@@ -150,6 +150,12 @@ pub fn t(lang: Lang, key: &str) -> &str {
     }
 }
 
+/// Whether `lang`'s catalog has `key` (the security log's `security.event.<id>` labels fall back
+/// to the id's words when it doesn't).
+pub fn has(lang: Lang, key: &str) -> bool {
+    lang.catalog().contains_key(key)
+}
+
 /// [t] with each `{name}` replaced by its value: one pass over the text, so a value is never scanned again (a name
 /// with a `{…}` in it stays as typed).
 pub fn t_params(lang: Lang, key: &str, params: &[(&str, &str)]) -> String {
@@ -295,8 +301,9 @@ mod tests {
                             .bytes()
                             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
                 })
-                // A template's or a file's name ("account.html", "music.rs").
-                && !["html", "js", "rs", "json", "css", "sql"]
+                // A template's or a file's name ("account.html", "music.rs"), a host's
+                // ("push.apple.com").
+                && !["html", "js", "rs", "json", "css", "sql", "com", "org", "net"]
                     .contains(&text.rsplit('.').next().unwrap())
         };
         let exists = |key: &str| {

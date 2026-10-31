@@ -244,7 +244,9 @@ pub fn screen_time(report: &TimeReport, zone: &Zone, now: DateTime<Utc>) -> Opti
     Some(ScreenTime {
         used,
         budget: report.budget_minutes,
-        day: zone.is_fallback().then(|| day.format("%-d %b").to_string()),
+        day: zone
+            .is_fallback()
+            .then(|| zone.date_of(day, zone.today(now))),
     })
 }
 

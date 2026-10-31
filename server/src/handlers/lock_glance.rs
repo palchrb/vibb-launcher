@@ -107,7 +107,7 @@ pub async fn save_app(
                     "lock_screen_app_changed",
                     Some(&admin.username),
                     None,
-                    Some(&lock_glance::log_line(id, &package, after.is_some())),
+                    Some(lock_glance::log_line(id, &package, after.is_some())),
                 )
                 .await;
             }
@@ -119,7 +119,7 @@ pub async fn save_app(
                     "lock_screen_text_changed",
                     Some(&admin.username),
                     None,
-                    Some(&lock_glance::text_log_line(id, &package, text)),
+                    Some(lock_glance::text_log_line(id, &package, text)),
                 )
                 .await;
             }
@@ -253,7 +253,7 @@ pub async fn save_wake(
                     "lock_wake_changed",
                     Some(&admin.username),
                     None,
-                    Some(&lock_glance::wake_log_line(id, on)),
+                    Some(lock_glance::wake_log_line(id, on)),
                 )
                 .await;
             }

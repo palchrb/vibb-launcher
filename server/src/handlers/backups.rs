@@ -510,7 +510,7 @@ async fn render_backups(
     lang: Lang,
 ) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let mut backups: Vec<BackupRow> = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(state.data_dir.join(BACKUP_DIR)).await {
@@ -990,7 +990,7 @@ pub async fn format_drive(
             "drive_format_triggered",
             Some(&admin.username),
             None,
-            Some(&drive.device),
+            Some(security::Detail::facts(&drive.device)),
         )
         .await;
         return Done::Format.redirect();
@@ -1069,7 +1069,7 @@ pub async fn restore_backup(
             "backup_restore_triggered",
             Some(&admin.username),
             None,
-            Some(&filename),
+            Some(security::Detail::facts(&filename)),
         )
         .await;
         return Done::Restore.redirect();
@@ -1104,7 +1104,7 @@ async fn restore_in_container(
         "backup_restore_triggered",
         Some(&admin.username),
         None,
-        Some(filename),
+        Some(security::Detail::facts(filename)),
     )
     .await;
     // The 303's GET comes back at once, well inside the second before the exit.

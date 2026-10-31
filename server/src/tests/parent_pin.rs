@@ -439,12 +439,19 @@ async fn the_literal_is_stored_once_with_one_security_row() {
             false
         )]
     );
-    let details = security_details(&app, "parent_pin_used").await;
     assert_eq!(
-        details,
-        vec![format!(
-            "device {id}, 2025-10-09 08:53 UTC: Restrictions lifted on the time-lock screen, until 9 \
-             Oct 10:53 UTC at the latest."
+        security_details(&app, "parent_pin_used").await,
+        [format!("device {id}")],
+        "the fact the budget counts by"
+    );
+    // The words, with the instants in the reader's zone (Phone Setup's Oslo: 08:53 UTC is 10:53).
+    let words = super::security_words(&app, "parent_pin_used", crate::i18n::Lang::En).await;
+    assert_eq!(
+        words,
+        // The phone's line names its phone from the fact (`Detail::shown`).
+        [format!(
+            "phone {id}: 9 Oct 2025 10:53: restrictions lifted on the time-lock screen, until 9 Oct \
+             2025 12:53 at the latest."
         )]
     );
     // A re-send (the phone never saw the 204) stores and logs nothing.
@@ -488,14 +495,13 @@ async fn wrong_tries_stay_off_the_security_log_and_lockouts_go_on_it() {
     );
     assert_eq!(stored_events(&app, id).await.len(), 5);
     assert!(security_details(&app, "parent_pin_wrong").await.is_empty());
-    let lockouts = security_details(&app, "parent_pin_lockout").await;
+    let lockouts = super::security_words(&app, "parent_pin_lockout", crate::i18n::Lang::En).await;
     assert_eq!(lockouts.len(), 1);
     assert!(
-        lockouts[0].starts_with(&format!("device {id}, "))
-            && lockouts[0].contains(
-                " UTC: 5 wrong parent PINs in a row (the last on the lock screen): the parent PIN \
-                 is locked on the phone for 30 minutes, until "
-            ),
+        lockouts[0].contains(
+            ": 5 wrong parent PINs in a row (the last on the lock screen): the parent PIN is \
+             locked on the phone. For 30 min. Until "
+        ),
         "{lockouts:?}"
     );
 }
@@ -527,12 +533,36 @@ async fn a_flood_of_lockouts_is_bounded() {
         StatusCode::NO_CONTENT
     );
     assert_eq!(stored_events(&app, id).await.len(), 100);
-    assert_eq!(security_details(&app, "parent_pin_lockout").await.len(), 60);
+    // Design 70 §4 (H3): the lines are worded (`params`), the budget counts their fact
+    // (`detail = "device {id}"`) - 61 worded lines, one `phone_lines_dropped`.
+    let lines = security_details(&app, "parent_pin_lockout").await;
+    assert_eq!(lines.len(), 60);
+    assert!(
+        lines.iter().all(|line| *line == format!("device {id}")),
+        "{lines:?}"
+    );
+    assert_eq!(
+        super::security_words(&app, "parent_pin_lockout", crate::i18n::Lang::En).await[0]
+            .split_once(": 5 wrong parent PINs in a row (the last on the lock screen)")
+            .map(|(_, rest)| rest.starts_with(": the parent PIN is locked on the phone.")),
+        Some(true)
+    );
     assert_eq!(
         security_details(&app, "phone_lines_dropped").await,
+        [format!("device {id}")]
+    );
+    assert_eq!(
+        super::security_words(&app, "phone_lines_dropped", crate::i18n::Lang::En).await,
         [format!(
-            "device {id}: more lines from this phone in this hour are not logged (at most 60 an \
+            "phone {id}: more lines from this phone in this hour are not logged (at most 60 an \
              hour)"
+        )]
+    );
+    assert_eq!(
+        super::security_words(&app, "phone_lines_dropped", crate::i18n::Lang::Nb).await,
+        [format!(
+            "telefon {id}: flere linjer fra denne telefonen denne timen logges ikke (høyst 60 i \
+             timen)"
         )]
     );
     let counts: (i64, i64) = sqlx::query_as(

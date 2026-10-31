@@ -285,7 +285,7 @@ async fn load_page(
         })
         .collect();
     let report = call_report(state, &policy).await?;
-    let (zone, now) = (Zone::load(&state.db).await, Utc::now());
+    let (zone, now) = (Zone::load(&state.db, lang).await, Utc::now());
     let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
         .findings
         .iter()

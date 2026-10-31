@@ -129,34 +129,53 @@ pub fn notes(
     notes
 }
 
-/// The security log's detail for a tick: "device 3: io.element.android.x on the lock screen: on".
-pub fn log_line(device_id: i64, package: &str, on: bool) -> String {
-    format!(
-        "device {device_id}: {package} on the lock screen: {}",
-        on_off(on)
+/// The security log's words for a tick (`security.detail.lock_screen_app.*`, design 70 §4):
+/// "phone 3: io.element.android.x on the lock screen: on".
+pub fn log_line(device_id: i64, package: &str, on: bool) -> crate::security::Detail {
+    switch_line(
+        device_id,
+        if on {
+            "security.detail.lock_screen_app.on"
+        } else {
+            "security.detail.lock_screen_app.off"
+        },
+        &[("package", package)],
     )
 }
 
-/// The security log's detail for an app's text switch (design 51): "device 3:
-/// io.element.android.x's message text on the lock screen: on".
-pub fn text_log_line(device_id: i64, package: &str, on: bool) -> String {
-    format!(
-        "device {device_id}: {package}'s message text on the lock screen: {}",
-        on_off(on)
+/// The same for an app's text switch (design 51): "phone 3: io.element.android.x's message text on
+/// the lock screen: on".
+pub fn text_log_line(device_id: i64, package: &str, on: bool) -> crate::security::Detail {
+    switch_line(
+        device_id,
+        if on {
+            "security.detail.lock_screen_text.on"
+        } else {
+            "security.detail.lock_screen_text.off"
+        },
+        &[("package", package)],
     )
 }
 
-/// The security log's detail for the wake switch (launcher round 7 §3): "device 3: wake the screen
-/// for a notification: on".
-pub fn wake_log_line(device_id: i64, on: bool) -> String {
-    format!(
-        "device {device_id}: wake the screen for a notification: {}",
-        on_off(on)
+/// The same for the wake switch (launcher round 7 §3): "phone 3: wake the screen for a
+/// notification: on".
+pub fn wake_log_line(device_id: i64, on: bool) -> crate::security::Detail {
+    switch_line(
+        device_id,
+        if on {
+            "security.detail.lock_wake.on"
+        } else {
+            "security.detail.lock_wake.off"
+        },
+        &[],
     )
 }
 
-fn on_off(on: bool) -> &'static str {
-    if on { "on" } else { "off" }
+fn switch_line(device_id: i64, key: &str, params: &[(&str, &str)]) -> crate::security::Detail {
+    let device = device_id.to_string();
+    let mut all = vec![("device", device.as_str())];
+    all.extend_from_slice(params);
+    crate::security::Detail::words(key, &all).with_facts(format!("device {device_id}"))
 }
 
 // ---- the device page ----------------------------------------------------------------------------
@@ -336,21 +355,30 @@ mod tests {
 
     #[test]
     fn the_log_lines() {
+        let worded = crate::security::worded_test;
         assert_eq!(
-            log_line(3, ELEMENT_X, true),
-            "device 3: io.element.android.x on the lock screen: on"
+            worded(&log_line(3, ELEMENT_X, true)),
+            "phone 3: io.element.android.x on the lock screen: on"
         );
         assert_eq!(
-            log_line(3, ELEMENT_X, false),
-            "device 3: io.element.android.x on the lock screen: off"
+            worded(&log_line(3, ELEMENT_X, false)),
+            "phone 3: io.element.android.x on the lock screen: off"
         );
         assert_eq!(
-            text_log_line(7, ELEMENT_X, true),
-            "device 7: io.element.android.x's message text on the lock screen: on"
+            worded(&text_log_line(7, ELEMENT_X, true)),
+            "phone 7: io.element.android.x's message text on the lock screen: on"
         );
         assert_eq!(
-            text_log_line(7, ELEMENT_X, false),
-            "device 7: io.element.android.x's message text on the lock screen: off"
+            worded(&text_log_line(7, ELEMENT_X, false)),
+            "phone 7: io.element.android.x's message text on the lock screen: off"
+        );
+        assert_eq!(
+            crate::security::worded_in(&wake_log_line(3, true), crate::i18n::Lang::Nb),
+            "telefon 3: vekk skjermen ved varsel: på"
+        );
+        assert_eq!(
+            log_line(3, ELEMENT_X, true).columns().0.as_deref(),
+            Some("device 3")
         );
     }
 

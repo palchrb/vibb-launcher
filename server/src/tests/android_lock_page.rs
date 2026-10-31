@@ -91,11 +91,11 @@ async fn pin_rows(app: &TestApp, id: i64) -> Vec<(i64, Option<String>)> {
 }
 
 async fn events(app: &TestApp, kind: &str) -> Vec<Option<String>> {
-    sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = ? ORDER BY id")
-        .bind(kind)
-        .fetch_all(&app.db)
+    super::security_words(app, kind, crate::i18n::Lang::En)
         .await
-        .unwrap()
+        .into_iter()
+        .map(|words| (!words.is_empty()).then_some(words))
+        .collect()
 }
 
 /// §2.3: the switch needs a Child PIN, saves, logs a change, queues the PIN for a phone that can
@@ -184,8 +184,8 @@ async fn the_switch_saves_queues_and_cancels() {
     assert_eq!(
         events(&app, "kid_keyguard_changed").await,
         [
-            Some(format!("device {id}: Android's lock")),
-            Some(format!("device {id}: Vibb One's lock")),
+            Some(format!("phone {id}: Android's lock")),
+            Some(format!("phone {id}: Vibb One's lock")),
         ]
     );
 }
@@ -227,11 +227,12 @@ async fn show_child_pin_needs_the_password() {
         [Some(format!("device {id}"))]
     );
     assert_eq!(events(&app, "kid_pin_reveal_refused").await.len(), 1);
-    let logged: Vec<String> =
-        sqlx::query_scalar("SELECT event_type || COALESCE(detail, '') FROM security_events")
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
+    let logged: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type || COALESCE(detail, '') || COALESCE(params, '') FROM security_events",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     assert!(
         logged.iter().all(|line| !line.contains("4826")),
         "{logged:?}"
@@ -381,7 +382,7 @@ async fn the_password_forms_share_one_count() {
     // Each wrong one is in the security log, the password change's too (security review L7).
     assert_eq!(
         events(&app, "password_change_refused").await,
-        [Some("wrong current password".to_string())]
+        [Some("Wrong current password".to_string())]
     );
     assert_eq!(events(&app, "totp_reset_refused").await.len(), 1);
     let account = app.get_page("/account", &cookie).await;

@@ -528,13 +528,7 @@ pub(super) fn nudged(rx: &mut tokio::sync::broadcast::Receiver<i64>) -> Vec<i64>
 }
 
 pub(super) async fn events(app: &TestApp, kind: &str) -> Vec<String> {
-    sqlx::query_scalar(
-        "SELECT COALESCE(detail, '') FROM security_events WHERE event_type = ? ORDER BY id",
-    )
-    .bind(kind)
-    .fetch_all(&app.db)
-    .await
-    .unwrap()
+    super::security_words(app, kind, crate::i18n::Lang::En).await
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1018,8 +1012,8 @@ async fn the_policy_carries_a_small_music_object() {
     assert_eq!(
         events(&app, "music_phone_settings").await.last().unwrap(),
         &format!(
-            "device {device}: streaming on mobile data true, downloads on mobile data false, \
-             storage limit 5 GB, volume cap 70 %, Storytel false"
+            "phone {device}: streaming on mobile data on, downloads on mobile data off, \
+             storage limit 5 GB, volume cap 70 %, Storytel off"
         )
     );
     app.request_form(
@@ -1279,8 +1273,8 @@ async fn a_page_from_before_the_update_sets_both_switches_from_mobile_data() {
     assert_eq!(
         events(&app, "music_phone_settings").await.last().unwrap(),
         &format!(
-            "device {device}: streaming on mobile data true, downloads on mobile data true, \
-             storage limit 10 GB, volume cap off, Storytel false"
+            "phone {device}: streaming on mobile data on, downloads on mobile data on, \
+             storage limit 10 GB, volume cap off, Storytel off"
         )
     );
     // Its checkbox off: both off. Today's switch names without `v` aren't read.
@@ -2455,7 +2449,7 @@ async fn uploads_are_read_by_content_ordered_and_scoped() {
     );
     assert_eq!(
         events(&app, "music_files_added").await,
-        vec![format!("entry {entry}: 2 file(s), 0 restored")]
+        vec![format!("entry {entry}: 2 files, 0 restored")]
     );
 }
 
@@ -3255,8 +3249,8 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
     assert_eq!(
         events(&app, "music_phone_entry").await,
         vec![
-            format!("device {device}: Abels tårn on"),
-            format!("device {device}: Abels tårn off")
+            format!("phone {device}: Abels tårn on"),
+            format!("phone {device}: Abels tårn off")
         ]
     );
 }
@@ -3474,10 +3468,10 @@ async fn the_music_page_scopes_sonos_rooms() {
     assert_eq!(
         events(&app, "music_sonos_rooms_changed").await,
         vec![
-            format!("device {device}: only Stua, Kjøkken <b>"),
-            format!("device {device}: only Stua"),
-            format!("device {device}: no room"),
-            format!("device {device}: all rooms"),
+            format!("phone {device}: only Stua, Kjøkken <b>"),
+            format!("phone {device}: only Stua"),
+            format!("phone {device}: no room"),
+            format!("phone {device}: all rooms"),
         ]
     );
 
@@ -3499,8 +3493,15 @@ async fn the_music_page_scopes_sonos_rooms() {
         .await
         .pop()
         .unwrap();
-    assert!(detail.starts_with(&format!("device {device}: only 00 xxx")));
-    assert_eq!(detail.chars().count(), 300);
+    assert!(
+        detail.starts_with(&format!("phone {device}: only 00 xxx")),
+        "{detail}"
+    );
+    // The names are cut to 300 characters; the words around them are the catalog's.
+    assert_eq!(
+        detail.chars().count(),
+        format!("phone {device}: only ").chars().count() + 300
+    );
 }
 
 #[tokio::test]
@@ -3757,10 +3758,12 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
             .text()
             .contains("Signed in")
     );
-    let log: Vec<String> = sqlx::query_scalar("SELECT COALESCE(detail, '') FROM security_events")
-        .fetch_all(&app.db)
-        .await
-        .unwrap();
+    let log: Vec<String> = sqlx::query_scalar(
+        "SELECT COALESCE(detail, '') || COALESCE(params, '') FROM security_events",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     assert!(
         log.iter()
             .all(|d| !d.contains(PASSWORD) && !d.contains(EMAIL))
@@ -3810,7 +3813,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
     );
     assert_eq!(
         events(&app, "storytel_login_sent").await,
-        vec![format!("device {device}: generation 1")]
+        vec![format!("phone {device}: generation 1")]
     );
 
     // Saved again: a new generation, the phones with the switch are nudged.
@@ -4894,7 +4897,7 @@ async fn reuploading_a_missing_file_restores_it_and_a_double_is_refused() {
     assert_eq!(res.status, StatusCode::OK);
     assert_eq!(
         events(&app, "music_files_added").await.last().unwrap(),
-        &format!("entry {entry}: 0 file(s), 1 restored")
+        &format!("entry {entry}: 0 files, 1 restored")
     );
 
     // The same file again, twice in one upload too: refused, nothing left behind.
@@ -5235,7 +5238,7 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
     assert!(dir.join(path).exists(), "the referenced file stays");
     assert_eq!(
         events(&app, "music_orphans_deleted").await,
-        vec!["2 file(s), 2.0 MB".to_string()]
+        vec!["2 files, 2.0 MB".to_string()]
     );
     // The group is gone, its anchor stays: the redirect still lands where the parent was
     // (qa-browser-fixes-code L1).

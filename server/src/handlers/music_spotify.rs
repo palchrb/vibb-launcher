@@ -330,13 +330,14 @@ pub async fn setup_view(
     headers: &HeaderMap,
     peer_trusted: bool,
     entered: Entered,
+    lang: Lang,
 ) -> Result<SpotifySetup, sqlx::Error> {
     let app = spotify::app(state).await?;
     let rows = spotify::accounts(&state.db).await?;
     let now = state.music_sweep.now();
     let suggested = spotify::suggested_redirect(headers, peer_trusted);
     let query = &entered.query;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let phones: Vec<(i64, String, Option<i64>)> = sqlx::query_as(
         "SELECT d.id, d.name, p.music_spotify_account FROM devices d \
          JOIN device_policy p ON p.device_id = d.id ORDER BY d.name, d.id",
@@ -726,11 +727,17 @@ pub async fn save_app(
         return server_error(err, "couldn't save the Spotify app");
     }
     let last_four = &client[client.len() - 4..];
-    let mut detail = format!("Spotify app: client ID ending in {last_four}, redirect {redirect}");
+    let mut detail = crate::security::Detail::words(
+        "security.detail.spotify.app_saved",
+        &[("last", last_four), ("redirect", &redirect)],
+    );
     if removed > 0 {
-        detail.push_str(&format!(" ({removed} accounts of the old app removed)"));
+        detail = detail.and(
+            "security.detail.spotify.old_accounts_removed",
+            &[("count", &removed.to_string())],
+        );
     }
-    log_event(&state, &admin, "spotify_app_saved", &detail).await;
+    log_event(&state, &admin, "spotify_app_saved", detail).await;
     // The Spotify entries that failed for want of an app are due now (design 26c step 2b).
     state.music_sweep.wake();
     Redirect::to(&format!("/music/settings?saved={removed}#spotify-app")).into_response()
@@ -773,7 +780,10 @@ pub async fn clear_app(
         &state,
         &admin,
         "spotify_app_cleared",
-        &format!("Spotify app and {removed} accounts removed"),
+        crate::security::Detail::words(
+            "security.detail.spotify.app_cleared",
+            &[("count", &removed.to_string())],
+        ),
     )
     .await;
     Redirect::to("/music/settings?cleared=1#spotify-app").into_response()
@@ -941,7 +951,7 @@ async fn finish(
             "spotify_login_failed",
             Some(&pending.admin),
             None,
-            Some("authorize_error"),
+            Some(crate::security::Detail::facts("authorize_error")),
         )
         .await;
         return LoginOutcome::Refused;
@@ -1128,7 +1138,10 @@ pub async fn remove_account(
                 &state,
                 &admin,
                 "spotify_account_removed",
-                &format!("Spotify account {name} removed"),
+                crate::security::Detail::words(
+                    "security.detail.spotify.account_removed",
+                    &[("name", &name)],
+                ),
             )
             .await;
             Redirect::to("/music/settings?removed=1#spotify-accounts").into_response()
@@ -1216,7 +1229,11 @@ pub async fn save_plays_on(
             &state,
             &admin,
             "music_spotify_binding_changed",
-            &format!("device {device}: Spotify plays as {name}"),
+            crate::security::Detail::words(
+                "security.detail.music.spotify_as",
+                &[("device", &device.to_string()), ("name", &name)],
+            )
+            .with_facts(format!("device {device}")),
         )
         .await;
     }
@@ -1225,7 +1242,11 @@ pub async fn save_plays_on(
             &state,
             &admin,
             "music_spotify_binding_changed",
-            &format!("device {device}: Spotify off"),
+            crate::security::Detail::words(
+                "security.detail.music.spotify_off",
+                &[("device", &device.to_string())],
+            )
+            .with_facts(format!("device {device}")),
         )
         .await;
     }
@@ -1476,19 +1497,25 @@ pub async fn add(
             .collect::<Vec<_>>()
             .join(",")
     };
-    log_event(
-        &state,
-        &admin,
-        "music_entry_added",
-        &format!(
-            "entry {id}: Spotify: {name} ({target}){}",
-            if on.is_empty() {
-                String::new()
-            } else {
-                format!(", ticked on phones {}", list(&on))
-            }
-        ),
-    )
+    log_event(&state, &admin, "music_entry_added", {
+        let detail = crate::security::Detail::words(
+            "security.detail.music.entry_spotify",
+            &[
+                ("id", &id.to_string()),
+                ("name", &name),
+                ("target", &target),
+            ],
+        )
+        .with_facts(format!("entry {id}"));
+        if on.is_empty() {
+            detail
+        } else {
+            detail.and(
+                "security.detail.music.ticked_on_phones",
+                &[("phones", &list(&on))],
+            )
+        }
+    })
     .await;
     let mut url = format!("/music/spotify?added={id}");
     if check.context {

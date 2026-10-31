@@ -254,7 +254,7 @@ async fn queue(
                 "device_command_queued",
                 Some(&admin.username),
                 None,
-                Some(&detail),
+                Some(security::Detail::facts(&detail)),
             )
             .await;
             // To the summary group the form is in, where the flash is (design 31 §3.0, §5.1): the
@@ -358,8 +358,8 @@ pub async fn log_relock_blocks(
         return;
     };
     let before = window_relock::parse_relock_blocks(previous);
-    if let Some(line) = window_relock::blocks_log_line(device_id, before.as_deref(), &blocks) {
-        security::record_phone_event_logged(db, device_id, security::PhoneLine::AppBlocked, &line)
+    if let Some(line) = window_relock::blocks_log_line(before.as_deref(), &blocks) {
+        security::record_phone_event_logged(db, device_id, security::PhoneLine::AppBlocked, line)
             .await;
     }
 }
@@ -384,7 +384,7 @@ pub async fn log_foreign_access(
         &state.db,
         device_id,
         security::PhoneLine::ForeignAccess,
-        &window_relock::foreign_log_line(device_id, after.as_ref()),
+        window_relock::foreign_log_line(after.as_ref()),
     )
     .await;
     if let (Some((phone, previous_status_id)), Some(found), Some(stored)) = (phone, &after, now) {
@@ -428,7 +428,7 @@ pub async fn log_relock(
         db,
         device_id,
         security::PhoneLine::RelockFindings,
-        &window_relock::log_line(device_id, &report),
+        window_relock::log_line(&report),
     )
     .await;
 }

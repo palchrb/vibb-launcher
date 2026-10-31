@@ -545,14 +545,12 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
         ],
         "the undelivered wipe is cancelled, the lock stays history"
     );
-    let detail: String = sqlx::query_scalar(
-        "SELECT detail FROM security_events WHERE event_type = 'device_enrolled' ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    let detail = super::security_words(&app, "device_enrolled", crate::i18n::Lang::En)
+        .await
+        .pop()
+        .unwrap();
     assert!(
-        detail.contains("2 command(s) for the earlier phone"),
+        detail.contains("2 commands for the earlier phone"),
         "{detail}"
     );
 }

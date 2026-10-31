@@ -1,11 +1,16 @@
 //! Stored times as the parent reads them (design 31 §3.10, M4): local time in the Phone Setup
 //! time zone (`provisioning_settings.time_zone`, the zone the setup QR gives the phones), relative
-//! to the server's clock.
+//! to the server's clock, worded in the reader's language (design 70 §4, slice 2).
 //!
 //! - **The zone.** `chrono-tz` compiles the IANA data in, so the distroless image needs no
 //!   `zoneinfo`. An empty or unknown zone falls back to UTC, and every clock time then says "UTC":
 //!   `provisioning::valid_time_zone` checks only the characters, so "Europe/Olso" is stored and
 //!   lands here.
+//! - **The language.** A [Zone] carries the reader's [Lang] (`Zone::load(db, lang)`,
+//!   [Zone::in_lang]), and every word - "just now", "yesterday", a month's or a weekday's name -
+//!   comes from the catalog's `time.*` keys, never from chrono's locales: nb "nå nettopp", "for 3
+//!   min siden", "i går 21:40", "27. okt.", "man. 14:30"; en as it always was. The clock is 24 h
+//!   in both (D3).
 //! - **Relative times** come from the server's clock only, never the phone's, so a phone with a
 //!   wrong clock can't make itself "just now". The steps: under a minute "just now", under an hour
 //!   "N min ago", the same local day "N h ago", the day before "yesterday HH:MM", older "12 Oct"
@@ -21,42 +26,48 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
+use crate::i18n::{Lang, t, t_params};
+
 /// A time "ahead" by at most this much still reads as "just now" (the server's clock moved back
 /// a little since the time was stored).
 const FUTURE_SLACK_SECS: i64 = 5 * 60;
 
-/// The zone times are shown in.
+/// The zone times are shown in, and the language they are worded in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Zone {
     tz: Tz,
     /// The Phone Setup zone was empty or unknown: UTC, and every clock time says so.
     fallback: bool,
+    lang: Lang,
 }
 
 impl Zone {
     /// The zone named `name` (an IANA id, as Phone Setup stores it); UTC, labelled, when it is
-    /// empty or unknown.
+    /// empty or unknown. In English: a page's zone comes from [Zone::load] with the reader's
+    /// language; this one is for day arithmetic (a phone's own zone, an intake) and the tests.
     pub fn from_setting(name: &str) -> Zone {
         match name.trim().parse::<Tz>() {
             Ok(tz) if !name.trim().is_empty() => Zone {
                 tz,
                 fallback: false,
+                lang: Lang::default(),
             },
             _ => Zone::utc_fallback(),
         }
     }
 
-    /// UTC, labelled "UTC".
+    /// UTC, labelled "UTC", in English (see [Zone::from_setting]).
     pub fn utc_fallback() -> Zone {
         Zone {
             tz: Tz::UTC,
             fallback: true,
+            lang: Lang::default(),
         }
     }
 
-    /// The Phone Setup zone; UTC, labelled, when it can't be read.
-    pub async fn load(db: &SqlitePool) -> Zone {
-        match sqlx::query_scalar::<_, String>(
+    /// The Phone Setup zone, worded in `lang`; UTC, labelled, when it can't be read.
+    pub async fn load(db: &SqlitePool, lang: Lang) -> Zone {
+        let zone = match sqlx::query_scalar::<_, String>(
             "SELECT time_zone FROM provisioning_settings WHERE id = 1",
         )
         .fetch_optional(db)
@@ -68,7 +79,18 @@ impl Zone {
                 tracing::error!(%err, "can't read the Phone Setup time zone; showing UTC");
                 Zone::utc_fallback()
             }
-        }
+        };
+        zone.in_lang(lang)
+    }
+
+    /// The same zone worded in `lang` (the push sender loads once and words per subscriber).
+    pub fn in_lang(self, lang: Lang) -> Zone {
+        Zone { lang, ..self }
+    }
+
+    /// The language the times are worded in.
+    pub fn lang(&self) -> Lang {
+        self.lang
     }
 
     /// Times are UTC because the Phone Setup zone was empty or unknown.
@@ -140,26 +162,34 @@ impl Zone {
         let secs = (now - t).num_seconds();
         if secs < 0 {
             if -secs <= FUTURE_SLACK_SECS {
-                return "just now".to_string();
+                return self.word("time.just_now");
             }
             // Only a server clock stepped back gets here: say the clock time, not "13 Oct".
             if self.local(t).date_naive() == self.today(now) {
-                return format!("today {}", self.clock(t));
+                return self.with_clock("time.today", t);
             }
             return self.date(t, now);
         }
         if secs < 60 {
-            return "just now".to_string();
+            return self.word("time.just_now");
         }
         if secs < 60 * 60 {
-            return format!("{} min ago", secs / 60);
+            return t_params(
+                self.lang,
+                "time.min_ago",
+                &[("n", &(secs / 60).to_string())],
+            );
         }
         let (day, today) = (self.local(t).date_naive(), self.today(now));
         if day == today {
-            return format!("{} h ago", secs / 3600);
+            return t_params(
+                self.lang,
+                "time.h_ago",
+                &[("n", &(secs / 3600).to_string())],
+            );
         }
         if today.pred_opt() == Some(day) {
-            return format!("yesterday {}", self.clock(t));
+            return self.with_clock("time.yesterday", t);
         }
         self.date(t, now)
     }
@@ -172,7 +202,7 @@ impl Zone {
         if day == today {
             self.clock(t)
         } else if today.pred_opt() == Some(day) {
-            format!("yesterday {}", self.clock(t))
+            self.with_clock("time.yesterday", t)
         } else {
             self.date(t, now)
         }
@@ -186,7 +216,7 @@ impl Zone {
         if day == today || today.pred_opt() == Some(day) {
             self.when(t, now)
         } else {
-            format!("{} {}", self.date(t, now), self.clock(t))
+            self.date_clock(t, now)
         }
     }
 
@@ -209,20 +239,90 @@ impl Zone {
         let days = (day - today).num_days();
         match days {
             0 => self.clock(t),
-            1 => format!("{} tomorrow", self.clock(t)),
-            2..=6 => format!("{} {}", self.local(t).format("%a"), self.clock(t)),
-            _ => format!("{} {}", self.date(t, now), self.clock(t)),
+            1 => self.with_clock("time.tomorrow", t),
+            2..=6 => t_params(
+                self.lang,
+                "time.weekday_clock",
+                &[
+                    ("weekday", &self.weekday_name(day)),
+                    ("clock", &self.clock(t)),
+                ],
+            ),
+            _ => self.date_clock(t, now),
         }
     }
 
     /// "12 Oct", or "12 Oct 2025" in another year than `now`'s.
     fn date(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
-        let local = self.local(t);
-        if local.year() == self.local(now).year() {
-            local.format("%-d %b").to_string()
+        self.date_of(self.local(t).date_naive(), self.today(now))
+    }
+
+    /// "12 Oct 08:12" ("12 Oct 2025 08:12").
+    fn date_clock(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        t_params(
+            self.lang,
+            "time.date_clock",
+            &[("date", &self.date(t, now)), ("clock", &self.clock(t))],
+        )
+    }
+
+    /// A local date as a value: "12 Oct", or "12 Oct 2025" in another year than `today`'s (nb
+    /// "12. okt.", "12. okt. 2025").
+    pub fn date_of(&self, day: NaiveDate, today: NaiveDate) -> String {
+        let number = day.day().to_string();
+        let month = self.month_name(day);
+        if day.year() == today.year() {
+            t_params(
+                self.lang,
+                "time.date",
+                &[("day", &number), ("month", &month)],
+            )
         } else {
-            local.format("%-d %b %Y").to_string()
+            t_params(
+                self.lang,
+                "time.date_year",
+                &[
+                    ("day", &number),
+                    ("month", &month),
+                    ("year", &day.year().to_string()),
+                ],
+            )
         }
+    }
+
+    /// The month's short name from the catalog ("Oct", nb "okt.").
+    pub fn month_name(&self, day: NaiveDate) -> String {
+        self.word(&format!("time.month.{}", day.month()))
+    }
+
+    /// The weekday's short name from the catalog ("Mon", nb "man.").
+    pub fn weekday_name(&self, day: NaiveDate) -> String {
+        self.word(&format!(
+            "time.weekday.{}",
+            day.weekday().number_from_monday()
+        ))
+    }
+
+    fn word(&self, key: &str) -> String {
+        t(self.lang, key).to_string()
+    }
+
+    /// `key` with its `{clock}` filled with `t`'s clock time.
+    fn with_clock(&self, key: &str, t: DateTime<Utc>) -> String {
+        t_params(self.lang, key, &[("clock", &self.clock(t))])
+    }
+}
+
+/// A length of time in minutes as a value: "45 min", "2 h", "1 h 30 min" (nb "1 t 30 min") -
+/// design 70 §6's `duration`, here since slice 2 for the events' words (`lifts::minutes_text`'s
+/// callers move onto it in slice 4).
+pub fn duration(lang: Lang, minutes: i64) -> String {
+    let (h, m) = (minutes / 60, minutes % 60);
+    let (h, m) = (h.to_string(), m.to_string());
+    match (minutes / 60, minutes % 60) {
+        (0, _) => t_params(lang, "time.duration.min", &[("min", &m)]),
+        (_, 0) => t_params(lang, "time.duration.h", &[("h", &h)]),
+        _ => t_params(lang, "time.duration.h_min", &[("h", &h), ("min", &m)]),
     }
 }
 
@@ -249,6 +349,10 @@ mod tests {
 
     fn oslo() -> Zone {
         Zone::from_setting("Europe/Oslo")
+    }
+
+    fn nb() -> Zone {
+        oslo().in_lang(Lang::Nb)
     }
 
     #[test]
@@ -295,97 +399,178 @@ mod tests {
             fallback.relative(utc("2026-10-13 07:57:00"), utc("2026-10-13 08:00:00")),
             "3 min ago"
         );
+        assert_eq!(
+            fallback
+                .in_lang(Lang::Nb)
+                .relative(utc("2026-10-12 21:40:00"), utc("2026-10-13 08:00:00")),
+            "i går 21:40 UTC"
+        );
+        // The language rides along; the zone stays.
+        assert_eq!(zone.in_lang(Lang::Nb).lang(), Lang::Nb);
+        assert_eq!(zone.in_lang(Lang::Nb).name(), Some("Europe/Oslo"));
+        assert_eq!(Zone::from_setting("Europe/Oslo").lang(), Lang::En);
     }
 
+    /// Every form in both languages (design 70 §4): the relative steps, a row's value, the clock
+    /// that always comes along, and an end - with "yesterday"/"tomorrow" at the zone's midnight,
+    /// not UTC's.
     #[test]
-    fn relative_times_step_from_minutes_to_dates() {
-        let zone = oslo();
-        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
-        let ago = |s: &str| zone.relative(utc(s), now);
-        assert_eq!(ago("2026-10-13 12:00:00"), "just now");
-        assert_eq!(ago("2026-10-13 11:59:01"), "just now");
-        assert_eq!(ago("2026-10-13 11:59:00"), "1 min ago");
-        assert_eq!(ago("2026-10-13 11:57:00"), "3 min ago");
-        assert_eq!(ago("2026-10-13 11:00:01"), "59 min ago");
-        assert_eq!(ago("2026-10-13 11:00:00"), "1 h ago");
-        assert_eq!(ago("2026-10-13 10:00:00"), "2 h ago");
-        // Local midnight is 22:00 UTC the day before: still today in Oslo.
-        assert_eq!(ago("2026-10-12 22:00:00"), "14 h ago");
-        assert_eq!(ago("2026-10-12 21:59:00"), "yesterday 23:59");
-        assert_eq!(ago("2026-10-12 19:40:00"), "yesterday 21:40");
-        assert_eq!(ago("2026-10-11 21:59:00"), "11 Oct");
-        assert_eq!(ago("2025-12-31 12:00:00"), "31 Dec 2025");
+    fn every_time_form_in_both_languages() {
+        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo, a Tuesday
+        let late = utc("2026-10-13 21:50:00"); // 23:50 in Oslo
+        for (lang, rows) in [
+            (
+                Lang::En,
+                vec![
+                    ("relative", "2026-10-13 12:00:00", "just now"),
+                    ("relative", "2026-10-13 11:59:01", "just now"),
+                    ("relative", "2026-10-13 11:59:00", "1 min ago"),
+                    ("relative", "2026-10-13 11:57:00", "3 min ago"),
+                    ("relative", "2026-10-13 11:00:01", "59 min ago"),
+                    ("relative", "2026-10-13 11:00:00", "1 h ago"),
+                    ("relative", "2026-10-13 10:00:00", "2 h ago"),
+                    // Local midnight is 22:00 UTC the day before: still today in Oslo.
+                    ("relative", "2026-10-12 22:00:00", "14 h ago"),
+                    ("relative", "2026-10-12 21:59:00", "yesterday 23:59"),
+                    ("relative", "2026-10-12 19:40:00", "yesterday 21:40"),
+                    ("relative", "2026-10-11 21:59:00", "11 Oct"),
+                    ("relative", "2025-12-31 12:00:00", "31 Dec 2025"),
+                    // Ahead: within the slack "just now", then the clock time, then the date.
+                    ("relative", "2026-10-13 12:05:00", "just now"),
+                    ("relative", "2026-10-13 14:00:00", "today 16:00"),
+                    ("relative", "2026-10-15 12:00:00", "15 Oct"),
+                    ("when", "2026-10-13 06:12:00", "08:12"),
+                    ("when", "2026-10-12 22:00:00", "00:00"),
+                    ("when", "2026-10-12 21:59:00", "yesterday 23:59"),
+                    ("when", "2026-10-11 21:59:00", "11 Oct"),
+                    ("when", "2025-12-31 12:00:00", "31 Dec 2025"),
+                    ("when", "2026-10-13 14:00:00", "16:00"),
+                    ("at", "2026-10-13 06:12:00", "08:12"),
+                    ("at", "2026-10-12 21:59:00", "yesterday 23:59"),
+                    ("at", "2026-10-11 21:59:00", "11 Oct 23:59"),
+                    ("at", "2025-12-31 12:00:00", "31 Dec 2025 13:00"),
+                    ("until", "2026-10-13 21:55:00", "23:55"),
+                    // A code made at 23:50 (15 min), install mode, a typed-code pause.
+                    ("until", "2026-10-13 22:05:00", "00:05 tomorrow"),
+                    ("until", "2026-10-14 21:59:00", "23:59 tomorrow"),
+                    ("until", "2026-10-15 12:30:00", "Thu 14:30"),
+                    ("until", "2026-10-19 12:30:00", "Mon 14:30"),
+                    ("until", "2026-10-20 12:30:00", "20 Oct 14:30"),
+                    ("until", "2027-01-20 12:30:00", "20 Jan 2027 13:30"),
+                    // Already past: as `when`.
+                    ("until", "2026-10-13 21:00:00", "23:00"),
+                ],
+            ),
+            (
+                Lang::Nb,
+                vec![
+                    ("relative", "2026-10-13 12:00:00", "nå nettopp"),
+                    ("relative", "2026-10-13 11:59:00", "for 1 min siden"),
+                    ("relative", "2026-10-13 11:57:00", "for 3 min siden"),
+                    ("relative", "2026-10-13 11:00:00", "for 1 t siden"),
+                    ("relative", "2026-10-13 10:00:00", "for 2 t siden"),
+                    ("relative", "2026-10-12 22:00:00", "for 14 t siden"),
+                    ("relative", "2026-10-12 21:59:00", "i går 23:59"),
+                    ("relative", "2026-10-11 21:59:00", "11. okt."),
+                    ("relative", "2025-12-31 12:00:00", "31. des. 2025"),
+                    ("relative", "2026-10-13 12:05:00", "nå nettopp"),
+                    ("relative", "2026-10-13 14:00:00", "i dag 16:00"),
+                    ("relative", "2026-10-15 12:00:00", "15. okt."),
+                    ("when", "2026-10-13 06:12:00", "08:12"),
+                    ("when", "2026-10-12 22:00:00", "00:00"),
+                    ("when", "2026-10-12 21:59:00", "i går 23:59"),
+                    ("when", "2026-10-11 21:59:00", "11. okt."),
+                    ("when", "2025-12-31 12:00:00", "31. des. 2025"),
+                    ("at", "2026-10-12 21:59:00", "i går 23:59"),
+                    ("at", "2026-10-11 21:59:00", "11. okt. 23:59"),
+                    ("at", "2025-12-31 12:00:00", "31. des. 2025 13:00"),
+                    ("until", "2026-10-13 21:55:00", "23:55"),
+                    ("until", "2026-10-13 22:05:00", "i morgen 00:05"),
+                    ("until", "2026-10-14 21:59:00", "i morgen 23:59"),
+                    ("until", "2026-10-15 12:30:00", "tor. 14:30"),
+                    ("until", "2026-10-19 12:30:00", "man. 14:30"),
+                    ("until", "2026-10-20 12:30:00", "20. okt. 14:30"),
+                    ("until", "2027-01-20 12:30:00", "20. jan. 2027 13:30"),
+                    ("until", "2026-10-13 21:00:00", "23:00"),
+                ],
+            ),
+        ] {
+            let zone = oslo().in_lang(lang);
+            for (form, t, want) in rows {
+                let got = match form {
+                    "relative" => zone.relative(utc(t), now),
+                    "when" => zone.when(utc(t), now),
+                    "at" => zone.at(utc(t), now),
+                    "until" => zone.until(utc(t), late),
+                    _ => unreachable!(),
+                };
+                assert_eq!(got, want, "{lang:?} {form} {t}");
+            }
+        }
         // An hour that crosses midnight is still minutes.
         let after_midnight = utc("2026-10-12 22:10:00"); // 00:10 on the 13th
         assert_eq!(
-            zone.relative(utc("2026-10-12 21:50:00"), after_midnight),
+            oslo().relative(utc("2026-10-12 21:50:00"), after_midnight),
             "20 min ago"
         );
-    }
-
-    #[test]
-    fn at_always_carries_the_clock_time() {
-        let zone = oslo();
-        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
-        let at = |s: &str| zone.at(utc(s), now);
-        assert_eq!(at("2026-10-13 06:12:00"), "08:12");
-        assert_eq!(at("2026-10-12 21:59:00"), "yesterday 23:59");
-        assert_eq!(at("2026-10-11 21:59:00"), "11 Oct 23:59");
-        assert_eq!(at("2025-12-31 12:00:00"), "31 Dec 2025 13:00");
-    }
-
-    #[test]
-    fn when_is_a_clock_time_today_and_a_date_before() {
-        let zone = oslo();
-        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
-        let when = |s: &str| zone.when(utc(s), now);
-        assert_eq!(when("2026-10-13 06:12:00"), "08:12");
         assert_eq!(
-            when("2026-10-12 22:00:00"),
-            "00:00",
-            "local midnight is today"
+            nb().relative(utc("2026-10-12 21:50:00"), after_midnight),
+            "for 20 min siden"
         );
-        assert_eq!(when("2026-10-12 21:59:00"), "yesterday 23:59");
-        assert_eq!(when("2026-10-11 21:59:00"), "11 Oct");
-        assert_eq!(when("2025-12-31 12:00:00"), "31 Dec 2025");
-        assert_eq!(when("2026-10-13 14:00:00"), "16:00", "ahead, same day");
         assert_eq!(
             Zone::utc_fallback().when(utc("2026-10-13 06:12:00"), now),
             "06:12 UTC"
         );
-    }
-
-    #[test]
-    fn until_keeps_the_clock_time_past_midnight() {
-        let zone = oslo();
-        let now = utc("2026-10-13 21:50:00"); // 23:50 in Oslo, a Tuesday
-        let until = |s: &str| zone.until(utc(s), now);
-        assert_eq!(until("2026-10-13 21:55:00"), "23:55");
-        // A code made at 23:50 (15 min), install mode, a typed-code pause.
-        assert_eq!(until("2026-10-13 22:05:00"), "00:05 tomorrow");
-        assert_eq!(until("2026-10-14 21:59:00"), "23:59 tomorrow");
-        assert_eq!(until("2026-10-15 12:30:00"), "Thu 14:30");
-        assert_eq!(until("2026-10-19 12:30:00"), "Mon 14:30");
-        assert_eq!(until("2026-10-20 12:30:00"), "20 Oct 14:30");
-        // Already past: as `when`.
-        assert_eq!(until("2026-10-13 21:00:00"), "23:00");
         assert_eq!(
-            Zone::utc_fallback().until(utc("2026-10-13 22:05:00"), now),
+            Zone::utc_fallback().until(utc("2026-10-13 22:05:00"), late),
             "22:05 UTC"
         );
     }
 
+    /// Every month's and weekday's name is in both catalogs, and a date on its own.
     #[test]
-    fn a_time_slightly_ahead_is_just_now() {
-        let zone = oslo();
-        let now = utc("2026-10-13 12:00:00");
-        assert_eq!(zone.relative(utc("2026-10-13 12:02:00"), now), "just now");
-        assert_eq!(zone.relative(utc("2026-10-13 12:05:00"), now), "just now");
-        assert_eq!(
-            zone.relative(utc("2026-10-13 14:00:00"), now),
-            "today 16:00"
-        );
-        assert_eq!(zone.relative(utc("2026-10-15 12:00:00"), now), "15 Oct");
+    fn months_weekdays_and_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+        let months_en = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let months_nb = [
+            "jan.", "feb.", "mars", "apr.", "mai", "juni", "juli", "aug.", "sep.", "okt.", "nov.",
+            "des.",
+        ];
+        for month in 1..=12 {
+            let day = NaiveDate::from_ymd_opt(2026, month, 1).unwrap();
+            assert_eq!(oslo().month_name(day), months_en[month as usize - 1]);
+            assert_eq!(nb().month_name(day), months_nb[month as usize - 1]);
+        }
+        let days_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        let days_nb = ["man.", "tir.", "ons.", "tor.", "fre.", "lør.", "søn."];
+        for i in 0..7 {
+            // 2026-10-12 is a Monday.
+            let day = NaiveDate::from_ymd_opt(2026, 10, 12 + i).unwrap();
+            assert_eq!(oslo().weekday_name(day), days_en[i as usize]);
+            assert_eq!(nb().weekday_name(day), days_nb[i as usize]);
+        }
+        let day = NaiveDate::from_ymd_opt(2026, 3, 5).unwrap();
+        assert_eq!(oslo().date_of(day, today), "5 Mar");
+        assert_eq!(nb().date_of(day, today), "5. mars");
+        let other_year = NaiveDate::from_ymd_opt(2025, 3, 5).unwrap();
+        assert_eq!(oslo().date_of(other_year, today), "5 Mar 2025");
+        assert_eq!(nb().date_of(other_year, today), "5. mars 2025");
+    }
+
+    #[test]
+    fn a_duration_in_both_languages() {
+        for (minutes, en, nb) in [
+            (0, "0 min", "0 min"),
+            (45, "45 min", "45 min"),
+            (60, "1 h", "1 t"),
+            (90, "1 h 30 min", "1 t 30 min"),
+            (150, "2 h 30 min", "2 t 30 min"),
+        ] {
+            assert_eq!(duration(Lang::En, minutes), en);
+            assert_eq!(duration(Lang::Nb, minutes), nb);
+        }
     }
 
     #[test]

@@ -213,7 +213,9 @@ pub async fn install(
                 "device_command_queued",
                 Some(&admin.username),
                 None,
-                Some(&format!("install_update {tag}, device {device_id}")),
+                Some(security::Detail::facts(format!(
+                    "install_update {tag}, device {device_id}"
+                ))),
             )
             .await;
             back(app_id, "sent", Some(&device))
@@ -310,9 +312,18 @@ async fn queue_install(
             "device_command_replaced",
             Some(&admin.username),
             None,
-            Some(&format!(
-                "{replaced} waiting install_update replaced by a new install_update, device {device_id}"
-            )),
+            Some(
+                security::Detail::words(
+                    "security.detail.command_replaced",
+                    &[
+                        ("count", &replaced.to_string()),
+                        ("replaced", "install_update"),
+                        ("command", "install_update"),
+                        ("device", &device_id.to_string()),
+                    ],
+                )
+                .with_facts(format!("device {device_id}")),
+            ),
         )
         .await;
     }
@@ -367,7 +378,11 @@ struct PolledPhone {
 /// `GET /apps/tracked/{app_id}/install-now.json`: every set-up phone's state word and sub-line,
 /// for `static/install-now.js` (it swaps the sub-lines and reloads the page when a state word
 /// changes). A DB error is a 500.
-pub async fn poll(State(state): State<AppState>, Path(app_id): Path<i64>) -> Response {
+pub async fn poll(
+    State(state): State<AppState>,
+    lang: crate::i18n::Lang,
+    Path(app_id): Path<i64>,
+) -> Response {
     let app = match launcher_app(&state, app_id).await {
         Ok(app) => app,
         Err(response) => return *response,
@@ -380,7 +395,7 @@ pub async fn poll(State(state): State<AppState>, Path(app_id): Path<i64>) -> Res
             Ok(devices) => devices,
             Err(err) => return db_error(app_id, err),
         };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let mut phones = Vec::with_capacity(devices.len());
     for device in devices {

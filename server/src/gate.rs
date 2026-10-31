@@ -44,13 +44,14 @@ pub enum Refusal {
 }
 
 impl Refusal {
-    fn as_str(&self) -> &'static str {
+    /// The log's words for the refusal (`security.detail.refused.*`, design 70 §4).
+    fn key(&self) -> &'static str {
         match self {
-            Refusal::NotTailnet => "not a tailnet or loopback client",
-            Refusal::UnknownClient => "a proxy's X-Forwarded-For names no client",
-            Refusal::UntrustedProxy => "forwarded by a proxy that isn't in TRUSTED_PROXIES",
-            Refusal::Funnel => "through Tailscale Funnel",
-            Refusal::TailscaleUser => "no allowed Tailscale-User-Login",
+            Refusal::NotTailnet => "security.detail.refused.not_tailnet",
+            Refusal::UnknownClient => "security.detail.refused.unknown_client",
+            Refusal::UntrustedProxy => "security.detail.refused.untrusted_proxy",
+            Refusal::Funnel => "security.detail.refused.funnel",
+            Refusal::TailscaleUser => "security.detail.refused.tailscale_user",
         }
     }
 }
@@ -118,22 +119,18 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
         Ok(()) => next.run(request).await,
         Err(refusal) => {
             let ip = client.describe();
-            let detail = format!(
-                "{} (peer {}, {} {})",
-                refusal.as_str(),
-                client.peer,
+            let detail = crate::security::Detail::words(
+                refusal.key(),
+                &[("peer", &client.peer.to_string())],
+            )
+            .with_facts(format!(
+                "{} {}",
                 request.method(),
                 crate::audit::clip(request.uri().path(), 100)
-            );
+            ));
             let first_this_minute = state
                 .audit
-                .record(
-                    &state.db,
-                    "admin_refused",
-                    &client.key(),
-                    Some(&ip),
-                    &detail,
-                )
+                .record(&state.db, "admin_refused", &client.key(), Some(&ip), detail)
                 .await;
             // A parent's own browser refused (2026-10-25, PLAN "PWA shows the login page after a
             // Tailscale outage"): the PWA gets an empty 403 here, never the sign-in page - logged
@@ -145,7 +142,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                 && crate::security::has_session_cookie(request.headers(), state.session_cookie)
             {
                 tracing::warn!(
-                    reason = refusal.as_str(),
+                    reason = refusal.key(),
                     client = %ip,
                     method = %request.method(),
                     path = crate::audit::clip(request.uri().path(), 100),

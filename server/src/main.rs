@@ -293,10 +293,12 @@ async fn main() {
             "backup_restored",
             None,
             None,
-            Some(&format!(
-                "{} (the previous database is in {})",
-                restore.filename,
-                restore.prerestore_dir.display()
+            Some(security::Detail::words(
+                "security.detail.backup_restored_prev",
+                &[
+                    ("file", &restore.filename),
+                    ("dir", &restore.prerestore_dir.display().to_string()),
+                ],
             )),
         )
         .await;
@@ -306,7 +308,14 @@ async fn main() {
     let restored_on_host = startup::take_restore_applied(std::path::Path::new("data"));
     if let Some(filename) = &restored_on_host {
         tracing::info!("restored the backup {filename}");
-        security::record_security_event(&db, "backup_restored", None, None, Some(filename)).await;
+        security::record_security_event(
+            &db,
+            "backup_restored",
+            None,
+            None,
+            Some(security::Detail::facts(filename)),
+        )
+        .await;
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;

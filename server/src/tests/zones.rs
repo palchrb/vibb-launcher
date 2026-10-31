@@ -337,26 +337,33 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
     assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 0);
     // The security log names the phone and the zone, never a coordinate.
-    let log: Vec<(String, String)> = sqlx::query_as(
-        "SELECT event_type, detail FROM security_events WHERE event_type LIKE 'zone_%' ORDER BY id",
+    let kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type FROM security_events WHERE event_type LIKE 'zone_%' ORDER BY id",
     )
     .fetch_all(&app.db)
     .await
     .unwrap();
+    let mut log: Vec<(String, String)> = Vec::new();
+    for kind in ["zone_added", "zone_changed"] {
+        for words in super::security_words(&app, kind, crate::i18n::Lang::En).await {
+            log.push((kind.to_string(), words));
+        }
+    }
+    assert_eq!(kinds, ["zone_added", "zone_changed", "zone_changed"]);
     assert_eq!(
         log,
         [
             (
                 "zone_added".to_string(),
-                format!("device {id} (Anna): Home, 150 m")
+                format!("phone {id} (Anna): Home, 150 m")
             ),
             (
                 "zone_changed".to_string(),
-                format!("device {id} (Anna): Hjemme - renamed from Home, leave off")
+                format!("phone {id} (Anna): Hjemme. Renamed from Home. Leave off.")
             ),
             (
                 "zone_changed".to_string(),
-                format!("device {id} (Anna): Hjemme - radius 150 -> 300 m")
+                format!("phone {id} (Anna): Hjemme. Radius 150 → 300 m.")
             ),
         ]
     );
@@ -589,9 +596,14 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     );
     app.assert_lands(&res, &cookie).await;
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 0);
-    let log = "SELECT detail FROM security_events WHERE event_type = 'zone_deleted'";
-    let detail: String = sqlx::query_scalar(log).fetch_one(&app.db).await.unwrap();
-    assert_eq!(detail, format!("device {id} (Anna): Home"));
+    let detail = super::security_words(&app, "zone_deleted", crate::i18n::Lang::En).await;
+    assert_eq!(detail, [format!("phone {id} (Anna): Home")]);
+    let facts: String =
+        sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = 'zone_deleted'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(facts, format!("device {id}"));
 }
 
 #[tokio::test]

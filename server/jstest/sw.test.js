@@ -196,8 +196,9 @@ test("a push that can't be read still shows a notification, and posts nothing", 
         const w = fakeWorker({ badge: false });
         await w.fire("push", event);
         assert.strictEqual(w.log[0][0], "show");
+        // No words of ours in the worker (design 70 §4): a name, an empty body.
         assert.strictEqual(w.log[0][1], "Vibb Phone");
-        assert.strictEqual(w.log[0][2].body, "Something new - open Notifications");
+        assert.strictEqual(w.log[0][2].body, "");
         assert.strictEqual(w.log[0][2].navigate, ORIGIN + "/notifications");
         assert.strictEqual(w.log[0][2].data.navigate, ORIGIN + "/notifications");
         assert.ok(!w.log.some((e) => e[0] === "fetch"));

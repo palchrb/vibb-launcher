@@ -191,12 +191,13 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// bedtime 0101 (was `migrations_73_to_100_in_order`). Design 68's per-app permissions 0102 (was
 /// `migrations_73_to_101_in_order`). Design 69's Dagen 0103 (was `migrations_73_to_102_in_order`). Design 70's
 /// parent language 0104 (was `migrations_73_to_103_in_order`). Design 72's calendar links 0105 (was
-/// `migrations_73_to_104_in_order`). A colour per calendar 0106 (was `migrations_73_to_105_in_order`).
+/// `migrations_73_to_104_in_order`). A colour per calendar 0106 (was `migrations_73_to_105_in_order`). Design 70
+/// slice 2's security-log params 0107 (was `migrations_73_to_106_in_order`).
 #[test]
-fn migrations_73_to_106_in_order() {
+fn migrations_73_to_107_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=106).contains(&m.version))
+        .filter(|m| (73..=107).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -235,11 +236,12 @@ fn migrations_73_to_106_in_order() {
             (103, "calendar".to_string()),
             (104, "admin lang".to_string()),
             (105, "calendar feeds".to_string()),
-            (106, "calendar colors".to_string())
+            (106, "calendar colors".to_string()),
+            (107, "security params".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }
@@ -1512,11 +1514,12 @@ async fn no_secret_in_logs_events_or_pages() {
     ] {
         assert_eq!(count(message), times, "{message}: {texts:?}");
     }
-    let events: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT event_type, detail FROM security_events")
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
+    let events: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT event_type, COALESCE(detail, '') || COALESCE(params, '') FROM security_events",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     texts.extend(events.into_iter().map(|e| format!("{e:?}")));
     for page in ["/music/spotify", "/music/settings?login=ok", "/music"] {
         texts.push(
@@ -4200,7 +4203,7 @@ mod entries {
         assert_eq!(nudged(&mut nudges), [ella]);
         assert_eq!(
             events(&app, "music_spotify_binding_changed").await,
-            [format!("device {ella}: Spotify plays as Ella")]
+            [format!("phone {ella}: Spotify plays as Ella")]
         );
         let page = card(ella).await;
         assert!(page.contains(&format!("<option value=\"{kid}\" selected>Ella</option>")));
@@ -4365,7 +4368,7 @@ mod entries {
                 .await
                 .last()
                 .unwrap(),
-            &format!("device {ella}: Spotify off")
+            &format!("phone {ella}: Spotify off")
         );
     }
 
@@ -5158,8 +5161,8 @@ mod settings_group {
         assert_eq!(plays_on(ola).await.0, "Plays on no phone yet");
         let logged: Vec<String> = super::events(&app, "music_spotify_binding_changed").await;
         assert_eq!(logged.len(), 3, "{logged:?}");
-        assert!(logged.contains(&format!("device {ola_phone}: Spotify plays as Ella")));
-        assert!(logged.contains(&format!("device {spare}: Spotify off")));
+        assert!(logged.contains(&format!("phone {ola_phone}: Spotify plays as Ella")));
+        assert!(logged.contains(&format!("phone {spare}: Spotify off")));
 
         // Unknown phone, unknown account, no choice: 400, nothing written.
         for (account, device) in [(ella, "999"), (999, &*anna_phone.to_string()), (ella, "x")] {
@@ -5259,8 +5262,8 @@ mod settings_group {
         assert_eq!(
             super::events(&app, "music_phone_settings").await,
             [
-                format!("device {ola}: Storytel false"),
-                format!("device {anna}: Storytel true")
+                format!("phone {ola}: Storytel off"),
+                format!("phone {anna}: Storytel on")
             ]
         );
         // Back with the row open, the switches as stored; an unknown phone is a 400.

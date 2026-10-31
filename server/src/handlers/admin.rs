@@ -24,6 +24,8 @@ struct EventRow {
     who: String,
     when: String,
     exact: String,
+    /// The row's words in the reader's language (`params`, design 70 §4), then " · " and its
+    /// facts; the facts alone, or an older row's prose, when there are no words.
     detail: Option<String>,
 }
 
@@ -55,135 +57,26 @@ crate::i18n::words!(SecurityTemplate);
 /// sign-in attempt out of reach).
 const EVENTS_PER_PAGE: i64 = 200;
 
-/// What a parent reads for an event id. Every id this server writes has its label (pinned by
-/// `tests::every_written_event_has_a_label`, which reads the writers in `src/`); anything else
-/// (an id from an older version) reads as its words ("retired_event" -> "Retired event"), never
-/// as the raw id - that stays in the row's ⓘ.
-pub(crate) fn event_label(kind: &str) -> String {
-    label_of(kind).map_or_else(|| words_of(kind), str::to_string)
+/// What a parent reads for an event id, in their language: `security.event.<id>` from the catalog
+/// (every id this server writes has one in both, pinned by `tests::every_written_event_has_a_label`,
+/// which reads the writers in `src/`); anything else (an id from an older version) reads as its
+/// words ("retired_event" -> "Retired event"), never as the raw id - that stays in the row's ⓘ.
+pub(crate) fn event_label(lang: Lang, kind: &str) -> String {
+    match label_key(lang, kind) {
+        Some(key) => crate::i18n::t(lang, &key).to_string(),
+        None => words_of(kind),
+    }
 }
 
-/// The label of an id this server writes; `None` for any other.
-fn label_of(kind: &str) -> Option<&'static str> {
-    Some(match kind {
-        "login_success" => "Signed in",
-        "login_failed" => "Wrong password",
-        "login_locked" => "Sign-in while locked",
-        "totp_failed" => "Wrong two-factor code",
-        "totp_reset" => "Two-factor login reset",
-        "totp_reset_refused" => "Two-factor reset refused",
-        "password_change_refused" => "Password change refused",
-        "password_changed" => "Password changed",
-        "signed_out_everywhere" => "Signed out everywhere",
-        "login_expired" => "Sign-in after the invitation expired",
-        "parent_added" => "Parent added",
-        "parent_removed" => "Parent removed",
-        "parent_reset" => "Parent reset: new one-time password",
-        "parent_restored" => "Parent restored on the server",
-        "parent_change_refused" => "Parent change refused: wrong password",
-        "display_name_changed" => "Name changed",
-        "ip_banned" => "Address blocked",
-        "admin_refused" => "Request from outside refused",
-        "csrf_refused" => "Request from another site refused",
-        "device_auth_failed" => "Phone sign-in refused",
-        "enroll_failed" => "Wrong setup code",
-        "enroll_typed_paused" => "Setup codes paused",
-        "enroll_code_created" => "New setup code",
-        "device_enrolled" => "Phone connected",
-        "access_revoked" => "Phone disconnected",
-        "device_command_queued" => "Command sent to phone",
-        "device_command_cancelled" => "Command cancelled",
-        "device_command_replaced" => "Command replaced",
-        "device_wipe_queued" => "Erase sent to phone",
-        "kid_pin_changed" => "Child PIN changed",
-        "kid_pin_cleared" => "Child PIN removed",
-        "kid_pin_shown" => "Child PIN shown",
-        "kid_pin_reveal_refused" => "Child PIN not shown: wrong password",
-        "kid_pin_sent" => "Child PIN sent to phone",
-        "kid_keyguard_changed" => "Lock screen changed",
-        "reauth_signed_out" => "Signed out: wrong passwords",
-        "override_pin_changed" => "Parent PIN changed",
-        "override_pin_cleared" => "Parent PIN removed",
-        "parent_pin_used" => "Parent PIN used on phone",
-        "parent_pin_lockout" => "Parent PIN locked on phone",
-        "phone_foreign_access" => "Another app has control",
-        "phone_relock_findings" => "Phone locked again: findings",
-        "phone_app_blocked" => "App blocked on phone",
-        "boot_unseen" => "Phone started without Vibb One",
-        "phone_lines_dropped" => "Too many lines from a phone",
-        "push_subscribed" => "Notifications turned on on a device",
-        "push_subscription_gone" => "Notifications turned off on a device",
-        "app_installed" => "App installed on phone",
-        "play_install_mode" => "Play Store opened for installs",
-        "time_lift" => "Time rule paused",
-        "time_lift_ended" => "Rule pause ended",
-        "time_rule_created" => "Time rule added",
-        "time_rule_updated" => "Time rule changed",
-        "time_rule_deleted" => "Time rule deleted",
-        "time_rule_to_bedtime" => "Time rule became Bedtime",
-        "time_rule_split" => "Time rule split at midnight",
-        "bedtime_saved" => "Bedtime changed",
-        "bedtime_removed" => "Bedtime removed",
-        "screen_time_saved" => "Screen time changed",
-        "location_policy_changed" => "Location setting changed",
-        "location_retention_changed" => "Location history changed",
-        "zone_added" => "Zone added",
-        "zone_changed" => "Zone changed",
-        "zone_deleted" => "Zone deleted",
-        "mock_location_ignored" => "Made-up locations ignored",
-        "dns_log_changed" => "Blocked Activity log changed",
-        "dns_server_changed" => "DNS server changed",
-        "lock_screen_text_changed" => "Lock screen text changed",
-        "lock_wake_changed" => "Lock screen wake changed",
-        "lock_screen_app_changed" => "Lock screen app changed",
-        "lock_wallpaper_changed" => "Lock screen background changed",
-        "backup_schedule_changed" => "Backup schedule changed",
-        "backup_restore_triggered" => "Backup restore started",
-        "backup_restored" => "Backup restored",
-        "drive_format_triggered" => "Drive format started",
-        "system_update_triggered" => "Server update started",
-        "system_restart_triggered" => "Server restart started",
-        "app_update_schedule_changed" => "Automatic updates changed",
-        "update_schedule_changed" => "System update schedule changed",
-        "os_check_triggered" => "System update check started",
-        "os_upgrade_triggered" => "System updates started",
-        "tailscale_update_triggered" => "Tailscale update started",
-        "reboot_triggered" => "Restart of the Pi started",
-        "storytel_login_saved" => "Storytel login saved",
-        "storytel_login_cleared" => "Storytel login removed",
-        "storytel_login_refused" => "Storytel refused the login",
-        "storytel_login_failed" => "Storytel couldn't check the login",
-        "storytel_login_sent" => "Storytel login sent to phone",
-        "spotify_app_saved" => "Spotify app saved",
-        "spotify_app_cleared" => "Spotify app removed",
-        "spotify_account_added" => "Spotify account logged in",
-        "spotify_account_removed" => "Spotify account removed",
-        "spotify_login_failed" => "Spotify login failed",
-        "spotify_login_needed" => "Spotify login needs renewing",
-        "music_spotify_binding_changed" => "Spotify account for a phone changed",
-        "music_entry_added" => "Music added",
-        "music_entry_changed" => "Music changed",
-        "music_entry_saved" => "Music offline choice changed",
-        "music_entry_deleted" => "Music deleted",
-        "music_entry_moved" => "Music moved",
-        "music_cover_changed" => "Music cover changed",
-        "music_files_added" => "Music files added",
-        "music_file_deleted" => "Music file deleted",
-        "music_orphans_deleted" => "Unused music files deleted",
-        "music_category_added" => "Music category added",
-        "music_category_changed" => "Music category changed",
-        "music_category_moved" => "Music category moved",
-        "music_category_deleted" => "Music category deleted",
-        "music_check_requested" => "Music check started",
-        "music_sweep_saved" => "New-episode check changed",
-        "music_library_imported" => "Music library imported",
-        "music_app_catalog_added" => "Music app added to Apps",
-        "music_phone_entry" => "Music on a phone changed",
-        "music_phone_settings" => "Phone's music settings changed",
-        "music_sonos_rooms_changed" => "Sonos rooms changed",
-        "settings_saved" => "Settings saved",
-        _ => return None,
-    })
+/// The catalog key of an id this server writes; `None` for any other (or an id that isn't shaped
+/// like one, which could name another key).
+fn label_key(lang: Lang, kind: &str) -> Option<String> {
+    let shaped = !kind.is_empty()
+        && kind
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    let key = format!("security.event.{kind}");
+    (shaped && crate::i18n::has(lang, &key)).then_some(key)
 }
 
 /// "music_entry_moved" -> "Music entry moved"; an empty id reads "Event".
@@ -218,12 +111,17 @@ fn event_row(
     .collect::<Vec<_>>()
     .join(" · ");
     EventRow {
-        label: event_label(&event.event_type),
+        label: event_label(zone.lang(), &event.event_type),
+        detail: crate::security::Detail::shown(
+            event.detail.as_deref(),
+            event.params.as_deref(),
+            zone,
+            now,
+        ),
         kind: event.event_type,
         who,
         when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
         exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-        detail: event.detail.filter(|d| !d.trim().is_empty()),
     }
 }
 
@@ -279,7 +177,7 @@ pub async fn security_log(
         Ok(names) => names,
         Err(err) => return server_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let bans: Vec<BanRow> = bans
         .into_iter()
@@ -289,7 +187,10 @@ pub async fn security_log(
                 ip: ban.ip_address,
                 until: until.map_or_else(|| "a while".to_string(), |t| zone.until(t, now)),
                 exact: until.map(|t| zone.exact(t)).unwrap_or_default(),
-                reason: ban.reason,
+                // Words since design 70 (a sentence's JSON), prose on a ban from before.
+                reason: ban
+                    .reason
+                    .map(|reason| crate::security::Detail::worded_or_stored(&reason, &zone, now)),
             }
         })
         .collect();
@@ -349,22 +250,26 @@ mod tests {
 
     #[test]
     fn every_event_reads_as_words() {
-        assert_eq!(event_label("login_failed"), "Wrong password");
-        assert_eq!(
-            event_label("device_command_queued"),
-            "Command sent to phone"
-        );
-        assert_eq!(event_label("music_entry_moved"), "Music moved");
-        assert_eq!(event_label("retired_event"), "Retired event");
-        assert_eq!(event_label("probe"), "Probe");
-        assert_eq!(event_label(""), "Event");
-        assert_eq!(event_label("__"), "Event");
-        assert_eq!(event_label("ÿes_no"), "Ÿes no");
+        let en = |kind| event_label(Lang::En, kind);
+        assert_eq!(en("login_failed"), "Wrong password");
+        assert_eq!(en("device_command_queued"), "Command sent to phone");
+        assert_eq!(en("music_entry_moved"), "Music moved");
+        assert_eq!(event_label(Lang::Nb, "login_failed"), "Feil passord");
+        assert_eq!(event_label(Lang::Nb, "music_entry_moved"), "Musikk flyttet");
+        // An id this server never wrote: its own words, in any language.
+        assert_eq!(en("retired_event"), "Retired event");
+        assert_eq!(event_label(Lang::Nb, "retired_event"), "Retired event");
+        assert_eq!(en("probe"), "Probe");
+        assert_eq!(en(""), "Event");
+        assert_eq!(en("__"), "Event");
+        assert_eq!(en("ÿes_no"), "Ÿes no");
+        // An id shaped like another key is no label.
+        assert_eq!(label_key(Lang::En, "unknown.music.title"), None);
     }
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 39] = [
+    const NOT_EVENTS: [&str; 40] = [
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_no_pin",
         "pin_not_kept",
@@ -388,6 +293,7 @@ mod tests {
         // Add Parent's refused field (design 62).
         "new_username",
         // Install Now's answers next to its queue (design 37: `?install=<word>`).
+        "install_update",
         "no_release",
         "not_set_up",
         "not_a_domain_allow",
@@ -474,10 +380,15 @@ mod tests {
                 .iter()
                 .map(|kind| kind.wire().to_string()),
         );
+        // The label is in both catalogs (design 70 §4).
         let unlabelled: Vec<&String> = ids
             .iter()
             .filter(|id| !NOT_EVENTS.contains(&id.as_str()))
-            .filter(|id| label_of(id).is_none())
+            .filter(|id| {
+                Lang::ALL
+                    .into_iter()
+                    .any(|lang| !crate::i18n::has(lang, &format!("security.event.{id}")))
+            })
             .collect();
         assert!(
             unlabelled.is_empty(),

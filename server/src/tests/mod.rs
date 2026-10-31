@@ -730,6 +730,55 @@ pub enum Section {
     Advanced,
 }
 
+/// The security log's rows of `event_type`, oldest first, as the log page reads them in `lang`
+/// (design 70 §4: the words from `params`, else the stored facts or prose).
+pub async fn security_words(
+    app: &TestApp,
+    event_type: &str,
+    lang: crate::i18n::Lang,
+) -> Vec<String> {
+    let zone = crate::display_time::Zone::load(&app.db, lang).await;
+    let now = chrono::Utc::now();
+    sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT detail, params FROM security_events WHERE event_type = ? ORDER BY id",
+    )
+    .bind(event_type)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(detail, params)| {
+        crate::security::Detail::shown(detail.as_deref(), params.as_deref(), &zone, now)
+            .unwrap_or_default()
+    })
+    .collect()
+}
+
+/// `(kind, title, summary)` of a phone's events, oldest first, worded in `lang` as the inbox
+/// words them (design 70 §4: nothing is stored as words any more).
+pub async fn told_events(
+    app: &TestApp,
+    device: i64,
+    lang: crate::i18n::Lang,
+) -> Vec<(String, String, String)> {
+    let zone = crate::display_time::Zone::load(&app.db, lang).await;
+    let now = chrono::Utc::now();
+    sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT kind, title, summary, params FROM parent_events WHERE device_id = ? ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(kind, title, summary, params)| {
+        let (title, summary) =
+            crate::parent_events::told(&kind, title, summary, params.as_deref(), &zone, now);
+        (kind, title, summary)
+    })
+    .collect()
+}
+
 pub fn device_page(id: i64, section: Section) -> String {
     match section {
         Section::Summary => format!("/devices/{id}"),

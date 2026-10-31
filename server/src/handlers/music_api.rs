@@ -277,7 +277,10 @@ pub async fn storytel(
         &state.db,
         device.id,
         crate::security::PhoneLine::StorytelLoginSent,
-        &format!("device {}: generation {generation}", device.id),
+        crate::security::Detail::words(
+            "security.detail.storytel_sent",
+            &[("generation", &generation.to_string())],
+        ),
     )
     .await;
     (

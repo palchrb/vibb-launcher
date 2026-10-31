@@ -248,7 +248,9 @@ pub(crate) fn inbox_row(
         params,
         avatar_hash,
     ) = raw;
-    // A zone event is told from its parameters (design 64), every other kind as stored.
+    // Told from its parameters in the reader's language (design 64's zones, every kind since
+    // design 70 §4); a row raised before that keeps its stored words.
+    let detail = parent_events::detail(&kind, &title, detail, params.as_deref(), zone, now);
     let (title, summary) = parent_events::told(&kind, title, summary, params.as_deref(), zone, now);
     let at = crate::display_time::parse_db_utc(&happened_at);
     // A catalog event has no phone: a grey avatar with the app's letter (its title starts with it).
@@ -316,7 +318,7 @@ pub async fn page(
         Ok(read) => read,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let older_than = (raw.len() as i64 > parent_events::PAGE)
         .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
         .flatten();
@@ -374,7 +376,7 @@ pub async fn settings_page(
         Ok(read) => read,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let switches = Kind::switches()
         .into_iter()
         .zip(settings)
@@ -428,6 +430,7 @@ struct DeviceRowJson {
 /// a Test to re-render them in place. No-store like every `/notifications` path.
 pub async fn subscriptions_json(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let now = chrono::Utc::now();
@@ -435,7 +438,7 @@ pub async fn subscriptions_json(
         Ok(subscriptions) => subscriptions,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let rows: Vec<DeviceRowJson> = subscriptions
         .iter()
         .map(|s| {
@@ -942,7 +945,7 @@ pub async fn subscribe(
                 "push_subscribed",
                 Some(&admin.username),
                 None,
-                Some(&label),
+                Some(crate::security::Detail::facts(&label)),
             )
             .await;
             back_to(&form, "push_on", "this-device")

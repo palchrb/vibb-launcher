@@ -77,8 +77,10 @@ function notificationOf(event) {
             via: "push-declarative",
         };
     }
+    // No words here (design 70 §4, H1): this worker is public and unescaped, the same bytes for
+    // every reader, and the server never sends a push without a body. A name and the inbox.
     return {
-        n: { title: "Vibb Phone", body: "Something new - open Notifications", navigate: "/notifications" },
+        n: { title: "Vibb Phone", body: "", navigate: "/notifications" },
         via: "push",
     };
 }

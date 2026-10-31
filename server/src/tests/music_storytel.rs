@@ -353,10 +353,12 @@ async fn save_probes_then_seals() {
     );
 
     // No secret in the security log.
-    let log: Vec<String> = sqlx::query_scalar("SELECT COALESCE(detail, '') FROM security_events")
-        .fetch_all(&app.db)
-        .await
-        .unwrap();
+    let log: Vec<String> = sqlx::query_scalar(
+        "SELECT COALESCE(detail, '') || COALESCE(params, '') FROM security_events",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     for detail in &log {
         for password in [PASSWORD, "feil", "tom", "nytt-pw", "pw3"] {
             assert_no_secret(detail, password, "the security log");

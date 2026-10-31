@@ -1015,13 +1015,12 @@ pub(crate) async fn log_change(
     scope: Option<i64>,
     what: &str,
 ) {
-    let scope = scope.map_or("global".to_string(), |id| format!("device {id}"));
     security::record_security_event(
         &state.db,
         event,
         Some(&admin.username),
         None,
-        Some(&format!("{scope}: {what}")),
+        Some(crate::time_rules::scoped_detail(scope, what)),
     )
     .await;
 }
@@ -1275,7 +1274,17 @@ pub async fn save_global_schedule(
     {
         return server_error(err, "failed to save the global screen time");
     }
-    log_change(&state, &admin, "screen_time_saved", None, &budget).await;
+    security::record_security_event(
+        &state.db,
+        "screen_time_saved",
+        Some(&admin.username),
+        None,
+        Some(security::Detail::words(
+            "security.detail.screen_time.budget",
+            &[("budget", &budget)],
+        )),
+    )
+    .await;
     nudge(&state, None).await;
     Redirect::to("/schedules/screen-time?saved=1#screen-time").into_response()
 }
@@ -1332,19 +1341,26 @@ pub async fn save_device_schedule(
             (StatusCode::NOT_FOUND, "Device not found").into_response()
         }
         Ok(_) => {
-            let mut detail = Vec::new();
+            let mut detail = security::Detail::facts(format!("device {id}"));
             if let Some(on) = custom_enabled {
-                detail.push(format!("own rules {}", if on { "on" } else { "off" }));
+                detail = detail.and(
+                    if on {
+                        "security.detail.screen_time.own_rules.on"
+                    } else {
+                        "security.detail.screen_time.own_rules.off"
+                    },
+                    &[],
+                );
             }
             if let Some(budget) = &budget {
-                detail.push(format!("budget {budget}"));
+                detail = detail.and("security.detail.screen_time.budget", &[("budget", budget)]);
             }
-            log_change(
-                &state,
-                &admin,
+            security::record_security_event(
+                &state.db,
                 "screen_time_saved",
-                Some(id),
-                &detail.join(", "),
+                Some(&admin.username),
+                None,
+                Some(detail),
             )
             .await;
             nudge(&state, Some(id)).await;
@@ -1476,7 +1492,7 @@ async fn render_device_time(
         Ok(report) => report.problems(),
         Err(err) => return read_failed(err, "the call report"),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let lifts =
         match crate::handlers::lifts::recent(&state.db, id, latest.as_ref(), &zone, now).await {

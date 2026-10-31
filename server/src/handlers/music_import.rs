@@ -602,10 +602,13 @@ pub async fn confirm(
         &state,
         &admin,
         "music_library_imported",
-        &format!(
-            "{} entries, {} categories, {skipped} skipped",
-            done.added.len(),
-            done.categories_created
+        crate::security::Detail::words(
+            "security.detail.music.import",
+            &[
+                ("entries", &done.added.len().to_string()),
+                ("categories", &done.categories_created.to_string()),
+                ("skipped", &skipped.to_string()),
+            ],
         ),
     )
     .await;

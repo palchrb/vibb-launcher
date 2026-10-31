@@ -972,10 +972,36 @@ async fn the_security_log_reads_as_labelled_rows() {
         "device_command_queued",
         Some("parent"),
         Some("192.0.2.9"),
-        Some("<img src=x onerror=alert(1)>"),
+        Some(crate::security::Detail::facts(
+            "<img src=x onerror=alert(1)>",
+        )),
     )
     .await;
     crate::security::record_security_event(&app.db, "music_entry_moved", None, None, None).await;
+    // A row from before design 70: prose in `detail`, no `params` - shown as stored.
+    sqlx::query(
+        "INSERT INTO security_events (event_type, username, detail) \
+         VALUES ('password_change_refused', 'parent', 'wrong current password')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // A row since: its words in `params`, the reader's language (design 70 §4); a user's name
+    // inside a sentence is escaped like any value.
+    crate::security::record_security_event(
+        &app.db,
+        "time_lift",
+        Some("parent"),
+        None,
+        Some(
+            crate::security::Detail::words(
+                "security.detail.lift.rule",
+                &[("device", "3"), ("rule", "<b>Natt</b>"), ("minutes", "30")],
+            )
+            .with_facts("device 3"),
+        ),
+    )
+    .await;
     sqlx::query(
         "INSERT INTO banned_ips (ip_address, banned_until, reason) \
          VALUES ('192.0.2.7', datetime('now', '+1 hours'), '20 failed login attempts')",
@@ -986,8 +1012,8 @@ async fn the_security_log_reads_as_labelled_rows() {
     let page = app.get_page("/security", &cookie).await.text();
     check_forms("/security", &page);
     let rows: Vec<&str> = page.split("data-event>").skip(1).collect();
-    assert_eq!(rows.len(), 2);
-    let (summary, panel) = rows[1].split_once("</summary>").unwrap();
+    assert_eq!(rows.len(), 4);
+    let (summary, panel) = rows[3].split_once("</summary>").unwrap();
     assert!(summary.contains("Command sent to phone"), "{summary}");
     assert!(summary.contains("parent · 192.0.2.9"));
     assert!(
@@ -996,7 +1022,18 @@ async fn the_security_log_reads_as_labelled_rows() {
     );
     assert!(panel.contains("device_command_queued"));
     assert!(panel.contains("&#60;img src=x") && !page.contains("<img src=x"));
-    assert!(rows[0].contains("Music moved"));
+    assert!(rows[2].contains("Music moved"));
+    assert!(
+        rows[1].contains("Password change refused") && rows[1].contains("wrong current password"),
+        "{}",
+        rows[1]
+    );
+    assert!(
+        rows[0].contains("Time rule paused")
+            && rows[0].contains("phone 3: &#60;b&#62;Natt&#60;/b&#62; lifted for 30 min"),
+        "{}",
+        rows[0]
+    );
     assert!(!page.contains("UTC"), "local times (Oslo), not UTC");
     let ban = part(&page, "data-ban", "</form>");
     assert!(
@@ -1004,6 +1041,48 @@ async fn the_security_log_reads_as_labelled_rows() {
             && ban.contains("Until ")
             && ban.contains("20 failed login attempts"),
         "{ban}"
+    );
+    // The same log in Norwegian: the labels and the new row's words; the older row as stored.
+    let nb = app.get_page("/security?lang=nb", &cookie).await.text();
+    let rows: Vec<&str> = nb.split("data-event>").skip(1).collect();
+    assert!(
+        rows[3].contains("Kommando sendt til telefonen"),
+        "{}",
+        rows[3]
+    );
+    assert!(rows[2].contains("Musikk flyttet"));
+    assert!(rows[1].contains("Passordbytte avvist") && rows[1].contains("wrong current password"));
+    assert!(
+        rows[0].contains("Tidsregel satt på pause")
+            && rows[0].contains("telefon 3: &#60;b&#62;Natt&#60;/b&#62; satt på pause i 30 min"),
+        "{}",
+        rows[0]
+    );
+    // A new ban's reason is words, in the reader's language.
+    sqlx::query(
+        "INSERT INTO banned_ips (ip_address, banned_until, reason) VALUES ('192.0.2.44', \
+         datetime('now', '+1 hours'), ?)",
+    )
+    .bind(
+        crate::security::Detail::words(
+            "security.detail.ban.failed_logins",
+            &[("count", "5"), ("minutes", "15")],
+        )
+        .columns()
+        .1,
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page("/security?lang=nb", &cookie).await.text();
+    assert!(
+        page.contains("5 mislykkede innlogginger på 15 minutter"),
+        "{}",
+        part(&page, "id=\"banned\"", "</section>")
+    );
+    assert!(
+        page.contains("20 failed login attempts"),
+        "the older reason as stored"
     );
 
     // "Unbanned" only for an address that isn't blocked (qa-31-s14-code N1).

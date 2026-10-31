@@ -122,7 +122,7 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    let today = crate::display_time::Zone::load(&app.db)
+    let today = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
         .await
         .today(chrono::Utc::now())
         .to_string();

@@ -1424,7 +1424,7 @@ async fn the_sign_in_log_lines_hold_no_cookie_value_and_no_query() {
         "once a minute, never without the cookie: {lines:#?}"
     );
     assert!(
-        gate[0].contains("not a tailnet or loopback client")
+        gate[0].contains("security.detail.refused.not_tailnet")
             && gate[0].contains("path=\"/devices\"")
             && gate[0].contains("192.168.1.20"),
         "{}",

@@ -258,7 +258,7 @@ async fn record(
         "settings_saved",
         Some(actor),
         None,
-        Some(&format!("{prefix}{entry}")),
+        Some(crate::security::Detail::facts(format!("{prefix}{entry}"))),
     )
     .await;
     Ok(())

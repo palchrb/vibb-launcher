@@ -126,20 +126,324 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// What a security-log row says besides its label (design 70 §4, slice 2): **facts** - identifiers
+/// only (a route, a tag, an address, a phone line's `device {id}`), stored in `detail` as typed -
+/// and **words** - sentences stored in `params` as catalog keys with their parameters, worded in
+/// the reader's language when the log is read ([Detail::shown]: the words, then " · " and the
+/// facts). A row from before slice 2 has its prose in `detail` and no `params`: shown as stored.
+///
+/// A `security.detail.*` key is **frozen once a release wrote it**: old rows name it for 180 days,
+/// and a key the catalog no longer has reads as itself. A rename keeps the old key in both
+/// catalogs (or maps it when reading) until the rows are gone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Detail {
+    facts: Option<String>,
+    words: Vec<Sentence>,
+}
+
+/// One sentence of a row's words: a key (`security.detail.<name>`, with `.one`/`.other` when
+/// `n` counts), its text parameters, and its instants (`t`, RFC 3339 UTC) - told as times in the
+/// reader's zone and language when read.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Sentence {
+    key: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    p: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    t: std::collections::BTreeMap<String, String>,
+    /// Parameters that are words of ours: the key of each (`{state}` = `security.detail.on`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    w: std::collections::BTreeMap<String, String>,
+    /// Parameters that are lengths of time, in minutes (`display_time::duration`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    d: std::collections::BTreeMap<String, i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    n: Option<i64>,
+}
+
+impl Sentence {
+    fn new(key: &str, params: &[(&str, &str)]) -> Sentence {
+        Sentence {
+            key: key.to_string(),
+            p: params
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+            t: Default::default(),
+            w: Default::default(),
+            d: Default::default(),
+            n: None,
+        }
+    }
+
+    /// The sentence in `zone`'s language, its instants in `zone` at `now`.
+    fn worded(
+        &self,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> String {
+        let times: Vec<(String, String)> = self
+            .t
+            .iter()
+            .map(|(name, stored)| {
+                let told = crate::display_time::parse_db_utc(stored)
+                    .map(|t| zone.at(t, now))
+                    .unwrap_or_else(|| stored.clone());
+                (name.clone(), told)
+            })
+            .collect();
+        let words: Vec<(String, String)> = self
+            .w
+            .iter()
+            .map(|(name, key)| (name.clone(), crate::i18n::t(zone.lang(), key).to_string()))
+            .collect();
+        let durations: Vec<(String, String)> = self
+            .d
+            .iter()
+            .map(|(name, minutes)| {
+                (
+                    name.clone(),
+                    crate::display_time::duration(zone.lang(), *minutes),
+                )
+            })
+            .collect();
+        let params: Vec<(&str, &str)> = self
+            .p
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .chain(
+                times
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            )
+            .chain(
+                words
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            )
+            .chain(
+                durations
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            )
+            .collect();
+        match self.n {
+            Some(n) => crate::i18n::t_count(zone.lang(), &self.key, n, &params),
+            None => crate::i18n::t_params(zone.lang(), &self.key, &params),
+        }
+    }
+}
+
+impl Detail {
+    /// A sentence: `key` with `params` (user data and identifiers; a word of ours is its own key).
+    pub fn words(key: &str, params: &[(&str, &str)]) -> Detail {
+        Detail::default().and(key, params)
+    }
+
+    /// A counted sentence: `key.one`/`key.other` with `{count}` = `n` (and `params`).
+    pub fn counted(key: &str, n: i64, params: &[(&str, &str)]) -> Detail {
+        let mut detail = Detail::words(key, params);
+        detail.words.last_mut().expect("just added").n = Some(n);
+        detail
+    }
+
+    /// Identifiers only, shown as typed.
+    pub fn facts(text: impl AsRef<str>) -> Detail {
+        Detail {
+            facts: Some(text.as_ref().to_string()),
+            words: Vec::new(),
+        }
+    }
+
+    /// Another sentence after the last.
+    pub fn and(mut self, key: &str, params: &[(&str, &str)]) -> Detail {
+        self.words.push(Sentence::new(key, params));
+        self
+    }
+
+    /// Another, counted sentence after the last ([Detail::counted]).
+    pub fn and_counted(mut self, key: &str, n: i64, params: &[(&str, &str)]) -> Detail {
+        let mut sentence = Sentence::new(key, params);
+        sentence.n = Some(n);
+        self.words.push(sentence);
+        self
+    }
+
+    /// A word of ours as the last sentence's `{name}`: `key`'s text in the reader's language
+    /// ("on"/"off", a place). A parameter needs a sentence: on a [Detail] without one it is lost
+    /// (a bug at the call, caught in a debug build).
+    pub fn word(mut self, name: &str, key: &str) -> Detail {
+        debug_assert!(
+            !self.words.is_empty(),
+            "a word for no sentence: {name} = {key}"
+        );
+        if let Some(last) = self.words.last_mut() {
+            last.w.insert(name.to_string(), key.to_string());
+        }
+        self
+    }
+
+    /// A length of time as the last sentence's `{name}`, told as "1 h 30 min" (nb "1 t 30 min").
+    /// Needs a sentence, as [Detail::word].
+    pub fn duration(mut self, name: &str, minutes: i64) -> Detail {
+        debug_assert!(!self.words.is_empty(), "a duration for no sentence: {name}");
+        if let Some(last) = self.words.last_mut() {
+            last.d.insert(name.to_string(), minutes);
+        }
+        self
+    }
+
+    /// An instant for the last sentence's `{name}`, told as a time in the reader's zone and
+    /// language when read ("yesterday 21:40", "12 Oct 08:12"). Needs a sentence, as [Detail::word].
+    pub fn at(mut self, name: &str, instant: chrono::DateTime<chrono::Utc>) -> Detail {
+        debug_assert!(!self.words.is_empty(), "an instant for no sentence: {name}");
+        if let Some(last) = self.words.last_mut() {
+            last.t.insert(
+                name.to_string(),
+                instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            );
+        }
+        self
+    }
+
+    /// The facts beside the words.
+    pub fn with_facts(mut self, text: impl AsRef<str>) -> Detail {
+        self.facts = Some(text.as_ref().to_string());
+        self
+    }
+
+    /// The row's `detail` and `params` columns: the facts, and the words as one `{"key", "p"}`
+    /// object or a list of them.
+    pub fn columns(&self) -> (Option<String>, Option<String>) {
+        let params = match self.words.as_slice() {
+            [] => None,
+            [one] => serde_json::to_string(one).ok(),
+            many => serde_json::to_string(many).ok(),
+        };
+        (self.facts.clone(), params)
+    }
+
+    /// The words of a stored `params` (a sentence or a list of them) as the reader reads them, the
+    /// sentences joined by a space; `None` for nothing stored or anything that isn't ours.
+    pub fn worded(
+        params: &str,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<String> {
+        let sentences: Vec<Sentence> = match serde_json::from_str::<Sentence>(params) {
+            Ok(one) => vec![one],
+            Err(_) => serde_json::from_str(params).ok()?,
+        };
+        (!sentences.is_empty()).then(|| {
+            sentences
+                .iter()
+                .map(|s| s.worded(zone, now))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    }
+
+    /// A row as the log page shows it (and the tests read it): its words in `zone`'s language, then
+    /// " · " and its facts when it has both (a refused request's words and its `METHOD /path`); the
+    /// words alone, the facts alone, or an older row's prose; `None` for a row that says nothing
+    /// besides its label. Two facts are ids kept for the greps and the phone lines' hourly budget,
+    /// never shown raw beside words: `entry {id}` (every worded entry sentence names it) and
+    /// `device {id}` - the words say the phone in the reader's language ("phone 3", "telefon 3"),
+    /// and a sentence that doesn't (a phone's own line, a phone's Screen Time save) gets it as a
+    /// lead, "phone 3: …".
+    pub fn shown(
+        detail: Option<&str>,
+        params: Option<&str>,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<String> {
+        let facts = detail.map(str::trim).filter(|d| !d.is_empty());
+        let words = params.and_then(|p| Detail::worded(p, zone, now));
+        match (words, facts) {
+            (Some(words), Some(facts)) => Some(match id_fact(facts) {
+                Some(("entry", _)) => words,
+                Some(("device", id)) => {
+                    let lang = zone.lang();
+                    let phone =
+                        crate::i18n::t_params(lang, "security.detail.phone", &[("device", id)]);
+                    if names(&words, &phone) {
+                        words
+                    } else {
+                        crate::i18n::t_params(
+                            lang,
+                            "security.detail.on_phone",
+                            &[("device", id), ("words", &words)],
+                        )
+                    }
+                }
+                _ => format!("{words} · {facts}"),
+            }),
+            (Some(words), None) => Some(words),
+            (None, facts) => facts.map(str::to_string),
+        }
+    }
+
+    /// A stored text that is either our words (a sentence's JSON, [Detail::columns]) or prose from
+    /// before design 70, shown as stored - `banned_ips.reason`, an older row's `detail`.
+    pub fn worded_or_stored(
+        stored: &str,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> String {
+        Detail::worded(stored, zone, now).unwrap_or_else(|| stored.to_string())
+    }
+}
+
+/// A fact that is a bare id, `device 3` or `entry 12`: `(kind, id)`.
+fn id_fact(facts: &str) -> Option<(&str, &str)> {
+    let (kind, id) = facts.split_once(' ')?;
+    (matches!(kind, "device" | "entry") && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        .then_some((kind, id))
+}
+
+/// `words` names `phone` ("phone 3") as a whole: not "phone 31".
+fn names(words: &str, phone: &str) -> bool {
+    words.match_indices(phone).any(|(at, _)| {
+        !words[at + phone.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+/// A [Detail]'s words in English, UTC, now - what a unit test reads.
+#[cfg(test)]
+pub fn worded_test(detail: &Detail) -> String {
+    worded_in(detail, crate::i18n::Lang::En)
+}
+
+/// A [Detail]'s words in `lang`, UTC, now.
+#[cfg(test)]
+pub fn worded_in(detail: &Detail, lang: crate::i18n::Lang) -> String {
+    let zone = crate::display_time::Zone::utc_fallback().in_lang(lang);
+    let (_, params) = detail.columns();
+    Detail::worded(&params.expect("words"), &zone, chrono::Utc::now()).expect("worded")
+}
+
+/// One row of the security log: its kind (the label is `security.event.<kind>`, `admin::event_label`),
+/// who and from where, and what it says ([Detail]).
 pub async fn record_security_event(
     db: &sqlx::SqlitePool,
     event_type: &str,
     username: Option<&str>,
     ip: Option<&str>,
-    detail: Option<&str>,
+    detail: Option<Detail>,
 ) {
+    let (facts, params) = detail.map(|d| d.columns()).unwrap_or_default();
     sqlx::query(
-        "INSERT INTO security_events (event_type, username, ip_address, detail) VALUES (?, ?, ?, ?)",
+        "INSERT INTO security_events (event_type, username, ip_address, detail, params) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(event_type)
     .bind(username)
     .bind(ip)
-    .bind(detail)
+    .bind(facts)
+    .bind(params)
     .execute(db)
     .await
     .ok();
@@ -210,31 +514,45 @@ pub async fn record_phone_event(
     conn: &mut sqlx::SqliteConnection,
     device_id: i64,
     kind: PhoneLine,
-    line: &str,
+    line: Detail,
 ) -> Result<bool, sqlx::Error> {
+    // The fact every phone line carries, which the hour's count matches - `device {id}` alone
+    // since design 70 (the words are in `params`), `device {id}:`/`device {id},` before it.
+    let fact = format!("device {device_id}");
     let written: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE created_at > datetime('now', '-1 hour') \
          AND username IS NULL AND ip_address IS NULL \
-         AND (detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
+         AND (detail = ?1 OR detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
     )
-    .bind(format!("device {device_id}"))
+    .bind(&fact)
     .fetch_one(&mut *conn)
     .await?;
     let (kind, line) = match written {
-        n if n < PHONE_LINES_AN_HOUR => (kind, line.to_string()),
+        n if n < PHONE_LINES_AN_HOUR => (kind, line),
         n if n == PHONE_LINES_AN_HOUR => (
             PhoneLine::LinesDropped,
-            format!(
-                "device {device_id}: more lines from this phone in this hour are not logged (at \
-                 most {PHONE_LINES_AN_HOUR} an hour)"
+            Detail::words(
+                "security.detail.phone_lines_dropped",
+                &[
+                    ("device", &device_id.to_string()),
+                    ("max", &PHONE_LINES_AN_HOUR.to_string()),
+                ],
             ),
         ),
         _ => return Ok(false),
     };
     let own = kind != PhoneLine::LinesDropped;
-    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
+    // A phone line's facts are the server's `fact` alone (H3): a caller's `with_facts` has no
+    // place here and is dropped - said in a debug build, never written.
+    debug_assert!(
+        line.facts.is_none(),
+        "a phone line's facts are `device {{id}}`, never the caller's"
+    );
+    let (_, params) = line.columns();
+    sqlx::query("INSERT INTO security_events (event_type, detail, params) VALUES (?, ?, ?)")
         .bind(kind.wire())
-        .bind(line)
+        .bind(fact)
+        .bind(params)
         .execute(&mut *conn)
         .await?;
     Ok(own)
@@ -245,7 +563,7 @@ pub async fn record_phone_event_logged(
     db: &sqlx::SqlitePool,
     device_id: i64,
     kind: PhoneLine,
-    line: &str,
+    line: Detail,
 ) {
     let written = match db.acquire().await {
         Ok(mut conn) => record_phone_event(&mut conn, device_id, kind, line).await,
@@ -287,9 +605,19 @@ pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
         )
         .bind(ip)
         .bind(format!("+{IP_BAN_HOURS} hours"))
-        .bind(format!(
-            "{recent_failures} failed login attempts within {IP_FAILURE_WINDOW_MINUTES} minutes"
-        ))
+        // The reason as words (design 70 §4): a sentence's JSON, worded when Blocked Addresses is
+        // read; a reason from before is prose, shown as stored.
+        .bind(
+            Detail::words(
+                "security.detail.ban.failed_logins",
+                &[
+                    ("count", &recent_failures.to_string()),
+                    ("minutes", &IP_FAILURE_WINDOW_MINUTES.to_string()),
+                ],
+            )
+            .columns()
+            .1,
+        )
         .execute(db)
         .await
         .ok();
@@ -299,7 +627,10 @@ pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
             "ip_banned",
             None,
             Some(ip),
-            Some(&format!("{recent_failures} failed attempts")),
+            Some(Detail::words(
+                "security.detail.ip_banned",
+                &[("count", &recent_failures.to_string())],
+            )),
         )
         .await;
     }
@@ -1017,24 +1348,21 @@ pub async fn require_device_token(
             "missing bearer token"
         };
         let ip = client.map(|c| c.describe());
-        let detail = format!(
-            "{what} for {}{}",
-            crate::audit::clip(request.uri().path(), 100),
-            if blocked {
-                " - this client is now refused for 10 minutes"
+        let mut detail = Detail::words(
+            if token.is_some() {
+                "security.detail.device_auth.invalid_token"
             } else {
-                ""
-            }
-        );
+                "security.detail.device_auth.missing_token"
+            },
+            &[],
+        )
+        .with_facts(crate::audit::clip(request.uri().path(), 100));
+        if blocked {
+            detail = detail.and("security.detail.client_refused", &[]);
+        }
         state
             .audit
-            .record(
-                &state.db,
-                "device_auth_failed",
-                &key,
-                ip.as_deref(),
-                &detail,
-            )
+            .record(&state.db, "device_auth_failed", &key, ip.as_deref(), detail)
             .await;
         return (axum::http::StatusCode::UNAUTHORIZED, what).into_response();
     };

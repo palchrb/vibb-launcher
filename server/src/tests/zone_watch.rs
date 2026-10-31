@@ -185,12 +185,7 @@ async fn a_launcher_report_raises_the_arrival() {
             mock_ignored: 2,
         }
     );
-    let logged: Vec<String> = sqlx::query_scalar(
-        "SELECT detail FROM security_events WHERE event_type = 'mock_location_ignored'",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
+    let logged = super::security_words(&app, "mock_location_ignored", crate::i18n::Lang::En).await;
     assert_eq!(logged.len(), 1);
     assert!(logged[0].contains("ignored 2 made-up"), "{logged:?}");
     // The same report again: nothing new (the fixes are stored, the count didn't rise).
@@ -493,13 +488,7 @@ async fn the_mock_counter_logs_each_rise() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Anna").await;
     let lines = || async {
-        sqlx::query_scalar::<_, String>(
-            "SELECT detail FROM security_events WHERE event_type = 'mock_location_ignored' \
-             ORDER BY id",
-        )
-        .fetch_all(&app.db)
-        .await
-        .unwrap()
+        super::security_words(&app, "mock_location_ignored", crate::i18n::Lang::En).await
     };
     post(&app, &token, json!({"zone_watch": watch(0, 0)})).await;
     assert!(lines().await.is_empty());
@@ -515,9 +504,7 @@ async fn the_mock_counter_logs_each_rise() {
     post(&app, &token, json!({"zone_watch": watch(0, 1)})).await;
     let logged = lines().await;
     assert_eq!(logged.len(), 2, "{logged:?}");
-    assert!(
-        logged[0].contains("ignored 3 made-up location(s)") && logged[0].contains("(3 in all)")
-    );
+    assert!(logged[0].contains("ignored 3 made-up locations") && logged[0].contains("(3 in all)"));
     // F-5: two different counts over the logged one at once. They may be served in either order:
     // 4 then 5 is two rises of 1; 5 then 4 is one rise of 2 (the 4 is then a lower count, taken
     // silently). Either way each line is its own real rise - never one read before the other's
@@ -538,7 +525,11 @@ async fn the_mock_counter_logs_each_rise() {
         crate::zones::mock_rise(&app.db, id, Some(&four)),
         crate::zones::mock_rise(&app.db, id, Some(&five))
     );
-    let rises: Vec<String> = [a.unwrap(), b.unwrap()].into_iter().flatten().collect();
+    let rises: Vec<String> = [a.unwrap(), b.unwrap()]
+        .into_iter()
+        .flatten()
+        .map(|d| crate::security::worded_test(&d))
+        .collect();
     let rose = |l: &String| -> i64 {
         l.split("ignored ")
             .nth(1)
@@ -554,6 +545,7 @@ async fn the_mock_counter_logs_each_rise() {
     assert!(sizes == [1, 1] || sizes == [2], "{rises:?}");
     // Each returned line is the one written, with its counter, in the same transaction.
     let written = lines().await;
+    let rises: Vec<String> = rises.iter().map(|r| format!("phone {id}: {r}")).collect();
     assert_eq!(written[before..], rises[..], "{written:?}");
     // At 5 whichever order they ran in; the same count again: nothing.
     crate::zones::mock_rise(&app.db, id, Some(&w(5)))
@@ -600,10 +592,8 @@ async fn the_mock_counter_logs_each_rise() {
             .unwrap();
     assert_eq!(after, (None, None));
     let token = res.json()["device_token"].as_str().unwrap().to_string();
-    assert!(logged[0].contains(&format!("device {id}: the phone ignored 3 ")));
-    assert!(
-        logged[1].contains("ignored 2 made-up location(s)") && logged[1].contains("(5 in all)")
-    );
+    assert!(logged[0].contains("The phone ignored 3 "), "{logged:?}");
+    assert!(logged[1].contains("ignored 2 made-up locations") && logged[1].contains("(5 in all)"));
     // Junk is dropped: an unknown key's value, a wrong type, a count out of range.
     for junk in [
         json!({"fences": "1", "motion_sensor": true, "location_on": true,

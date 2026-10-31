@@ -2497,7 +2497,7 @@ async fn render_detail_full(
         "One source per app: switching it to GitHub or Play needs a reinstall when the repo's \
          signing key isn't the developer's."
     };
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let sync = state.app_syncs.status(id);
     let package_candidates = if app.package_name.is_empty() {

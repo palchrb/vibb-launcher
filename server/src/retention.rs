@@ -364,15 +364,17 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
-    // The shutdown's last position (2026-10-25) in a `phone_off`'s parameters and detail goes
-    // with the location history too, and at once while the phone's location is Off; the event
-    // itself stays its 90 days.
+    // The shutdown's last position (2026-10-25) in a `phone_off`'s parameters goes with the
+    // location history too, and at once while the phone's location is Off; the event itself
+    // stays its 90 days with its other parameters - its words (design 70 §4) - and only
+    // `location` is removed. The detail of a row from before design 70 said the position: gone
+    // with it.
     rows(
         failed,
         "parent_events",
         sqlx::query(&format!(
-            "UPDATE parent_events SET params = NULL, detail = NULL WHERE kind = ? \
-           AND params IS NOT NULL \
+            "UPDATE parent_events SET params = json_remove(params, '$.location'), detail = NULL \
+           WHERE kind = ? AND json_type(params, '$.location') IS NOT NULL \
            AND (device_id IN ({LOCATION_OFF}) \
                 OR created_at < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \

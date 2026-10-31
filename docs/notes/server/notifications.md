@@ -390,6 +390,21 @@ migration `0098_push_words.sql`. (0097 is branch `last-position`'s, built in par
   `pushed`; a row from before 0098 has no push words and pushes its inbox words as before. The summary and test
   pushes' words are `push::SUMMARY_TITLE`/`SUMMARY_BODY`/`TEST_TITLE`.
 - Times are the phone's local time as before: "14:02" today, "Yesterday 19:14", "12 Oct 14:02".
+- **In the parent's language (design 70 §4, slice 2, 2026-10-31)**: nothing is stored as words any more. Every kind
+  raises with `parent_events.params` (a serde struct per kind: the phone's name as it was, the instant in RFC 3339,
+  the facts - `PhoneOffParams` keeps `location` and has `reason`/`battery`/`charging`/`late`), and the words are made
+  when read: the inbox and Activity by `parent_events::told` in the reader's zone and language, the push by `pushed`
+  at send time in **the subscriber's** language (`push::send_due` joins `admin_users.lang`; NULL or unknown pushes in
+  English; the payload's `lang` is the subscriber's code), the inbox's detail by `detail`. The keys are
+  `events.<kind>.inbox.title`, `.push.title` (with `.<variant>` for `phone_off`'s reason and `phone_on`'s start),
+  the summaries' parts (`events.pin_used.entry.*`, `events.battery.*`, `events.phone_on.off_since`, …), the summary
+  and test pushes `push.summary.*`/`push.test.*` (`{label}`), the times `time.*` (nb "I går 19:14", "12. okt. 14:02").
+  The table above holds for English; nb says the same in its own words ("Anna: tomt batteri, slått av" / "14:02 ·
+  batteri 1 %", "Anna: nødanrop", "Anna ber om mer skjermtid"), read by the user in the catalog diff. A row from
+  before slice 2 (a non-empty `title`) keeps its stored English until retention ends it; `fit_name` cuts the name so
+  the worded title fits `TITLE_MAX` in either language (`parent_events::tests::every_kind_is_worded_in_both_languages`).
+  `/sw.js` carries no words (a public, unescaped template): its fallback is the name "Vibb Phone" with an empty body,
+  the same bytes for every reader - the server never sends a push without a body.
 
 | Kind | Before: title / body (also the inbox, which keeps it) | After: the push's title / body |
 |---|---|---|

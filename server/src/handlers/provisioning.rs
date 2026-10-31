@@ -173,7 +173,7 @@ impl ProvisionQrTemplate {
         device: Device,
         settings: &ProvisioningSettings,
     ) -> Self {
-        let zone = Zone::load(&state.db).await;
+        let zone = Zone::load(&state.db, lang).await;
         let now = chrono::Utc::now();
         ProvisionQrTemplate {
             lang,

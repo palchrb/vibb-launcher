@@ -74,7 +74,7 @@ pub async fn list_devices(
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
 
     let mut rows = Vec::with_capacity(devices.len());
@@ -520,10 +520,16 @@ pub async fn regenerate_code(
         "enroll_code_created",
         Some(&admin.username),
         None,
-        Some(&format!("{} (device {id}), typed code", device.name)),
+        Some(
+            security::Detail::words(
+                "security.detail.code_created",
+                &[("name", &device.name), ("device", &id.to_string())],
+            )
+            .with_facts(format!("device {id}")),
+        ),
     )
     .await;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let page = EnrollCodeTemplate {
         lang,
@@ -592,7 +598,7 @@ pub async fn revoke_access(
         "access_revoked",
         Some(&admin.username),
         None,
-        Some(&format!("{name} (device {id})")),
+        Some(security::Detail::facts(format!("{name} (device {id})"))),
     )
     .await;
     Redirect::to(&format!(
@@ -1307,6 +1313,7 @@ pub(crate) async fn app_rows(
     id: i64,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
+    lang: Lang,
 ) -> Result<AppRows, sqlx::Error> {
     // A corrupt stored allowlist is shown as a warning, not silently as "nothing allowed" -
     // `build_policy` answers the phone with a 500 for it.
@@ -1361,7 +1368,7 @@ pub(crate) async fn app_rows(
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
     // A fresh progress row above still wins for the live percentage - but not over a release the
     // phone refused (security review M10): its reason beats "Install failed".
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let downloads =
         crate::app_downloads::parse(latest.and_then(|s| s.app_downloads_json.as_deref()));
@@ -1521,7 +1528,7 @@ async fn render_device(
                 .into_response();
         }
     };
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let lifts =
         match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now).await {
@@ -1543,8 +1550,10 @@ async fn render_device(
     // of -1, a dropped start). `happened_at` is RFC 3339 and `reported_at` SQLite's `datetime`
     // text: compared through `datetime()`, never as raw strings. A minute's slack for the phone's
     // clock and a report racing the shutdown (no start reports within a minute of its shutdown).
-    let off: Result<Option<(String, String, String, String)>, sqlx::Error> = sqlx::query_as(
-        "SELECT o.happened_at, o.created_at, o.title, o.summary FROM parent_events o \
+    // The newest off: `(happened_at, created_at, title, summary, params)`.
+    type OffRow = (String, String, String, String, Option<String>);
+    let off: Result<Option<OffRow>, sqlx::Error> = sqlx::query_as(
+        "SELECT o.happened_at, o.created_at, o.title, o.summary, o.params FROM parent_events o \
          WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
              COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
                        WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
@@ -1557,10 +1566,18 @@ async fn render_device(
     .fetch_optional(&state.db)
     .await;
     let power_off = match off {
-        Ok(off) => off.and_then(|(at, created, title, summary)| {
+        Ok(off) => off.and_then(|(at, created, title, summary, params)| {
             let at = crate::display_time::parse_db_utc(&at)?;
             let created = crate::display_time::parse_db_utc(&created)?;
-            crate::parent_events::off_since_line(at, created, &title, &summary, &zone, now)
+            crate::parent_events::off_since_line(
+                at,
+                created,
+                &title,
+                &summary,
+                params.as_deref(),
+                &zone,
+                now,
+            )
         }),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's power events");
@@ -1594,7 +1611,7 @@ async fn render_device(
 
     // The Apps row (design 31 step 6): the switches on under Device › Apps, the launcher not
     // counted - the number the Apps tab shows.
-    let rows = app_rows(state, id, &policy, latest.as_ref())
+    let rows = app_rows(state, id, &policy, latest.as_ref(), lang)
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's apps"))
         .ok();
@@ -2543,7 +2560,7 @@ pub async fn update_kid_lock(
         event,
         Some(&admin.username),
         None,
-        Some(&format!("device {id}")),
+        Some(security::Detail::facts(format!("device {id}"))),
     )
     .await;
     let _ = state.command_notify.send(id);
@@ -2635,16 +2652,19 @@ pub async fn update_kid_keyguard(
     }
     if was != keyguard {
         let words = if keyguard == crate::kid_lock::KEYGUARD_ANDROID {
-            "Android's lock"
+            "security.detail.keyguard.android"
         } else {
-            "Vibb One's lock"
+            "security.detail.keyguard.own"
         };
         security::record_security_event(
             &state.db,
             "kid_keyguard_changed",
             Some(&admin.username),
             None,
-            Some(&format!("device {id}: {words}")),
+            Some(
+                security::Detail::words(words, &[("device", &id.to_string())])
+                    .with_facts(format!("device {id}")),
+            ),
         )
         .await;
     }
@@ -2698,7 +2718,7 @@ pub async fn send_kid_pin(
         "kid_pin_sent",
         Some(&admin.username),
         None,
-        Some(&format!("device {id}")),
+        Some(security::Detail::facts(format!("device {id}"))),
     )
     .await;
     let _ = state.command_notify.send(id);

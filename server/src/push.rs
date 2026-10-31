@@ -19,6 +19,7 @@ use ring::rand::SecureRandom;
 use sha2::{Digest, Sha256};
 
 use crate::AppState;
+use crate::i18n::{Lang, t, t_params};
 use crate::music_net::BoxFut;
 use crate::parent_events::Kind;
 use crate::webpush::{self, VapidKey};
@@ -235,12 +236,14 @@ pub fn payload_json(
     token_b64: String,
     unread: i64,
     icon: &str,
+    lang: Lang,
 ) -> String {
     let mut payload = serde_json::json!({
         "notification": {
             "title": crate::audit::clip(title, crate::parent_events::TITLE_MAX),
             "body": crate::audit::clip(body, crate::parent_events::SUMMARY_MAX),
-            "lang": "en",
+            // The subscriber's language, the words' (design 70 §4, L2).
+            "lang": lang.code(),
             "navigate": navigate,
             "tag": tag,
             // `icon` in `data`, not the notification's own key: only the worker's legacy path shows
@@ -414,10 +417,13 @@ pub fn db_time(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// A summary push's words (more than [FOLD_ABOVE] at once) and a test push's title.
-pub const SUMMARY_TITLE: &str = "New notifications";
-pub const SUMMARY_BODY: &str = "More in the inbox";
-pub const TEST_TITLE: &str = "Vibb Phone: test";
+/// A summary push's words (more than [FOLD_ABOVE] at once) in the subscriber's language.
+fn summary_words(lang: Lang) -> (String, String) {
+    (
+        t(lang, "push.summary.title").to_string(),
+        t(lang, "push.summary.body").to_string(),
+    )
+}
 
 /// What a delivery is: an event's push, a summary of folded ones, or a test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -464,6 +470,8 @@ struct Due {
     target: String,
     /// The notification's icon: the event's phone's own picture, else the app's (server round C).
     icon: String,
+    /// The subscriber's language (design 70 §4): the words above are in it, and the payload says it.
+    lang: Lang,
 }
 
 /// A due delivery as [send_due] reads it, with its subscription and event.
@@ -489,6 +497,8 @@ struct DueRow {
     push_title: Option<String>,
     push_body: Option<String>,
     avatar_hash: Option<String>,
+    /// The subscriber's `admin_users.lang` (migration 0104); NULL or unknown pushes in English.
+    lang: Option<String>,
 }
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
@@ -515,8 +525,10 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     let rows: Vec<DueRow> = sqlx::query_as(
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
                 s.auth, s.origin, s.label, s.state, d.event_id, e.kind AS event_kind, e.title, \
-                e.summary, e.target, e.params, e.push_title, e.push_body, v.avatar_hash \
+                e.summary, e.target, e.params, e.push_title, e.push_body, v.avatar_hash, \
+                a.lang \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
+         LEFT JOIN admin_users a ON a.id = s.admin_id \
          LEFT JOIN parent_events e ON e.id = d.event_id \
          LEFT JOIN devices v ON v.id = e.device_id \
          WHERE d.status = 'queued' AND (d.next_try_at IS NULL OR d.next_try_at <= ?) \
@@ -526,9 +538,9 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     .fetch_all(&state.db)
     .await?;
     let mut due: Vec<Due> = Vec::new();
-    // A kind told from its parameters (design 64's zones) gets its words here, in the Phone Setup
-    // zone at the pass's time.
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    // Every push gets its words here, in the Phone Setup zone at the pass's time and in the
+    // subscriber's language (design 70 §4: the zone is loaded once and worded per delivery).
+    let setup_zone = crate::display_time::Zone::load(&state.db, Lang::default()).await;
     for row in rows {
         let DueRow {
             id,
@@ -551,7 +563,13 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             push_title,
             push_body,
             avatar_hash,
+            lang,
         } = row;
+        let lang = lang
+            .as_deref()
+            .and_then(Lang::from_code)
+            .unwrap_or_default();
+        let zone = setup_zone.in_lang(lang);
         let what = match (kind.as_str(), event_kind.as_deref().and_then(Kind::of)) {
             ("event", Some(kind)) => What::Event(kind),
             ("summary", _) => What::Summary,
@@ -581,14 +599,13 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
                 );
                 (title, body, target.unwrap_or_default())
             }
-            What::Summary => (
-                SUMMARY_TITLE.to_string(),
-                SUMMARY_BODY.to_string(),
-                "/notifications".to_string(),
-            ),
+            What::Summary => {
+                let (title, body) = summary_words(lang);
+                (title, body, "/notifications".to_string())
+            }
             What::Test => (
-                TEST_TITLE.to_string(),
-                format!("Notifications work on {label}"),
+                t(lang, "push.test.title").to_string(),
+                t_params(lang, "push.test.body", &[("label", &label)]),
                 "/notifications/settings#devices".to_string(),
             ),
         };
@@ -608,6 +625,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             body,
             target,
             icon: icon_of(avatar_hash.as_deref()),
+            lang,
         });
     }
     let mut sends = fold(state, due).await?;
@@ -669,6 +687,7 @@ async fn fold(state: &AppState, due: Vec<Due>) -> Result<Vec<Due>, sqlx::Error> 
                 .fetch_one(&state.db)
                 .await?;
         let first = &list[0];
+        let (title, body) = summary_words(first.lang);
         sends.push(Due {
             id: summary_id,
             subscription_id,
@@ -681,10 +700,11 @@ async fn fold(state: &AppState, due: Vec<Due>) -> Result<Vec<Due>, sqlx::Error> 
             origin: first.origin.clone(),
             label: first.label.clone(),
             event_id: None,
-            title: SUMMARY_TITLE.to_string(),
-            body: SUMMARY_BODY.to_string(),
+            title,
+            body,
             target: "/notifications".to_string(),
             icon: icon_of(None),
+            lang: first.lang,
         });
         sends.extend(newest);
     }
@@ -810,6 +830,7 @@ async fn send_one(
         B64.encode(token),
         unread,
         &delivery.icon,
+        delivery.lang,
     );
     let body = match webpush::encrypt(
         &ring::rand::SystemRandom::new(),
@@ -913,10 +934,12 @@ async fn send_one(
                     "push_subscription_gone",
                     None,
                     None,
-                    Some(&format!(
-                        "{}: the push service says it is gone ({})",
-                        delivery.label,
-                        status.unwrap_or(0)
+                    Some(crate::security::Detail::words(
+                        "security.detail.push_gone",
+                        &[
+                            ("label", &delivery.label),
+                            ("status", &status.unwrap_or(0).to_string()),
+                        ],
                     )),
                 )
                 .await;
@@ -1563,6 +1586,7 @@ mod tests {
             "AA".into(),
             2,
             APP_ICON,
+            Lang::En,
         ))
         .unwrap();
         assert!(classic.get("web_push").is_none() && classic.get("mutable").is_none());
@@ -1577,6 +1601,7 @@ mod tests {
             "AA".into(),
             2,
             APP_ICON,
+            Lang::En,
         ))
         .unwrap();
         assert_eq!(declarative["web_push"], 8030);

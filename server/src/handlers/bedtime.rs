@@ -45,6 +45,34 @@ const DEFAULT_NIGHT: DayWindow = DayWindow {
 
 /// "Every night 21:00-07:00", "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00", "Sun-Thu nights
 /// 21:00-07:00" (the other row empty).
+/// The log's line for a saved bedtime (`security.detail.bedtime.*`): the windows as values, the
+/// words for the reader (design 70 §4).
+fn nights_detail(device_id: i64, nights: &Nights) -> crate::security::Detail {
+    let detail = match (nights.school, nights.free) {
+        (Some(school), Some(free)) if school == free => crate::security::Detail::words(
+            "security.detail.bedtime.every_night",
+            &[("window", &window_text(school))],
+        ),
+        (Some(school), Some(free)) => crate::security::Detail::words(
+            "security.detail.bedtime.split",
+            &[
+                ("school", &window_text(school)),
+                ("free", &window_text(free)),
+            ],
+        ),
+        (Some(school), None) => crate::security::Detail::words(
+            "security.detail.bedtime.school",
+            &[("school", &window_text(school))],
+        ),
+        (None, Some(free)) => crate::security::Detail::words(
+            "security.detail.bedtime.free",
+            &[("free", &window_text(free))],
+        ),
+        (None, None) => crate::security::Detail::words("security.detail.bedtime.none", &[]),
+    };
+    detail.with_facts(format!("device {device_id}"))
+}
+
 pub(crate) fn nights_summary(nights: &Nights) -> String {
     match (nights.school, nights.free) {
         (Some(school), Some(free)) if school == free => {
@@ -393,12 +421,12 @@ pub async fn save_bedtime(
     {
         return server_error(err, "failed to save a bedtime");
     }
-    log_change(
-        &state,
-        &admin,
+    crate::security::record_security_event(
+        &state.db,
         "bedtime_saved",
-        Some(id),
-        &nights_summary(&input.nights),
+        Some(&admin.username),
+        None,
+        Some(nights_detail(id, &input.nights)),
     )
     .await;
     nudge(&state, Some(id)).await;

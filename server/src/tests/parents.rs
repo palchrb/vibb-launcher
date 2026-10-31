@@ -66,11 +66,11 @@ async fn account(app: &TestApp, username: &str) -> AdminUser {
 }
 
 async fn events(app: &TestApp, kind: &str) -> Vec<Option<String>> {
-    sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = ? ORDER BY id")
-        .bind(kind)
-        .fetch_all(&app.db)
+    super::security_words(app, kind, crate::i18n::Lang::En)
         .await
-        .unwrap()
+        .into_iter()
+        .map(|words| (!words.is_empty()).then_some(words))
+        .collect()
 }
 
 /// Mamma signed in ("parent", fully onboarded) and Pappa added: (Mamma's cookie, Pappa's OTP).
@@ -654,7 +654,7 @@ async fn invitee_onboards_with_the_otp() {
             .last()
             .unwrap()
             .as_deref(),
-        Some("one-time password")
+        Some("One-time password")
     );
     let rows = app.get_page("/account", &mamma).await.text();
     let row = part(&rows, "data-parent=\"pappa\"", "</div>");
@@ -1949,6 +1949,16 @@ async fn language_is_each_parents() {
         "Avvist: dette skjemaet ble sendt fra et annet nettsted."
     );
     assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
+    // The log's row: the reason as words, then its facts - the route (qa-s-i18n-2-code M1).
+    app.state.audit.flush(&app.db).await;
+    assert_eq!(
+        super::security_words(&app, "csrf_refused", crate::i18n::Lang::En).await,
+        ["Sent from another site (Sec-Fetch-Site) · POST /account/language"]
+    );
+    assert_eq!(
+        super::security_words(&app, "csrf_refused", crate::i18n::Lang::Nb).await,
+        ["Sendt fra et annet nettsted (Sec-Fetch-Site) · POST /account/language"]
+    );
 }
 
 /// A language save held past a Reset (another session's epoch bump) writes nothing and signs out

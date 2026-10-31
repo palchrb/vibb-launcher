@@ -131,20 +131,32 @@ pub async fn create_lift(
         return server_error(err, "failed to record a lift");
     }
 
-    let detail = if target == "rule" {
-        format!(
-            "device {id}: {} lifted for {minutes} min",
-            rule_name.as_deref().unwrap_or("all rules")
-        )
-    } else {
-        format!("device {id}: +{minutes} min screen time")
-    };
+    let device = id.to_string();
+    let detail = match (target, rule_name.as_deref()) {
+        ("rule", Some(rule)) => security::Detail::words(
+            "security.detail.lift.rule",
+            &[
+                ("device", &device),
+                ("rule", rule),
+                ("minutes", &minutes.to_string()),
+            ],
+        ),
+        ("rule", None) => security::Detail::words(
+            "security.detail.lift.all_rules",
+            &[("device", &device), ("minutes", &minutes.to_string())],
+        ),
+        _ => security::Detail::words(
+            "security.detail.lift.budget",
+            &[("device", &device), ("minutes", &minutes.to_string())],
+        ),
+    }
+    .with_facts(format!("device {id}"));
     security::record_security_event(
         &state.db,
         "time_lift",
         Some(&admin.username),
         None,
-        Some(&detail),
+        Some(detail),
     )
     .await;
     let _ = state.command_notify.send(id);
@@ -193,7 +205,13 @@ pub async fn end_lift(
                 "time_lift_ended",
                 Some(&admin.username),
                 None,
-                Some(&format!("device {id}: lift {lift_id} ended early")),
+                Some(
+                    security::Detail::words(
+                        "security.detail.lift_ended",
+                        &[("device", &id.to_string()), ("lift", &lift_id.to_string())],
+                    )
+                    .with_facts(format!("device {id}")),
+                ),
             )
             .await;
             let _ = state.command_notify.send(id);

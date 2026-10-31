@@ -172,7 +172,7 @@ pub async fn update_parent_pin(
         event,
         Some(&admin.username),
         None,
-        Some(&format!("device {id}")),
+        Some(security::Detail::facts(format!("device {id}"))),
     )
     .await;
     // The phone re-syncs at once and takes the new PIN.
@@ -301,7 +301,7 @@ pub async fn pin_events(
                     &mut tx,
                     device.id,
                     kind,
-                    &parent_pin::log_line(device.id, &event),
+                    parent_pin::log_line(&event),
                 )
                 .await
                 .map(|_| ());

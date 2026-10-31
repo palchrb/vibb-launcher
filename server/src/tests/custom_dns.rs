@@ -650,7 +650,7 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
             .trim_end_matches("</li>")
             .to_string()
     };
-    let zone = Zone::load(&app.db).await;
+    let zone = Zone::load(&app.db, crate::i18n::Lang::En).await;
     let page = app.get_page("/dns", &cookie).await.text();
     assert_eq!(line(&page, anna), "Anna · Your server in use");
     assert_eq!(
@@ -771,7 +771,7 @@ async fn the_lines_say_when_dns_cant_be_reached() {
     };
     let now = chrono::Utc::now();
     let ms = |minutes: i64| (now - chrono::Duration::minutes(minutes)).timestamp_millis();
-    let zone = Zone::load(&app.db).await;
+    let zone = Zone::load(&app.db, crate::i18n::Lang::En).await;
     let when = |minutes: i64| zone.when(now - chrono::Duration::minutes(minutes), now);
     let (anna, t) = app.enrolled_device("Anna").await;
     report(

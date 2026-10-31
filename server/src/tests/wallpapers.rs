@@ -766,15 +766,10 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
-    let logged: Vec<String> = sqlx::query_scalar(
-        "SELECT detail FROM security_events WHERE event_type = 'lock_wallpaper_changed' ORDER BY id",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
+    let logged = super::security_words(&app, "lock_wallpaper_changed", crate::i18n::Lang::En).await;
     assert_eq!(
         logged,
-        [format!("device {id}: lock screen background: wallpaper 1")]
+        [format!("phone {id}: lock screen background: wallpaper 1")]
     );
     let page = app
         .get_page(&super::device_page(id, super::Section::Lock), &cookie)

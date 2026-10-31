@@ -105,13 +105,16 @@ pub fn unseen(
     })
 }
 
-/// `boot_unseen`'s detail when the count rose since the previous report (`None` = it didn't).
-pub fn log_line(device_id: i64, previous: Option<i64>, count: Option<i64>) -> Option<String> {
+/// `boot_unseen`'s words when the count rose since the previous report (`None` = it didn't):
+/// "{rose} starts without Vibb One running noticed ({count} in all)".
+pub fn log_line(previous: Option<i64>, count: Option<i64>) -> Option<crate::security::Detail> {
     let count = count?;
     let rose = count - previous.unwrap_or(0);
     (rose > 0).then(|| {
-        format!(
-            "device {device_id}: {rose} start(s) without Vibb One running noticed ({count} in all)"
+        crate::security::Detail::counted(
+            "security.detail.boot_unseen",
+            rose,
+            &[("total", &count.to_string())],
         )
     })
 }
@@ -199,12 +202,15 @@ mod tests {
     #[test]
     fn the_log_line_only_when_the_count_rose() {
         assert_eq!(
-            log_line(3, Some(1), Some(2)).as_deref(),
-            Some("device 3: 1 start(s) without Vibb One running noticed (2 in all)")
+            log_line(Some(1), Some(2)).map(|d| crate::security::worded_test(&d)),
+            Some("1 start without Vibb One running noticed (2 in all)".to_string())
         );
-        assert_eq!(log_line(3, Some(2), Some(2)), None);
-        assert_eq!(log_line(3, None, Some(0)), None);
-        assert!(log_line(3, None, Some(2)).is_some());
-        assert_eq!(log_line(3, Some(2), None), None);
+        assert_eq!(
+            log_line(None, Some(2)).map(|d| crate::security::worded_test(&d)),
+            Some("2 starts without Vibb One running noticed (2 in all)".to_string())
+        );
+        assert_eq!(log_line(Some(2), Some(2)), None);
+        assert_eq!(log_line(None, Some(0)), None);
+        assert_eq!(log_line(Some(2), None), None);
     }
 }

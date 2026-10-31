@@ -930,7 +930,8 @@ async fn off_erases_every_fix_and_on_keeps_the_last_known() {
         positions[0].1.is_some() && positions[0].2.is_some(),
         "{positions:?}"
     );
-    assert_eq!(positions[1], (off, None, None));
+    // The position alone goes (design 70 §4: the row's other parameters are its words).
+    assert_eq!(positions[1], (off, Some("{}".to_string()), None));
     // An Off phone keeps none, even one that arrives some other way (a restored backup).
     location(db, off, "2026-10-26T10:00:00.000Z", "-1 minutes").await;
     crate::retention::prune(db).await;

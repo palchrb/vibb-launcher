@@ -766,15 +766,15 @@ async fn switches_the_emergency_call_and_a_burst() {
         })
         .collect();
     assert_eq!(pushed.len(), 5, "{pushed:?}");
-    // The summary's short body (the push wording, 2026-10-25; qa-pwa-fixes-b-code Q-3).
-    assert_eq!(crate::push::SUMMARY_BODY, "More in the inbox");
+    // The summary's short body (the push wording, 2026-10-25; qa-pwa-fixes-b-code Q-3), in the
+    // subscriber's language (design 70 §4: this account has none stored, so English).
     let bodies: Vec<String> = requests
         .iter()
         .map(|r| payload(r)["notification"].clone())
-        .filter(|n| n["title"] == crate::push::SUMMARY_TITLE)
+        .filter(|n| n["title"] == "New notifications")
         .map(|n| n["body"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(bodies, [crate::push::SUMMARY_BODY]);
+    assert_eq!(bodies, ["More in the inbox"]);
     assert_eq!(
         pushed[0].0, "Anna: emergency call",
         "the emergency call first, on its own"
@@ -1073,6 +1073,131 @@ async fn send_a_test_and_remove() {
         .request_form(Method::POST, &test_uri, Some(&cookie), &[])
         .await;
     assert!(res.location().unwrap().contains("notice=test_gone"));
+}
+
+/// Design 70 §4: one event, two parents - each push in its subscriber's language, worded at send
+/// time with the payload's `lang`; the test push and the summary too. An account with no language
+/// stored pushes in English.
+#[tokio::test]
+async fn a_push_is_worded_per_subscriber() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &mamma, ENDPOINT).await;
+    let other = "https://web.push.apple.com/QK2-fake-endpoint";
+    subscribe(&app, &pappa, other).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/language",
+            Some(&mamma),
+            &[("lang", "nb")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    sqlx::query("UPDATE admin_users SET lang = NULL WHERE username = 'pappa'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (id, _) = app.enrolled_device("Anna").await;
+    let anna = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    let battery = crate::models::BatteryReport {
+        level: 14,
+        charging: false,
+        low: true,
+    };
+    raise(&app, &anna.low_battery(&battery, anna.now)).await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 2);
+    let by_endpoint = |endpoint: &str| {
+        let request = requests
+            .iter()
+            .find(|r| r.endpoint == endpoint)
+            .unwrap_or_else(|| panic!("no push to {endpoint}"));
+        payload(request)["notification"].clone()
+    };
+    let nb = by_endpoint(ENDPOINT);
+    assert_eq!(nb["title"], "Anna: lite batteri");
+    assert_eq!(nb["lang"], "nb");
+    assert!(
+        nb["body"].as_str().unwrap().ends_with(" · batteri 14 %"),
+        "{nb}"
+    );
+    let en = by_endpoint(other);
+    assert_eq!(en["title"], "Anna: battery low");
+    assert_eq!(en["lang"], "en");
+    assert!(
+        en["body"].as_str().unwrap().ends_with(" · battery 14 %"),
+        "{en}"
+    );
+    // The test push, in Mamma's language.
+    let sub = scalar(
+        &app,
+        "SELECT id FROM push_subscriptions WHERE endpoint = 'https://web.push.apple.com/QK1-fake-endpoint'",
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{sub}/test"),
+        Some(&mamma),
+        &[("from", "settings")],
+    )
+    .await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 1);
+    let n = &payload(&requests[0])["notification"];
+    assert_eq!(n["title"], "Vibb Phone: test");
+    assert_eq!(n["body"], "Varsler virker på iPhone · Safari");
+    assert_eq!(n["lang"], "nb");
+}
+
+/// Design 70 §4 (H1 of its review): the service worker is a public, unescaped script - it carries
+/// no words of ours, so its bytes are the same for every reader, whatever `?lang=`, the browser or
+/// the account says, and its fallback notification is a name with an empty body.
+#[tokio::test]
+async fn the_worker_has_the_same_bytes_for_every_reader() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    app.request_form(
+        Method::POST,
+        "/account/language",
+        Some(&mamma),
+        &[("lang", "nb")],
+    )
+    .await;
+    let fetch = |uri: &'static str, cookie: Option<String>, accept: Option<&'static str>| {
+        let app = &app;
+        async move {
+            let mut request = Request::builder().uri(uri);
+            if let Some(cookie) = cookie {
+                request = request.header(header::COOKIE, cookie);
+            }
+            if let Some(accept) = accept {
+                request = request.header(header::ACCEPT_LANGUAGE, accept);
+            }
+            let res = app.send(request.body(Body::empty()).unwrap()).await;
+            assert_eq!(res.status, StatusCode::OK);
+            res.text()
+        }
+    };
+    let plain = fetch("/sw.js", None, None).await;
+    assert!(
+        plain.contains(r#"title: "Vibb Phone", body: """#),
+        "{plain}"
+    );
+    assert!(!plain.contains("Something new"));
+    for (uri, cookie, accept) in [
+        ("/sw.js?lang=nb", None, None),
+        ("/sw.js", None, Some("nb-NO")),
+        ("/sw.js", Some(mamma.clone()), Some("nb")),
+        ("/sw.js?lang=en", Some(mamma.clone()), None),
+    ] {
+        assert_eq!(fetch(uri, cookie, accept).await, plain, "{uri} {accept:?}");
+    }
 }
 
 /// 2026-10-25 (the user's false alarm after adding the app to the Home Screen again): under the

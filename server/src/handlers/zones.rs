@@ -190,26 +190,47 @@ fn parse(form: &HashMap<String, String>) -> (ZoneForm, Result<Input, ZoneErrors>
 
 /// What a save changed, for the security log ("radius 150 -> 250 m, moved, renamed, arrive
 /// off") - never a coordinate.
-fn changes(before: &zones::Zone, after: &Input) -> Vec<String> {
+/// What a save changed, as the log's sentences (`security.detail.zone.*`, design 70 §4); empty
+/// when nothing did.
+fn changes(
+    before: &zones::Zone,
+    after: &Input,
+) -> Vec<(&'static str, Vec<(&'static str, String)>)> {
     let mut words = Vec::new();
     if before.name != after.name {
-        words.push(format!("renamed from {}", before.name));
-    }
-    if before.latitude != after.latitude || before.longitude != after.longitude {
-        words.push("moved".to_string());
-    }
-    if before.radius_m != after.radius_m {
-        words.push(format!(
-            "radius {} -> {} m",
-            before.radius_m, after.radius_m
+        words.push((
+            "security.detail.zone.renamed",
+            vec![("name", before.name.clone())],
         ));
     }
-    for (was, now, what) in [
-        (before.notify_arrive, after.notify_arrive, "arrive"),
-        (before.notify_leave, after.notify_leave, "leave"),
+    if before.latitude != after.latitude || before.longitude != after.longitude {
+        words.push(("security.detail.zone.moved", vec![]));
+    }
+    if before.radius_m != after.radius_m {
+        words.push((
+            "security.detail.zone.radius",
+            vec![
+                ("from", before.radius_m.to_string()),
+                ("to", after.radius_m.to_string()),
+            ],
+        ));
+    }
+    for (was, now, on, off) in [
+        (
+            before.notify_arrive,
+            after.notify_arrive,
+            "security.detail.zone.arrive.on",
+            "security.detail.zone.arrive.off",
+        ),
+        (
+            before.notify_leave,
+            after.notify_leave,
+            "security.detail.zone.leave.on",
+            "security.detail.zone.leave.off",
+        ),
     ] {
         if was != now {
-            words.push(format!("{what} {}", if now { "on" } else { "off" }));
+            words.push((if now { on } else { off }, vec![]));
         }
     }
     words
@@ -382,7 +403,7 @@ async fn saved(
     admin: &AdminUser,
     device: &Device,
     event: &str,
-    detail: String,
+    detail: security::Detail,
     back: String,
 ) -> Response {
     security::record_security_event(
@@ -390,7 +411,7 @@ async fn saved(
         event,
         Some(&admin.username),
         None,
-        Some(&format!("device {} ({}): {detail}", device.id, device.name)),
+        Some(detail.with_facts(format!("device {}", device.id))),
     )
     .await;
     let _ = state.command_notify.send(device.id);
@@ -474,7 +495,15 @@ pub async fn create_zone(
     };
     match written.await {
         Ok(Outcome::Written(zone_id)) => {
-            let detail = format!("{}, {} m", input.name, input.radius_m);
+            let detail = security::Detail::words(
+                "security.detail.zone.added",
+                &[
+                    ("device", &device.id.to_string()),
+                    ("name", &device.name),
+                    ("zone", &input.name),
+                    ("radius", &input.radius_m.to_string()),
+                ],
+            );
             let back =
                 format!("/devices/locate?device={id}&zone=added&zone_id={zone_id}#zone-{zone_id}");
             saved(&state, &admin, &device, "zone_added", detail, back).await
@@ -601,7 +630,19 @@ pub async fn save_zone(
             if changed.is_empty() {
                 return Redirect::to(&back).into_response();
             }
-            let detail = format!("{} - {}", input.name, changed.join(", "));
+            let mut detail = security::Detail::words(
+                "security.detail.zone.changed",
+                &[
+                    ("device", &device.id.to_string()),
+                    ("name", &device.name),
+                    ("zone", &input.name),
+                ],
+            );
+            for (key, params) in &changed {
+                let params: Vec<(&str, &str)> =
+                    params.iter().map(|(n, v)| (*n, v.as_str())).collect();
+                detail = detail.and(key, &params);
+            }
             saved(&state, &admin, &device, "zone_changed", detail, back).await
         }
         Ok((Outcome::NameTaken, _)) => {
@@ -649,7 +690,15 @@ pub async fn delete_zone(
     match deleted {
         Ok(Some(name)) => {
             let back = format!("/devices/locate?device={id}&zone=deleted#zones");
-            saved(&state, &admin, &device, "zone_deleted", name, back).await
+            let detail = security::Detail::words(
+                "security.detail.zone.deleted",
+                &[
+                    ("device", &device.id.to_string()),
+                    ("name", &device.name),
+                    ("zone", &name),
+                ],
+            );
+            saved(&state, &admin, &device, "zone_deleted", detail, back).await
         }
         Ok(None) => not_found("Zone not found"),
         Err(err) => db_error(id, err),
@@ -879,10 +928,16 @@ mod tests {
             notify_arrive: false,
             notify_leave: true,
         };
-        let words = changes(&before, &after).join(", ");
+        // The sentences (design 70 §4), worded as the log reads them.
+        let mut detail = security::Detail::facts("device 3");
+        for (key, params) in changes(&before, &after) {
+            let params: Vec<(&str, &str)> = params.iter().map(|(n, v)| (*n, v.as_str())).collect();
+            detail = detail.and(key, &params);
+        }
+        let words = security::worded_test(&detail);
         assert_eq!(
             words,
-            "renamed from Hjem, moved, radius 150 -> 250 m, arrive off"
+            "Renamed from Hjem. Moved. Radius 150 → 250 m. Arrive off."
         );
         assert!(!words.contains("59.9"));
         let same = Input {

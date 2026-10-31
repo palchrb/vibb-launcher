@@ -784,12 +784,13 @@ pub fn parse_zone_watch(stored: Option<&str>) -> Option<ZoneWatch> {
 /// The security log's line when the phone's count of ignored mock fixes rose past the count
 /// last logged (`mock_location_ignored`, "Made-up locations ignored"): the phone and the count,
 /// never a place.
-pub fn mock_log_line(device_id: i64, logged: i64, count: i64) -> Option<String> {
+pub fn mock_log_line(logged: i64, count: i64) -> Option<crate::security::Detail> {
     let rose = count - logged;
     (rose > 0).then(|| {
-        format!(
-            "device {device_id}: the phone ignored {rose} made-up location(s) - an app pretended \
-             to be somewhere else ({count} in all)"
+        crate::security::Detail::counted(
+            "security.detail.mock_locations",
+            rose,
+            &[("total", &count.to_string())],
         )
     })
 }
@@ -807,7 +808,7 @@ pub async fn mock_rise(
     db: &sqlx::SqlitePool,
     device_id: i64,
     watch: Option<&ZoneWatch>,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<Option<crate::security::Detail>, sqlx::Error> {
     let Some(count) = watch.map(|w| w.mock_ignored) else {
         return Ok(None);
     };
@@ -836,12 +837,12 @@ pub async fn mock_rise(
             .await?;
         // Within the phone's hourly line budget (QA M2: a count that goes 1, 0, 1, 0 would
         // otherwise write a line on every other report).
-        match mock_log_line(device_id, logged, count) {
+        match mock_log_line(logged, count) {
             Some(line) => crate::security::record_phone_event(
                 &mut tx,
                 device_id,
                 crate::security::PhoneLine::MockLocationIgnored,
-                &line,
+                line.clone(),
             )
             .await?
             .then_some(line),
@@ -1362,21 +1363,21 @@ mod tests {
 
     #[test]
     fn the_mock_line_comes_with_each_rise() {
-        assert_eq!(mock_log_line(3, 0, 0), None);
+        assert_eq!(mock_log_line(0, 0), None);
         assert_eq!(
-            mock_log_line(3, 0, 2).as_deref(),
+            mock_log_line(0, 2).map(|d| crate::security::worded_test(&d)),
             Some(
-                "device 3: the phone ignored 2 made-up location(s) - an app pretended to be \
-                 somewhere else (2 in all)"
+                "The phone ignored 2 made-up locations - an app pretended to be somewhere else \
+                 (2 in all)"
+                    .to_string()
             )
         );
         assert!(
-            mock_log_line(3, 2, 5)
-                .unwrap()
+            crate::security::worded_test(&mock_log_line(2, 5).unwrap())
                 .contains("ignored 3 made-up")
         );
-        assert_eq!(mock_log_line(3, 5, 5), None);
-        assert_eq!(mock_log_line(3, 5, 1), None, "a reset count");
+        assert_eq!(mock_log_line(5, 5), None);
+        assert_eq!(mock_log_line(5, 1), None, "a reset count");
     }
 
     /// The report's fixes: every extra checked, the newest 20 of them in time order, then the

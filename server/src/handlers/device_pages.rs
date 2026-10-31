@@ -535,7 +535,7 @@ pub async fn view_about(
         Ok(latest) => latest,
         Err(err) => return read_failed(id, "the last report", err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
     let connection = crate::handlers::devices::connection_of(&state, &device, now);
@@ -764,7 +764,7 @@ pub async fn view_advanced(
         Ok(latest) => latest,
         Err(err) => return read_failed(id, "the last report", err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
 
@@ -992,7 +992,7 @@ pub async fn lock_action(
                 event,
                 Some(&username),
                 None,
-                Some(&format!("device {id}")),
+                Some(crate::security::Detail::facts(format!("device {id}"))),
             )
             .await;
         }
@@ -1101,7 +1101,7 @@ async fn render_lock(
         Ok(latest) => latest,
         Err(err) => return read_failed(id, "the last report", err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
 
     let lock_state = crate::kid_lock::parse_lock_state(
@@ -1160,10 +1160,11 @@ async fn render_lock(
         .into_iter()
         .filter(|w| w.checked)
         .collect();
-    let rows = match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref()).await {
-        Ok(rows) => rows,
-        Err(err) => return read_failed(id, "the phone's apps", err),
-    };
+    let rows =
+        match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang).await {
+            Ok(rows) => rows,
+            Err(err) => return read_failed(id, "the phone's apps", err),
+        };
     let lock_screen =
         crate::handlers::devices::lock_screen_card(state, &policy, latest.as_ref(), &rows).await;
     // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
@@ -1530,7 +1531,7 @@ pub async fn view_filter(
     } else {
         Vec::new()
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     // The phone's own time (RFC 3339); newest first, one it sent unreadable last ("Time unknown",
     // never the raw text) - not first, as the text's order put it (qa-31-s5-code N5).
@@ -1810,10 +1811,11 @@ pub(crate) async fn render_apps(
         Ok(latest) => latest,
         Err(err) => return read_failed(id, "the last report", err),
     };
-    let rows = match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref()).await {
-        Ok(rows) => rows,
-        Err(err) => return read_failed(id, "the phone's apps", err),
-    };
+    let rows =
+        match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang).await {
+            Ok(rows) => rows,
+            Err(err) => return read_failed(id, "the phone's apps", err),
+        };
     // Names and icons: a failed read must not show every app as "its own".
     let defaults = match display::catalog_defaults(&state.db).await {
         Ok(defaults) => defaults,
@@ -1838,7 +1840,7 @@ pub(crate) async fn render_apps(
         Err(err) => return read_failed(id, "the catalog app it came from", err),
     };
     let from = from.map(AppsFrom::value);
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
 
     let network = rows
@@ -2024,13 +2026,14 @@ pub async fn view_music(
         latest.as_ref(),
         query.get("music_notice").map(String::as_str),
         query.get("music_entry").and_then(|e| e.parse().ok()),
+        lang,
     )
     .await
     {
         Ok(music) => music,
         Err(err) => return read_failed(id, "the phone's music", err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let reported = latest
         .as_ref()
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))

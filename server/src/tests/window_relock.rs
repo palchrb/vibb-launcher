@@ -32,11 +32,7 @@ async fn post_status(app: &TestApp, token: &str, mut extra: Value) {
 }
 
 async fn events(app: &TestApp, event_type: &str) -> Vec<String> {
-    sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = ? ORDER BY id")
-        .bind(event_type)
-        .fetch_all(&app.db)
-        .await
-        .unwrap()
+    super::security_words(app, event_type, crate::i18n::Lang::En).await
 }
 
 async fn commands(app: &TestApp, id: i64) -> Vec<String> {
@@ -833,8 +829,8 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
     assert_eq!(
         events(&app, "phone_foreign_access").await,
         vec![format!(
-            "device {id}: the parent PIN is refused on the phone - device admin: com.evil.admin; \
-             accessibility on: com.evil.admin."
+            "phone {id}: The parent PIN is refused on the phone. Device admin: com.evil.admin. \
+             Accessibility on: com.evil.admin."
         )]
     );
     // Gone: the warning goes, and the log says the PIN works again.

@@ -1223,14 +1223,28 @@ async fn parent_edits_are_in_the_security_log() {
         &[("mode", "interval"), ("interval_minutes", "15")],
     )
     .await;
-    let events: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT event_type, username, detail FROM security_events \
-         WHERE event_type IN ('time_rule_created', 'time_rule_updated', 'time_rule_deleted', \
-         'screen_time_saved', 'location_policy_changed') ORDER BY id",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
+    let events: Vec<(String, String, String)> =
+        sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+            "SELECT event_type, username, detail, params FROM security_events \
+             WHERE event_type IN ('time_rule_created', 'time_rule_updated', 'time_rule_deleted', \
+             'screen_time_saved', 'location_policy_changed') ORDER BY id",
+        )
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(kind, user, detail, params)| {
+            let words = crate::security::Detail::shown(
+                detail.as_deref(),
+                params.as_deref(),
+                &zone,
+                chrono::Utc::now(),
+            )
+            .unwrap_or_default();
+            (kind, user, words)
+        })
+        .collect();
     let kinds: Vec<&str> = events.iter().map(|e| e.0.as_str()).collect();
     assert_eq!(
         kinds,
@@ -1244,9 +1258,15 @@ async fn parent_edits_are_in_the_security_log() {
         ]
     );
     assert!(events.iter().all(|e| e.1 == "parent"));
-    assert_eq!(events[0].2, "global: Skole");
-    assert!(events[4].2.starts_with(&format!("device {id}: ")));
-    assert_eq!(events[5].2, format!("device {id}: interval, every 15 min"));
+    assert_eq!(events[0].2, "everyone: Skole");
+    // A phone's Screen Time save names the phone (qa-s-i18n-2-code M1): its fact `device {id}`
+    // shown as the reader's "phone {id}: …".
+    assert!(
+        events[4].2.starts_with(&format!("phone {id}: Own rules ")),
+        "{}",
+        events[4].2
+    );
+    assert_eq!(events[5].2, format!("phone {id}: interval, every 15 min"));
 }
 
 #[tokio::test]

@@ -59,7 +59,7 @@ pub async fn settings_hub(
         crate::security::CurrentAdmin,
     >,
 ) -> impl IntoResponse {
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let values = hub_values(
         &state.db,
         &state.data_dir.join(BACKUP_DIR),
