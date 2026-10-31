@@ -484,7 +484,7 @@ async fn the_security_log_pages_back_past_a_flood() {
             "probe",
             None,
             None,
-            Some(&format!("event-{i:03}.")),
+            Some(crate::security::Detail::facts(format!("event-{i:03}."))),
         )
         .await;
     }

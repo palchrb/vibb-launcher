@@ -110,10 +110,16 @@ pub async fn enroll(
     let (device_id, name) = match enrolled {
         Ok(Some(device)) => device,
         Ok(None) => {
-            let mut detail = format!("{} code", kind.as_str());
+            let mut detail = security::Detail::words(
+                match kind {
+                    Kind::Typed => "security.detail.enroll_failed.typed",
+                    Kind::Qr => "security.detail.enroll_failed.qr",
+                },
+                &[],
+            );
             if kind == Kind::Typed {
                 if state.limits.ip_failed(&key) {
-                    detail.push_str(" - this client is now refused for 10 minutes");
+                    detail = detail.and("security.detail.client_refused", &[]);
                 }
                 if state.enrollment.typed_failed(now) {
                     security::record_security_event(
@@ -121,19 +127,20 @@ pub async fn enroll(
                         "enroll_typed_paused",
                         None,
                         Some(&ip),
-                        Some(&format!(
-                            "{} wrong typed codes this hour - typed codes are paused until {} UTC; \
-                             setup QR codes still work",
-                            enrollment::TYPED_PAUSE_FAILURES,
-                            enrollment::end_of_hour(now).format("%H:%M")
-                        )),
+                        Some(
+                            security::Detail::words(
+                                "security.detail.enroll_typed_paused",
+                                &[("count", &enrollment::TYPED_PAUSE_FAILURES.to_string())],
+                            )
+                            .at("until", enrollment::end_of_hour(now)),
+                        ),
                     )
                     .await;
                 }
             }
             state
                 .audit
-                .record(&state.db, "enroll_failed", &key, Some(&ip), &detail)
+                .record(&state.db, "enroll_failed", &key, Some(&ip), detail)
                 .await;
             return unauthorized();
         }
@@ -157,13 +164,18 @@ pub async fn enroll(
     // A command meant for the phone this row had before - a wipe for a lost one - must never
     // reach its replacement (QA of the launcher wave, Low 2).
     let dropped = end_pending_commands(&state.db, device_id).await;
-    let mut detail = format!("{name} (device {device_id}), {} code", kind.as_str());
+    let mut detail = security::Detail::words(
+        match kind {
+            Kind::Typed => "security.detail.enrolled.typed",
+            Kind::Qr => "security.detail.enrolled.qr",
+        },
+        &[("name", &name), ("device", &device_id.to_string())],
+    )
+    .with_facts(format!("device {device_id}"));
     if dropped > 0 {
-        detail.push_str(&format!(
-            "; {dropped} command(s) for the earlier phone won't be sent"
-        ));
+        detail = detail.and_counted("security.detail.enrolled_dropped", dropped as i64, &[]);
     }
-    security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(&detail))
+    security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(detail))
         .await;
 
     Json(EnrollResponse {
@@ -1436,16 +1448,14 @@ pub async fn status(
             crate::parent_events::battery_report(&state, phone, battery).await;
         }
     }
-    if let Some(line) = crate::boot_witness::log_line(
-        device.id,
-        previous_unseen,
-        unseen_boots.map(|(count, _)| count),
-    ) {
+    if let Some(line) =
+        crate::boot_witness::log_line(previous_unseen, unseen_boots.map(|(count, _)| count))
+    {
         crate::security::record_phone_event_logged(
             &state.db,
             device.id,
             crate::security::PhoneLine::BootUnseen,
-            &line,
+            line,
         )
         .await;
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
@@ -1692,14 +1702,19 @@ async fn log_play_events(
     if let Some(mode) = report.install_mode
         && previous_until != Some(mode.until_ms)
     {
-        let until = chrono::DateTime::from_timestamp_millis(mode.until_ms)
-            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-            .unwrap_or_else(|| mode.until_ms.to_string());
+        let line = crate::security::Detail::words("security.detail.play_install_mode", &[]);
+        let line = match chrono::DateTime::from_timestamp_millis(mode.until_ms) {
+            Some(until) => line.at("until", until),
+            None => crate::security::Detail::words(
+                "security.detail.play_install_mode",
+                &[("until", &mode.until_ms.to_string())],
+            ),
+        };
         crate::security::record_phone_event_logged(
             &state.db,
             device_id,
             crate::security::PhoneLine::PlayInstallMode,
-            &format!("device {device_id}: Play install mode until {until}"),
+            line,
         )
         .await;
     }
@@ -1721,16 +1736,23 @@ async fn log_play_events(
         .filter(|a| !before.contains(&a.package_name))
         .take(20)
     {
-        let source = app.installer.as_deref().unwrap_or("unknown source");
+        let label = app.label.chars().take(80).collect::<String>();
+        let package = app.package_name.chars().take(200).collect::<String>();
+        let line = match app.installer.as_deref() {
+            Some(source) => crate::security::Detail::words(
+                "security.detail.app_installed",
+                &[("app", &label), ("package", &package), ("source", source)],
+            ),
+            None => crate::security::Detail::words(
+                "security.detail.app_installed_unknown",
+                &[("app", &label), ("package", &package)],
+            ),
+        };
         crate::security::record_phone_event_logged(
             &state.db,
             device_id,
             crate::security::PhoneLine::AppInstalled,
-            &format!(
-                "device {device_id}: {} ({}) installed from {source}",
-                app.label.chars().take(80).collect::<String>(),
-                app.package_name.chars().take(200).collect::<String>()
-            ),
+            line,
         )
         .await;
     }

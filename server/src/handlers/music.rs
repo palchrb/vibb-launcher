@@ -65,10 +65,24 @@ pub(super) async fn log_event(
     state: &AppState,
     admin: &crate::models::AdminUser,
     kind: &str,
-    detail: &str,
+    detail: security::Detail,
 ) {
     security::record_security_event(&state.db, kind, Some(&admin.username), None, Some(detail))
         .await;
+}
+
+/// A log line's facts: an entry's or a category's id (`entry 12`), as `device {id}` is a fact.
+fn facts(text: impl AsRef<str>) -> security::Detail {
+    security::Detail::facts(text)
+}
+
+/// "on"/"off" as a word of the log's (`security.detail.on`/`.off`, `Detail::word`).
+fn on_off_key(on: bool) -> &'static str {
+    if on {
+        "security.detail.on"
+    } else {
+        "security.detail.off"
+    }
 }
 
 /// A random file-name part (never anything the browser sent).
@@ -122,7 +136,10 @@ pub async fn add_catalog_row(
         &state,
         &admin,
         "music_app_catalog_added",
-        &format!("Vibb music app from {}", state.config.server_release_repo),
+        security::Detail::words(
+            "security.detail.music.app_from",
+            &[("repo", &state.config.server_release_repo)],
+        ),
     )
     .await;
     Redirect::to("/music/settings#app").into_response()
@@ -884,9 +901,10 @@ pub async fn delete_orphans(
         &state,
         &admin,
         "music_orphans_deleted",
-        &format!(
-            "{deleted} file(s), {}",
-            music::megabytes(orphans.bytes as i64)
+        security::Detail::counted(
+            "security.detail.music.orphans",
+            deleted as i64,
+            &[("size", &music::megabytes(orphans.bytes as i64))],
         ),
     )
     .await;
@@ -1045,17 +1063,35 @@ pub async fn add_link(
     // A feed by its host only (security review P7): a private or paid feed's URL often carries a
     // token, and the log keeps it 180 days.
     let logged = match &link {
-        music::Link::Rss { url } => reqwest::Url::parse(url)
-            .ok()
-            .and_then(|url| url.host_str().map(|host| format!("feed at {host}")))
-            .unwrap_or_else(|| "a feed".to_string()),
-        _ => target,
+        music::Link::Rss { url } => security::Detail::words(
+            "security.detail.music.entry_feed",
+            &[
+                ("id", &id.to_string()),
+                ("title", &title),
+                (
+                    "host",
+                    reqwest::Url::parse(url)
+                        .ok()
+                        .and_then(|url| url.host_str().map(str::to_string))
+                        .as_deref()
+                        .unwrap_or("?"),
+                ),
+            ],
+        ),
+        _ => security::Detail::words(
+            "security.detail.music.entry_source",
+            &[
+                ("id", &id.to_string()),
+                ("title", &title),
+                ("source", &target),
+            ],
+        ),
     };
     log_event(
         &state,
         &admin,
         "music_entry_added",
-        &format!("entry {id}: {title} ({logged})"),
+        logged.with_facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music#entry-{id}")).into_response()
@@ -1112,7 +1148,11 @@ pub async fn add_own(
         &state,
         &admin,
         "music_entry_added",
-        &format!("entry {id}: {name} (own files)"),
+        security::Detail::words(
+            "security.detail.music.entry_own_files",
+            &[("id", &id.to_string()), ("name", &name)],
+        )
+        .with_facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music/entries/{id}#files")).into_response()
@@ -1170,7 +1210,13 @@ pub async fn move_entry(
             .await
             .unwrap_or_default();
     nudge(&state, &phones);
-    log_event(&state, &admin, "music_entry_moved", &format!("entry {id}")).await;
+    log_event(
+        &state,
+        &admin,
+        "music_entry_moved",
+        facts(format!("entry {id}")),
+    )
+    .await;
     Redirect::to(&format!("/music?edit=1#entry-{id}")).into_response()
 }
 
@@ -1241,7 +1287,7 @@ pub async fn add_category(
         &state,
         &admin,
         "music_category_added",
-        &format!("category {id}: {checked}"),
+        facts(format!("category {id}: {checked}")),
     )
     .await;
     Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
@@ -1300,7 +1346,7 @@ pub async fn save_category(
         &state,
         &admin,
         "music_category_changed",
-        &format!("category {id}: {checked}"),
+        facts(format!("category {id}: {checked}")),
     )
     .await;
     Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
@@ -1335,7 +1381,7 @@ pub async fn move_category(
         &state,
         &admin,
         "music_category_moved",
-        &format!("category {id}"),
+        facts(format!("category {id}")),
     )
     .await;
     Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
@@ -1404,7 +1450,7 @@ pub async fn delete_category(
         &state,
         &admin,
         "music_category_deleted",
-        &format!("category {id}: {}", category.name),
+        facts(format!("category {id}: {}", category.name)),
     )
     .await;
     Redirect::to("/music/categories#categories").into_response()
@@ -1560,8 +1606,11 @@ pub async fn save_storytel(
         Probe::Refused { status, outage } => {
             // A typo must not cut every phone off (26b §9): the saved login stays as it was.
             let detail = match status {
-                Some(status) => format!("Storytel answered {status}"),
-                None => "Storytel sent no session".to_string(),
+                Some(status) => security::Detail::words(
+                    "security.detail.music.storytel_answered",
+                    &[("status", &status.to_string())],
+                ),
+                None => security::Detail::words("security.detail.music.storytel_no_session", &[]),
             };
             // An outage is no refusal (design 58 §2.3, code QA nit 4).
             let event = if outage {
@@ -1569,7 +1618,7 @@ pub async fn save_storytel(
             } else {
                 "storytel_login_refused"
             };
-            log_event(&state, &admin, event, &detail).await;
+            log_event(&state, &admin, event, detail).await;
             // Worded by the login's class (QA L5, design 58 §2.3): a 5xx, a 408, a 429 or no
             // session is Storytel's trouble, not a wrong password. Nothing is stored either way.
             let text = match (outage, status) {
@@ -1636,7 +1685,7 @@ pub async fn save_storytel(
         &state,
         &admin,
         "storytel_login_saved",
-        "Storytel login saved",
+        security::Detail::default(),
     )
     .await;
     if let Err(err) = session.insert(STORYTEL_NOTICE_FLASH, notice).await {
@@ -1668,7 +1717,7 @@ pub async fn clear_storytel(
         &state,
         &admin,
         "storytel_login_cleared",
-        "Storytel login removed",
+        security::Detail::default(),
     )
     .await;
     Redirect::to("/music/settings#storytel").into_response()
@@ -2038,7 +2087,15 @@ pub async fn add_storytel(
             &state,
             &admin,
             "music_entry_added",
-            &format!("entry {id}: Storytel: {name} ({})", group.target),
+            security::Detail::words(
+                "security.detail.music.entry_storytel",
+                &[
+                    ("id", &id.to_string()),
+                    ("name", &name),
+                    ("target", &group.target),
+                ],
+            )
+            .with_facts(format!("entry {id}")),
         )
         .await;
     }
@@ -2456,7 +2513,17 @@ pub async fn save_entry(
         &state,
         &admin,
         "music_entry_changed",
-        &format!("entry {id}: {name}, {order}, cache {cache}, resume {resume}"),
+        security::Detail::words(
+            "security.detail.music.entry_changed",
+            &[
+                ("id", &id.to_string()),
+                ("name", &name),
+                ("order", &order.to_string()),
+                ("cache", &cache.to_string()),
+                ("resume", &resume.to_string()),
+            ],
+        )
+        .with_facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music/entries/{id}#settings")).into_response()
@@ -2498,7 +2565,7 @@ pub async fn delete_entry(
         &state,
         &admin,
         "music_entry_deleted",
-        &format!("entry {id}: {}", entry.name),
+        facts(format!("entry {id}: {}", entry.name)),
     )
     .await;
     Redirect::to("/music#entries").into_response()
@@ -2582,7 +2649,7 @@ pub async fn upload_cover(
         &state,
         &admin,
         "music_cover_changed",
-        &format!("entry {id}"),
+        facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music/entries/{id}#cover")).into_response()
@@ -2616,7 +2683,11 @@ pub async fn remove_cover(
         &state,
         &admin,
         "music_cover_changed",
-        &format!("entry {id}: removed"),
+        security::Detail::words(
+            "security.detail.music.cover_removed",
+            &[("id", &id.to_string())],
+        )
+        .with_facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music/entries/{id}#cover")).into_response()
@@ -3054,11 +3125,15 @@ pub async fn upload_files(
             &state,
             &admin,
             "music_files_added",
-            &format!(
-                "entry {id}: {} file(s), {} restored",
-                added.len(),
-                restored.len()
-            ),
+            security::Detail::counted(
+                "security.detail.music.files_added",
+                added.len() as i64,
+                &[
+                    ("id", &id.to_string()),
+                    ("restored", &restored.len().to_string()),
+                ],
+            )
+            .with_facts(format!("entry {id}")),
         )
         .await;
     }
@@ -3132,7 +3207,7 @@ pub async fn delete_file(
         &state,
         &admin,
         "music_file_deleted",
-        &format!("entry {id}: {name}"),
+        facts(format!("entry {id}: {name}")),
     )
     .await;
     Redirect::to(&format!("/music/entries/{id}#{anchor}")).into_response()
@@ -3834,7 +3909,10 @@ pub async fn save_sweep(
         &state,
         &admin,
         "music_sweep_saved",
-        &format!("every {hours} hours"),
+        security::Detail::words(
+            "security.detail.music.sweep",
+            &[("hours", &hours.to_string())],
+        ),
     )
     .await;
     Redirect::to("/music/settings#sweep").into_response()
@@ -3883,7 +3961,7 @@ pub async fn check_now(
         &state,
         &admin,
         "music_check_requested",
-        &format!("entry {id}: {}", entry.name),
+        facts(format!("entry {id}: {}", entry.name)),
     )
     .await;
     Redirect::to(&back).into_response()
@@ -3948,7 +4026,15 @@ pub async fn save_offline(
         &state,
         &admin,
         "music_entry_saved",
-        &format!("entry {id}: {}, offline {cache}", entry.name),
+        security::Detail::words(
+            "security.detail.music.entry_offline",
+            &[
+                ("id", &id.to_string()),
+                ("name", &entry.name),
+                ("cache", &cache.to_string()),
+            ],
+        )
+        .with_facts(format!("entry {id}")),
     )
     .await;
     Redirect::to(&format!("/music#entry-{id}")).into_response()
@@ -4839,13 +4925,24 @@ pub async fn save_device_spotify(
         &state,
         &admin,
         "music_spotify_binding_changed",
-        &match (account, name) {
-            (Some(account), name) => format!(
-                "device {id}: Spotify plays as {}",
-                name.unwrap_or_else(|| format!("account {account}"))
+        match (account, name) {
+            (Some(_), Some(name)) => security::Detail::words(
+                "security.detail.music.spotify_as",
+                &[("device", &id.to_string()), ("name", &name)],
             ),
-            (None, _) => format!("device {id}: Spotify off"),
-        },
+            (Some(account), None) => security::Detail::words(
+                "security.detail.music.spotify_as_account",
+                &[
+                    ("device", &id.to_string()),
+                    ("account", &account.to_string()),
+                ],
+            ),
+            (None, _) => security::Detail::words(
+                "security.detail.music.spotify_off",
+                &[("device", &id.to_string())],
+            ),
+        }
+        .with_facts(format!("device {id}")),
     )
     .await;
     Redirect::to(&format!("/devices/{id}/music#music-spotify")).into_response()
@@ -4903,7 +5000,15 @@ pub async fn save_storytel_phone(
         &state,
         &admin,
         "music_phone_settings",
-        &format!("device {id}: Storytel {on}"),
+        security::Detail::words(
+            if on {
+                "security.detail.music.storytel.on"
+            } else {
+                "security.detail.music.storytel.off"
+            },
+            &[("device", &id.to_string())],
+        )
+        .with_facts(format!("device {id}")),
     )
     .await;
     Redirect::to("/music/settings?storytel=phones#storytel-phones").into_response()
@@ -4988,10 +5093,15 @@ pub async fn set_device_entry(
         &state,
         &admin,
         "music_phone_entry",
-        &format!(
-            "device {id}: {name} {}",
-            if selected { "on" } else { "off" }
-        ),
+        security::Detail::words(
+            if selected {
+                "security.detail.music.phone_entry.on"
+            } else {
+                "security.detail.music.phone_entry.off"
+            },
+            &[("device", &id.to_string()), ("name", &name)],
+        )
+        .with_facts(format!("device {id}")),
     )
     .await;
     // Back to that row, not the page's top (qa-21-step1-code #8).
@@ -5068,12 +5178,21 @@ pub async fn save_device_settings(
         &state,
         &admin,
         "music_phone_settings",
-        &format!(
-            "device {id}: streaming on mobile data {stream}, downloads on mobile data {download}, \
-             storage limit {}, volume cap {}, Storytel {storytel}",
-            music::storage_limit_label(music::storage_limit(stored_limit)),
-            cap.map_or("off".to_string(), |c| format!("{c} %"))
-        ),
+        security::Detail::words(
+            "security.detail.music.phone_settings",
+            &[
+                ("device", &id.to_string()),
+                (
+                    "limit",
+                    &music::storage_limit_label(music::storage_limit(stored_limit)),
+                ),
+                ("cap", &cap.map_or("off".to_string(), |c| format!("{c} %"))),
+            ],
+        )
+        .word("stream", on_off_key(stream))
+        .word("download", on_off_key(download))
+        .word("storytel", on_off_key(storytel))
+        .with_facts(format!("device {id}")),
     )
     .await;
     Redirect::to(&format!("/devices/{id}/music#music-settings")).into_response()
@@ -5146,21 +5265,26 @@ pub async fn save_device_sonos_rooms(
                 .map_or_else(|| uid.clone(), |room| room.name.clone())
         })
         .collect();
+    let device = id.to_string();
     let detail = if all {
-        format!("device {id}: all rooms")
+        security::Detail::words("security.detail.music.sonos.all", &[("device", &device)])
     } else if names.is_empty() {
-        format!("device {id}: no room")
+        security::Detail::words("security.detail.music.sonos.none", &[("device", &device)])
     } else {
-        format!("device {id}: only {}", names.join(", "))
-    };
+        security::Detail::words(
+            "security.detail.music.sonos.only",
+            &[
+                ("device", &device),
+                (
+                    "rooms",
+                    crate::audit::clip(&names.join(", "), MAX_ROOMS_EVENT_CHARS),
+                ),
+            ],
+        )
+    }
+    .with_facts(format!("device {id}"));
     // Up to 32 names the phone sent: the row keeps a short detail (qa-26a-step3c-code L5).
-    log_event(
-        &state,
-        &admin,
-        "music_sonos_rooms_changed",
-        crate::audit::clip(&detail, MAX_ROOMS_EVENT_CHARS),
-    )
-    .await;
+    log_event(&state, &admin, "music_sonos_rooms_changed", detail).await;
     Redirect::to(&format!("/devices/{id}/music#music-sonos")).into_response()
 }
 

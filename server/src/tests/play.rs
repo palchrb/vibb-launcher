@@ -66,11 +66,7 @@ async fn advanced_page(app: &TestApp, id: i64) -> String {
 }
 
 async fn security_details(app: &TestApp, event_type: &str) -> Vec<String> {
-    sqlx::query_scalar("SELECT detail FROM security_events WHERE event_type = ? ORDER BY id")
-        .bind(event_type)
-        .fetch_all(&app.db)
-        .await
-        .unwrap()
+    super::security_words(app, event_type, crate::i18n::Lang::En).await
 }
 
 // ---------------------------------------------------------------------------------------------

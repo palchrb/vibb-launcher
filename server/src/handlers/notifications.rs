@@ -945,7 +945,7 @@ pub async fn subscribe(
                 "push_subscribed",
                 Some(&admin.username),
                 None,
-                Some(&label),
+                Some(crate::security::Detail::facts(&label)),
             )
             .await;
             back_to(&form, "push_on", "this-device")

@@ -89,13 +89,14 @@ async fn each_kind_is_raised_once_from_its_real_input() {
     );
     // Design 70 §4: nothing stored as words - the columns are empty, the parameters hold the facts,
     // and the inbox words each row in the reader's language, the detail too.
-    let stored: Vec<(
+    type Stored = (
         String,
         String,
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let stored: Vec<Stored> = sqlx::query_as(
         "SELECT title, summary, detail, push_title, params FROM parent_events ORDER BY id",
     )
     .fetch_all(&app.db)

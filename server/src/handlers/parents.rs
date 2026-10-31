@@ -88,7 +88,10 @@ pub async fn set_name(
         "display_name_changed",
         Some(&admin.username),
         None,
-        Some(name.as_deref().unwrap_or("(the username)")),
+        Some(match name.as_deref() {
+            Some(name) => security::Detail::facts(name),
+            None => security::Detail::words("security.detail.name_is_username", &[]),
+        }),
     )
     .await;
     Redirect::to("/account?changed=name#name").into_response()
@@ -181,7 +184,10 @@ pub async fn add(
             "parent_change_refused",
             Some(&actor.username),
             None,
-            Some("add"),
+            Some(security::Detail::words(
+                "security.detail.parent_refused.add",
+                &[],
+            )),
         )
         .await;
     }
@@ -244,7 +250,7 @@ pub async fn add(
         "parent_added",
         Some(&actor.username),
         None,
-        Some(&format!("{username} ({name})")),
+        Some(security::Detail::facts(format!("{username} ({name})"))),
     )
     .await;
     let shown = otp_shown(
@@ -337,7 +343,10 @@ pub async fn reset(
             "parent_change_refused",
             Some(&actor.username),
             None,
-            Some(&format!("reset {target_username}")),
+            Some(security::Detail::words(
+                "security.detail.parent_refused.reset",
+                &[("username", target_username)],
+            )),
         )
         .await;
     }
@@ -377,7 +386,7 @@ pub async fn reset(
                 "parent_reset",
                 Some(&actor.username),
                 None,
-                Some(&username),
+                Some(security::Detail::facts(&username)),
             )
             .await;
             state.spotify.forget_pending(&username);
@@ -464,7 +473,10 @@ pub async fn remove(
                 "parent_change_refused",
                 Some(&actor.username),
                 None,
-                Some(&format!("remove {target_username}")),
+                Some(security::Detail::words(
+                    "security.detail.parent_refused.remove",
+                    &[("username", target_username)],
+                )),
             )
             .await;
             let admin_auth::Reauth::Wrong { left } = reauth else {
@@ -493,7 +505,7 @@ pub async fn remove(
                 "parent_removed",
                 Some(&actor.username),
                 None,
-                Some(target_username),
+                Some(security::Detail::facts(target_username)),
             )
             .await;
             state.spotify.forget_pending(target_username);

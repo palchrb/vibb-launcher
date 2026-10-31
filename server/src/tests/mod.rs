@@ -730,6 +730,33 @@ pub enum Section {
     Advanced,
 }
 
+/// The security log's rows of `event_type`, oldest first, as the log page reads them in `lang`
+/// (design 70 §4: the words from `params`, else the stored facts or prose).
+pub async fn security_words(
+    app: &TestApp,
+    event_type: &str,
+    lang: crate::i18n::Lang,
+) -> Vec<String> {
+    let zone = crate::display_time::Zone::load(&app.db, lang).await;
+    let now = chrono::Utc::now();
+    sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT detail, params FROM security_events WHERE event_type = ? ORDER BY id",
+    )
+    .bind(event_type)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(detail, params)| {
+        params
+            .as_deref()
+            .and_then(|p| crate::security::Detail::worded(p, &zone, now))
+            .or(detail)
+            .unwrap_or_default()
+    })
+    .collect()
+}
+
 /// `(kind, title, summary)` of a phone's events, oldest first, worded in `lang` as the inbox
 /// words them (design 70 §4: nothing is stored as words any more).
 pub async fn told_events(

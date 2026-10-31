@@ -1513,11 +1513,12 @@ async fn no_secret_in_logs_events_or_pages() {
     ] {
         assert_eq!(count(message), times, "{message}: {texts:?}");
     }
-    let events: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT event_type, detail FROM security_events")
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
+    let events: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT event_type, COALESCE(detail, '') || COALESCE(params, '') FROM security_events",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     texts.extend(events.into_iter().map(|e| format!("{e:?}")));
     for page in ["/music/spotify", "/music/settings?login=ok", "/music"] {
         texts.push(
@@ -4201,7 +4202,7 @@ mod entries {
         assert_eq!(nudged(&mut nudges), [ella]);
         assert_eq!(
             events(&app, "music_spotify_binding_changed").await,
-            [format!("device {ella}: Spotify plays as Ella")]
+            [format!("phone {ella}: Spotify plays as Ella")]
         );
         let page = card(ella).await;
         assert!(page.contains(&format!("<option value=\"{kid}\" selected>Ella</option>")));
@@ -4366,7 +4367,7 @@ mod entries {
                 .await
                 .last()
                 .unwrap(),
-            &format!("device {ella}: Spotify off")
+            &format!("phone {ella}: Spotify off")
         );
     }
 
@@ -5159,8 +5160,8 @@ mod settings_group {
         assert_eq!(plays_on(ola).await.0, "Plays on no phone yet");
         let logged: Vec<String> = super::events(&app, "music_spotify_binding_changed").await;
         assert_eq!(logged.len(), 3, "{logged:?}");
-        assert!(logged.contains(&format!("device {ola_phone}: Spotify plays as Ella")));
-        assert!(logged.contains(&format!("device {spare}: Spotify off")));
+        assert!(logged.contains(&format!("phone {ola_phone}: Spotify plays as Ella")));
+        assert!(logged.contains(&format!("phone {spare}: Spotify off")));
 
         // Unknown phone, unknown account, no choice: 400, nothing written.
         for (account, device) in [(ella, "999"), (999, &*anna_phone.to_string()), (ella, "x")] {
@@ -5260,8 +5261,8 @@ mod settings_group {
         assert_eq!(
             super::events(&app, "music_phone_settings").await,
             [
-                format!("device {ola}: Storytel false"),
-                format!("device {anna}: Storytel true")
+                format!("phone {ola}: Storytel off"),
+                format!("phone {anna}: Storytel on")
             ]
         );
         // Back with the row open, the switches as stored; an unknown phone is a 400.

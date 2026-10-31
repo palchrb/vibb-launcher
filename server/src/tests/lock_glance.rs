@@ -38,13 +38,16 @@ fn text_of(package: &str, on: bool) -> (String, bool) {
 }
 
 async fn events(app: &TestApp, kind: &str) -> Vec<(String, Option<String>)> {
-    sqlx::query_as("SELECT detail, username FROM security_events WHERE event_type = ? ORDER BY id")
-        .bind(kind)
-        .fetch_all(&app.db)
+    let users: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT username FROM security_events WHERE event_type = ? ORDER BY id")
+            .bind(kind)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    super::security_words(app, kind, crate::i18n::Lang::En)
         .await
-        .unwrap()
         .into_iter()
-        .map(|(detail, user): (Option<String>, Option<String>)| (detail.unwrap_or_default(), user))
+        .zip(users)
         .collect()
 }
 
@@ -353,8 +356,8 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
         events(&app, "lock_screen_app_changed").await,
         // One line per change, not per save (2026-10-21).
         [
-            "device {id}: org.thoughtcrime.securesms on the lock screen: on",
-            "device {id}: io.element.android.x on the lock screen: off",
+            "phone {id}: org.thoughtcrime.securesms on the lock screen: on",
+            "phone {id}: io.element.android.x on the lock screen: off",
         ]
         .map(|d| (
             d.replace("{id}", &id.to_string()),
@@ -399,7 +402,7 @@ async fn an_apps_text_switch_saves_logs_nudges_and_a_retick_resets_it() {
     assert_eq!(
         events(&app, "lock_screen_text_changed").await,
         ["on", "off", "on"].map(|s| (
-            format!("device {id}: {signal}'s message text on the lock screen: {s}"),
+            format!("phone {id}: {signal}'s message text on the lock screen: {s}"),
             Some("parent".to_string())
         ))
     );
@@ -1013,7 +1016,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     assert_eq!(
         events(&app, "lock_wake_changed").await,
         ["on", "off", "on"].map(|s| (
-            format!("device {id}: wake the screen for a notification: {s}"),
+            format!("phone {id}: wake the screen for a notification: {s}"),
             Some("parent".to_string())
         ))
     );

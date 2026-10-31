@@ -181,14 +181,16 @@ async fn a_cancelled_command_never_reaches_the_phone() {
         !page.contains(&format!("/commands/{wipe}/cancel")),
         "no Cancel any more"
     );
-    let (actor, detail): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT username, detail FROM security_events WHERE event_type = 'device_command_cancelled'",
+    let actor: Option<String> = sqlx::query_scalar(
+        "SELECT username FROM security_events WHERE event_type = 'device_command_cancelled'",
     )
     .fetch_one(&app.db)
     .await
     .unwrap();
     assert!(actor.is_some(), "the parent who cancelled");
-    assert!(detail.unwrap().starts_with("wipe (asked "));
+    let words =
+        super::security_words(&app, "device_command_cancelled", crate::i18n::Lang::En).await;
+    assert!(words[0].starts_with("wipe (asked "), "{words:?}");
 }
 
 /// Cancel races the policy's pop: whichever comes first wins. A command the phone fetched (and
@@ -401,15 +403,11 @@ async fn a_waiting_wipe_is_never_replaced() {
         "lock"
     );
     assert!(app.policy(&token).await["pending_command"].is_null());
-    let replaced: String = sqlx::query_scalar(
-        "SELECT detail FROM security_events WHERE event_type = 'device_command_replaced'",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    let replaced =
+        super::security_words(&app, "device_command_replaced", crate::i18n::Lang::En).await;
     assert!(
-        replaced.starts_with("1 waiting ring/stop_ring replaced by a new stop_ring"),
-        "{replaced}"
+        replaced[0].starts_with("1 waiting ring/stop_ring replaced by a new stop_ring"),
+        "{replaced:?}"
     );
     let page = locate_page(&app, &cookie, device).await;
     assert!(

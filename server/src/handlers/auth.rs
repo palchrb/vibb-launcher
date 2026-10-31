@@ -151,7 +151,10 @@ pub async fn login(
             "login_expired",
             Some(&admin.username),
             Some(&ip),
-            Some("correct password after the one-time password's 72 hours"),
+            Some(security::Detail::words(
+                "security.detail.login_expired",
+                &[],
+            )),
         )
         .await;
         return render_login(Some(INVITE_EXPIRED.to_string()), lang).into_response();
@@ -162,7 +165,7 @@ pub async fn login(
             "login_locked",
             Some(&admin.username),
             Some(&ip),
-            Some("correct password while the account is locked"),
+            Some(security::Detail::words("security.detail.login_locked", &[])),
         )
         .await;
         return render_login(Some(locked_message(minutes)), lang).into_response();
@@ -192,7 +195,9 @@ pub async fn login(
             "login_success",
             Some(&admin.username),
             Some(&ip),
-            admin.must_change_password.then_some("one-time password"),
+            admin
+                .must_change_password
+                .then(|| security::Detail::words("security.detail.login.one_time_password", &[])),
         )
         .await;
         session.insert("admin_id", admin.id).await.ok();
@@ -501,7 +506,10 @@ pub async fn change_password(
             "password_change_refused",
             Some(&admin.username),
             None,
-            Some("wrong current password"),
+            Some(security::Detail::words(
+                "security.detail.wrong_current_password",
+                &[],
+            )),
         )
         .await;
     }
@@ -972,7 +980,10 @@ pub async fn update_account_password(
             "password_change_refused",
             Some(&admin.username),
             None,
-            Some("wrong current password"),
+            Some(security::Detail::words(
+                "security.detail.wrong_current_password",
+                &[],
+            )),
         )
         .await;
     }
@@ -1042,7 +1053,10 @@ pub async fn update_account_password(
         "password_changed",
         Some(&admin.username),
         None,
-        Some("every other session signed out"),
+        Some(security::Detail::words(
+            "security.detail.other_sessions_signed_out",
+            &[],
+        )),
     )
     .await;
 
@@ -1086,7 +1100,10 @@ pub async fn reset_totp(
             "totp_reset_refused",
             Some(&admin.username),
             None,
-            Some("wrong current password"),
+            Some(security::Detail::words(
+                "security.detail.wrong_current_password",
+                &[],
+            )),
         )
         .await;
         let reset_error = match reauth {
@@ -1138,7 +1155,10 @@ pub async fn reset_totp(
         "totp_reset",
         Some(&admin.username),
         None,
-        Some("every other session signed out"),
+        Some(security::Detail::words(
+            "security.detail.other_sessions_signed_out",
+            &[],
+        )),
     )
     .await;
 

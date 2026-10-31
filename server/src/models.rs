@@ -441,6 +441,9 @@ pub struct SecurityEvent {
     pub ip_address: Option<String>,
     pub detail: Option<String>,
     pub created_at: String,
+    /// The row's words as a catalog key and its parameters (migration 0107, design 70 §4;
+    /// `security::Detail`); NULL on a row from before, whose prose is in `detail`.
+    pub params: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Clone)]

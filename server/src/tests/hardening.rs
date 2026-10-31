@@ -488,14 +488,8 @@ async fn unseen_boots_are_stored_warned_and_logged() {
             assert_eq!(res.status, StatusCode::NO_CONTENT);
         }
     };
-    let logged = || async {
-        sqlx::query_scalar::<_, String>(
-            "SELECT detail FROM security_events WHERE event_type = 'boot_unseen' ORDER BY id",
-        )
-        .fetch_all(&app.db)
-        .await
-        .unwrap()
-    };
+    let logged =
+        || async { super::security_words(&app, "boot_unseen", crate::i18n::Lang::En).await };
     let stored = || async {
         sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
             "SELECT unseen_boots_count, unseen_boots_last_at_ms FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
@@ -532,9 +526,7 @@ async fn unseen_boots_are_stored_warned_and_logged() {
     assert_eq!(stored().await, (Some(1), Some(at)));
     assert_eq!(
         logged().await,
-        vec![format!(
-            "device {id}: 1 start(s) without Vibb One running noticed (1 in all)"
-        )]
+        vec!["1 start without Vibb One running noticed (1 in all)".to_string()]
     );
     let html = page().await;
     assert!(html.contains(warning), "{html}");

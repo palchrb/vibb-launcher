@@ -776,7 +776,7 @@ async fn server_changed(state: &AppState, username: &str, detail: &str) {
         "dns_server_changed",
         Some(username),
         None,
-        Some(detail),
+        Some(crate::security::Detail::facts(detail)),
     )
     .await;
     nudge(state, None).await;
@@ -1220,10 +1220,17 @@ pub async fn set_dns_log(
                 "dns_log_changed",
                 Some(&admin.username),
                 None,
-                Some(&format!(
-                    "device {device_id}: {}",
-                    if enabled { "on" } else { "off" }
-                )),
+                Some(
+                    crate::security::Detail::words(
+                        if enabled {
+                            "security.detail.dns_log.on"
+                        } else {
+                            "security.detail.dns_log.off"
+                        },
+                        &[("device", &device_id.to_string())],
+                    )
+                    .with_facts(format!("device {device_id}")),
+                ),
             )
             .await;
             let _ = state.command_notify.send(device_id);

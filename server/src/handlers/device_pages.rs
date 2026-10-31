@@ -992,7 +992,7 @@ pub async fn lock_action(
                 event,
                 Some(&username),
                 None,
-                Some(&format!("device {id}")),
+                Some(crate::security::Detail::facts(format!("device {id}"))),
             )
             .await;
         }

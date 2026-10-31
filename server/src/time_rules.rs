@@ -594,17 +594,30 @@ async fn has_bedtime(
     .await
 }
 
+/// A rule's log line: "everyone: {what}" or "phone {id}: {what}" (`security.detail.rule.*`, design
+/// 70 §4), the phone's id a fact too.
+pub fn scoped_detail(device_id: Option<i64>, what: &str) -> crate::security::Detail {
+    match device_id {
+        Some(id) => crate::security::Detail::words(
+            "security.detail.rule.device",
+            &[("device", &id.to_string()), ("what", what)],
+        )
+        .with_facts(format!("device {id}")),
+        None => crate::security::Detail::words("security.detail.rule.everyone", &[("what", what)]),
+    }
+}
+
 /// A conversion's line in the security log, in its unit's transaction (no actor).
 async fn log_conversion(
     conn: &mut sqlx::SqliteConnection,
     event: &str,
-    device_id: Option<i64>,
-    what: &str,
+    detail: crate::security::Detail,
 ) -> Result<(), sqlx::Error> {
-    let scope = device_id.map_or("global".to_string(), |id| format!("device {id}"));
-    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
+    let (facts, params) = detail.columns();
+    sqlx::query("INSERT INTO security_events (event_type, detail, params) VALUES (?, ?, ?)")
         .bind(event)
-        .bind(format!("{scope}: {what}"))
+        .bind(facts)
+        .bind(params)
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -638,7 +651,12 @@ async fn split_rule(
     .bind(row.sort_order)
     .execute(&mut *conn)
     .await?;
-    log_conversion(conn, "time_rule_split", row.device_id, &row.name).await
+    log_conversion(
+        conn,
+        "time_rule_split",
+        scoped_detail(row.device_id, &row.name),
+    )
+    .await
 }
 
 /// Step 1 for every rule (`bedtime = 0`): an end of 00:00 becomes 23:59. A rule whose days or
@@ -690,7 +708,12 @@ async fn convert_phone(db: &SqlitePool, device_id: i64, own: bool) -> Result<(),
         .bind(device_id)
         .execute(&mut *tx)
         .await?;
-        log_conversion(&mut tx, "time_rule_to_bedtime", Some(device_id), &row.name).await?;
+        log_conversion(
+            &mut tx,
+            "time_rule_to_bedtime",
+            scoped_detail(Some(device_id), &row.name),
+        )
+        .await?;
     }
     for (row, days) in &rules {
         split_rule(&mut tx, row, days).await?;
@@ -734,8 +757,15 @@ async fn convert_global_bedtime(
         .execute(&mut *tx)
         .await?;
     let to: Vec<String> = followers.iter().map(|(id, _)| id.to_string()).collect();
-    let what = format!("{}, now the bedtime of device {}", row.name, to.join(", "));
-    log_conversion(&mut tx, "time_rule_to_bedtime", None, &what).await?;
+    log_conversion(
+        &mut tx,
+        "time_rule_to_bedtime",
+        crate::security::Detail::words(
+            "security.detail.rule.now_bedtime_of",
+            &[("what", &row.name), ("devices", &to.join(", "))],
+        ),
+    )
+    .await?;
     tx.commit().await
 }
 

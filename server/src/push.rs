@@ -934,10 +934,12 @@ async fn send_one(
                     "push_subscription_gone",
                     None,
                     None,
-                    Some(&format!(
-                        "{}: the push service says it is gone ({})",
-                        delivery.label,
-                        status.unwrap_or(0)
+                    Some(crate::security::Detail::words(
+                        "security.detail.push_gone",
+                        &[
+                            ("label", &delivery.label),
+                            ("status", &status.unwrap_or(0).to_string()),
+                        ],
                     )),
                 )
                 .await;

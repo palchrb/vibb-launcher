@@ -83,22 +83,22 @@ async fn a_valid_token_never_touches_the_failure_bucket() {
 
     // The audit trail has one row per client per minute, not one per request.
     app.state.audit.flush(&app.db).await;
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT ip_address, detail FROM security_events WHERE event_type = 'device_auth_failed' \
+    let ips: Vec<String> = sqlx::query_scalar(
+        "SELECT ip_address FROM security_events WHERE event_type = 'device_auth_failed' \
          ORDER BY id",
     )
     .fetch_all(&app.db)
     .await
     .unwrap();
-    assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(rows[0].0, "203.0.113.7");
+    assert_eq!(ips.len(), 2, "{ips:?}");
+    assert_eq!(ips[0], "203.0.113.7");
+    let rows = super::security_words(&app, "device_auth_failed", crate::i18n::Lang::En).await;
     assert!(
-        rows[0]
-            .1
-            .contains(&format!("({IP_FAILURES} times in a minute)")),
+        rows[0].contains(&format!("({IP_FAILURES} times in a minute)")),
         "{}",
-        rows[0].1
+        rows[0]
     );
+    assert!(rows[0].starts_with("Invalid phone key"), "{}", rows[0]);
 }
 
 #[tokio::test]
@@ -501,27 +501,35 @@ async fn a_flood_from_many_addresses_has_a_row_budget() {
                 "device_auth_failed",
                 &format!("2001:db8:{:x}:{:x}::/64", n / 0x10000, n % 0x10000),
                 Some("2001:db8::1"),
-                "invalid device token",
+                crate::security::Detail::words("security.detail.device_auth.invalid_token", &[]),
             )
             .await;
     }
     app.state.audit.flush(&app.db).await;
-    let rows: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT detail FROM security_events WHERE event_type = 'device_auth_failed' ORDER BY id",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
+    let rows = super::security_words(&app, "device_auth_failed", crate::i18n::Lang::En).await;
     assert_eq!(rows.len() as u32, crate::audit::ROWS_PER_MINUTE + 1);
-    let summary = rows.last().unwrap().as_deref().unwrap();
+    let summary = rows.last().unwrap();
     assert!(
         summary.starts_with("9940 more in this minute from at least 1000 addresses"),
         "{summary}"
     );
+    let nb = super::security_words(&app, "device_auth_failed", crate::i18n::Lang::Nb).await;
+    assert!(
+        nb.last()
+            .unwrap()
+            .starts_with("9940 til dette minuttet fra minst 1000 adresser"),
+        "{nb:?}"
+    );
     // Another kind has its own budget.
     app.state
         .audit
-        .record(&app.db, "enroll_failed", "203.0.113.7", None, "typed code")
+        .record(
+            &app.db,
+            "enroll_failed",
+            "203.0.113.7",
+            None,
+            crate::security::Detail::words("security.detail.enroll_failed.typed", &[]),
+        )
         .await;
     let enroll: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'enroll_failed'",

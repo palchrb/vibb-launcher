@@ -243,8 +243,9 @@ async fn the_admin_gate_refuses_public_clients_and_logs_it_once_a_minute() {
     let rows = refused_rows(&app).await;
     assert_eq!(rows.len(), 2, "one row per client per minute: {rows:?}");
     assert_eq!(rows[0].0, "203.0.113.7");
-    let detail = rows[0].1.as_deref().unwrap();
-    assert!(detail.contains("6 times in a minute"), "{detail}");
+    let words = super::security_words(&app, "admin_refused", crate::i18n::Lang::En).await;
+    assert!(words[0].contains("6 times in a minute"), "{words:?}");
+    assert!(rows[0].1.is_some(), "the method and path as facts");
     assert_eq!(rows[1].0, "192.168.1.20");
 
     // Tailnet clients (behind the local proxy, or directly) and loopback pass.

@@ -213,7 +213,9 @@ pub async fn install(
                 "device_command_queued",
                 Some(&admin.username),
                 None,
-                Some(&format!("install_update {tag}, device {device_id}")),
+                Some(security::Detail::facts(format!(
+                    "install_update {tag}, device {device_id}"
+                ))),
             )
             .await;
             back(app_id, "sent", Some(&device))
@@ -310,9 +312,18 @@ async fn queue_install(
             "device_command_replaced",
             Some(&admin.username),
             None,
-            Some(&format!(
-                "{replaced} waiting install_update replaced by a new install_update, device {device_id}"
-            )),
+            Some(
+                security::Detail::words(
+                    "security.detail.command_replaced",
+                    &[
+                        ("count", &replaced.to_string()),
+                        ("replaced", "install_update"),
+                        ("command", "install_update"),
+                        ("device", &device_id.to_string()),
+                    ],
+                )
+                .with_facts(format!("device {device_id}")),
+            ),
         )
         .await;
     }

@@ -520,7 +520,13 @@ pub async fn regenerate_code(
         "enroll_code_created",
         Some(&admin.username),
         None,
-        Some(&format!("{} (device {id}), typed code", device.name)),
+        Some(
+            security::Detail::words(
+                "security.detail.code_created",
+                &[("name", &device.name), ("device", &id.to_string())],
+            )
+            .with_facts(format!("device {id}")),
+        ),
     )
     .await;
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
@@ -592,7 +598,7 @@ pub async fn revoke_access(
         "access_revoked",
         Some(&admin.username),
         None,
-        Some(&format!("{name} (device {id})")),
+        Some(security::Detail::facts(format!("{name} (device {id})"))),
     )
     .await;
     Redirect::to(&format!(
@@ -1544,9 +1550,10 @@ async fn render_device(
     // of -1, a dropped start). `happened_at` is RFC 3339 and `reported_at` SQLite's `datetime`
     // text: compared through `datetime()`, never as raw strings. A minute's slack for the phone's
     // clock and a report racing the shutdown (no start reports within a minute of its shutdown).
-    let off: Result<Option<(String, String, String, String, Option<String>)>, sqlx::Error> =
-        sqlx::query_as(
-            "SELECT o.happened_at, o.created_at, o.title, o.summary, o.params FROM parent_events o \
+    // The newest off: `(happened_at, created_at, title, summary, params)`.
+    type OffRow = (String, String, String, String, Option<String>);
+    let off: Result<Option<OffRow>, sqlx::Error> = sqlx::query_as(
+        "SELECT o.happened_at, o.created_at, o.title, o.summary, o.params FROM parent_events o \
          WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
              COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
                        WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
@@ -1554,10 +1561,10 @@ async fn render_device(
                        FROM device_status s \
                        WHERE s.device_id = ?1), '') \
          ORDER BY o.happened_at DESC, o.id DESC LIMIT 1",
-        )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await;
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
     let power_off = match off {
         Ok(off) => off.and_then(|(at, created, title, summary, params)| {
             let at = crate::display_time::parse_db_utc(&at)?;
@@ -2553,7 +2560,7 @@ pub async fn update_kid_lock(
         event,
         Some(&admin.username),
         None,
-        Some(&format!("device {id}")),
+        Some(security::Detail::facts(format!("device {id}"))),
     )
     .await;
     let _ = state.command_notify.send(id);
@@ -2645,16 +2652,19 @@ pub async fn update_kid_keyguard(
     }
     if was != keyguard {
         let words = if keyguard == crate::kid_lock::KEYGUARD_ANDROID {
-            "Android's lock"
+            "security.detail.keyguard.android"
         } else {
-            "Vibb One's lock"
+            "security.detail.keyguard.own"
         };
         security::record_security_event(
             &state.db,
             "kid_keyguard_changed",
             Some(&admin.username),
             None,
-            Some(&format!("device {id}: {words}")),
+            Some(
+                security::Detail::words(words, &[("device", &id.to_string())])
+                    .with_facts(format!("device {id}")),
+            ),
         )
         .await;
     }
@@ -2708,7 +2718,7 @@ pub async fn send_kid_pin(
         "kid_pin_sent",
         Some(&admin.username),
         None,
-        Some(&format!("device {id}")),
+        Some(security::Detail::facts(format!("device {id}"))),
     )
     .await;
     let _ = state.command_notify.send(id);

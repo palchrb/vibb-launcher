@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use sqlx::SqlitePool;
 
+use crate::security::Detail;
+
 /// One row per kind and key per this long.
 pub const WINDOW: Duration = Duration::from_secs(60);
 /// At most this many keys are tracked; past it the oldest window is dropped (its count may be
@@ -46,17 +48,21 @@ impl Budget {
         }
     }
 
-    fn summary_detail(&self) -> String {
+    /// The summary row's words: "{count} more in this minute from {addresses} addresses (past
+    /// {max} rows a minute, only counted)".
+    fn summary_detail(&self) -> Detail {
         let addresses = self.summary_keys.len();
-        let more = if addresses >= SUMMARY_KEYS {
-            format!("at least {addresses}")
-        } else {
-            addresses.to_string()
-        };
-        format!(
-            "{} more in this minute from {more} addresses (past {ROWS_PER_MINUTE} rows a minute, \
-             only counted)",
-            self.summary_count
+        Detail::words(
+            if addresses >= SUMMARY_KEYS {
+                "security.detail.flood_at_least"
+            } else {
+                "security.detail.flood"
+            },
+            &[
+                ("count", &self.summary_count.to_string()),
+                ("addresses", &addresses.to_string()),
+                ("max", &ROWS_PER_MINUTE.to_string()),
+            ],
         )
     }
 }
@@ -68,14 +74,14 @@ enum Plan {
     /// A new row for this key; the window it replaced, if its count isn't written yet.
     Row(Option<Window>),
     /// The minute's first summary row of this kind.
-    Summary(String),
+    Summary(Detail),
 }
 
 struct Window {
     started: Instant,
     /// The row written for this window, once its insert finished.
     row_id: Option<i64>,
-    detail: String,
+    detail: Detail,
     count: u64,
     /// The count the row says.
     written: u64,
@@ -88,19 +94,20 @@ pub struct EventThrottle {
 }
 
 impl EventThrottle {
-    /// Records one event of `event_type` for `key`. `ip` and `detail` go into the row of the
-    /// minute's first event. True when this event opened the key's minute (its own row): a caller
-    /// that also logs a line logs it then, one a minute per client (qa-pwa-fixes-d Q-4).
+    /// Records one event of `event_type` for `key`. `ip` and `detail` (its words and facts,
+    /// design 70 §4) go into the row of the minute's first event. True when this event opened the
+    /// key's minute (its own row): a caller that also logs a line logs it then, one a minute per
+    /// client (qa-pwa-fixes-d Q-4).
     pub async fn record(
         &self,
         db: &SqlitePool,
         event_type: &str,
         key: &str,
         ip: Option<&str>,
-        detail: &str,
+        detail: Detail,
     ) -> bool {
         let map_key = (event_type.to_string(), key.to_string());
-        let mut old_summary: Option<(i64, String)> = None;
+        let mut old_summary: Option<(i64, Detail)> = None;
         let plan = {
             let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
             let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
@@ -133,7 +140,7 @@ impl EventThrottle {
                         Window {
                             started: Instant::now(),
                             row_id: None,
-                            detail: detail.to_string(),
+                            detail: detail.clone(),
                             count: 1,
                             written: 1,
                         },
@@ -162,7 +169,7 @@ impl EventThrottle {
                 if let Some(old) = finished {
                     write_count(db, &old).await;
                 }
-                let row_id = insert(db, event_type, ip, detail).await;
+                let row_id = insert(db, event_type, ip, &detail).await;
                 let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(window) = windows.get_mut(&map_key) {
                     window.row_id = row_id;
@@ -183,7 +190,7 @@ impl EventThrottle {
     /// Writes every window's count that its row doesn't show yet, and forgets windows that are
     /// over.
     pub async fn flush(&self, db: &SqlitePool) {
-        let due: Vec<(i64, String, u64)> = {
+        let due: Vec<(i64, Detail, u64)> = {
             let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
             let mut due = Vec::new();
             windows.retain(|_, window| {
@@ -200,7 +207,7 @@ impl EventThrottle {
         for (row_id, detail, count) in due {
             update_detail(db, row_id, &detail, count).await;
         }
-        let summaries: Vec<(i64, String)> = {
+        let summaries: Vec<(i64, Detail)> = {
             let mut budgets = self.budgets.lock().unwrap_or_else(|e| e.into_inner());
             let mut due = Vec::new();
             budgets.retain(|_, budget| {
@@ -221,22 +228,31 @@ impl EventThrottle {
     }
 }
 
-async fn insert(db: &SqlitePool, event_type: &str, ip: Option<&str>, detail: &str) -> Option<i64> {
+async fn insert(
+    db: &SqlitePool,
+    event_type: &str,
+    ip: Option<&str>,
+    detail: &Detail,
+) -> Option<i64> {
+    let (facts, params) = detail.columns();
     sqlx::query_scalar(
-        "INSERT INTO security_events (event_type, username, ip_address, detail) \
-         VALUES (?, NULL, ?, ?) RETURNING id",
+        "INSERT INTO security_events (event_type, username, ip_address, detail, params) \
+         VALUES (?, NULL, ?, ?, ?) RETURNING id",
     )
     .bind(event_type)
     .bind(ip)
-    .bind(detail)
+    .bind(facts)
+    .bind(params)
     .fetch_one(db)
     .await
     .ok()
 }
 
-async fn update_raw(db: &SqlitePool, row_id: i64, detail: &str) {
-    sqlx::query("UPDATE security_events SET detail = ? WHERE id = ?")
-        .bind(detail)
+async fn update_raw(db: &SqlitePool, row_id: i64, detail: &Detail) {
+    let (facts, params) = detail.columns();
+    sqlx::query("UPDATE security_events SET detail = ?, params = ? WHERE id = ?")
+        .bind(facts)
+        .bind(params)
         .bind(row_id)
         .execute(db)
         .await
@@ -259,23 +275,19 @@ async fn write_count(db: &SqlitePool, window: &Window) {
     }
 }
 
-async fn update_detail(db: &SqlitePool, row_id: i64, detail: &str, count: u64) {
-    sqlx::query("UPDATE security_events SET detail = ? WHERE id = ?")
-        .bind(counted(detail, count))
-        .bind(row_id)
-        .execute(db)
-        .await
-        .ok();
+async fn update_detail(db: &SqlitePool, row_id: i64, detail: &Detail, count: u64) {
+    update_raw(db, row_id, &counted(detail, count)).await;
 }
 
-/// The detail a row ends up with: "<detail> (N times in a minute)".
-pub fn counted(detail: &str, count: u64) -> String {
+/// The words a row ends up with: its own, then "({N} times in a minute)" once it counts more
+/// than one (`security.detail.times`, a `{times}` parameter - design 70 §4).
+pub fn counted(detail: &Detail, count: u64) -> Detail {
     if count <= 1 {
-        detail.to_string()
-    } else if detail.is_empty() {
-        format!("{count} times in a minute")
+        detail.clone()
     } else {
-        format!("{detail} ({count} times in a minute)")
+        detail
+            .clone()
+            .and("security.detail.times", &[("times", &count.to_string())])
     }
 }
 

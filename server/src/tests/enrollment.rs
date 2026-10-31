@@ -62,14 +62,15 @@ async fn a_qr_code_works_once_and_is_never_stored_in_plain() {
     let res = enroll_from(&app, "203.0.113.7", &code).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "once");
 
-    let event: (String, String) = sqlx::query_as(
-        "SELECT ip_address, detail FROM security_events WHERE event_type = 'device_enrolled'",
+    let ip: String = sqlx::query_scalar(
+        "SELECT ip_address FROM security_events WHERE event_type = 'device_enrolled'",
     )
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(event.0, "203.0.113.7");
-    assert!(event.1.contains("phone"), "{}", event.1);
+    assert_eq!(ip, "203.0.113.7");
+    let words = super::security_words(&app, "device_enrolled", crate::i18n::Lang::En).await;
+    assert!(words[0].contains("setup QR code"), "{words:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -187,13 +188,14 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(res.headers.contains_key(header::RETRY_AFTER));
     let paused: (String, String) = sqlx::query_as(
-        "SELECT ip_address, detail FROM security_events WHERE event_type = 'enroll_typed_paused'",
+        "SELECT ip_address, params FROM security_events WHERE event_type = 'enroll_typed_paused'",
     )
     .fetch_one(&app.db)
     .await
     .unwrap();
+    let words = super::security_words(&app, "enroll_typed_paused", crate::i18n::Lang::En).await;
     assert!(
-        paused.1.contains("setup QR codes still work"),
+        words[0].contains("setup QR codes still work"),
         "{}",
         paused.1
     );
@@ -219,15 +221,19 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
 
     // enroll_failed is written once a minute per client, with a count.
     app.state.audit.flush(&app.db).await;
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT ip_address, detail FROM security_events WHERE event_type = 'enroll_failed' \
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT ip_address, params FROM security_events WHERE event_type = 'enroll_failed' \
          AND ip_address = '203.0.113.66'",
     )
     .fetch_all(&app.db)
     .await
     .unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert!(rows[0].1.contains("200 times in a minute"), "{}", rows[0].1);
+    let words = super::security_words(&app, "enroll_failed", crate::i18n::Lang::En).await;
+    assert!(
+        words.iter().any(|w| w.contains("200 times in a minute")),
+        "{words:?}"
+    );
 }
 
 #[tokio::test]

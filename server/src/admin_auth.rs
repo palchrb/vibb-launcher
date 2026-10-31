@@ -234,9 +234,10 @@ pub async fn record_reauth(
         "reauth_signed_out",
         Some(&admin.username),
         None,
-        Some(
-            "3 wrong passwords in a row at a form that asks for it again: every session signed out",
-        ),
+        Some(crate::security::Detail::words(
+            "security.detail.reauth_signed_out",
+            &[],
+        )),
     )
     .await;
     Reauth::SignedOut
@@ -518,18 +519,18 @@ pub async fn reset_2fa(
             .map_err(|err| format!("couldn't mark the events read: {err}"))?;
     }
     let (event, detail) = if removed {
-        (
-            "parent_restored",
-            "from the command line (reset-2fa): the removed account is back with a new password",
-        )
+        ("parent_restored", "security.detail.shell.restored")
     } else {
-        (
-            "totp_reset",
-            "from the command line (reset-2fa): new password, 2FA cleared, every session \
-             signed out, notifications removed from every device",
-        )
+        ("totp_reset", "security.detail.shell.reset")
     };
-    crate::security::record_security_event(db, event, Some(username), None, Some(detail)).await;
+    crate::security::record_security_event(
+        db,
+        event,
+        Some(username),
+        None,
+        Some(crate::security::Detail::words(detail, &[])),
+    )
+    .await;
     // The restore doesn't refuse past Add's cap (qa-62-step12-code P62-3): the shell is the way back
     // for a parent the other one removed, and a full family must not lock it out. It says so.
     let mut restored = String::new();
@@ -592,7 +593,8 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
                 "csrf_refused",
                 &client.map(|c| c.key()).unwrap_or_default(),
                 ip.as_deref(),
-                &format!("{reason} ({method} {})", crate::audit::clip(path, 100)),
+                crate::security::Detail::words(reason, &[])
+                    .with_facts(format!("{method} {}", crate::audit::clip(path, 100))),
             )
             .await;
         // Before the session layer: `?lang=` or the browser's language.
@@ -602,12 +604,13 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
     next.run(request).await
 }
 
-/// [csrf_guard]'s decision. `peer_trusted`: `X-Forwarded-Host` from it counts as the host too.
+/// [csrf_guard]'s decision; a refusal is its reason's key (`security.detail.csrf.*`, the log's
+/// words). `peer_trusted`: `X-Forwarded-Host` from it counts as the host too.
 pub fn csrf_check(headers: &HeaderMap, peer_trusted: bool) -> Result<(), &'static str> {
     if let Some(site) = headers.get("sec-fetch-site") {
         return match site.to_str().unwrap_or("") {
             "same-origin" | "none" => Ok(()),
-            _ => Err("Sec-Fetch-Site is not same-origin"),
+            _ => Err("security.detail.csrf.cross_site"),
         };
     }
     let Some(origin) = headers.get(header::ORIGIN) else {
@@ -615,7 +618,7 @@ pub fn csrf_check(headers: &HeaderMap, peer_trusted: bool) -> Result<(), &'stati
     };
     let origin = origin.to_str().unwrap_or("");
     let Some((_, origin_host)) = origin.split_once("://") else {
-        return Err("Origin is not a site");
+        return Err("security.detail.csrf.no_site");
     };
     let origin_host = normalize_host(origin_host);
     let host_matches = |value: Option<&HeaderValue>| {
@@ -628,7 +631,7 @@ pub fn csrf_check(headers: &HeaderMap, peer_trusted: bool) -> Result<(), &'stati
     {
         Ok(())
     } else {
-        Err("Origin is another host")
+        Err("security.detail.csrf.other_host")
     }
 }
 

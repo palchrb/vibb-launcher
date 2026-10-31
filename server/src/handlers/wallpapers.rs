@@ -475,7 +475,7 @@ pub async fn save_lock_wallpaper(
                 "lock_wallpaper_changed",
                 Some(&admin.username),
                 None,
-                Some(&lock_wallpaper_log_line(id, choice)),
+                Some(lock_wallpaper_log_line(id, choice)),
             )
             .await;
             nudge(&state, &[id]);
@@ -494,9 +494,17 @@ pub async fn save_lock_wallpaper(
 }
 
 /// The security log's detail for a lock-wallpaper change.
-pub fn lock_wallpaper_log_line(device_id: i64, choice: Option<i64>) -> String {
+pub fn lock_wallpaper_log_line(device_id: i64, choice: Option<i64>) -> security::Detail {
+    let device = device_id.to_string();
     match choice {
-        Some(w) => format!("device {device_id}: lock screen background: wallpaper {w}"),
-        None => format!("device {device_id}: lock screen background: same as Home"),
+        Some(w) => security::Detail::words(
+            "security.detail.wallpaper.chosen",
+            &[("device", &device), ("wallpaper", &w.to_string())],
+        ),
+        None => security::Detail::words(
+            "security.detail.wallpaper.same_as_home",
+            &[("device", &device)],
+        ),
     }
+    .with_facts(format!("device {device_id}"))
 }

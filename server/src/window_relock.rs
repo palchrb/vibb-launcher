@@ -576,10 +576,9 @@ pub fn relock_blocked(r: &RelockReport, allowed_since: bool, ctx: &BlockContext)
 /// The security log's line for apps the phone newly reports as blocked (`phone_app_blocked`):
 /// `None` when none is new since [previous].
 pub fn blocks_log_line(
-    device_id: i64,
     previous: Option<&[RelockBlock]>,
     now: &[RelockBlock],
-) -> Option<String> {
+) -> Option<crate::security::Detail> {
     let new: Vec<String> = now
         .iter()
         .filter(|b| !previous.is_some_and(|p| p.iter().any(|q| q.package_name == b.package_name)))
@@ -588,7 +587,9 @@ pub fn blocks_log_line(
             format!("{} ({}, {}, key {key})", b.package_name, b.reason, b.found)
         })
         .collect();
-    (!new.is_empty()).then(|| format!("device {device_id}: blocked {}", new.join("; ")))
+    (!new.is_empty()).then(|| {
+        crate::security::Detail::words("security.detail.blocked", &[("apps", &new.join("; "))])
+    })
 }
 
 /// The summary's red warning while the phone refuses the Parent PIN (the fix round, QA High 1
@@ -644,24 +645,25 @@ pub fn foreign_view(
 }
 
 /// The security log's line when the finding appears, changes or goes (`phone_foreign_access`).
-pub fn foreign_log_line(device_id: i64, found: Option<&ForeignAccess>) -> String {
+pub fn foreign_log_line(found: Option<&ForeignAccess>) -> crate::security::Detail {
     match found {
         Some(f) => {
-            let mut parts = Vec::new();
+            let mut detail = crate::security::Detail::words("security.detail.foreign.refused", &[]);
             if !f.admins.is_empty() {
-                parts.push(format!("device admin: {}", f.admins.join(", ")));
+                detail = detail.and(
+                    "security.detail.foreign.admins",
+                    &[("apps", &f.admins.join(", "))],
+                );
             }
             if !f.accessibility.is_empty() {
-                parts.push(format!("accessibility on: {}", f.accessibility.join(", ")));
+                detail = detail.and(
+                    "security.detail.foreign.accessibility",
+                    &[("apps", &f.accessibility.join(", "))],
+                );
             }
-            format!(
-                "device {device_id}: the parent PIN is refused on the phone - {}.",
-                parts.join("; ")
-            )
+            detail
         }
-        None => format!(
-            "device {device_id}: nothing unknown any more - the phone takes the parent PIN again."
-        ),
+        None => crate::security::Detail::words("security.detail.foreign.cleared", &[]),
     }
 }
 
@@ -794,54 +796,71 @@ pub fn findings(
     })
 }
 
-/// The security log's line for a new relock with findings (`phone_relock_findings`): when it
-/// happened on the phone, then what it found - built only from the sanitized report.
-pub fn log_line(device_id: i64, r: &RelockReport) -> String {
-    let at = chrono::DateTime::from_timestamp_millis(r.at_ms)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let mut parts = Vec::new();
+/// The security log's words for a new relock with findings (`phone_relock_findings`): when it
+/// happened on the phone, then what it found, each a sentence - built only from the sanitized
+/// report. The lists are the phone's package names (facts inside the words); each is cut so a row
+/// stays short.
+pub fn log_line(r: &RelockReport) -> crate::security::Detail {
+    let mut detail = match (
+        chrono::DateTime::from_timestamp_millis(r.at_ms),
+        r.trigger.as_str(),
+    ) {
+        (Some(at), "") => {
+            crate::security::Detail::words("security.detail.relock.at_plain", &[]).at("at", at)
+        }
+        (Some(at), trigger) => {
+            crate::security::Detail::words("security.detail.relock.at", &[("trigger", trigger)])
+                .at("at", at)
+        }
+        (None, _) => crate::security::Detail::words(
+            "security.detail.relock.at_plain",
+            &[("at", &r.at_ms.to_string())],
+        ),
+    };
     if r.proxies_cleared > 0 {
-        parts.push(format!("Wi-Fi proxies removed: {}", r.proxies_cleared));
+        detail = detail.and(
+            "security.detail.relock.proxies",
+            &[("count", &r.proxies_cleared.to_string())],
+        );
     }
     if r.ca_certs_removed > 0 {
-        parts.push(format!("certificates removed: {}", r.ca_certs_removed));
+        detail = detail.and(
+            "security.detail.relock.certs",
+            &[("count", &r.ca_certs_removed.to_string())],
+        );
     }
     if r.credential_removed {
-        parts.push("Android screen lock removed".to_string());
+        detail = detail.and("security.detail.relock.credential_removed", &[]);
     }
-    for (label, list) in [
-        ("blocked", &r.blocked),
-        ("accessibility on", &r.accessibility_enabled),
-        ("notification access", &r.notification_listeners),
-        ("device admin", &r.admins_enabled),
-        ("turned off", &r.apps_disabled),
-        ("failed", &r.failures),
+    for (key, list) in [
+        ("security.detail.relock.blocked", &r.blocked),
+        (
+            "security.detail.relock.accessibility",
+            &r.accessibility_enabled,
+        ),
+        (
+            "security.detail.relock.notification_access",
+            &r.notification_listeners,
+        ),
+        ("security.detail.relock.device_admin", &r.admins_enabled),
+        ("security.detail.relock.turned_off", &r.apps_disabled),
+        ("security.detail.relock.failed", &r.failures),
     ] {
         if !list.is_empty() {
-            parts.push(format!("{label}: {}", list.join(", ")));
+            let apps: String = list.join(", ").chars().take(200).collect();
+            detail = detail.and(key, &[("apps", &apps)]);
         }
     }
     if r.proxy_left {
-        parts.push("a proxy left on a network".to_string());
+        detail = detail.and("security.detail.relock.proxy_left", &[]);
     }
     if r.credential_left {
-        parts.push("an Android screen lock left".to_string());
+        detail = detail.and("security.detail.relock.credential_left", &[]);
     }
     if r.own_notifications_off {
-        parts.push("launcher notifications off".to_string());
+        detail = detail.and("security.detail.relock.notifications_off", &[]);
     }
-    let how = match r.trigger.as_str() {
-        "" => String::new(),
-        t => format!(" ({t})"),
-    };
-    format!(
-        "device {device_id}, {at}: locked again{how} - {}.",
-        parts.join("; ")
-    )
-    .chars()
-    .take(1000)
-    .collect()
+    detail
 }
 
 /// The last of one of this design's commands (QA Low 10): when it was pressed (server time) and,
@@ -1053,13 +1072,14 @@ mod tests {
         let blocks =
             parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
         assert_eq!(
-            blocks_log_line(5, Some(&blocks[1..]), &blocks).as_deref(),
+            blocks_log_line(Some(&blocks[1..]), &blocks).map(|d| crate::security::worded_test(&d)),
             Some(
-                "device 5: blocked me.vibb.music.debug (outside_play, install, key 3f2a0000…0000c0de)"
+                "Blocked me.vibb.music.debug (outside_play, install, key 3f2a0000…0000c0de)"
+                    .to_string()
             )
         );
-        assert_eq!(blocks_log_line(5, Some(&blocks), &blocks), None);
-        assert_eq!(blocks_log_line(5, None, &[]), None);
+        assert_eq!(blocks_log_line(Some(&blocks), &blocks), None);
+        assert_eq!(blocks_log_line(None, &[]), None);
     }
 
     #[test]
@@ -1245,9 +1265,15 @@ mod tests {
 
     #[test]
     fn the_log_line_and_the_flashes() {
+        // Worded when read (design 70 §4): the time in the reader's zone (UTC in the test's).
         assert_eq!(
-            log_line(3, &report()),
-            "device 3, 2025-10-10 12:40 UTC: locked again (timer) - Wi-Fi proxies removed: 1; blocked: com.example.app."
+            crate::security::worded_test(&log_line(&report())),
+            "Locked again 10 Oct 2025 12:40 UTC (timer). Wi-Fi proxies removed: 1. Blocked: com.example.app."
+        );
+        let nb = crate::security::worded_in(&log_line(&report()), crate::i18n::Lang::Nb);
+        assert!(
+            nb.starts_with("Låst igjen 10. okt. 2025 12:40 UTC (timer). "),
+            "{nb}"
         );
         assert_eq!(flash("end_windows_sent").unwrap().0, "quick");
         assert_eq!(flash("start_pause_sent").unwrap().0, "quick");
@@ -1553,10 +1579,13 @@ mod tests {
         assert_eq!((view.admins.as_str(), view.many), ("", false));
         assert_eq!(view.packages, "Accessibility: com.evil.reader.");
         assert_eq!(
-            foreign_log_line(4, Some(&found)),
-            "device 4: the parent PIN is refused on the phone - device admin: com.evil.admin; \
-             accessibility on: com.evil.admin, com.evil.reader."
+            crate::security::worded_test(&foreign_log_line(Some(&found))),
+            "The parent PIN is refused on the phone. Device admin: com.evil.admin. \
+             Accessibility on: com.evil.admin, com.evil.reader."
         );
-        assert!(foreign_log_line(4, None).contains("takes the parent PIN again"));
+        assert!(
+            crate::security::worded_test(&foreign_log_line(None))
+                .contains("takes the parent PIN again")
+        );
     }
 }

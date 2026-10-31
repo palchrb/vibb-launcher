@@ -1482,9 +1482,17 @@ pub(crate) async fn cancel_waiting(
         "device_command_cancelled",
         Some(admin),
         None,
-        Some(&format!(
-            "{command} (asked {requested_at} UTC), device {device_id}"
-        )),
+        Some(
+            security::Detail::words(
+                "security.detail.command_cancelled",
+                &[
+                    ("command", &command),
+                    ("asked", &format!("{requested_at} UTC")),
+                    ("device", &device_id.to_string()),
+                ],
+            )
+            .with_facts(format!("device {device_id}")),
+        ),
     )
     .await;
     Ok(true)
@@ -1742,10 +1750,18 @@ async fn queue_command(
             "device_command_replaced",
             Some(&admin.username),
             None,
-            Some(&format!(
-                "{replaced} waiting {} replaced by a new {command}, device {device_id}",
-                kinds.join("/")
-            )),
+            Some(
+                security::Detail::words(
+                    "security.detail.command_replaced",
+                    &[
+                        ("count", &replaced.to_string()),
+                        ("replaced", &kinds.join("/")),
+                        ("command", command),
+                        ("device", &device_id.to_string()),
+                    ],
+                )
+                .with_facts(format!("device {device_id}")),
+            ),
         )
         .await;
     }
@@ -1770,7 +1786,7 @@ async fn send(
                 event,
                 Some(&admin.username),
                 None,
-                Some(detail),
+                Some(security::Detail::facts(detail)),
             )
             .await;
             Redirect::to(&back).into_response()
@@ -1871,7 +1887,13 @@ pub async fn update_location_retention(
                 "location_retention_changed",
                 Some(&admin.username),
                 None,
-                Some(&format!("device {id}: {days} days")),
+                Some(
+                    security::Detail::words(
+                        "security.detail.location_retention",
+                        &[("device", &id.to_string()), ("days", &days.to_string())],
+                    )
+                    .with_facts(format!("device {id}")),
+                ),
             )
             .await;
             // A failing table is logged by the pass itself (security review L9).
@@ -1931,12 +1953,23 @@ pub async fn update_location_policy(
                 "location_policy_changed",
                 Some(&admin.username),
                 None,
-                Some(&format!(
-                    "device {id}: {mode}{}",
-                    interval
-                        .map(|m| format!(", every {m} min"))
-                        .unwrap_or_default()
-                )),
+                Some(
+                    match interval {
+                        Some(minutes) => security::Detail::words(
+                            "security.detail.location_policy_interval",
+                            &[
+                                ("device", &id.to_string()),
+                                ("mode", mode),
+                                ("minutes", &minutes.to_string()),
+                            ],
+                        ),
+                        None => security::Detail::words(
+                            "security.detail.location_policy",
+                            &[("device", &id.to_string()), ("mode", mode)],
+                        ),
+                    }
+                    .with_facts(format!("device {id}")),
+                ),
             )
             .await;
             if mode == "off" {

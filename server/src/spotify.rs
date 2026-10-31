@@ -1360,17 +1360,20 @@ impl Accounts {
             };
         match outcome {
             Ok((name, new)) => {
-                let detail = if new {
-                    format!("Spotify account {name} logged in")
-                } else {
-                    format!("Spotify account {name} logged in again")
-                };
+                let detail = crate::security::Detail::words(
+                    if new {
+                        "security.detail.spotify.logged_in"
+                    } else {
+                        "security.detail.spotify.logged_in_again"
+                    },
+                    &[("name", &name)],
+                );
                 crate::security::record_security_event(
                     &state.db,
                     "spotify_account_added",
                     Some(&admin),
                     None,
-                    Some(&detail),
+                    Some(detail),
                 )
                 .await;
                 // The Spotify entries that failed for want of a (good) login are due now
@@ -1385,7 +1388,7 @@ impl Accounts {
                     "spotify_login_failed",
                     Some(&admin),
                     None,
-                    Some(&code),
+                    Some(crate::security::Detail::facts(&code)),
                 )
                 .await;
                 outcome
@@ -1755,9 +1758,9 @@ async fn refresh_failed(
                         "spotify_login_needed",
                         None,
                         None,
-                        Some(&format!(
-                            "Spotify account {}: log in again",
-                            row.display_name
+                        Some(crate::security::Detail::words(
+                            "security.detail.spotify.login_needed",
+                            &[("name", &row.display_name)],
                         )),
                     )
                     .await;
@@ -3512,12 +3515,8 @@ pub(crate) mod tests {
             outcome(&app, account).await,
             (None, Some("invalid_grant".to_string()), 1)
         );
-        let events: Vec<String> = sqlx::query_scalar(
-            "SELECT detail FROM security_events WHERE event_type = 'spotify_login_needed'",
-        )
-        .fetch_all(&app.db)
-        .await
-        .unwrap();
+        let events =
+            crate::tests::security_words(&app, "spotify_login_needed", crate::i18n::Lang::En).await;
         assert_eq!(events, ["Spotify account Ella: log in again"]);
         app.fetch
             .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
