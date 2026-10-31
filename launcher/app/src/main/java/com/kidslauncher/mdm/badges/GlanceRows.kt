@@ -427,6 +427,8 @@ data class GlanceCalendarRow(
     val beginMs: Long,
     val minutesLeft: Int,
     val epochDay: Long,
+    /** The calendar's dot in the disc (2026-10-27); none = the calendar glyph. */
+    val color: com.kidslauncher.mdm.day.CalendarColor? = null,
 ) : GlanceRow {
     override val timeMs: Long get() = beginMs
 

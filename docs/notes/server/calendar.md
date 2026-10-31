@@ -8,8 +8,8 @@ a calendar link's events are the only ones it holds (while the link exists, sent
 
 ## The policy's `calendar` (`calendar::policy_calendar`, always sent)
 
-`{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind, remind_minutes, writable_for_kid}],
-rules: [{id, calendar, field, match, pattern, action, text}]}`. A fresh phone: on Home, the kid may add events (to the
+`{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind, remind_minutes, writable_for_kid,
+color}], rules: [{id, calendar, field, match, pattern, action, text}]}` (`color` since 2026-10-27, below). A fresh phone: on Home, the kid may add events (to the
 phone's own "Min kalender"), nothing on the lock (`glance_next` false, `lock_reminders` `"off"`), no calendars saved, no
 rules (`policy_json_keys_snapshot`). A read error fails the whole policy (500; the phone keeps its cache): a missing hide
 rule would show what the parent hid. The key is the phone's (16 hex of SHA-256 over the provider's account type, account
@@ -17,6 +17,46 @@ name and `Calendars.NAME` - the feed or collection URL, so a display name's rena
 leaves the phone. Tables (migration `0103_calendar.sql`): `device_calendars` (no row = shown, reminders off, not the
 kid's; `idx_device_calendars_kid`: at most one `writable_for_kid`), `device_calendar_rules` (`sort_order`; a description
 rule only hides - a CHECK), the four `device_policy.calendar_*` switches, `devices.calendar_report`.
+
+## A colour per calendar (2026-10-27, mockup §6 B, branch `calendar-colours`; code QA `docs/review/qa-calendar-colours-code.md`)
+
+`calendars[].color` is one of eight names (`calendar::COLORS`: `sky`, `forest`, `sun`, `berry`, `sea`, `lavender`,
+`sand`, `slate` - in the auto-pick's order; never hex: the phone's `CalendarColor` keeps the ARGB values, the PWA's
+`static/style.css` the swatches `.cal-<name>`) or `null` = no dot (`device_calendars.color`, migration 0106, numbered
+past the feeds branch's 0105 on purpose). Peach is the kid's own calendar's and is never stored or offered: the parent's
+pick (`writable_for_kid`; choosing a calendar as the kid's clears its colour) and the phone's own "Min kalender", which
+the server knows by its key - `calendar::KID_LOCAL_KEY` = `c211fc627cbde3c1`, the phone's key rule over `LOCAL`, the
+launcher's `LOCAL_ACCOUNT` "Vibb One" and `LOCAL_NAME` "vibb-kid-calendar" (`local_calendar_key`, pinned against the
+launcher's constants by `calendar::tests::kid_local_key_is_the_launchers`; QA L3) - have no Colour row and take no
+colour. Device › Calendar's "Colour" row under every other calendar's Reminder (`color_<key>`, a plain autosaving
+select, back to `#calendars`) offers the eight; a calendar without one shows "Pick for me" first (value `""`, read as
+unchanged - a select of the eight alone would post the first for every calendar at the first autosave), or, with all
+eight held by this phone's rows, the disabled "No free colour" (QA L6). Once picked there is no way back to "no dot"
+(by design: the key needs every calendar's dot; QA nit 4).
+
+**The auto-pick** (`calendar::assign_free_colors(tx, device, first, min_takers)`): the colour-taking calendars are
+every shown saved row, every reported calendar with no row (shown by default) and every calendar link's own calendar
+(its key is the server's, `calendar_feeds::calendar_key(uid)`, before the phone has it) - never the kid's pick or
+`KID_LOCAL_KEY`. Each without a colour gets the first name **no row of the phone holds - hidden rows' colours count
+too** (QA M1: with the pool rule a calendar hidden, its colour given away and shown again made two dots alike; now a
+hidden calendar keeps its name reserved), in the order of `first` (a form's rows as posted, a report's rows as listed),
+then by key; a calendar without a row gets a row holding only the colour, by an upsert that never overwrites a colour
+(`ON CONFLICT … COALESCE`, QA L5: a report and an autosave may both decide to insert the same key). First, under a
+readable report, a row holding only a colour whose calendar is neither reported nor a link's goes (QA L2: a gone
+calendar - a school feed re-subscribed each term under a new NAME - frees its colour; a row the parent set anything
+else on stays, as a hidden one; an unreadable report prunes nothing - the calendars aren't gone, only unseen). Eight in
+use: the rest get none. It runs after **every save on the Calendar page** - the calendars form and Dagen's switches
+(`min_takers` 0: one calendar alone gets a colour at a save), the links forms add, rename and remove
+(`colors_after_link_save`, best effort after the link's own write; not "Fetch now", where no calendar can appear) - and
+at **every report intake** (`store_report`, after the report's own statement, in its own transaction - a failure here
+is logged and never costs the report, QA L5) with `min_takers` 2 (QA L7, the user's decision: the parent needs to do
+nothing - the moment a key would first show, the dots are there; a phone with one calendar gets none from a report
+alone, a key never shows for one). An unknown name is a 400 (`calendar.error.color`) that writes nothing. A row with
+a colour is never pruned as "the defaults" (`prune_default_rows`); L2's prune is the auto-pick's own. **Not built**
+(QA L1, the coordinator's call): the mockup's calendar name after the time on the lock's reminder row ("17:30 ·
+Fotball") - the dot alone; the name is the key's job on Dagen. Tests: `tests::calendar::a_colour_is_saved_picked_and_refused`,
+`a_link_save_and_a_new_report_extend_the_colours`, `hidden_keeps_gone_frees_the_kids_own_takes_none_and_the_ninth_has_none`;
+the row's shape in `the_policy_carries_the_rules_and_the_calendars` and the launcher's `PolicyResponseCompatTest`.
 
 ## The report's `calendar` (`calendar::sanitize_report`, `store_report`)
 

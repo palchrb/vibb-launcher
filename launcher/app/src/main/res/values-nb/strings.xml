@@ -402,6 +402,7 @@
     <string name="day_open_event">Åpne hendelsen</string>
     <string name="day_spoken_time">%1$s til %2$s</string>
     <string name="day_kid_calendar_name">Min kalender</string>
+    <string name="day_legend_spoken">Kalendere: %1$s</string>
     <string name="day_add">Ny avtale</string>
     <string name="event_time_range">%1$s - %2$s</string>
     <string name="event_gone">Denne hendelsen er ikke i kalenderen lenger.</string>

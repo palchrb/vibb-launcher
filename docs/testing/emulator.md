@@ -2204,6 +2204,27 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    the page on top (as any app); the reminder row then lands on the day view itself. A time rule beginning while Dagen
    is open, then Recents › Dagen: the time-rule screen comes back on top at once (`dumpsys activity activities | grep
    -E "DayActivity|LockActivity"`); `adb shell dumpsys activity recents | grep -c "\.day"` is 1.
+9. **A colour per calendar** (2026-10-27, branch `calendar-colours`, mockup §6 B): seed a second LOCAL calendar
+   ("Fotball", step 1) with an event on the same day as Skolen's. In the PWA's Device › Calendar every calendar but
+   the kid's own pick has a "Colour" row ("Farge") under its Reminder: before any save its select says "Pick for me"
+   and no swatch shows; change anything on the form (a reminder) - the page comes back at the same place, not the top,
+   and every shown calendar now has a swatch and its name selected, each a different colour (Skolen Sky, Fotball
+   Forest, the kid's "Min kalender" none - peach is its own); pick "Sea" for Fotball and the swatch follows. A save on
+   the links group alone does the same (add a link, §6y, without touching the calendars form: every reported calendar
+   gets a swatch); a phone set up on the phone alone gets its dots from its own report as soon as it has two
+   calendars (QA L7). After the
+   sync Dagen's rows: an 8 dp dot in the calendar's colour in its own column before the time, the start **and** the
+   end time of every row at one left edge (a row of a calendar without a colour keeps the empty column), the kid's own
+   event's dot peach; under the list the key "● Skolen   ● Fotball   ● Min kalender" only on a day with events from
+   more than one calendar (a day with Skolen's alone has none); TalkBack reads a row on such a day with its calendar
+   last ("…, Gym, Skolen") and the key as "Kalendere: Skolen, Fotball". Lock the phone with the quiet reminder row
+   up: the disc holds a 16 dp dot in the calendar's colour instead of the calendar glyph (the glyph stays for a
+   calendar without one); the row's subtitle is the time alone - the calendar's name is the key's job on Dagen, not
+   built on the lock row (QA L1). Hide Fotball in the PWA, seed a third calendar with an event (it takes the next
+   colour, not Fotball's - a hidden calendar's colour stays reserved, QA M1), then show Fotball again: three different
+   dots, three entries in the key. Delete the third calendar from the provider: after the phone's next report its
+   Colour row is gone and its colour free again (QA L2). The phone's own "Min kalender" never has a Colour row
+   (QA L3). A `color` the launcher doesn't know (edit the policy by hand) is no dot, never a wrong one.
 
 **Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
 reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),

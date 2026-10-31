@@ -22,7 +22,7 @@ class RemindersTest {
 
     private fun remind(key: String, mode: String, minutes: Int? = null, master: String = "row", next: Boolean = false, rules: String = "[]") = policy(
         """{"on_home": true, "lock_reminders": "$master", "glance_next": $next, "rules": $rules,
-           "calendars": [{"key": "$key", "shown": true, "remind": "$mode", "remind_minutes": ${minutes ?: "null"}}]}""",
+           "calendars": [{"key": "$key", "shown": true, "remind": "$mode", "remind_minutes": ${minutes ?: "null"}, "color": "sky"}]}""",
     )
 
     private val training = InstanceRow(10, at(17, 30), at(18, 45), false, "Fotball: Trening", null, null, 1)
@@ -50,7 +50,8 @@ class RemindersTest {
     fun `the row is up from its start until the event, under the master switch and Dagen on Home`() {
         val p = remind("c04e7b19a2f6d853", "before", 15)
         assertNull(reminderNow(today(p), p, at(17, 14)))
-        assertEquals(GlanceReminder(10, "Fotball: Trening", at(17, 30), 15), reminderNow(today(p), p, at(17, 15)))
+        // The calendar's colour rides along to the lock row's dot (QA L4).
+        assertEquals(GlanceReminder(10, "Fotball: Trening", at(17, 30), 15, CalendarColor.SKY), reminderNow(today(p), p, at(17, 15)))
         assertEquals(1, reminderNow(today(p), p, at(17, 29, ))!!.minutesLeft)
         assertEquals(2, reminderNow(today(p), p, at(17, 28) + 30_000)!!.minutesLeft)
         assertNull(reminderNow(today(p), p, at(17, 30)))
