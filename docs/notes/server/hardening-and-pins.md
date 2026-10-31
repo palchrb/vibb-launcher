@@ -183,3 +183,17 @@ Step 2 (Lock Screen & PINs; `docs/notes/server/pwa.md`, "Lock Screen & PINs", ha
   `send_again_is_offered_only_when_it_can_help`, `the_shown_pin_names_what_the_phone_has`),
   `src/tests/android_lock_page.rs`, `device_pages::lock_forms_return_to_the_page`, `admin_auth::tests::no_store_paths`,
   `parent_events::tests::the_power_words`, `locate::tests::the_phones_answers_are_reworded`.
+
+## The server's own trust store (2026-10-31)
+
+- The server's outbound TLS (reqwest + rustls, `rustls-no-provider`) trusts the OS CA bundle - nothing is compiled in (a
+  compiled-in list crashed production once, v0.18.5; Cargo.toml's comment). In the image that bundle is the distroless
+  base's Debian `ca-certificates`, filtered at build time: the Dockerfile's `certs` stage drops every root whose DER
+  SHA-256 is in `deploy/distrusted-roots.txt` (2026-10-31: `emSign ECC Root CA - G3` and `AAA Certificate Services`, the
+  two Debian removed on 2026-10-20 after the eMudhra key compromise, CVE-2026-111943), fails the build if a listed root is
+  still in the bundle afterwards or fewer than 100 roots remain, and prints `ca bundle: N in the base, R removed, K kept`.
+  The base image follows Debian only at its next rebuild (on 2026-10-31 the pinned digest, still the current `nonroot`,
+  carried both roots), so the list is what makes the removal ours; drop a line once the base no longer has the root.
+  The image smoke test's `selftest-tls` (one HTTPS request through the server's own stack) proves the filtered bundle
+  still works. Without Docker (`install.sh`), the host's `ca-certificates` package is the store. Pinning the server's own
+  certificate in the launcher is a separate, open design question (PLAN, 2026-10-31).
