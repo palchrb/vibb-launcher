@@ -52,6 +52,7 @@
   "calendar.calendars.color": "Colour",
   "calendar.calendars.colors_info": "A calendar's colour is the dot before the time on Dagen's rows and on the lock screen's reminder row; on a day with more than one calendar, a key under the list names them. The kid's own events are always peach.",
   "calendar.color.auto": "Pick for me",
+  "calendar.color.none_free": "No free colour",
   "calendar.color.sky": "Sky",
   "calendar.color.forest": "Forest",
   "calendar.color.sun": "Sun",

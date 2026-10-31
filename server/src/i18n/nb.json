@@ -52,6 +52,7 @@
   "calendar.calendars.color": "Farge",
   "calendar.calendars.colors_info": "Kalenderens farge er prikken foran klokkeslettet på radene i Dagen og på påminnelsesraden på låseskjermen; har dagen mer enn én kalender, står navnene med prikk under listen. Barnets egne avtaler er alltid fersken.",
   "calendar.color.auto": "Velg for meg",
+  "calendar.color.none_free": "Ingen ledig farge",
   "calendar.color.sky": "Himmel",
   "calendar.color.forest": "Skog",
   "calendar.color.sun": "Sol",

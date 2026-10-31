@@ -28,8 +28,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::calendar::{
-    self, Action, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX, PolicyCalendar,
-    REMIND_MINUTES, Rule, TEXT_MAX, assign_free_colors,
+    self, Action, COLORS, CalendarReport, Field, KID_LOCAL_KEY, MAX_RULES, Match, Outcome,
+    PATTERN_MAX, PolicyCalendar, REMIND_MINUTES, Rule, TEXT_MAX, assign_free_colors,
 };
 use crate::calendar_feeds;
 use crate::handlers::schedules::form_pairs;
@@ -113,6 +113,8 @@ pub struct ColorChoice {
     pub value: &'static str,
     pub label: String,
     pub selected: bool,
+    /// "No free colour" (QA L6): all eight in use on this phone - shown selected, posts nothing.
+    pub disabled: bool,
 }
 
 /// The catalog key of each colour's word, by name - literals, so `i18n::tests::every_key_used_exists` sees them.
@@ -283,20 +285,37 @@ fn remind_choices(lang: Lang, current: &str) -> Vec<RemindChoice> {
 
 /// The eight colours, the saved one selected; none saved yet = "Pick for me" first (value `""`, which the save reads
 /// as unchanged and the auto-pick fills) - a select of the eight alone would post the first for every calendar at
-/// the first autosave of anything on the form.
-fn color_choices(lang: Lang, current: Option<&str>) -> Vec<ColorChoice> {
+/// the first autosave of anything on the form -, or, with all eight in use on the phone, the disabled "No free
+/// colour" (QA L6: the auto-pick gave this calendar none; the eight stay for a pick by hand).
+fn color_choices(lang: Lang, current: Option<&str>, pool_full: bool) -> Vec<ColorChoice> {
     let auto = current.is_none().then(|| ColorChoice {
         value: "",
-        label: t(lang, "calendar.color.auto").to_string(),
+        label: t(
+            lang,
+            if pool_full {
+                "calendar.color.none_free"
+            } else {
+                "calendar.color.auto"
+            },
+        )
+        .to_string(),
         selected: true,
+        disabled: pool_full,
     });
     auto.into_iter()
         .chain(COLOR_WORDS.iter().map(|(value, word)| ColorChoice {
             value,
             label: t(lang, word).to_string(),
             selected: current == Some(*value),
+            disabled: false,
         }))
         .collect()
+}
+
+/// The Colour row shows for every calendar but the kid's own: the parent's pick, or the phone's own "Min kalender"
+/// (`KID_LOCAL_KEY`) - both peach on the phone (QA L3).
+fn color_row(key: &str, saved: Option<&PolicyCalendar>) -> bool {
+    key != KID_LOCAL_KEY && !saved.is_some_and(|s| s.writable_for_kid)
 }
 
 /// A rule in words: "Starts with «Gruppe 2-» · Skolen · show as «Skole:» + the rest".
@@ -427,6 +446,13 @@ async fn render_page(
         switches.unwrap_or_else(calendar::default_switches);
     let saved_by_key: BTreeMap<&str, &PolicyCalendar> =
         saved.iter().map(|c| (c.key.as_str(), c)).collect();
+    // All eight colours held by this phone's rows (hidden ones too): a calendar without one gets none (QA L6).
+    let pool_full = saved
+        .iter()
+        .filter_map(|c| c.color.as_deref())
+        .collect::<HashSet<&str>>()
+        .len()
+        >= COLORS.len();
     let mut calendars: Vec<CalendarView> = Vec::new();
     let mut names: HashMap<&str, &str> = HashMap::new();
     if let Some(report) = &report {
@@ -454,9 +480,9 @@ async fn render_page(
                 shown: saved.is_none_or(|s| s.shown),
                 reminds: remind_choices(lang, &remind_value(saved)),
                 on_phone: true,
-                color_row: !saved.is_some_and(|s| s.writable_for_kid),
+                color_row: color_row(&c.key, saved),
                 color: saved.and_then(|s| s.color.clone()),
-                colors: color_choices(lang, saved.and_then(|s| s.color.as_deref())),
+                colors: color_choices(lang, saved.and_then(|s| s.color.as_deref()), pool_full),
             });
         }
     }
@@ -477,9 +503,9 @@ async fn render_page(
             shown: saved.is_none_or(|s| s.shown),
             reminds: remind_choices(lang, &remind_value(saved)),
             on_phone: true,
-            color_row: !saved.is_some_and(|s| s.writable_for_kid),
+            color_row: color_row(&key, saved),
             color: saved.and_then(|s| s.color.clone()),
-            colors: color_choices(lang, saved.and_then(|s| s.color.as_deref())),
+            colors: color_choices(lang, saved.and_then(|s| s.color.as_deref()), pool_full),
             key,
         });
     }
@@ -492,9 +518,9 @@ async fn render_page(
                 shown: s.shown,
                 reminds: remind_choices(lang, &remind_value(Some(s))),
                 on_phone: false,
-                color_row: !s.writable_for_kid,
+                color_row: color_row(&s.key, Some(s)),
                 color: s.color.clone(),
-                colors: color_choices(lang, s.color.as_deref()),
+                colors: color_choices(lang, s.color.as_deref(), pool_full),
             });
         }
     }
@@ -706,14 +732,15 @@ fn back_to_links(id: i64) -> Response {
     Redirect::to(&format!("/devices/{id}/calendar#links")).into_response()
 }
 
-/// The auto-pick after a links form's save (add, rename, fetch now, remove): a parent who sets the phone up from the
-/// links alone may never touch the calendars form, so every calendar the phone reports - and every link's own
-/// calendar, whose key the server knows before the phone has it - gets its colour here too. Best effort: the link's
-/// write is done, so a failure here is logged, never a 500.
+/// The auto-pick after a links form's save (add, rename, remove - not "Fetch now", where no calendar can appear): a
+/// parent who sets the phone up from the links alone may never touch the calendars form, so every calendar the phone
+/// reports - and every link's own calendar, whose key the server knows before the phone has it - gets its colour
+/// here too, and a removed link's colour-only row goes. Best effort: the link's write is done, so a failure here is
+/// logged, never a 500.
 async fn colors_after_link_save(state: &AppState, id: i64) {
     let result = async {
         let mut tx = state.db.begin().await?;
-        assign_free_colors(&mut tx, id, &[]).await?;
+        assign_free_colors(&mut tx, id, &[], 0).await?;
         tx.commit().await
     }
     .await;
@@ -843,7 +870,6 @@ pub async fn fetch_link(
     if let Err(err) = calendar_feeds::refresh(&state, source_id, now).await {
         return failed(lang, err, "couldn't store a calendar link's fetch");
     }
-    colors_after_link_save(&state, id).await;
     Redirect::to(&format!("/devices/{id}/calendar#link-{uid}")).into_response()
 }
 
@@ -1017,7 +1043,7 @@ pub async fn save_dagen(
             .bind(id)
             .execute(&mut *tx)
             .await?;
-            assign_free_colors(&mut tx, id, &[]).await?;
+            assign_free_colors(&mut tx, id, &[], 0).await?;
             prune_default_rows(&mut tx, id).await?;
         }
         tx.commit().await
@@ -1144,7 +1170,7 @@ pub async fn save_calendars(
             .execute(&mut *tx)
             .await?;
         }
-        assign_free_colors(&mut tx, id, &keys).await?;
+        assign_free_colors(&mut tx, id, &keys, 0).await?;
         prune_default_rows(&mut tx, id).await?;
         tx.commit().await
     }

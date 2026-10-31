@@ -191,7 +191,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// bedtime 0101 (was `migrations_73_to_100_in_order`). Design 68's per-app permissions 0102 (was
 /// `migrations_73_to_101_in_order`). Design 69's Dagen 0103 (was `migrations_73_to_102_in_order`). Design 70's
 /// parent language 0104 (was `migrations_73_to_103_in_order`). Design 72's calendar links 0105 (was
-/// `migrations_73_to_104_in_order`).
+/// `migrations_73_to_104_in_order`). A colour per calendar 0106 (was `migrations_73_to_105_in_order`).
 #[test]
 fn migrations_73_to_106_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
