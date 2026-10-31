@@ -393,6 +393,13 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
     not 16 dp - rule (b), not a gap. No `requestLayout() improperly called` line in logcat (`-s ViewRootImpl`) while
     Home lays out. Install or remove an app while scrolled down, scroll back to the top: the fold follows the new
     row count.
+    **Run 2026-10-31 (E6)** (`docs/testing/2026-10-31-e6-run.md`): passed at 1.0 and 1.3, gestures and 3-button
+    (14 tiles, five rows): the clip at 1.0 sits 67 px = 44.7 dp above the gesture bar (the card of row 4 ends there,
+    fading, the badge visible), 31 px above the 3-button bar; at 1.3 no clip (the bar itself cuts row 4 above its icon's
+    middle) and the end stops 16 dp over the bar; the scroll round trip changes nothing. A UI dump can't show the clip
+    (accessibility bounds ignore `clipToPadding`): read a `screencap` column by column. The 12 `requestLayout()
+    improperly called` lines of the session were all the lock glance's (`lock_glance_top`, `lock_glance_list`,
+    `lock_glance_clock`), none Home's. Not run: the row-count change (an untick uninstalls).
 
 Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d below).
 
@@ -546,6 +553,15 @@ Notifications (B; kiosk LOCKED, block on unless noted):
   <Exception>` (warn). Every line of the filter is under the one tag `NotificationRule`.
   **A Google nag that stays (PLAN: Play services' `multidevice...WELCOME_CHANNEL_ID`) is diagnosed from this line**: its
   `kept com.google.android.gms / ... : <REASON>` names why, or `platform kept` says the cancel was refused; paste it.
+  **Run 2026-10-31 (E6)** (`docs/testing/2026-10-31-e6-run.md`): the shell notification cancelled within 1 s with the
+  line `cancel com.android.shell / shell_cmd (1 since the last report)`, kept with the filter off (`Rule inactive: 9
+  essential packages`, no line), cancelled at once when it came back on; the `kept` shapes seen: `android / VPN:
+  ONGOING (1 so far)`, `com.google.android.apps.messaging / bugle_default_channel: ESSENTIAL_PACKAGE (1 so far)` and
+  `(10 so far)`, `android / PHYSICAL_KEYBOARD: ESSENTIAL_PACKAGE`. `Rule active: 9 essential packages: com.android.phone,
+  com.android.server.telecom, com.google.android.apps.messaging, com.google.android.cellbroadcastreceiver,
+  com.google.android.deskclock, com.google.android.dialer, com.google.android.inputmethod.latin, com.google.android.tts,
+  me.vibb.launcher.debug` - **`com.google.android.gms` is not in it**. GMS posted nothing in an hour on the Play image
+  (no Google account on it), so the welcome nag's line is still the phone's to show.
 
 Fix round (qa-11-code) and user requests, 2026-10-06:
 - [ ] **Orphan sweep**: with the fence up (A4, during the window) `adb shell run-as $P rm shared_prefs/update_fence.xml`,
@@ -2236,6 +2252,19 @@ colon needs `\:`. Device checks: Dagen on 2040 (the provider answers), TalkBack'
 reminder row's Dagen in its own task (H1), the header and the time column at 1.3 (M1), the peek (L1), a sideways swipe
 on the reminder row doing nothing (L2), AM/PM and "Tuesday, October 27" in en-US (L4).
 
+**Run 2026-10-31 (E6)** (`docs/testing/2026-10-31-e6-run.md`, `jelly36` in Europe/Oslo): steps 8 and 9 passed. Step 8:
+the Recents card `Vibb One (debug) Dagen`, one task with the `.day` affinity, the reminder row's code opens Dagen on the
+reminder's day with no `wm_destroy_activity` of `DayActivity` (E5's H1 fixed), the event page comes back on top from the
+tile, a time rule beginning over Dagen puts the time-rule screen on top and Recents › Dagen brings it back at once (the
+bare `grep -c "\.day"` counts the one task's lines - 9 here; count `Recent #… A=…debug.day` instead). Step 9: the dots
+`[45,235][57,247]` (8 dp) with every time at x=66, the key only with more than one calendar, TalkBack's calendar last,
+the lock row's disc a 16 dp dot of exactly SEA (console screenshot) with the time alone under it, "Pick for me" before
+any save, the auto-pick at the link add and at a report, a hidden calendar's colour reserved (Kor took Berry), a deleted
+calendar's freed at the next report (K4 took it), "No free colour" with eight taken. E5's fixes seen: the 10 dp peek
+(`[0,138][14,231]`), AM/PM, the header whole at 1.3. The animations and the 390 px page are device checks; a hand-edited
+`color` wasn't run. **Note for the poster**: the calendars form carries one `key=` per calendar - a tool that folds
+repeated fields into one (`pwam.py`) updates only the last calendar.
+
 ## 6y. Calendar links: a link pasted in the PWA, the phone's own calendar of it (design 72 step 1)
 
 Branch `calendar-feeds-1`; `jelly36`, `wm density 240`. Logcat: `CalendarFeeds`, `CalendarStore`. No ICSx5. The feed is
@@ -2269,6 +2298,19 @@ from `server/testdata/calendar_feeds/series.ics` and `itslearning.ics`), the lin
    (`am kill`), the next sync completes it.
 8. **Remove**: Fjern… -> the calendar goes from the phone at the next sync, its "Calendars shown" row greys (settings
    kept); add the same link again -> the same calendar key, its settings back.
+
+**Run 2026-10-31 (E6)** (`docs/testing/2026-10-31-e6-run.md`, `jelly36` started with `-timezone Europe/Oslo`): steps
+1-8 passed, every [verify] item included - the provider linked the overrides (`original_id` = the master's `_id`),
+honoured both EXDATE forms (`EXDATE_COLUMN` stays true), ended the UNTIL series on its day with the RDATE after it, made
+no instance for the cancelled override; the `Z` series moved an hour across 2026-10-25 and the `TZID=Europe/Oslo` one
+stayed at 16:00 across 2027-03-28; 2000 events applied in 3.0 s; a SIGKILL mid-apply (`run-as me.vibb.launcher.debug
+kill -9 <pid>` - `am crash` does nothing to the device owner) left 600 rows and the restart's sync rewrote all 2000
+(`600 rows deleted, 2000 series written`). **The feed's link must be the VM's own LAN address** (`http://192.168.1.92:8088/…`
+here): the server fetches it, and `10.0.2.2` is only the emulator's name for the host. Three words of this section don't
+match the build: a `webcal://` link is https (a plain http host refuses it: "Couldn't reach the link"), a renamed music
+key is replaced by a new one at start (the form says nothing; the old links' URLs are `key_lost` at their next fetch),
+and a removed link's row doesn't grey - it reads "· Phone" until the phone's next report and then goes, with the
+settings kept (the re-add got Sun back). The 390 px page wasn't rendered this session.
 
 ## 7. Reporting back
 
