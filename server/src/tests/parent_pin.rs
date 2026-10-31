@@ -448,10 +448,11 @@ async fn the_literal_is_stored_once_with_one_security_row() {
     let words = super::security_words(&app, "parent_pin_used", crate::i18n::Lang::En).await;
     assert_eq!(
         words,
-        [
-            "9 Oct 2025 10:53: restrictions lifted on the time-lock screen, until 9 Oct 2025 12:53 \
-          at the latest."
-        ]
+        // The phone's line names its phone from the fact (`Detail::shown`).
+        [format!(
+            "phone {id}: 9 Oct 2025 10:53: restrictions lifted on the time-lock screen, until 9 Oct \
+             2025 12:53 at the latest."
+        )]
     );
     // A re-send (the phone never saw the 204) stores and logs nothing.
     assert_eq!(

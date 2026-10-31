@@ -526,7 +526,9 @@ async fn unseen_boots_are_stored_warned_and_logged() {
     assert_eq!(stored().await, (Some(1), Some(at)));
     assert_eq!(
         logged().await,
-        vec!["1 start without Vibb One running noticed (1 in all)".to_string()]
+        vec![format!(
+            "phone {id}: 1 start without Vibb One running noticed (1 in all)"
+        )]
     );
     let html = page().await;
     assert!(html.contains(warning), "{html}");

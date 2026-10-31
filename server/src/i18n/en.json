@@ -707,5 +707,7 @@
   "security.detail.spotify.app_cleared": "Spotify app and {count} accounts removed",
   "security.detail.spotify.account_removed": "Spotify account {name} removed",
   "security.detail.music.entry_spotify": "entry {id}: Spotify: {name} ({target})",
-  "security.detail.music.ticked_on_phones": "Ticked on phones {phones}."
+  "security.detail.music.ticked_on_phones": "Ticked on phones {phones}.",
+  "security.detail.phone": "phone {device}",
+  "security.detail.on_phone": "phone {device}: {words}"
 }

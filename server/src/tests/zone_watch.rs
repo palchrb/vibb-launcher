@@ -545,6 +545,7 @@ async fn the_mock_counter_logs_each_rise() {
     assert!(sizes == [1, 1] || sizes == [2], "{rises:?}");
     // Each returned line is the one written, with its counter, in the same transaction.
     let written = lines().await;
+    let rises: Vec<String> = rises.iter().map(|r| format!("phone {id}: {r}")).collect();
     assert_eq!(written[before..], rises[..], "{written:?}");
     // At 5 whichever order they ran in; the same count again: nothing.
     crate::zones::mock_rise(&app.db, id, Some(&w(5)))

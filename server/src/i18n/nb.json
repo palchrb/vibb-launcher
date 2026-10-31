@@ -707,5 +707,7 @@
   "security.detail.spotify.app_cleared": "Spotify-appen og {count} kontoer fjernet",
   "security.detail.spotify.account_removed": "Spotify-kontoen {name} fjernet",
   "security.detail.music.entry_spotify": "innslag {id}: Spotify: {name} ({target})",
-  "security.detail.music.ticked_on_phones": "Krysset av for telefon {phones}."
+  "security.detail.music.ticked_on_phones": "Krysset av for telefon {phones}.",
+  "security.detail.phone": "telefon {device}",
+  "security.detail.on_phone": "telefon {device}: {words}"
 }

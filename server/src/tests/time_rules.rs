@@ -1259,9 +1259,10 @@ async fn parent_edits_are_in_the_security_log() {
     );
     assert!(events.iter().all(|e| e.1 == "parent"));
     assert_eq!(events[0].2, "everyone: Skole");
-    // A phone's Screen Time save names the phone: the words, then the fact (qa-s-i18n-2-code M1).
+    // A phone's Screen Time save names the phone (qa-s-i18n-2-code M1): its fact `device {id}`
+    // shown as the reader's "phone {id}: …".
     assert!(
-        events[4].2.starts_with("Own rules ") && events[4].2.ends_with(&format!(" · device {id}")),
+        events[4].2.starts_with(&format!("phone {id}: Own rules ")),
         "{}",
         events[4].2
     );

@@ -3813,7 +3813,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
     );
     assert_eq!(
         events(&app, "storytel_login_sent").await,
-        vec!["generation 1".to_string()]
+        vec![format!("phone {device}: generation 1")]
     );
 
     // Saved again: a new generation, the phones with the switch are nudged.

@@ -828,11 +828,10 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
     .await;
     assert_eq!(
         events(&app, "phone_foreign_access").await,
-        vec![
-            "The parent PIN is refused on the phone. Device admin: com.evil.admin. Accessibility \
-             on: com.evil.admin."
-                .to_string()
-        ]
+        vec![format!(
+            "phone {id}: The parent PIN is refused on the phone. Device admin: com.evil.admin. \
+             Accessibility on: com.evil.admin."
+        )]
     );
     // Gone: the warning goes, and the log says the PIN works again.
     post_status(&app, &token, json!({})).await;

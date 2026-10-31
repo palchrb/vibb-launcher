@@ -344,9 +344,13 @@ impl Detail {
     }
 
     /// A row as the log page shows it (and the tests read it): its words in `zone`'s language, then
-    /// " · " and its facts when it has both (a refused request's words and its `METHOD /path`, a
-    /// phone's Screen Time words and its `device {id}`); the words alone, the facts alone, or an
-    /// older row's prose; `None` for a row that says nothing besides its label.
+    /// " · " and its facts when it has both (a refused request's words and its `METHOD /path`); the
+    /// words alone, the facts alone, or an older row's prose; `None` for a row that says nothing
+    /// besides its label. Two facts are ids kept for the greps and the phone lines' hourly budget,
+    /// never shown raw beside words: `entry {id}` (every worded entry sentence names it) and
+    /// `device {id}` - the words say the phone in the reader's language ("phone 3", "telefon 3"),
+    /// and a sentence that doesn't (a phone's own line, a phone's Screen Time save) gets it as a
+    /// lead, "phone 3: …".
     pub fn shown(
         detail: Option<&str>,
         params: Option<&str>,
@@ -356,7 +360,24 @@ impl Detail {
         let facts = detail.map(str::trim).filter(|d| !d.is_empty());
         let words = params.and_then(|p| Detail::worded(p, zone, now));
         match (words, facts) {
-            (Some(words), Some(facts)) => Some(format!("{words} · {facts}")),
+            (Some(words), Some(facts)) => Some(match id_fact(facts) {
+                Some(("entry", _)) => words,
+                Some(("device", id)) => {
+                    let lang = zone.lang();
+                    let phone =
+                        crate::i18n::t_params(lang, "security.detail.phone", &[("device", id)]);
+                    if names(&words, &phone) {
+                        words
+                    } else {
+                        crate::i18n::t_params(
+                            lang,
+                            "security.detail.on_phone",
+                            &[("device", id), ("words", &words)],
+                        )
+                    }
+                }
+                _ => format!("{words} · {facts}"),
+            }),
             (Some(words), None) => Some(words),
             (None, facts) => facts.map(str::to_string),
         }
@@ -371,6 +392,23 @@ impl Detail {
     ) -> String {
         Detail::worded(stored, zone, now).unwrap_or_else(|| stored.to_string())
     }
+}
+
+/// A fact that is a bare id, `device 3` or `entry 12`: `(kind, id)`.
+fn id_fact(facts: &str) -> Option<(&str, &str)> {
+    let (kind, id) = facts.split_once(' ')?;
+    (matches!(kind, "device" | "entry") && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        .then_some((kind, id))
+}
+
+/// `words` names `phone` ("phone 3") as a whole: not "phone 31".
+fn names(words: &str, phone: &str) -> bool {
+    words.match_indices(phone).any(|(at, _)| {
+        !words[at + phone.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+    })
 }
 
 /// A [Detail]'s words in English, UTC, now - what a unit test reads.
