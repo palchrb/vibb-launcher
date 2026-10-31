@@ -246,6 +246,13 @@ The server also ships as a multi-arch image (`linux/amd64`, `linux/arm64`): `ghc
 either architecture, and the Pi Zero 2 W stays with it. The image suits a home server or VPS that runs Docker anyway. It runs
 as uid 65532 with no shell, keeps everything in `/app/data`, and listens on `127.0.0.1:3100` by default.
 
+**Which root certificates the server trusts.** The image carries the base image's Debian CA bundle minus the roots
+`server/deploy/distrusted-roots.txt` names (since the eMudhra key compromise of October 2026: Debian removed two roots
+on 2026-10-20, and the base image follows only at its next rebuild, so the image removes them itself at build time and
+the build fails if one survives; the release's smoke test then makes one real HTTPS request through the server's own
+TLS stack). Without Docker the server trusts the host's store: keep `ca-certificates` updated (`apt upgrade`), which is
+where the same removals arrive.
+
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
 never hides the client's address. The files are in the repo: `server/deploy/compose.yaml`, `server/deploy/env.example`
 (copy it as `.env`) and `server/deploy/Caddyfile.example` (option (c) above). `compose.yaml`:

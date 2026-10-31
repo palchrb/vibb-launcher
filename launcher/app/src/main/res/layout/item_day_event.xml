@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A Dagen row (design 69 §2.1, mockup dagen.html §1): the start in peach over the end (dim), the title (15 sp, two
-     lines at most) and the second line (13 sp dim, two lines at most) - the location, else the description's first
-     sentence; a small "›" at the right edge only when something was cut. One TalkBack node: the row. -->
+<!-- A Dagen row (design 69 §2.1, mockup dagen.html §1): the calendar's 8 dp dot in its own 14 dp column (mockup §6 B,
+     2026-10-27: invisible, never gone, without a colour, so the start and the end time of every row share one left
+     edge), the start in peach over the end (dim), the title (15 sp, two lines at most) and the second line (13 sp
+     dim, two lines at most) - the location, else the description's first sentence; a small "›" at the right edge
+     only when something was cut. One TalkBack node: the row. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/day_event"
     android:layout_width="match_parent"
@@ -16,6 +18,17 @@
     android:paddingTop="12dp"
     android:paddingEnd="12dp"
     android:paddingBottom="12dp">
+
+    <!-- The dot column: 8 dp + 6 dp = 14 dp, the dot centred on the start time's first line. -->
+    <View
+        android:id="@+id/day_event_dot"
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="6dp"
+        android:background="@drawable/bg_day_dot"
+        android:importantForAccessibility="no"
+        android:visibility="invisible" />
 
     <!-- The time column: 56 dp, widened per page to its widest time (DayListAdapter, timeColumnPx) - a 12-hour time
          or a larger font never wraps; an all-day row is "Hele" over "dagen" (mockup §1). -->

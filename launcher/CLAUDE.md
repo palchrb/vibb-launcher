@@ -1408,9 +1408,13 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `calendar` field by field - missing = an older server, everything shown and nothing on the lock; anything but an
   object = `UNKNOWN`, Dagen off; a rule it can't use is dropped and its id reported; `CalendarPolicyTest`),
   `CalendarKey.kt` (the key = 16 hex of SHA-256 over account type NUL account name NUL `Calendars.NAME`; the source =
-  only the host of an http(s)/webcal NAME), `DayModel.kt` (`dayView`: all-day on its UTC dates, timed on the local ones,
-  multi-day first/middle/last, cancelled/declined/hidden/rule-hidden out, two copies one row, the order, "now";
-  `DayModelTest` with the DST days), `RowText.kt` (the second line: the location, else the description's first
+  only the host of an http(s)/webcal NAME), `CalendarColor.kt` (a colour per calendar, 2026-10-27, mockup §6 B: the
+  policy's `calendars[].color` - one of eight names, the ARGB table here, Dagen draws on the night ground only -, an
+  unknown name none; `OWN` = the kid's own calendar's peach, never a policy value), `DayModel.kt` (`dayView`: all-day
+  on its UTC dates, timed on the local ones, multi-day first/middle/last, cancelled/declined/hidden/rule-hidden out,
+  two copies one row, the order, "now", each row's `color` by `rowColor` - the phone's own or the parent's pick for
+  the kid peach, else the policy's or none -, `DayView.legend`/`legendShown` - the day's calendars in order of
+  appearance, the key only with more than one; `DayModelTest` with the DST days), `RowText.kt` (the second line: the location, else the description's first
   sentence - a "." after a digit or `ca kl nr osv bl.a f.eks` ends nothing - at most 120 code points; `cut` = the row's
   "›"; `FirstSentenceTest`), `DayPager.kt` (`DAY_CENTER`, `dayAt`/`positionOf`, `todayJump`: "← I dag" on a later day,
   "I dag →" on an earlier one; `DayPagerTest`), `Reminders.kt` (§5: `reminderStart` off / before N / own - the earliest
@@ -1439,12 +1443,17 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   Android's task-close animation; the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
   also `CLEAR_TOP`, so the reminder row lands on the day view - from the lock's task it died with the lock, E5's H1)
   serves Home's tile and the glance, and the three screens redirect to the time-rule screen on resume while a lock
-  reason is set (Kid Settings' rule), since Recents can bring the task over it; `DayTaskTest`), `DayListAdapter` (two lines of title and second line - the kid's own event's second
+  reason is set (Kid Settings' rule), since Recents can bring the task over it; `DayTaskTest`), `DayListAdapter` (the
+  calendar's 8 dp dot in its own 14 dp column before the time - `day_event_dot`, `bg_day_dot` tinted `CalendarColor`,
+  invisible, never gone, without one, so every row's start and end time share one left edge (the user's one change to
+  mockup §6 B); two lines of title and second line - the kid's own event's second
   line is its place, else the calendar's name -; the time column 56 dp, widened per page to its widest one-line time
   by `timeColumnPx`, an all-day row "Hele" over "dagen"; times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
   L4 -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
-  "Åpne hendelsen"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
+  "Åpne hendelsen" - the calendar's name last on a day with more than one; the key under the list, `item_day_legend`
+  as the last item while `legendShown`: one `DotSpan` and name per calendar in one wrapping text, TalkBack
+  "Kalendere: Skolen, Fotball"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
   links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day - `DayActivity.dayLine`, the locale's best pattern for "EEEEdMMMM", en-US
   "Tuesday, October 27" -, from - the framework's date and time pickers with our `VibbPickerDialog` (the dark Material dialog with every colour
   named: before it the system's light dialog took our white text, and the day numbers were white on white; `PickerThemeTest`)
@@ -1454,8 +1463,9 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   the kid's own to come). `KidScreensEscapeTest` scans `ui/day` and `calendar`.
 - **The glance** (step 2, `lock/GlanceCalendar`, `GlancePanel`): today read off the main thread at the page's start and on
   every provider or policy change, one main-thread callback at the next boundary - no alarm, no notification, no wake.
-  C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc, "Fotball om 15 min" / "… nå", the
-  start; never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
+  C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc - since 2026-10-27 the calendar's 16 dp
+  dot in the disc instead when it has a colour, `bg_glance_dot`, the row's `color` from the reminder's row -, "Fotball
+  om 15 min" / "… nå", the start; never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
   tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, none under a time rule).
   A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
   row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out.

@@ -609,6 +609,19 @@ class PolicyResponseCompatTest {
             assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
         }
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        // A calendar row as the server sends it since 2026-10-27 (`color`: one of eight names or null, the server's
+        // `calendar::COLORS`, pinned by its `the_policy_carries_the_rules_and_the_calendars`): read, carried as is.
+        val coloured = withCalendar(
+            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [
+                 {"key": "9f3a61c2d84be705", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": false, "color": "sky"},
+                 {"key": "c04e7b19a2f6d853", "shown": true, "remind": "before", "remind_minutes": 15, "writable_for_kid": true, "color": null}
+               ], "rules": []}""",
+        )
+        val withColour = (decodeFresh(coloured) as FreshDecode.Ok).policy
+        val read = com.kidslauncher.mdm.day.calendarPolicy(withColour.calendar)
+        assertEquals(com.kidslauncher.mdm.day.CalendarColor.SKY, read.setting("9f3a61c2d84be705").color)
+        assertNull(read.setting("c04e7b19a2f6d853").color)
+        assertEquals(CachedPolicy.Ok(withColour), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), withColour)))
         for (odd in listOf("null", "[]", "5", "{}", """{"rules": [5, null, {"id": "x"}], "calendars": "no"}""")) {
             assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)
         }

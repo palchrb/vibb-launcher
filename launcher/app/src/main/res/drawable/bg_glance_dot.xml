@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The calendar's dot in the lock's reminder row (2026-10-27, "a colour per calendar", mockup dagen.html §6's lock
+     row): 16 dp in the 36 dp disc where the calendar glyph sits otherwise, tinted the calendar's colour. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <size android:width="16dp" android:height="16dp" />
+    <solid android:color="#FFFFFFFF" />
+</shape>

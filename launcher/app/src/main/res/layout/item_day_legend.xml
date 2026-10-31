@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The day's key under its list (mockup dagen.html §6 B, 2026-10-27): "● Skolen   ● Fotball   ● Mine" - one dot and
+     name per calendar with events on this day, only when there is more than one (DayListAdapter, DayView.legend).
+     The dots are DotSpans in one wrapping line; 14 dp in, as the rows' dots. One TalkBack node: "Kalendere: …". -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/day_legend"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fontFamily="@font/nunito_bold"
+    android:lineSpacingExtra="4sp"
+    android:paddingStart="14dp"
+    android:paddingTop="2dp"
+    android:paddingEnd="14dp"
+    android:paddingBottom="8dp"
+    android:textColor="@color/kid_core_dim"
+    android:textSize="13sp" />

@@ -1,0 +1,15 @@
+# Root certificates the server image removes from its CA bundle at build time (Dockerfile, the
+# `certs` stage), one SHA-256 fingerprint of the DER certificate per line (hex, no colons, upper
+# case), with the reason after a space. Lines starting with # are comments.
+#
+# The base image (distroless static-debian12) ships Debian's ca-certificates; when Debian removes a
+# root, the image follows only at its next rebuild, which can lag. This list makes the removal
+# ours: the build fails if a listed root is still in the bundle after filtering, and passes whether
+# or not the base still carries it. Drop a line once the base no longer has the root (the build
+# log says "removed 0" for it).
+#
+# 2026-10-31: Debian's ca-certificates 20250419~deb12u2 (DLA-4845-1, 2026-10-20) removed these two
+# after the eMudhra key compromise (CVE-2026-111943: eight emSign intermediates' private keys were
+# recoverable from their public certificates; browsers blocked them 2026-10-17..20).
+86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B emSign ECC Root CA - G3 (eMudhra; signed the compromised intermediates)
+D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4 AAA Certificate Services (Comodo; removed in the same Debian update)

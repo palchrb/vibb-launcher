@@ -191,8 +191,8 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// bedtime 0101 (was `migrations_73_to_100_in_order`). Design 68's per-app permissions 0102 (was
 /// `migrations_73_to_101_in_order`). Design 69's Dagen 0103 (was `migrations_73_to_102_in_order`). Design 70's
 /// parent language 0104 (was `migrations_73_to_103_in_order`). Design 72's calendar links 0105 (was
-/// `migrations_73_to_104_in_order`). Design 70 slice 2's security-log params 0107 (was
-/// `migrations_73_to_105_in_order`; 0106 is the calendar colours', merged beside it).
+/// `migrations_73_to_104_in_order`). A colour per calendar 0106 (was `migrations_73_to_105_in_order`). Design 70
+/// slice 2's security-log params 0107 (was `migrations_73_to_106_in_order`).
 #[test]
 fn migrations_73_to_107_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -236,11 +236,12 @@ fn migrations_73_to_107_in_order() {
             (103, "calendar".to_string()),
             (104, "admin lang".to_string()),
             (105, "calendar feeds".to_string()),
+            (106, "calendar colors".to_string()),
             (107, "security params".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0107 (design 70 slice 2's security-log params) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }

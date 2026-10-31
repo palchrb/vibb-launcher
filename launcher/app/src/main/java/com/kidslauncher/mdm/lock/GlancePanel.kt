@@ -1312,8 +1312,9 @@ class GlancePanel(
         if (line.visibility != wantedVisibility) line.visibility = wantedVisibility
     }
 
-    /** Dagen's reminder row (design 69 §5.2): the calendar glyph in a peach disc, "Fotball om 15 min" ("… nå" in the
-     * last minute), the start time; TalkBack "Påminnelse: Fotball, om 15 minutter, 17:30". Never dismissable. */
+    /** Dagen's reminder row (design 69 §5.2): the calendar glyph in a peach disc - since 2026-10-27 the calendar's
+     * 16 dp dot in the disc instead, when it has a colour (the mockup's lock row) -, "Fotball om 15 min" ("… nå" in
+     * the last minute), the start time; TalkBack "Påminnelse: Fotball, om 15 minutter, 17:30". Never dismissable. */
     private fun bindCalendar(view: ViewLockGlanceRowBinding, row: GlanceCalendarRow) {
         val res = activity.resources
         val time = ClockFormat.formatClock(activity, row.beginMs)
@@ -1331,8 +1332,14 @@ class GlancePanel(
         view.glanceRowBadge.visibility = View.GONE
         view.glanceRowIcon.scaleType = ImageView.ScaleType.CENTER
         view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_lock_kind_disc))
-        view.glanceRowIcon.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_accent))
-        view.glanceRowIcon.setImageResource(R.drawable.app_glyph_calendar_month)
+        val color = row.color
+        if (color != null) {
+            view.glanceRowIcon.imageTintList = ColorStateList.valueOf(color.argb)
+            view.glanceRowIcon.setImageResource(R.drawable.bg_glance_dot)
+        } else {
+            view.glanceRowIcon.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_accent))
+            view.glanceRowIcon.setImageResource(R.drawable.app_glyph_calendar_month)
+        }
         val left = if (row.minutesLeft <= 1) activity.getString(R.string.glance_reminder_now_spoken)
         else res.getQuantityString(R.plurals.glance_reminder_minutes, row.minutesLeft, row.minutesLeft)
         view.root.contentDescription = activity.getString(R.string.glance_reminder_spoken, row.title, left, time)

@@ -18,8 +18,9 @@ data class TodayCalendar(val view: DayView, val ownMinutes: Map<Long, List<Int>>
     override fun toString() = "TodayCalendar(${view.timed.size})"
 }
 
-/** A reminder that is up: the event's shown title and its start; [minutesLeft] counts down, 1 = "nå". */
-data class GlanceReminder(val eventId: Long, val title: String, val beginMs: Long, val minutesLeft: Int) {
+/** A reminder that is up: the event's shown title and its start; [minutesLeft] counts down, 1 = "nå"; [color] the
+ * calendar's dot (2026-10-27), none = the calendar glyph. */
+data class GlanceReminder(val eventId: Long, val title: String, val beginMs: Long, val minutesLeft: Int, val color: CalendarColor? = null) {
     override fun toString() = "GlanceReminder($eventId)"
 }
 
@@ -52,7 +53,7 @@ fun reminderNow(today: TodayCalendar, policy: CalendarPolicy, now: Long): Glance
         startsToday(row) && row.begin > now &&
             (reminderStart(row, policy.setting(row.calendarKey).remind, today.ownMinutes[row.eventId])?.let { it <= now } == true)
     } ?: return null
-    return GlanceReminder(row.eventId, row.title, row.begin, minutesLeft(row.begin, now))
+    return GlanceReminder(row.eventId, row.title, row.begin, minutesLeft(row.begin, now), row.color)
 }
 
 /** The "Neste" line now (A): the switch on and Dagen on Home, the first timed event today that starts after [now];

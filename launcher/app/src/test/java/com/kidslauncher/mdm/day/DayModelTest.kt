@@ -158,4 +158,40 @@ class DayModelTest {
         assertEquals(listOf(true, false), view(listOf(mine, sibling), LocalDate.of(2026, 10, 31)).timed.map { it.ownedByVibb })
         assertEquals(2461340, julianDay(LocalDate.of(2026, 10, 26)))
     }
+
+    /** A colour per calendar (2026-10-27): a row's dot is its calendar's policy colour, peach for the kid's own
+     * calendar (the phone's own, or the parent's pick), none without one; the key under the list names the calendars
+     * on the day in order of appearance, and shows only with more than one. */
+    @Test
+    fun `a row's colour and the day's key`() {
+        val mine = CalendarInfo(3, "51d8e0aa3b7c9462", "LOCAL", "Min kalender", vibbLocal = true)
+        val all = mapOf(1L to school, 2L to family, 3L to mine)
+        val policy = calendarPolicy(
+            ServerJson.parseToJsonElement(
+                """{"calendars": [{"key": "9f3a61c2d84be705", "color": "sky"}, {"key": "c04e7b19a2f6d853", "color": "sea", "writable_for_kid": true}]}""",
+            ),
+        )
+        val day = LocalDate.of(2026, 10, 28)
+        val gym = row(1, at(2026, 10, 28, 10), at(2026, 10, 28, 11, 30), "Gym", calendar = 1)
+        val cinema = row(2, at(2026, 10, 28, 19, 30), at(2026, 10, 28, 20, 30), "Kino", calendar = 2)
+        val camp = row(3, utc(2026, 10, 28), utc(2026, 10, 29), "Leir", allDay = true, calendar = 3)
+        val one = dayView(listOf(gym), all, policy, day, oslo, 0, own, tag)
+        assertEquals(CalendarColor.SKY, one.timed.single().color)
+        assertEquals(1, one.legend.size)
+        assertFalse("one calendar: no key", one.legendShown)
+        assertTrue(dayView(emptyList(), all, policy, day, oslo, 0, own, tag).legend.isEmpty())
+        // The parent's pick is the kid's own: peach, not its "sea"; the phone's own calendar peach too.
+        val three = dayView(listOf(gym, cinema, camp), all, policy, day, oslo, 0, own, tag)
+        assertEquals(listOf(CalendarColor.OWN), three.allDay.map { it.color })
+        assertEquals(listOf(CalendarColor.SKY, CalendarColor.OWN), three.timed.map { it.color })
+        assertTrue(three.legendShown)
+        assertEquals(
+            listOf(LegendEntry(3, "Min kalender", CalendarColor.OWN), LegendEntry(1, "Skolen", CalendarColor.SKY), LegendEntry(2, "Familie", CalendarColor.OWN)),
+            three.legend,
+        )
+        // No colour saved: no dot, still in the key.
+        val plain = dayView(listOf(gym, cinema), all, CalendarPolicy.OLDER_SERVER, day, oslo, 0, own, tag)
+        assertEquals(listOf(null, null), plain.timed.map { it.color })
+        assertTrue(plain.legendShown)
+    }
 }

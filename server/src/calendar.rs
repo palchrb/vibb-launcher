@@ -32,6 +32,150 @@ pub const DESCRIPTION_MAX: usize = 2000;
 pub const REMIND_MINUTES: [i64; 5] = [5, 10, 15, 30, 60];
 /// Calendars a report may list.
 pub const MAX_REPORTED_CALENDARS: usize = 50;
+/// The eight calendar colours (`calendars[].color`), in the order the auto-pick tries them: names, never hex - the
+/// phone keeps the values (its `CalendarColor`), the PWA's `static/style.css` the swatches (`.cal-<name>`). Peach is
+/// the kid's own calendar's and is never one of these. Migration 0106's CHECK lists the same eight.
+pub const COLORS: [&str; 8] = [
+    "sky", "forest", "sun", "berry", "sea", "lavender", "sand", "slate",
+];
+
+/// One of the eight colour names.
+pub fn valid_color(name: &str) -> bool {
+    COLORS.contains(&name)
+}
+
+/// The kid's own local calendar on the phone ("Min kalender": account type `LOCAL`, account `Vibb One`, NAME
+/// `vibb-kid-calendar` - the launcher's `CalendarStore.LOCAL_ACCOUNT`/`LOCAL_NAME`), by the phone's key rule
+/// ([local_calendar_key]; `tests::kid_local_key_is_the_launchers` pins both). Peach on the phone whatever the
+/// policy says, so it never takes a colour here and has no Colour row (QA L3).
+pub const KID_LOCAL_KEY: &str = "c211fc627cbde3c1";
+
+/// A phone-local calendar's key as the phone computes it: 16 hex of SHA-256 over `LOCAL` NUL account NUL NAME
+/// (the test's derivation of [KID_LOCAL_KEY]; production reads the constant).
+#[cfg(test)]
+pub fn local_calendar_key(account: &str, name: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(
+        format!("LOCAL\u{0}{account}\u{0}{name}").as_bytes(),
+    ))[..16]
+        .to_string()
+}
+
+/// The auto-pick (2026-10-27): every calendar the phone shows that takes a colour - a shown saved row, a reported
+/// calendar with no row (shown by default), or a calendar link's own calendar (its key is the server's,
+/// `calendar_feeds::calendar_key`, before the phone has it); never the kid's pick or [KID_LOCAL_KEY] - and has none
+/// gets the first of [COLORS] no row of this phone holds (hidden rows' colours count too, so a calendar shown again
+/// keeps a colour no one else got - QA M1), in the order of [first] (a form's rows as posted, a report's rows as
+/// listed), then by key. A calendar without a row gets a row holding only the colour (an upsert that never overwrites
+/// a colour, QA L5). Nothing is picked while the phone shows fewer than [min_takers] colour-taking calendars (the
+/// intake's 2: a key first shows then - QA L7; a page save's 0). First, a row holding only a colour whose calendar
+/// is neither reported nor a link's goes (QA L2: a gone calendar frees its colour) - only under a readable report.
+/// Eight in use: the rest get none (the page says so, QA L6).
+pub async fn assign_free_colors(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: i64,
+    first: &[&str],
+    min_takers: usize,
+) -> Result<(), sqlx::Error> {
+    let reported = reported_keys(&mut *tx, device_id).await?;
+    let link_uids: Vec<String> = sqlx::query_scalar(
+        "SELECT s.uid FROM calendar_sources s JOIN device_calendar_feeds d ON d.source_id = s.id \
+         WHERE d.device_id = ? ORDER BY s.uid",
+    )
+    .bind(device_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    // The calendars the phone has or will have: the readable report's, then the links' own.
+    let mut visible: Vec<String> = reported.clone().unwrap_or_default();
+    for uid in &link_uids {
+        let key = crate::calendar_feeds::calendar_key(uid);
+        if !visible.contains(&key) {
+            visible.push(key);
+        }
+    }
+    if reported.is_some() {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT calendar_key FROM device_calendars WHERE device_id = ? AND shown = 1 \
+             AND remind = 'off' AND writable_for_kid = 0 AND color IS NOT NULL",
+        )
+        .bind(device_id)
+        .fetch_all(&mut **tx)
+        .await?;
+        for key in rows.iter().filter(|k| !visible.contains(k)) {
+            sqlx::query("DELETE FROM device_calendars WHERE device_id = ? AND calendar_key = ?")
+                .bind(device_id)
+                .bind(key)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    // (key, colour, the kid's pick, shown)
+    let rows: Vec<(String, Option<String>, bool, bool)> = sqlx::query_as(
+        "SELECT calendar_key, color, writable_for_kid, shown FROM device_calendars \
+         WHERE device_id = ? ORDER BY calendar_key",
+    )
+    .bind(device_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut used: Vec<&str> = rows.iter().filter_map(|r| r.1.as_deref()).collect();
+    let takes = |key: &str| key != KID_LOCAL_KEY;
+    // Every colour-taking calendar the phone shows, with its colour: shown rows, then the rowless visible ones.
+    let mut takers: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .filter(|(key, _, kid, shown)| *shown && !kid && takes(key))
+        .map(|(key, color, _, _)| (key.as_str(), color.as_deref()))
+        .collect();
+    for key in &visible {
+        if takes(key) && !rows.iter().any(|r| r.0 == *key) {
+            takers.push((key.as_str(), None));
+        }
+    }
+    if takers.len() < min_takers {
+        return Ok(());
+    }
+    let mut wanting: Vec<&str> = takers
+        .iter()
+        .filter(|(_, color)| color.is_none())
+        .map(|(key, _)| *key)
+        .collect();
+    let place = |key: &str| first.iter().position(|k| *k == key).unwrap_or(first.len());
+    wanting.sort_by(|a, b| place(a).cmp(&place(b)).then_with(|| a.cmp(b)));
+    for key in wanting {
+        let Some(color) = COLORS.iter().find(|c| !used.contains(c)) else {
+            break;
+        };
+        used.push(color);
+        sqlx::query(
+            "INSERT INTO device_calendars (device_id, calendar_key, color) VALUES (?, ?, ?) \
+             ON CONFLICT(device_id, calendar_key) DO UPDATE SET \
+             color = COALESCE(device_calendars.color, excluded.color)",
+        )
+        .bind(device_id)
+        .bind(key)
+        .bind(color)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// The keys of the phone's last readable report's calendars, in the report's order; `None` before a report or
+/// after one that couldn't read the provider (its calendars aren't gone, only unseen).
+async fn reported_keys(
+    db: &mut sqlx::SqliteConnection,
+    device_id: i64,
+) -> Result<Option<Vec<String>>, sqlx::Error> {
+    let stored: Option<Option<String>> =
+        sqlx::query_scalar("SELECT calendar_report FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(stored
+        .flatten()
+        .and_then(|json| serde_json::from_str::<CalendarReport>(&json).ok())
+        .filter(|report| report.readable)
+        .map(|report| report.calendars.into_iter().map(|c| c.key).collect()))
+}
 
 // ---- the grammar -------------------------------------------------------------------------------
 
@@ -305,6 +449,8 @@ pub struct PolicyCalendar {
     pub remind: String,
     pub remind_minutes: Option<i64>,
     pub writable_for_kid: bool,
+    /// One of [COLORS], `null` = no dot (the kid's own calendar is peach whatever this says).
+    pub color: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -350,7 +496,7 @@ pub async fn calendars(
     device_id: i64,
 ) -> Result<Vec<PolicyCalendar>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT calendar_key AS key, shown, remind, remind_minutes, writable_for_kid \
+        "SELECT calendar_key AS key, shown, remind, remind_minutes, writable_for_kid, color \
          FROM device_calendars WHERE device_id = ? ORDER BY calendar_key",
     )
     .bind(device_id)
@@ -597,25 +743,43 @@ pub async fn last_report(
 /// without it (an older launcher) leaves the last one. Never fails the report: an error is logged.
 pub async fn store_report(db: &SqlitePool, device_id: i64, value: Option<&serde_json::Value>) {
     let Some(value) = value else { return };
-    let result = async {
+    let result: Result<Option<CalendarReport>, sqlx::Error> = async {
         let ids: Vec<i64> =
             sqlx::query_scalar("SELECT id FROM device_calendar_rules WHERE device_id = ?")
                 .bind(device_id)
                 .fetch_all(db)
                 .await?;
         let Some(report) = sanitize_report(value, &ids.into_iter().collect()) else {
-            return Ok(());
+            return Ok(None);
         };
         sqlx::query("UPDATE devices SET calendar_report = ? WHERE id = ?")
             .bind(serde_json::to_string(&report).expect("a report serializes"))
             .bind(device_id)
             .execute(db)
-            .await
-            .map(|_| ())
+            .await?;
+        Ok(Some(report))
     }
     .await;
-    if let Err(err) = result {
-        tracing::error!(device_id, %err, "couldn't store the phone's calendar report");
+    let report = match result {
+        Ok(report) => report,
+        Err(err) => {
+            tracing::error!(device_id, %err, "couldn't store the phone's calendar report");
+            return;
+        }
+    };
+    // The colours (QA L7: the parent needs to do nothing): once the phone shows two or more colour-taking calendars,
+    // every one without a colour gets one, in the report's order; a gone calendar's colour-only row goes. Its own
+    // transaction after the report's statement: a failure here is logged and never costs the report (QA L5).
+    let Some(report) = report else { return };
+    let order: Vec<&str> = report.calendars.iter().map(|c| c.key.as_str()).collect();
+    let colored = async {
+        let mut tx = db.begin().await?;
+        assign_free_colors(&mut tx, device_id, &order, 2).await?;
+        tx.commit().await
+    }
+    .await;
+    if let Err(err) = colored {
+        tracing::warn!(device_id, %err, "couldn't pick the calendars' colours after a report");
     }
 }
 
@@ -665,6 +829,32 @@ mod tests {
             let shown = apply(&rules, v.calendar.as_deref(), &v.title, &v.description).shown();
             assert_eq!(shown, v.shown, "row {i}: {:?}", v.title);
         }
+    }
+
+    /// QA L3: the phone's own "Min kalender" key is the launcher's constants through the phone's key rule.
+    #[test]
+    fn kid_local_key_is_the_launchers() {
+        let store = std::fs::read_to_string(
+            "../launcher/app/src/main/java/com/kidslauncher/mdm/calendar/CalendarStore.kt",
+        )
+        .unwrap();
+        assert!(
+            store.contains("const val LOCAL_ACCOUNT = \"Vibb One\""),
+            "the launcher's account"
+        );
+        assert!(
+            store.contains("const val LOCAL_NAME = \"vibb-kid-calendar\""),
+            "the launcher's NAME"
+        );
+        assert_eq!(
+            local_calendar_key("Vibb One", "vibb-kid-calendar"),
+            KID_LOCAL_KEY
+        );
+        assert_eq!(
+            crate::calendar_feeds::calendar_key("x"),
+            local_calendar_key(crate::calendar_feeds::ACCOUNT, "vibb-feed-x"),
+            "one key rule with the links'"
+        );
     }
 
     #[test]
