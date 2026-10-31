@@ -23,7 +23,7 @@
     /* A field's edge: 3:1 against the field and the card (WCAG 1.4.11). */
     --field-border: #86868B;
 
-    /* vibb's dark peach: 5.2:1 on --bg, 5.8:1 on --surface, 4.7:1 on --tab-pill. */
+    /* vibb's dark peach: 5.2:1 on --bg, 5.8:1 on --surface, 5.1:1 on the tab bar (the chosen tab's label). */
     --tint: #A64B25;
     --tint-hover: #7E3517;
     /* The filled button (the user's pick 3, 2026-10-25): a lighter peach with night text, 7.6:1
@@ -87,8 +87,10 @@
     --bg-clear: rgba(242, 242, 247, 0);
     /* The labels stay AA over the see-through bar with text behind it (5.2:1 at worst, 2026-10-22). */
     --tab-off: #5A5A5F;
-    --tab-on: #0C0C14;
-    --tab-pill: #FBE4DC;
+    /* The chosen tab (the user, 2026-10-31, mockup B, "like Teams"): no pill - its icon filled in
+       vibb's peach, its label in the dark peach (the bright one is ~2.5:1 as text on the bar). */
+    --tab-on: #A64B25;
+    --tab-on-icon: #E8895E;
 
     /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), a phone's initial on
        peach (#0C0C14 on #F0A884 9.9:1). Devices' night band (artboard E) is night in both schemes,
@@ -179,7 +181,7 @@
         --bar-shadow: inset 0 0 0 1px rgba(246, 231, 224, 0.08), 0 4px 18px rgba(0, 0, 0, 0.5);
         --tab-off: #B4A8A2;
         --tab-on: #F0A884;
-        --tab-pill: #2A2A3A;
+        --tab-on-icon: #F0A884;
     }
 }
 
@@ -483,9 +485,22 @@ input[type="radio"] {
 
 .tab[aria-current="page"],
 .tab[aria-current="page"]:hover {
-    background: var(--tab-pill);
     color: var(--tab-on);
-    font-weight: 600;
+    font-weight: 700;
+}
+
+/* Each tab carries its outline icon and its filled one; the chosen tab (and the one just tapped,
+   .is-pending) shows the filled one in the bright peach. */
+.tab-icon-on,
+.tab[aria-current="page"] .tab-icon-off,
+.tab.is-pending .tab-icon-off {
+    display: none;
+}
+
+.tab[aria-current="page"] .tab-icon-on,
+.tab.is-pending .tab-icon-on {
+    display: block;
+    color: var(--tab-on-icon);
 }
 
 .tab-icon {
@@ -2482,9 +2497,9 @@ details.app-display[open] > summary .section-chev {
 .row-value-keep { flex: none; min-width: auto; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
 
 /* ---- Connecting (static/reconnect.js, 2026-10-21): a tap is never "nothing" after being away ---- */
-/* The tapped link at once: the tab in its "on" pill, a row pressed, any other link dimmed. */
+/* The tapped link at once: the tab in its "on" look, a row pressed, any other link dimmed. */
 .is-pending { opacity: 0.6; }
-.tab.is-pending { background: var(--tab-pill); color: var(--tab-on); opacity: 1; }
+.tab.is-pending { color: var(--tab-on); font-weight: 700; opacity: 1; }
 .row.is-pending { background: var(--row-active); opacity: 1; }
 /* A thin bar along the top while the page comes; it never takes a tap. Both are absolute, never
    fixed (design 43: the shell's document doesn't scroll, so its top is the screen's, and an iOS
