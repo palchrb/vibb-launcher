@@ -509,7 +509,7 @@ findings, merge to `main`, full suite once.
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
 
-**Next emulator session E6 (one session, the user 2026-10-27: "grupper gjerne emulator tester etc for effektivitet"), after the colours merge:** §6y calendar links (ICS), §6w steps 8-9 (Dagen's own task + the colours, legend, the lock row's dot), §6 step 12 (Home's fold), B6 (the notification filter's shell test; whether the GMS welcome nag appears with the debug build), the nb day heading's capital, Etar's own crash if time allows. Then `launcher-v0.37.0-rc.8` + `server-v0.60.0` in one release.
+**Emulator session E6 RUNNING since 2026-10-31 22:10 on `jelly36` (main 9064518e; run doc `docs/testing/2026-10-31-e6-run.md` on branch `e6-run`; one session, the user 2026-10-27: "grupper gjerne emulator tester etc for effektivitet"):** §6y calendar links (ICS), §6w steps 8-9 (Dagen's own task + the colours, legend, the lock row's dot), §6 step 12 (Home's fold), B6 (the notification filter's shell test; whether the GMS welcome nag appears with the debug build), the nb day heading's capital, the phones' trust store (the emSign root on the Android 16 image), Etar's own crash if time allows. Then `launcher-v0.37.0-rc.8` + `server-v0.60.0` in one release (Cargo.toml → 0.60.0 in the release commit).
 
 Rounds and waves: `docs/plan/2026-10-25-queue-rounds.md` (2026-10-25). Combined lines are split at their own
 separators, one item per bullet, so each sits in its round; the words are unchanged.
