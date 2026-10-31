@@ -129,8 +129,12 @@ pub fn hash_token(token: &str) -> String {
 /// What a security-log row says besides its label (design 70 §4, slice 2): **facts** - identifiers
 /// only (a route, a tag, an address, a phone line's `device {id}`), stored in `detail` as typed -
 /// and **words** - sentences stored in `params` as catalog keys with their parameters, worded in
-/// the reader's language when the log is read ([worded]). A row from before slice 2 has its prose
-/// in `detail` and no `params`: shown as stored.
+/// the reader's language when the log is read ([Detail::shown]: the words, then " · " and the
+/// facts). A row from before slice 2 has its prose in `detail` and no `params`: shown as stored.
+///
+/// A `security.detail.*` key is **frozen once a release wrote it**: old rows name it for 180 days,
+/// and a key the catalog no longer has reads as itself. A rename keeps the old key in both
+/// catalogs (or maps it when reading) until the rows are gone.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Detail {
     facts: Option<String>,
@@ -266,8 +270,13 @@ impl Detail {
     }
 
     /// A word of ours as the last sentence's `{name}`: `key`'s text in the reader's language
-    /// ("on"/"off", a place).
+    /// ("on"/"off", a place). A parameter needs a sentence: on a [Detail] without one it is lost
+    /// (a bug at the call, caught in a debug build).
     pub fn word(mut self, name: &str, key: &str) -> Detail {
+        debug_assert!(
+            !self.words.is_empty(),
+            "a word for no sentence: {name} = {key}"
+        );
         if let Some(last) = self.words.last_mut() {
             last.w.insert(name.to_string(), key.to_string());
         }
@@ -275,7 +284,9 @@ impl Detail {
     }
 
     /// A length of time as the last sentence's `{name}`, told as "1 h 30 min" (nb "1 t 30 min").
+    /// Needs a sentence, as [Detail::word].
     pub fn duration(mut self, name: &str, minutes: i64) -> Detail {
+        debug_assert!(!self.words.is_empty(), "a duration for no sentence: {name}");
         if let Some(last) = self.words.last_mut() {
             last.d.insert(name.to_string(), minutes);
         }
@@ -283,8 +294,9 @@ impl Detail {
     }
 
     /// An instant for the last sentence's `{name}`, told as a time in the reader's zone and
-    /// language when read ("yesterday 21:40", "12 Oct 08:12").
+    /// language when read ("yesterday 21:40", "12 Oct 08:12"). Needs a sentence, as [Detail::word].
     pub fn at(mut self, name: &str, instant: chrono::DateTime<chrono::Utc>) -> Detail {
+        debug_assert!(!self.words.is_empty(), "an instant for no sentence: {name}");
         if let Some(last) = self.words.last_mut() {
             last.t.insert(
                 name.to_string(),
@@ -329,6 +341,25 @@ impl Detail {
                 .collect::<Vec<_>>()
                 .join(" ")
         })
+    }
+
+    /// A row as the log page shows it (and the tests read it): its words in `zone`'s language, then
+    /// " · " and its facts when it has both (a refused request's words and its `METHOD /path`, a
+    /// phone's Screen Time words and its `device {id}`); the words alone, the facts alone, or an
+    /// older row's prose; `None` for a row that says nothing besides its label.
+    pub fn shown(
+        detail: Option<&str>,
+        params: Option<&str>,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<String> {
+        let facts = detail.map(str::trim).filter(|d| !d.is_empty());
+        let words = params.and_then(|p| Detail::worded(p, zone, now));
+        match (words, facts) {
+            (Some(words), Some(facts)) => Some(format!("{words} · {facts}")),
+            (Some(words), None) => Some(words),
+            (None, facts) => facts.map(str::to_string),
+        }
     }
 
     /// A stored text that is either our words (a sentence's JSON, [Detail::columns]) or prose from
@@ -473,6 +504,12 @@ pub async fn record_phone_event(
         _ => return Ok(false),
     };
     let own = kind != PhoneLine::LinesDropped;
+    // A phone line's facts are the server's `fact` alone (H3): a caller's `with_facts` has no
+    // place here and is dropped - said in a debug build, never written.
+    debug_assert!(
+        line.facts.is_none(),
+        "a phone line's facts are `device {{id}}`, never the caller's"
+    );
     let (_, params) = line.columns();
     sqlx::query("INSERT INTO security_events (event_type, detail, params) VALUES (?, ?, ?)")
         .bind(kind.wire())

@@ -1343,5 +1343,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (`admin::event_label`; an id this server never wrote reads as its own words), and a row from before slice 2 shows
   its prose as stored, as does a `banned_ips.reason` from before. The audit throttle's "(N times in a minute)" and
   summary rows, the phone lines (`parent_pin::log_line`, `window_relock::log_line`, …), `time_rules`' conversions
-  and `settings_log` (facts: the page and its routes) go the same way. **No new
+  and `settings_log` (facts: the page and its routes) go the same way. The page shows a row's words, then " · "
+  and its facts (`Detail::shown`): the words say "phone 3" in the reader's language, the facts and the greps say
+  `device 3`. A `security.detail.*` key is frozen once a release wrote it - old rows name it for 180 days and a key
+  the catalog lost reads as itself - so a rename keeps the old key (or maps it when reading) until the rows are gone.
+  **No new
   user-facing word is hardcoded** (the user, 2026-10-26).

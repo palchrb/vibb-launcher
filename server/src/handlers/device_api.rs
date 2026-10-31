@@ -1703,6 +1703,8 @@ async fn log_play_events(
         && previous_until != Some(mode.until_ms)
     {
         let line = crate::security::Detail::words("security.detail.play_install_mode", &[]);
+        // The intake keeps `until_ms` in range, so the instant always converts; the number is the
+        // last resort for a value that somehow doesn't (never a panic, never a lost line).
         let line = match chrono::DateTime::from_timestamp_millis(mode.until_ms) {
             Some(until) => line.at("until", until),
             None => crate::security::Detail::words(

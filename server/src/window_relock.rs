@@ -812,6 +812,8 @@ pub fn log_line(r: &RelockReport) -> crate::security::Detail {
             crate::security::Detail::words("security.detail.relock.at", &[("trigger", trigger)])
                 .at("at", at)
         }
+        // The sanitized report's `at_ms` is in range, so it converts; the number is the last
+        // resort for one that somehow doesn't (the line is kept either way).
         (None, _) => crate::security::Detail::words(
             "security.detail.relock.at_plain",
             &[("at", &r.at_ms.to_string())],

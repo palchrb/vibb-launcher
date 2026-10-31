@@ -1235,11 +1235,13 @@ async fn parent_edits_are_in_the_security_log() {
         .unwrap()
         .into_iter()
         .map(|(kind, user, detail, params)| {
-            let words = params
-                .as_deref()
-                .and_then(|p| crate::security::Detail::worded(p, &zone, chrono::Utc::now()))
-                .or(detail)
-                .unwrap_or_default();
+            let words = crate::security::Detail::shown(
+                detail.as_deref(),
+                params.as_deref(),
+                &zone,
+                chrono::Utc::now(),
+            )
+            .unwrap_or_default();
             (kind, user, words)
         })
         .collect();
@@ -1257,7 +1259,12 @@ async fn parent_edits_are_in_the_security_log() {
     );
     assert!(events.iter().all(|e| e.1 == "parent"));
     assert_eq!(events[0].2, "everyone: Skole");
-    assert!(events[4].2.starts_with("own rules "), "{}", events[4].2);
+    // A phone's Screen Time save names the phone: the words, then the fact (qa-s-i18n-2-code M1).
+    assert!(
+        events[4].2.starts_with("Own rules ") && events[4].2.ends_with(&format!(" · device {id}")),
+        "{}",
+        events[4].2
+    );
     assert_eq!(events[5].2, format!("phone {id}: interval, every 15 min"));
 }
 

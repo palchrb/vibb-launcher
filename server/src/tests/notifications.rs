@@ -135,7 +135,7 @@ async fn each_kind_is_raised_once_from_its_real_input() {
         ),
         (
             "Safe mode or a start cut short",
-            "Sikker modus eller en avbrutt start",
+            "Sikkermodus eller en avbrutt start",
         ),
     ] {
         assert!(en.contains(en_words), "{en_words}");
@@ -201,6 +201,98 @@ async fn each_kind_is_raised_once_from_its_real_input() {
     assert_eq!(
         kinds(&app, id).await[5..],
         ["foreign_access", "unseen_boot", "emergency_call"]
+    );
+}
+
+/// Design 70 §4: a row raised before slice 2 keeps its stored English on the nb page - the two
+/// real shapes (qa-s-i18n-2-code L3): a 2026-10-25 `phone_off` with its words stored and
+/// `{"location"}` for params, and an older `foreign_access` with a stored detail. Neither is
+/// worded from its params; the detail reader keeps the stored one.
+#[tokio::test]
+async fn older_rows_keep_their_stored_english() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let insert = |kind: &'static str,
+                  title: &'static str,
+                  summary: &'static str,
+                  detail: Option<&'static str>,
+                  params: Option<&'static str>| {
+        let app = &app;
+        async move {
+            sqlx::query(
+                "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, \
+                 detail, params, happened_at) VALUES (?, ?, ?, ?, ?, '/devices', ?, ?, datetime('now'))",
+            )
+            .bind(id)
+            .bind(kind)
+            .bind(format!("old-{kind}"))
+            .bind(title)
+            .bind(summary)
+            .bind(detail)
+            .bind(params)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        }
+    };
+    insert(
+        "phone_off",
+        "Anna was turned off",
+        "21:14 · battery 3 %, probably flat",
+        Some("Last position from 21:10: shown on Locate"),
+        Some(r#"{"location":{"lat":59.9,"lng":10.7,"at_ms":1761419400000}}"#),
+    )
+    .await;
+    insert(
+        "foreign_access",
+        "An app may read the PIN on Anna",
+        "1 app with device admin",
+        Some("Device admin: Helper."),
+        None,
+    )
+    .await;
+    let cookie = app.admin_cookie().await;
+    let nb = app.get_page("/notifications?lang=nb", &cookie).await.text();
+    for stored in [
+        "Anna was turned off",
+        "21:14 · battery 3 %, probably flat",
+        "Last position from 21:10: shown on Locate",
+        "An app may read the PIN on Anna",
+        "1 app with device admin",
+        "Device admin: Helper.",
+    ] {
+        assert!(nb.contains(stored), "{stored} on the nb page");
+    }
+    assert!(!nb.contains("ble slått av") && !nb.contains("vist under Finn"));
+    // The readers directly, in nb.
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::Nb).await;
+    let now = chrono::Utc::now();
+    let rows = super::told_events(&app, id, crate::i18n::Lang::Nb).await;
+    assert_eq!(rows[0].1, "Anna was turned off");
+    assert_eq!(rows[1].1, "An app may read the PIN on Anna");
+    assert_eq!(
+        crate::parent_events::detail(
+            "foreign_access",
+            "An app may read the PIN on Anna",
+            Some("Device admin: Helper.".to_string()),
+            None,
+            &zone,
+            now
+        )
+        .as_deref(),
+        Some("Device admin: Helper.")
+    );
+    assert_eq!(
+        crate::parent_events::detail(
+            "phone_off",
+            "Anna was turned off",
+            Some("Last position from 21:10: shown on Locate".to_string()),
+            Some(r#"{"location":{"lat":59.9,"lng":10.7,"at_ms":1761419400000}}"#),
+            &zone,
+            now
+        )
+        .as_deref(),
+        Some("Last position from 21:10: shown on Locate")
     );
 }
 

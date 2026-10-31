@@ -791,7 +791,7 @@ mod tests {
             security::worded_in(&log_line(&lockout), crate::i18n::Lang::Nb),
             "9. okt. 2025 08:53 UTC: 5 feil foreldre-PIN-er på rad (den siste for pause i \
              begrensningene): foreldre-PIN-en er sperret på telefonen. I 1 t. Til 9. okt. 2025 \
-             09:53 UTC. Lagrer du en ny foreldre-PIN, oppheves det når telefonen melder seg."
+             09:53 UTC. Lagrer du en ny foreldre-PIN, oppheves det neste gang telefonen melder seg."
         );
         assert_eq!(lockout_minutes(3), 60);
         assert_eq!(lockout_minutes(5), 240);

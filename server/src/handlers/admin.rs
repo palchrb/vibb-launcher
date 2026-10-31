@@ -24,8 +24,8 @@ struct EventRow {
     who: String,
     when: String,
     exact: String,
-    /// The row's words in the reader's language (`params`, design 70 §4), else its stored
-    /// facts or an older row's prose.
+    /// The row's words in the reader's language (`params`, design 70 §4), then " · " and its
+    /// facts; the facts alone, or an older row's prose, when there are no words.
     detail: Option<String>,
 }
 
@@ -62,7 +62,7 @@ const EVENTS_PER_PAGE: i64 = 200;
 /// which reads the writers in `src/`); anything else (an id from an older version) reads as its
 /// words ("retired_event" -> "Retired event"), never as the raw id - that stays in the row's ⓘ.
 pub(crate) fn event_label(lang: Lang, kind: &str) -> String {
-    match label_key(kind) {
+    match label_key(lang, kind) {
         Some(key) => crate::i18n::t(lang, &key).to_string(),
         None => words_of(kind),
     }
@@ -70,13 +70,13 @@ pub(crate) fn event_label(lang: Lang, kind: &str) -> String {
 
 /// The catalog key of an id this server writes; `None` for any other (or an id that isn't shaped
 /// like one, which could name another key).
-fn label_key(kind: &str) -> Option<String> {
+fn label_key(lang: Lang, kind: &str) -> Option<String> {
     let shaped = !kind.is_empty()
         && kind
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
     let key = format!("security.event.{kind}");
-    (shaped && crate::i18n::has(Lang::En, &key)).then_some(key)
+    (shaped && crate::i18n::has(lang, &key)).then_some(key)
 }
 
 /// "music_entry_moved" -> "Music entry moved"; an empty id reads "Event".
@@ -110,17 +110,18 @@ fn event_row(
     .filter(|part| !part.is_empty())
     .collect::<Vec<_>>()
     .join(" · ");
-    let words = event
-        .params
-        .as_deref()
-        .and_then(|params| crate::security::Detail::worded(params, zone, now));
     EventRow {
         label: event_label(zone.lang(), &event.event_type),
+        detail: crate::security::Detail::shown(
+            event.detail.as_deref(),
+            event.params.as_deref(),
+            zone,
+            now,
+        ),
         kind: event.event_type,
         who,
         when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
         exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-        detail: words.or_else(|| event.detail.filter(|d| !d.trim().is_empty())),
     }
 }
 
@@ -263,7 +264,7 @@ mod tests {
         assert_eq!(en("__"), "Event");
         assert_eq!(en("ÿes_no"), "Ÿes no");
         // An id shaped like another key is no label.
-        assert_eq!(label_key("unknown.music.title"), None);
+        assert_eq!(label_key(Lang::En, "unknown.music.title"), None);
     }
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,

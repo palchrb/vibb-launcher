@@ -2814,6 +2814,46 @@ mod tests {
             );
             assert_ne!(inbox, t, "{:?}", event.kind);
         }
+        // The same rows in Norwegian (design 70 §8: the nb column) - the push's short form, never
+        // the inbox's long one ("14:02 · batteri 3 %", not "…, trolig tomt").
+        let nb = zone.in_lang(Lang::Nb);
+        let nb_rows = [
+            ("Anna: nødanrop", "14:02"),
+            ("Anna: nødanrop", "I går 19:14"),
+            ("Anna: foreldre-PIN brukt", "14:02"),
+            ("Anna: foreldre-PIN sperret", "Til 14:45"),
+            ("Anna: en app kan lese PIN-koden", "14:30 · 2 apper"),
+            ("Anna: startet uten Vibb One", "14:02"),
+            ("Anna: lite batteri", "14:02 · batteri 14 %"),
+            ("Anna: slått av", "14:02 · batteri 3 %"),
+            ("Anna: tomt batteri, slått av", "14:02 · batteri 1 %"),
+            ("Anna: for varm, slått av", "14:02"),
+            ("Anna: starter på nytt", "14:02"),
+            ("Anna: startet på nytt", "14:20 · batteri 64 %"),
+            ("Anna: slått på", "14:20 · batteri 64 %"),
+            ("Anna: slått på", "14:20"),
+            ("Anna: kom til Home", "14:02"),
+            ("Anna: dro fra School", "14:02"),
+            ("Anna: ber om mer tid", "14:02"),
+            ("Anna: ber om mer tid", "14:02 · 1 t 20 min igjen"),
+            ("Anna: ber om mer tid", "14:02"),
+            ("Signal: oppdatering tilgjengelig", "14:02 · versjon 7.2.0"),
+            ("Anna: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
+        ];
+        assert_eq!(rows.len(), nb_rows.len());
+        for ((event, ..), (title, body)) in rows.iter().zip(nb_rows) {
+            let (t, b) = pushed(
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                Some(event.push_title.clone()),
+                Some(event.push_body.clone()),
+                event.params.as_deref(),
+                &nb,
+                phone.now,
+            );
+            assert_eq!((t.as_str(), b.as_str()), (title, body), "{:?}", event.kind);
+        }
         // A long name is cut, the fact stays.
         let long = Phone {
             name: "Anna-Sofie ".repeat(8),

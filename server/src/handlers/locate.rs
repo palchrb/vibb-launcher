@@ -1482,17 +1482,26 @@ pub(crate) async fn cancel_waiting(
         "device_command_cancelled",
         Some(admin),
         None,
-        Some(
-            security::Detail::words(
+        Some({
+            // `requested_at` is `datetime('now')` text: an instant, told in the reader's zone.
+            let (asked, instant) = match parse_db_utc(&requested_at) {
+                Some(at) => (String::new(), Some(at)),
+                None => (format!("{requested_at} UTC"), None),
+            };
+            let detail = security::Detail::words(
                 "security.detail.command_cancelled",
                 &[
                     ("command", &command),
-                    ("asked", &format!("{requested_at} UTC")),
+                    ("asked", &asked),
                     ("device", &device_id.to_string()),
                 ],
-            )
-            .with_facts(format!("device {device_id}")),
-        ),
+            );
+            match instant {
+                Some(at) => detail.at("asked", at),
+                None => detail,
+            }
+            .with_facts(format!("device {device_id}"))
+        }),
     )
     .await;
     Ok(true)

@@ -748,10 +748,7 @@ pub async fn security_words(
     .unwrap()
     .into_iter()
     .map(|(detail, params)| {
-        params
-            .as_deref()
-            .and_then(|p| crate::security::Detail::worded(p, &zone, now))
-            .or(detail)
+        crate::security::Detail::shown(detail.as_deref(), params.as_deref(), &zone, now)
             .unwrap_or_default()
     })
     .collect()
