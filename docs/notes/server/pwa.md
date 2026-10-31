@@ -1329,5 +1329,19 @@ man er inne på en device". Branch `pwa-fixes-b`.
   its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. One English sentence
   is left on Account until slice 3a: the "Wrong codes before this sign-in" banner, which `admin_auth::login_warning`
   builds at sign-in and the session keeps as text (3a keeps the count and addresses instead, worded by the page, with
-  the Devices list's row). **No new
+  the Devices list's row).
+- **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
+  `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
+  siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`
+  for a date alone, `display_time::duration` for "1 t 30 min". The parent's events are stored as key + params and
+  worded when read (`parent_events::told`/`pushed`/`detail`, `events.<kind>.*`; `notifications.md`, "Push
+  wording"). The security log's rows are words too: `security::record_security_event` takes a `Detail` -
+  `Detail::words(key, params)` (sentences stored in `security_events.params`, migration 0107, as `{"key", "p"}`
+  or a list of them, with `t` instants told in the reader's zone, `w` words of ours and `d` durations) and
+  `Detail::facts(text)` (identifiers only in `detail`: a route, a tag, an address, an entry's or a phone's
+  `device {id}`, which the phone lines' hourly budget counts by) - the labels are `security.event.<id>`
+  (`admin::event_label`; an id this server never wrote reads as its own words), and a row from before slice 2 shows
+  its prose as stored, as does a `banned_ips.reason` from before. The audit throttle's "(N times in a minute)" and
+  summary rows, the phone lines (`parent_pin::log_line`, `window_relock::log_line`, …), `time_rules`' conversions
+  and `settings_log` (facts: the page and its routes) go the same way. **No new
   user-facing word is hardcoded** (the user, 2026-10-26).

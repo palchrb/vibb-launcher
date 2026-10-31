@@ -54,7 +54,10 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
   (a plain-text answer), over `src/i18n/en.json` and `nb.json` compiled in; every template struct has `lang: Lang`
   and `impl Words` (`i18n::words!`; `self.t`/`self.tp`/`self.tc`), every moved page `<html lang="{{ lang.code() }}">`
   (the others keep `lang="en"` until their slice). `i18n::tests` keeps both catalogs' keys and parameters equal, the plural pairs, no markup, and every used key
-  present. **No new user-facing word is hardcoded** (the user, 2026-10-26): new pages go through it (design 69's
+  present. Since slice 2 the times (`display_time::Zone` carries the `Lang`, `time.*`), the parent's events
+  (`events.<kind>.*`, worded when read; pushes in the subscriber's language) and the security log (`security.event.<id>`
+  labels, `security::Detail` words in `security_events.params`, 0107) are in the reader's language too. **No new
+  user-facing word is hardcoded** (the user, 2026-10-26): new pages go through it (design 69's
   Calendar pages and Account are moved; round S-i18n, design 70, moves the rest; `docs/notes/server/pwa.md`, "Words").
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), or any x86_64 Linux box: every `server-v*` tag builds the static `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` binaries, each natively on a runner of its own architecture (root `.github/workflows/server-release.yml`, plain `cargo build --target`, `musl-tools`; no `cross` since 2026-10-25), and publishes a tarball for each - `deploy/install.sh` downloads the newest `server-v*` release's tarball for `uname -m` and sets up a systemd service
 
@@ -235,8 +238,10 @@ one per phone by `idx_time_rules_bedtime`) follows 0100, and `0102_app_permissio
 `device_calendars` with the one-writable index, `device_calendar_rules`, the four `device_policy.calendar_*` switches,
 `devices.calendar_report`, `device_app_display.on_home`) follows 0102, and `0104_admin_lang.sql` (design 70:
 `admin_users.lang`, no CHECK) follows 0103, and `0105_calendar_feeds.sql` (design 72's calendar links:
-`calendar_sources`, `device_calendar_feeds`, the trigger `calendar_sources_orphaned`) follows 0104
-(`migrations_73_to_105_in_order`). The next free number is 0106.
+`calendar_sources`, `device_calendar_feeds`, the trigger `calendar_sources_orphaned`) follows 0104, and
+`0107_security_params.sql` (design 70 slice 2: `security_events.params`, a row's words as a catalog key and its
+parameters) follows 0105 - 0106 is the calendar colours' (branch `calendar-colours`, merged beside it)
+(`migrations_73_to_107_in_order`). The next free number is 0108.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request)
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture")
