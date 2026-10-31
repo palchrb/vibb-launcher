@@ -158,7 +158,7 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
   `time_request.json`, `installed_apps_report.json` and the three `calendar_*.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
-  `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
+  `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and
   `server-release.yml` (security review L9) - move it on deliberately, both files at once. Both build the static musl
   binaries natively, each architecture on its own runner (`aarch64-unknown-linux-musl` on `ubuntu-24.04-arm`,

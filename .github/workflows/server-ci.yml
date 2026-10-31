@@ -4,7 +4,7 @@ name: Server CI
 # required check pending forever): server-changes decides, server-build runs only when server/ or
 # this workflow changed, server-image-context and server-image (a matrix: amd64 and arm64, each on
 # a runner of its own architecture) only when the image's files (Dockerfile, .dockerignore,
-# deploy/image-smoke.sh) or this workflow changed, and server-ci (always runs) is the check to
+# deploy/image-smoke.sh, deploy/distrusted-roots.txt) or this workflow changed, and server-ci (always runs) is the check to
 # require.
 # Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
 
@@ -60,7 +60,7 @@ jobs:
             changed=false
           fi
           # The image job (design 22 §6): only when the image's own files or this workflow changed.
-          if grep -qE '^(server/Dockerfile|server/\.dockerignore|server/deploy/image-smoke\.sh|\.github/workflows/server-ci\.yml)$' <<<"$files"; then
+          if grep -qE '^(server/Dockerfile|server/\.dockerignore|server/deploy/image-smoke\.sh|server/deploy/distrusted-roots\.txt|\.github/workflows/server-ci\.yml)$' <<<"$files"; then
             image=true
           else
             image=false
