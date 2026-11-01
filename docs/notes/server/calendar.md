@@ -242,9 +242,10 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   `host_changed` / `untested` (a first Test that never passed: hidden, its password blanked); `test_error` (a code,
   worded by `handlers::calendar::caldav_why`), `tested_at` (the 10 s gap), `lan`/`lan_http`. `calendar_sources` gains
   `account_id` (cascade): a CalDAV source's `url_sealed` is the collection's address (sealed as a link is) and `etag`
-  its validator (`<getctag>|<sync-token>`). The trigger `caldav_accounts_orphaned` deletes an account when its last
-  calendar leaves the last phone; `caldav::sweep` (each scheduler pass) deletes an account no phone has a calendar of
-  a day after its last Test. A source's uid = 32 hex of SHA-256 over `vibb-caldav:` + server address NUL username NUL
+  its validator (`<getctag>|<sync-token>`), `last_modified` the last REPORT's time. No account goes at once (code QA
+  L3): the trigger `caldav_accounts_unused` stamps `unused_since` when its last calendar leaves the last phone
+  (`caldav_accounts_used` clears it), and `caldav::sweep` (each scheduler pass) deletes an account no phone has a
+  calendar of a day after both that and its last Test - one switch flipped by mistake never loses the login. A source's uid = 32 hex of SHA-256 over `vibb-caldav:` + server address NUL username NUL
   collection address - the account's identity, not its row id, so an account removed and signed in again gives each
   calendar its key (settings, rules) back, as a link does. Step 3's "the kid's own CalDAV calendar" flag would go on
   the phone's `device_calendar_feeds` row (nothing built).
@@ -258,19 +259,26 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   (`resourcetype` calendar, `supported-calendar-component-set` with VEVENT or none, `displayname` - else the decoded
   last path segment). At Test **a host gets the password only once it asked for it** (a 401 without it; a mail
   domain's web host that never asks never gets it); a 401/403 with it is `login_refused`, never retried. The hosts
-  that got it plus the calendars' hosts are the account's `hosts`, shown: "Passordet sendes bare til: …". At most once
+  that got it are the account's `hosts`, shown: "Passordet sendes bare til: …" - a calendar on a host that never
+  asked isn't offered. Every address the server names (principal, home set, calendars) is held as a redirect is
+  (code QA M1): a public account never reaches the LAN (an http href resolving there is `private_address`), a LAN
+  account only its server's host and port. A typed password is stored only when the Test passes (QA L5); a
+  refused stored password stops the account, a refused new one doesn't. At most once
   per 10 s per account (`?notice=caldav_wait`; a new account's form re-renders with it). A pass re-seals the
   calendars under today's key and makes every failing calendar of the account due at once. XML by `quick-xml`'s
   `NsReader` (`caldav::multistatus`: any prefix, CDATA, the five entities and numeric ones; a DOCTYPE with an internal
   subset is refused).
 - **The fetch** (`caldav::refresh_source`, from `calendar_feeds::refresh`; the same schedule, backoff, empty hold,
   churn, caps, rev and nudge): no request while the account isn't `ok` or its password can't be opened (`key_lost`);
-  PROPFIND Depth 0 `getctag` + `sync-token` - the stored validator → unchanged; else one `REPORT calendar-query`
+  a calendar the last Test no longer listed is `not_listed` (that calendar alone, no request; QA M2); PROPFIND Depth 0
+  `getctag` + `sync-token` - the stored validator and a REPORT within 24 h → unchanged (QA L6: the window moves);
+  else one `REPORT calendar-query`
   (`time-range` today −60 d .. +401 d, `calendar-data`), capped at `Kind::Calendar`'s 5 MB (`too_big` keeps the set),
   every resource's VCALENDAR concatenated into one body for `ics::parse` (a resource that isn't one whole VCALENDAR
   counted `bad`). Only to `hosts`: another host - a redirect - is `host_changed` before any request to it. **A
   401/403 marks the account `login_refused`** (QA M5) and **another host `host_changed`**: no request for any of its
-  calendars until Test passes; every phone's row says so at once (`LinkRow.account_state`).
+  calendars until Test passes; every phone's row says so at once (`LinkRow.account_state`). A fetch that read an older
+  password never stops the account over a Test that saved a new one (`AND password_nonce = ?`, QA L4).
 - **The page**: each account (`data-caldav`): the username and server host, "Logget inn 14:05 · 3 kalendere" or the
   stop ("Passordet ble avvist - …", "Serveren svarte fra en ny vert - …", "Serverens nøkkel er byttet - …"), a later
   Test's failure ("Siste test: …"), the hosts line, the LAN warning; a switch per calendar for this phone (one form,

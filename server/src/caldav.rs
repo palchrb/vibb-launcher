@@ -12,9 +12,12 @@
 //!   (or the path typed), `current-user-principal`, `calendar-home-set`, then Depth 1 for the calendars (`resourcetype`
 //!   calendar, `supported-calendar-component-set` with VEVENT). XML by `quick-xml` ([multistatus]). At Test the
 //!   password goes to a host only once it asks for it (a 401 without it): a mail domain's web host that never asks
-//!   never gets it. **The hosts that got it, and the calendars' hosts, are the only hosts it may go to later**
-//!   (`hosts`, shown on the page): another one is `host_changed` before any request to it.
-//! - **The fetch** ([fetch_collection]): `PROPFIND` Depth 0 `getctag` + `sync-token`; unchanged → done; else one
+//!   never gets it. **The hosts that got it are the only hosts it may go to later** (`hosts`, shown on the page; a
+//!   calendar on a host that never asked isn't offered): a redirect to another one is `host_changed` before any
+//!   request to it. An address the server names (principal, home set, a calendar) is held to the same rules as a
+//!   redirect: never the LAN for a public account, and only the server's own host and port for a LAN one.
+//! - **The fetch** ([fetch_collection]): `PROPFIND` Depth 0 `getctag` + `sync-token`; unchanged (and a report less
+//!   than [REPORT_EVERY] old, so events entering the window come in) → done; else one
 //!   `REPORT calendar-query` with a `time-range` (−60 .. +400 days) for `calendar-data`, capped at `Kind::Calendar`'s
 //!   5 MB (`too_big` keeps the set), every resource through `ics::parse` as one body. No `sync-collection`.
 //! - **A refused password stops** (QA M5): a 401/403 with the password marks the account `login_refused` - no request
@@ -50,7 +53,8 @@ pub const MAX_CALENDARS: usize = 50;
 pub const MAX_SERVER_CHARS: usize = 500;
 pub const MAX_USERNAME_CHARS: usize = 200;
 pub const MAX_PASSWORD_CHARS: usize = 500;
-/// An account no phone has a calendar of goes this long after its last Test.
+/// An account no phone has a calendar of goes this long after it was last used: its last Test, or its last calendar
+/// leaving the last phone (`unused_since`, code QA L3) - one switch flipped by mistake never loses the login.
 pub const UNUSED_HOURS: i64 = 24;
 /// Redirects followed per request.
 const MAX_HOPS: usize = 5;
@@ -58,6 +62,8 @@ const MAX_HOPS: usize = 5;
 const MAX_DEPTH: usize = 32;
 /// A validator kept, in bytes.
 const MAX_VALIDATOR: usize = 500;
+/// The `REPORT` runs at least this often, whatever the ctag says: the window moves a day each day (QA L6).
+pub const REPORT_EVERY: TimeDelta = TimeDelta::hours(24);
 
 /// Mail domains whose CalDAV server isn't at the domain itself (design 72 §6: "an e-mail, its domain tried").
 const KNOWN_DOMAINS: &[(&str, &str)] = &[
@@ -351,8 +357,16 @@ struct Dav<'a> {
     /// The address was the LAN or the tailnet when judged; every request judged again (`calendar_feeds::route`).
     lan: bool,
     hosts: Hosts<'a>,
+    /// A LAN account's server: its host and port, the only ones any request may go to (code QA M1).
+    origin: Option<(String, Option<u16>)>,
     /// A LAN account's name resolved publicly: it stays public for good (the caller stores it).
     went_public: bool,
+}
+
+/// A LAN account's host and port ([Dav::origin]); `None` for a public one.
+fn origin_of(server_url: &str, lan: bool) -> Option<(String, Option<u16>)> {
+    let url = reqwest::Url::parse(server_url).ok().filter(|_| lan)?;
+    Some((host_of(&url), url.port_or_known_default()))
 }
 
 /// A path segment's `%XX` decoded (a calendar without a display name is named by it), lossy UTF-8.
@@ -407,6 +421,12 @@ impl Dav<'_> {
         let mut hops = 0;
         loop {
             let host = host_of(&current);
+            // Every address, the server's own hrefs too - not only a redirect's (code QA M1).
+            if let Some((origin, port)) = &self.origin
+                && (host != *origin || current.port_or_known_default() != *port)
+            {
+                return Err(FeedError::code("network"));
+            }
             let with_password = match &self.hosts {
                 Hosts::Learn(asked) => asked.contains(&host),
                 Hosts::Fixed(hosts) => {
@@ -417,6 +437,11 @@ impl Dav<'_> {
                 }
             };
             let route = calendar_feeds::route(self.source, current.as_str(), self.lan).await?;
+            // A public account never reaches the LAN: an http address the server names that resolves to it is a
+            // private address (code QA M1).
+            if !self.lan && matches!(route, Route::Lan(_)) {
+                return Err(FeedError::code("private_address"));
+            }
             if self.lan && route == Route::Public {
                 self.went_public = true;
             }
@@ -523,7 +548,7 @@ pub struct Discovery {
     pub principal: String,
     pub home_set: String,
     pub calendars: Vec<Found>,
-    /// The hosts the password may go to: those that asked for it, and the calendars'.
+    /// The hosts the password may go to: those that asked for it.
     pub hosts: Vec<String>,
     pub went_public: bool,
 }
@@ -553,6 +578,7 @@ pub async fn discover(
         login,
         lan,
         hosts: Hosts::Learn(&mut asked),
+        origin: origin_of(server_url, lan),
         went_public: false,
     };
     let mut last = FeedError::code("not_caldav");
@@ -659,21 +685,18 @@ pub async fn discover(
             break;
         }
     }
+    let went_public = dav.went_public;
+    // The password goes only to a host that asked for it: a calendar elsewhere isn't offered (code QA M1).
+    calendars
+        .retain(|c| reqwest::Url::parse(&c.href).is_ok_and(|url| asked.contains(&host_of(&url))));
     if calendars.is_empty() {
         return Err(FeedError::code("no_calendars"));
-    }
-    let went_public = dav.went_public;
-    let mut hosts = asked;
-    for c in &calendars {
-        if let Ok(url) = reqwest::Url::parse(&c.href) {
-            hosts.insert(host_of(&url));
-        }
     }
     Ok(Discovery {
         principal: principal.to_string(),
         home_set: home.to_string(),
         calendars,
-        hosts: hosts.into_iter().collect(),
+        hosts: asked.into_iter().collect(),
         went_public,
     })
 }
@@ -681,16 +704,19 @@ pub async fn discover(
 // ---- the fetch ---------------------------------------------------------------------------------
 
 /// One calendar's fetch (§6): `PROPFIND` Depth 0 for `getctag` and `sync-token` (the validator, `<ctag>|<token>`);
-/// the stored one → [Fetched::NotModified]; else `REPORT calendar-query` over the horizon, every resource's
+/// the stored one and a report less than [REPORT_EVERY] old (`last_report`) → [Fetched::NotModified]; else
+/// `REPORT calendar-query` over the horizon (its time returned as `last_modified`), every resource's
 /// `calendar-data` read by `ics::parse` as one body (a resource that isn't a whole VCALENDAR counted `bad`). Only to
 /// `hosts`. Returns the fetch and whether a LAN account's address now resolved publicly.
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch_collection(
     source: &dyn Source,
+    server_url: &str,
     url: &str,
     lan: bool,
     login: Login<'_>,
     hosts: &[String],
-    validator: Option<&str>,
+    (validator, last_report): (Option<&str>, Option<&str>),
     now: DateTime<Utc>,
 ) -> (Result<Fetched, FeedError>, bool) {
     let mut dav = Dav {
@@ -698,16 +724,17 @@ pub async fn fetch_collection(
         login,
         lan,
         hosts: Hosts::Fixed(hosts),
+        origin: origin_of(server_url, lan),
         went_public: false,
     };
-    let result = fetch_with(&mut dav, url, validator, now).await;
+    let result = fetch_with(&mut dav, url, (validator, last_report), now).await;
     (result, dav.went_public)
 }
 
 async fn fetch_with(
     dav: &mut Dav<'_>,
     url: &str,
-    validator: Option<&str>,
+    (validator, last_report): (Option<&str>, Option<&str>),
     now: DateTime<Utc>,
 ) -> Result<Fetched, FeedError> {
     let url = reqwest::Url::parse(url).map_err(|_| FeedError::code("network"))?;
@@ -726,7 +753,10 @@ async fn fetch_with(
             .then(|| format!("{ctag}|{token}"))
             .filter(|t| t.len() <= MAX_VALIDATOR)
     });
-    if tag.is_some() && tag.as_deref() == validator {
+    let reported_lately = last_report
+        .and_then(crate::music_sweep::parse_stamp)
+        .is_some_and(|at| now - at < REPORT_EVERY);
+    if tag.is_some() && tag.as_deref() == validator && reported_lately {
         return Ok(Fetched::NotModified);
     }
     let (_, answer) = dav.ask("REPORT", &url, "1", &report_body(now)).await?;
@@ -774,7 +804,7 @@ async fn fetch_with(
     Ok(Fetched::Body {
         parsed,
         etag: tag,
-        last_modified: None,
+        last_modified: Some(stamp(now)),
     })
 }
 
@@ -783,19 +813,21 @@ async fn fetch_with(
 /// The account as a fetch needs it. No `Debug`: it holds the sealed password.
 #[derive(sqlx::FromRow)]
 struct AccountRow {
+    server_url: String,
     username: String,
     password_sealed: Vec<u8>,
     password_nonce: Vec<u8>,
     password_key_fp: String,
     hosts: String,
+    calendars_json: String,
     lan: bool,
     state: String,
 }
 
 async fn account(state: &AppState, id: i64) -> Result<Option<AccountRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT username, password_sealed, password_nonce, password_key_fp, hosts, lan, state \
-         FROM caldav_accounts WHERE id = ?",
+        "SELECT server_url, username, password_sealed, password_nonce, password_key_fp, hosts, calendars_json, \
+         lan, state FROM caldav_accounts WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -816,12 +848,14 @@ fn open_password(state: &AppState, id: i64, row: &AccountRow) -> Option<String> 
 
 /// A `caldav` source's fetch for `calendar_feeds::refresh`: no request while its account is stopped (`login_refused`,
 /// `host_changed` - "Test again") or its password can't be opened (`key_lost`); a refused password or another host
-/// stops the account for all its calendars (QA M5).
+/// stops the account for all its calendars (QA M5). A calendar the account's last Test no longer listed is
+/// `not_listed`, without a request - that one alone (code QA M2). `validators`: the stored ctag and the last report's
+/// time.
 pub async fn refresh_source(
     state: &AppState,
     account_id: Option<i64>,
     url: &str,
-    validator: Option<&str>,
+    validators: (Option<&str>, Option<&str>),
     now: DateTime<Utc>,
 ) -> Result<Result<Fetched, FeedError>, sqlx::Error> {
     let Some(id) = account_id else {
@@ -835,6 +869,10 @@ pub async fn refresh_source(
         "host_changed" => return Ok(Err(FeedError::code("host_changed"))),
         _ => return Ok(Err(FeedError::code("login_refused"))),
     }
+    let listed: Vec<Found> = serde_json::from_str(&row.calendars_json).unwrap_or_default();
+    if !listed.iter().any(|c| c.href == url) {
+        return Ok(Err(FeedError::code("not_listed")));
+    }
     let Some(password) = open_password(state, id, &row) else {
         return Ok(Err(FeedError::code("key_lost")));
     };
@@ -845,22 +883,28 @@ pub async fn refresh_source(
     };
     let (result, went_public) = fetch_collection(
         state.music_fetch.as_ref(),
+        &row.server_url,
         url,
         row.lan,
         login,
         &hosts,
-        validator,
+        validators,
         now,
     )
     .await;
     if let Err(err) = &result
         && matches!(err.code, "login_refused" | "host_changed")
     {
-        sqlx::query("UPDATE caldav_accounts SET state = ? WHERE id = ? AND state = 'ok'")
-            .bind(err.code)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+        // Only while the password is the one this fetch used: a Test that saved a new one meanwhile wins (code QA
+        // L4).
+        sqlx::query(
+            "UPDATE caldav_accounts SET state = ? WHERE id = ? AND state = 'ok' AND password_nonce = ?",
+        )
+        .bind(err.code)
+        .bind(id)
+        .bind(&row.password_nonce)
+        .execute(&state.db)
+        .await?;
         tracing::warn!(
             account_id = id,
             code = err.code,
@@ -918,26 +962,10 @@ async fn claim(state: &AppState, id: i64, now: DateTime<Utc>) -> Result<bool, sq
     Ok(done.rows_affected() > 0)
 }
 
-async fn store_password(state: &AppState, id: i64, password: &str) -> Result<(), TestError> {
-    let Some(key) = state.music_key.as_ref() else {
-        return Err(TestError::Refused("calendar.caldav.error.no_key"));
-    };
-    let (sealed, nonce) = key.seal_with(&aad(&key.fingerprint, id), password.as_bytes());
-    sqlx::query(
-        "UPDATE caldav_accounts SET password_sealed = ?, password_nonce = ?, password_key_fp = ? WHERE id = ?",
-    )
-    .bind(sealed)
-    .bind(nonce)
-    .bind(&key.fingerprint)
-    .bind(id)
-    .execute(&state.db)
-    .await?;
-    Ok(())
-}
-
 /// Test of an account typed in the form (§6): the server (or an e-mail), the username (empty: the e-mail) and the
-/// app password. The same server and username again is that account, its password replaced. Returns the account's
-/// id; a failed Test is stored on it too.
+/// app password. The same server and username again is that account, its password replaced once the Test passes
+/// (a failed one keeps the working password, code QA L5). Returns the account's id; a failed Test is stored on it
+/// too.
 pub async fn test_new(
     state: &AppState,
     raw_server: &str,
@@ -969,9 +997,13 @@ pub async fn test_new(
     let id = match existing {
         Some(id) => id,
         None => {
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM caldav_accounts")
-                .fetch_one(&state.db)
-                .await?;
+            // The accounts the page lists (a first Test that never passed is hidden and swept), as `can_add_caldav`
+            // counts them (code QA L8).
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM caldav_accounts WHERE principal IS NOT NULL",
+            )
+            .fetch_one(&state.db)
+            .await?;
             if count >= MAX_ACCOUNTS {
                 return Err(TestError::Refused("calendar.caldav.error.too_many"));
             }
@@ -989,13 +1021,12 @@ pub async fn test_new(
     if !claim(state, id, now).await? {
         return Err(TestError::Wait);
     }
-    store_password(state, id, password).await?;
-    run_test(state, id, &server_url, &username, password, now).await?;
+    run_test(state, id, &server_url, &username, password, true, now).await?;
     Ok(id)
 }
 
-/// "Test again" on an account: with a new password when one is typed, else the stored one (a lost key or a first
-/// Test that failed has none: type it again).
+/// "Test again" on an account: with a new password when one is typed (stored once it passes), else the stored one
+/// (a lost key or a first Test that failed has none: type it again).
 pub async fn test_again(
     state: &AppState,
     id: i64,
@@ -1021,21 +1052,30 @@ pub async fn test_again(
     if !claim(state, id, now).await? {
         return Err(TestError::Wait);
     }
-    if !typed.is_empty() {
-        store_password(state, id, &password).await?;
-    }
-    run_test(state, id, &server_url, &username, &password, now).await
+    let new_password = !typed.is_empty();
+    run_test(
+        state,
+        id,
+        &server_url,
+        &username,
+        &password,
+        new_password,
+        now,
+    )
+    .await
 }
 
-/// One Test, stored: a pass replaces the hosts and the calendars, sets the account `ok`, seals its calendars'
-/// addresses again under today's key and lets every stopped calendar of it be fetched at once; a failure is the
-/// account's `test_error` (a refused password stops it; a first Test that fails keeps no password).
+/// One Test, stored: a pass replaces the hosts and the calendars, stores a `new_password`, sets the account `ok`,
+/// seals its calendars' addresses again under today's key, marks a ticked calendar no longer listed `not_listed`
+/// (code QA M2) and lets every other failing calendar of it be fetched at once; a failure is the account's
+/// `test_error` (the stored password refused stops it; a new one that fails is never kept, code QA L5).
 async fn run_test(
     state: &AppState,
     id: i64,
     server_url: &str,
     username: &str,
     password: &str,
+    new_password: bool,
     now: DateTime<Utc>,
 ) -> Result<(), TestError> {
     let Some(key) = state.music_key.clone() else {
@@ -1065,15 +1105,15 @@ async fn run_test(
     let (discovery, lan, lan_http) = match found {
         Ok(found) => found,
         Err(err) => {
+            let stops = err.code == "login_refused" && !new_password;
             sqlx::query(
                 "UPDATE caldav_accounts SET test_error = ?, test_status = ?, \
-                 state = CASE WHEN ? = 'login_refused' AND state <> 'untested' THEN 'login_refused' ELSE state END, \
-                 password_sealed = CASE WHEN state = 'untested' THEN X'' ELSE password_sealed END \
+                 state = CASE WHEN ? AND state <> 'untested' THEN 'login_refused' ELSE state END \
                  WHERE id = ?",
             )
             .bind(err.code)
             .bind(err.status.map(i64::from))
-            .bind(err.code)
+            .bind(stops)
             .bind(id)
             .execute(&state.db)
             .await?;
@@ -1096,23 +1136,42 @@ async fn run_test(
     .bind(id)
     .execute(&mut *tx)
     .await?;
-    // The calendars ticked before: sealed again under today's key (a key made anew since), the address kept.
+    if new_password {
+        let (sealed, nonce) = key.seal_with(&aad(&key.fingerprint, id), password.as_bytes());
+        sqlx::query(
+            "UPDATE caldav_accounts SET password_sealed = ?, password_nonce = ?, password_key_fp = ? WHERE id = ?",
+        )
+        .bind(sealed)
+        .bind(nonce)
+        .bind(&key.fingerprint)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    // The calendars ticked before: one no longer listed is that calendar's own error (never the account's); the
+    // others sealed again under today's key (a key made anew since), the address kept.
     let sources: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT id, uid, url_key_fp FROM calendar_sources WHERE account_id = ?")
             .bind(id)
             .fetch_all(&mut *tx)
             .await?;
     for (source_id, uid, sealed_with) in sources {
-        if sealed_with == key.fingerprint {
-            continue;
-        }
         let Some(found) = discovery
             .calendars
             .iter()
             .find(|c| uid_of(server_url, username, &c.href) == uid)
         else {
+            sqlx::query(
+                "UPDATE calendar_sources SET error = 'not_listed', error_status = NULL WHERE id = ?",
+            )
+            .bind(source_id)
+            .execute(&mut *tx)
+            .await?;
             continue;
         };
+        if sealed_with == key.fingerprint {
+            continue;
+        }
         let (sealed, nonce) = key.seal_with(
             &calendar_feeds::aad(&key.fingerprint, &uid),
             found.href.as_bytes(),
@@ -1128,7 +1187,8 @@ async fn run_test(
         .await?;
     }
     sqlx::query(
-        "UPDATE calendar_sources SET next_at = ?, failures = 0 WHERE account_id = ? AND error IS NOT NULL",
+        "UPDATE calendar_sources SET next_at = ?, failures = 0 WHERE account_id = ? AND error IS NOT NULL \
+         AND error <> 'not_listed'",
     )
     .bind(stamp(now))
     .bind(id)
@@ -1221,6 +1281,25 @@ pub async fn save_ticks(
             "calendar.caldav.error.too_many_calendars",
         ));
     }
+    // The server's cap before any write (code QA L7): a refusal mid-way would leave ticks saved but unfetched.
+    let mut new_sources = 0i64;
+    for (_, uid, _) in chosen
+        .iter()
+        .filter(|(_, uid, on)| *on && !mine.contains(uid))
+    {
+        let exists: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM calendar_sources WHERE uid = ?")
+                .bind(uid)
+                .fetch_optional(&state.db)
+                .await?;
+        new_sources += i64::from(exists.is_none());
+    }
+    let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendar_sources")
+        .fetch_one(&state.db)
+        .await?;
+    if new_sources > 0 && sources + new_sources > calendar_feeds::MAX_SOURCES {
+        return Err(TickError::Refused("calendar.links.error.too_many_sources"));
+    }
     let mut made = Vec::new();
     for (c, uid, _) in chosen
         .iter()
@@ -1235,12 +1314,6 @@ pub async fn save_ticks(
         let source_id = match existing {
             Some(id) => id,
             None => {
-                let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendar_sources")
-                    .fetch_one(&mut *tx)
-                    .await?;
-                if sources >= calendar_feeds::MAX_SOURCES {
-                    return Err(TickError::Refused("calendar.links.error.too_many_sources"));
-                }
                 let host = reqwest::Url::parse(&c.href)
                     .map(|u| host_of(&u))
                     .unwrap_or_default();
@@ -1324,14 +1397,18 @@ pub async fn remove(state: &AppState, account_id: i64) -> Result<Vec<i64>, sqlx:
     Ok(phones)
 }
 
-/// An account no phone has a calendar of, [UNUSED_HOURS] after its last Test (a Test never ticked, a first Test
-/// that failed), goes with its password. Run with the scheduler's pass.
+/// An account no phone has a calendar of, [UNUSED_HOURS] after it was last used - its last Test (a Test never
+/// ticked, a first Test that failed) and its last calendar going (`unused_since`, stamped by the migration's
+/// trigger) -, goes with its password. Run with the scheduler's pass.
 pub async fn sweep(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<u64, sqlx::Error> {
+    let cut = stamp(now - TimeDelta::hours(UNUSED_HOURS));
     let done = sqlx::query(
         "DELETE FROM caldav_accounts WHERE (tested_at IS NULL OR tested_at <= ?) \
+         AND (unused_since IS NULL OR unused_since <= ?) \
          AND NOT EXISTS (SELECT 1 FROM calendar_sources s WHERE s.account_id = caldav_accounts.id)",
     )
-    .bind(stamp(now - TimeDelta::hours(UNUSED_HOURS)))
+    .bind(&cut)
+    .bind(&cut)
     .execute(db)
     .await?;
     Ok(done.rows_affected())

@@ -830,6 +830,7 @@ pub fn caldav_why(lang: Lang, code: &str, status: Option<i64>) -> String {
         "host_changed" => "calendar.caldav.why.host_changed",
         "not_caldav" => "calendar.caldav.why.not_caldav",
         "no_calendars" => "calendar.caldav.why.no_calendars",
+        "not_listed" => "calendar.caldav.why.not_listed",
         "key_lost" => "calendar.caldav.why.key_lost",
         "not_found" => "calendar.caldav.why.not_found",
         "status" => "calendar.caldav.why.status",

@@ -375,6 +375,27 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
         requests_since(&app, before),
         [("PROPFIND".to_string(), HOME.to_string(), true)]
     );
+    // A day after the last report the REPORT runs whatever the ctag says: the window has moved (code QA L6).
+    sqlx::query("UPDATE calendar_sources SET last_modified = ? WHERE id = ?")
+        .bind(crate::music_sweep::stamp(
+            Utc::now() - chrono::TimeDelta::hours(25),
+        ))
+        .bind(source)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let before = app.fetch.count();
+    calendar_feeds::refresh(&app.state, source, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        requests_since(&app, before),
+        [("PROPFIND", HOME, true), ("REPORT", HOME, true)].map(|(m, u, a)| (
+            m.to_string(),
+            u.to_string(),
+            a
+        ))
+    );
     // A changed ctag: the report again, a new rev, the phone nudged.
     while nudges.try_recv().is_ok() {}
     app.fetch
@@ -396,7 +417,8 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
         app.policy(&ola_token).await["calendar"]["feeds"][0]["id"],
         uid.as_str()
     );
-    // Unticked on both: the source goes, and the account with it (its last calendar).
+    // Unticked on both: the source goes; the account stays a day (code QA L3: one switch flipped by mistake never
+    // loses the login), then the sweep takes it.
     tick(&app, &cookie, anna, account, &[]).await;
     assert!(
         app.policy(&token).await["calendar"]["feeds"]
@@ -405,13 +427,19 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
             .is_empty()
     );
     tick(&app, &cookie, ola, account, &[]).await;
-    let left: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM calendar_sources), (SELECT COUNT(*) FROM caldav_accounts)",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(left, (0, 0));
+    let counts = || async {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT (SELECT COUNT(*) FROM calendar_sources), (SELECT COUNT(*) FROM caldav_accounts)",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(counts().await, (0, 1));
+    assert_eq!(caldav::sweep(&app.db, Utc::now()).await.unwrap(), 0);
+    let later = Utc::now() + chrono::TimeDelta::hours(caldav::UNUSED_HOURS + 1);
+    assert_eq!(caldav::sweep(&app.db, later).await.unwrap(), 1);
+    assert_eq!(counts().await, (0, 0));
 }
 
 fn report_body_with(from: &str, to: &str) -> Vec<u8> {
@@ -538,6 +566,39 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         .await
         .text();
     assert!(!page.contains("data-caldav-failing"));
+    // A mistyped new password is refused and never kept: the account stays signed in with the working one (code QA
+    // L5).
+    sqlx::query("UPDATE caldav_accounts SET tested_at = ?")
+        .bind(&past)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.request_form(
+        Method::POST,
+        &again,
+        Some(&cookie),
+        &[("password", "mistyped")],
+    )
+    .await;
+    let (state, error): (String, Option<String>) =
+        sqlx::query_as("SELECT state, test_error FROM caldav_accounts")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        (state.as_str(), error.as_deref()),
+        ("ok", Some("login_refused"))
+    );
+    app.fetch
+        .answer_method("PROPFIND", HOME, 207, ctag("ctag-4"));
+    let outcome = calendar_feeds::refresh(&app.state, source, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        Outcome::Unchanged,
+        "fetched with the stored password"
+    );
 }
 
 #[tokio::test]
@@ -592,6 +653,112 @@ async fn another_host_stops_the_account_before_any_request_to_it() {
     )
     .await;
     assert_eq!(account_state(&app).await, "ok");
+
+    // The calendar moves to a host that never asked (code QA M2): Test leaves it out, that calendar alone says so and
+    // gets no request - the account stays signed in.
+    let moved = String::from_utf8(fixture("icloud_calendars.xml"))
+        .unwrap()
+        .replace(
+            "<href>/1000000001/calendars/home/</href>",
+            "<href>https://p09-dav.example.net/1000000001/calendars/home/</href>",
+        );
+    app.fetch.answer_method("PROPFIND", LIST, 207, moved);
+    sqlx::query("UPDATE caldav_accounts SET tested_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{anna}/calendar/caldav/{account}/test"),
+        Some(&cookie),
+        &[("password", "")],
+    )
+    .await;
+    assert_eq!(account_state(&app).await, "ok");
+    let before = app.fetch.count();
+    let outcome = calendar_feeds::refresh(&app.state, source, Utc::now())
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Outcome::Failed(ref e) if e.code == "not_listed"));
+    assert_eq!(app.fetch.count(), before);
+    assert_eq!(account_state(&app).await, "ok");
+    let page = app
+        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("data-link-failing>The account no longer lists this calendar"));
+    assert!(!page.contains("data-caldav-failing"));
+    assert!(
+        !page.contains("p09-dav"),
+        "the hosts line: only the hosts that asked"
+    );
+}
+
+/// Code QA M1: an address the server names is held as a redirect is - a home set on the loopback is refused before
+/// any request to it, and a calendar listed on a host that never asked (here the loopback) isn't offered.
+#[tokio::test]
+async fn the_servers_own_addresses_never_reach_the_lan() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    fake_icloud(&app);
+    let principal = String::from_utf8(fixture("icloud_principal.xml"))
+        .unwrap()
+        .replace(
+            "https://p07-dav.example.net:443/1000000001/calendars/",
+            "http://127.0.0.1:8080/1000000001/calendars/",
+        );
+    app.fetch.answer_method(
+        "PROPFIND",
+        "https://dav.example.net/1000000001/principal/",
+        207,
+        principal,
+    );
+    let res = test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("The server led to a private address."));
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.contains("127.0.0.1"))
+    );
+
+    fake_icloud(&app);
+    let listed = String::from_utf8(fixture("icloud_calendars.xml"))
+        .unwrap()
+        .replace(
+            "<href>/1000000001/calendars/tasks/</href>",
+            "<href>http://127.0.0.1/admin/</href>",
+        )
+        .replace("Påminnelser", "Ruteren")
+        .replace(
+            "<comp name=\"VTODO\"/></supported-calendar-component-set>\n</prop>",
+            "<comp name=\"VEVENT\"/></supported-calendar-component-set>\n</prop>",
+        );
+    app.fetch.answer_method("PROPFIND", LIST, 207, listed);
+    sqlx::query("UPDATE caldav_accounts SET tested_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let page = app
+        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(">Hjem<") && !page.contains("Ruteren"));
+    assert!(page.contains("The password goes only to: dav.example.net, p07-dav.example.net<"));
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.contains("127.0.0.1"))
+    );
 }
 
 #[tokio::test]
@@ -605,6 +772,13 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
     ] {
         app.fetch
             .answer_method("PROPFIND", url, 404, "<html>Familien</html>");
+    }
+    for url in [
+        "https://down.example.net/.well-known/caldav",
+        "https://down.example.net/",
+    ] {
+        app.fetch
+            .redirect_method("PROPFIND", url, 301, "http://down.example.net/");
     }
     for (server, password, why) in [
         ("", PASSWORD, "Type the server&#39;s address"),
@@ -625,6 +799,12 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
             "forelder@familie.example",
             PASSWORD,
             "No CalDAV calendars were found",
+        ),
+        // An https server that redirects to plain http.
+        (
+            "down.example.net",
+            PASSWORD,
+            "Plain http to the internet is refused - use https.",
         ),
     ] {
         let res = test_form(&app, &cookie, id, server, password).await;

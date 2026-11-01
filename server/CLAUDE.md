@@ -247,7 +247,7 @@ parameters) follows 0106, and `0108_spotify_diag.sql` (the Spotify diagnostic lo
 `device_policy.music_spotify_diag_until`) follows 0107, and `0109_parent_events_kind_index.sql` (the status lines'
 "Turned off", 2026-11-01: `idx_parent_events_device_kind` on `parent_events(device_id, kind, happened_at)`, for
 `parent_events::offs_now` on the Devices list) follows 0108, and `0110_caldav_accounts.sql` (design 72 step 2:
-`caldav_accounts`, `calendar_sources.account_id`, the trigger `caldav_accounts_orphaned`) follows 0109
+`caldav_accounts`, `calendar_sources.account_id`, the triggers `caldav_accounts_unused`/`_used`) follows 0109
 (`migrations_73_to_110_in_order`). The next free number is 0111.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request)

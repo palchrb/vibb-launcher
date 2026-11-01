@@ -418,12 +418,16 @@ pub async fn refresh(
     let result = match url.and_then(|u| String::from_utf8(u).ok()) {
         None => Err((FeedError::code("key_lost"), row.lan)),
         // A CalDAV calendar (design 72 step 2): its account's login, its validator the collection's ctag.
-        Some(url) if row.kind == "caldav" => {
-            crate::caldav::refresh_source(state, row.account_id, &url, row.etag.as_deref(), now)
-                .await?
-                .map(|f| (f, row.lan))
-                .map_err(|e| (e, row.lan))
-        }
+        Some(url) if row.kind == "caldav" => crate::caldav::refresh_source(
+            state,
+            row.account_id,
+            &url,
+            (row.etag.as_deref(), row.last_modified.as_deref()),
+            now,
+        )
+        .await?
+        .map(|f| (f, row.lan))
+        .map_err(|e| (e, row.lan)),
         Some(url) => match route(state.music_fetch.as_ref(), &url, row.lan).await {
             Err(err) => Err((err, row.lan)),
             Ok(route) => {
