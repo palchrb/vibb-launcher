@@ -260,7 +260,9 @@ parameters) follows 0106, and `0108_spotify_diag.sql` (the Spotify diagnostic lo
 `caldav_accounts`, `calendar_sources.account_id`, the triggers `caldav_accounts_unused`/`_used`) follows 0109,
 and `0111_fdroid_repo_keys.sql` (round S4: `fdroid_repo_keys`, a custom F-Droid repo's key pinned at its first
 fetch) follows 0110, and `0112_fdroid_repo_state.sql` (S4's fix round M1: `fdroid_repo_state`, each repo's newest
-entry.json timestamp taken) follows 0111 (`migrations_73_to_112_in_order`). The next free number is 0113.
+entry.json timestamp taken) follows 0111 (`migrations_73_to_112_in_order`), and `0113_calendar_lock_ping.sql` (the
+lock reminders' ping, 2026-11-01: `device_policy.calendar_lock_ping`, the row's sound) follows 0112. The next free
+number is 0114.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request)
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture")
