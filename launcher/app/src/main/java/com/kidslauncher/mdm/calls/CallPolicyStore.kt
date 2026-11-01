@@ -70,6 +70,9 @@ object CallPolicyStore {
         }
         val deJson = readBoot(context)
         val ce = if (ceReadable) readCe(context) else null
+        // Design 73: every Nødsamtale runs after the first unlock, so the menu comes from CE alone (the DE copy
+        // holds no names); before it, and if CE can't be read, the last menu read stays (112 alone at first).
+        if (ce is CeRead.Ok) emergencyMenuRaw = storedEmergencyMenu(ce.cached, ce.lastRules)
         if (!committedKnown && deJson != null) {
             committed = deJson.getOrNull()
             committedKnown = deJson.isSuccess
@@ -163,6 +166,11 @@ object CallPolicyStore {
 
     /** For logs: the kind of state and where it came from, never numbers. */
     fun describe(): String = "${state.javaClass.simpleName} from $source"
+
+    /** Design 73: the emergency menu as last read, unchecked (`null` = none: 112 alone); [emergencyMenu] cleans it. */
+    @Volatile
+    var emergencyMenuRaw: List<EmergencyEntry>? = null
+        private set
 
     /** The default country code for normalising the other side of a call. */
     val defaultCc: String

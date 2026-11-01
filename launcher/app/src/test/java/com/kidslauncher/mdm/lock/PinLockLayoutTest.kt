@@ -214,9 +214,9 @@ class PinLockLayoutTest {
         // Same size as the keypad's pill: it grows with the text the same way.
         val width = contentWidthDp(320f)
         for (scale in listOf(1f, 1.3f, 2f)) assertEquals(height(byId("pin_emergency"), scale, width), height(pill, scale, width), 0.01f)
-        // Its click path is unchanged.
+        // Its click path is unchanged, the lock's (design 73: emergency numbers only while locked).
         val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
-        assertTrue(activity.contains("voipRing.voipRingEmergency.setOnClickListener {\n            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })"))
+        assertTrue(activity.contains("voipRing.voipRingEmergency.setOnClickListener {\n            trackDialog(EmergencyCall.confirm(this, locked = true) { PinLockRuntime.emergencyFlowStarted() })"))
     }
 
     @Test

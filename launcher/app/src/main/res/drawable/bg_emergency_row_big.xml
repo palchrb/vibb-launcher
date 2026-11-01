@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The emergency menu's large row (design 73): the first real emergency number, deep red, 16 dp radius, a press
+     ripple of white at 20 %. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_emergency_big" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</ripple>

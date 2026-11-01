@@ -19,6 +19,7 @@ fun CallPolicy.toRules() = CallRules(
     contacts = contacts.map {
         RuleContact(it.id, it.name, it.number, it.inbound, it.outbound, it.showOnHome, it.messageApp, it.messageAddress, it.photo)
     },
+    emergencyMenu = emergencyMenu?.map { EmergencyEntry(it.number, it.name) },
 )
 
 fun encodeCallRules(rules: CallRules): String = ServerJson.encodeToString(CallRules.serializer(), rules)

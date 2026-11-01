@@ -1100,6 +1100,9 @@ pub struct CallPolicy {
     pub sms_enabled: bool,
     pub default_country_code: String,
     pub contacts: Vec<PolicyContact>,
+    /// Design 73: the emergency menu in the parent's order, always at least one number (default 112 alone), also
+    /// while calls are unmanaged. Normalised numbers; an empty name reads "Emergency number" on the phone.
+    pub emergency_menu: Vec<crate::emergency::PolicyEntry>,
 }
 
 /// One contact as the launcher sees it. `number` is normalised (src/phone.rs) - the launcher

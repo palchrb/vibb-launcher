@@ -2638,3 +2638,11 @@ details.app-display[open] > summary .section-chev {
 .calendar-preview-arrow { color: var(--tint); margin: 0 6px; }
 /* The lock's reminder row, drawn in the lock group's ⓘ (the night ground in both schemes). */
 .calendar-example { display: block; width: 100%; max-width: 280px; height: auto; margin-top: 8px; font-family: inherit; }
+
+/* ---- Design 73: Device › Calls' Emergency Menu (templates/device_calls.html) ---- */
+/* A number's row: the number in bold before its name, the sub-line under them (orange for a number that follows
+   the call rules); up/down and Remove at its end, as Dagen's title rules. */
+.emergency-number { font-weight: 700; font-variant-numeric: tabular-nums; }
+.emergency-move { display: flex; flex: none; gap: 4px; margin: 0; }
+.emergency-move .row-action { margin: -11px 0; padding: 11px 10px; }
+.emergency-row > form.row-end { margin-left: 4px; }

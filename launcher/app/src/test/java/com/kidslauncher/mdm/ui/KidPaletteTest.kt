@@ -247,6 +247,19 @@ class KidPaletteTest {
         assertTrue(contrast("kid_emergency_text", "kid_emergency_tonal") >= 6.6)
     }
 
+    /** Design 73: the emergency menu's inks - white and the pale sub-line on the large red row, the light, the muted
+     * line, the peach "follows the call rules" and the red glyph on the other rows (the sheet's tonal button over
+     * the sheet). */
+    @Test
+    fun `the emergency menu's inks read on its rows`() {
+        assertTrue(contrast("kid_ink", "kid_emergency_big") >= 4.5)
+        assertTrue(contrast("kid_emergency_big_sub", "kid_emergency_big") >= 4.5)
+        val row = over("kid_sheet_button", "kid_sheet")
+        for (ink in listOf("kid_core", "kid_sheet_muted", "kid_accent", "kid_emergency_text")) {
+            assertTrue(ink, contrast(ink, row) >= 4.5)
+        }
+    }
+
     /** Design 34 P6: the time-rule screen's inks on its grounds, read from its layouts. */
     @Test
     fun `the time-rule screen reads calmly - every ink against its ground`() {

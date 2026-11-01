@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A row of the emergency menu's sheet (design 73): the sheet's tonal button ground, 16 dp radius, a calm press
+     ripple of the light at 12 %. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_sheet_button" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</ripple>
