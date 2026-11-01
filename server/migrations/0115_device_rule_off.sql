@@ -12,8 +12,11 @@ CREATE TABLE device_rule_off (
 CREATE INDEX idx_device_rule_off_rule ON device_rule_off(rule_id);
 
 -- Every phone keeps the rules it had: one on Own rules has every one of everyone's rules off ...
+-- Both back-fills join `devices`, so a row left behind by a phone that is gone (an orphan from before foreign keys
+-- were on) is skipped instead of failing the foreign key and stopping the start.
 INSERT INTO device_rule_off (device_id, rule_id)
 SELECT p.device_id, r.id FROM device_policy p
+JOIN devices d ON d.id = p.device_id
 JOIN time_rules r ON r.device_id IS NULL AND r.bedtime = 0
 WHERE p.custom_schedule_enabled = 1;
 
@@ -21,6 +24,7 @@ WHERE p.custom_schedule_enabled = 1;
 -- schedule) off, as they were not in force. They show switched off under its own rules.
 INSERT OR IGNORE INTO device_rule_off (device_id, rule_id)
 SELECT r.device_id, r.id FROM time_rules r
+JOIN devices d ON d.id = r.device_id
 LEFT JOIN device_policy p ON p.device_id = r.device_id
 WHERE r.device_id IS NOT NULL AND r.bedtime = 0 AND COALESCE(p.custom_schedule_enabled, 0) = 0;
 

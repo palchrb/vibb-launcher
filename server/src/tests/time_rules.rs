@@ -1837,8 +1837,29 @@ async fn the_switch_per_rule_migration_keeps_every_phones_rules() {
     .execute(&db)
     .await
     .unwrap();
+    // An own rule and a policy row whose phone is gone (left from before foreign keys were on):
+    // skipped, never a failed foreign key that stops the start (qa L3).
+    {
+        let mut conn = db.acquire().await.unwrap();
+        for sql in [
+            "PRAGMA foreign_keys = OFF",
+            "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json) \
+             VALUES (9999, 'Orphan', 'custom', 1, '[null,null,null,null,null,null,null]')",
+            "INSERT INTO device_policy (device_id, kiosk_desired, custom_schedule_enabled) \
+             VALUES (9998, 1, 1)",
+            "PRAGMA foreign_keys = ON",
+        ] {
+            sqlx::query(sql).execute(&mut *conn).await.unwrap();
+        }
+    }
 
     super::cleanup::finish(&db).await;
+    let off_for_gone: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_rule_off WHERE device_id >= 9998")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(off_for_gone, 0);
 
     let in_force = |device: i64| {
         let db = &db;

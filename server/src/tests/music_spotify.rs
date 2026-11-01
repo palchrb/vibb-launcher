@@ -196,11 +196,14 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// `migrations_73_to_107_in_order`). The status lines' events index 0109 (was `migrations_73_to_108_in_order`). Design 72
 /// step 2's CalDAV accounts 0110 (was `migrations_73_to_109_in_order`). Round S4's F-Droid repo keys 0111 (was
 /// `migrations_73_to_110_in_order`). Its fix round's entry timestamps 0112 (was `migrations_73_to_111_in_order`).
+/// The lock reminders' ping 0113 and Tidsregler's switch per rule 0115 (2026-11-01; was `migrations_73_to_112_in_order`):
+/// since then it takes every migration from 0073 on, so a new one fails it until its row is added here (B2's
+/// 0114 goes between 113 and 115).
 #[test]
-fn migrations_73_to_112_in_order() {
+fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=112).contains(&m.version))
+        .filter(|m| m.version >= 73)
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -245,11 +248,13 @@ fn migrations_73_to_112_in_order() {
             (109, "parent events kind index".to_string()),
             (110, "caldav accounts".to_string()),
             (111, "fdroid repo keys".to_string()),
-            (112, "fdroid repo state".to_string())
+            (112, "fdroid repo state".to_string()),
+            (113, "calendar lock ping".to_string()),
+            (115, "device rule off".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params), 0108 (the Spotify diagnostic log), 0109 (the status lines' events index), 0110 (design 72 step 2's CalDAV accounts), 0111 (round S4's F-Droid repo keys), 0112 (its fix round's entry timestamps) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params), 0108 (the Spotify diagnostic log), 0109 (the status lines' events index), 0110 (design 72 step 2's CalDAV accounts), 0111 (round S4's F-Droid repo keys), 0112 (its fix round's entry timestamps), 0113 (the lock reminders' ping), 0115 (Tidsregler's switch per rule) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }
