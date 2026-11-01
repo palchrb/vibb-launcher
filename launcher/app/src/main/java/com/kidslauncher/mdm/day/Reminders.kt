@@ -25,7 +25,7 @@ data class GlanceReminder(val eventId: Long, val title: String, val beginMs: Lon
 }
 
 /** A row's start is today's ("Neste", a reminder): a timed row that starts today. */
-private fun startsToday(row: DayRow): Boolean = row.kind == RowKind.TIMED || row.kind == RowKind.FIRST_DAY
+internal fun startsToday(row: DayRow): Boolean = row.kind == RowKind.TIMED || row.kind == RowKind.FIRST_DAY
 
 /**
  * When the row's reminder starts (§5.2), checked in this order: the calendar's `off` - none; `before` N - N minutes
@@ -41,7 +41,7 @@ fun reminderStart(row: DayRow, remind: Remind, own: List<Int>?): Long? = when (r
 /** The minutes left to [beginMs], rounded up (1 in the last minute). */
 fun minutesLeft(beginMs: Long, now: Long): Int = (((beginMs - now) + 59_999) / 60_000).toInt().coerceAtLeast(1)
 
-private fun remindersOn(policy: CalendarPolicy): Boolean = policy.usable && policy.onHome && policy.lockReminders
+internal fun remindersOn(policy: CalendarPolicy): Boolean = policy.usable && policy.onHome && policy.lockReminders
 
 /**
  * The reminder row now (C): the master switch on (`lock_reminders: "row"`) and Dagen on Home; up from its start until

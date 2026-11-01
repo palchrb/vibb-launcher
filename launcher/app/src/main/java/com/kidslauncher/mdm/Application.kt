@@ -429,6 +429,8 @@ class Application : android.app.Application() {
                 // main thread), and our missed-call notification known again if it is still on screen.
                 com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
                 // Dagen (design 69): the calendar permissions, the provider's calendars and its change notification.
+                // The quiet row plus a ping: every calendar change (the first at init) checks and arms its alarm.
+                com.kidslauncher.mdm.calendar.ReminderPinger.init(this)
                 com.kidslauncher.mdm.calendar.CalendarStore.init(this)
                 com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
 
