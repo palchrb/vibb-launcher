@@ -116,12 +116,12 @@ pub fn valid_uid(uid: &str) -> bool {
     uid.len() == 32 && uid.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn aad(fingerprint: &str, uid: &str) -> Vec<u8> {
+pub(crate) fn aad(fingerprint: &str, uid: &str) -> Vec<u8> {
     format!("calendar-v1:{fingerprint}:{uid}").into_bytes()
 }
 
 /// Tailscale's addresses (100.64.0.0/10, fd7a:115c:a1e0::/48).
-fn tailscale(ip: IpAddr) -> bool {
+pub(crate) fn tailscale(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             let [a, b, ..] = v4.octets();
@@ -144,12 +144,12 @@ pub struct FeedError {
 }
 
 impl FeedError {
-    fn code(code: &'static str) -> FeedError {
+    pub(crate) fn code(code: &'static str) -> FeedError {
         FeedError { code, status: None }
     }
 }
 
-fn fetch_error(err: FetchError) -> FeedError {
+pub(crate) fn fetch_error(err: FetchError) -> FeedError {
     FeedError::code(match err {
         FetchError::Timeout => "timeout",
         FetchError::Refused(why) if why.contains("private") => "private_address",
@@ -345,6 +345,8 @@ struct SourceRow {
     empty_count: i64,
     empty_since: Option<String>,
     churn: i64,
+    kind: String,
+    account_id: Option<i64>,
 }
 
 /// What [refresh] did.
@@ -396,7 +398,8 @@ pub async fn refresh(
 ) -> Result<Outcome, sqlx::Error> {
     let row: Option<SourceRow> = sqlx::query_as(
         "SELECT uid, url_sealed, url_nonce, url_key_fp, lan, etag, last_modified, rev, feed_json, events, \
-         ok_at, created_at, failures, empty_count, empty_since, churn FROM calendar_sources WHERE id = ?",
+         ok_at, created_at, failures, empty_count, empty_since, churn, kind, account_id FROM calendar_sources \
+         WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -414,6 +417,13 @@ pub async fn refresh(
     });
     let result = match url.and_then(|u| String::from_utf8(u).ok()) {
         None => Err((FeedError::code("key_lost"), row.lan)),
+        // A CalDAV calendar (design 72 step 2): its account's login, its validator the collection's ctag.
+        Some(url) if row.kind == "caldav" => {
+            crate::caldav::refresh_source(state, row.account_id, &url, row.etag.as_deref(), now)
+                .await?
+                .map(|f| (f, row.lan))
+                .map_err(|e| (e, row.lan))
+        }
         Some(url) => match route(state.music_fetch.as_ref(), &url, row.lan).await {
             Err(err) => Err((err, row.lan)),
             Ok(route) => {
@@ -589,6 +599,10 @@ pub async fn run(state: AppState) {
 /// One pass over the sources due, `spacing` apart. Each fetch is its own task: one that panics is stored as that
 /// source's failure (`unreadable`) and the pass goes on (QA H1).
 pub async fn run_due(state: &AppState, spacing: std::time::Duration) {
+    // CalDAV accounts no phone has a calendar of go a day after their last Test (design 72 step 2).
+    if let Err(err) = crate::caldav::sweep(&state.db, Utc::now()).await {
+        tracing::error!(%err, "couldn't sweep the unused CalDAV accounts");
+    }
     let due: Result<Vec<i64>, sqlx::Error> = sqlx::query_scalar(
         "SELECT id FROM calendar_sources WHERE next_at <= ? ORDER BY next_at LIMIT ?",
     )
@@ -895,13 +909,19 @@ pub struct LinkRow {
     /// anew (E6's L3) - the link can't be fetched until it is pasted again, though `error` says so only after its
     /// next fetch.
     pub key_fp: String,
+    /// `ics` or `caldav` (design 72 step 2).
+    pub kind: String,
+    /// A CalDAV calendar's account: its username and its state (`ok`, `login_refused`, `host_changed`).
+    pub account: Option<String>,
+    pub account_state: Option<String>,
 }
 
 pub async fn links(db: &SqlitePool, device_id: i64) -> Result<Vec<LinkRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT s.uid, d.name, s.host, s.lan_http, s.ok_at, s.error, s.error_status, s.events, s.cut, \
-         s.unknown_tz, s.churn, s.url_key_fp AS key_fp FROM device_calendar_feeds d \
-         JOIN calendar_sources s ON s.id = d.source_id WHERE d.device_id = ? ORDER BY d.created_at, s.uid",
+         s.unknown_tz, s.churn, s.url_key_fp AS key_fp, s.kind, a.username AS account, a.state AS account_state \
+         FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
+         LEFT JOIN caldav_accounts a ON a.id = s.account_id WHERE d.device_id = ? ORDER BY d.created_at, s.uid",
     )
     .bind(device_id)
     .fetch_all(db)

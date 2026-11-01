@@ -63,9 +63,15 @@ impl Recorded {
 /// canned DNS (unknown hosts resolve to a public address), a public-only request to a host that
 /// resolves only privately is refused like the real resolver does, `If-None-Match` matching a
 /// canned ETag answers 304. Every URL asked for is recorded (with its method, headers and body in
-/// `requests`), and how many requests were in flight at once.
+/// `requests`), and how many requests were in flight at once. A fake CalDAV server (design 72 step 2):
+/// answers by method and URL ([CannedFetch::answer_method], before the URL's own), and a host that
+/// asks for basic auth ([CannedFetch::basic]) answers 401 to a request without that `Authorization`.
 #[derive(Default)]
 pub struct CannedFetch {
+    /// `"<METHOD> <url>"` → answer (design 72 step 2: a PROPFIND and a REPORT on one collection).
+    by_method: Mutex<HashMap<String, Canned>>,
+    /// Host → the `Authorization` it takes.
+    basic: Mutex<HashMap<String, String>>,
     answers: Mutex<HashMap<String, Canned>>,
     once: Mutex<HashMap<String, std::collections::VecDeque<Canned>>>,
     pub requests: Mutex<Vec<Recorded>>,
@@ -122,6 +128,41 @@ impl CannedFetch {
                 body: body.into(),
                 ..Default::default()
             });
+    }
+
+    /// Answers `method` on `url` (before any answer for the URL alone).
+    pub fn answer_method(&self, method: &str, url: &str, status: u16, body: impl Into<Vec<u8>>) {
+        self.by_method.lock().unwrap().insert(
+            format!("{method} {url}"),
+            Canned {
+                status,
+                body: body.into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Answers a redirect to `location` for `method` on `url`.
+    pub fn redirect_method(&self, method: &str, url: &str, status: u16, location: &str) {
+        self.by_method.lock().unwrap().insert(
+            format!("{method} {url}"),
+            Canned {
+                status,
+                location: Some(location.to_string()),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// `host` asks for basic auth: a request without `Basic base64(username:password)` is a 401.
+    pub fn basic(&self, host: &str, username: &str, password: &str) {
+        use base64::Engine;
+        let pair =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+        self.basic
+            .lock()
+            .unwrap()
+            .insert(host.to_string(), format!("Basic {pair}"));
     }
 
     pub fn canned(&self, url: &str, answer: Canned) {
@@ -259,14 +300,35 @@ impl crate::music_net::Source for CannedFetch {
             if let Some(err) = self.failures.lock().unwrap().get(&request.url) {
                 return Err(err.clone());
             }
+            let wanted = self.basic.lock().unwrap().get(&host).cloned();
+            if let Some(wanted) = wanted {
+                let sent = request
+                    .headers
+                    .iter()
+                    .find(|(name, _)| *name == reqwest::header::AUTHORIZATION)
+                    .map(|(_, value)| value.as_str());
+                if sent != Some(wanted.as_str()) {
+                    return Ok(crate::music_net::SourceResponse {
+                        status: 401,
+                        ..Default::default()
+                    });
+                }
+            }
+            let by_method = self
+                .by_method
+                .lock()
+                .unwrap()
+                .get(&format!("{} {}", request.method, request.url))
+                .cloned();
             let once = self
                 .once
                 .lock()
                 .unwrap()
                 .get_mut(&request.url)
                 .and_then(|queue| queue.pop_front());
-            let Some(answer) =
-                once.or_else(|| self.answers.lock().unwrap().get(&request.url).cloned())
+            let Some(answer) = by_method
+                .or(once)
+                .or_else(|| self.answers.lock().unwrap().get(&request.url).cloned())
             else {
                 return Err(crate::music_net::FetchError::Network(
                     "no route to host".to_string(),

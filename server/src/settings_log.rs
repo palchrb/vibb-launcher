@@ -46,6 +46,9 @@ const NOT_SAVES: &[&str] = &[
     "/music/entries/{id}/check",
     // A calendar link's "Fetch now" (design 72 §5): a check, not a setting.
     "/devices/{id}/calendar/links/{uid}/fetch",
+    // A CalDAV account's Test (design 72 step 2): a check; the password it stores is never a setting's detail.
+    "/devices/{id}/calendar/caldav",
+    "/devices/{id}/calendar/caldav/{account}/test",
     "/notifications/{id}/open",
     "/notifications/read-all",
     // Hides a session banner, like a read mark (code QA L1).

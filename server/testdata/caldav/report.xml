@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:">
+<response>
+<href>/1000000001/calendars/home/weekly-1.ics</href>
+<propstat>
+<prop>
+<getetag>"e1"</getetag>
+<calendar-data xmlns="urn:ietf:params:xml:ns:caldav"><![CDATA[BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example Corp.//CalDAV Server//EN
+BEGIN:VTIMEZONE
+TZID:Europe/Oslo
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:weekly-1
+DTSTART;TZID=Europe/Oslo:20260901T171500
+DTEND;TZID=Europe/Oslo:20260901T183000
+RRULE:FREQ=WEEKLY;BYDAY=TU
+SUMMARY:Fotballtrening
+LOCATION:Banen
+END:VEVENT
+END:VCALENDAR
+]]></calendar-data>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/home/once-2.ics</href>
+<propstat>
+<prop>
+<getetag>"e2"</getetag>
+<calendar-data xmlns="urn:ietf:params:xml:ns:caldav">BEGIN:VCALENDAR&#13;
+VERSION:2.0&#13;
+BEGIN:VEVENT&#13;
+UID:once-2&#13;
+DTSTART:{SOON}T100000Z&#13;
+DTEND:{SOON}T110000Z&#13;
+SUMMARY:Tannlege &amp; kontroll&#13;
+END:VEVENT&#13;
+END:VCALENDAR&#13;
+</calendar-data>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/home/broken-3.ics</href>
+<propstat>
+<prop>
+<calendar-data xmlns="urn:ietf:params:xml:ns:caldav">BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:broken-3
+</calendar-data>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/home/gone-4.ics</href>
+<status>HTTP/1.1 404 Not Found</status>
+</response>
+</multistatus>
