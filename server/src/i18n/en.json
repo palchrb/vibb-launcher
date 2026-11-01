@@ -4,6 +4,9 @@
   "common.not_saved": "Not saved.",
   "common.why": "Why",
 
+  "music.spotify.audiobook": "This is a Spotify audiobook - Spotify lets only its own apps play them.",
+  "music.spotify.audiobook_short": "it is a Spotify audiobook, and Spotify lets only its own apps play them",
+
   "advanced.spotify_diag.title": "Spotify",
   "advanced.spotify_diag.start": "Turn On Diagnostic Log for 15 Minutes",
   "advanced.spotify_diag.label": "Diagnostic log",

@@ -2642,6 +2642,81 @@ pub(in crate::tests) mod listing {
         assert!(row.capped);
     }
 
+    /// Spotify audiobooks shared as shows (2026-11-01): a show whose every episode is `is_playable: false` fails with
+    /// its own code, `audiobook`, worded "This is a Spotify audiobook - ..." (a really empty show stays `no_items`);
+    /// with `SPOTIFY_AUDIOBOOK_SPIKE` its audiobook-shaped chapters are listed as the show's episodes, oldest first,
+    /// to try on a phone.
+    #[tokio::test]
+    async fn an_audiobook_shared_as_a_show_says_so_and_the_spike_lists_its_chapters() {
+        let app = TestApp::new().await;
+        ready(&app).await;
+        let show = entry(&app, "show", SHOW).await;
+        app.fetch
+            .answer(&url(&app, Read::Show(SHOW)), 200, fixture("show.json"));
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes(SHOW, 0)),
+            200,
+            fixture("show_audiobook_episodes.json"),
+        );
+        let report = check(&app, show, t0()).await;
+        assert_eq!(report.error.as_deref(), Some("audiobook"));
+        let row = listing(&app, show).await;
+        assert_eq!((row.version, row.failures), (None, 1));
+        assert!(items(&app, show).await.iter().all(|i| i.state != "ok"));
+        assert_eq!(
+            crate::music::CheckError::Spotify("audiobook".to_string()).message(),
+            "This is a Spotify audiobook - Spotify lets only its own apps play them."
+        );
+        assert_eq!(
+            crate::music::sweep_error_text("spotify", "audiobook"),
+            "it is a Spotify audiobook, and Spotify lets only its own apps play them"
+        );
+        assert_eq!(
+            crate::i18n::t(crate::i18n::Lang::Nb, "music.spotify.audiobook"),
+            "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker."
+        );
+
+        // The spike (read once at start: a server with the variable set): the chapters are the show's episodes.
+        let mut state = app.state.clone();
+        state.spotify = Arc::new(Accounts::new(Config::from_vars(
+            &[("SPOTIFY_AUDIOBOOK_SPIKE".to_string(), "1".to_string())].into(),
+        )));
+        let report = sweep::check_entry(&state, show, t0() + TimeDelta::hours(25))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.error, None);
+        let list = items(&app, show).await;
+        assert_eq!(
+            keys(&list),
+            [
+                "6FakeChapter0000000001",
+                "6FakeChapter0000000002",
+                "6FakeChapter0000000003"
+            ],
+            "oldest first, as a show's episodes"
+        );
+        assert_eq!(list[0].title.as_deref(), Some("Kapittel 1"));
+        assert_eq!(listing(&app, show).await.spotify_skipped, 0);
+
+        // A really empty show is still `no_items`.
+        let empty = entry(&app, "show", "4FakeShow0000000000002").await;
+        app.fetch.answer(
+            &url(&app, Read::Show("4FakeShow0000000000002")),
+            200,
+            fixture("show.json"),
+        );
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes("4FakeShow0000000000002", 0)),
+            200,
+            r#"{"items": [], "next": null, "total": 0}"#,
+        );
+        assert_eq!(
+            check(&app, empty, t0()).await.error.as_deref(),
+            Some("no_items")
+        );
+    }
+
     /// qa-26c-step2a-code L2: a first fill with nothing playable is `no_items` (the card's
     /// sentence); the metadata read moves to the next reader; a later page failing keeps the last
     /// good list; a track repeated on a later page is listed once, at its first place.

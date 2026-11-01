@@ -371,7 +371,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   metadata only, not one 403 per account) - at once for Check now or a Spotify login newer than the try - and it flips
   back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
   checklist item 18) lists an artist as its newest 20 albums' tracks (pages of 10, at most 500 tracks), with a
-  403/404 falling back to context mode. A playlist's `snapshot_id` gates its items: unchanged = one request and the
+  403/404 falling back to context mode. **Audiobooks shared as shows** (2026-11-01, PLAN "Spotify audiobooks shared
+  as shows"): Spotify lists an audiobook's chapters under `GET /shows/{id}/episodes`, each `is_playable: false` for
+  this app; `parse_show_episodes` counts them (`Page::unplayable`, the first `restrictions.reason`, logged as "a
+  Spotify show with unplayable episodes"), and a show whose every episode is unplayable fails with its own code
+  `audiobook` (`spotify::AUDIOBOOK_CODE`, the catalogs' `music.spotify.audiobook`: "This is a Spotify audiobook -
+  Spotify lets only its own apps play them.") instead of `no_items`, which stays a really empty show's.
+  `SPOTIFY_AUDIOBOOK_SPIKE=1` (off by default; the user's go-librespot plays these, so the refusal may be the Web
+  API's view only) lists the chapters whose reason is audiobook-shaped (`audiobook_shaped`: anything but `market` and
+  `explicit`, or none) as the show's episodes (`parse_show_episodes_spike`), so one can be tried on the phone; the
+  result decides whether they stay listed or the sentence is the answer. The add form says nothing at add time yet
+  (the show object has no audiobook marker the server reads). Tests: `listing::an_audiobook_shared_as_a_show_says_so_and_the_spike_lists_its_chapters`,
+  the parsers in `spotify::tests`; fixture `testdata/spotify/show_audiobook_episodes.json` (fake-spotify `--audiobook`).
+  A playlist's `snapshot_id` gates its items: unchanged = one request and the
   items are **never** read again (2026-10-21, the user: the snapshot moves with any change to the list); only a moved
   snapshot or Check now reads them. Knowingly given up: a track's availability, relinking or metadata changing without
   a snapshot change stays unseen until then (Check now covers it; the phone and the speaker skip an unplayable track

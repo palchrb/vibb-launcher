@@ -149,7 +149,7 @@ requests -, `play_answers.json`, `token_answers.json`, and `sdk_states/*.json`, 
 `SpotifyTrackerTest` replays) and `server/testdata/spotify/` (the accounts and Web API answers) are what
 `scripts/fake-spotify.py` answers from (`--selftest`, CI too): the accounts service with PKCE (`--as`, `--deny`,
 `--rotate`, `--access-ttl`, `--expire-refresh`, `--bad-client`), the Web API the server and the phone use
-(`--snapshot`, `--rate-limit N`, `--quota`, `--not-premium`, `--offset-404`) and a stub Web Playback SDK playing a tone
+(`--snapshot`, `--rate-limit N`, `--quota`, `--not-premium`, `--offset-404`, `--audiobook` - the show as an audiobook's unplayable chapters) and a stub Web Playback SDK playing a tone
 per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--unplayable`, `--relink`, `--no-eme`,
 `--slow-ready`, `--shuffle`, `--repeat`, `--token-ttl`, `--track-seconds`), plus `--print-library` and
 `--print-listing ENTRY [--tracks N]`; they drive docs/testing/emulator.md §6l. Every value in it is fake

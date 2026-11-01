@@ -40,7 +40,8 @@ The accounts service (the server's SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731):
 The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switch), a bearer each:
     GET  /v1/me, /v1/playlists/<id>[/items] (403 unless the bearer's user owns the fixture's playlist;
          --snapshot changes its snapshot_id), /v1/albums/<id>[/tracks], /v1/tracks/<id>,
-         /v1/artists/<id>[/albums], /v1/shows/<id>[/episodes], /v1/episodes/<id>
+         /v1/artists/<id>[/albums], /v1/shows/<id>[/episodes], /v1/episodes/<id> (--audiobook: the show's
+         episodes are an audiobook's chapters, every one is_playable false - show_audiobook_episodes.json)
     PUT  /v1/me/player/play?device_id=<id>           the body checked against play_request.json's shapes;
                                                      404 for an unknown device; --not-premium 403
                                                      PREMIUM_REQUIRED; handed to the stub device. A context
@@ -570,7 +571,8 @@ def handler_for(sp):
             elif seg[:1] == ["artists"] and len(seg) >= 2 and seg[1] == sp.artist["id"]:
                 doc = sp.artist if len(seg) == 2 else server_fixture("artist_albums.json") if seg[2:] == ["albums"] else None
             elif seg[:1] == ["shows"] and len(seg) >= 2 and seg[1] == sp.show["id"]:
-                doc = sp.show if len(seg) == 2 else server_fixture("show_episodes.json") if seg[2:] == ["episodes"] else None
+                episodes = "show_audiobook_episodes.json" if sp.args.audiobook else "show_episodes.json"
+                doc = sp.show if len(seg) == 2 else server_fixture(episodes) if seg[2:] == ["episodes"] else None
             elif seg == ["episodes", sp.episode["id"]]:
                 doc = sp.episode
             log(f"GET {path}: {200 if doc is not None else 404} ({user})")
@@ -1053,7 +1055,7 @@ def defaults(**over):
     ns = argparse.Namespace(port=0, as_user="parent", deny=False, offset_404=False, rotate=False, access_ttl=3600.0, expire_refresh=False,
                             bad_client=False, snapshot=None, rate_limit=0, quota=False, not_premium=False, no_eme=False,
                             slow_ready=0.0, token_ttl=0, track_seconds=None, elsewhere=None, autoplay=False,
-                            transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off")
+                            transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off", audiobook=False)
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -1073,6 +1075,9 @@ def selftest():
     assert server_fixture("token_refresh_rotated.json")["refresh_token"].startswith("FAKE-REFRESH-")
     assert server_fixture("token_invalid_grant.json")["error"] == "invalid_grant"
     assert server_fixture("token_invalid_client.json")["error"] == "invalid_client"
+    # --audiobook (2026-11-01): a show of chapters Spotify marks unplayable for this app, an audiobook-shaped reason each
+    book = server_fixture("show_audiobook_episodes.json")["items"]
+    assert book and all(e["is_playable"] is False and e["restrictions"]["reason"] == "payment_required" for e in book)
     shapes, answers, tokens = music_fixture("play_request.json"), music_fixture("play_answers.json"), music_fixture("token_answers.json")
     for key in ("play", "play_context", "transfer", "queue", "shuffle", "repeat", "shuffle_on", "repeat_context", "repeat_track"):
         r = shapes[key]
@@ -1452,6 +1457,8 @@ def main():
     p.add_argument("--unplayable", default="", metavar="ID,...", help="tracks that answer playback_error and are skipped")
     p.add_argument("--relink", default="", metavar="ID:OTHER,...", help="track ID plays as OTHER with linked_from ID")
     p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone sets the entry's wanted one")
+    p.add_argument("--audiobook", action="store_true",
+                   help="the fixture show's episodes are an audiobook's chapters, every one is_playable false (2026-11-01)")
     p.add_argument("--offset-404", action="store_true",
                    help="a context play whose offset isn't in the context answers 404 (else it plays from the top)")
     p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone sets the entry's wanted one")
