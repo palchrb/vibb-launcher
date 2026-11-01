@@ -2487,6 +2487,8 @@ details.app-display[open] > summary .section-chev {
 .badge-on { background: var(--green-bg); color: var(--green-text); }
 .badge-warn { background: var(--orange-bg); color: var(--orange-text); }
 #this-device [hidden] { display: none; }
+/* The first opening's offer on Devices (partials/push_offer.html): its Turn On row hides when the prompt was refused. */
+#push-offer [hidden] { display: none; }
 
 /* ---- Install Now (design 37): the launcher page's phone rows carry the name as a link and a form ---- */
 .phone-link { color: var(--label); text-decoration: none; }

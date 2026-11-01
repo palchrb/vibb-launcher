@@ -282,3 +282,201 @@ test("the poll stops after ten tries", async () => {
     assert.strictEqual(page.fetched.length, 10);
     assert.strictEqual(page.timers.length, 0);
 });
+
+// The first opening's offer on Devices (2026-11-01, partials/push_offer.html): the card's rule as a
+// table, then the card itself - shown only once the worker is ready and the browser holds no
+// subscription the server knows, Turn On subscribing first in the tap and posting the form, Not
+// Now kept in localStorage.
+const { offerShown } = require("../static/notifications.js");
+
+test("the offer's rule: the Home Screen (or an install), Push, the permission not asked, not dismissed", () => {
+    const base = { standalone: true, installed: false, push: true, permission: "default", dismissed: false };
+    const rows = [
+        [{}, true],
+        [{ standalone: false }, false], // a plain Safari or Chrome tab
+        [{ standalone: false, installed: true }, true], // Chrome's appinstalled, in the tab it came from
+        [{ push: false }, false],
+        [{ permission: "granted" }, false],
+        [{ permission: "denied" }, false],
+        [{ permission: "" }, false], // no Notification API
+        [{ dismissed: true }, false],
+        [{ standalone: false, installed: true, dismissed: true }, false],
+    ];
+    for (const [change, shown] of rows) {
+        assert.strictEqual(offerShown(Object.assign({}, base, change)), shown, JSON.stringify(change));
+    }
+});
+
+function offerPage({
+    standalone = true,
+    mediaStandalone = false,
+    permission = "default",
+    known = [],
+    subscription = null,
+    subscribe,
+    stored = null,
+    storageThrows = false,
+} = {}) {
+    const calls = [];
+    const submitted = [];
+    const listeners = {};
+    const field = () => ({ value: "" });
+    const parts = {
+        "[data-offer-on]": element({ hidden: false, disabled: true }),
+        "[data-offer-later]": element({ hidden: false }),
+        "[data-offer-line]": element({ textContent: "Hear at once" }),
+    };
+    const card = element({
+        elements: { endpoint: field(), p256dh: field(), auth: field() },
+        getAttribute: (name) => ({
+            "data-key": KEY,
+            "data-subscribed": known.join(","),
+            "data-failed": "Couldn't turn notifications on",
+            "data-blocked": "Notifications are blocked",
+        })[name],
+        querySelector: (s) => parts[s],
+        submit: () => submitted.push("on"),
+    });
+    const fresh = {
+        endpoint: ENDPOINT,
+        toJSON: () => ({ endpoint: ENDPOINT, keys: { p256dh: "p-key", auth: "a-key" } }),
+    };
+    const manager = {
+        getSubscription: () => Promise.resolve(subscription),
+        subscribe: (options) => {
+            calls.push(["subscribe", options]);
+            return subscribe ? subscribe() : Promise.resolve(fresh);
+        },
+    };
+    const storage = { value: stored };
+    const nav = { serviceWorker: { ready: Promise.resolve({ pushManager: manager }) } };
+    if (standalone !== undefined) nav.standalone = standalone;
+    const win = {
+        document: { getElementById: (id) => (id === "push-offer" ? card : null) },
+        navigator: nav,
+        matchMedia: (q) => ({ matches: mediaStandalone && q === "(display-mode: standalone)" }),
+        addEventListener: (type, fn) => {
+            listeners[type] = fn;
+        },
+        localStorage: {
+            getItem: (k) => {
+                if (storageThrows) throw new Error("SecurityError");
+                return k === "vibb.push-offer" ? storage.value : null;
+            },
+            setItem: (k, v) => {
+                if (storageThrows) throw new Error("SecurityError");
+                if (k === "vibb.push-offer") storage.value = v;
+            },
+        },
+        isSecureContext: true,
+        Notification: { permission },
+        PushManager: function () {},
+        atob: (s) => Buffer.from(s, "base64").toString("binary"),
+        TextEncoder,
+        crypto: { subtle: syncSubtle },
+    };
+    return { win, card, parts, calls, submitted, listeners, storage };
+}
+
+test("the card shows from the Home Screen once the worker is ready, and Turn On subscribes in the tap", async () => {
+    const page = offerPage();
+    install(page.win);
+    assert.strictEqual(page.card.hidden, true, "hidden until the worker and the subscription are known");
+    await settle();
+    assert.strictEqual(page.card.hidden, false);
+    const on = page.parts["[data-offer-on]"];
+    assert.ok(!on.disabled);
+    on.click();
+    assert.strictEqual(page.calls.length, 1, "subscribe first, in the tap");
+    assert.ok(page.calls[0][1].applicationServerKey instanceof Uint8Array);
+    assert.strictEqual(page.calls[0][1].userVisibleOnly, true);
+    await settle();
+    assert.deepStrictEqual(page.submitted, ["on"]);
+    assert.strictEqual(page.card.elements.endpoint.value, ENDPOINT);
+    assert.strictEqual(page.card.elements.p256dh.value, "p-key");
+    assert.strictEqual(page.card.elements.auth.value, "a-key");
+});
+
+test("display-mode standalone counts as the Home Screen too (Android, desktop)", async () => {
+    const page = offerPage({ standalone: undefined, mediaStandalone: true });
+    install(page.win);
+    await settle();
+    assert.strictEqual(page.card.hidden, false);
+});
+
+test("a plain tab shows nothing, until Chrome says the app was installed", async () => {
+    const page = offerPage({ standalone: false });
+    install(page.win);
+    await settle();
+    assert.strictEqual(page.card.hidden, true);
+    page.listeners.appinstalled();
+    await settle();
+    assert.strictEqual(page.card.hidden, false);
+});
+
+test("a subscription the server knows keeps it hidden; one it doesn't is dropped first", async () => {
+    let page = offerPage({
+        subscription: { endpoint: ENDPOINT, unsubscribe: () => Promise.resolve(true) },
+        known: [hashOf(ENDPOINT)],
+    });
+    install(page.win);
+    await settle();
+    assert.strictEqual(page.card.hidden, true);
+    let ended = false;
+    page = offerPage({
+        subscription: { endpoint: ENDPOINT, unsubscribe: () => { ended = true; return Promise.resolve(true); } },
+        known: ["0123456789abcdef"],
+    });
+    install(page.win);
+    await settle();
+    assert.ok(ended);
+    assert.strictEqual(page.card.hidden, false);
+});
+
+test("an asked permission, or Not Now tapped before, shows nothing", async () => {
+    for (const options of [{ permission: "granted" }, { permission: "denied" }, { stored: "not-now" }]) {
+        const page = offerPage(options);
+        install(page.win);
+        await settle();
+        assert.strictEqual(page.card.hidden, true, JSON.stringify(options));
+    }
+});
+
+test("Not Now hides the card and is kept in this browser; storage that throws still shows it", async () => {
+    let page = offerPage();
+    install(page.win);
+    await settle();
+    page.parts["[data-offer-later]"].click();
+    assert.strictEqual(page.card.hidden, true);
+    assert.strictEqual(page.storage.value, "not-now");
+    assert.deepStrictEqual(page.calls, []);
+    page = offerPage({ storageThrows: true });
+    install(page.win);
+    await settle();
+    assert.strictEqual(page.card.hidden, false);
+    page.parts["[data-offer-later]"].click();
+    assert.strictEqual(page.card.hidden, true);
+});
+
+test("a refused prompt says blocked and drops Turn On; another failure says try again", async () => {
+    let page = offerPage({
+        subscribe: () => {
+            page.win.Notification.permission = "denied";
+            return Promise.reject(new Error("NotAllowedError"));
+        },
+    });
+    install(page.win);
+    await settle();
+    page.parts["[data-offer-on]"].click();
+    await settle();
+    assert.strictEqual(page.parts["[data-offer-line]"].textContent, "Notifications are blocked");
+    assert.strictEqual(page.parts["[data-offer-on]"].hidden, true);
+    assert.deepStrictEqual(page.submitted, []);
+    page = offerPage({ subscribe: () => Promise.reject(new Error("AbortError")) });
+    install(page.win);
+    await settle();
+    page.parts["[data-offer-on]"].click();
+    await settle();
+    assert.strictEqual(page.parts["[data-offer-line]"].textContent, "Couldn't turn notifications on");
+    assert.strictEqual(page.parts["[data-offer-on]"].hidden, false);
+});

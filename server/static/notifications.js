@@ -10,7 +10,8 @@
 // After Send a Test (the page is back with ?notice=test_sent&sub=<id>), the device rows poll
 // subscriptions.json every 3 s for 30 s and re-render their badge and sub-line in place - no
 // reload, no scroll - stopping once the tested row's sub-line changed (server round 5 §5).
-// Lives on /notifications/settings (design 45 §1.7).
+// Lives on /notifications/settings (design 45 §1.7), and on Devices for the first opening's offer
+// (`offer` below).
 // Tests: jstest/notifications.test.js.
 (function (root) {
     "use strict";
@@ -97,8 +98,137 @@
         win.setTimeout(tick, 3000);
     }
 
+    // The first opening's offer on Devices (2026-11-01, partials/push_offer.html). Browsers grant
+    // the permission prompt only inside a tap, so the app can't ask at launch; this shows a card
+    // whose Turn On is This Device's subscribe and form post (back to Devices on success). Its
+    // rule (pure, the jstest's table): the app opened from the Home Screen (display-mode
+    // standalone, or iOS's navigator.standalone) or just installed (Chrome's appinstalled, in the
+    // tab it was installed from); Push here (PushManager, a secure context, a service worker); the
+    // permission not asked yet ("default"); Not Now not tapped in this browser (localStorage).
+    // Then, once the worker is ready, no subscription the server knows: a known one keeps the card
+    // hidden, an unknown one is dropped first, as on This Device. A plain Safari tab never shows it.
+    var OFFER_KEY = "vibb.push-offer";
+
+    function offerShown(s) {
+        if (!s.standalone && !s.installed) return false;
+        if (!s.push) return false;
+        if (s.permission !== "default") return false;
+        return !s.dismissed;
+    }
+
+    function standaloneNow(win) {
+        if (win.navigator.standalone === true) return true;
+        try {
+            return !!(win.matchMedia && win.matchMedia("(display-mode: standalone)").matches);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Not Now is kept in this browser only; storage that throws (a private window) shows the card.
+    function offerDismissed(win) {
+        try {
+            return win.localStorage.getItem(OFFER_KEY) === "not-now";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function dismissOffer(win) {
+        try {
+            win.localStorage.setItem(OFFER_KEY, "not-now");
+        } catch (e) {
+            // Nothing kept: the card comes back at the next opening.
+        }
+    }
+
+    function offer(win) {
+        var doc = win.document;
+        var card = doc.getElementById("push-offer");
+        if (!card) return;
+        var nav = win.navigator;
+        var onButton = card.querySelector("[data-offer-on]");
+        var later = card.querySelector("[data-offer-later]");
+        var line = card.querySelector("[data-offer-line]");
+        var installed = false;
+        var checking = false;
+        var registration = null;
+
+        function facts() {
+            return {
+                standalone: standaloneNow(win),
+                installed: installed,
+                push: "PushManager" in win && !!win.isSecureContext && !!nav.serviceWorker,
+                permission: win.Notification ? win.Notification.permission : "",
+                dismissed: offerDismissed(win)
+            };
+        }
+
+        // The worker's registration and the browser's subscription, then the card.
+        function check() {
+            if (checking || !offerShown(facts())) return;
+            checking = true;
+            nav.serviceWorker.ready.then(function (reg) {
+                registration = reg;
+                return reg.pushManager.getSubscription();
+            }).then(function (subscription) {
+                if (!subscription) return false;
+                return endpointHash(subscription.endpoint, win).then(function (hash) {
+                    var known = (card.getAttribute("data-subscribed") || "").split(",");
+                    if (known.indexOf(hash) >= 0) return true;
+                    return subscription.unsubscribe().then(function () {
+                        return false;
+                    }, function () {
+                        return false;
+                    });
+                });
+            }).then(function (known) {
+                if (known || !offerShown(facts())) return;
+                card.hidden = false;
+                onButton.disabled = false;
+            }, function () {
+                // No worker or no answer: no card, This Device is still the way.
+            });
+        }
+
+        onButton.addEventListener("click", function () {
+            if (!registration) return;
+            registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: decodeKey(card.getAttribute("data-key"), win)
+            }).then(function (subscription) {
+                var json = subscription.toJSON();
+                card.elements.endpoint.value = json.endpoint;
+                card.elements.p256dh.value = json.keys.p256dh;
+                card.elements.auth.value = json.keys.auth;
+                card.submit();
+            }, function () {
+                if (win.Notification && win.Notification.permission === "denied") {
+                    onButton.hidden = true;
+                    line.textContent = card.getAttribute("data-blocked");
+                } else {
+                    line.textContent = card.getAttribute("data-failed");
+                }
+            });
+        });
+
+        later.addEventListener("click", function () {
+            dismissOffer(win);
+            card.hidden = true;
+        });
+
+        if (win.addEventListener) {
+            win.addEventListener("appinstalled", function () {
+                installed = true;
+                check();
+            });
+        }
+        check();
+    }
+
     function install(win) {
         var doc = win.document;
+        offer(win);
         var tested = testedRow(win.location && win.location.search);
         if (tested && doc.querySelector) pollRows(win, tested);
         var form = doc.getElementById("push-on-form");
@@ -199,6 +329,7 @@
 
     var api = {
         install: install,
+        offerShown: offerShown,
         decodeKey: decodeKey,
         endpointHash: endpointHash,
         testedRow: testedRow,

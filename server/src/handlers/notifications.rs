@@ -948,7 +948,12 @@ pub async fn subscribe(
                 Some(crate::security::Detail::facts(&label)),
             )
             .await;
-            back_to(&form, "push_on", "this-device")
+            // The first opening's card on Devices (2026-11-01) comes back there; This Device to its group.
+            if form.get("offer").map(String::as_str) == Some("devices") {
+                Redirect::to("/devices?notice=push_on#push-offer-done").into_response()
+            } else {
+                back_to(&form, "push_on", "this-device")
+            }
         }
         Ok(false) => crate::settings_log::refused(back_to(&form, "push_many", "this-device")),
         Err(err) => db_error(err),

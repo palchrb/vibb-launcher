@@ -4,6 +4,14 @@
   "common.not_saved": "Not saved.",
   "common.why": "Why",
 
+  "devices.push_offer.title": "Get notifications on this phone?",
+  "devices.push_offer.sub": "Hear at once when a phone needs you - an emergency call, a low battery, a request for more time. You can change it later in Notification Settings.",
+  "devices.push_offer.on": "Turn On",
+  "devices.push_offer.not_now": "Not Now",
+  "devices.push_offer.failed": "Couldn't turn notifications on - try again, or use Notification Settings.",
+  "devices.push_offer.blocked": "Notifications are blocked for Vibb Phone. Allow them in this phone's Settings.",
+  "devices.push_offer.done": "Notifications are on for this phone.",
+
   "music.spotify.audiobook": "This is a Spotify audiobook - Spotify lets only its own apps play them.",
   "music.spotify.audiobook_short": "it is a Spotify audiobook, and Spotify lets only its own apps play them",
 

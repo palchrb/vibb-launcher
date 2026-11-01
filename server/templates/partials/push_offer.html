@@ -1,0 +1,21 @@
+{#- The first opening's offer (2026-11-01, `static/notifications.js` `offer`): a card at the top of Devices, hidden
+    until the script shows it - the app opened from the Home Screen (or just installed in Chrome), Push here, the
+    permission not asked yet, no subscription the server knows, Not Now not tapped in this browser. Turn On is This
+    Device's subscribe and form post (`POST /notifications/subscriptions`); `offer=devices` brings a success back here
+    with `?notice=push_on`, a refusal goes to Notification Settings' This Device, which says why. Needs the server's
+    push key (`push_offer` is `None` without it). -#}
+{% if let Some(offer) = push_offer %}
+{% if offer.done %}<p class="flash" role="status" id="push-offer-done">{{ self.t("devices.push_offer.done") }}</p>{% endif %}
+<form method="post" action="/notifications/subscriptions#push-offer" class="group" id="push-offer" data-key="{{ offer.key }}" data-subscribed="{{ offer.subscribed }}" data-failed="{{ self.t("devices.push_offer.failed") }}" data-blocked="{{ self.t("devices.push_offer.blocked") }}" hidden>
+    <input type="hidden" name="from" value="devices">
+    <input type="hidden" name="offer" value="devices">
+    <input type="hidden" name="endpoint" value="">
+    <input type="hidden" name="p256dh" value="">
+    <input type="hidden" name="auth" value="">
+    <div class="row">
+        <span class="row-label">{{ self.t("devices.push_offer.title") }}<span class="row-sub" data-offer-line>{{ self.t("devices.push_offer.sub") }}</span></span>
+    </div>
+    <button type="button" class="row row-button" data-offer-on disabled>{{ self.t("devices.push_offer.on") }}</button>
+    <button type="button" class="row row-button" data-offer-later>{{ self.t("devices.push_offer.not_now") }}</button>
+</form>
+{% endif %}

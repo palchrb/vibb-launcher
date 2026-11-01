@@ -4,6 +4,14 @@
   "common.not_saved": "Ikke lagret.",
   "common.why": "Hvorfor",
 
+  "devices.push_offer.title": "Få varsler på denne telefonen?",
+  "devices.push_offer.sub": "Få vite med en gang når en telefon trenger deg - en nødsamtale, lavt batteri, en forespørsel om mer tid. Du kan endre det senere under varselinnstillingene.",
+  "devices.push_offer.on": "Slå på",
+  "devices.push_offer.not_now": "Ikke nå",
+  "devices.push_offer.failed": "Fikk ikke slått på varsler - prøv igjen, eller bruk varselinnstillingene.",
+  "devices.push_offer.blocked": "Varsler er blokkert for Vibb Phone. Tillat dem i innstillingene på denne telefonen.",
+  "devices.push_offer.done": "Varsler er slått på for denne telefonen.",
+
   "music.spotify.audiobook": "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker.",
   "music.spotify.audiobook_short": "det er en lydbok fra Spotify, og Spotify lar bare sine egne apper spille lydbøker",
 
