@@ -432,6 +432,8 @@
     <string name="glance_group_spoken">Group %1$s, latest from %2$s</string>
     <!-- The glance page's time-rule card for TalkBack (design r13 §1.2): the label, then the certain end. -->
     <string name="glance_rule_card_description">%1$s, until %2$s</string>
+    <!-- The time-rule screen's card read aloud (launcher round L6): "School, until 14:30", then what still works. -->
+    <string name="lock_rule_card_spoken_note">%1$s. %2$s</string>
     <!-- Design 24b: a parent-PIN window that locks again by itself (notification, Home banner). -->
     <string name="notification_channel_window">Opened with the parent code</string>
     <string name="window_override_open">Open with the parent code until %1$s</string>

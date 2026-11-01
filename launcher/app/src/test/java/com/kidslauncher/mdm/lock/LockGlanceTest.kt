@@ -590,7 +590,7 @@ class LockGlanceTest {
         val calm = src("java/com/kidslauncher/mdm/lock/GlanceCalendar.kt").readText() +
             src("java/com/kidslauncher/mdm/day/Reminders.kt").readText() +
             src("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().let {
-                it.substringAfter("private fun bindNext()").substringBefore("private fun alarmText(")
+                it.substringAfter("private fun bindNext()").substringBefore("private fun bindTorch(")
             }
         for (banned in listOf("noticeCame", "NotificationManager", ".notify(", "Notification.Builder", "NotificationCompat", "Vibrator", "WakeLock")) {
             assertFalse(banned, calm.contains(banned))
@@ -731,7 +731,24 @@ class LockGlanceLayoutTest {
     private val ns = "http://schemas.android.com/apk/res/android"
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
     private fun parse(name: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
-        .newDocumentBuilder().parse(file("res/layout/$name.xml")).documentElement
+        .newDocumentBuilder().parse(file("res/layout/$name.xml")).documentElement.also(::inlineIncludes)
+
+    /** Each `<include>` replaced by its layout's root (launcher round L6: the rule card is `view_lock_rule_card.xml`),
+     * the include's id over the root's, as the inflater does; an include setting more than id and layout fails here. */
+    private fun inlineIncludes(e: Element) {
+        for (child in (0 until e.childNodes.length).map { e.childNodes.item(it) }.filterIsInstance<Element>()) {
+            if (child.tagName != "include") {
+                inlineIncludes(child)
+                continue
+            }
+            val attrs = (0 until child.attributes.length).map { child.attributes.item(it).nodeName }.toSet()
+            check(attrs == setOf("android:id", "layout")) { "an include the model doesn't know: $attrs" }
+            val included = parse(child.getAttribute("layout").removePrefix("@layout/"))
+            val copy = e.ownerDocument.importNode(included, true) as Element
+            copy.setAttributeNS(ns, "android:id", child.getAttributeNS(ns, "id"))
+            e.replaceChild(copy, child)
+        }
+    }
 
     private val root = parse("view_lock_glance")
     private val row = parse("view_lock_glance_row")
@@ -904,9 +921,14 @@ class LockGlanceLayoutTest {
         assertTrue(card.all().none { it.getAttributeNS(ns, "clickable") == "true" || it.tagName.endsWith("Button") })
         // The panel never makes it clickable or sensitive: the label is the parent's own (r13 §1.3).
         val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        assertFalse(panel.contains("lockRuleCard.setOnClickListener"))
+        assertFalse(panel.contains("lockRuleCard.setOnClickListener") || panel.contains("lockRuleCard.root.setOnClickListener"))
         assertFalse(panel.contains("sensitive(glance.lockRuleCard"))
-        assertTrue(panel.contains("view.contentDescription = if (until != null) activity.getString(R.string.glance_rule_card_description, label, until) else label"))
+        // One binder for both screens (launcher round L6): the glance passes no line 3, so its card stays two lines.
+        val binder = file("java/com/kidslauncher/mdm/lock/RuleCardView.kt").readText()
+        assertTrue(binder.contains("val spoken = if (time != null) context.getString(R.string.glance_rule_card_description, label, time) else label"))
+        assertFalse(binder.contains("setOnClickListener"))
+        assertTrue(panel.contains("RuleCardView.bind(activity, glance.lockRuleCard, com.kidslauncher.mdm.ui.LockActivity.glyphRes(card.kind.glyph()), label, card.until)\n"))
+        assertEquals("gone", root.byId("lock_rule_card_note").getAttributeNS(ns, "visibility"))
     }
 
     @Test
@@ -1014,7 +1036,7 @@ class LockGlanceLayoutTest {
         val listener = panel.substringAfter("glance.root.addOnLayoutChangeListener").substringBefore("\n        }")
         assertTrue(listener, listener.contains("available(bottom - top) != placedFor"))
         assertFalse("the bare height no longer decides", listener.contains("bottom - top != placedFor"))
-        val layoutNow = panel.substringAfter("private fun layoutNow()").substringBefore("val clock = ")
+        val layoutNow = panel.substringAfter("private fun layoutNow()").substringBefore("val moved = ")
         assertTrue(layoutNow, layoutNow.contains("val room = available(root.height)"))
         assertTrue(layoutNow, layoutNow.contains("placedFor = room"))
         assertTrue(panel.contains("private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }"))
@@ -1213,20 +1235,29 @@ class LockGlanceLayoutTest {
     fun `the profile's clock is placed, one size, measured by nothing else (design 59d step L)`() {
         assertEquals(113.7f, profileParts.clock, 0.1f)
         assertEquals(12.7f, profileParts.date, 0.1f)
-        // The panel places the profile's clock (its margins under the keyguard status bar), else the 56 sp clock.
+        // The panel places the face at every layout (launcher round L6: the clock face is LockClockFace, shared with the
+        // time-rule screen): the profile's clock (its margins under the keyguard status bar), else the 56 sp clock.
         val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
         val layoutNow = panel.substringAfter("private fun layoutNow()").substringBefore("val layout = ")
-        assertTrue(layoutNow, layoutNow.contains("clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)\n            moved = placeProfile(p, width)"))
-        assertTrue(layoutNow, layoutNow.contains("clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)"))
+        assertTrue(layoutNow, layoutNow.contains("val moved = clockFace.place(width)"))
+        val face = file("java/com/kidslauncher/mdm/lock/LockClockFace.kt").readText()
+        val place = face.substringAfter("fun place(width: Int): Boolean {").substringBefore("\n    }\n")
+        assertTrue(place, place.contains("clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)\n            return placeProfile(p, width)"))
+        assertTrue(place, place.contains("clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)"))
+        assertTrue(face.contains("const val CLOCK_BIG_SP = 56f"))
     }
 
     @Test
     fun `the profile is the phone's own, its clock in Nunito Light, the date and alarm at its start`() {
-        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        // Launcher round L6: the clock face moved out of the panel into LockClockFace, shared by both lock screens.
+        val glancePanel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext), logTag = LOG_TAG,"))
+        assertTrue(glancePanel.contains("val pill = glanceHandle(profile)") && glancePanel.contains("private val profile: ClockGeometry? = clockFace.profile"))
+        val panel = file("java/com/kidslauncher/mdm/lock/LockClockFace.kt").readText()
         assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp)"))
-        assertTrue(panel.contains("val widthDp = activity.resources.configuration.screenWidthDp"))
+        assertTrue(panel.contains("val widthDp = context.resources.configuration.screenWidthDp"))
         // JL-6: no profile is said once, with what was looked at.
-        assertTrue(panel.contains("if (it == null) Log.i(LOG_TAG, \"Glance clock: no profile (model"))
+        assertTrue(panel.contains("if (it == null) Log.i(logTag, \"Glance clock: no profile (model"))
         // JL-2: Nunito Light (300) is bundled for this clock only - the family keeps 600/700/800, so a normal (400)
         // request still gets SemiBold.
         val fonts = listOf("src/main/res/font", "app/src/main/res/font").map(::File).first { it.exists() }.list()!!.filter { it.endsWith(".ttf") }.toSet()
@@ -1236,8 +1267,11 @@ class LockGlanceLayoutTest {
         val look = panel.substringAfter("private fun profileLook(").substringBefore("\n    /**")
         assertTrue(look, look.contains("R.font.nunito_light"))
         assertEquals("only the profile's clock is light", 1, Regex("R\\.font\\.nunito_light").findAll(panel).count())
+        val main = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
+        val light = main.walkTopDown().filter { it.extension == "kt" && "R.font.nunito_light" in it.readText() }.map { it.name }.toList()
+        assertEquals(listOf("LockClockFace.kt"), light)
         assertTrue(look, look.contains("date.transformationMethod = FirstCapital(locale)"))
-        assertTrue(look, look.contains("listOf(clock, date, glance.lockGlanceAlarm, glance.lockGlanceNext)"))
+        assertTrue(look, look.contains("for (view in listOf(clock, date, alarm) + extra) {"))
         assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))"))
         val place = panel.substringAfter("private fun placeProfile(").substringBefore("private fun margins(")
         assertTrue(place, place.contains("floorPx = -descent"))
@@ -1254,11 +1288,11 @@ class LockGlanceLayoutTest {
         // The first digit's ink at the profile's start, whatever its side bearing - again when the text changes. The
         // content starts after the root's and the top block's side padding (r11 §1.1: the top block's now).
         assertTrue(place, place.contains("margins(clock, clockStartPx(p), clockTop)"))
-        assertTrue(place, place.contains("val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()"))
+        assertTrue(place, place.contains("val contentStart = (at[0] + root.paddingStart + top.paddingStart).toFloat()"))
         val start = panel.substringAfter("private fun clockStartPx(").substringBefore("\n    /**")
         assertTrue(start, start.contains("clock.paint.getTextBounds(text, 0, 1, first)"))
-        assertTrue(start, start.contains("startMarginPx(p.clockInkStartDp * activity.resources.displayMetrics.density - first.left, contentStart)"))
-        assertTrue(start, start.contains("val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()"))
+        assertTrue(start, start.contains("startMarginPx(p.clockInkStartDp * context.resources.displayMetrics.density - first.left, contentStart)"))
+        assertTrue(start, start.contains("val contentStart = (at[0] + root.paddingStart + top.paddingStart).toFloat()"))
         assertTrue(look, look.contains("clock.addTextChangedListener("))
         assertTrue(place, place.contains("margins(alarm, dateStart,"))
         // Without a profile the XML's centred clock is untouched (LockFontScaleTest pins its gravity).

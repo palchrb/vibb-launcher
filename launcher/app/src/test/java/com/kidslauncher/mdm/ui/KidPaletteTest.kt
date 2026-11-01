@@ -259,9 +259,9 @@ class KidPaletteTest {
             views.single { it.getAttributeNS(ns, "id") == "@+id/$id" }.getAttributeNS(ns, attr)
         val screen = views("activity_lock")
         assertEquals("@color/kid_ground", screen.first().getAttributeNS(ns, "background"))
-        // On the night: the clock, title, message and the red emergency text.
+        // On the night: the glance's clock, date and alarm line (launcher round L6) and the red emergency text.
         for ((id, minimum) in listOf(
-            "lock_clock" to 4.5, "lock_title" to 4.5, "lock_message" to 4.5,
+            "lock_clock" to 4.5, "lock_date" to 4.5, "lock_alarm" to 4.5,
             "lock_emergency_button" to 4.5,
         )) {
             val ink = colourOf(screen, id, "textColor")
@@ -269,9 +269,16 @@ class KidPaletteTest {
             assertTrue("$id $ink: $ratio", ratio >= minimum)
         }
         assertTrue(contrast("kid_emergency_text", "kid_ground") >= 7.0)
-        // The kind's icon: the accent on its peach disc (14 % over the night), a graphic >= 3:1 - and well above.
-        val disc = over("kid_lock_kind_disc", "kid_ground")
-        assertTrue(contrast(colourOf(screen, "lock_kind_icon", "tint"), disc) >= 4.5)
+        // The rule card (the glance's, view_lock_rule_card.xml): the kind's glyph, the accent on its peach disc (14 % over
+        // the tile), well above a graphic's 3:1; its three lines on the compact tile's ground.
+        val ruleCard = views("view_lock_rule_card")
+        val tile = (parse("drawable/bg_glance_compact_tile.xml").getElementsByTagName("solid").item(0) as Element).getAttributeNS(ns, "color")
+        val disc = over("kid_lock_kind_disc", tile.removePrefix("@color/"))
+        assertTrue(contrast(colourOf(ruleCard, "lock_rule_card_glyph", "tint"), disc) >= 4.5)
+        for (id in listOf("lock_rule_card_title", "lock_rule_card_until", "lock_rule_card_note")) {
+            val ink = colourOf(ruleCard, id, "textColor")
+            assertTrue("$id $ink on $tile", contrast(ink, tile.removePrefix("@color/")) >= 4.5)
+        }
         assertEquals("#24F0A884", resolve("kid_lock_kind_disc").uppercase())
         // The card is the contact sheet's lifted night (QA M4: one set of colours), its rows' name and chevron on it.
         val card = parse("drawable/bg_lock_card.xml").getElementsByTagName("solid").item(0) as Element
