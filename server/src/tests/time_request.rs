@@ -239,7 +239,7 @@ async fn a_request_raises_one_event_and_pushes_by_each_parents_switch() {
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert_eq!(target, format!("/devices/{id}/time#extra"));
+    assert_eq!(target, format!("/devices/{id}#quick"));
     // Notify Me About lists the switch once, on by default.
     let settings = app.get_page("/notifications/settings", &mamma).await.text();
     assert_eq!(settings.matches("name=\"push_extra_time\"").count(), 1);
@@ -345,15 +345,15 @@ async fn news_stale_and_refused_bodies() {
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
 
-/// Device › Time: "Asked for more time at …" at the top of Extra Time Today; after a lift
-/// (budget +15) it is gone and the save lands on `#extra`; a lift made before the request leaves
-/// the row.
+/// The summary: "Asked for more time at …" at the top of Quick actions (Device › Time Rules lost
+/// Extra Time Today on 2026-11-01); after a lift (budget +15) it is gone and the save lands on
+/// `#quick`; a lift made before the request leaves the row.
 #[tokio::test]
-async fn the_time_page_shows_the_open_request_until_a_lift() {
+async fn the_summary_shows_the_open_request_until_a_lift() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    let page = format!("/devices/{id}/time");
+    let page = format!("/devices/{id}");
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-asked"), "no request yet");
     // A lift before the request (a minute earlier) leaves the row.
@@ -362,10 +362,10 @@ async fn the_time_page_shows_the_open_request_until_a_lift() {
             Method::POST,
             &format!("/devices/{id}/lifts"),
             Some(&cookie),
-            &[("target", "budget"), ("minutes", "15"), ("back", "time")],
+            &[("target", "budget"), ("minutes", "15"), ("back", "summary")],
         )
         .await;
-    assert_redirect(&lifted, &format!("{page}?done=extra"), Some("extra"));
+    assert_redirect(&lifted, &format!("{page}?done=extra"), Some("quick"));
     sqlx::query("UPDATE time_lifts SET created_at = datetime('now', '-1 minute')")
         .execute(&app.db)
         .await
@@ -375,26 +375,28 @@ async fn the_time_page_shows_the_open_request_until_a_lift() {
         json!({"accepted": true})
     );
     let html = app.get_page(&page, &cookie).await.text();
-    let extra = &html[html.find("<section id=\"extra\"").unwrap()..];
-    let extra = &extra[..extra.find("</section>").unwrap()];
+    let quick = &html[html.find("<section id=\"quick\"").unwrap()..];
+    let quick = &quick[..quick.find("</section>").unwrap()];
     assert!(
-        extra.contains("data-asked>Asked for more time at "),
-        "{extra}"
+        quick.contains("data-asked>Asked for more time at "),
+        "{quick}"
     );
     assert!(
-        extra.find("data-asked").unwrap() < extra.find("act-grid").unwrap(),
+        quick.find("data-asked").unwrap() < quick.find("act-grid").unwrap(),
         "above the buttons"
     );
-    // The answer: +15 min, back at #extra, the row gone.
+    let time = app.get_page(&format!("{page}/time"), &cookie).await.text();
+    assert!(!time.contains("data-asked"), "not on Device › Time Rules");
+    // The answer: +15 min, back at #quick, the row gone.
     let lifted = app
         .request_form(
             Method::POST,
             &format!("/devices/{id}/lifts"),
             Some(&cookie),
-            &[("target", "budget"), ("minutes", "15"), ("back", "time")],
+            &[("target", "budget"), ("minutes", "15"), ("back", "summary")],
         )
         .await;
-    assert_redirect(&lifted, &format!("{page}?done=extra"), Some("extra"));
+    assert_redirect(&lifted, &format!("{page}?done=extra"), Some("quick"));
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-asked"), "answered by the lift");
 }

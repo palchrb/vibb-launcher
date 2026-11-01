@@ -260,7 +260,8 @@ pub(crate) async fn build_policy(
         .map_err(PolicyError::CorruptAllowlist)?;
 
     // The legacy schedule fields: the global default unless this device has its own override
-    // turned on - see migrations/0017_schedules_page.sql. Since step 6 they're frozen (converted
+    // turned on - see migrations/0017_schedules_page.sql (since 0115 that switch is the own daily
+    // limit's alone; these frozen fields still follow it). Since step 6 they're frozen (converted
     // into time rules once, `time_rules::migrate_legacy`) and only read by launchers without
     // `time_rules_v1`. A missing singleton row means "no schedule" (its migration seeds it); a
     // query error is a 500.
@@ -578,24 +579,22 @@ pub(crate) async fn pop_command(
         .await
 }
 
-/// The device's effective rules and budget (its own while `custom_schedule_enabled`, else the
-/// global ones) and the lifts still to deliver. Anything stored that doesn't validate is an error
-/// (500): the phone keeps its cached rules instead of getting fewer.
+/// The device's effective rules (`time_rules::effective_rule_rows`: everyone's and its own, each
+/// unless switched off for it, then its bedtime) and budget (its own while
+/// `custom_schedule_enabled` - the Own limit switch since migration 0115 -, else the global one)
+/// and the lifts still to deliver. Anything stored that doesn't validate is an error (500): the
+/// phone keeps its cached rules instead of getting fewer.
 async fn build_time_policy(
     state: &AppState,
     policy: &DevicePolicy,
     global: Option<&GlobalSchedule>,
 ) -> Result<TimePolicy, PolicyError> {
-    let rules = crate::time_rules::effective_rule_rows(
-        &state.db,
-        policy.device_id,
-        policy.custom_schedule_enabled,
-    )
-    .await?
-    .iter()
-    .map(|row| row.to_policy())
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(PolicyError::CorruptTimePolicy)?;
+    let rules = crate::time_rules::effective_rule_rows(&state.db, policy.device_id)
+        .await?
+        .iter()
+        .map(|row| row.to_policy())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PolicyError::CorruptTimePolicy)?;
     let budget_json = if policy.custom_schedule_enabled {
         policy.daily_budget_json.as_str()
     } else {

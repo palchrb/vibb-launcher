@@ -356,7 +356,9 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   never its name -, then today's screen time from `time_state`; never text from the request). `title`/`summary` empty;
   `told` words it: "Anna asks for more screen time" (`fit_name` to 60) / "17:21 · Screen time used up",
   "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", "School", "A time rule", or the clock alone for `unknown`.
-  Target `/devices/{id}/time#extra`. Kept `EVENT_DAYS` (90) like every kind.
+  Target `/devices/{id}#quick` (the summary's Quick actions, where the tiles are; `/devices/{id}/time#extra` until
+  Device › Time Rules lost Extra Time Today on 2026-11-01 - migration 0115 repointed the stored rows). Kept
+  `EVENT_DAYS` (90) like every kind.
 - **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): "today" is the phone's own day
   (`device_api::extra_time_day_zone`, qa-r13-rule-card-code Q-2: the zone its latest report names in `time_state.zone`,
   the zone its ledger and its own count of three go by; else Phone Setup's). A request asked before it isn't stored
@@ -367,14 +369,14 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   after (inbox and Activity only). The phone keeps its own count of three too (design r13 D5).
 - **Activity**: `activity::without_own_clock` strips a leading or trailing own clock case-insensitively, so the day
   after "Yesterday 21:40 · Bedtime" against `when` "yesterday 21:40" shows "Bedtime".
-- **Device › Time** shows "Asked for more time at 17:21" (`data-asked`, a `.group` with one `.row.row-note` at the top
-  of Extra Time Today, above the buttons) while `parent_events::open_extra_time_request` finds one open: the phone's
+- **The summary** shows "Asked for more time at 17:21" (`data-asked`, a `.quick-note` at the top of Quick actions,
+  above the tiles; on Device › Time's Extra Time Today until 2026-11-01) while `parent_events::open_extra_time_request` finds one open: the phone's
   newest request raised in the server zone's today, and no `time_lifts` row for the phone made at or after its
   `created_at` (both the server's `datetime('now')`, compared through `datetime()`; any lift counts, one in the same
-  second as the request counts as its answer). A lift form already returns to `#extra`, so after +15 min the page lands
+  second as the request counts as its answer). A lift form already returns to `#quick`, so after +15 min the page lands
   there with its flash and without the row.
 - Tests: `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch, the
-  same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids, the Time page's
+  same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids, the summary's
   row until a lift and a lift before the request leaving it), `parent_events::tests` (the words per state, a long name,
   the day after, the state from a report), `activity::tests` (the case-insensitive strip),
   `migrations_73_to_96_in_order`.

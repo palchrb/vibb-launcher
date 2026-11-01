@@ -77,9 +77,11 @@ pub struct DevicePolicy {
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
     pub vpn_filter_enabled: bool,
-    /// The per-device override switch: when set, this device uses its own time rules
-    /// (`time_rules.device_id` = this device) and its own `daily_budget_json` instead of the
-    /// global ones. The weekday/weekend/bedtime *_minutes columns above are the pre-step-6
+    /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
+    /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
+    /// everyone's rules for the phone's own; since then each rule has its own switch
+    /// (`device_rule_off`, `time_rules::effective_rule_rows`) and the old choice became those
+    /// rows. The weekday/weekend/bedtime *_minutes columns above are the pre-step-6
     /// schedule, converted into rules once (`time_rules::migrate_legacy`) and still sent to older
     /// launchers. See `handlers::schedules`.
     pub custom_schedule_enabled: bool,
@@ -338,8 +340,9 @@ pub struct DeviceContactRow {
     pub photo_hash: Option<String>,
 }
 
-/// Singleton (always `id = 1`) - the schedule every device follows unless it has its own
-/// `device_policy.custom_schedule_enabled` override. See `handlers::schedules`.
+/// Singleton (always `id = 1`) - the daily limit (and frozen pre-step-6 schedule) every device
+/// follows unless `device_policy.custom_schedule_enabled` (its own limit) is set. See
+/// `handlers::schedules`.
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct GlobalSchedule {
     pub weekday_start_minutes: Option<i64>,

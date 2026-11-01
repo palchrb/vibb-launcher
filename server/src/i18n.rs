@@ -561,6 +561,7 @@ mod tests {
         "partials/recent.html",
         "partials/exceptions.html",
         "partials/budget_rows.html",
+        "partials/rule_switch.html",
         "partials/device_app_row.html",
         "partials/app_permissions_form.html",
         "partials/status_line.html",

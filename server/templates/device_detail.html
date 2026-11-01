@@ -126,6 +126,8 @@
         {% if paused %}
         <p class="quick-note" data-warning="restrictions-paused">{% if relock.lock_again %}{{ self.t("device.summary.pause_ends") }}{% else %}{{ self.t("device.summary.pause_ends_old") }}{% endif %}</p>
         {% endif %}
+        {#- Design r13 §2.7: the kid's "Be om mer tid" still open (until a lift or the day's end); its push lands here. -#}
+        {% if let Some(at) = asked %}<p class="quick-note" data-asked>{{ self.tp("device.summary.asked", [("at", at.as_str())]) }}</p>{% endif %}
         <div class="act-grid">
             {% for minutes in [15, 30, 60] %}
             <form method="post" action="/devices/{{ device.id }}/lifts#quick">

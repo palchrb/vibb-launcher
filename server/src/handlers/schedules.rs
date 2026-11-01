@@ -1,29 +1,35 @@
 //! Time rules (handy step 6, docs/design/06-time-rules.md in the handy workspace): named rules
 //! (school / bedtime / custom, per-weekday windows, calls on/off, exempt apps) and a daily
-//! screen-time budget per weekday - a global set every device follows, plus an explicit per-device
-//! override (`device_policy.custom_schedule_enabled`). The pre-step-6 weekday/weekend/bedtime
+//! screen-time budget per weekday. Everyone's rules and each phone's own rules both apply, each
+//! unless switched off for the phone (`device_rule_off`, migration 0115; a rule added later is on
+//! for every phone); the daily limit is everyone's unless the phone's Own limit switch
+//! (`device_policy.custom_schedule_enabled`) is on. The pre-step-6 weekday/weekend/bedtime
 //! schedule was converted into rules once (`time_rules::migrate_legacy`).
 //!
 //! The pages (design 31 §3.5, step 9):
-//! - **Settings › Time Rules** (`GET /schedules`, `schedules.html`): everyone's rules as rows, the
-//!   daily limit's row, a row per phone. Links only, no form. `/schedules?device=X` (an old
-//!   bookmark) redirects to the phone's Time page (L5).
+//! - **Settings › Time Rules** (`GET /schedules`, `schedules.html`): everyone's rules as rows ("Off
+//!   for Emil" where a phone has one off), the daily limit's row, a row per phone with its rules
+//!   in force. Links only, no form. `/schedules?device=X` (an old bookmark) redirects to the
+//!   phone's Time Rules page (L5).
 //! - **Daily Limit** (`GET /schedules/screen-time`, `schedule_budget.html`): everyone's 7 limits,
 //!   one form (`POST /schedules/global`).
 //! - **The rule editor** (`GET /schedules/rules/{id}`, chained with its POST; `GET
 //!   /schedules/rules/new`, `?device=X` for a phone's own rule; `schedule_rule.html`): one form with
 //!   Save at the top, the exempt apps in a `<details>` inside it, Delete Rule… behind a confirm.
-//! - **Device › Time** (`GET /devices/{id}/time`, `device_time.html`): what the phone last said, extra
-//!   time, Pause a rule, the recent lifts (`handlers::lifts`, `back=time`), the own-rules switch, the
-//!   phone's own rules and its own daily limits.
+//! - **Device › Time Rules** ("Tidsregler", `GET /devices/{id}/time`, `device_time.html`; tidied
+//!   2026-11-01): what the phone last said, the bedtime, everyone's rules with a switch each, the
+//!   phone's own rules, the daily limit (the Own limit switch, its 7 days while on). Extra time,
+//!   Pause a rule and the lifts are the summary's Quick actions (`handlers::lifts`).
 //!
 //! Where the forms return (§5.1): a rule's save to its own page's form (`#rule`: Save sits at the
 //! top, and scroll-restore keeps the place), a new rule to its new page, a delete to the list it was in
 //! (`/schedules#rules`, a phone's own `/devices/{id}/time#own-rules`) with the flash there; a save or
 //! delete of a rule deleted in another tab lands on that list with nothing written. The daily limit
-//! to `/schedules/screen-time?saved=1#screen-time`. `/schedules/device/{id}` takes `section` (§5.6,
-//! H1): `switch` writes only the own-rules switch (→ `#rules`), `budget` only the limits (→
-//! `?saved=budget#screen-time`), none both (an older tab). A refused rule or limit renders its page
+//! to `/schedules/screen-time?saved=1#screen-time`. A rule's switch for a phone
+//! (`/devices/{id}/time/rules/{rule_id}`) to `#everyone` / `#own-rules`. `/schedules/device/{id}`
+//! takes `section` (§5.6, H1): `limit` writes only the Own limit switch (→ `#screen-time`; an
+//! older tab's `switch` the same), `budget` only the limits (→ `?saved=budget#screen-time`), none
+//! both (an older tab). A refused rule or limit renders its page
 //! again (400) with what was typed and the reason under the field, which is focused.
 //!
 //! Every write validates first (nothing written on a refusal), answers 404 for an unknown device or
@@ -145,6 +151,12 @@ pub(crate) struct RuleRow {
     pub summary: String,
     /// The stored rule doesn't read: the phones get an error until it is saved again or deleted.
     pub corrupt: bool,
+    /// A phone's own rule (else everyone's): its switch lands on `#own-rules`.
+    pub own: bool,
+    /// Device › Time Rules: switched off for this phone (`device_rule_off`), dimmed.
+    pub off: bool,
+    /// Settings › Time Rules: "Off for Emil" - the phones that have everyone's rule off.
+    pub off_for: Option<String>,
 }
 
 /// The rules as rows. The summary is of the stored days, as the editor shows them ("00:00-23:59"),
@@ -166,12 +178,18 @@ fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
                     ),
                     name: row.name.clone(),
                     corrupt: false,
+                    own: row.device_id.is_some(),
+                    off: false,
+                    off_for: None,
                 },
                 _ => RuleRow {
                     id: row.id,
                     name: row.name.clone(),
                     summary: "Can't be read".to_string(),
                     corrupt: true,
+                    own: row.device_id.is_some(),
+                    off: false,
+                    off_for: None,
                 },
             },
         )
@@ -247,7 +265,8 @@ struct PhoneRow {
     initial: String,
     avatar: &'static str,
     photo: Option<String>,
-    own: bool,
+    /// The rules in force on the phone, its bedtime too: "3 rules".
+    rules: String,
     bedtime: Bedtime,
 }
 
@@ -345,15 +364,25 @@ pub async fn show_schedules(
         Ok(devices) => devices,
         Err(err) => return read_failed(err, "the devices"),
     };
-    let own: Vec<i64> = match sqlx::query_scalar(
-        "SELECT device_id FROM device_policy WHERE custom_schedule_enabled = 1",
+    // Everyone's rules switched off on a phone (migration 0115): "Off for Emil" under the rule.
+    let off: Vec<(i64, String)> = match sqlx::query_as(
+        "SELECT o.rule_id, d.name FROM device_rule_off o JOIN devices d ON d.id = o.device_id \
+         JOIN time_rules r ON r.id = o.rule_id WHERE r.device_id IS NULL ORDER BY d.name, d.id",
     )
     .fetch_all(&state.db)
     .await
     {
-        Ok(own) => own,
-        Err(err) => return read_failed(err, "the own-rules switches"),
+        Ok(off) => off,
+        Err(err) => return read_failed(err, "the rule switches"),
     };
+    // Each phone's rules in force (its bedtime too), the row's value.
+    let mut in_force = HashMap::new();
+    for d in &devices {
+        match time_rules::effective_rule_rows(&state.db, d.id).await {
+            Ok(rules) => in_force.insert(d.id, rules.len() as i64),
+            Err(err) => return read_failed(err, "a phone's rules"),
+        };
+    }
     let bedtimes: HashMap<Option<i64>, TimeRuleRow> =
         match sqlx::query_as::<_, TimeRuleRow>("SELECT * FROM time_rules WHERE bedtime = 1")
             .fetch_all(&state.db)
@@ -367,7 +396,24 @@ pub async fn show_schedules(
         SchedulesTemplate {
             lang,
             title: "Time Rules".to_string(),
-            rules: rule_rows(&rules),
+            rules: rule_rows(&rules)
+                .into_iter()
+                .map(|mut row| {
+                    let names: Vec<&str> = off
+                        .iter()
+                        .filter(|(rule, _)| *rule == row.id)
+                        .map(|(_, name)| name.as_str())
+                        .collect();
+                    if !names.is_empty() {
+                        row.off_for = Some(t_params(
+                            lang,
+                            "settings.time_rules.off_for",
+                            &[("names", &names.join(", "))],
+                        ));
+                    }
+                    row
+                })
+                .collect(),
             budget: time_rules::parse_budget(&budget_json)
                 .ok()
                 .map(|b| budget_summary(&b)),
@@ -379,7 +425,10 @@ pub async fn show_schedules(
                     initial: crate::handlers::devices::initial(&d.name),
                     avatar: crate::handlers::devices::avatar_class(d),
                     photo: crate::handlers::devices::avatar_photo(d),
-                    own: own.contains(&d.id),
+                    rules: match in_force.get(&d.id).copied().unwrap_or(0) {
+                        0 => t(lang, "device.about.none").to_string(),
+                        n => t_count(lang, "device.time.rule_count", n, &[]),
+                    },
                     bedtime: Bedtime::of(lang, bedtimes.get(&Some(d.id))),
                 })
                 .collect(),
@@ -613,7 +662,8 @@ pub(crate) async fn reported_apps(
 /// Where a rule belongs: everyone's (`None`) or one phone's own, with the phone's name.
 struct RuleScope {
     device: Option<(i64, String)>,
-    /// The phone follows its own rules (always true for everyone's).
+    /// The rule applies to the phone: not switched off for it (always true for everyone's and a
+    /// new rule).
     in_force: bool,
 }
 
@@ -686,16 +736,19 @@ fn render_rule(
         .clone()
         .or_else(|| rule.days.iter().find_map(|d| d.error.clone()))
         .or_else(|| rule.apps_error.clone());
-    // A phone's own rule while it follows everyone's: saved, but not in force yet (qa N2).
-    let saved = saved.map(|text| {
-        if scope.in_force {
-            format!("{text} The phones get it within seconds when online.")
-        } else {
-            format!("{text} Used once Own rules is on.")
-        }
+    // A phone's own rule switched off for it (migration 0115): saved, but not in force (qa N2).
+    let saved = saved.map(|text| match &scope.device {
+        Some((_, name)) if !scope.in_force => format!(
+            "{text} {}",
+            t_params(lang, "settings.time_rules.saved_off", &[("name", name)])
+        ),
+        _ => format!("{text} The phones get it within seconds when online."),
     });
     let (back_href, back_label) = match &scope.device {
-        Some((id, _)) => (format!("/devices/{id}/time"), "Time".to_string()),
+        Some((id, _)) => (
+            format!("/devices/{id}/time"),
+            t(lang, "device.page.time").to_string(),
+        ),
         None => ("/schedules".to_string(), "Time Rules".to_string()),
     };
     render(
@@ -739,17 +792,17 @@ async fn scope_of(state: &AppState, device: Option<i64>) -> Result<RuleScope, Bo
             in_force: true,
         });
     };
-    match sqlx::query_as::<_, (String, bool)>(
-        "SELECT d.name, p.custom_schedule_enabled FROM devices d \
-         JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+    match sqlx::query_scalar::<_, String>(
+        "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
     {
-        Ok(Some((name, in_force))) => Ok(RuleScope {
+        // A phone's own rules apply unless switched off ([show_rule] reads its switch).
+        Ok(Some(name)) => Ok(RuleScope {
             device: Some((id, name)),
-            in_force,
+            in_force: true,
         }),
         Ok(None) => Err(Box::new(
             (StatusCode::NOT_FOUND, "Device not found").into_response(),
@@ -817,10 +870,16 @@ pub async fn show_rule(
             None => (StatusCode::NOT_FOUND, "Rule not found").into_response(),
         };
     }
-    let scope = match scope_of(&state, row.device_id).await {
+    let mut scope = match scope_of(&state, row.device_id).await {
         Ok(scope) => scope,
         Err(answer) => return *answer,
     };
+    if let Some(device) = row.device_id {
+        scope.in_force = match time_rules::rules_off(&state.db, device).await {
+            Ok(off) => !off.contains(&row.id),
+            Err(err) => return read_failed(err, "the phone's rule switches"),
+        };
+    }
     let available = match scope.apps(&state).await {
         Ok(apps) => apps,
         Err(err) => return read_failed(err, "the reported apps"),
@@ -1313,8 +1372,10 @@ pub async fn save_global_schedule(
     Redirect::to("/schedules/screen-time?saved=1#screen-time").into_response()
 }
 
-/// POST `/schedules/device/{id}`: a phone's own-rules switch (`section=switch`) or its own limits
-/// (`section=budget`); without a section (a page from before design 31 step 9) both, as before.
+/// POST `/schedules/device/{id}`: a phone's Own limit switch (`section=limit`, field `own_limit`)
+/// or its own limits (`section=budget`). An older tab's `section=switch` (the Own rules switch
+/// until migration 0115, field `custom_schedule_enabled`) writes the same column, now the limit's
+/// switch alone; without a section (a page from before design 31 step 9) both.
 pub async fn save_device_schedule(
     State(state): State<AppState>,
     lang: Lang,
@@ -1324,10 +1385,11 @@ pub async fn save_device_schedule(
 ) -> Response {
     let fields = form_pairs(&body);
     let section = field(&fields, "section");
-    let (switch, limits) = match section {
-        "switch" => (true, false),
-        "budget" => (false, true),
-        "" => (true, true),
+    let (switch, limits, switch_field) = match section {
+        "limit" => (true, false, "own_limit"),
+        "switch" => (true, false, "custom_schedule_enabled"),
+        "budget" => (false, true, ""),
+        "" => (true, true, "custom_schedule_enabled"),
         _ => {
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_section");
         }
@@ -1349,7 +1411,7 @@ pub async fn save_device_schedule(
     } else {
         None
     };
-    let custom_enabled = switch.then(|| fields.iter().any(|(k, _)| k == "custom_schedule_enabled"));
+    let custom_enabled = switch.then(|| fields.iter().any(|(k, _)| k == switch_field));
     // A NULL bind keeps the column (COALESCE), so a section writes only its own.
     match sqlx::query(
         "UPDATE device_policy SET \
@@ -1371,9 +1433,9 @@ pub async fn save_device_schedule(
             if let Some(on) = custom_enabled {
                 detail = detail.and(
                     if on {
-                        "security.detail.screen_time.own_rules.on"
+                        "security.detail.screen_time.own_limit.on"
                     } else {
-                        "security.detail.screen_time.own_rules.off"
+                        "security.detail.screen_time.own_limit.off"
                     },
                     &[],
                 );
@@ -1391,7 +1453,7 @@ pub async fn save_device_schedule(
             .await;
             nudge(&state, Some(id)).await;
             match section {
-                "switch" => Redirect::to(&format!("/devices/{id}/time#rules")),
+                "limit" | "switch" => Redirect::to(&format!("/devices/{id}/time#screen-time")),
                 "budget" => Redirect::to(&format!("/devices/{id}/time?saved=budget#screen-time")),
                 _ => Redirect::to(&format!("/devices/{id}/time")),
             }
@@ -1399,6 +1461,88 @@ pub async fn save_device_schedule(
         }
         Err(err) => server_error_in(lang, err, "failed to save a device's time rules"),
     }
+}
+
+/// POST `/devices/{id}/time/rules/{rule_id}`: one rule's switch for the phone (migration 0115),
+/// the checkbox `on` (absent = off): everyone's rules and the phone's own, never its bedtime or
+/// another phone's rule (404). A rule deleted in another tab lands back with nothing written.
+/// Lands on its group: `#everyone`, an own rule `#own-rules`.
+pub async fn switch_device_rule(
+    State(state): State<AppState>,
+    lang: Lang,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path((id, rule_id)): Path<(i64, i64)>,
+    body: Bytes,
+) -> Response {
+    let on = form_pairs(&body).iter().any(|(k, _)| k == "on");
+    match sqlx::query_scalar::<_, i64>("SELECT device_id FROM device_policy WHERE device_id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return read_failed_in(lang, err, "a device"),
+    }
+    let rule = match sqlx::query_as::<_, TimeRuleRow>("SELECT * FROM time_rules WHERE id = ?")
+        .bind(rule_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(rule)) if !rule.bedtime && rule.device_id.is_none_or(|d| d == id) => rule,
+        Ok(Some(_)) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.rule_not_found");
+        }
+        Ok(None) => return Redirect::to(&format!("/devices/{id}/time#everyone")).into_response(),
+        Err(err) => return read_failed_in(lang, err, "a time rule"),
+    };
+    let group = if rule.device_id.is_some() {
+        "own-rules"
+    } else {
+        "everyone"
+    };
+    let written = if on {
+        sqlx::query("DELETE FROM device_rule_off WHERE device_id = ? AND rule_id = ?")
+            .bind(id)
+            .bind(rule_id)
+            .execute(&state.db)
+            .await
+    } else {
+        sqlx::query("INSERT OR IGNORE INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
+            .bind(id)
+            .bind(rule_id)
+            .execute(&state.db)
+            .await
+    };
+    match written {
+        // Already so (a second tap, another tab): nothing to log or send.
+        Ok(done) if done.rows_affected() == 0 => {}
+        Ok(_) => {
+            security::record_security_event(
+                &state.db,
+                "time_rule_updated",
+                Some(&admin.username),
+                None,
+                Some(
+                    security::Detail::words(
+                        if on {
+                            "security.detail.rule.on_for"
+                        } else {
+                            "security.detail.rule.off_for"
+                        },
+                        &[("device", &id.to_string()), ("what", &rule.name)],
+                    )
+                    .with_facts(format!("device {id}")),
+                ),
+            )
+            .await;
+            nudge(&state, Some(id)).await;
+        }
+        Err(err) => return server_error_in(lang, err, "failed to switch a rule for a phone"),
+    }
+    Redirect::to(&format!("/devices/{id}/time#{group}")).into_response()
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1420,25 +1564,21 @@ struct DeviceTimeTemplate {
     screen: Option<(String, Option<String>)>,
     /// The last report's age and exact time, for the Now group's footer.
     reported: Option<(String, String)>,
-    /// "17:21": the kid's request for more time still open (design r13 §2.7), at the top of Extra
-    /// Time Today until a lift or the day's end.
-    asked: Option<String>,
-    /// The rules a pause can name (the phone's effective ones).
-    pause_rules: Vec<(i64, String)>,
-    lifts: Vec<crate::handlers::lifts::LiftView>,
-    /// A lift form's flash: its group, text, refused.
-    done: Option<(&'static str, &'static str, bool)>,
-    /// Pause a Rule shows for its flash even with no rule left to pause (qa-31-s9-code M1).
-    pause_done: bool,
-    custom: bool,
     /// The phone's bedtime (design 66), its row to the Bedtime page.
     bedtime: Bedtime,
     /// The flash after Remove Bedtime.
     bedtime_removed: bool,
-    /// Everyone's rules: how many (the row to Settings › Time Rules).
-    everyone_rules: String,
+    /// Everyone's rules, each with its switch for this phone (`off`: switched off here).
+    everyone: Vec<RuleRow>,
+    /// The phone's own rules: rows to the editor, a switch while one is off.
     own_rules: Vec<RuleRow>,
+    /// One of them is off: the footer says why.
+    own_off: bool,
     own_notice: Option<(&'static str, bool)>,
+    /// The Own limit switch (`custom_schedule_enabled`): on, the 7 day rows; off, everyone's.
+    own_limit: bool,
+    /// Everyone's daily limit as the off row's value, `None` when it doesn't read.
+    everyone_limit: Option<String>,
     budget: Vec<BudgetInput>,
     budget_corrupt: bool,
     budget_saved: bool,
@@ -1496,44 +1636,50 @@ async fn render_device_time(
         Ok(latest) => latest,
         Err(err) => return read_failed_in(lang, err, "the last report"),
     };
-    let effective = match time_rules::effective_rule_rows(
-        &state.db,
-        id,
-        policy.custom_schedule_enabled,
-    )
-    .await
-    {
+    let effective = match time_rules::effective_rule_rows(&state.db, id).await {
         Ok(rules) => rules,
         Err(err) => return read_failed_in(lang, err, "the phone's rules"),
     };
+    let off = match time_rules::rules_off(&state.db, id).await {
+        Ok(off) => off,
+        Err(err) => return read_failed_in(lang, err, "the phone's rule switches"),
+    };
+    let switched = |rows: &[TimeRuleRow]| -> Vec<RuleRow> {
+        rule_rows(rows)
+            .into_iter()
+            .map(|mut row| {
+                row.off = off.contains(&row.id);
+                row
+            })
+            .collect()
+    };
+    let everyone = match time_rules::rule_set_rows(&state.db, None).await {
+        Ok(rules) => switched(&rules),
+        Err(err) => return read_failed_in(lang, err, "the global rules"),
+    };
     let own = match time_rules::rule_set_rows(&state.db, Some(id)).await {
-        Ok(rules) => rules,
+        Ok(rules) => switched(&rules),
         Err(err) => return read_failed_in(lang, err, "the phone's own rules"),
     };
-    let everyone_count: i64 =
-        match sqlx::query_scalar("SELECT COUNT(*) FROM time_rules WHERE device_id IS NULL")
-            .fetch_one(&state.db)
-            .await
-        {
-            Ok(n) => n,
-            Err(err) => return read_failed_in(lang, err, "the global rules"),
-        };
+    let everyone_limit: Option<String> = match sqlx::query_scalar::<_, String>(
+        "SELECT daily_budget_json FROM global_schedule WHERE id = 1",
+    )
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(json) => {
+            time_rules::parse_budget(json.as_deref().unwrap_or(time_rules::UNLIMITED_BUDGET_JSON))
+                .ok()
+                .map(|b| budget_summary(&b))
+        }
+        Err(err) => return read_failed_in(lang, err, "the global screen time"),
+    };
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
         Ok(report) => report.problems(),
         Err(err) => return read_failed_in(lang, err, "the call report"),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
-    let lifts =
-        match crate::handlers::lifts::recent(&state.db, id, latest.as_ref(), &zone, now).await {
-            Ok(lifts) => lifts,
-            Err(err) => return read_failed_in(lang, err, "the lifts"),
-        };
-    let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
-    {
-        Ok(asked) => asked.map(|at| zone.clock(at)),
-        Err(err) => return read_failed_in(lang, err, "the request for more time"),
-    };
 
     // What the phone last said (design 31 §3.10's badge; the end only when provably right).
     let report = latest.as_ref().and_then(|s| {
@@ -1611,9 +1757,6 @@ async fn render_device_time(
     }
 
     let refused = entered.is_some();
-    let done = query
-        .get("done")
-        .and_then(|code| crate::handlers::lifts::done_flash(code));
     render(
         DeviceTimeTemplate {
             lang,
@@ -1623,20 +1766,15 @@ async fn render_device_time(
             locking,
             screen,
             reported,
-            asked,
-            pause_rules: effective.iter().map(|r| (r.id, r.name.clone())).collect(),
-            lifts,
-            done,
-            pause_done: done.is_some_and(|(group, _, _)| group == "pause"),
-            custom: policy.custom_schedule_enabled,
             bedtime: Bedtime::of(lang, effective.iter().find(|r| r.bedtime)),
             bedtime_removed: query.get("notice").map(String::as_str) == Some("bedtime_removed"),
-            everyone_rules: match everyone_count {
-                0 => t(lang, "device.about.none").to_string(),
-                n => t_count(lang, "device.time.rule_count", n, &[]),
-            },
-            own_rules: rule_rows(&own),
+            everyone,
+            own_off: own.iter().any(|r| r.off),
+            own_rules: own,
             own_notice: rules_notice(lang, query.get("notice").map(String::as_str)),
+            // A refused limits save keeps the rows open, as typed.
+            own_limit: policy.custom_schedule_enabled || refused,
+            everyone_limit,
             budget_corrupt: time_rules::parse_budget(&policy.daily_budget_json).is_err(),
             budget: match &entered {
                 Some((fields, error)) => budget_entered(fields, error),

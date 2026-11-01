@@ -577,11 +577,13 @@ summary.row:active {
     margin: 0;
 }
 
-/* Hairlines between rows: 1px in a light colour, 0.5px only on 2x screens (§5.7). */
+/* Hairlines between rows: 1px in a light colour, 0.5px only on 2x screens (§5.7). A .cell-rows is a
+   cell (a form) holding several rows, which get them too (Device › Time Rules' own limits). */
 .group > .row ~ .row::before,
 .group > .row ~ .cell::before,
 .group > .cell ~ .row::before,
-.group > .cell ~ .cell::before {
+.group > .cell ~ .cell::before,
+.group > .cell-rows > .row ~ .row::before {
     content: "";
     position: absolute;
     top: 0;
@@ -610,7 +612,8 @@ summary.row:active {
     .group > .row ~ .row::before,
     .group > .row ~ .cell::before,
     .group > .cell ~ .row::before,
-    .group > .cell ~ .cell::before {
+    .group > .cell ~ .cell::before,
+    .group > .cell-rows > .row ~ .row::before {
         border-top-width: 0.5px;
         border-top-color: var(--sep);
     }

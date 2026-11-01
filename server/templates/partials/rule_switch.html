@@ -1,0 +1,10 @@
+{#- One rule's switch for the phone on Device › Time Rules (`schedules::RuleRow` as `r`, the page's
+    `device`): saves itself, a `<noscript>` Save without JS, back on the rule's group (#everyone for
+    everyone's, #own-rules for the phone's own). Off: dimmed. -#}
+<form method="post" action="/devices/{{ device.id }}/time/rules/{{ r.id }}#{% if r.own %}own-rules{% else %}everyone{% endif %}" class="cell{% if r.off %} row-dim{% endif %}" data-rule="{{ r.id }}">
+    <label class="row">
+        <span class="row-label">{{ r.name }}<span class="row-sub{% if r.corrupt %} text-alarm{% endif %}">{{ r.summary }}</span></span>
+        <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if !r.off %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+    </label>
+    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+</form>

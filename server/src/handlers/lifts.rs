@@ -4,12 +4,12 @@
 //! rule pause can be ended early ("End now"); added screen time can't be taken back once the
 //! phone has counted it.
 //!
-//! The forms live on Device › Time (design 31 §3.5, step 9) and the summary's Quick actions (step
-//! 10; End now there too since Now went, the user 2026-10-20). Where they return is §5.1's `back` table, always with a `done` code for the
-//! flash of the group that posted: `back=time` → `/devices/{id}/time` (`#extra`, `#pause`,
-//! `#lifts`); anything else (`summary`, an older page) → the summary (`#quick`). A second
-//! tap on a pause that is already over, or a pause of a rule deleted or switched off in another
-//! tab, lands back there with nothing written and says why.
+//! The forms live on the summary's Quick actions (step 10; End now there too since Now went, the
+//! user 2026-10-20; Device › Time Rules had them too until 2026-11-01, the user: "det er bare
+//! duplicat"). They return to the summary's `#quick` with a `done` code for its flash, whatever
+//! `back` says (an older Time tab's `back=time` too). A second tap on a pause that is already
+//! over, or a pause of a rule deleted or switched off in another tab, lands back there with
+//! nothing written and says why.
 
 use std::collections::HashMap;
 
@@ -34,19 +34,15 @@ fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
         .into_response()
 }
 
-/// Where a lift form returns (§5.1): Device › Time's `group`, or the summary's group for it
-/// ([summary_group]), with `done` for its flash. `back` is checked against the one value that
-/// leaves the default; the phone is the path's.
-fn back_to(id: i64, form: &HashMap<String, String>, group: &str, done: &str) -> Response {
-    if form.get("back").map(String::as_str) == Some("time") {
-        Redirect::to(&format!("/devices/{id}/time?done={done}#{group}")).into_response()
-    } else {
-        Redirect::to(&format!(
-            "/devices/{id}?done={done}#{}",
-            summary_group(group)
-        ))
-        .into_response()
-    }
+/// Where a lift form returns (§5.1): the summary's group for it ([summary_group]), with `done` for
+/// its flash. Since Device › Time Rules lost Extra Time Today, Pause a Rule and Recent
+/// (2026-11-01) every form is the summary's; an older Time tab's `back=time` lands there too.
+fn back_to(id: i64, group: &str, done: &str) -> Response {
+    Redirect::to(&format!(
+        "/devices/{id}?done={done}#{}",
+        summary_group(group)
+    ))
+    .into_response()
 }
 
 /// The summary's group for one of Device › Time's: the tiles, Pause a rule… and the lifts with End
@@ -56,27 +52,23 @@ pub(crate) fn summary_group(_time_group: &str) -> &'static str {
 }
 
 /// Form: `target` ("rule" or "budget"), `rule` ("all" or a rule id - only for "rule"), `minutes`
-/// (15/30/60/120 for a rule, 15/30/60 for screen time), `back`. The rule must be one of the
-/// device's effective rules (its own with the override on, else the global ones).
+/// (15/30/60/120 for a rule, 15/30/60 for screen time), `back` (ignored since 2026-11-01). The
+/// rule must be one of the device's effective rules (`time_rules::effective_rule_rows`).
 pub async fn create_lift(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let custom: Option<bool> = match sqlx::query_scalar(
-        "SELECT custom_schedule_enabled FROM device_policy WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
+    match sqlx::query_scalar::<_, i64>("SELECT device_id FROM device_policy WHERE device_id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
     {
-        Ok(custom) => custom,
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => return server_error(err, "failed to read a device"),
-    };
-    let Some(custom) = custom else {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
-    };
+    }
 
     let target = form.get("target").map(String::as_str).unwrap_or("");
     let minutes = form
@@ -94,13 +86,13 @@ pub async fn create_lift(
                 let Ok(rule_id) = raw.parse::<i64>() else {
                     return (StatusCode::BAD_REQUEST, "Unknown rule").into_response();
                 };
-                let rules = match time_rules::effective_rule_rows(&state.db, id, custom).await {
+                let rules = match time_rules::effective_rule_rows(&state.db, id).await {
                     Ok(rules) => rules,
                     Err(err) => return server_error(err, "failed to read time rules"),
                 };
                 let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
-                    // Deleted, or the own-rules switch flipped, since the page loaded.
-                    return back_to(id, &form, "pause", "gone");
+                    // Deleted, or switched off for the phone, since the page loaded.
+                    return back_to(id, "pause", "gone");
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -161,9 +153,9 @@ pub async fn create_lift(
     .await;
     let _ = state.command_notify.send(id);
     if target == "rule" {
-        back_to(id, &form, "pause", "pause")
+        back_to(id, "pause", "pause")
     } else {
-        back_to(id, &form, "extra", "extra")
+        back_to(id, "extra", "extra")
     }
 }
 
@@ -174,7 +166,6 @@ pub async fn end_lift(
     State(state): State<AppState>,
     Path((id, lift_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-    Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     match sqlx::query(
         "UPDATE time_lifts SET ended_early_at = datetime('now') WHERE id = ? AND device_id = ? \
@@ -194,7 +185,7 @@ pub async fn end_lift(
             .fetch_optional(&state.db)
             .await
             {
-                Ok(Some(_)) => back_to(id, &form, "lifts", "over"),
+                Ok(Some(_)) => back_to(id, "lifts", "over"),
                 Ok(None) => (StatusCode::NOT_FOUND, "No such pause").into_response(),
                 Err(err) => server_error(err, "failed to read a lift"),
             }
@@ -215,7 +206,7 @@ pub async fn end_lift(
             )
             .await;
             let _ = state.command_notify.send(id);
-            back_to(id, &form, "lifts", "ended")
+            back_to(id, "lifts", "ended")
         }
         Err(err) => server_error(err, "failed to end a lift"),
     }
@@ -321,7 +312,7 @@ impl LiftState {
     }
 }
 
-/// One row of Device › Time's Recent group.
+/// One lift as the summary's Today lists it.
 pub(crate) struct LiftView {
     pub id: i64,
     /// "Skole paused for 30 min", "All rules paused for 1 h", "+15 min screen time".
@@ -335,35 +326,12 @@ pub(crate) struct LiftView {
     pub can_end: bool,
 }
 
-/// The newest 10 lifts of the phone, with their state (a DB error is the caller's 500).
-pub(crate) async fn recent(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-    latest: Option<&DeviceStatus>,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Result<Vec<LiftView>, sqlx::Error> {
-    views(db, device_id, None, latest, zone, now).await
-}
-
 /// The summary's Today (qa-31-s10-code N3): the lifts made since the local midnight, and every
-/// pause still running however many lifts came after it (at most 50).
+/// pause still running however many lifts came after it (at most 50), with their state (a DB
+/// error is the caller's 500).
 pub(crate) async fn today(
     db: &sqlx::SqlitePool,
     device_id: i64,
-    latest: Option<&DeviceStatus>,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Result<Vec<LiftView>, sqlx::Error> {
-    let since = zone.start_of_today(now);
-    views(db, device_id, Some(since), latest, zone, now).await
-}
-
-/// [since]: `None` the newest 10, else the lifts made since then and the running pauses.
-async fn views(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-    since: Option<DateTime<Utc>>,
     latest: Option<&DeviceStatus>,
     zone: &Zone,
     now: DateTime<Utc>,
@@ -374,30 +342,18 @@ async fn views(
         lift: TimeLiftRow,
         active: bool,
     }
-    let lifts = match since {
-        None => {
-            sqlx::query_as::<_, LiftWithState>(
-                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
-                 FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
-            )
-            .bind(device_id)
-            .fetch_all(db)
-            .await?
-        }
-        // `created_at` is `datetime('now')` text, so it compares as text.
-        Some(since) => {
-            sqlx::query_as::<_, LiftWithState>(
-                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
-                 FROM time_lifts WHERE device_id = ? AND (created_at >= ? OR (target = 'rule' \
-                 AND ended_early_at IS NULL AND expires_at > datetime('now'))) \
-                 ORDER BY id DESC LIMIT 50",
-            )
-            .bind(device_id)
-            .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
-            .fetch_all(db)
-            .await?
-        }
-    };
+    let since = zone.start_of_today(now);
+    // `created_at` is `datetime('now')` text, so it compares as text.
+    let lifts = sqlx::query_as::<_, LiftWithState>(
+        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+         FROM time_lifts WHERE device_id = ? AND (created_at >= ? OR (target = 'rule' \
+         AND ended_early_at IS NULL AND expires_at > datetime('now'))) \
+         ORDER BY id DESC LIMIT 50",
+    )
+    .bind(device_id)
+    .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
+    .fetch_all(db)
+    .await?;
     // Who made each lift, by display name (design 62 §6).
     let names = crate::parents::Names::load(db).await?;
     // What the phone last said it runs, and when.
