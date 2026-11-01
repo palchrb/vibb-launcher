@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.day
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,5 +40,15 @@ class DayPagerTest {
         assertEquals(TodayJump.FORWARD_FROM_EARLIER, todayJump(-1))
         assertEquals(TodayJump.FORWARD_FROM_EARLIER, todayJump(-400))
         assertNull(todayJump(0))
+    }
+
+    @Test
+    fun `Dagen opens on today after a minute away`() {
+        assertFalse("not away", backToToday(null))
+        assertFalse(backToToday(0))
+        assertFalse(backToToday(DAY_BACK_TO_TODAY_MS - 1))
+        assertTrue(backToToday(DAY_BACK_TO_TODAY_MS))
+        assertTrue(backToToday(Long.MAX_VALUE))
+        assertTrue("the clock set back", backToToday(-1))
     }
 }

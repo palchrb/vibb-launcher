@@ -93,8 +93,9 @@ data class DayView(val allDay: List<DayRow>, val timed: List<DayRow>) {
     val legend: List<LegendEntry>
         get() = (allDay + timed).distinctBy { it.calendarId }.map { LegendEntry(it.calendarId, it.calendarName, it.color) }
 
-    /** The key shows only when the day has events from more than one calendar (one calendar needs no key). */
-    val legendShown: Boolean get() = legend.size > 1
+    /** The key shows whenever the day has an event (the user, 2026-11-01: "den alltid må vise legend" - a lone dot
+     * still needs its name). */
+    val legendShown: Boolean get() = legend.isNotEmpty()
 
     companion object {
         val EMPTY = DayView(emptyList(), emptyList())

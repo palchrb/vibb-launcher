@@ -2027,6 +2027,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 
 ### Done (not released yet)
 
+- **Dagen: the key always, and today again after a minute away** (the user, 2026-11-01, a `jellystar2` screenshot of a day with one event: "jeg ønsker at den alltid må vise legend" and "etter feks 1 minutt ute av fokus så begynner den alltid tilbake på i dag"): `DayView.legendShown` = any event; `DAY_BACK_TO_TODAY_MS` 60 s - stopped that long, or a saved state that old, opens on today, a day asked for (the reminder row) wins. Built and merged 2026-11-01 (`dagen-small`; Dagen unit tests 64/0). Ships in the next launcher RC.
+
 - **CI: arm64 image on a native arm runner (the user, 2026-10-24, branch `ci-native-arm64`)**: done - no QEMU; the
   release and CI image jobs are an amd64/arm64 matrix (`ubuntu-24.04`, `ubuntu-24.04-arm`), each built and smoked
   natively, then `server-release-image-merge` joins the two digests and tags `X.Y.Z` (and `latest`) as before.
