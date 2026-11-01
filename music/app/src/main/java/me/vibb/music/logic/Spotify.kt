@@ -311,6 +311,24 @@ enum class SpotifyProblem(val line: SpotifyLine?, val outcome: String?) {
 }
 
 /**
+ * The farthest ahead of the phone's clock a diagnostic log's end may be (2026-11-01): the server's 15 minutes with room
+ * for a phone clock that is behind; an end farther out is junk and never turns the log on.
+ */
+const val SPOTIFY_DIAG_MAX_AHEAD_MS = 60 * 60_000L
+
+/**
+ * Is the web player's `VibbSpotify` log written now (2026-11-01)? Always in a debug build; in a release only while the
+ * parent's diagnostic log runs - [untilS] (the managed config's `spotify_diag_until`, epoch seconds) still ahead of
+ * [nowMs] (the wall clock), by at most [SPOTIFY_DIAG_MAX_AHEAD_MS]. The lines are the same fixed words either way
+ * (music/CLAUDE.md, "Spotify secrets"): the SDK's own text and the page's console stay debug-only.
+ */
+fun spotifyDiagLogOn(debug: Boolean, untilS: Long, nowMs: Long): Boolean {
+    if (debug) return true
+    if (untilS <= 0) return false
+    return untilS * 1000 - nowMs in 1..SPOTIFY_DIAG_MAX_AHEAD_MS
+}
+
+/**
  * The SDK's error kinds as the page names them (§5.3) to the problem each is, or null for one the
  * renderer reads elsewhere: `authentication` through the token result it already has, `playback`
  * through the tracker (an unplayable track), `autoplay` only logged.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The media session's pictures (2026-11-01): only the player's small copies (`Store.smallArtDir`, cache/art/), as
+     content:// URIs SystemUI reads with a read grant (PlaybackService.sessionArtUri). Nothing else of the app. -->
+<paths>
+    <cache-path name="art" path="art/" />
+</paths>

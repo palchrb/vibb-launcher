@@ -159,6 +159,9 @@ pub struct DevicePolicy {
     /// `music::STORAGE_LIMITS`, `None` = no limit; default 2. Anything else is sent as 2
     /// (`music::storage_limit`).
     pub music_storage_limit_gb: Option<i64>,
+    /// Device › Advanced's Spotify diagnostic log (migrations/0108): until when, epoch seconds; `None` = never turned
+    /// on. Sent as `music.spotify_diag_until` while it is in the future (`music::spotify_diag_until`).
+    pub music_spotify_diag_until: Option<i64>,
     /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
     /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
     pub override_pin_easy: Option<bool>,

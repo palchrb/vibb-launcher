@@ -17,6 +17,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.core.content.FileProvider
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
@@ -76,6 +77,8 @@ import me.vibb.music.logic.callTimerEnded
 import me.vibb.music.logic.SleepEvent
 import me.vibb.music.logic.sleepAtEndAfter
 import me.vibb.music.logic.artOrCover
+import me.vibb.music.logic.SESSION_ART_READERS
+import me.vibb.music.logic.sessionArtAuthority
 import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
@@ -119,6 +122,7 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.spotifyDiagLogOn
 import me.vibb.music.logic.spotifyInCall
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
@@ -1399,11 +1403,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * The web player's debug log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host
-     * and the locks - never a token, a uri list or a state - and nothing at all in a release build.
+     * The web player's log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host and the
+     * locks - never a token, an account or device id, a uri or a state. A debug build always writes it; a release only
+     * while the parent's diagnostic log runs (Device › Advanced, 2026-11-01: `spotifyDiagLogOn`, the managed config's
+     * `spotify_diag_until`), and otherwise nothing at all.
      */
     private fun spotifyLog(message: String) {
-        if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)
+        if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)
     }
 
     /**
@@ -1507,7 +1513,36 @@ class PlaybackService : MediaSessionService() {
      * The item's own picture when its small copy exists, else the entry's cover ([artOrCover]); main
      * thread. A copy the prune deleted counts as missing (QA L8): the series cover shows, never nothing.
      */
-    private fun artUri(a: Active, item: PlayItem): Uri? = artOrCover(item, a.entry) { hasCopy(a, it) }?.let { a.art[it] }
+    private fun artFile(a: Active, item: PlayItem): File? = artOrCover(item, a.entry) { hasCopy(a, it) }?.let { a.art[it] }?.path?.let(::File)
+
+    /**
+     * The item's picture as the media session hands it over (2026-11-01): the small copy - checked to be there now
+     * ([artFile]: [hasCopy] at every build and at every item change's [refreshArt]) - as a `content://` URI with
+     * SystemUI's read grant ([sessionArtUri]), never the `file://` path SystemUI can't open (ENOENT in its logcat).
+     */
+    private fun artUri(a: Active, item: PlayItem): Uri? = artFile(a, item)?.takeIf { it.isFile }?.let(::sessionArtUri)
+
+    /**
+     * [file] (a small copy under `Store.smallArtDir`) through the manifest's FileProvider, read-granted to
+     * [SESSION_ART_READERS]; when the provider can't name it, the file's own URI (as before 2026-11-01: our
+     * notification still shows it, SystemUI falls back to the session's bitmap). Why not `artworkData`: the bytes would
+     * ride on every queue item's metadata through the session's Binder (an entry's cover on each of hundreds of items);
+     * a URI is a few bytes, and Media3's own bitmap loader reads it in this process for the notification.
+     */
+    private fun sessionArtUri(file: File): Uri {
+        sessionArt[file.path]?.let { return it }
+        val uri = runCatching { FileProvider.getUriForFile(this, sessionArtAuthority(packageName), file) }.getOrNull() ?: return Uri.fromFile(file)
+        // a grant lasts until a reboot: once per picture and process (an entry's cover is every item's)
+        for (reader in SESSION_ART_READERS) runCatching { grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        sessionArt[file.path] = uri
+        return uri
+    }
+
+    /**
+     * [sessionArtUri]'s URIs by the small copy's path, granted (main thread). It stays small: one entry per picture the
+     * player handed over in this process (the small copies are a few hundred at most), gone with the process.
+     */
+    private val sessionArt = HashMap<String, Uri>()
 
     private fun hasCopy(a: Active, hash: String): Boolean = a.art[hash]?.path?.let { File(it).isFile } == true
 
@@ -2303,7 +2338,7 @@ class PlaybackService : MediaSessionService() {
         }
         // The item's own picture once its copy is on the phone, else the entry's cover (artOrCover):
         // every report looks again, so Home's card and the lock's tile get a late picture (design 27).
-        val art = artUri(a, item)?.path?.let { File(it) }
+        val art = artFile(a, item)
             ?.takeIf { it.isFile && it.length() <= 64 * 1024 }?.let { runCatching { it.readBytes() }.getOrNull() }
         LiveBridge.setNowPlaying(
             Bundle().apply {

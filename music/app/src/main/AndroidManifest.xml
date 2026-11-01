@@ -100,6 +100,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- The media session's pictures (2026-11-01): the small copies as content:// URIs, readable only with the grant
+             the player gives SystemUI (the lock screen's and Quick Settings' media controls) - never exported, and
+             only cache/art/ (res/xml/art_paths.xml). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.art"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/art_paths" />
+        </provider>
+
         <!-- Media3's receiver, but a press with nothing to resume never starts the service (M2). -->
         <receiver
             android:name=".playback.KidMediaButtonReceiver"

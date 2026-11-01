@@ -134,6 +134,27 @@ class SpotifyTracker {
         data class LeftoverAdd(val uri: String, val playing: Boolean) : Event
     }
 
+    /**
+     * [e]'s name for the diagnostic log (2026-11-01): spelled out, since a release build's class names are minified,
+     * and never its uri or title.
+     */
+    fun eventWord(e: Event): String = when (e) {
+        is Event.Started -> "started ${e.index}"
+        is Event.ItemChanged -> "item ${e.index}${if (e.auto) " by itself" else ""}"
+        is Event.Unplayable -> "unplayable ${e.index}${if (e.stop) ", stop" else ""}"
+        is Event.Paused -> if (e.ours) "paused by us" else "paused not by us"
+        Event.Resumed -> "resumed"
+        is Event.NotOurs -> if (e.playing) "not ours, playing" else "not ours"
+        Event.Ended -> "ended"
+        is Event.NewWindow -> "a new window from ${e.index}"
+        is Event.QueueAdd -> "queue add ${e.index}"
+        is Event.ShuffleOrRepeat -> "shuffle or repeat"
+        Event.Look -> "look again"
+        Event.Elsewhere -> "elsewhere"
+        is Event.TrackChanged -> "the context moved on"
+        is Event.LeftoverAdd -> "our leftover add"
+    }
+
     /** The latest state of ours for item [index]: [positionMs] as the SDK measured it at [atMs] (the elapsed clock). */
     data class Measured(val index: Int, val positionMs: Long, val atMs: Long, val playing: Boolean)
 
@@ -389,6 +410,38 @@ class SpotifyTracker {
             return listOf(Event.ItemChanged(next, auto = true)) + unplayable(next)
         }
         return unplayable(index)
+    }
+
+    /**
+     * What [snapshot] is to the tracker before [onState] reads it, in fixed words for the diagnostic log (2026-11-01) -
+     * never its uri, title or context: playing or paused at a whole second, then whose track it is (the current item,
+     * the next, a later one, none of ours; in context mode whether it names our context), whether it is a track from
+     * before the play call (the start passes those over unless they are the sent track near the sent place: [stale]),
+     * and while starting how far it is from the sent place. Pure; it changes nothing.
+     */
+    fun judged(snapshot: SdkSnapshot): String {
+        val s = snapshot as? SdkState ?: return "null (not the active device)"
+        val head = "${if (s.paused) "paused" else "playing"} at ${s.positionMs / 1000} s"
+        if (s.trackless) return "$head, no track"
+        val whose = when {
+            context != null -> when (s.contextUri) {
+                context -> "our context"
+                null -> if (s.uri != null && (s.uri == liveUri || s.uri in lastNext)) "no context, our live or next track" else "no context"
+                else -> "another context"
+            }
+            matches(s, index) -> "the current item"
+            matches(s, index + 1) -> "the next item"
+            s.uri != null && queue.any { it.uri == s.uri } -> "a later item of ours"
+            else -> "not in our queue"
+        }
+        val pre = if (s.uri != null && s.uri in prePlayUris) ", a track from before the play call" else ""
+        val sent = if (mode == Mode.STARTING) {
+            val d = s.positionMs - sentPositionMs
+            ", ${if (d >= 0) "+" else "-"}${abs(d) / 1000}.${abs(d) % 1000 / 100} s from the sent place"
+        } else {
+            ""
+        }
+        return "$head, $whose$pre$sent (${mode.name.lowercase()})"
     }
 
     /** One posted state ([SdkState.parse]) at [nowMs] (the elapsed clock). */

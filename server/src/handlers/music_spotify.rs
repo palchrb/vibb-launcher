@@ -1253,6 +1253,43 @@ pub async fn save_plays_on(
     Redirect::to(&format!("/music/settings#spotify-account-{id}")).into_response()
 }
 
+/// `POST /devices/{id}/spotify-diag` (Device › Advanced, 2026-11-01): the Spotify diagnostic log for
+/// [music::SPOTIFY_DIAG_SECS] from now - `music.spotify_diag_until` in the policy, the phone nudged, so its launcher
+/// hands it to the music app at once. One-shot: a press while it runs starts the 15 minutes again. Back to the group
+/// (`#spotify-diag`: the page never jumps to the top); an unknown phone, or one that doesn't play Spotify, is a 404
+/// with nothing written.
+pub async fn start_diag(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    // As the page: only a phone that plays Spotify has the button.
+    match sqlx::query_scalar::<_, bool>(PLAYS_SPOTIFY)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(true)) => {}
+        Ok(_) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return server_error(err, "couldn't read the phone"),
+    }
+    let until = Utc::now().timestamp() + music::SPOTIFY_DIAG_SECS;
+    let saved = sqlx::query(
+        "UPDATE device_policy SET music_spotify_diag_until = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(until)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match saved {
+        Ok(r) if r.rows_affected() == 0 => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            nudge(&state, &[id]);
+            Redirect::to(&format!("/devices/{id}/advanced#spotify-diag")).into_response()
+        }
+        Err(err) => server_error(err, "couldn't start the Spotify diagnostic log"),
+    }
+}
+
 /// Whether a phone plays as an account (the gate's condition, `spotify_gate!()`); no row = no such
 /// phone.
 const PLAYS_SPOTIFY: &str = "SELECT EXISTS(SELECT 1 FROM device_policy p \

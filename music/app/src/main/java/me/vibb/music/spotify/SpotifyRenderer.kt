@@ -412,6 +412,9 @@ internal class SpotifyRenderer(
 
     private var stepTimer: (() -> Unit)? = null
     private var firstStateTimer: (() -> Unit)? = null
+
+    /** When [armFirstState] armed (the elapsed clock), for the diagnostic log's "first state after N ms". */
+    private var firstStateArmedAt = 0L
     private var gapTimer: (() -> Unit)? = null
     private var idleTimer: (() -> Unit)? = null
     private var prefetchTimer: (() -> Unit)? = null
@@ -608,8 +611,25 @@ internal class SpotifyRenderer(
             return
         }
         if (pwr && !ended && (tracker.mode == Mode.STARTING || tracker.mode == Mode.OURS)) return
-        if (resumable()) resume() else request(Request(index, startPosition(), fresh = true, settings = needSettings))
+        if (resumable()) {
+            resume()
+        } else {
+            ports.log("spotify: a fresh start, not a resume - ${notResumable()}")
+            request(Request(index, startPosition(), fresh = true, settings = needSettings))
+        }
     }
+
+    /** Why [resumable] is false, in fixed words for the diagnostic log (2026-11-01). */
+    private fun notResumable(): String = listOfNotNull(
+        "no page".takeIf { !host.alive },
+        "no device".takeIf { deviceId == null },
+        "the tracker is ${tracker.mode.name.lowercase()}".takeIf { tracker.mode != Mode.OURS },
+        "another item".takeIf { tracker.index != index },
+        "ended".takeIf { ended },
+        "stopped".takeIf { stopped },
+        "shuffle or repeat to set".takeIf { needSettings },
+        "a new order".takeIf { windowStale },
+    ).joinToString(", ").ifEmpty { "resumable" }
 
     override fun pause() {
         pause(PauseCause.USER)
@@ -961,6 +981,7 @@ internal class SpotifyRenderer(
         ports.networkLine()?.let { return refuse(it) }
         heldByPage = false
         askedPaused = false
+        ports.log("spotify: a resume through the page (no play call)")
         sdk("resume")
         tracker.resumeSent()
         pwr = true
@@ -1010,6 +1031,7 @@ internal class SpotifyRenderer(
         // past the gates: this start really goes out with the new order's window (qa-39-code N3)
         windowStale = false
         val s = Start(r, ports.now() + SPOTIFY_START_BUDGET_MS)
+        ports.log("spotify: a start from item ${r.index} at ${r.posMs / 1000} s (${if (host.alive) "the page is up" else "a new page"}, ${if (deviceId != null) "its device known" else "no device yet"})")
         start = s
         sdkProblem = null
         pwr = true
@@ -1150,7 +1172,11 @@ internal class SpotifyRenderer(
         if (sent && !s.superseded) {
             // what the page posted before the play call went out is the old play's: it only tells the
             // tracker what played before, read for nothing (qa-26c-step5a-code M3)
-            for ((snap, at) in replay) if (at < sentAt) tracker.onState(snap, at)
+            for ((snap, at) in replay) {
+                if (at >= sentAt) continue
+                ports.log("spotify: a state from before the play call, read for nothing - ${tracker.judged(snap)}")
+                tracker.onState(snap, at)
+            }
         }
         when {
             s.superseded && sent && queued == null -> {
@@ -1163,6 +1189,13 @@ internal class SpotifyRenderer(
             s.superseded -> ports.log("spotify: a start replaced by a newer play")
             end is StartEnd.Called && end.result == StartResult.Sent -> {
                 s.settings?.let { lastSet = it }
+                ports.log(
+                    if (contextUri != null) {
+                        "spotify: the play call went out (the context${if (s.offset != null) " from its live track at ${s.posMs / 1000} s" else ""})"
+                    } else {
+                        "spotify: the play call went out (items ${r.index} to ${r.index + end.window - 1} at ${s.posMs / 1000} s)"
+                    },
+                )
                 if (contextUri != null) {
                     ports.record(if (s.offset != null) "play context from the live track at ${s.posMs} ms" else "play context")
                     apply(tracker.playedContext(s.offset, s.posMs, r.fresh))
@@ -1327,6 +1360,7 @@ internal class SpotifyRenderer(
                 deviceWait?.complete(true)
             }
             is HostEvent.NotReady -> {
+                ports.log("spotify: the web player went offline (not_ready${if (e.deviceId == deviceId) "" else ", an older device"})")
                 if (e.deviceId == deviceId) deviceId = null
                 apply(tracker.onNotReady())
                 changed()
@@ -1335,6 +1369,7 @@ internal class SpotifyRenderer(
             is HostEvent.State -> {
                 deviceWait?.complete(true)
                 if (start?.calling == true) {
+                    ports.log("spotify: a state while the play call runs, held - ${tracker.judged(e.snapshot)}")
                     held.addLast(e.snapshot to ports.now())
                     while (held.size > HELD_MAX) held.removeFirst()
                 } else {
@@ -1358,6 +1393,11 @@ internal class SpotifyRenderer(
     }
 
     private fun onSdkError(kind: String, message: String) {
+        if (kind == "diag") {
+            // our page's own diagnostic line (2026-11-01): its fixed words only, whatever else came in this kind
+            SpotifyPage.diagLine(message)?.let { ports.log("spotify: the page says $it") }
+            return
+        }
         // the SDK's own text only in a debug build (§7.1; qa-26c-step5a-code L8): it is foreign text
         ports.log("spotify: the web player said $kind" + if (BuildConfig.DEBUG) ": $message" else "")
         if (kind == "playback") {
@@ -1423,7 +1463,10 @@ internal class SpotifyRenderer(
     /** One posted state through the tracker. */
     private fun feed(snap: SdkSnapshot) {
         val before = tracker.measured
+        // the diagnostic log (2026-11-01): every state as the tracker judges it, and the mode it leaves (no uri)
+        val judged = tracker.judged(snap)
         val events = tracker.onState(snap, ports.now())
+        ports.log("spotify: a state - $judged -> ${tracker.mode.name.lowercase()}${if (events.isEmpty()) "" else ": " + events.joinToString { tracker.eventWord(it) }}")
         val m = tracker.measured
         if (m != null && m !== before && m.index == tracker.index) {
             if (snap is SdkState) snap.durationMs?.let { stateDuration = it }
@@ -1585,6 +1628,7 @@ internal class SpotifyRenderer(
     private fun measuredAt(i: Int): Long = tracker.measured?.takeIf { it.index == i }?.positionMs ?: place.takeIf { it.index == i }?.posMs ?: 0
 
     private fun onStarted(j: Int) {
+        if (firstStateTimer != null) ports.log("spotify: our first state, ${ports.now() - firstStateArmedAt} ms after the play call")
         cancelFirstState()
         if (j != index) moveIndex(j, auto = false)
         line = null
@@ -1685,10 +1729,12 @@ internal class SpotifyRenderer(
     private fun armFirstState(deadline: Long) {
         cancelFirstState()
         val wait = minOf(SPOTIFY_FIRST_STATE_MS, deadline - ports.now()).coerceAtLeast(0)
+        firstStateArmedAt = ports.now()
+        ports.log("spotify: waiting ${wait / 1000} s for our first state")
         firstStateTimer = ports.after(wait) {
             firstStateTimer = null
             if (pwr && tracker.mode == Mode.STARTING && start == null) {
-                ports.log("spotify: no state of ours after the play call")
+                ports.log("spotify: no state of ours after the play call (${ports.now() - firstStateArmedAt} ms)")
                 fail(SpotifyProblem.UNREACHABLE)
             }
         }
@@ -1701,8 +1747,11 @@ internal class SpotifyRenderer(
 
     /** No state of ours for 30 s while we play (§5.4's table): paused, "trenger internett". */
     private fun armGap() {
+        val armed = gapTimer != null
         cancelGap()
         if (!pwr || tracker.mode != Mode.OURS) return
+        // re-armed at every state of ours: the diagnostic log notes only a fresh arming
+        if (!armed) ports.log("spotify: the ${SPOTIFY_STATE_GAP_MS / 1000} s gap watch is on")
         val at = lastOursAt + SPOTIFY_STATE_GAP_MS
         gapTimer = ports.after((at - ports.now()).coerceAtLeast(0)) {
             gapTimer = null
@@ -1725,6 +1774,7 @@ internal class SpotifyRenderer(
     /** The page is destroyed 5 minutes after the last play (§5.2): the device leaves the account's Connect list. */
     private fun armIdle() {
         if (idleTimer != null || !host.alive) return
+        ports.log("spotify: the web player goes in ${SPOTIFY_HOST_IDLE_MS / 60_000} min unless it plays")
         idleTimer = ports.after(SPOTIFY_HOST_IDLE_MS) {
             idleTimer = null
             if (!pwr && start == null && !heldByPage) {

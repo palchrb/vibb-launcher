@@ -2778,14 +2778,33 @@ impl SpotifyReads<'_, '_, '_> {
     async fn pages(
         &mut self,
         account: i64,
-        mut page: spotify::Page,
+        page: spotify::Page,
         max: usize,
         next_url: impl Fn(usize) -> String,
         parse: fn(&[u8]) -> Option<spotify::Page>,
     ) -> Result<(Vec<spotify::Listed>, usize, bool), SpotifyError> {
+        let (kept, skipped, capped, _) = self
+            .pages_tallied(account, page, max, next_url, parse)
+            .await?;
+        Ok((kept, skipped, capped))
+    }
+
+    /// [Self::pages], with the pages' unplayable count and first restriction (a show's, 2026-11-01:
+    /// `(unplayable, restriction)`).
+    #[allow(clippy::type_complexity)]
+    async fn pages_tallied(
+        &mut self,
+        account: i64,
+        mut page: spotify::Page,
+        max: usize,
+        next_url: impl Fn(usize) -> String,
+        parse: fn(&[u8]) -> Option<spotify::Page>,
+    ) -> Result<(Vec<spotify::Listed>, usize, bool, (usize, Option<String>)), SpotifyError> {
         let mut kept: Vec<spotify::Listed> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut skipped = 0;
+        let mut unplayable = 0;
+        let mut restriction: Option<String> = None;
         let mut offset = 0;
         // A list of nothing but left-out entries still ends: at most twice the pages `max` needs.
         let most_pages = max.div_ceil(spotify::PAGE_LIMIT) * 2;
@@ -2793,21 +2812,26 @@ impl SpotifyReads<'_, '_, '_> {
         loop {
             read += 1;
             skipped += page.skipped;
+            unplayable += page.unplayable;
+            if restriction.is_none() {
+                restriction = page.restriction.take();
+            }
+            let tally = |restriction: &Option<String>| (unplayable, restriction.clone());
             let mut listed = std::mem::take(&mut page.listed).into_iter();
             for item in listed.by_ref() {
                 if !seen.insert(item.id.clone()) {
                     continue;
                 }
                 if kept.len() == max {
-                    return Ok((kept, skipped, true));
+                    return Ok((kept, skipped, true, tally(&restriction)));
                 }
                 kept.push(item);
             }
             if !page.next {
-                return Ok((kept, skipped, false));
+                return Ok((kept, skipped, false, tally(&restriction)));
             }
             if kept.len() == max || read >= most_pages {
-                return Ok((kept, skipped, true));
+                return Ok((kept, skipped, true, tally(&restriction)));
             }
             offset += spotify::PAGE_LIMIT;
             let body = self.get(account, &next_url(offset)).await?;
@@ -3002,9 +3026,17 @@ async fn spotify_check(
                     return Ok(Ok(()));
                 }
             }
+            // The audiobook spike (2026-11-01, `SPOTIFY_AUDIOBOOK_SPIKE`): an audiobook's chapters are listed though
+            // Spotify marks them unplayable for this app, to try them on the phone.
+            let spike = accounts.config().audiobook_spike;
+            let parse: fn(&[u8]) -> Option<spotify::Page> = if spike {
+                spotify::parse_show_episodes_spike
+            } else {
+                spotify::parse_show_episodes
+            };
             let url = accounts.read_url(Read::ShowEpisodes(id, 0));
             let page = match reads.get(meta_reader, &url).await {
-                Ok(body) => match spotify::parse_show_episodes(&body) {
+                Ok(body) => match parse(&body) {
                     Some(page) => {
                         snapshot = spotify::show_mark(&body);
                         page
@@ -3014,18 +3046,38 @@ async fn spotify_check(
                 Err(err) => return fail(err),
             };
             let next = |offset| accounts.read_url(Read::ShowEpisodes(id, offset));
-            match reads
-                .pages(
-                    meta_reader,
-                    page,
-                    spotify::MAX_SHOW_EPISODES,
-                    next,
-                    spotify::parse_show_episodes,
-                )
+            let (unplayable, restriction) = match reads
+                .pages_tallied(meta_reader, page, spotify::MAX_SHOW_EPISODES, next, parse)
                 .await
             {
-                Ok(read) => (listed, skipped, capped) = read,
+                Ok((kept, left_out, more, tally)) => {
+                    (listed, skipped, capped) = (kept, left_out, more);
+                    tally
+                }
                 Err(err) => return fail(err),
+            };
+            if unplayable > 0 {
+                tracing::info!(
+                    entry = old.entry_id,
+                    unplayable,
+                    listed = listed.len(),
+                    reason = restriction.as_deref().unwrap_or("none"),
+                    spike,
+                    "a Spotify show with unplayable episodes"
+                );
+            }
+            // Every episode unplayable (none listed, none left out for anything else) with an audiobook-shaped
+            // restriction: an audiobook Spotify shares as a show - its own sentence instead of `no_items`
+            // (2026-11-01). A really empty show, or a podcast whose episodes are all `market`/`explicit`-restricted,
+            // stays `no_items`.
+            if listed.is_empty()
+                && unplayable > 0
+                && unplayable == skipped
+                && spotify::audiobook_shaped(restriction.as_deref())
+            {
+                return Ok(Err(CheckError::Spotify(
+                    spotify::AUDIOBOOK_CODE.to_string(),
+                )));
             }
             // Spotify lists a show newest first; the list is kept oldest first, as a podcast's.
             listed.reverse();

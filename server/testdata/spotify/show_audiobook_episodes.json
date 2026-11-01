@@ -1,0 +1,31 @@
+{
+  "href": "https://api.spotify.com/v1/shows/4FakeShow0000000000001/episodes?offset=0&limit=50&market=from_token",
+  "items": [
+    {
+      "duration_ms": 1260000, "id": "6FakeChapter0000000003", "is_playable": false,
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-chapter-640", "width": 640}],
+      "name": "Kapittel 3", "release_date": "2026-10-01", "type": "episode",
+      "restrictions": {"reason": "payment_required"},
+      "uri": "spotify:episode:6FakeChapter0000000003"
+    },
+    {
+      "duration_ms": 1140000, "id": "6FakeChapter0000000002", "is_playable": false,
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-chapter-640", "width": 640}],
+      "name": "Kapittel 2", "release_date": "2026-10-01", "type": "episode",
+      "restrictions": {"reason": "payment_required"},
+      "uri": "spotify:episode:6FakeChapter0000000002"
+    },
+    {
+      "duration_ms": 1020000, "id": "6FakeChapter0000000001", "is_playable": false,
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-chapter-640", "width": 640}],
+      "name": "Kapittel 1", "release_date": "2026-10-01", "type": "episode",
+      "restrictions": {"reason": "payment_required"},
+      "uri": "spotify:episode:6FakeChapter0000000001"
+    }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total": 3
+}

@@ -79,6 +79,12 @@ object MusicRestrictions {
 
     /** The parent's music storage limit in GB (design 30 §1.8): 1..1000, 0 = no limit. */
     const val STORAGE_LIMIT_GB = "storage_limit_gb"
+
+    /**
+     * Device › Advanced's Spotify diagnostic log (2026-11-01): until when the music app writes its `VibbSpotify` lines,
+     * epoch seconds (an Int until 2038, H1: no Long), 0 = off.
+     */
+    const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
 }
 
 private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -103,6 +109,8 @@ data class MusicPolicy(
     val volumeCapPct: Int?,
     val storageLimitGb: Int?,
     val storytelGeneration: Long,
+    /** The policy's `spotify_diag_until` (epoch seconds), 0 = not running - read leniently ([spotifyDiagUntil]). */
+    val spotifyDiagUntilS: Long = 0,
 ) {
     /** The old one-switch key (design 30 §1.3): both, so an older music app never spends data the parent turned off. */
     val mobileData: Boolean get() = streamMobileData && downloadMobileData
@@ -131,8 +139,17 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
     }
     val limit = storageLimitGb(o["storage_limit_gb"])
     val generation = (o["storytel_generation"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.takeIf { it >= 0 } ?: return null
-    return MusicPolicy(version, stream, download, cap, limit, generation)
+    return MusicPolicy(version, stream, download, cap, limit, generation, spotifyDiagUntil(o["spotify_diag_until"]))
 }
+
+/**
+ * The policy's `music.spotify_diag_until` (2026-11-01, Device › Advanced's Spotify diagnostic log): a positive integer
+ * is its end in epoch seconds; absent (an older server), `null` (not running) or anything else is 0 - the least
+ * important field never refuses the music object, and junk never turns the log on.
+ */
+fun spotifyDiagUntil(element: JsonElement?): Long =
+    (element as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.takeIf { it in 1..Int.MAX_VALUE.toLong() } ?: 0
+
 
 /**
  * The storage limit in GB (design 30 §1.3, qa-30-s2-code L1): JSON `null` = no limit, an integer
@@ -272,6 +289,7 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.STREAM_MOBILE_DATA to policy.streamMobileData,
     MusicRestrictions.DOWNLOAD_MOBILE_DATA to policy.downloadMobileData,
     MusicRestrictions.STORAGE_LIMIT_GB to storageLimitRestriction(policy.storageLimitGb),
+    MusicRestrictions.SPOTIFY_DIAG_UNTIL to policy.spotifyDiagUntilS.coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
 )
 
 /** The restriction's value for the storage limit (design 30 §1.3): the GB, 0 = no limit. */

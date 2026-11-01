@@ -190,6 +190,34 @@
         {% endif %}
     </section>
 
+    {#- The Spotify diagnostic log (2026-11-01): a one-shot button while it isn't running, "On until hh:mm" while it is;
+        only on a phone that plays Spotify. The press lands back here (#spotify-diag, scroll-restore.js). -#}
+    {% if let Some(diag) = spotify_diag %}
+    <section id="spotify-diag" aria-labelledby="spotify-diag-title">
+        <h2 class="group-header" id="spotify-diag-title">{{ self.t("advanced.spotify_diag.title") }}</h2>
+        <div class="group">
+            {% if let Some(until) = diag.until %}
+            <div class="row" data-row="spotify-diag">
+                <span class="row-label">{{ self.t("advanced.spotify_diag.label") }}</span>
+                <span class="row-value">{{ self.tp("advanced.spotify_diag.on_until", [("time", until.as_str())]) }}</span>
+            </div>
+            {% else %}
+            <form method="post" action="/devices/{{ device.id }}/spotify-diag#spotify-diag" class="cell">
+                <button type="submit" class="row row-button">{{ self.t("advanced.spotify_diag.start") }}</button>
+            </form>
+            {% endif %}
+        </div>
+        <div class="group-footer">{{ self.t("advanced.spotify_diag.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("advanced.spotify_diag.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("advanced.spotify_diag.info") }}</p>
+                </div>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+
     <section id="connection" aria-labelledby="connection-title">
         <h2 class="group-header" id="connection-title">Connection</h2>
         {% if !access.has_token %}

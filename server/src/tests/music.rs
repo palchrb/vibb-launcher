@@ -960,7 +960,8 @@ async fn the_policy_carries_a_small_music_object() {
             "volume_cap_pct": null,
             "storage_limit_gb": 2,
             "storytel_generation": 0,
-            "spotify": false
+            "spotify": false,
+            "spotify_diag_until": null
         }),
         "nothing ticked, everything off, 2 GB"
     );

@@ -48,7 +48,10 @@ class MusicApp : Application() {
      * lacked (L4), and a room's own volume above a lowered cap follows it (design 26a §5.3).
      */
     private fun applyConfig(context: Context) {
-        Bridge.applyLanguage(context, Bridge.config(context))
+        val config = Bridge.config(context)
+        // the parent's Spotify diagnostic log (2026-11-01): on and off with the launcher's next write, no restart
+        PlayerHub.spotifyDiagUntilS = config.spotifyDiagUntilS
+        Bridge.applyLanguage(context, config)
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             LiveBridge.refresh(context)
             PlayerHub.capChanged?.invoke()

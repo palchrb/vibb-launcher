@@ -6,7 +6,8 @@
 // file against them):
 // - page -> host: the one interface object VibbSpotify - ready(deviceId), notReady(deviceId),
 //   needToken(requestId), state(json), error(kind, message). The host validates and caps each; the
-//   kind `csp` (a CSP violation) is for the debug log only.
+//   kind `csp` (a CSP violation) is for the debug log only, `diag` (the page's visibility, a late tick) for the
+//   diagnostic log - fixed words and a number only (SpotifyPage.diagLine).
 // - host -> page: vibb.connect(name), vibb.token(requestId, tokenOrNull), vibb.pause(), vibb.resume(),
 //   vibb.seek(ms), vibb.next(), vibb.previous(), vibb.volume(v), vibb.state(), vibb.disconnect().
 //
@@ -20,10 +21,12 @@
   var sdkReady = false;
   var wanted = null;        // the player's name, once the host asked to connect
   var tick = null;          // the 5 s state post while playing
+  var lastTick = 0;         // when the tick last ran (Date.now()), 0 while it doesn't
   var pending = {};         // getOAuthToken callbacks by request id
   var nextRequest = 1;
 
   var TICK_MS = 5000;
+  var LATE_MS = 2000;       // a tick later than this past its 5 s is a diag line (the page throttled)
   var NEIGHBOURS = 3;
   var TEXT_MAX = 200;
   var ARTISTS_MAX = 10;
@@ -82,15 +85,28 @@
     var c = compact(s);
     try { bridge.state(JSON.stringify(c)); } catch (e) { /* the host is gone */ }
     if (c && !c.paused) {
-      if (!tick) tick = setInterval(poll, TICK_MS);
+      if (!tick) {
+        tick = setInterval(poll, TICK_MS);
+        lastTick = Date.now();
+      }
     } else if (tick) {
       clearInterval(tick);
       tick = null;
+      lastTick = 0;
     }
   }
 
   function poll() {
+    // the diagnostic log (2026-11-01): a tick that came late says the page's timers were held back
+    var now = Date.now();
+    if (lastTick && now - lastTick > TICK_MS + LATE_MS) report('diag', 'tick late by ' + (now - lastTick - TICK_MS) + ' ms');
+    lastTick = now;
     if (player) player.getCurrentState().then(post);
+  }
+
+  // The page's visibility for the diagnostic log (2026-11-01): a hidden page's timers may be throttled.
+  function visibility() {
+    report('diag', 'page ' + document.visibilityState);
   }
 
   function report(kind, message) {
@@ -128,6 +144,8 @@
 
   // What our CSP refused (design 26c §5.2): the directive and the blocked origin only, for the debug log -
   // a loader that needs more than the policy gives would otherwise never reach `ready` without a trace.
+  document.addEventListener('visibilitychange', visibility);
+
   document.addEventListener('securitypolicyviolation', function (e) {
     var blocked = String((e && e.blockedURI) || '').split('/').slice(0, 3).join('/');
     report('csp', String((e && e.violatedDirective) || '') + ' ' + blocked);
@@ -143,6 +161,7 @@
     connect: function (name) {
       wanted = String(name).slice(0, 64);
       start();
+      visibility();
     },
     token: function (requestId, token) {
       var cb = pending[requestId];
@@ -177,6 +196,7 @@
     disconnect: function () {
       if (tick) clearInterval(tick);
       tick = null;
+      lastTick = 0;
       pending = {};
       if (player) player.disconnect();
       player = null;

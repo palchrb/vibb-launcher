@@ -4,6 +4,17 @@
   "common.not_saved": "Not saved.",
   "common.why": "Why",
 
+  "music.spotify.audiobook": "This is a Spotify audiobook - Spotify lets only its own apps play them.",
+  "music.spotify.audiobook_short": "it is a Spotify audiobook, and Spotify lets only its own apps play them",
+
+  "advanced.spotify_diag.title": "Spotify",
+  "advanced.spotify_diag.start": "Turn On Diagnostic Log for 15 Minutes",
+  "advanced.spotify_diag.label": "Diagnostic log",
+  "advanced.spotify_diag.on_until": "On until {time}",
+  "advanced.spotify_diag.footer": "For finding out why the web player stops. The music app writes what it does to the phone's own log; nothing is sent here.",
+  "advanced.spotify_diag.info_label": "About the diagnostic log",
+  "advanced.spotify_diag.info": "Read it with a computer: adb logcat -s VibbSpotify. It says what happens and when - never the account, a token or what is playing. It turns itself off after 15 minutes. The phone needs an updated Vibb One and music app to know it.",
+
   "calendar.title": "Calendar",
   "calendar.not_capable": "This phone's Vibb One doesn't know Dagen yet",
   "calendar.not_capable_sub": "What you set here reaches it once Vibb One is updated.",

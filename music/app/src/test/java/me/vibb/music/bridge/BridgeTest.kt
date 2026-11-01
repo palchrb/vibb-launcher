@@ -189,7 +189,7 @@ class BridgeTest {
             RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
             RestrictionKeys.MOBILE_DATA, RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
             RestrictionKeys.VOLUME_CAP_PCT, RestrictionKeys.STREAM_MOBILE_DATA, RestrictionKeys.DOWNLOAD_MOBILE_DATA,
-            RestrictionKeys.STORAGE_LIMIT_GB,
+            RestrictionKeys.STORAGE_LIMIT_GB, RestrictionKeys.SPOTIFY_DIAG_UNTIL,
         )
         assertEquals(types.keys, keys.toSet())
         val sample: Map<String, Any> = types.mapValues { (key, type) ->
@@ -203,6 +203,7 @@ class BridgeTest {
         assertTrue(read.managed && read.streamMobileData && read.downloadMobileData && read.launcherPackage == "me.vibb.launcher" && read.storytelGeneration == 7L && read.language == "nb")
         assertEquals(7, read.volumeCapPct)
         assertEquals(7, read.storageLimitGb)
+        assertEquals(7L, read.spotifyDiagUntilS)
         assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
         assertEquals(
             strings("now_playing"),

@@ -581,7 +581,8 @@ pub enum CheckError {
     /// A Spotify entry's check (design 26c §3.4): the code (`spotify_off`, `no_account`,
     /// `reauthorize`, `app_refused`, `not_found`, `rate_limited`, `quota`, `network`, `timeout`,
     /// `http_<n>`, `too_big`, `bad_answer`, `key`), as [crate::spotify::SpotifyError::code] gives
-    /// it.
+    /// it; `no_items`, and `audiobook` ([crate::spotify::AUDIOBOOK_CODE]: a show whose every episode is
+    /// unplayable, 2026-11-01) from the sweep's own reading.
     Spotify(String),
 }
 
@@ -683,6 +684,11 @@ pub fn storytel_check_message(code: &str) -> String {
 pub fn spotify_check_message(code: &str) -> String {
     match code {
         "no_items" => "Nothing in it can be played here.".to_string(),
+        // 2026-11-01: from the catalog, in English as the rest of the Music pages until they move (round S-i18n);
+        // `nb.json` has its words ready.
+        crate::spotify::AUDIOBOOK_CODE => {
+            crate::i18n::t(crate::i18n::Lang::En, "music.spotify.audiobook").to_string()
+        }
         "network" => "Spotify couldn't be reached.".to_string(),
         "timeout" => "Spotify didn't answer in time.".to_string(),
         other => {
@@ -1361,6 +1367,19 @@ pub struct MusicPolicy {
     /// the account exist). The launcher exempts Spotify's hosts from its DNS filter while it is
     /// true; an older launcher ignores it.
     pub spotify: bool,
+    /// Device › Advanced's Spotify diagnostic log (2026-11-01): until when the music app writes its `VibbSpotify` log
+    /// lines, epoch seconds; `null` unless it is running ([spotify_diag_until]). The launcher hands it to the music app
+    /// as the managed config's `spotify_diag_until`; an older launcher ignores it.
+    pub spotify_diag_until: Option<i64>,
+}
+
+/// How long one press of Device › Advanced's "Spotify diagnostic log" runs.
+pub const SPOTIFY_DIAG_SECS: i64 = 15 * 60;
+
+/// The stored diagnostic log's end [stored] (epoch seconds) while it is still ahead of [now_s], else `None`: a run
+/// that ended leaves the policy as it was before the press.
+pub fn spotify_diag_until(stored: Option<i64>, now_s: i64) -> Option<i64> {
+    stored.filter(|&until| until > now_s)
 }
 
 pub async fn policy_music(
@@ -1394,6 +1413,10 @@ pub async fn policy_music(
         storage_limit_gb: storage_limit(policy.music_storage_limit_gb),
         storytel_generation,
         spotify: policy.music_spotify_account.is_some(),
+        spotify_diag_until: spotify_diag_until(
+            policy.music_spotify_diag_until,
+            chrono::Utc::now().timestamp(),
+        ),
     })
 }
 
@@ -1990,6 +2013,9 @@ pub fn sweep_error_text(source: &str, code: &str) -> String {
             "a saved Spotify login was locked with another key - log in again".to_string()
         }
         ("spotify", "no_items") => "nothing in it can be played here".to_string(),
+        ("spotify", crate::spotify::AUDIOBOOK_CODE) => {
+            crate::i18n::t(crate::i18n::Lang::En, "music.spotify.audiobook_short").to_string()
+        }
         // qa-26c-step2a-code L3: a token mint that couldn't read its account row, and a refused
         // address (`FetchError::Refused`, coded `network` today - mapped should it get its own).
         ("spotify", "database") => {

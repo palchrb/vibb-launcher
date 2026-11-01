@@ -4,6 +4,17 @@
   "common.not_saved": "Ikke lagret.",
   "common.why": "Hvorfor",
 
+  "music.spotify.audiobook": "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker.",
+  "music.spotify.audiobook_short": "det er en lydbok fra Spotify, og Spotify lar bare sine egne apper spille lydbøker",
+
+  "advanced.spotify_diag.title": "Spotify",
+  "advanced.spotify_diag.start": "Slå på feilsøkingslogg i 15 minutter",
+  "advanced.spotify_diag.label": "Feilsøkingslogg",
+  "advanced.spotify_diag.on_until": "På til {time}",
+  "advanced.spotify_diag.footer": "For å finne ut hvorfor nettspilleren stopper. Musikkappen skriver hva den gjør i telefonens egen logg; ingenting sendes hit.",
+  "advanced.spotify_diag.info_label": "Om feilsøkingsloggen",
+  "advanced.spotify_diag.info": "Les den med en datamaskin: adb logcat -s VibbSpotify. Den viser hva som skjer og når - aldri kontoen, tilgangsnøkler eller hva som spilles. Den slår seg av selv etter 15 minutter. Telefonen må ha oppdatert Vibb One og musikkappen for å kjenne den.",
+
   "calendar.title": "Kalender",
   "calendar.not_capable": "Vibb One på denne telefonen kjenner ikke Dagen ennå",
   "calendar.not_capable_sub": "Det du velger her, når telefonen når Vibb One er oppdatert.",

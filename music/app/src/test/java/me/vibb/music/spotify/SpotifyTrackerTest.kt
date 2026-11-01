@@ -243,6 +243,37 @@ class SpotifyTrackerTest {
         assertEquals(listOf("ItemChanged 1 auto"), t.onState(SdkState.parse(moved)!!, 900_100).map(::word))
     }
 
+    @Test
+    fun `the diagnostic log's words for a state - whose track, from before the play call, how far from the sent place, never a uri (2026-11-01)`() {
+        val t = SpotifyTracker().apply { load((0..3).map { track(it) }, 0) }
+        t.played(0, 3)
+        t.onState(state(0, 5_000, paused = true), 0)
+        assertEquals("paused at 5 s, the current item, +5.0 s from the sent place (starting)", t.judged(state(0, 5_000, paused = true)))
+        // the kid paused at 15.1 s and plays again later: a fresh start of the same track at the same place
+        t.played(0, 3, positionMs = 15_117)
+        assertEquals(
+            "near the sent place: ours",
+            "playing at 15 s, the current item, a track from before the play call, +0.0 s from the sent place (starting)",
+            t.judged(state(0, 15_150)),
+        )
+        val late = state(0, 19_900)
+        assertEquals(
+            "a first post 4.8 s past the sent place is read as the old play's (stale): the log says so",
+            "playing at 19 s, the current item, a track from before the play call, +4.7 s from the sent place (starting)",
+            t.judged(late),
+        )
+        assertEquals(emptyList<String>(), t.onState(late, 1_000).map(::word))
+        assertEquals("playing at 0 s, the next item, a track from before the play call, -15.1 s from the sent place (starting)", t.judged(state(1, 0)))
+        assertEquals("playing at 0 s, not in our queue, -15.1 s from the sent place (starting)", t.judged(foreign()))
+        assertEquals("null (not the active device)", t.judged(Inactive))
+        t.onState(state(0, 15_200), 2_000)
+        assertEquals("playing at 16 s, the current item, a track from before the play call (ours)", t.judged(state(0, 16_000)))
+        for (s in listOf(state(0, 0), state(1, 0), foreign())) assertFalse(t.judged(s).contains("spotify:") || t.judged(s).contains("Fake"))
+        assertEquals("started 2", t.eventWord(Event.Started(2)))
+        assertEquals("the context moved on", t.eventWord(Event.TrackChanged(uri(1), "Fake track 1")))
+        assertEquals("our leftover add", t.eventWord(Event.LeftoverAdd(uri(1), true)))
+    }
+
     private fun uri(n: Int) = "spotify:track:FAKEtrack%013d".format(n)
 
     private fun track(n: Int, duration: Long = 20_000) = SpotifyTrack(uri(n), "Fake track $n — Fake Artist", duration)

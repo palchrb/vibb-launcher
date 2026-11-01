@@ -1046,6 +1046,10 @@ pub fn build_admin_router(
             post(handlers::devices::update_kiosk_block),
         )
         .route(
+            "/devices/{id}/spotify-diag",
+            post(handlers::music_spotify::start_diag),
+        )
+        .route(
             "/devices/{id}/kiosk-escapes",
             post(handlers::devices::update_kiosk_escapes),
         )

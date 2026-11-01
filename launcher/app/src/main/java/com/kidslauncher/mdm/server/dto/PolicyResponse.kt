@@ -115,7 +115,9 @@ data class PolicyResponse(
      * Carried as raw JSON so nothing in it can fail the policy, and read field by field:
      * [com.kidslauncher.mdm.music.musicPolicy] for the music sync, and
      * [com.kidslauncher.mdm.music.musicSpotify] for `spotify` (design 26c §6.2: this phone plays
-     * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false).
+     * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false). Since 2026-11-01
+     * `spotify_diag_until` too (Device › Advanced's Spotify diagnostic log; read leniently by
+     * [com.kidslauncher.mdm.music.spotifyDiagUntil], handed to the music app as `spotify_diag_until`).
      * Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
     /** The lock's glance page (design 25): `{apps: [{package, show_text}, ...]}` - the apps whose

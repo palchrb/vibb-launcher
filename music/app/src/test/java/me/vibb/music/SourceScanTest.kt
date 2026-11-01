@@ -442,16 +442,20 @@ class SourceScanTest {
 
     /**
      * Design 26c step 5b (§7.1, qa-26c-step5a-code L8): the web player is made only by the service, with a log that is
-     * a debug build's only and writes the renderer's fixed words as they are; the outcome file is the store's alone
-     * and holds a word. (The tile's and the player's "Spotify" went in step 8: see the next test.)
+     * a debug build's only - or, since 2026-11-01, the parent's diagnostic log's while it runs (`spotifyDiagLogOn`) - and
+     * writes the renderer's fixed words as they are; the outcome file is the store's alone and holds a word. (The
+     * tile's and the player's "Spotify" went in step 8: see the next test.)
      */
     @Test
-    fun `5b - the web player's log is debug-only, it is made by the service alone, and the outcome file holds a word`() {
+    fun `5b - the web player's log is debug-only or the diagnostic log's, it is made by the service alone, and the outcome file holds a word`() {
         val made = sources("src/main/java").filter { code(it).contains("SpotifyRenderer.create(") }.map { it.name }
         assertEquals(listOf("PlaybackService.kt"), made)
         val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
         val logs = service.lines().filter { it.contains("Log.") }
-        assertEquals(listOf("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"), logs.map { it.trim() })
+        assertEquals(
+            listOf("if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)"),
+            logs.map { it.trim() },
+        )
         assertTrue(service.contains("log = ::spotifyLog,"))
         // the outcome's file: written by the store only, read by the report through the store's name
         val files = sources("src/main/java").filter { code(it).contains("spotify_state.json") }.map { it.name }
@@ -485,10 +489,11 @@ class SourceScanTest {
         }
         // qa-26c-step8-code L1: the notification, the lock screen and Home's card are built outside ui/ - the session's
         // metadata and setNowPlaying in playback/, the bridge's now-playing in bridge/, Nytt's notification in sync/.
-        // No literal there names Spotify (any case) but these two, which never reach a screen.
+        // No literal there names Spotify (any case) but these three, which never reach a screen.
         val allowed = setOf(
-            "PlaybackService.kt" to "\"VibbSpotify\"", // SPOTIFY_LOG_TAG, a debug build's log tag
+            "PlaybackService.kt" to "\"VibbSpotify\"", // SPOTIFY_LOG_TAG, the web player's log tag
             "PlaybackService.kt" to "\"playing on Spotify\"", // the resumption future's exception, Media3's only
+            "BridgeConfig.kt" to "\"spotify_diag_until\"", // the managed config's key of the diagnostic log (2026-11-01)
         )
         val literal = Regex("\"[^\"\n]*\"")
         for (dir in listOf("playback", "bridge", "sync")) {
@@ -631,6 +636,45 @@ class SourceScanTest {
         val provider = manifest.substringAfter("DebugStartup").substringBefore("/>")
         assertTrue("the start-up provider is not exported", provider.contains("android:exported=\"false\""))
         assertTrue("created before WorkManager's provider (L2)", provider.contains("android:initOrder=\"1000\""))
+    }
+
+    /**
+     * The media session's artwork (2026-11-01, PLAN "The media session's artwork is a `file://` path"): SystemUI reads
+     * the session's artwork URI with its own identity and can't open our private cache, so the session gets a
+     * `content://` URI of the non-exported FileProvider, which serves only cache/art/ and is read-granted to SystemUI;
+     * every `setArtworkUri` takes [artUri]'s URI, and that is always [sessionArtUri]'s. The launcher's snapshot still
+     * reads the small copy's file ([artFile]).
+     */
+    @Test
+    fun `the session's artwork is a content URI SystemUI is granted - never a file path`() {
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        val provider = manifest.substringAfter("<provider").substringBefore("</provider>")
+        assertTrue(provider.contains("android:name=\"androidx.core.content.FileProvider\""))
+        assertTrue(provider.contains("android:authorities=\"\${applicationId}.art\""))
+        assertTrue("never exported", provider.contains("android:exported=\"false\""))
+        assertTrue("read by a grant", provider.contains("android:grantUriPermissions=\"true\""))
+        assertTrue(provider.contains("android:resource=\"@xml/art_paths\""))
+        assertEquals("one provider in the main manifest", 1, Regex("<provider").findAll(manifest).count())
+        val paths = moduleFile("src/main/res/xml/art_paths.xml").readText().replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+        val entries = Regex("<([a-z-]+-path) name=\"([a-z]+)\" path=\"([^\"]*)\"").findAll(paths).map { it.groupValues.drop(1) }.toList()
+        assertEquals("only the small copies: Store.smallArtDir", listOf(listOf("cache-path", "art", "art/")), entries)
+        assertTrue(code(moduleFile("src/main/java/me/vibb/music/data/Store.kt")).contains("val smallArtDir = File(app.cacheDir, \"art\")"))
+        assertEquals("me.vibb.music.art", me.vibb.music.logic.sessionArtAuthority("me.vibb.music"))
+        assertEquals(listOf("com.android.systemui"), me.vibb.music.logic.SESSION_ART_READERS)
+        val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
+        assertEquals(
+            "every artwork the session gets is artUri's",
+            listOf("artUri(a, item)?.let { meta.setArtworkUri(it) }", "renderer.replaceItem(index, old.buildUpon().setMediaMetadata(old.mediaMetadata.buildUpon().setArtworkUri(uri).build()).build())"),
+            service.lines().filter { it.contains("setArtworkUri(") }.map { it.trim() },
+        )
+        assertTrue(service.contains("val uri = artUri(a, item)"))
+        assertTrue(service.contains("private fun artUri(a: Active, item: PlayItem): Uri? = artFile(a, item)?.takeIf { it.isFile }?.let(::sessionArtUri)"))
+        val grant = service.substringAfter("private fun sessionArtUri(file: File): Uri {").substringBefore("\n    }\n")
+        assertTrue(grant.contains("FileProvider.getUriForFile(this, sessionArtAuthority(packageName), file)"))
+        assertTrue("no worse than before when the provider can't name it", grant.contains("?: return Uri.fromFile(file)"))
+        assertTrue(grant.contains("grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)"))
+        assertFalse("read only", grant.contains("WRITE"))
+        assertFalse("no picture bytes on the queue's metadata", service.contains("setArtworkData("))
     }
 
     /**

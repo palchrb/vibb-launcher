@@ -149,7 +149,7 @@ requests -, `play_answers.json`, `token_answers.json`, and `sdk_states/*.json`, 
 `SpotifyTrackerTest` replays) and `server/testdata/spotify/` (the accounts and Web API answers) are what
 `scripts/fake-spotify.py` answers from (`--selftest`, CI too): the accounts service with PKCE (`--as`, `--deny`,
 `--rotate`, `--access-ttl`, `--expire-refresh`, `--bad-client`), the Web API the server and the phone use
-(`--snapshot`, `--rate-limit N`, `--quota`, `--not-premium`, `--offset-404`) and a stub Web Playback SDK playing a tone
+(`--snapshot`, `--rate-limit N`, `--quota`, `--not-premium`, `--offset-404`, `--audiobook` - the show as an audiobook's unplayable chapters) and a stub Web Playback SDK playing a tone
 per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--unplayable`, `--relink`, `--no-eme`,
 `--slow-ready`, `--shuffle`, `--repeat`, `--token-ttl`, `--track-seconds`), plus `--print-library` and
 `--print-listing ENTRY [--tracks N]`; they drive docs/testing/emulator.md §6l. Every value in it is fake
@@ -446,9 +446,19 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   appear only in `StorytelApi.kt` and `spotify/SpotifyApi.kt`; the Web API calls use the guarded public-only client.
 - **Spotify secrets** (26c §7.1): the access token, the SDK's device id and the page's state never reach a log, Room,
   `music_state`, the report or a `toString`. **No `Log.` in `spotify/`** at all: the host, the locks and the renderer
-  log through the function the service gives them, `spotifyLog` (`Log.d` under `BuildConfig.DEBUG` - the service's one
-  Spotify log line; a release logs nothing), with fixed words only (hosts, statuses, kinds; never a token, a uri list
-  or a state JSON), the SDK's error text only in a debug build. **The page's console is a log channel too**:
+  log through the function the service gives them, `spotifyLog` (`Log.d` - the service's one Spotify log line - under
+  `spotifyDiagLogOn`: always in a debug build, in a release only while the parent's **diagnostic log** runs, Device ›
+  Advanced's 15 minutes, 2026-11-01: the policy's `music.spotify_diag_until` -> the managed config's
+  `spotify_diag_until` (`bridge_contract.json`) -> `PlayerHub.spotifyDiagUntilS`, set by `MusicApp`'s config edge; an
+  end more than `SPOTIFY_DIAG_MAX_AHEAD_MS` ahead is junk), with fixed words only (hosts, statuses, kinds, item
+  indexes, whole seconds; never a token, an account or device id, a uri, a title or a state JSON), the SDK's error text
+  only in a debug build. The diagnostic lines (2026-11-01): a start (the page up or new, the device known) and why it
+  isn't a resume, the play call that went out, every state as `SpotifyTracker.judged` reads it (playing or paused at
+  N s; the current, next or a later item, not ours; a track from before the play call; how far from the sent place)
+  and the mode it leaves with its events (`eventWord`), the first-state wait, the gap watch and the idle close, the
+  page's calls by name (no argument; not `volume`), its load, `not_ready`, and the page's own `diag` lines (its
+  visibility, a 5 s tick more than 2 s late - Chromium throttling it; `SpotifyPage.diagLine` passes only those fixed
+  shapes). The page is never paused: no `onPause`/`pauseTimers` anywhere. **The page's console is a log channel too**:
   `onConsoleMessage` returns true always (a debug build notes the level and the source's host only). The token
   reaches the page only as a quoted `evaluateJavascript` argument. **The state recorder is debug-only**:
   `SpotifyRecording.recorder` is null in main and assigned only by `DebugSpotify.kt` while `config.json` says
@@ -671,7 +681,13 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
   `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
   in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
-  room only the session player's item, no SOAP).
+  room only the session player's item, no SOAP). **The session's artwork is a `content://` URI** (2026-11-01: SystemUI
+  read the old `file://` path with its own identity and failed with ENOENT at every state change): `artUri` is the
+  small copy (`cache/art/<hash>.jpg`, checked to exist at every build and item change) through the manifest's
+  non-exported FileProvider (`${applicationId}.art`, `res/xml/art_paths.xml`: `cache/art/` only), read-granted once per
+  picture and process to `SESSION_ART_READERS` (`com.android.systemui`); Media3's notification reads the same URI in
+  this process. Not `artworkData`: the bytes would ride on every queue item's metadata through the session's Binder.
+  `setNowPlaying` still reads the file (`artFile`). `SourceScanTest` pins it.
 - **The episode list's pictures and the kid's order flip** (design 39; **the user's decisions, not vibb's**: vibb's
   list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
   `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
