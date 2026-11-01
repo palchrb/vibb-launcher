@@ -90,6 +90,11 @@
         <h2 class="group-header" id="links-title">{{ self.t("calendar.links.title") }}</h2>
         {% if let Some(key) = links_notice %}<p class="flash" role="status" data-flash="fetch-wait">{{ self.t(key) }}</p>{% endif %}
         {% if let Some(why) = add.error %}<p class="flash flash-error" role="alert" data-flash="link-refused">{{ why }}</p>{% endif %}
+        {#- E6's L3: the server made a new music key at its start (the file was gone), so the links sealed with the old one
+            can't be fetched; each such row says it too. Pasting the same link again re-seals it onto its calendar. -#}
+        {% if links_key_new %}
+        <div class="attention attention-alarm" data-warning="links-key-new"><div class="attention-text">{{ self.t("calendar.links.key_new") }}<div class="attention-sub">{{ self.t("calendar.links.key_new_sub") }}</div></div></div>
+        {% endif %}
         <div class="group">
             {% for l in links %}
             <div class="cell" id="link-{{ l.uid }}" data-link="{{ l.uid }}">

@@ -192,7 +192,13 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   writes nothing) and nudges exactly the phones with the link. Error codes, worded at render
   (`calendar.links.why.*`): `not_found`, `status`, `network`, `timeout`, `too_big`, `not_calendar`,
   `private_address`, `key_lost` (the key changed: add the link again - the add re-seals the source under today's key
-  and clears the error, QA M1), `insecure`, `empty`, `unreadable` (the parser failed on the body).
+  and clears the error, QA M1), `insecure`, `empty`, `unreadable` (the parser failed on the body). **A new key is
+  said at once** (E6's L3, 2026-11-01): the server makes a new music key at its start when the key file is gone, and a
+  link sealed with the old one would turn `key_lost` only at its next fetch - so the page compares each link's
+  `url_key_fp` (`LinkRow.key_fp`) with today's key's fingerprint: one that differs shows the row's `key_lost` line
+  before any fetch stored it, and the group gets an alarm row (`data-warning="links-key-new"`, `calendar.links.key_new`
+  and `_sub`: paste each marked link again with Add Link). No key at all is the form's own line (`links_off`), not this.
+  Test `calendar_feeds::a_new_music_key_says_to_paste_the_links_again`.
 - **Delivery**: the policy's `calendar.feeds` (`[{id, name, rev}]`, always sent, `[]` without one;
   `policy_json_keys_snapshot`) and `GET /api/devices/calendar/feeds/{uid}` (bearer; `handlers::calendar::device_feed`
   through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's

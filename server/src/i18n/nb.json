@@ -169,6 +169,8 @@
   "calendar.links.remove": "Fjern",
   "calendar.links.remove_confirm": "Kalenderen forsvinner fra denne telefonen. Kalendere i ICSx5 blir ikke rørt.",
   "calendar.links.no_key": "Kalenderlenker er av: serveren har ingen nøkkel å lagre lenken kryptert med. Sjekk serverloggen (MUSIC_SECRET_KEY).",
+  "calendar.links.key_new": "Serverens nøkkel er byttet, så disse lenkene kan ikke hentes lenger",
+  "calendar.links.key_new_sub": "Lim inn hver lenke som er merket nedenfor på nytt med Legg til lenke - samme lenke beholder kalenderens innstillinger.",
   "calendar.links.full": "Denne telefonen har allerede 10 lenker - fjern en først.",
   "calendar.links.kind": "Kalenderlenke",
   "calendar.links.waiting": "Venter på telefonen",

@@ -169,6 +169,8 @@
   "calendar.links.remove": "Remove",
   "calendar.links.remove_confirm": "The calendar goes off this phone. ICSx5's calendars are not touched.",
   "calendar.links.no_key": "Calendar links are off: the server has no key to store a link encrypted. Check the server log (MUSIC_SECRET_KEY).",
+  "calendar.links.key_new": "The server's key has changed, so these links can't be fetched any more",
+  "calendar.links.key_new_sub": "Paste each link marked below again with Add Link - the same link keeps its calendar's settings.",
   "calendar.links.full": "This phone has 10 links already - remove one first.",
   "calendar.links.kind": "Calendar link",
   "calendar.links.waiting": "Waiting for the phone",

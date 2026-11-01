@@ -719,6 +719,70 @@ async fn adding_the_link_again_mends_a_lost_key() {
     );
 }
 
+/// E6's L3: a server that made a new music key at its start (the file was gone) says at once - on Device › Calendar's
+/// links and on the link's row - that the links sealed with the old key must be pasted again, before any fetch stored
+/// `key_lost`; pasting the link again ends it.
+#[tokio::test]
+async fn a_new_music_key_says_to_paste_the_links_again() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    app.fetch.answer(LINK, 200, one_event("a", "First"));
+    add(&app, &cookie, anna, LINK, "").await;
+    let id = source_id(&app, &uid()).await.unwrap();
+    let page_with = |state: crate::AppState, lang: crate::i18n::Lang| async move {
+        super::read_response(
+            crate::handlers::calendar::view_calendar(
+                axum::extract::State(state),
+                lang,
+                axum::extract::Path(anna),
+                axum::extract::Query(Default::default()),
+            )
+            .await,
+        )
+        .await
+        .text()
+    };
+    let today = page_with(app.state.clone(), crate::i18n::Lang::En).await;
+    assert!(!today.contains("data-warning=\"links-key-new\""));
+    assert!(!today.contains("The server&#39;s key has changed - add the link again."));
+
+    let mut rotated = app.state.clone();
+    rotated.music_key = Some(std::sync::Arc::new(
+        crate::music_secret::MusicKey::from_bytes(&[7; 32]),
+    ));
+    // Nothing fetched yet: the stored error is still none.
+    assert_eq!(source_error(&app, id).await, None);
+    let page = page_with(rotated.clone(), crate::i18n::Lang::En).await;
+    let links = super::settings_pages::part(&page, "id=\"links\"", "</section>");
+    assert!(links.contains("data-warning=\"links-key-new\""), "{links}");
+    assert!(links.contains(
+        "The server&#39;s key has changed, so these links can&#39;t be fetched any more"
+    ));
+    assert!(links.contains(
+        "<span class=\"row-sub\" data-link-failing>The server&#39;s key has changed - add the link again."
+    ));
+    let nb = page_with(rotated.clone(), crate::i18n::Lang::Nb).await;
+    assert!(nb.contains("Serverens nøkkel er byttet, så disse lenkene kan ikke hentes lenger"));
+    // Without a key at all the form's own line says it, not this one.
+    let mut none = app.state.clone();
+    none.music_key = None;
+    assert!(
+        !page_with(none, crate::i18n::Lang::En)
+            .await
+            .contains("data-warning=\"links-key-new\"")
+    );
+
+    // The link pasted again is sealed with today's key: the notice goes.
+    app.fetch.answer(LINK, 200, one_event("a", "Again"));
+    calendar_feeds::add(&rotated, anna, LINK, "", Utc::now())
+        .await
+        .unwrap();
+    let mended = page_with(rotated, crate::i18n::Lang::En).await;
+    assert!(!mended.contains("data-warning=\"links-key-new\""));
+    assert!(!mended.contains("data-link-failing"));
+}
+
 /// QA L5: a LAN link whose name now resolves publicly goes public for good; plain http's warning follows what the
 /// name resolves to at each fetch; a LAN link's redirect to another host is refused.
 #[tokio::test]

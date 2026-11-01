@@ -891,12 +891,16 @@ pub struct LinkRow {
     pub cut: i64,
     pub unknown_tz: i64,
     pub churn: i64,
+    /// The music key's fingerprint the link is sealed with: another than today's key's means the key file was made
+    /// anew (E6's L3) - the link can't be fetched until it is pasted again, though `error` says so only after its
+    /// next fetch.
+    pub key_fp: String,
 }
 
 pub async fn links(db: &SqlitePool, device_id: i64) -> Result<Vec<LinkRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT s.uid, d.name, s.host, s.lan_http, s.ok_at, s.error, s.error_status, s.events, s.cut, \
-         s.unknown_tz, s.churn FROM device_calendar_feeds d \
+         s.unknown_tz, s.churn, s.url_key_fp AS key_fp FROM device_calendar_feeds d \
          JOIN calendar_sources s ON s.id = d.source_id WHERE d.device_id = ? ORDER BY d.created_at, s.uid",
     )
     .bind(device_id)
