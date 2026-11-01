@@ -390,6 +390,10 @@ test("the card shows from the Home Screen once the worker is ready, and Turn On 
     assert.strictEqual(page.calls.length, 1, "subscribe first, in the tap");
     assert.ok(page.calls[0][1].applicationServerKey instanceof Uint8Array);
     assert.strictEqual(page.calls[0][1].userVisibleOnly, true);
+    // Disabled at the tap: a second tap while the prompt runs asks nothing more.
+    assert.strictEqual(on.disabled, true);
+    on.click();
+    assert.strictEqual(page.calls.length, 1);
     await settle();
     assert.deepStrictEqual(page.submitted, ["on"]);
     assert.strictEqual(page.card.elements.endpoint.value, ENDPOINT);
@@ -479,4 +483,6 @@ test("a refused prompt says blocked and drops Turn On; another failure says try 
     await settle();
     assert.strictEqual(page.parts["[data-offer-line]"].textContent, "Couldn't turn notifications on");
     assert.strictEqual(page.parts["[data-offer-on]"].hidden, false);
+    // Enabled again after the failure, so a second try works.
+    assert.strictEqual(page.parts["[data-offer-on]"].disabled, false);
 });

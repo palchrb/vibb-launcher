@@ -89,6 +89,14 @@ class LockActivity : UIObjectActivity() {
         render()
     }
 
+    /** A redirect brought this instance back ([start]'s SINGLE_TOP, E6's L5): already resumed, onStart doesn't run, so
+     * a moved end or budget is drawn here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        render()
+    }
+
     /** Design 25 (QA Q1): a glance row the kid tapped on the PIN lock under this rule, handed over
      * by the unlock - its conversation (or the phone book) opens over this screen if the rule
      * leaves it usable, so Back returns here. */

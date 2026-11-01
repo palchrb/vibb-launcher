@@ -180,6 +180,7 @@
                 <form method="post" action="/devices/{{ device.id }}/start-pause#quick" class="confirm-body act-sheet-body">
                     <p>Unlock {{ device.name }}'s phone for 2 hours? Apps, Settings and the Play Store open. It locks again by itself, or with Lock again.</p>
                     <button type="submit" class="button-destructive">Unlock</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}

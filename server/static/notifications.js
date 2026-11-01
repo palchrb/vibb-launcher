@@ -192,17 +192,21 @@
         }
 
         onButton.addEventListener("click", function () {
-            if (!registration) return;
-            registration.pushManager.subscribe({
+            if (!registration || onButton.disabled) return;
+            // One subscribe and one post per tap: a second tap while the prompt or the post runs does nothing.
+            var asked = registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: decodeKey(card.getAttribute("data-key"), win)
-            }).then(function (subscription) {
+            });
+            onButton.disabled = true;
+            asked.then(function (subscription) {
                 var json = subscription.toJSON();
                 card.elements.endpoint.value = json.endpoint;
                 card.elements.p256dh.value = json.keys.p256dh;
                 card.elements.auth.value = json.keys.auth;
                 card.submit();
             }, function () {
+                onButton.disabled = false;
                 if (win.Notification && win.Notification.permission === "denied") {
                     onButton.hidden = true;
                     line.textContent = card.getAttribute("data-blocked");

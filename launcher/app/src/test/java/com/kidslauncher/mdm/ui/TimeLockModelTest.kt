@@ -260,6 +260,9 @@ class TimeLockModelTest {
         assertTrue(
             "intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)" in startNow,
         )
+        // A reused instance that is already resumed gets no onStart: its new intent draws a moved end or budget.
+        val newIntent = body(activity, "override fun onNewIntent(intent: Intent)")
+        assertTrue("super.onNewIntent(intent)" in newIntent && "setIntent(intent)" in newIntent && "render()" in newIntent)
         // No other intent for it anywhere: every redirect goes through LockActivity.start.
         val main = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
         val builders = main.walkTopDown().filter { it.extension == "kt" }

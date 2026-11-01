@@ -1639,7 +1639,7 @@ async fn every_startup_image_has_its_screens_size() {
     assert_eq!(themes, ["#0C0C14"]);
 }
 
-/// Every confirm has a Cancel (PLAN "PWA small things" (3), 2026-11-01): each `<details class="confirm">` in the
+/// Every confirm has a Cancel (PLAN "PWA small things" (3), 2026-11-01): each `<details>` whose class has `confirm` in the
 /// templates, partials too, ends its form with the Cancel partial, which `static/confirm.js` (deferred, from the head)
 /// shows and wires; rendered, it is hidden without JS and in the reader's language.
 #[tokio::test]
@@ -1652,12 +1652,14 @@ async fn every_confirm_has_a_cancel() {
             files.push(path);
         }
     }
+    // Any class order (the summary's "Unlock 2 h…" is `act-sheet confirm`).
+    let opening = regex::Regex::new(r#"<details\s+class="[^"]*\bconfirm\b"#).unwrap();
     let mut confirms = 0;
     for path in files {
         let text = std::fs::read_to_string(&path).unwrap();
         let mut from = 0;
-        while let Some(at) = text[from..].find("<details class=\"confirm") {
-            let start = from + at;
+        while let Some(found) = opening.find_at(&text, from) {
+            let start = found.start();
             let end = start + text[start..].find("</details>").unwrap();
             let block = &text[start..end];
             let cancel = block
@@ -1672,7 +1674,7 @@ async fn every_confirm_has_a_cancel() {
             from = end;
         }
     }
-    assert!(confirms >= 32, "{confirms} confirms");
+    assert!(confirms >= 33, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
     assert!(head.contains("<script src=\"/static/confirm.js?v=1\" defer></script>"));
     let app = TestApp::new().await;

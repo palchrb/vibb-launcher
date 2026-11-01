@@ -1299,7 +1299,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 ## A Cancel in every confirm (2026-11-01, PLAN "PWA small things left from the old list" (3), branch `small-c`)
 
-- Every `<details class="confirm">` (32, in the pages and partials) ends its form with `partials/confirm_cancel.html`:
+- Every `<details>` whose class has `confirm` (33, in the pages and partials - the summary's "Unlock 2 h…" is `act-sheet confirm`) ends its form with `partials/confirm_cancel.html`:
   `<button type="button" class="button-cancel" data-confirm-cancel hidden>` "Cancel" / "Avbryt" (`common.cancel`), a
   quiet text button under the red one. `static/confirm.js` (deferred, from the head partial; one listener on the
   document) shows them and, on a click, closes the confirm it sits in and focuses its summary
