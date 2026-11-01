@@ -252,6 +252,24 @@ class TimeLockModelTest {
         assertTrue("override fun handleOnBackPressed() {}" in activity)
     }
 
+    /** E6's L5: the redirects stacked a LockActivity per call in Home's task - the one way in reuses the instance. */
+    @Test
+    fun `every start reuses the screen in Home's task - one instance, never a stack`() {
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        val startNow = body(activity, "private fun startNow(")
+        assertTrue(
+            "intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)" in startNow,
+        )
+        // No other intent for it anywhere: every redirect goes through LockActivity.start.
+        val main = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
+        val builders = main.walkTopDown().filter { it.extension == "kt" }
+            .filter { Regex("""Intent\([^)]*\bLockActivity::class""").containsMatchIn(it.readText()) }.map { it.name }.toList()
+        assertEquals(listOf("LockActivity.kt"), builders)
+        // A standard activity in Home's task: no own affinity, no launch mode the flags would fight.
+        val entry = file("AndroidManifest.xml").readText().substringAfter("android:name=\".ui.LockActivity\"").substringBefore("/>")
+        assertFalse("launchMode" in entry || "taskAffinity" in entry)
+    }
+
     private fun code(path: String): String =
         file(path).readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""(?m)//.*$"""), "")
 

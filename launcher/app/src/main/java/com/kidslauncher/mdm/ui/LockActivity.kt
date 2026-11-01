@@ -273,7 +273,8 @@ class LockActivity : UIObjectActivity() {
 
         /** Starts the time-rule screen. It is never held back by handy's PIN lock (QA 10 #4): while
          * that is LOCKED it is brought back on top right away, so the kid sees the PIN first, then
-         * this screen. */
+         * this screen. One instance (E6's L5): a redirect while one is in Home's task reuses it -
+         * [startNow]'s CLEAR_TOP | SINGLE_TOP, what it opened above it there (the phone book) closes. */
         fun start(context: Context) {
             // Design 59d step A (qa-59b-code B-1): not showWhenLocked - as Android's face with its keyguard locked it
             // waits for the unlock (it would land behind the keyguard and un-occlude it); at once otherwise.
@@ -282,7 +283,9 @@ class LockActivity : UIObjectActivity() {
 
         private fun startNow(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // E6's L5: each redirect (the rule's start, Home, Dagen, Kid Settings) stacked another instance in Home's
+            // task - the one there is brought back instead (onNewIntent, then onStart's render).
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             // Design 59b §3: one of our own starts - the face's loss rule doesn't cover it (the glance comes on top next).
             PinLockRuntime.startOwn(context, intent, "the time-rule screen")
             PinLockRuntime.afterTimeRuleShown(context)
