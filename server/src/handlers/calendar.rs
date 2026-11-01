@@ -3,7 +3,9 @@
 //!
 //! - `GET /devices/{id}/calendar` (`device_calendar.html`): the groups top to bottom - Dagen (`#dagen`: on Home, the
 //!   kid's own events), On the lock screen (`#lock`: the "Next" line, the reminders' master switch), Calendars shown
-//!   (`#calendars`: the phone's last report, per calendar Shown and its reminder), Title rules (`#rules`).
+//!   (`#calendars`: the phone's last report, per calendar Shown and its reminder), Title rules (`#rules`); between
+//!   them "Fetched by the server" (`#sources`: the calendar links and CalDAV accounts, each a row to its own page -
+//!   `crate::handlers::calendar_sources`).
 //! - `POST .../calendar/dagen`, `.../calendar/lock`, `.../calendar/calendars` (one form, exactly the rows it was sent),
 //!   `.../calendar/calendars/{key}/remove`: auto-saving forms, each back to its group (a save never jumps).
 //! - The rule editor `GET .../calendar/rules/new` and `.../rules/{rule}`, saved by `POST .../calendar/rules` and
@@ -32,21 +34,22 @@ use crate::calendar::{
     PATTERN_MAX, PolicyCalendar, REMIND_MINUTES, Rule, TEXT_MAX, assign_free_colors,
 };
 use crate::calendar_feeds;
+use crate::handlers::calendar_sources::{self, SourceRow};
 use crate::handlers::schedules::form_pairs;
-use crate::i18n::{Lang, Words, t, t_count, t_params};
+use crate::i18n::{Lang, Words, t, t_params};
 
-fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
+pub(super) fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
     fields
         .iter()
         .find(|(k, _)| k == name)
         .map_or("", |(_, v)| v.as_str())
 }
 
-fn has(fields: &[(String, String)], name: &str) -> bool {
+pub(super) fn has(fields: &[(String, String)], name: &str) -> bool {
     fields.iter().any(|(k, _)| k == name)
 }
 
-fn read_failed(lang: Lang, err: sqlx::Error, what: &str) -> Response {
+pub(super) fn read_failed(lang: Lang, err: sqlx::Error, what: &str) -> Response {
     tracing::error!(%err, "can't read {what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -56,7 +59,7 @@ fn read_failed(lang: Lang, err: sqlx::Error, what: &str) -> Response {
 }
 
 /// A save (or a render) that failed: a 500 in the page's language, nothing changed.
-fn failed(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
+pub(super) fn failed(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -70,7 +73,7 @@ fn bad(lang: Lang, key: &str) -> Response {
     crate::i18n::error(lang, StatusCode::BAD_REQUEST, key)
 }
 
-fn render(lang: Lang, template: impl Template, status: StatusCode) -> Response {
+pub(super) fn render(lang: Lang, template: impl Template, status: StatusCode) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
         Err(err) => failed(lang, err, "failed to render a calendar page"),
@@ -78,7 +81,7 @@ fn render(lang: Lang, template: impl Template, status: StatusCode) -> Response {
 }
 
 /// The phone's name, or the answer: 404 for an unknown phone, 500 on a DB error.
-async fn phone(state: &AppState, lang: Lang, id: i64) -> Result<String, Box<Response>> {
+pub(super) async fn phone(state: &AppState, lang: Lang, id: i64) -> Result<String, Box<Response>> {
     match sqlx::query_scalar(
         "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
     )
@@ -94,7 +97,7 @@ async fn phone(state: &AppState, lang: Lang, id: i64) -> Result<String, Box<Resp
     }
 }
 
-fn saved(state: &AppState, id: i64, anchor: &str) -> Response {
+pub(super) fn saved(state: &AppState, id: i64, anchor: &str) -> Response {
     let _ = state.command_notify.send(id);
     Redirect::to(&format!("/devices/{id}/calendar#{anchor}")).into_response()
 }
@@ -146,52 +149,6 @@ pub struct CalendarView {
     pub colors: Vec<ColorChoice>,
 }
 
-/// One calendar link on the page (design 72 §5): its name, its host (the link itself is sealed, never shown again)
-/// and its status lines, the first the fetch's.
-pub struct LinkView {
-    pub uid: String,
-    pub name: String,
-    pub host: String,
-    pub lines: Vec<String>,
-    /// The first line says something failed (or a held empty answer).
-    pub failing: bool,
-}
-
-/// The add form as typed (a refusal renders it again).
-#[derive(Default)]
-pub struct AddForm {
-    pub url: String,
-    pub name: String,
-    pub error: Option<String>,
-}
-
-/// The CalDAV form as typed (design 72 step 2; a refusal renders it again - never the password).
-#[derive(Default)]
-pub struct CaldavForm {
-    pub server: String,
-    pub username: String,
-    pub error: Option<String>,
-}
-
-/// One calendar of a CalDAV account, ticked on this phone or not.
-pub struct CaldavChoice {
-    pub id: String,
-    pub name: String,
-    pub ticked: bool,
-}
-
-/// One CalDAV account on the page: who and where, its status lines (the login, the hosts the password goes to) and
-/// its calendars to tick for this phone.
-pub struct CaldavView {
-    pub id: i64,
-    pub username: String,
-    pub host: String,
-    pub lines: Vec<String>,
-    /// The first line says the account is stopped (a refused password, a new host, a new key).
-    pub failing: bool,
-    pub calendars: Vec<CaldavChoice>,
-}
-
 /// One title rule in the list.
 pub struct RuleView {
     pub id: i64,
@@ -236,18 +193,14 @@ struct CalendarTemplate {
     rules_skipped: Vec<i64>,
     can_add_rule: bool,
     notice: Option<&'static str>,
-    links: Vec<LinkView>,
-    can_add_link: bool,
-    /// No music key: nothing can be sealed, the form says why and has no submit (QA L11).
-    links_off: bool,
+    /// "Fetched by the server" (`#sources`): the links and the CalDAV accounts, each a row to its own page.
+    sources: Vec<SourceRow>,
+    /// "Add Calendar…": the phone has room for another link or calendar.
+    can_add_source: bool,
+    /// No music key: nothing can be sealed, the group says why and has no add row (QA L11).
+    sources_off: bool,
     /// A link is sealed with a music key the server no longer has (E6's L3): paste it again.
     links_key_new: bool,
-    add: AddForm,
-    links_notice: Option<&'static str>,
-    caldav: Vec<CaldavView>,
-    can_add_caldav: bool,
-    caldav_form: CaldavForm,
-    caldav_notice: Option<&'static str>,
 }
 crate::i18n::words!(CalendarTemplate);
 
@@ -437,19 +390,7 @@ pub async fn view_calendar(
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
     let notice = query.get("notice").map(String::as_str);
-    let forms = (AddForm::default(), CaldavForm::default());
-    render_page(&state, lang, id, notice, forms, StatusCode::OK).await
-}
-
-/// The page, with a notice from the query and the add form as typed.
-async fn render_page(
-    state: &AppState,
-    lang: Lang,
-    id: i64,
-    notice: Option<&str>,
-    (add, caldav_form): (AddForm, CaldavForm),
-    status: StatusCode,
-) -> Response {
+    let state = &state;
     let device_name = match phone(state, lang, id).await {
         Ok(name) => name,
         Err(answer) => return *answer,
@@ -472,7 +413,6 @@ async fn render_page(
     };
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
-    let feeds_capable = capabilities.iter().any(|c| c == calendar_feeds::CAPABILITY);
     let link_keys: HashMap<String, &calendar_feeds::LinkRow> = links
         .iter()
         .map(|l| (calendar_feeds::calendar_key(&l.uid), l))
@@ -496,7 +436,7 @@ async fn render_page(
             let saved = saved_by_key.get(c.key.as_str()).copied();
             let mut sub = calendar_sub(lang, &c.account_type, c.source.as_deref());
             if let Some(link) = link_keys.get(&c.key) {
-                sub = link_kind(lang, link).to_string();
+                sub = calendar_sources::link_kind(lang, link).to_string();
             } else if let Some(link) = c
                 .source
                 .as_deref()
@@ -532,7 +472,7 @@ async fn render_page(
             name: link.name.clone(),
             sub: format!(
                 "{} · {}",
-                link_kind(lang, link),
+                calendar_sources::link_kind(lang, link),
                 t(lang, "calendar.links.waiting")
             ),
             shown: saved.is_none_or(|s| s.shown),
@@ -578,46 +518,8 @@ async fn render_page(
         })
         .collect();
     let ids: HashSet<i64> = rules.iter().map(|r| r.id).collect();
-    let reported_keys: HashSet<&str> = report
-        .iter()
-        .flat_map(|r| &r.calendars)
-        .map(|c| c.key.as_str())
-        .collect();
-    // E6's L3: the server made a new music key (its file was gone at the start) - a link sealed with the old one turns
-    // `key_lost` only at its next fetch, so the page says so at once, on the group and on each such row.
-    let key_lost = |l: &calendar_feeds::LinkRow| {
-        state
-            .music_key
-            .as_ref()
-            .is_some_and(|key| key.fingerprint != l.key_fp)
-    };
-    // A CalDAV calendar is sealed again by its account's next Test, which the account's own row asks for.
-    let links_key_new = links.iter().filter(|l| l.kind != "caldav").any(key_lost);
-    let link_views = links
-        .iter()
-        .map(|l| {
-            let on_phone = reported_keys.contains(calendar_feeds::calendar_key(&l.uid).as_str());
-            let applied = report.iter().flat_map(|r| &r.feeds).find(|f| f.id == l.uid);
-            link_view(
-                lang,
-                &zone,
-                now,
-                l,
-                key_lost(l),
-                feeds_capable,
-                on_phone,
-                applied,
-            )
-        })
-        .collect();
-    let can_add_link = links.len() < calendar_feeds::MAX_LINKS_PER_PHONE as usize;
-    let mine: HashSet<&str> = links.iter().map(|l| l.uid.as_str()).collect();
-    let key_now = state.music_key.as_ref().map(|k| k.fingerprint.as_str());
-    let caldav_views = accounts
-        .iter()
-        .map(|a| caldav_view(lang, &zone, now, a, key_now, &mine))
-        .collect();
-    let can_add_caldav = (accounts.len() as i64) < crate::caldav::MAX_ACCOUNTS;
+    let (sources, links_key_new) =
+        calendar_sources::source_rows(state, lang, &zone, now, id, &links, &accounts);
     render(
         lang,
         CalendarTemplate {
@@ -650,615 +552,13 @@ async fn render_page(
                 Some("rule_gone") => Some("calendar.rules.gone"),
                 _ => None,
             },
-            links: link_views,
-            can_add_link,
-            links_off: state.music_key.is_none(),
+            can_add_source: links.len() < calendar_feeds::MAX_LINKS_PER_PHONE as usize,
+            sources,
+            sources_off: state.music_key.is_none(),
             links_key_new,
-            add,
-            links_notice: match notice {
-                Some("fetch_wait") => Some("calendar.links.fetch_wait"),
-                _ => None,
-            },
-            caldav: caldav_views,
-            can_add_caldav,
-            caldav_form,
-            caldav_notice: match notice {
-                Some("caldav_wait") => Some("calendar.caldav.test_wait"),
-                Some("caldav_retype") => Some("calendar.caldav.error.retype"),
-                Some("caldav_too_long") => Some("calendar.caldav.error.too_long"),
-                Some("caldav_full") => Some("calendar.caldav.error.too_many_calendars"),
-                Some("caldav_sources_full") => Some("calendar.links.error.too_many_sources"),
-                _ => None,
-            },
         },
-        status,
+        StatusCode::OK,
     )
-}
-
-// ---- calendar links (design 72 §5) -------------------------------------------------------------
-
-/// A stored stamp as the parent reads it: the clock today, else the date and the clock (`calendar.links.when_date`:
-/// "27.10. 14:05", "10/27 14:05").
-fn when_text(
-    lang: Lang,
-    zone: &crate::display_time::Zone,
-    stored: Option<&str>,
-    now: chrono::DateTime<chrono::Utc>,
-) -> String {
-    use chrono::Datelike;
-    let Some(at) = stored.and_then(crate::music_sweep::parse_stamp) else {
-        return "-".to_string();
-    };
-    if zone.is_today(at, now) {
-        return zone.clock(at);
-    }
-    let local = zone.local(at);
-    t_params(
-        lang,
-        "calendar.links.when_date",
-        &[
-            ("day", &local.day().to_string()),
-            ("month", &local.month().to_string()),
-            ("time", &zone.clock(at)),
-        ],
-    )
-}
-
-/// A fetch error's code (`calendar_feeds::FeedError`) in words, never the link or the body.
-pub fn why_text(lang: Lang, code: &str, status: Option<i64>) -> String {
-    let key = match code {
-        "not_found" => "calendar.links.why.not_found",
-        "status" => "calendar.links.why.status",
-        "timeout" => "calendar.links.why.timeout",
-        "too_big" => "calendar.links.why.too_big",
-        "not_calendar" => "calendar.links.why.not_calendar",
-        "private_address" => "calendar.links.why.private_address",
-        "key_lost" => "calendar.links.why.key_lost",
-        "insecure" => "calendar.links.why.insecure",
-        "unreadable" => "calendar.links.why.unreadable",
-        _ => "calendar.links.why.network",
-    };
-    t_params(lang, key, &[("status", &status.unwrap_or(0).to_string())])
-}
-
-/// A link's status lines (§5): the fetch (or its error with the set's age), then the phone, the counts, the warning.
-/// `key_lost`: sealed with a music key the server no longer has - said before the next fetch stores it (E6's L3).
-#[allow(clippy::too_many_arguments)]
-fn link_view(
-    lang: Lang,
-    zone: &crate::display_time::Zone,
-    now: chrono::DateTime<chrono::Utc>,
-    link: &calendar_feeds::LinkRow,
-    key_lost: bool,
-    capable: bool,
-    on_phone: bool,
-    applied: Option<&calendar::ReportedFeed>,
-) -> LinkView {
-    let when = when_text(lang, zone, link.ok_at.as_deref(), now);
-    let caldav = link.kind == "caldav";
-    // A stopped CalDAV account says so on every phone's row at once, before its calendars' next fetch (QA M5).
-    let stopped = link
-        .account_state
-        .as_deref()
-        .filter(|s| matches!(*s, "login_refused" | "host_changed"));
-    let error = if key_lost {
-        Some("key_lost")
-    } else {
-        stopped.or(link.error.as_deref())
-    };
-    let why = |code: &str, status: Option<i64>| {
-        if caldav {
-            caldav_why(lang, code, status)
-        } else {
-            why_text(lang, code, status)
-        }
-    };
-    let (first, failing) = match error {
-        Some("empty") => (
-            t_params(lang, "calendar.links.status.held_empty", &[("when", &when)]),
-            true,
-        ),
-        Some(code) => (
-            t_params(
-                lang,
-                "calendar.links.status.failing",
-                &[("why", &why(code, link.error_status)), ("when", &when)],
-            ),
-            true,
-        ),
-        None => (
-            t_count(
-                lang,
-                "calendar.links.status.fetched",
-                link.events,
-                &[("when", &when)],
-            ),
-            false,
-        ),
-    };
-    let mut lines = vec![first];
-    if !capable {
-        lines.push(t(lang, "calendar.links.update_phone").to_string());
-    } else if !on_phone {
-        lines.push(t(lang, "calendar.links.waiting").to_string());
-    }
-    let count = |key: &str, n: i64| t_count(lang, key, n, &[]);
-    if let Some(refused) = applied.map(|a| a.refused).filter(|n| *n > 0) {
-        lines.push(count("calendar.links.status.refused", refused));
-    }
-    if link.unknown_tz > 0 {
-        lines.push(count("calendar.links.status.unknown_tz", link.unknown_tz));
-    }
-    if link.cut > 0 {
-        lines.push(count("calendar.links.status.cut", link.cut));
-    }
-    if link.churn >= calendar_feeds::CHURN_FETCHES {
-        lines.push(t(lang, "calendar.links.status.churn").to_string());
-    }
-    if link.lan_http {
-        lines.push(t(lang, "calendar.links.status.lan_http").to_string());
-    }
-    LinkView {
-        uid: link.uid.clone(),
-        name: link.name.clone(),
-        host: match &link.account {
-            Some(username) if caldav => format!(
-                "{} · {username} · {}",
-                t(lang, "calendar.caldav.kind"),
-                link.host
-            ),
-            _ => link.host.clone(),
-        },
-        lines,
-        failing,
-    }
-}
-
-/// "Kalenderlenke" or "CalDAV": what a link's calendar is in "Calendars shown".
-fn link_kind(lang: Lang, link: &calendar_feeds::LinkRow) -> &'static str {
-    if link.kind == "caldav" {
-        t(lang, "calendar.caldav.kind")
-    } else {
-        t(lang, "calendar.links.kind")
-    }
-}
-
-/// A CalDAV fetch's or Test's code in words (`calendar.caldav.why.*`), never an address or a body.
-pub fn caldav_why(lang: Lang, code: &str, status: Option<i64>) -> String {
-    let key = match code {
-        "login_refused" => "calendar.caldav.why.login_refused",
-        "host_changed" => "calendar.caldav.why.host_changed",
-        "not_caldav" => "calendar.caldav.why.not_caldav",
-        "no_calendars" => "calendar.caldav.why.no_calendars",
-        "not_listed" => "calendar.caldav.why.not_listed",
-        "key_lost" => "calendar.caldav.why.key_lost",
-        "not_found" => "calendar.caldav.why.not_found",
-        "status" => "calendar.caldav.why.status",
-        "timeout" => "calendar.caldav.why.timeout",
-        "too_big" => "calendar.caldav.why.too_big",
-        "not_calendar" => "calendar.caldav.why.not_calendar",
-        "private_address" => "calendar.caldav.why.private_address",
-        "insecure" => "calendar.caldav.why.insecure",
-        "unreadable" => "calendar.caldav.why.unreadable",
-        _ => "calendar.caldav.why.network",
-    };
-    t_params(lang, key, &[("status", &status.unwrap_or(0).to_string())])
-}
-
-/// An account's status lines: signed in (when, how many calendars) or stopped (a refused password, a new host, a
-/// new music key - each "test again"), a later Test's failure, the hosts the password goes to, the LAN warning.
-fn caldav_view(
-    lang: Lang,
-    zone: &crate::display_time::Zone,
-    now: chrono::DateTime<chrono::Utc>,
-    account: &crate::caldav::AccountView,
-    key_now: Option<&str>,
-    mine: &HashSet<&str>,
-) -> CaldavView {
-    let calendars = account.calendars();
-    let key_lost = key_now.is_some_and(|fp| fp != account.key_fp);
-    let when = when_text(lang, zone, account.ok_at.as_deref(), now);
-    let (first, failing) = if key_lost {
-        (t(lang, "calendar.caldav.status.key_lost").to_string(), true)
-    } else {
-        match account.state.as_str() {
-            "login_refused" => (
-                t(lang, "calendar.caldav.status.login_refused").to_string(),
-                true,
-            ),
-            "host_changed" => (
-                t(lang, "calendar.caldav.status.host_changed").to_string(),
-                true,
-            ),
-            _ => (
-                t_count(
-                    lang,
-                    "calendar.caldav.status.ok",
-                    calendars.len() as i64,
-                    &[("when", &when)],
-                ),
-                false,
-            ),
-        }
-    };
-    let mut lines = vec![first];
-    if let Some(code) = account.test_error.as_deref().filter(|_| !failing) {
-        lines.push(t_params(
-            lang,
-            "calendar.caldav.status.last_test",
-            &[("why", &caldav_why(lang, code, account.test_status))],
-        ));
-    }
-    lines.push(t_params(
-        lang,
-        "calendar.caldav.hosts",
-        &[("hosts", &account.hosts().join(", "))],
-    ));
-    if account.lan_http {
-        lines.push(t(lang, "calendar.links.status.lan_http").to_string());
-    }
-    CaldavView {
-        id: account.id,
-        username: account.username.clone(),
-        host: crate::music_net::host_of(&account.server_url).unwrap_or_default(),
-        lines,
-        failing,
-        calendars: calendars
-            .iter()
-            .map(|c| CaldavChoice {
-                id: c.id.clone(),
-                name: c.name.clone(),
-                ticked: mine.contains(account.uid(c).as_str()),
-            })
-            .collect(),
-    }
-}
-
-/// The link `uid` of this phone: its source id, `None` when the phone hasn't it (removed meanwhile).
-async fn link_of(state: &AppState, id: i64, uid: &str) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT s.id FROM calendar_sources s JOIN device_calendar_feeds d ON d.source_id = s.id \
-         WHERE s.uid = ? AND d.device_id = ?",
-    )
-    .bind(uid)
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-}
-
-fn back_to_links(id: i64) -> Response {
-    Redirect::to(&format!("/devices/{id}/calendar#links")).into_response()
-}
-
-/// The auto-pick after a links form's save (add, rename, remove - not "Fetch now", where no calendar can appear): a
-/// parent who sets the phone up from the links alone may never touch the calendars form, so every calendar the phone
-/// reports - and every link's own calendar, whose key the server knows before the phone has it - gets its colour
-/// here too, and a removed link's colour-only row goes. Best effort: the link's write is done, so a failure here is
-/// logged, never a 500.
-async fn colors_after_link_save(state: &AppState, id: i64) {
-    let result = async {
-        let mut tx = state.db.begin().await?;
-        assign_free_colors(&mut tx, id, &[], 0).await?;
-        tx.commit().await
-    }
-    .await;
-    if let Err(err) = result {
-        tracing::warn!(device_id = id, %err, "couldn't pick the calendars' colours after a link save");
-    }
-}
-
-/// POST `/devices/{id}/calendar/links`: `url` and an optional `name` (design 72 §5). Added (or attached to the
-/// source the link already is) → 303 to `#link-<uid>`; refused → the page again as typed (400, the reason in the
-/// group, never the body). The phone is nudged.
-pub async fn add_link(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path(id): Path<i64>,
-    body: Bytes,
-) -> Response {
-    let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let (url, name) = (field(&fields, "url"), field(&fields, "name"));
-    let error = match calendar_feeds::add(&state, id, url, name, chrono::Utc::now()).await {
-        Ok(uid) => {
-            colors_after_link_save(&state, id).await;
-            return saved(&state, id, &format!("link-{uid}"));
-        }
-        Err(calendar_feeds::AddError::Db(err)) => {
-            return failed(lang, err, "couldn't add a calendar link");
-        }
-        Err(calendar_feeds::AddError::Refused(key)) => t(lang, key).to_string(),
-        Err(calendar_feeds::AddError::Fetch(err)) => t_params(
-            lang,
-            "calendar.links.error.fetch",
-            &[("why", &why_text(lang, err.code, err.status.map(i64::from)))],
-        ),
-    };
-    let add = AddForm {
-        url: crate::audit::clip(url, calendar_feeds::MAX_URL_CHARS).to_string(),
-        name: crate::audit::clip(name, 200).to_string(),
-        error: Some(error),
-    };
-    let forms = (add, CaldavForm::default());
-    render_page(&state, lang, id, None, forms, StatusCode::BAD_REQUEST).await
-}
-
-/// POST `/devices/{id}/calendar/links/{uid}/name`: `name` (1-60 after cleaning; empty → the feed's, else the host),
-/// back to `#link-<uid>`; the phone renames its calendar from the policy alone.
-pub async fn rename_link(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, uid)): Path<(i64, String)>,
-    body: Bytes,
-) -> Response {
-    let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let found: Result<Option<(i64, Option<String>, String)>, sqlx::Error> = sqlx::query_as(
-        "SELECT s.id, s.feed_name, s.host FROM calendar_sources s JOIN device_calendar_feeds d \
-         ON d.source_id = s.id WHERE s.uid = ? AND d.device_id = ?",
-    )
-    .bind(&uid)
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await;
-    let (source_id, feed_name, host) = match found {
-        Ok(Some(found)) => found,
-        Ok(None) => return back_to_links(id),
-        Err(err) => return read_failed(lang, err, "a calendar link"),
-    };
-    let name = calendar_feeds::name_of(field(&fields, "name"), feed_name.as_deref(), &host);
-    match sqlx::query(
-        "UPDATE device_calendar_feeds SET name = ? WHERE device_id = ? AND source_id = ?",
-    )
-    .bind(&name)
-    .bind(id)
-    .bind(source_id)
-    .execute(&state.db)
-    .await
-    {
-        Ok(_) => {
-            colors_after_link_save(&state, id).await;
-            saved(&state, id, &format!("link-{uid}"))
-        }
-        Err(err) => failed(lang, err, "couldn't rename a calendar link"),
-    }
-}
-
-/// POST `/devices/{id}/calendar/links/{uid}/fetch`: "Fetch now", at most once per source per 5 minutes (else back
-/// with `?notice=fetch_wait`); the fetch runs before the answer (at most 60 s), back to `#link-<uid>`. Not a save.
-pub async fn fetch_link(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, uid)): Path<(i64, String)>,
-) -> Response {
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let source_id = match link_of(&state, id, &uid).await {
-        Ok(Some(source)) => source,
-        Ok(None) => return back_to_links(id),
-        Err(err) => return read_failed(lang, err, "a calendar link"),
-    };
-    let now = chrono::Utc::now();
-    // One claim: two taps at once fetch once.
-    let claimed = sqlx::query(
-        "UPDATE calendar_sources SET fetch_now_at = ? WHERE id = ? \
-         AND (fetch_now_at IS NULL OR fetch_now_at <= ?)",
-    )
-    .bind(crate::music_sweep::stamp(now))
-    .bind(source_id)
-    .bind(crate::music_sweep::stamp(
-        now - calendar_feeds::FETCH_NOW_GAP,
-    ))
-    .execute(&state.db)
-    .await;
-    match claimed {
-        Ok(done) if done.rows_affected() == 0 => {
-            return Redirect::to(&format!(
-                "/devices/{id}/calendar?notice=fetch_wait#link-{uid}"
-            ))
-            .into_response();
-        }
-        Ok(_) => {}
-        Err(err) => return failed(lang, err, "couldn't start a calendar link's fetch"),
-    }
-    if let Err(err) = calendar_feeds::refresh(&state, source_id, now).await {
-        return failed(lang, err, "couldn't store a calendar link's fetch");
-    }
-    Redirect::to(&format!("/devices/{id}/calendar#link-{uid}")).into_response()
-}
-
-/// POST `/devices/{id}/calendar/links/{uid}/remove`: the link goes off this phone (its calendar with it, at the
-/// phone's next sync); a source no phone names goes at once (the migration's trigger). The calendar's settings and
-/// rules stay, by its key, and come back with the same link. Back to `#links`.
-pub async fn remove_link(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, uid)): Path<(i64, String)>,
-) -> Response {
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    match sqlx::query(
-        "DELETE FROM device_calendar_feeds WHERE device_id = ? \
-         AND source_id = (SELECT id FROM calendar_sources WHERE uid = ?)",
-    )
-    .bind(id)
-    .bind(&uid)
-    .execute(&state.db)
-    .await
-    {
-        Ok(_) => {
-            colors_after_link_save(&state, id).await;
-            saved(&state, id, "links")
-        }
-        Err(err) => failed(lang, err, "couldn't remove a calendar link"),
-    }
-}
-
-// ---- CalDAV accounts (design 72 step 2, `crate::caldav`) ---------------------------------------
-
-fn caldav_back(id: i64, account: i64, notice: Option<&str>) -> Response {
-    let query = notice.map(|n| format!("?notice={n}")).unwrap_or_default();
-    Redirect::to(&format!("/devices/{id}/calendar{query}#caldav-{account}")).into_response()
-}
-
-/// POST `/devices/{id}/calendar/caldav`: `server` (or an e-mail), `username` (empty: the e-mail), `password` (the app
-/// password). Test: passed → 303 to `#caldav-<account>`, its calendars listed to tick; refused or failed → the page
-/// again as typed (400, the reason in the group; never the password). Not a save (`settings_log::NOT_SAVES`): the
-/// phone gets nothing until a calendar is ticked.
-pub async fn test_caldav(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path(id): Path<i64>,
-    body: Bytes,
-) -> Response {
-    let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let (server, username) = (field(&fields, "server"), field(&fields, "username"));
-    let tested = crate::caldav::test_new(
-        &state,
-        server,
-        username,
-        field(&fields, "password"),
-        chrono::Utc::now(),
-    )
-    .await;
-    let error = match tested {
-        Ok(account) => return caldav_back(id, account, None),
-        Err(crate::caldav::TestError::Db(err)) => {
-            return failed(lang, err, "couldn't test a CalDAV account");
-        }
-        Err(crate::caldav::TestError::Refused(key)) => t(lang, key).to_string(),
-        Err(crate::caldav::TestError::Wait) => t(lang, "calendar.caldav.test_wait").to_string(),
-        Err(crate::caldav::TestError::Failed(err)) => {
-            caldav_why(lang, err.code, err.status.map(i64::from))
-        }
-    };
-    let form = CaldavForm {
-        server: crate::audit::clip(server, crate::caldav::MAX_SERVER_CHARS).to_string(),
-        username: crate::audit::clip(username, crate::caldav::MAX_USERNAME_CHARS).to_string(),
-        error: Some(error),
-    };
-    let forms = (AddForm::default(), form);
-    render_page(&state, lang, id, None, forms, StatusCode::BAD_REQUEST).await
-}
-
-/// POST `/devices/{id}/calendar/caldav/{account}/test`: "Test again", with `password` when one is typed (else the
-/// stored one). Back to `#caldav-<account>`, where the result is the account's status lines; too soon →
-/// `?notice=caldav_wait`, no password to use → `?notice=caldav_retype`. Not a save.
-pub async fn test_caldav_again(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, account)): Path<(i64, i64)>,
-    body: Bytes,
-) -> Response {
-    let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let tested = crate::caldav::test_again(
-        &state,
-        account,
-        field(&fields, "password"),
-        chrono::Utc::now(),
-    )
-    .await;
-    match tested {
-        Ok(()) | Err(crate::caldav::TestError::Failed(_)) => caldav_back(id, account, None),
-        Err(crate::caldav::TestError::Db(err)) => {
-            failed(lang, err, "couldn't test a CalDAV account")
-        }
-        Err(crate::caldav::TestError::Wait) => caldav_back(id, account, Some("caldav_wait")),
-        Err(crate::caldav::TestError::Refused("calendar.caldav.error.gone")) => {
-            Redirect::to(&format!("/devices/{id}/calendar#caldav")).into_response()
-        }
-        Err(crate::caldav::TestError::Refused("calendar.caldav.error.too_long")) => {
-            caldav_back(id, account, Some("caldav_too_long"))
-        }
-        Err(crate::caldav::TestError::Refused(_)) => {
-            caldav_back(id, account, Some("caldav_retype"))
-        }
-    }
-}
-
-/// POST `/devices/{id}/calendar/caldav/{account}/calendars`: `cal` (every listed calendar's id) and `on_<id>` for the
-/// ticked ones - exactly the rows it was sent. A newly ticked calendar is fetched before the answer (each at most
-/// 60 s), so the phone's first sync has its events; back to `#caldav-<account>`, the phone nudged. Too many
-/// calendars on the phone → `?notice=caldav_full`, nothing saved.
-pub async fn save_caldav_calendars(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, account)): Path<(i64, i64)>,
-    body: Bytes,
-) -> Response {
-    let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    let listed: Vec<String> = fields
-        .iter()
-        .filter(|(k, _)| k == "cal")
-        .map(|(_, v)| v.clone())
-        .collect();
-    let ticked: HashSet<String> = listed
-        .iter()
-        .filter(|c| has(&fields, &format!("on_{c}")))
-        .cloned()
-        .collect();
-    let now = chrono::Utc::now();
-    match crate::caldav::save_ticks(&state, id, account, &listed, &ticked, now).await {
-        Ok(made) => {
-            for source in made {
-                if let Err(err) = calendar_feeds::refresh(&state, source, now).await {
-                    tracing::error!(source_id = source, %err, "couldn't store a CalDAV calendar's first fetch");
-                }
-            }
-            colors_after_link_save(&state, id).await;
-            let _ = state.command_notify.send(id);
-            caldav_back(id, account, None)
-        }
-        Err(crate::caldav::TickError::Gone) => {
-            crate::settings_log::refused(Redirect::to(&format!("/devices/{id}/calendar#caldav")))
-        }
-        Err(crate::caldav::TickError::Refused("calendar.links.error.too_many_sources")) => {
-            crate::settings_log::refused(caldav_back(id, account, Some("caldav_sources_full")))
-        }
-        Err(crate::caldav::TickError::Refused(_)) => {
-            crate::settings_log::refused(caldav_back(id, account, Some("caldav_full")))
-        }
-        Err(crate::caldav::TickError::Db(err)) => {
-            failed(lang, err, "couldn't save a phone's CalDAV calendars")
-        }
-    }
-}
-
-/// POST `/devices/{id}/calendar/caldav/{account}/remove`: the account goes (confirmed: its calendars leave every
-/// phone, the password is deleted); every phone that had one is nudged. Back to `#caldav`.
-pub async fn remove_caldav(
-    State(state): State<AppState>,
-    lang: Lang,
-    Path((id, account)): Path<(i64, i64)>,
-) -> Response {
-    if let Err(answer) = phone(&state, lang, id).await {
-        return *answer;
-    }
-    match crate::caldav::remove(&state, account).await {
-        Ok(phones) => {
-            for phone in phones {
-                let _ = state.command_notify.send(phone);
-            }
-            colors_after_link_save(&state, id).await;
-            Redirect::to(&format!("/devices/{id}/calendar#caldav")).into_response()
-        }
-        Err(err) => failed(lang, err, "couldn't remove a CalDAV account"),
-    }
 }
 
 /// `GET /api/devices/calendar/feeds/{uid}` (design 72 §3, bearer): the link's set for a phone that has it - else

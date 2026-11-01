@@ -1077,6 +1077,13 @@ div.attention {
     color: var(--red-text);
 }
 
+/* A check that failed (a CalDAV account's Test Again): orange, as the Attention level "action" and a failing row's
+   line; red stays for a refused save. */
+.flash-warn {
+    background: var(--orange-bg);
+    color: var(--orange-text);
+}
+
 /* ---- Confirm (§3.0): a <details> whose summary is the button ---- */
 
 details.confirm > summary.row {
@@ -1811,7 +1818,8 @@ details.section[open] > summary .section-chev {
     font-size: 1.0625rem;
 }
 
-.container > form > .button-wide {
+.container > form > .button-wide,
+.add-form > .button-wide {
     margin-bottom: 20px;
 }
 
@@ -1881,6 +1889,33 @@ code.key {
 #source-github:focus:not(:focus-visible) ~ .group label[for="source-github"],
 #source-fdroid:focus:not(:focus-visible) ~ .group label[for="source-fdroid"],
 #source-manual:focus:not(:focus-visible) ~ .group label[for="source-manual"] {
+    outline: none;
+}
+
+/* Add Calendar's source (Device › Calendar, 2026-11-01): Add App's choice for two kinds - a link or a CalDAV
+   account - each its own form, shown by its radio alone (no script). */
+#kind-link:checked ~ .group .check-link,
+#kind-caldav:checked ~ .group .check-caldav {
+    visibility: visible;
+}
+
+.caldav-only,
+#kind-caldav:checked ~ .link-only {
+    display: none;
+}
+
+#kind-caldav:checked ~ .caldav-only {
+    display: block;
+}
+
+#kind-link:focus ~ .group label[for="kind-link"],
+#kind-caldav:focus ~ .group label[for="kind-caldav"] {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
+}
+
+#kind-link:focus:not(:focus-visible) ~ .group label[for="kind-link"],
+#kind-caldav:focus:not(:focus-visible) ~ .group label[for="kind-caldav"] {
     outline: none;
 }
 

@@ -722,7 +722,35 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         .await
         .unwrap();
     }
+    // Design 72: a calendar link and a CalDAV account, so the Calendar page's rows and their own pages render.
+    app.fetch.answer(
+        "https://skole.example.no/k.ics",
+        200,
+        "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+    );
+    let link = crate::calendar_feeds::add(
+        &app.state,
+        id,
+        "https://skole.example.no/k.ics",
+        "Skolen",
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         '[\"dav.example.net\"]', '/p/', \
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     let mut pages = vec![
+        format!("/devices/{id}/calendar/add"),
+        format!("/devices/{id}/calendar/add?kind=caldav"),
+        format!("/devices/{id}/calendar/links/{link}"),
+        format!("/devices/{id}/calendar/caldav/1"),
         format!("/devices/{id}/calendar/rules/new"),
         format!("/devices/{id}/calendar/rules/1"),
         format!("/devices/{id}/bedtime"),

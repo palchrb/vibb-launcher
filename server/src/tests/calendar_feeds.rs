@@ -79,11 +79,15 @@ async fn a_link_reaches_the_policy_and_the_phone() {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
     let uid = uid();
+    // To the link's own page.
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calendar#link-{uid}").as_str())
+        Some(format!("/devices/{id}/calendar/links/{uid}").as_str())
     );
-    app.assert_lands(&res, &cookie).await;
+    assert_eq!(
+        app.get_page(res.location().unwrap(), &cookie).await.status,
+        StatusCode::OK
+    );
     assert_eq!(nudges.try_recv().unwrap(), id);
 
     // The policy names it; the endpoint serves the set under its rev.
@@ -158,15 +162,23 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
         .get_page(&format!("/devices/{id}/calendar"), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("id=\"link-{uid}\"")));
-    assert!(page.contains("skole.example.no"));
-    assert!(
-        !page.contains("FAKE-TOKEN") && !page.contains("/kalender/"),
-        "the link is never shown"
-    );
-    assert!(page.contains("Fetched "), "{page}");
+    let link_path = format!("/devices/{id}/calendar/links/{uid}");
+    // A row to the link's own page: its name, its host and the fetch.
+    let row = super::settings_pages::part(&page, &format!("data-link=\"{uid}\""), "</a>");
+    assert!(row.contains("tile-teal") && row.contains("Skolen"), "{row}");
+    assert!(row.contains("skole.example.no · Fetched "), "{row}");
+    assert!(page.contains(&format!("href=\"{link_path}\"")));
+    let link = app.get_page(&link_path, &cookie).await.text();
+    for html in [&page, &link] {
+        assert!(
+            !html.contains("FAKE-TOKEN") && !html.contains("/kalender/"),
+            "the link is never shown"
+        );
+    }
+    assert!(link.contains("data-link-host>skole.example.no<"), "{link}");
+    assert!(link.contains("data-value=\"events\""), "{link}");
     // No `calendar_feeds_v1` yet: update Vibb One; the calendar is listed at once by its key.
-    assert!(page.contains("Update Vibb One on the phone"));
+    assert!(link.contains("Update Vibb One on the phone"));
     assert!(page.contains(&format!("data-calendar=\"{key}\"")));
     assert!(page.contains("Calendar link · Waiting for the phone"));
 
@@ -189,9 +201,10 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
         .get_page(&format!("/devices/{id}/calendar"), &cookie)
         .await
         .text();
-    assert!(!page.contains("Waiting for the phone"));
-    assert!(!page.contains("Update Vibb One on the phone"));
-    assert!(page.contains("save 2 events"), "{page}");
+    let link = app.get_page(&link_path, &cookie).await.text();
+    assert!(!page.contains("Waiting for the phone") && !link.contains("Waiting for the phone"));
+    assert!(!link.contains("Update Vibb One on the phone"));
+    assert!(link.contains("save 2 events"), "{link}");
     assert!(page.contains("May be the same as the calendar link Skolen"));
     // The kid's calendar is never a link's.
     assert!(!page.contains(&format!("<option value=\"{key}\"")));
@@ -201,10 +214,15 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
         .await
         .text();
     assert!(
-        nb.contains("Kalenderlenker") && nb.contains("Hentet "),
+        nb.contains("Hentes av serveren") && nb.contains("skole.example.no · Hentet "),
         "{nb}"
     );
-    assert!(nb.contains("Telefonen fikk ikke lagret 2 hendelser"));
+    let nb_link = app
+        .get_page(&format!("{link_path}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(nb_link.contains("Telefonen fikk ikke lagret 2 hendelser"));
+    assert!(nb_link.contains("Sist hentet") && nb_link.contains("Hent nå"));
 }
 
 #[tokio::test]
@@ -240,7 +258,10 @@ async fn a_refused_add_renders_the_form_as_typed() {
         let res = add(&app, &cookie, id, url, "Mitt navn").await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{url}");
         let page = res.text();
-        assert!(page.contains(words), "{url}: {page}");
+        // Add Calendar again, the link chosen, the reason under the link.
+        assert!(page.contains("id=\"kind-link\" name=\"kind\" value=\"link\" checked"));
+        let field = super::settings_pages::part(&page, "id=\"link-url-error\"", "</p>");
+        assert!(field.contains(words), "{url}: {page}");
         assert!(
             page.contains("value=\"Mitt navn\""),
             "{url}: the form as typed"
@@ -270,7 +291,7 @@ async fn a_refused_add_renders_the_form_as_typed() {
     )
     .await
     .text();
-    assert!(page.contains("data-links=\"off\"") && !page.contains("data-links=\"add\""));
+    assert!(page.contains("data-sources=\"off\"") && !page.contains("data-sources=\"add\""));
 }
 
 #[tokio::test]
@@ -291,12 +312,20 @@ async fn plain_http_is_judged_by_what_the_name_resolves_to() {
         let res = add(&app, &cookie, id, url, "").await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{url}: {}", res.text());
     }
-    // LAN only: saved with the warning; the tailnet: fine. Both pinned (the LAN reach).
-    let page = app
-        .get_page(&format!("/devices/{id}/calendar"), &cookie)
-        .await
-        .text();
-    assert_eq!(page.matches("Plain http on the home network").count(), 1);
+    // LAN only: saved with the warning (on its page); the tailnet: fine. Both pinned (the LAN reach).
+    let mut warned = 0;
+    for url in [
+        "http://nas.home.arpa/k.ics",
+        "http://pi.tailnet.example/k.ics",
+    ] {
+        let uid = calendar_feeds::uid_of(&calendar_feeds::normalize(url).unwrap());
+        let page = app
+            .get_page(&format!("/devices/{id}/calendar/links/{uid}"), &cookie)
+            .await
+            .text();
+        warned += page.matches("Plain http on the home network").count();
+    }
+    assert_eq!(warned, 1);
     let reaches = app.fetch.reaches.lock().unwrap().clone();
     assert!(
         reaches
@@ -341,16 +370,19 @@ async fn fetch_now_waits_five_minutes_and_is_not_a_save() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calendar#link-{uid}").as_str())
+        Some(format!("/devices/{id}/calendar/links/{uid}#fetch").as_str())
     );
+    app.assert_lands(&res, &cookie).await;
     assert_eq!(app.fetch.count(), calls + 1);
     let res = app
         .request_form(Method::POST, &path, Some(&cookie), &[])
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calendar?notice=fetch_wait#link-{uid}").as_str())
+        Some(format!("/devices/{id}/calendar/links/{uid}?notice=fetch_wait#fetch").as_str())
     );
+    let waiting = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(waiting.contains("data-flash=\"fetch-wait\""));
     assert_eq!(app.fetch.count(), calls + 1);
     app.assert_lands(&res, &cookie).await;
     assert_eq!(saves(&app).await, 0);
@@ -363,6 +395,10 @@ async fn fetch_now_waits_five_minutes_and_is_not_a_save() {
             &[("name", "  Skolen 5B ")],
         )
         .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/calendar/links/{uid}#name").as_str())
+    );
     app.assert_lands(&res, &cookie).await;
     let name: String = sqlx::query_scalar("SELECT name FROM device_calendar_feeds")
         .fetch_one(&app.db)
@@ -574,7 +610,7 @@ async fn a_removal_during_a_fetch_writes_nothing() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calendar#links").as_str())
+        Some(format!("/devices/{id}/calendar#sources").as_str())
     );
     app.fetch.release();
     assert_eq!(fetching.await.unwrap().unwrap(), Outcome::Gone);
@@ -653,7 +689,7 @@ async fn the_caps_per_phone() {
         .get_page(&format!("/devices/{id}/calendar"), &cookie)
         .await
         .text();
-    assert!(page.contains("data-links=\"full\"") && !page.contains("data-links=\"add\""));
+    assert!(page.contains("data-sources=\"full\"") && !page.contains("data-sources=\"add\""));
     app.fetch
         .answer("https://skole.example.no/x.ics", 200, EMPTY);
     let res = add(&app, &cookie, id, "https://skole.example.no/x.ics", "").await;
@@ -754,13 +790,13 @@ async fn a_new_music_key_says_to_paste_the_links_again() {
     // Nothing fetched yet: the stored error is still none.
     assert_eq!(source_error(&app, id).await, None);
     let page = page_with(rotated.clone(), crate::i18n::Lang::En).await;
-    let links = super::settings_pages::part(&page, "id=\"links\"", "</section>");
+    let links = super::settings_pages::part(&page, "id=\"sources\"", "</section>");
     assert!(links.contains("data-warning=\"links-key-new\""), "{links}");
     assert!(links.contains(
         "The server&#39;s key has changed, so these links can&#39;t be fetched any more"
     ));
     assert!(links.contains(
-        "<span class=\"row-sub\" data-link-failing>The server&#39;s key has changed - add the link again."
+        "<span class=\"row-sub tone-orange\" data-link-failing>The server&#39;s key has changed - add the link again.<"
     ));
     let nb = page_with(rotated.clone(), crate::i18n::Lang::Nb).await;
     assert!(nb.contains("Serverens nøkkel er byttet, så disse lenkene kan ikke hentes lenger"));
@@ -925,5 +961,85 @@ async fn a_panicking_parse_leaves_the_next_source_running() {
         .get_page(&format!("/devices/{id}/calendar"), &cookie)
         .await
         .text();
-    assert!(page.contains("be read. Showing what was fetched"), "{page}");
+    // The row says it with the retry; the link's page with the age of the set the phone keeps.
+    assert!(page.contains("be read. Trying again"), "{page}");
+}
+
+/// The look of 2026-11-01: Add Calendar chooses the link unless `?kind=caldav` (CSS swaps the forms, so both are on the
+/// page), the Calendar page's add row goes there, and a source gone since the page loaded goes back to `#sources`.
+#[tokio::test]
+async fn add_calendar_picks_its_kind_and_a_gone_source_goes_back() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(&format!(
+        "<a class=\"row row-button\" href=\"/devices/{id}/calendar/add\" data-sources=\"add\">Add Calendar&hellip;</a>"
+    )));
+    for (query, link, caldav) in [("", " checked", ""), ("?kind=caldav", "", " checked")] {
+        let res = app
+            .get_page(&format!("/devices/{id}/calendar/add{query}"), &cookie)
+            .await;
+        assert_eq!(res.status, StatusCode::OK);
+        let html = res.text();
+        assert!(html.contains(&format!(
+            "id=\"kind-link\" name=\"kind\" value=\"link\"{link}>"
+        )));
+        assert!(html.contains(&format!(
+            "id=\"kind-caldav\" name=\"kind\" value=\"caldav\"{caldav}>"
+        )));
+        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/links#add\"")));
+        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/caldav#add\"")));
+    }
+    let nb = app
+        .get_page(&format!("/devices/{id}/calendar/add?lang=nb"), &cookie)
+        .await
+        .text();
+    for words in [
+        "Legg til kalender",
+        "Kilde",
+        "Lenke (https eller webcal)",
+        "CalDAV-konto",
+        "Test og logg inn",
+    ] {
+        assert!(nb.contains(words), "{words}");
+    }
+    for path in [
+        format!("/devices/{id}/calendar/links/{}", "0".repeat(32)),
+        format!("/devices/{id}/calendar/caldav/99"),
+    ] {
+        let res = app.get_page(&path, &cookie).await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/devices/{id}/calendar#sources").as_str()),
+            "{path}"
+        );
+        app.assert_lands(&res, &cookie).await;
+    }
+    // Another phone's link is not this phone's to remove: back to #sources, the sibling keeps it.
+    let (ola, _) = app.enrolled_device("Ola").await;
+    app.fetch.answer(LINK, 200, contract_body());
+    add(&app, &cookie, ola, LINK, "Skolen").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calendar/links/{}/remove", uid()),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/calendar#sources").as_str())
+    );
+    assert_eq!(sources(&app).await, 1);
+    assert_eq!(
+        app.get_page("/devices/999/calendar/add", &cookie)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }

@@ -915,16 +915,19 @@ pub struct LinkRow {
     pub key_fp: String,
     /// `ics` or `caldav` (design 72 step 2).
     pub kind: String,
-    /// A CalDAV calendar's account: its username and its state (`ok`, `login_refused`, `host_changed`).
-    pub account: Option<String>,
+    /// A CalDAV calendar's account's state (`ok`, `login_refused`, `host_changed`).
     pub account_state: Option<String>,
+    /// The CalDAV calendar's account row (its page, `/devices/{id}/calendar/caldav/{account}`).
+    pub account_id: Option<i64>,
+    /// When the next fetch is due (a failing link's retry).
+    pub next_at: String,
 }
 
 pub async fn links(db: &SqlitePool, device_id: i64) -> Result<Vec<LinkRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT s.uid, d.name, s.host, s.lan_http, s.ok_at, s.error, s.error_status, s.events, s.cut, \
-         s.unknown_tz, s.churn, s.url_key_fp AS key_fp, s.kind, a.username AS account, a.state AS account_state \
-         FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
+         s.unknown_tz, s.churn, s.url_key_fp AS key_fp, s.kind, a.state AS account_state, \
+         s.account_id, s.next_at FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
          LEFT JOIN caldav_accounts a ON a.id = s.account_id WHERE d.device_id = ? ORDER BY d.created_at, s.uid",
     )
     .bind(device_id)

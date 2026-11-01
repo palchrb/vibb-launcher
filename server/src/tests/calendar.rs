@@ -969,8 +969,9 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
         let panel = &panel[..panel.find("</details>").unwrap()];
         assert!(panel.contains(text), "{label}: {panel}");
     }
-    // Dagen, the lock, Calendars shown and (design 72) Calendar links and CalDAV accounts.
-    assert_eq!(html.matches(r#"<details class="info">"#).count(), 5);
+    // Dagen, the lock, Calendars shown and (design 72) the calendars the server fetches - links and accounts, one.
+    assert_eq!(html.matches(r#"<details class="info">"#).count(), 4);
+    assert!(html.contains(r#"<summary aria-label="Om kalendere som hentes av serveren">"#));
     assert!(html.contains(r#"role="img" aria-label="Skole: Matte om 15 min, 08:30""#));
     for gone in [
         "Den rolige raden",
@@ -1130,6 +1131,11 @@ async fn every_calendar_route_needs_a_session() {
         page.clone(),
         format!("{page}/rules/new"),
         format!("{page}/rules/1"),
+        // The calendars the server fetches (the look of 2026-11-01): Add Calendar, a link's and an account's page.
+        format!("{page}/add"),
+        format!("{page}/add?kind=caldav"),
+        links.clone(),
+        format!("{page}/caldav/1"),
     ] {
         let res = app
             .send(
@@ -1140,6 +1146,11 @@ async fn every_calendar_route_needs_a_session() {
             )
             .await;
         assert!(res.status.is_redirection(), "{path}: {}", res.status);
+        assert!(
+            res.location().is_some_and(|l| l.starts_with("/login")),
+            "{path}: {:?}",
+            res.location()
+        );
     }
     let (glance, kid_adds): (bool, bool) = sqlx::query_as(
         "SELECT calendar_glance_next, calendar_kid_adds FROM device_policy WHERE device_id = ?",
