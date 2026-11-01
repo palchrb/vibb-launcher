@@ -88,7 +88,8 @@
     /* The labels stay AA over the see-through bar with text behind it (5.2:1 at worst, 2026-10-22). */
     --tab-off: #5A5A5F;
     /* The chosen tab (the user, 2026-10-31, mockup B, "like Teams"): no pill - its icon filled in
-       vibb's peach, its label in the dark peach (the bright one is ~2.5:1 as text on the bar). */
+       vibb's peach, its label in the dark peach (the bright one is ~2.5:1 as text on the bar), at the
+       others' weight - bold made the label jump (the user, 2026-11-01). */
     --tab-on: #A64B25;
     --tab-on-icon: #E8895E;
 
@@ -486,7 +487,6 @@ input[type="radio"] {
 .tab[aria-current="page"],
 .tab[aria-current="page"]:hover {
     color: var(--tab-on);
-    font-weight: 700;
 }
 
 /* Each tab carries its outline icon and its filled one; the chosen tab (and the one just tapped,
@@ -2499,7 +2499,7 @@ details.app-display[open] > summary .section-chev {
 /* ---- Connecting (static/reconnect.js, 2026-10-21): a tap is never "nothing" after being away ---- */
 /* The tapped link at once: the tab in its "on" look, a row pressed, any other link dimmed. */
 .is-pending { opacity: 0.6; }
-.tab.is-pending { color: var(--tab-on); font-weight: 700; opacity: 1; }
+.tab.is-pending { color: var(--tab-on); opacity: 1; }
 .row.is-pending { background: var(--row-active); opacity: 1; }
 /* A thin bar along the top while the page comes; it never takes a tap. Both are absolute, never
    fixed (design 43: the shell's document doesn't scroll, so its top is the screen's, and an iOS
