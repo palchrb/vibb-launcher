@@ -178,7 +178,7 @@ class DayModelTest {
         val one = dayView(listOf(gym), all, policy, day, oslo, 0, own, tag)
         assertEquals(CalendarColor.SKY, one.timed.single().color)
         assertEquals(1, one.legend.size)
-        assertFalse("one calendar: no key", one.legendShown)
+        assertTrue("one calendar: the key too (2026-11-01)", one.legendShown)
         assertTrue(dayView(emptyList(), all, policy, day, oslo, 0, own, tag).legend.isEmpty())
         // The parent's pick is the kid's own: peach, not its "sea"; the phone's own calendar peach too.
         val three = dayView(listOf(gym, cinema, camp), all, policy, day, oslo, 0, own, tag)

@@ -26,7 +26,7 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private var rows: List<DayRow> = emptyList()
     private var empty = false
 
-    /** The day's key under the list, empty when it has one calendar or none (DayView.legendShown). */
+    /** The day's key under the list, empty when the day has no event (DayView.legendShown). */
     private var legend: List<LegendEntry> = emptyList()
 
     /** The page's time column (px), measured at the first bind after a submit; 0 = not yet. */

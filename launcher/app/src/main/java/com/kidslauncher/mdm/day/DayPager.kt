@@ -18,6 +18,14 @@ fun positionOf(anchor: LocalDate, day: LocalDate): Int {
     return DAY_CENTER + offset.toInt()
 }
 
+/** Away from Dagen this long (stopped, or its saved state this old) and it opens on today again (the user,
+ * 2026-11-01: a day swiped to earlier is not where Dagen should open later). */
+const val DAY_BACK_TO_TODAY_MS = 60_000L
+
+/** Whether Dagen opens on today after [awayMs] away; `null` = not away (first start, or a day asked for); a negative
+ * span (the clock set back) counts as away. */
+fun backToToday(awayMs: Long?): Boolean = awayMs != null && (awayMs >= DAY_BACK_TO_TODAY_MS || awayMs < 0)
+
 /** The jump back to today: on a day after today it reads "← I dag", before it "I dag →" (the arrow towards today);
  * none on today. */
 enum class TodayJump { BACK_FROM_LATER, FORWARD_FROM_EARLIER }

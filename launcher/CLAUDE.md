@@ -1414,7 +1414,7 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   on its UTC dates, timed on the local ones, multi-day first/middle/last, cancelled/declined/hidden/rule-hidden out,
   two copies one row, the order, "now", each row's `color` by `rowColor` - the phone's own or the parent's pick for
   the kid peach, else the policy's or none -, `DayView.legend`/`legendShown` - the day's calendars in order of
-  appearance, the key only with more than one; `DayModelTest` with the DST days), `RowText.kt` (the second line: the location, else the description's first
+  appearance, the key whenever the day has an event (2026-11-01; it was more than one); `DayModelTest` with the DST days), `RowText.kt` (the second line: the location, else the description's first
   sentence - a "." after a digit or `ca kl nr osv bl.a f.eks` ends nothing - at most 120 code points; `cut` = the row's
   "›"; `FirstSentenceTest`), `DayPager.kt` (`DAY_CENTER`, `dayAt`/`positionOf`, `todayJump`: "← I dag" on a later day,
   "I dag →" on an earlier one; `DayPagerTest`), `Reminders.kt` (§5: `reminderStart` off / before N / own - the earliest
@@ -1440,7 +1440,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
   events; since 2026-10-27 a task of its own - `taskAffinity` `${applicationId}.day` on the three Dagen activities, in
   Recents with "Dagen" and the launcher's icon as its card (`setTaskDescription` on the root), so Home and Back get
-  Android's task-close animation; the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
+  Android's task-close animation; a minute away (`DAY_BACK_TO_TODAY_MS`, pure `backToToday`: stopped that long, or its
+  saved state that old) and it opens on today again, unless a day is asked for (the reminder row); the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
   also `CLEAR_TOP`, so the reminder row lands on the day view - from the lock's task it died with the lock, E5's H1)
   serves Home's tile and the glance, and the three screens redirect to the time-rule screen on resume while a lock
   reason is set (Kid Settings' rule), since Recents can bring the task over it; `DayTaskTest`), `DayListAdapter` (the
@@ -1451,7 +1452,7 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   by `timeColumnPx`, an all-day row "Hele" over "dagen"; times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
   L4 -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
-  "Åpne hendelsen" - the calendar's name last on a day with more than one; the key under the list, `item_day_legend`
+  "Åpne hendelsen" - the calendar's name last on a day with a key; the key under the list, `item_day_legend`
   as the last item while `legendShown`: one `DotSpan` and name per calendar in one wrapping text, TalkBack
   "Kalendere: Skolen, Fotball"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
   links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day - `DayActivity.dayLine`, the locale's best pattern for "EEEEdMMMM", en-US

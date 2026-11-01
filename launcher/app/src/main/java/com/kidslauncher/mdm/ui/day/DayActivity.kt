@@ -20,6 +20,7 @@ import com.kidslauncher.mdm.databinding.ActivityDayBinding
 import com.kidslauncher.mdm.day.DAY_CENTER
 import com.kidslauncher.mdm.day.DayView
 import com.kidslauncher.mdm.day.TodayJump
+import com.kidslauncher.mdm.day.backToToday
 import com.kidslauncher.mdm.day.dayAt
 import com.kidslauncher.mdm.day.positionOf
 import com.kidslauncher.mdm.day.todayJump
@@ -46,6 +47,9 @@ class DayActivity : UIObjectActivity() {
     private lateinit var binding: ActivityDayBinding
     private lateinit var adapter: DayPagerAdapter
     private var anchor: LocalDate = LocalDate.now()
+
+    /** elapsedRealtime at the last onStop, 0 while started (or after a day asked for): the return to today. */
+    private var stoppedAt = 0L
     private val tick = Handler(Looper.getMainLooper())
     private val minute = object : Runnable {
         override fun run() {
@@ -91,9 +95,15 @@ class DayActivity : UIObjectActivity() {
             list.setPadding(peek, 0, peek, 0)
             list.clipToPadding = false
         }
-        val start = savedInstanceState?.getLong(STATE_DAY)?.let(LocalDate::ofEpochDay)
-            ?: intent.getLongExtra(EXTRA_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let(LocalDate::ofEpochDay)
-            ?: anchor
+        // A saved day counts only within DAY_BACK_TO_TODAY_MS of its save (a rotation, not Recents after a long while).
+        val savedAway = savedInstanceState?.getLong(STATE_SAVED_AT, Long.MIN_VALUE)?.takeIf { it != Long.MIN_VALUE }
+            ?.let { System.currentTimeMillis() - it }
+        val start = when {
+            savedInstanceState == null ->
+                intent.getLongExtra(EXTRA_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let(LocalDate::ofEpochDay) ?: anchor
+            backToToday(savedAway ?: Long.MAX_VALUE) -> anchor
+            else -> LocalDate.ofEpochDay(savedInstanceState.getLong(STATE_DAY))
+        }
         binding.dayPager.setCurrentItem(positionOf(anchor, start), false)
         binding.dayPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) = renderHeader()
@@ -115,12 +125,15 @@ class DayActivity : UIObjectActivity() {
         // A later reader of `intent` sees the newest start's day, not the first's (qa-day-task-code Q-5).
         setIntent(intent)
         val day = intent.getLongExtra(EXTRA_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE } ?: return
+        // A day asked for (the reminder row) wins over the return to today, whichever of onStart and this runs first.
+        stoppedAt = 0L
         binding.dayPager.setCurrentItem(positionOf(anchor, LocalDate.ofEpochDay(day)), false)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putLong(STATE_DAY, shownDay().toEpochDay())
+        outState.putLong(STATE_SAVED_AT, System.currentTimeMillis())
     }
 
     override fun onStart() {
@@ -137,6 +150,12 @@ class DayActivity : UIObjectActivity() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         if (anchor != LocalDate.now()) moveAnchor()
+        val away = stoppedAt.takeIf { it > 0L }?.let { android.os.SystemClock.elapsedRealtime() - it }
+        stoppedAt = 0L
+        if (backToToday(away) && binding.dayPager.currentItem != DAY_CENTER) {
+            binding.dayPager.setCurrentItem(DAY_CENTER, false)
+            renderHeader()
+        }
     }
 
     override fun onResume() {
@@ -163,6 +182,7 @@ class DayActivity : UIObjectActivity() {
     }
 
     override fun onStop() {
+        stoppedAt = android.os.SystemClock.elapsedRealtime()
         CalendarStore.removeListener(calendarListener)
         try {
             unregisterReceiver(dateReceiver)
@@ -221,6 +241,7 @@ class DayActivity : UIObjectActivity() {
         /** The day to open on (epoch day), e.g. a reminder's. */
         const val EXTRA_DAY = "me.vibb.launcher.extra.DAY"
         private const val STATE_DAY = "day"
+        private const val STATE_SAVED_AT = "day_saved_at"
 
         /** The pager's side padding (dp); with the page's 3 dp the neighbours' cards peek 10 dp. */
         const val PAGER_PAD_DP = 13
