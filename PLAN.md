@@ -90,6 +90,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 
   - **"Sist sett" again, and an env default language for the PWA** (the user, 2026-11-01: "Sist sett gir mer mening. Ønsker btw å kunne sette en env variabel som gir pwa som engelsk som utgangspunkt?"): nb "sist hørt" -> "sist sett" (en "last seen"); `PWA_DEFAULT_LANG=en|nb` before Accept-Language (the account's switch still wins). **IN BUILD 2026-11-01 on `pwa-default-lang`**; server only, S.
 
+  - **The chosen tab's icon filled with peach, same outline and stroke** (the user, 2026-11-01, a screenshot of the bar after 6959578d: "Jeg hadde tenkt fersken fargen skulle fylle det som er grått eller tomt i taben? Så routine og tykkelse beholdes, men de blir fylt med fersken farge og outline blir fersken farget? Så devices blir en full firkant med en grå strek nederst?"): **IN DESIGN 2026-11-01 - mockup sent** (A the details cut out in the bar's colour, B the details grey); server only (tab_bar.html + CSS), XS.
+
 ### Asked for, scope not settled yet
 
 - **PWA i18n** (the user, 2026-10-24, on design 64's push wording: "burde gå for i18n så man enkelt kan endre og legge
