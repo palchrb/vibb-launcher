@@ -30,6 +30,8 @@ findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-10-25)
 
+**Next release APPROVED 2026-11-01** (the user: "Vi tar det når du er klar som foreslått, bare gjør det når du er klar med det som skal inn"): tag `server-v0.62.0` (Cargo bump in the release commit) + `launcher-v0.38.0-rc.2` + `music-v0.6.0-rc.1` once B2 (0114), the Tidsregler tidy (0115) and the off-status item are merged in that migration order and CI is green; never tag with 0115 on main without 0114.
+
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
 
