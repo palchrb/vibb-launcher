@@ -38,11 +38,11 @@ class EmergencyMenuTest {
         ),
     )
 
-    private fun rows(menu: List<EmergencyEntry>, state: CallPolicyState, busy: Boolean = false) =
-        emergencyRows(menu, state, busy, emergency)
+    private fun rows(menu: List<EmergencyEntry>, state: CallPolicyState, busy: Boolean = false, locked: Boolean = false) =
+        emergencyRows(menu, state, busy, emergency, locked)
 
-    private fun kinds(menu: List<EmergencyEntry>, state: CallPolicyState, busy: Boolean = false) =
-        rows(menu, state, busy).associate { it.entry.number to it.kind }
+    private fun kinds(menu: List<EmergencyEntry>, state: CallPolicyState, busy: Boolean = false, locked: Boolean = false) =
+        rows(menu, state, busy, locked).associate { it.entry.number to it.kind }
 
     @Test
     fun `no menu is 112 alone`() {
@@ -113,8 +113,42 @@ class EmergencyMenuTest {
         val legevakt = EmergencyEntry("116117", "Legevakt")
         assertEquals(EmergencyRowKind.BLOCKED, kinds(listOf(e112, legevakt), managed())["116117"])
         // 113 is Norway's; with Sweden's default it is an ordinary number.
-        val swedish = emergencyRows(listOf(e112, e113), managed(), false) { Emergency.isEmergencyOutgoing(it, "46") { null } }
+        val swedish = emergencyRows(listOf(e112, e113), managed(), false, { Emergency.isEmergencyOutgoing(it, "46") { null } })
         assertEquals(EmergencyRowKind.BLOCKED, swedish.first { it.entry == e113 }.kind)
+    }
+
+    /** The user, 2026-11-01 ("kun ordentlige nødanrop fra låst skjerm"): while the phone is locked only real
+     * emergency numbers call, on a managed and an unmanaged phone alike; the others stay, dimmed, "Unlock to call". */
+    @Test
+    fun `a locked phone calls only real emergency numbers`() {
+        for (state in listOf(CallPolicyState.Unmanaged, managed(), CallPolicyState.UnknownFailClosed)) {
+            val shown = rows(listOf(e112, e113, mamma), state, locked = true).associateBy { it.entry.number }
+            assertEquals("$state", EmergencyRowKind.EMERGENCY, shown.getValue("112").kind)
+            assertEquals("$state", EmergencyRowKind.EMERGENCY, shown.getValue("113").kind)
+            assertEquals("$state", EmergencyRowKind.LOCKED, shown.getValue("+4791234567").kind)
+            assertEquals("$state", EmergencyTap.Nothing, emergencyTap(shown.getValue("+4791234567")))
+            assertEquals("$state", EmergencyTap.Emergency("113"), emergencyTap(shown.getValue("113")))
+        }
+    }
+
+    @Test
+    fun `an unlocked phone follows the call rules as before`() {
+        assertEquals(EmergencyRowKind.ALLOWED, kinds(listOf(e112, mamma), managed(), locked = false)["+4791234567"])
+        assertEquals(EmergencyRowKind.ALLOWED, kinds(listOf(e112, mamma), CallPolicyState.Unmanaged, locked = false)["+4791234567"])
+        assertEquals(EmergencyRowKind.BLOCKED, kinds(listOf(e112, mamma), managed(mammaOutbound = false), locked = false)["+4791234567"])
+    }
+
+    /** Code QA M1: the rows scroll inside a capped view with Cancel below it; a long name takes two lines at most. */
+    @Test
+    fun `the sheet's rows scroll and Cancel stays outside`() {
+        val sheet = File("src/main/res/layout/sheet_emergency.xml").readText()
+        val scroll = sheet.substringAfter("<com.kidslauncher.mdm.calls.EmergencyRowsScroll").substringBefore("</com.kidslauncher.mdm.calls.EmergencyRowsScroll>")
+        assertTrue("@+id/emergency_rows" in scroll)
+        assertFalse("@+id/emergency_cancel" in scroll)
+        assertTrue("@+id/emergency_cancel" in sheet.substringAfter("</com.kidslauncher.mdm.calls.EmergencyRowsScroll>"))
+        val name = File("src/main/res/layout/item_emergency_row.xml").readText()
+            .substringAfter("@+id/emergency_row_name").substringBefore("/>")
+        assertTrue("android:maxLines=\"2\"" in name && "android:ellipsize=\"end\"" in name)
     }
 
     @Test

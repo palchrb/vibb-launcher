@@ -29,7 +29,7 @@
         <div class="group">
             {% for row in emergency %}
             <div class="row emergency-row" id="{{ row.anchor() }}" data-emergency="{{ row.number }}">
-                <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span></span>
+                <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span>{% if let Some(extra) = row.extra %}<span class="row-sub">{{ self.t(extra) }}</span>{% endif %}</span>
                 {% if let Some(entry) = row.id %}
                 {% if !(row.first && row.last) %}
                 <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/move#emergency-{{ entry }}" class="emergency-move">

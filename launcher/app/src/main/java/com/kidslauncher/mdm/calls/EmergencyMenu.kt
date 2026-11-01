@@ -55,6 +55,10 @@ enum class EmergencyRowKind {
 
     /** Any other number the call rules block now (dimmed, not callable). */
     BLOCKED,
+
+    /** Any other number while the phone is locked (dimmed, "Unlock to call"): from a locked screen only real
+     * emergency calls (the user, 2026-11-01: "kun ordentlige nødanrop fra låst skjerm"), managed or not. */
+    LOCKED,
 }
 
 /** One row of the sheet; [big] is the large red one. */
@@ -64,19 +68,22 @@ data class EmergencyRow(val entry: EmergencyEntry, val kind: EmergencyRowKind, v
  * The sheet's rows: the first real emergency number of [menu] as the large row, on top, then the others in the
  * parent's order (a non-emergency number moved first is never the big red row). [state] is what the call path
  * enforces now (`CallPolicyStore.effectiveState()`: a no-calls time rule included); [busy] = another call is live
- * ([secondCallAllowed] says no to a non-emergency number).
+ * ([secondCallAllowed] says no to a non-emergency number); [locked] = the phone is locked (the PIN lock, its glance
+ * and ring card, Android's keyguard): emergency numbers only, every other row [EmergencyRowKind.LOCKED].
  */
 fun emergencyRows(
     menu: List<EmergencyEntry>,
     state: CallPolicyState,
     busy: Boolean,
     isEmergency: (String) -> Boolean,
+    locked: Boolean = false,
 ): List<EmergencyRow> {
     val bigAt = menu.indexOfFirst { isEmergency(it.number) }
     val ordered = if (bigAt <= 0) menu else listOf(menu[bigAt]) + menu.filterIndexed { i, _ -> i != bigAt }
     return ordered.mapIndexed { i, entry ->
         val kind = when {
             isEmergency(entry.number) -> EmergencyRowKind.EMERGENCY
+            locked -> EmergencyRowKind.LOCKED
             busy -> EmergencyRowKind.BLOCKED
             decideOutgoing(entry.number, state, isEmergency = false) == Verdict.ALLOW -> EmergencyRowKind.ALLOWED
             else -> EmergencyRowKind.BLOCKED
@@ -108,7 +115,7 @@ sealed interface EmergencyTap {
 fun emergencyTap(row: EmergencyRow): EmergencyTap = when (row.kind) {
     EmergencyRowKind.EMERGENCY -> EmergencyTap.Emergency(row.entry.number)
     EmergencyRowKind.ALLOWED -> EmergencyTap.ByRules(row.entry.number)
-    EmergencyRowKind.BLOCKED -> EmergencyTap.Nothing
+    EmergencyRowKind.BLOCKED, EmergencyRowKind.LOCKED -> EmergencyTap.Nothing
 }
 
 /** A row's words: [number] in the number column (a short number only - an E.164 one is too long), [label] the

@@ -31,11 +31,21 @@
         android:textColor="@color/kid_core"
         android:textSize="20sp" />
 
-    <LinearLayout
-        android:id="@+id/emergency_rows"
+    <!-- The rows scroll (code QA M1: six rows at font scale 2.0, or long names, pushed the last rows and Cancel off
+         the screen); EmergencySheet caps their height, Cancel stays below. The large row is first, at the top. -->
+    <com.kidslauncher.mdm.calls.EmergencyRowsScroll
+        android:id="@+id/emergency_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical" />
+        android:fadeScrollbars="false"
+        android:scrollbarStyle="outsideOverlay">
+
+        <LinearLayout
+            android:id="@+id/emergency_rows"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </com.kidslauncher.mdm.calls.EmergencyRowsScroll>
 
     <TextView
         android:id="@+id/emergency_cancel"

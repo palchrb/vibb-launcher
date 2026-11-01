@@ -126,6 +126,54 @@ pub async fn store_default(
     Ok(())
 }
 
+/// After Phone Setup's default country code changed (code QA L3): a phone whose stored menu has no number of the
+/// fixed list for `cc` any more (113 is Norway's, not Sweden's) gets 112 first, as the phone would show it; a menu
+/// that then has more than [MAX_ENTRIES] loses its last number, which the phone drops too. Returns the phones changed.
+pub async fn repair_menus(
+    tx: &mut sqlx::SqliteConnection,
+    cc: &str,
+) -> Result<Vec<i64>, sqlx::Error> {
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT device_id, id, number FROM device_emergency_numbers ORDER BY device_id, sort_order, id",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut changed = Vec::new();
+    let mut at = 0;
+    while at < rows.len() {
+        let device = rows[at].0;
+        let menu: Vec<&(i64, i64, String)> =
+            rows[at..].iter().take_while(|r| r.0 == device).collect();
+        at += menu.len();
+        if menu.iter().any(|(_, _, number)| is_emergency(number, cc)) {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO device_emergency_numbers (device_id, number, name, sort_order) VALUES (?, ?, '', 0)",
+        )
+        .bind(device)
+        .bind(DEFAULT_NUMBER)
+        .execute(&mut *tx)
+        .await?;
+        for (i, (_, id, _)) in menu.iter().enumerate() {
+            if i + 1 >= MAX_ENTRIES {
+                sqlx::query("DELETE FROM device_emergency_numbers WHERE id = ?")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query("UPDATE device_emergency_numbers SET sort_order = ? WHERE id = ?")
+                    .bind(i as i64 + 1)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        changed.push(device);
+    }
+    Ok(changed)
+}
+
 /// The row the phone shows large and red: the first number on the fixed list (design 73 §3).
 pub fn big_row(menu: &[MenuEntry], cc: &str) -> Option<usize> {
     menu.iter().position(|e| is_emergency(&e.number, cc))

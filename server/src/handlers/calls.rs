@@ -185,6 +185,9 @@ struct EmergencyRow {
     /// The sub-line's word key, and whether it is orange (a number that follows the call rules).
     sub: &'static str,
     warn: bool,
+    /// A second line: on a managed phone, a non-emergency number that isn't an outbound phone-book contact (the
+    /// phone dims it).
+    extra: Option<&'static str>,
     first: bool,
     last: bool,
     removable: bool,
@@ -199,7 +202,13 @@ impl EmergencyRow {
     }
 }
 
-fn emergency_rows(lang: Lang, menu: &[emergency::MenuEntry], cc: &str) -> Vec<EmergencyRow> {
+/// `phone_book`: the outbound contacts' numbers while calls are managed, `None` while they aren't.
+fn emergency_rows(
+    lang: Lang,
+    menu: &[emergency::MenuEntry],
+    cc: &str,
+    phone_book: Option<&[String]>,
+) -> Vec<EmergencyRow> {
     let big = emergency::big_row(menu, cc);
     menu.iter()
         .enumerate()
@@ -223,6 +232,9 @@ fn emergency_rows(lang: Lang, menu: &[emergency::MenuEntry], cc: &str) -> Vec<Em
                 name,
                 sub,
                 warn,
+                extra: phone_book
+                    .filter(|book| !real && !book.contains(&e.number))
+                    .map(|_| "device.emergency.not_in_phone_book"),
                 first: i == 0,
                 last: i + 1 == menu.len(),
                 removable: e.id.is_some() && emergency::can_remove(menu, i, cc),
@@ -426,7 +438,17 @@ async fn load_page(
         && refused.is_none()
         && emergency_add_error.is_none();
 
-    let emergency_view = emergency_rows(lang, &menu, &default_country_code);
+    let phone_book: Vec<String> = contacts
+        .iter()
+        .filter(|c| c.outbound)
+        .map(|c| c.number.clone())
+        .collect();
+    let emergency_view = emergency_rows(
+        lang,
+        &menu,
+        &default_country_code,
+        policy.calls_managed.then_some(phone_book.as_slice()),
+    );
     Ok(Some(DeviceCallsTemplate {
         lang,
         title: format!("{} - Calls & Contacts", device.name),

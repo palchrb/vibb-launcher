@@ -40,7 +40,13 @@ object EmergencySheet {
             number.text = text.number.orEmpty()
             number.visibility = if (text.number == null) android.view.View.GONE else android.view.View.VISIBLE
             name.text = text.label
-            sub.setText(if (row.kind == EmergencyRowKind.EMERGENCY) R.string.emergency_menu_always else R.string.emergency_menu_rules)
+            sub.setText(
+                when (row.kind) {
+                    EmergencyRowKind.EMERGENCY -> R.string.emergency_menu_always
+                    EmergencyRowKind.LOCKED -> R.string.emergency_menu_unlock
+                    else -> R.string.emergency_menu_rules
+                },
+            )
             if (row.kind != EmergencyRowKind.EMERGENCY) sub.setTextColor(activity.getColor(R.color.kid_accent))
             glyph.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_emergency_text))
             if (row.big) {
@@ -73,8 +79,27 @@ object EmergencySheet {
             list.addView(item)
         }
         view.findViewById<TextView>(R.id.emergency_cancel).setOnClickListener { dialog.dismiss() }
+        capRows(activity, view)
         dialog.show()
         return dialog
+    }
+
+    /**
+     * Code QA M1: the rows get what the screen has left after the system bars (96 dp, the Jelly Star's status and
+     * navigation bars at most), the title, Cancel and the sheet's own padding - measured at the current font scale -,
+     * at least 120 dp; more rows scroll, Cancel always shows. The large row is the first, at the top.
+     */
+    private fun capRows(activity: Activity, sheet: android.view.View) {
+        val metrics = activity.resources.displayMetrics
+        val dp = { v: Int -> (v * metrics.density).toInt() }
+        val width = android.view.View.MeasureSpec.makeMeasureSpec(metrics.widthPixels, android.view.View.MeasureSpec.AT_MOST)
+        val free = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+        val title = sheet.findViewById<android.view.View>(R.id.emergency_title).apply { measure(width, free) }
+        val cancel = sheet.findViewById<android.view.View>(R.id.emergency_cancel).apply { measure(width, free) }
+        // The sheet's padding (12 + 16), the handle (5), the title's margins (12 + 4) and Cancel's (6).
+        val reserved = dp(96) + title.measuredHeight + cancel.measuredHeight + dp(12 + 16 + 5 + 12 + 4 + 6)
+        sheet.findViewById<EmergencyRowsScroll>(R.id.emergency_scroll).maxHeightPx =
+            maxOf(metrics.heightPixels - reserved, dp(120))
     }
 
     /** Each row announces as a button (as the lock's Nødsamtale pills, qa-34-s8-code L3). */

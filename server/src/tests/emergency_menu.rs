@@ -85,7 +85,9 @@ async fn adding_keeps_112_first_and_normalises_the_number() {
     assert!(html.contains("First and largest on the phone"), "{html}");
     assert!(html.contains("Emergency number: always works"));
     assert!(
-        html.contains("row-sub tone-orange\">Not an emergency number: follows the call rules"),
+        html.contains(
+            "row-sub tone-orange\">Not an emergency number to the server: follows the call rules"
+        ),
         "Mamma's row is orange"
     );
 }
@@ -290,4 +292,101 @@ async fn a_removed_phone_takes_its_menu() {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+/// Code QA L4: on a managed phone a non-emergency number that isn't an outbound contact says the phone dims it.
+#[tokio::test]
+async fn a_number_outside_the_phone_book_says_it_is_dimmed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    add(&app, &cookie, id, "90000001", "Mamma").await;
+    let dimmed = "Not in the phone book - dimmed on the phone";
+    assert!(
+        !page(&app, &cookie, id).await.contains(dimmed),
+        "unmanaged: no line"
+    );
+    sqlx::query(
+        "UPDATE device_policy SET calls_managed = 1, calls_enabled = 1 WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(page(&app, &cookie, id).await.contains(dimmed));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[("name", "Mamma"), ("number", "90000001")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let html = page(&app, &cookie, id).await;
+    assert!(!html.contains(dimmed), "in the phone book now: {html}");
+}
+
+async fn numbers(app: &TestApp, token: &str) -> Vec<String> {
+    menu(app, token)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["number"].as_str().unwrap().to_string())
+        .collect()
+}
+
+async fn remove_112(app: &TestApp, cookie: &str, id: i64) {
+    let e112 = entry(app, id, "112").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/emergency/{e112}/remove"),
+            Some(cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+}
+
+/// Code QA L3: a new default country code that leaves a menu without an emergency number puts 112 first, and the
+/// menu stays at most six.
+#[tokio::test]
+async fn a_new_country_code_puts_112_back_first() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let (full, full_token) = app.enrolled_device("full").await;
+    add(&app, &cookie, id, "113", "Ambulanse").await;
+    remove_112(&app, &cookie, id).await;
+    add(&app, &cookie, full, "113", "").await;
+    for n in 1..=4 {
+        add(&app, &cookie, full, &format!("9000000{n}"), "").await;
+    }
+    remove_112(&app, &cookie, full).await;
+    add(&app, &cookie, full, "110", "").await;
+    assert_eq!(numbers(&app, &full_token).await.len(), 6);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/settings/calls",
+            Some(&cookie),
+            &[("default_country_code", "46")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(numbers(&app, &token).await, ["112", "113"]);
+    assert_eq!(
+        numbers(&app, &full_token).await,
+        [
+            "112",
+            "113",
+            "+4790000001",
+            "+4790000002",
+            "+4790000003",
+            "+4790000004"
+        ],
+        "112 first, the last one (110) gone"
+    );
 }

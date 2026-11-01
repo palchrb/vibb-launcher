@@ -62,8 +62,10 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   list, shared as `emergency_numbers.json` with the server), else `decideOutgoing(.., isEmergency = false)` over
   `CallPolicyStore.effectiveState()` (`ALLOWED`/`BLOCKED`; `BLOCKED` too while another call is live) -, `emergencyTap`
   (emergency path: CALL_PHONE self-granted, Telecom, else `EmergencyDialer`; rules' path: `CallSystem.placeCall` only,
-  as a phone-book call; a blocked row is dimmed and does nothing). A non-emergency row calls from the lock without the
-  kid's PIN when the rules allow it (design 73 §2).
+  as a phone-book call; a blocked row is dimmed and does nothing). While the phone is locked (`confirm(.., locked = true)` from the PIN lock,
+  or `phoneLocked`: our lock LOCKED or Android's keyguard up) only real emergency numbers call: every other row is
+  `LOCKED`, dimmed, "Lås opp for å ringe" (the user, 2026-11-01; design 73 §2). The rows
+  scroll in `EmergencyRowsScroll`, capped to what the screen leaves after the title and Cancel.
 - **Store:** `CallPolicyStore.emergencyMenuRaw`, read with the CE cache in `refresh` (`storedEmergencyMenu`: the cached
   policy's list, else the one in `last_call_rules` - `CallRules.emergencyMenu`); the DE boot copy is unchanged (no
   entry point runs before the first unlock).

@@ -36,12 +36,22 @@ with the fixed list (112 and 911 everywhere, plus the default country's: 47 → 
 |---|---|---|---|
 | Real emergency number | calls (Telecom, else `EmergencyDialer`) | calls (Telecom, else `EmergencyDialer`) | calls |
 | Any other number | calls through Telecom, our redirection and in-call services check it again | **dimmed, not callable** | calls |
+| Any other number, phone locked | **dimmed, "Lås opp for å ringe"** | **dimmed** | **dimmed, "Lås opp for å ringe"** |
 
 A non-emergency row is decided exactly like a phone-book call (`decideOutgoing` over `CallPolicyStore.effectiveState()`,
-`isEmergency = false`): no new loophole. It never falls back to the emergency dialer. On the lock it calls without
-the kid's PIN when the rules allow it, as the mockup draws "Mamma" there: the parent put the number on the menu, and
-the call rules - not the screen lock - are what limits calls. The lock's "emergency flow" window
-(`PinLockRuntime.emergencyFlowStarted`) opens for any call the sheet places, so the call screen isn't covered.
+`isEmergency = false`): no new loophole. It never falls back to the emergency dialer. **While the phone is locked
+only real emergency numbers call** (the user, 2026-11-01: "Nei kun ordentlige nødanrop fra låst skjerm"), managed or
+not: on the PIN lock, its glance and ring card, and any sheet shown while our PIN lock is LOCKED or Android's keyguard
+is up (`EmergencyCall.phoneLocked`), every other row is dimmed with "Lås opp for å ringe" (`EmergencyRowKind.LOCKED`).
+Unlocked (the time-rule screen, the phone book) the rows follow the call rules as in the table. This replaces the
+first build's "Mamma calls from the lock" (and the code QA's managed/unmanaged switch). The lock's "emergency flow" window (`PinLockRuntime.emergencyFlowStarted`) opens for an emergency call, and for
+another call once Telecom took it, so the call screen isn't covered. CALL_PHONE is self-granted before either.
+
+The PWA's orange line says "to the server" (the phone may know more emergency numbers than the fixed list); on a
+managed phone a non-emergency number that isn't an outbound contact adds "Not in the phone book - dimmed on the
+phone". A new default country code (Phone Setup) that leaves a menu without an emergency number puts 112 first
+(`emergency::repair_menus`; a seventh number goes, as the phone would drop it). The sheet's rows scroll in a capped
+`EmergencyRowsScroll`, Cancel below it; a name takes two lines at most.
 
 ## 3. Defaults chosen
 

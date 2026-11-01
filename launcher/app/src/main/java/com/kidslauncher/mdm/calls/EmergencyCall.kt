@@ -3,11 +3,13 @@ package com.kidslauncher.mdm.calls
 import android.Manifest
 import android.app.Activity
 import android.app.Dialog
+import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
 
@@ -29,13 +31,15 @@ object EmergencyCall {
 
     /** Returns the shown dialog or sheet (the PIN lock sends no VoIP ring screen over it, qa-17b-code #3). Vibb
      * night in both system modes, like the phone book's confirm (design 34 step 5's `KidAlertDialog`; emulator
-     * round 2026-10-14 N10: it was a white panel on the lock). [onCalling] runs just before any call is placed. */
-    fun confirm(activity: Activity, onCalling: () -> Unit = {}): Dialog {
+     * round 2026-10-14 N10: it was a white panel on the lock). [onCalling] runs just before an emergency call and
+     * once another call was placed. [locked]: the caller is a locked screen (the PIN lock); the phone's own lock
+     * state counts too ([phoneLocked]) - while locked only real emergency numbers call. */
+    fun confirm(activity: Activity, locked: Boolean = false, onCalling: () -> Unit = {}): Dialog {
         CallPolicyStore.ensureLoaded(activity)
         val isEmergency = { number: String -> CallSystem.isEmergencyOutgoing(activity, number) }
         val menu = emergencyMenu(CallPolicyStore.emergencyMenuRaw, CallPolicyStore.defaultCc, isEmergency)
         val busy = !secondCallAllowed(OngoingCalls.states, emergency = false)
-        val rows = emergencyRows(menu, CallPolicyStore.effectiveState(), busy, isEmergency)
+        val rows = emergencyRows(menu, CallPolicyStore.effectiveState(), busy, isEmergency, locked || phoneLocked(activity))
         return when (val shape = emergencyMenuShape(rows)) {
             is EmergencyMenuShape.Dialog -> AlertDialog.Builder(activity, R.style.KidAlertDialog)
                 .setTitle(activity.getString(R.string.calls_confirm_title, shape.row.entry.number))
@@ -47,29 +51,44 @@ object EmergencyCall {
     }
 
     /** One tap's call: nothing for a blocked row, the emergency path for a real emergency number, the phone book's
-     * path for any other. */
+     * path for any other (the lock's yield, [onCalling], only once Telecom took it - code QA L1). CALL_PHONE is
+     * self-granted first for both (code QA M2: an unmanaged phone may not hold it). */
     fun place(activity: Activity, tap: EmergencyTap, onCalling: () -> Unit) {
+        if (tap == EmergencyTap.Nothing) return
+        grantCallPhone(activity)
         when (tap) {
             EmergencyTap.Nothing -> Unit
             is EmergencyTap.Emergency -> {
                 onCalling()
                 callEmergency(activity, tap.number)
             }
-            is EmergencyTap.ByRules -> {
-                onCalling()
-                CallSystem.placeCall(activity, tap.number)
-            }
+            is EmergencyTap.ByRules -> if (CallSystem.placeCall(activity, tap.number)) onCalling()
         }
     }
 
-    /** A real emergency number: Telecom, else the platform's emergency dialer. */
-    fun callEmergency(activity: Activity, number: String = NUMBER) {
+    /** Whether the phone is locked now: our PIN lock is LOCKED, or Android's keyguard is up (design 59's face, a
+     * screen shown over it). Any doubt reads as locked. */
+    private fun phoneLocked(activity: Activity): Boolean {
+        if (PinLockRuntime.chromeLocked) return true
+        return try {
+            activity.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked ?: true
+        } catch (e: Exception) {
+            true
+        }
+    }
+
+    private fun grantCallPhone(activity: Activity) {
         val dpm = activity.getSystemService(DevicePolicyManager::class.java)
         if (dpm?.isDeviceOwnerApp(activity.packageName) == true) {
             QuickControls.selfGrantPermission(
                 activity, dpm, ComponentName(activity, MdmDeviceAdminReceiver::class.java), Manifest.permission.CALL_PHONE,
             )
         }
+    }
+
+    /** A real emergency number: Telecom, else the platform's emergency dialer. */
+    fun callEmergency(activity: Activity, number: String = NUMBER) {
+        grantCallPhone(activity)
         if (CallSystem.placeCall(activity, number)) return
         if (!EmergencyDialer.open(activity, number)) {
             Log.w("EmergencyCall", "Neither Telecom nor the emergency dialer took the emergency call")

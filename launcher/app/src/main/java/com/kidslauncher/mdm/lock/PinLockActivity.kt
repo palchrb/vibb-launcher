@@ -552,7 +552,7 @@ class PinLockActivity : AppCompatActivity() {
         voipRing.voipRingDecline.setOnClickListener { onVoipDecline() }
         // Emergency call and Parent code stay reachable during a ring (qa-16-17-code #3).
         voipRing.voipRingEmergency.setOnClickListener {
-            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })
+            trackDialog(EmergencyCall.confirm(this, locked = true) { PinLockRuntime.emergencyFlowStarted() })
         }
         voipRing.voipRingParentCode.setOnClickListener { showParentCodeDialog() }
         // Both Nødsamtale pills announce as a button (qa-34-s8-code L3).
@@ -568,7 +568,7 @@ class PinLockActivity : AppCompatActivity() {
         buildKeypad()
         binding.pinKeypad.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ -> sizeKeys(bottom - top) }
         binding.pinEmergency.setOnClickListener {
-            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })
+            trackDialog(EmergencyCall.confirm(this, locked = true) { PinLockRuntime.emergencyFlowStarted() })
         }
         binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
         PinLockRuntime.addModeListener(modeListener)

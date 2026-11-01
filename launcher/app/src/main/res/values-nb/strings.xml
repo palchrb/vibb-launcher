@@ -44,6 +44,7 @@
     <string name="emergency_menu_title">Ring nødnummer</string>
     <string name="emergency_menu_always">Virker alltid</string>
     <string name="emergency_menu_rules">Følger anropsreglene</string>
+    <string name="emergency_menu_unlock">Lås opp for å ringe</string>
     <string name="emergency_menu_default_name">Nødnummer</string>
     <string name="emergency_menu_row_description">Ring %1$s, %2$s</string>
     <string name="calls_not_allowed">Dette nummeret er ikke tillatt.</string>
