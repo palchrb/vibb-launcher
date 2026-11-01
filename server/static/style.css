@@ -489,10 +489,29 @@ input[type="radio"] {
     color: var(--tab-on);
 }
 
-/* One outline icon per tab, the same shape in both states (the user, 2026-11-01: "outline og form er identisk
-   når de skifter farge"); the chosen tab (and the one just tapped, .is-pending) only turns it the bright peach. */
+/* One icon per tab, the same outline and stroke in both states (the user, 2026-11-01). The chosen tab (and the one just
+   tapped, .is-pending) turns it the bright peach and fills it ("fylt med fersken", pick A): .ti-body fills, .ti-fill
+   (the note's beam) appears, and .ti-detail (the phone's bar, the pin's dot, the gear's middle) is cut out in the
+   bar's own colour. */
 .tab[aria-current="page"] .tab-icon,
 .tab.is-pending .tab-icon {
+    color: var(--tab-on-icon);
+}
+
+.tab[aria-current="page"] .ti-body,
+.tab[aria-current="page"] .ti-fill,
+.tab.is-pending .ti-body,
+.tab.is-pending .ti-fill {
+    fill: currentColor;
+}
+
+.tab[aria-current="page"] .ti-detail,
+.tab.is-pending .ti-detail {
+    stroke: var(--bar);
+    fill: var(--bar);
+}
+
+.tab-icon {
     color: var(--tab-on-icon);
 }
 
