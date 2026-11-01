@@ -1524,20 +1524,24 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * [file] (a small copy under `Store.smallArtDir`) through the manifest's FileProvider, read-granted to
-     * [SESSION_ART_READERS]; null when the provider can't name it. Why not `artworkData`: the bytes would ride on every
-     * queue item's metadata through the session's Binder (an entry's cover on each of hundreds of items); a URI is a
-     * few bytes, and Media3's own bitmap loader reads it in this process for the notification.
+     * [SESSION_ART_READERS]; when the provider can't name it, the file's own URI (as before 2026-11-01: our
+     * notification still shows it, SystemUI falls back to the session's bitmap). Why not `artworkData`: the bytes would
+     * ride on every queue item's metadata through the session's Binder (an entry's cover on each of hundreds of items);
+     * a URI is a few bytes, and Media3's own bitmap loader reads it in this process for the notification.
      */
-    private fun sessionArtUri(file: File): Uri? {
+    private fun sessionArtUri(file: File): Uri {
         sessionArt[file.path]?.let { return it }
-        val uri = runCatching { FileProvider.getUriForFile(this, sessionArtAuthority(packageName), file) }.getOrNull() ?: return null
+        val uri = runCatching { FileProvider.getUriForFile(this, sessionArtAuthority(packageName), file) }.getOrNull() ?: return Uri.fromFile(file)
         // a grant lasts until a reboot: once per picture and process (an entry's cover is every item's)
         for (reader in SESSION_ART_READERS) runCatching { grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         sessionArt[file.path] = uri
         return uri
     }
 
-    /** [sessionArtUri]'s URIs by the small copy's path, granted (main thread). */
+    /**
+     * [sessionArtUri]'s URIs by the small copy's path, granted (main thread). It stays small: one entry per picture the
+     * player handed over in this process (the small copies are a few hundred at most), gone with the process.
+     */
     private val sessionArt = HashMap<String, Uri>()
 
     private fun hasCopy(a: Active, hash: String): Boolean = a.art[hash]?.path?.let { File(it).isFile } == true

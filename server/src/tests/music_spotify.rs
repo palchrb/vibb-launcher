@@ -2699,6 +2699,30 @@ pub(in crate::tests) mod listing {
         assert_eq!(list[0].title.as_deref(), Some("Kapittel 1"));
         assert_eq!(listing(&app, show).await.spotify_skipped, 0);
 
+        // A podcast whose every episode is `market`-restricted is no audiobook: `no_items`, with the spike too.
+        let market = entry(&app, "show", "4FakeShow0000000000003").await;
+        app.fetch.answer(
+            &url(&app, Read::Show("4FakeShow0000000000003")),
+            200,
+            fixture("show.json"),
+        );
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes("4FakeShow0000000000003", 0)),
+            200,
+            String::from_utf8(fixture("show_audiobook_episodes.json"))
+                .unwrap()
+                .replace("payment_required", "market"),
+        );
+        assert_eq!(
+            check(&app, market, t0()).await.error.as_deref(),
+            Some("no_items")
+        );
+        let report = sweep::check_entry(&state, market, t0() + TimeDelta::hours(25))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.error.as_deref(), Some("no_items"));
+
         // A really empty show is still `no_items`.
         let empty = entry(&app, "show", "4FakeShow0000000000002").await;
         app.fetch.answer(
@@ -5383,6 +5407,23 @@ async fn the_diagnostic_log_runs_fifteen_minutes() {
         !page.contains("id=\"spotify-diag\""),
         "no Spotify, no group"
     );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/spotify-diag"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "no Spotify, no log");
+    let stored: Option<i64> = sqlx::query_scalar(
+        "SELECT music_spotify_diag_until FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, None, "nothing written");
 
     sqlx::query(
         "INSERT INTO music_spotify_accounts (id, spotify_user, display_name, ciphertext, nonce, \

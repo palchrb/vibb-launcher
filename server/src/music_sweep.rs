@@ -3066,10 +3066,15 @@ async fn spotify_check(
                     "a Spotify show with unplayable episodes"
                 );
             }
-            // Every episode unplayable (none listed, none left out for anything else to blame): an audiobook Spotify
-            // shares as a show - its own sentence instead of `no_items` (2026-11-01); a really empty show stays
-            // `no_items`.
-            if listed.is_empty() && unplayable > 0 {
+            // Every episode unplayable (none listed, none left out for anything else) with an audiobook-shaped
+            // restriction: an audiobook Spotify shares as a show - its own sentence instead of `no_items`
+            // (2026-11-01). A really empty show, or a podcast whose episodes are all `market`/`explicit`-restricted,
+            // stays `no_items`.
+            if listed.is_empty()
+                && unplayable > 0
+                && unplayable == skipped
+                && spotify::audiobook_shaped(restriction.as_deref())
+            {
                 return Ok(Err(CheckError::Spotify(
                     spotify::AUDIOBOOK_CODE.to_string(),
                 )));
