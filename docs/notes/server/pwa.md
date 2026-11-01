@@ -129,7 +129,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Disconnected (enrolled, no token), Not seen yet, Not set up. The two windows come from the launcher's backstop
   (`SyncSchedule.kt` 30/15 min, inexact alarms up to 1.75 x): a launcher change to the backstop must revisit them.
   Right after a restart a phone shows Away, or Offline if its last report is over 45 min old, until its stream
-  reconnects: seconds after a clean stop, up to 5 min after a crash or power cut (no special case).
+  reconnects: seconds after a clean stop, up to 5 min after a crash or power cut (no special case). The pages' dots
+  and lines read it through `phone_status::dot` since 2026-11-01 ("Off or out of touch says so" below): Away under
+  `NO_CONTACT_AFTER_MINUTES` (10) is green, after it orange "No contact"; About This Phone's Connection row keeps
+  the raw state's word and colour.
 - **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
   "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
   (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none and
@@ -603,7 +606,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
   title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · seen 3 min ago" ›,
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
-  state as a dot and in each `aria-label`, "Anna, online"; the chosen one `aria-current="true"` - the tab bar has the
+  state as a dot and in each `aria-label`, "Anna, online" (since 2026-11-01 the Devices dot and word, "Off or out
+  of touch says so"); the chosen one `aria-current="true"` - the tab bar has the
   page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
   trail, the **last fix** (kept past the window while location is on, with "Last seen 9 days ago"; "No position yet." without one, "No position kept while location is off." under Off, which erases them - security review P1, M1 of round S3) as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
   `title`; the marker's popup says the same, built with `textContent`), the newest Update Location's **answer row**
@@ -1317,23 +1321,23 @@ man er inne på en device". Branch `pwa-fixes-b`.
   first that holds: (1) not set up / "Disconnected · access removed" / not seen yet; (2) **turned off** - design 38's
   `phone_off` later than every `phone_on` and status report and past its push hold (`parent_events::offs_now` +
   `off_since`, the rule the summary had): "Turned off 21:14 · battery was 3 %" (nb "Slått av 21:14 · batteriet var
-  3 %"); (3) **offline** (`streams::connection_state`): "Offline · last seen 13:05" (nb "Frakoblet · sist sett
-  13:05"), the exact time in `title`; (4) **a rule locks**: the lock's words (`LockBadge::words`: "Leggetid until
+  3 %"); (3) **offline** (`streams::connection_state`): "Offline · last heard 13:05" (nb "Frakoblet · sist hørt
+  13:05"; "last seen"/"sist sett" until 2026-11-01), the exact time in `title`; (4) **a rule locks**: the lock's words (`LockBadge::words`: "Leggetid until
   07:00 · calls off", nb "Leggetid til 07:00 · anrop av", "at last report (…)" as before) · the battery; (5) **low
   battery** - `devices.battery_low_since` set (the phone's own `low`, design 35 §2.5) and the last report not
   charging: "Low battery, 9 %" · today's screen time; (6) else today's screen time · the battery ("4 min today ·
-  100 %", "62 %, charging"), or the connection's word ("Online", "Away") when the phone said neither. No "seen N min
+  100 %", "62 %, charging"), or "Online" when the phone said neither (was the connection's word, "Online"/"Away"). No "seen N min
   ago" and no battery age while the phone is online or away: the last contact is said only as "last seen" once it
   is offline. A phone turned off or offline shows that line alone - its lock, "calls off", screen time and battery
-  are not shown (the last report may be stale; Device › Time still has them). Away (no stream, contact within
-  45 min) reads as online - its orange dot says it. The summary's Away/Offline tails "changes may be delayed" /
+  are not shown (the last report may be stale; Device › Time still has them). Away (no stream) reads as online
+  under 10 min and leads with "No contact" after it (below, since 2026-11-01). The summary's Away/Offline tails "changes may be delayed" /
   "changes wait until it's back" were dropped on purpose with the ages (the user's pick, the minimal variant C).
 - **The header** (`phone_status::header`): line 1 the same lead, the screen time named ("4 min screen time today", nb
   "4 min skjermtid i dag"); line 2 the zone the phone is in now ("Test since 22:19", `devices::zone_now`) · the
   battery - the screen time instead when the lead is the battery; a phone turned off, offline or not reachable has
   line 1 alone. The lock is orange text now (`tone-orange`), not the lock badge's pill.
-- **The dot** stays the connection's (green online, orange away, grey otherwise): orange for a low battery would
-  read as Away, so the low battery is said in the line, in orange.
+- **The dot** says what the line leads with (`phone_status::dot`, since 2026-11-01, below): orange for a low battery
+  would read as "No contact", so the low battery is said in the line, in orange.
 - **Times**: `Zone::since` - the clock alone today (never "24. okt." for today), "yesterday 21:40", the weekday within
   the week ("Sat 22:19"), else "24 Oct 22:19". Screen time with `display_time::duration` ("1 h 12 min of 1 h 30 min
   today"). Device › Time keeps `ScreenTime::text` and the badge's English `text_beside` until its slice.
@@ -1353,6 +1357,45 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `src/tests/devices_list.rs`, `summary.rs`, `power.rs` (the row and the header "Turned off"), `notifications.rs`
   (the low battery, no doubled spoken name), `zones.rs`, `enrollment.rs`,
   `devices_list::the_list_fails_loudly_when_the_power_events_dont_read`, `music_spotify::migrations_73_to_109_in_order`.
+
+## Off or out of touch says so: dot and line agree (2026-11-01, branch `status-off`)
+
+- **Why**: Sverre was turned off at 20:35; the push came, but the Devices row showed an orange dot and no "Turned
+  off" (the user: "Kanskje når den ikke er grønn burde det stå slått av kl xx eller mistet kontakten for x min
+  siden"). The dot was the raw connection (orange = no stream, heard within 45 min - also for a phone turned off),
+  and `offs_now` compared the off's `happened_at` (the phone's clock) with the reports (the server's), so a phone
+  clock behind or the report sent as it shut down hid the off. The user accepted the mockup ("Vibb status av og
+  frakoblet").
+- **The rule** (`phone_status::dot`, `no_contact`, `NO_CONTACT_AFTER_MINUTES` = 10): turned off - grey at once,
+  "Turned off 20:35 · battery was 100 %"; online (stream open, `ONLINE_WINDOW_MINUTES`) or Away under 10 min -
+  green, the line as before ("Online" when the phone said nothing; a sleeping phone drops its stream for a moment,
+  not worth a word); Away 10-45 min (`AWAY_WINDOW_MINUTES`) - orange, the line leads with **"No contact · last heard
+  20 min ago"** (nb "Ingen kontakt · sist hørt for 20 min siden"; `data-no-contact` in `state-away`, then `data-seen`
+  with the exact time in `title`) and then the rest of the row's line as before (the lock · the battery, the low
+  battery · the screen time, the screen time · the battery); Offline (over 45 min) - grey, "Offline · last heard
+  13:05" (nb "Frakoblet · sist hørt 13:05"; en "last heard" too, for one wording with the orange line); not set up,
+  access removed, not seen yet - grey. The header without contact: line 1 "No contact · last heard …", line 2 the
+  row's rest with the screen time named, no zone (where it was then isn't where it is now).
+- **Where**: the Devices row (`DeviceListRow.dot`, also its line's `data-status`), the summary's header
+  (`DeviceDetailTemplate.dot`), and Locate's switcher and list (`PhoneLink.dot`/`word`; `render_locate_page` reads
+  `offs_now(db, None)` once, a failure is the page's 500; the word in the reader's language - "Online", "No
+  contact", "Offline", "Turned off 20:35" - and in the `aria-label`, "Anna, no contact"). `ConnectionState::word` is
+  the tests' alone now.
+- **The off by the server's clock**: `parent_events::offs_now` weighs the reports against the off's arrival
+  (`created_at`, `datetime('now')` text like `reported_at`, both through `datetime()`) + 60 s, not `happened_at`;
+  the off against the starts stays `happened_at` (both the phone's), and the line's time is `happened_at`. A late
+  off (told at the next start) comes with its start, which ends it. Locate's "Last position before the phone went
+  off" (`locate::before_off`) weighs the report against the same arrival (the shutdown's instant when the event is
+  gone).
+- **The off's last position**: "Last position at 20:26 – see the map in Locate" (nb "Siste posisjon kl. 20:26 – se
+  kartet i Finn": "Finn" was read as a verb), "Last position yesterday 20:26 – …" on another day
+  (`events.phone_off.detail.position_on`), "Last position – …" without a time.
+- Tests: `phone_status::tests::the_dot_says_what_the_line_leads_with` (each state's dot, 9/10/44 min, the mockup's
+  Anna, off over "No contact", the parts), `devices_list::each_phone_shows_its_connection` (Ella away just now green
+  "Online", Frida 20 min orange "No contact", nb), `summary.rs` (away just now green), `power::a_phone_clock_behind_and_a_report_at_shutdown_still_say_off`
+  (3 min behind, a report 30 s after the arrival: "Turned off" and the grey dot on both pages),
+  `locate::tests::the_last_position_before_the_phone_went_off` (the clock behind),
+  `parent_events::tests::the_offs_last_position_points_to_the_map`.
 
 ## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
 

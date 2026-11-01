@@ -374,8 +374,8 @@ impl Phone {
     /// 2 %, probably flat". `late`: it reached the server only with the next boot's start (" · told
     /// at the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it),
     /// never for a restart the phone knew of. The phone's last stored fix (2026-10-25) rides in the
-    /// parameters (`location`, never in any text) for the inbox's "Last position from 21:10: shown
-    /// on Locate", until retention removes it with the location history.
+    /// parameters (`location`, never in any text) for the inbox's "Last position at 21:10 – see the
+    /// map in Locate", until retention removes it with the location history.
     pub fn phone_off(&self, off: &PowerOff, at: DateTime<Utc>, late: bool) -> NewEvent {
         let restarting = off.reboot == Some(true);
         let reason = if restarting {
@@ -790,10 +790,13 @@ impl OffSince {
 /// its newest `phone_on` and than every status report (design 38 §3.4; qa-38-code M1: a report
 /// after the shutdown proves the phone is on, whatever start never arrived - a re-enrollment, a boot
 /// count of -1, a dropped start), as `(device_id, happened_at, created_at, title, summary,
-/// params)`: one query for the whole Devices list. `happened_at` is RFC 3339 and `reported_at`
-/// SQLite's `datetime` text: compared through `datetime()`, never as raw strings. A minute's slack
-/// for the phone's clock and a report racing the shutdown (no start reports within a minute of its
-/// shutdown). [off_since] words it.
+/// params)`: one query for the whole Devices list. The reports are weighed against the off's
+/// arrival (`created_at`), not its `happened_at`: both are this server's clock (SQLite's
+/// `datetime('now')` text, compared through `datetime()`), while `happened_at` is the phone's - a
+/// phone clock 3 min behind hid "Turned off" behind the report it sent as it shut down (2026-11-01,
+/// "a phone that is off says so"). A minute's slack for a report racing the shutdown (no start
+/// reports within a minute of its shutdown). The off against the starts stays `happened_at`, both
+/// the phone's clock; [off_since] words it from `happened_at`.
 pub async fn offs_now<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,
     device: Option<i64>,
@@ -809,7 +812,7 @@ pub async fn offs_now<'e, E: sqlx::SqliteExecutor<'e>>(
          AND o.happened_at > \
              COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
                        WHERE n.device_id = o.device_id AND n.kind = 'phone_on'), '') \
-         AND datetime(o.happened_at, '+60 seconds') >= COALESCE((SELECT MAX(s.reported_at) \
+         AND datetime(o.created_at, '+60 seconds') >= COALESCE((SELECT datetime(MAX(s.reported_at)) \
                        FROM device_status s \
                        WHERE s.device_id = o.device_id), '')",
     )
@@ -1678,10 +1681,18 @@ pub fn detail(
         }
         Kind::PhoneOff => {
             let location = off_params(params)?.location?;
+            // "Last position at 21:10 – see the map in Locate" (nb "Siste posisjon kl. 21:10 – se
+            // kartet i Finn": Finn the tab, never read as a verb); "Last position yesterday 21:10"
+            // on another day.
             Some(match DateTime::from_timestamp_millis(location.at_ms) {
-                Some(fix_at) => t_params(
+                Some(fix_at) if zone.local(fix_at).date_naive() == zone.today(now) => t_params(
                     lang,
                     "events.phone_off.detail.position_at",
+                    &[("at", &zone.clock(fix_at))],
+                ),
+                Some(fix_at) => t_params(
+                    lang,
+                    "events.phone_off.detail.position_on",
                     &[("at", &zone.at(fix_at, now))],
                 ),
                 None => t(lang, "events.phone_off.detail.position").to_string(),
@@ -3526,5 +3537,40 @@ mod tests {
     fn the_bell() {
         assert_eq!(Bell { unread: 3 }.pill(), "3");
         assert_eq!(Bell { unread: 100 }.pill(), "99+");
+    }
+
+    /// 2026-11-01 ("Hva er egentlig Finn sending??"): the off's last position names Locate as the
+    /// tab to open, "kl." before a clock alone, the day's word otherwise.
+    #[test]
+    fn the_offs_last_position_points_to_the_map() {
+        // 20:40 in Oslo.
+        let now = utc("2026-11-01 19:40:00");
+        let detail = |at_ms: i64, lang: Lang| {
+            let params = format!(r#"{{"location":{{"lat":59.9,"lng":10.7,"at_ms":{at_ms}}}}}"#);
+            let zone = Zone::from_setting("Europe/Oslo").in_lang(lang);
+            super::detail("phone_off", "", None, Some(&params), &zone, now).unwrap()
+        };
+        let today = utc("2026-11-01 19:26:00").timestamp_millis();
+        let yesterday = utc("2026-10-31 19:26:00").timestamp_millis();
+        assert_eq!(
+            detail(today, Lang::Nb),
+            "Siste posisjon kl. 20:26 – se kartet i Finn"
+        );
+        assert_eq!(
+            detail(today, Lang::En),
+            "Last position at 20:26 – see the map in Locate"
+        );
+        assert_eq!(
+            detail(yesterday, Lang::Nb),
+            "Siste posisjon i går 20:26 – se kartet i Finn"
+        );
+        assert_eq!(
+            detail(yesterday, Lang::En),
+            "Last position yesterday 20:26 – see the map in Locate"
+        );
+        assert_eq!(
+            detail(i64::MAX, Lang::Nb),
+            "Siste posisjon – se kartet i Finn"
+        );
     }
 }

@@ -220,7 +220,7 @@ impl Zone {
         }
     }
 
-    /// Since when something holds, for the phone's status lines ("last seen 13:05", "Home since
+    /// Since when something holds, for the phone's status lines ("last heard 13:05", "Home since
     /// 22:19", "Turned off 21:14"; the user's pick of 2026-11-01): its clock alone today - never
     /// a date for today -, "yesterday 21:40", the weekday within the week ("Sat 22:19"), else
     /// "24 Oct 22:19" ("24 Oct 2025 22:19"). A time ahead of `now` reads as [at].
