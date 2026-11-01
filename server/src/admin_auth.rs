@@ -381,8 +381,42 @@ pub async fn lock_minutes_left(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i
 }
 
 /// The banner after a complete login (§3.2.1): how many 2FA codes failed since the last complete
-/// login, and from where - whoever typed them knew the password.
-pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64) -> Option<String> {
+/// login, and from where - whoever typed them knew the password. Kept in the session as facts and
+/// worded by the page that shows it (design 70 slice 3a), so it reads in the parent's language.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LoginWarning {
+    pub failures: i64,
+    /// The addresses the codes came from, newest first (at most 5).
+    pub ips: Vec<String>,
+    /// A session from before slice 3a kept the sentence itself (English): shown as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
+}
+
+impl LoginWarning {
+    /// Account's sentence: "3 wrong two-factor codes were entered before this sign-in (from
+    /// 203.0.113.7). Whoever entered them knew your password - change it now."
+    pub fn words(&self, lang: crate::i18n::Lang) -> String {
+        if let Some(said) = &self.said {
+            said.clone()
+        } else if self.ips.is_empty() {
+            crate::i18n::t_count(lang, "account.warning.login", self.failures, &[])
+        } else {
+            crate::i18n::t_count(
+                lang,
+                "account.warning.login_from",
+                self.failures,
+                &[("ips", &self.ips.join(", "))],
+            )
+        }
+    }
+}
+
+pub async fn login_warning(
+    db: &sqlx::SqlitePool,
+    username: &str,
+    failures: i64,
+) -> Option<LoginWarning> {
     if failures <= 0 {
         return None;
     }
@@ -397,16 +431,11 @@ pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64)
     .fetch_all(db)
     .await
     .unwrap_or_default();
-    let from = if ips.is_empty() {
-        String::new()
-    } else {
-        format!(" (from {})", ips.join(", "))
-    };
-    Some(format!(
-        "{failures} wrong two-factor code{} entered before this sign-in{from}. Whoever entered \
-         them knew your password - change it now.",
-        if failures == 1 { " was" } else { "s were" }
-    ))
+    Some(LoginWarning {
+        failures,
+        ips,
+        said: None,
+    })
 }
 
 /// The forced first password change's write (design 62 §2, qa-62-design Q62-2): the new hash and
@@ -785,6 +814,40 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The banner is worded by the page; a session from before keeps its English sentence (qa-s-i18n-3a L3).
+    #[test]
+    fn the_login_warning_reads_in_the_language_or_as_it_was_said() {
+        let warning = LoginWarning {
+            failures: 3,
+            ips: vec!["203.0.113.7".to_string()],
+            said: None,
+        };
+        assert_eq!(
+            warning.words(crate::i18n::Lang::En),
+            "3 wrong two-factor codes were entered before this sign-in (from 203.0.113.7). Whoever \
+             entered them knew your password - change it now."
+        );
+        assert!(
+            warning
+                .words(crate::i18n::Lang::Nb)
+                .starts_with("3 feil tofaktorkoder")
+        );
+        let stored = serde_json::to_value(&warning).unwrap();
+        assert_eq!(
+            stored,
+            serde_json::json!({"failures": 3, "ips": ["203.0.113.7"]})
+        );
+        let old = LoginWarning {
+            failures: 0,
+            ips: Vec::new(),
+            said: Some("1 wrong two-factor code was entered.".to_string()),
+        };
+        assert_eq!(
+            old.words(crate::i18n::Lang::Nb),
+            "1 wrong two-factor code was entered."
+        );
+    }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();

@@ -88,6 +88,18 @@ fun hardeningPlan(policy: HardeningPolicy?, managed: Boolean): HardeningPlan =
         screenCaptureDisabled = managed && (policy?.disallowScreenCapture ?: false),
     )
 
+/**
+ * Security review S-L11: `DISALLOW_CONFIG_VPN` whenever the Web filter is on ([filterOn]: a policy with
+ * `vpn_filter_enabled`, no override or pause), not only while the hardening is managed - so a phone with only the
+ * filter can't switch always-on's lockdown or Disconnect the filter's VPN. The parent's explicit switch off
+ * (`disallow_config_vpn: false`) still wins. Unlike the rest of [plan], this part goes with the filter: the override
+ * and the pause lift the filter, and with it this.
+ */
+fun withFilterVpnLock(plan: HardeningPlan, policy: HardeningPolicy?, filterOn: Boolean): HardeningPlan {
+    if (plan.isSet(HardeningRestriction.CONFIG_VPN) || !filterOn || policy?.disallowConfigVpn == false) return plan
+    return plan.copy(restrictions = plan.restrictions + (HardeningRestriction.CONFIG_VPN to true))
+}
+
 /** What to write with `setScreenCaptureDisabled` given what `getScreenCaptureDisabled` says now
  * ([current]): `null` = nothing, it is already [wanted] (a write only on a change, like the
  * camera policy). */

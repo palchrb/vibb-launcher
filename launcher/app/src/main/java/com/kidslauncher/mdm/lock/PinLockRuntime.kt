@@ -592,7 +592,7 @@ object PinLockRuntime {
         // Off the main thread: the clock app for the alarm exemption, and the kiosk-off lock
         // helpers, so a screen-off never waits for PackageManager (qa-10-code #7).
         CoroutineScope(Dispatchers.IO).launch {
-            systemClockPackage = systemClockApp(app)
+            systemClocks = ClockApp.systemClocks(app)
             ClockApp.refresh(app)
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
@@ -1889,28 +1889,15 @@ object PinLockRuntime {
         appContext?.let { syncVoipRinger(it) }
     }
 
-    /** The system clock app (resolved off the main thread at init) - its alarms open the alarm
-     * exemption (qa-10-code #4), as do the pinned clock app's ([clockPackages]). */
+    /** The system clock apps (resolved off the main thread at init, [ClockApp.systemClocks]: every system handler of
+     * `SHOW_ALARMS`, never the next alarm's creator - qa-r6-b-code L8) - their alarms open the alarm exemption
+     * (qa-10-code #4), as do the pinned clock app's ([clockPackages]). */
     @Volatile
-    private var systemClockPackage: String? = null
-
-    /**
-     * The system clock app: a system handler of `AlarmClock.ACTION_SHOW_ALARMS` - never the next
-     * alarm's creator, which may be the catalog's clock app; with that one holding the next alarm at
-     * process start the system clock's own alarms lost the exemption (qa-r6-b-code L8).
-     */
-    private fun systemClockApp(context: Context): String? = try {
-        context.packageManager.queryIntentActivities(
-            android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS),
-            android.content.pm.PackageManager.ResolveInfoFlags.of(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY.toLong()),
-        ).map { it.activityInfo.packageName }.firstOrNull { it != "android" }
-    } catch (e: Exception) {
-        null
-    }
+    private var systemClocks: Set<String> = emptySet()
 
     /** The clock apps whose alarms show over the lock and under the glance page's date (design 42
      * §1.2): the system clock app and Fossify Clock while its signer is verified. Read-only. */
-    fun clockPackages(): Set<String> = lockClockPackages(systemClockPackage, ClockApp.verified)
+    fun clockPackages(): Set<String> = lockClockPackages(systemClocks, ClockApp.verified)
 
     private fun rememberAlarm(context: Context) {
         val next = try {
@@ -1970,7 +1957,14 @@ object PinLockRuntime {
                 if (state != stored) PinLockStore.saveBackoff(app, state)
                 return PinResult.Waiting(wait)
             }
-            beginAttempt(state, now).also { PinLockStore.saveBackoff(app, it) }
+            val next = beginAttempt(state, now)
+            // Security review S-L6: a count that wasn't committed is no count - the try is refused, like an
+            // unreadable count, rather than checked uncounted.
+            if (!PinLockStore.saveBackoff(app, next)) {
+                Log.e(LOG_TAG, "Wrong-PIN count not committed - parent code only")
+                return PinResult.Unusable
+            }
+            next
         } catch (e: Exception) {
             // The failure can't be counted first (QA 10 #3): only the parent code opens the lock
             // then (qa-16c-code #3).

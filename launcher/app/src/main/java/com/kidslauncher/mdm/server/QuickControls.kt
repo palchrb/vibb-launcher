@@ -473,11 +473,8 @@ object QuickControls {
             Log.w(LOG_TAG, "getScanResults() threw", e)
             emptyList()
         }
-        Log.i(
-            LOG_TAG,
-            "collectWifiNetworks: raw scanResults=${results.size} " +
-                "(ssids=${results.take(5).map { it.SSID }}), configuredNetworks=${saved.size}",
-        )
+        // Security review P-L4: counts only - nearby networks' names say where the kid is.
+        Log.i(LOG_TAG, "collectWifiNetworks: raw scanResults=${results.size}, configuredNetworks=${saved.size}")
 
         return results
             .mapNotNull { result -> result.SSID?.takeIf { it.isNotBlank() }?.let { it to result } }
@@ -542,14 +539,15 @@ object QuickControls {
                 }
                 val result = wm.addNetworkPrivileged(config)
                 if (result.statusCode != WifiManager.AddNetworkResult.STATUS_SUCCESS) {
-                    Log.w(LOG_TAG, "addNetworkPrivileged failed for $ssid: ${result.statusCode}")
+                    Log.w(LOG_TAG, "addNetworkPrivileged failed: ${result.statusCode}")
                     return false
                 }
                 result.networkId
             }
             wm.enableNetwork(networkId, true)
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to connect to WiFi network $ssid", e)
+            val failure = e.javaClass.simpleName
+            Log.w(LOG_TAG, "Failed to connect to the WiFi network: $failure")
             false
         }
     }

@@ -43,7 +43,7 @@ use chrono::Utc;
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::handlers::device_pages::Note;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp};
 use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{
@@ -180,16 +180,20 @@ fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
 
 /// The flash in a rules list after a delete or a save of a gone rule (`?notice=`), as `(text,
 /// refused)`; `None` for a code the page doesn't know.
-fn rules_notice(code: Option<&str>) -> Option<(&'static str, bool)> {
-    match code? {
-        "deleted" => Some(("Rule deleted.", false)),
-        "gone" => Some(("That rule was already deleted.", false)),
-        "gone_unsaved" => Some((
-            "That rule was deleted in the meantime, so nothing was saved.",
-            true,
-        )),
-        _ => None,
-    }
+fn rules_notice(lang: Lang, code: Option<&str>) -> Option<(&'static str, bool)> {
+    let (key, refused) = match code? {
+        "deleted" => ("settings.time_rules.deleted", false),
+        "gone" => ("settings.time_rules.gone", false),
+        "gone_unsaved" => ("settings.time_rules.gone_unsaved", true),
+        _ => return None,
+    };
+    Some((t(lang, key), refused))
+}
+
+/// [read_failed] in the reader's language (Device › Time and the bedtime, design 70 slice 3a).
+pub(crate) fn read_failed_in(lang: Lang, err: sqlx::Error, what: &str) -> Response {
+    tracing::error!(%err, "can't read {what}");
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_rules")
 }
 
 pub(crate) fn read_failed(err: sqlx::Error, what: &str) -> Response {
@@ -208,6 +212,16 @@ pub(crate) fn server_error(err: impl std::fmt::Display, what: &str) -> Response 
         "Couldn't save - nothing was changed. Check the server log.",
     )
         .into_response()
+}
+
+/// [server_error] in the reader's language (Device › Time's saves and the bedtime, design 70 slice 3a).
+pub(crate) fn server_error_in(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
+    tracing::error!(%err, "{what}");
+    crate::i18n::error(
+        lang,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "error.save_failed_log",
+    )
 }
 
 fn bad_request(message: impl Into<String>) -> Response {
@@ -239,41 +253,51 @@ struct PhoneRow {
 
 /// A phone's bedtime as a row says it: "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00", none, or a
 /// stored one that doesn't read (`text-alarm`).
-enum Bedtime {
-    None,
-    Nights(String),
-    Unreadable,
+struct Bedtime {
+    unreadable: bool,
+    /// Device › Time's row value.
+    value: String,
+    /// Settings › Time Rules' sub-line under the phone.
+    line: String,
 }
 
 impl Bedtime {
-    fn of(row: Option<&TimeRuleRow>) -> Bedtime {
-        match row.map(crate::handlers::bedtime::bedtime_summary) {
-            None => Bedtime::None,
-            Some(Some(summary)) => Bedtime::Nights(summary),
-            Some(None) => Bedtime::Unreadable,
+    fn of(lang: Lang, row: Option<&TimeRuleRow>) -> Bedtime {
+        let (unreadable, value, line) =
+            match row.map(|row| crate::handlers::bedtime::bedtime_summary(lang, row)) {
+                None => (
+                    false,
+                    t(lang, "device.time.bedtime_not_set").to_string(),
+                    t(lang, "settings.time_rules.no_bedtime").to_string(),
+                ),
+                Some(Some(summary)) => (
+                    false,
+                    summary.clone(),
+                    t_params(lang, "settings.time_rules.bedtime", &[("nights", &summary)]),
+                ),
+                Some(None) => (
+                    true,
+                    t(lang, "device.time.bedtime_unreadable").to_string(),
+                    t(lang, "settings.time_rules.bedtime_unreadable").to_string(),
+                ),
+            };
+        Bedtime {
+            unreadable,
+            value,
+            line,
         }
     }
 
     fn unreadable(&self) -> bool {
-        matches!(self, Bedtime::Unreadable)
+        self.unreadable
     }
 
-    /// Device › Time's row value.
     fn value(&self) -> &str {
-        match self {
-            Bedtime::None => "Not set",
-            Bedtime::Nights(summary) => summary,
-            Bedtime::Unreadable => "Can't be read",
-        }
+        &self.value
     }
 
-    /// Settings › Time Rules' sub-line under the phone.
-    fn line(&self) -> String {
-        match self {
-            Bedtime::None => "No bedtime".to_string(),
-            Bedtime::Nights(summary) => format!("Bedtime {summary}"),
-            Bedtime::Unreadable => "Bedtime can't be read".to_string(),
-        }
+    fn line(&self) -> &str {
+        &self.line
     }
 }
 
@@ -356,10 +380,10 @@ pub async fn show_schedules(
                     avatar: crate::handlers::devices::avatar_class(d),
                     photo: crate::handlers::devices::avatar_photo(d),
                     own: own.contains(&d.id),
-                    bedtime: Bedtime::of(bedtimes.get(&Some(d.id))),
+                    bedtime: Bedtime::of(lang, bedtimes.get(&Some(d.id))),
                 })
                 .collect(),
-            notice: rules_notice(params.get("notice").map(String::as_str)),
+            notice: rules_notice(lang, params.get("notice").map(String::as_str)),
         },
         StatusCode::OK,
     )
@@ -1304,7 +1328,9 @@ pub async fn save_device_schedule(
         "switch" => (true, false),
         "budget" => (false, true),
         "" => (true, true),
-        _ => return bad_request("Unknown section"),
+        _ => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_section");
+        }
     };
     let budget = if limits {
         match parse_budget_form(&fields) {
@@ -1338,7 +1364,7 @@ pub async fn save_device_schedule(
     .await
     {
         Ok(done) if done.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             let mut detail = security::Detail::facts(format!("device {id}"));
@@ -1371,7 +1397,7 @@ pub async fn save_device_schedule(
             }
             .into_response()
         }
-        Err(err) => server_error(err, "failed to save a device's time rules"),
+        Err(err) => server_error_in(lang, err, "failed to save a device's time rules"),
     }
 }
 
@@ -1443,8 +1469,10 @@ async fn render_device_time(
         .await
     {
         Ok(Some(device)) => device,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return read_failed(err, "the device"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return read_failed_in(lang, err, "the device"),
     };
     let policy =
         match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
@@ -1453,8 +1481,10 @@ async fn render_device_time(
             .await
         {
             Ok(Some(policy)) => policy,
-            Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-            Err(err) => return read_failed(err, "the device's settings"),
+            Ok(None) => {
+                return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+            }
+            Err(err) => return read_failed_in(lang, err, "the device's settings"),
         };
     let latest = match sqlx::query_as::<_, DeviceStatus>(
         "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -1464,7 +1494,7 @@ async fn render_device_time(
     .await
     {
         Ok(latest) => latest,
-        Err(err) => return read_failed(err, "the last report"),
+        Err(err) => return read_failed_in(lang, err, "the last report"),
     };
     let effective = match time_rules::effective_rule_rows(
         &state.db,
@@ -1474,11 +1504,11 @@ async fn render_device_time(
     .await
     {
         Ok(rules) => rules,
-        Err(err) => return read_failed(err, "the phone's rules"),
+        Err(err) => return read_failed_in(lang, err, "the phone's rules"),
     };
     let own = match time_rules::rule_set_rows(&state.db, Some(id)).await {
         Ok(rules) => rules,
-        Err(err) => return read_failed(err, "the phone's own rules"),
+        Err(err) => return read_failed_in(lang, err, "the phone's own rules"),
     };
     let everyone_count: i64 =
         match sqlx::query_scalar("SELECT COUNT(*) FROM time_rules WHERE device_id IS NULL")
@@ -1486,23 +1516,23 @@ async fn render_device_time(
             .await
         {
             Ok(n) => n,
-            Err(err) => return read_failed(err, "the global rules"),
+            Err(err) => return read_failed_in(lang, err, "the global rules"),
         };
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
         Ok(report) => report.problems(),
-        Err(err) => return read_failed(err, "the call report"),
+        Err(err) => return read_failed_in(lang, err, "the call report"),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let lifts =
         match crate::handlers::lifts::recent(&state.db, id, latest.as_ref(), &zone, now).await {
             Ok(lifts) => lifts,
-            Err(err) => return read_failed(err, "the lifts"),
+            Err(err) => return read_failed_in(lang, err, "the lifts"),
         };
     let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
     {
         Ok(asked) => asked.map(|at| zone.clock(at)),
-        Err(err) => return read_failed(err, "the request for more time"),
+        Err(err) => return read_failed_in(lang, err, "the request for more time"),
     };
 
     // What the phone last said (design 31 §3.10's badge; the end only when provably right).
@@ -1532,54 +1562,50 @@ async fn render_device_time(
             let lock = match &badge {
                 // The footer says when the report came, so the badge needn't repeat it.
                 Some(badge) => badge.text_beside(&zone.relative(*reported_at, now)),
-                None => "None".to_string(),
+                None => t(lang, "device.about.none").to_string(),
             };
             let screen = screen.map(|st| {
                 (
                     st.text(),
                     report.extra_minutes.map(|m| {
-                        format!("Includes {} extra", crate::handlers::lifts::minutes_text(m))
+                        t_params(
+                            lang,
+                            "device.time.includes_extra",
+                            &[("extra", &crate::handlers::lifts::minutes_text(m))],
+                        )
                     }),
                 )
             });
             (lock, badge.is_some(), screen)
         }
-        _ => ("No report yet".to_string(), false, None),
+        _ => (t(lang, "device.time.no_report").to_string(), false, None),
     };
 
     let mut warnings = Vec::new();
     if crate::handlers::devices::launcher_without_rules(latest.as_ref()) {
         warnings.push(Note {
             warning: true,
-            title: "Vibb One too old for time rules".to_string(),
+            title: t(lang, "device.time.too_old").to_string(),
             value: None,
-            detail: Some(
-                "Until Vibb One updates, the phone keeps its old schedule and changes here don't \
-                 reach it."
-                    .to_string(),
-            ),
+            detail: Some(t(lang, "device.time.too_old_sub").to_string()),
             fix: None,
         });
     }
     if report.as_ref().is_some_and(|(_, r)| r.ledger_unreadable) {
         warnings.push(Note {
             warning: true,
-            title: "Screen-time record unreadable".to_string(),
+            title: t(lang, "device.time.ledger_unreadable").to_string(),
             value: None,
-            detail: Some("The phone counts today's screen time as used up.".to_string()),
+            detail: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
             fix: None,
         });
     }
     if !policy.calls_managed && effective.iter().any(|r| !r.calls_allowed) {
         warnings.push(Note {
             warning: true,
-            title: "Incoming calls aren't blocked".to_string(),
+            title: t(lang, "device.time.incoming_not_blocked").to_string(),
             value: None,
-            detail: Some(
-                "Calls aren't managed on this phone, so a rule without calls only stops calls \
-                 out. Manage calls under Calls & Contacts."
-                    .to_string(),
-            ),
+            detail: Some(t(lang, "device.time.incoming_not_blocked_sub").to_string()),
             fix: None,
         });
     }
@@ -1591,7 +1617,7 @@ async fn render_device_time(
     render(
         DeviceTimeTemplate {
             lang,
-            title: format!("Time · {}", device.name),
+            title: format!("{} · {}", t(lang, "device.page.time"), device.name),
             warnings,
             lock,
             locking,
@@ -1603,15 +1629,14 @@ async fn render_device_time(
             done,
             pause_done: done.is_some_and(|(group, _, _)| group == "pause"),
             custom: policy.custom_schedule_enabled,
-            bedtime: Bedtime::of(effective.iter().find(|r| r.bedtime)),
+            bedtime: Bedtime::of(lang, effective.iter().find(|r| r.bedtime)),
             bedtime_removed: query.get("notice").map(String::as_str) == Some("bedtime_removed"),
             everyone_rules: match everyone_count {
-                0 => "None".to_string(),
-                1 => "1 rule".to_string(),
-                n => format!("{n} rules"),
+                0 => t(lang, "device.about.none").to_string(),
+                n => t_count(lang, "device.time.rule_count", n, &[]),
             },
             own_rules: rule_rows(&own),
-            own_notice: rules_notice(query.get("notice").map(String::as_str)),
+            own_notice: rules_notice(lang, query.get("notice").map(String::as_str)),
             budget_corrupt: time_rules::parse_budget(&policy.daily_budget_json).is_err(),
             budget: match &entered {
                 Some((fields, error)) => budget_entered(fields, error),
@@ -1827,9 +1852,9 @@ mod tests {
     #[test]
     fn every_rules_notice_reads_as_words() {
         for code in ["deleted", "gone", "gone_unsaved"] {
-            assert!(rules_notice(Some(code)).is_some(), "{code}");
+            assert!(rules_notice(Lang::En, Some(code)).is_some(), "{code}");
         }
-        assert_eq!(rules_notice(Some("<b>")), None);
-        assert_eq!(rules_notice(None), None);
+        assert_eq!(rules_notice(Lang::En, Some("<b>")), None);
+        assert_eq!(rules_notice(Lang::En, None), None);
     }
 }

@@ -31,7 +31,8 @@ val MUSIC_PACKAGES = listOf("me.vibb.music", "me.vibb.music.debug")
  * finished): the music app to nudge, so the new app syncs and Device > Music gets its report at
  * once - its managed config didn't change, so nothing else would nudge it. Null for any other app.
  */
-fun musicNudgeOnChange(changedPackage: String?): String? = changedPackage?.takeIf { it in MUSIC_PACKAGES }
+fun musicNudgeOnChange(changedPackage: String?, trusted: (String) -> Boolean): String? =
+    changedPackage?.takeIf { it in MUSIC_PACKAGES && trusted(it) } // S-L8 (code QA L3): only the music app with our signer
 
 /** The bridge's nudge to the music app: carries nothing, only starts its sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
@@ -301,8 +302,24 @@ fun volumeCapRestriction(capPct: Int?): Int = capPct?.takeIf { it in 1..99 } ?: 
 /** The value types `setApplicationRestrictions` stores for a device owner (besides nested bundles and arrays). */
 fun restrictionValueStorable(value: Any?): Boolean = value is Boolean || value is Int || value is String
 
-/** Only the music app's two build names may use the bridge (on top of the signature permission). */
-fun callerAllowed(callerPackages: List<String>?): Boolean = callerPackages.orEmpty().any { it in MUSIC_PACKAGES }
+/**
+ * Security review S-L8: the music app's build names this launcher build trusts - a release launcher only the release
+ * app (`me.vibb.music`), a debug launcher both (the emulator's debug pair). [MUSIC_PACKAGES] stays the contract's
+ * list of every build name.
+ */
+fun trustedMusicNames(debugBuild: Boolean): List<String> = if (debugBuild) MUSIC_PACKAGES else MUSIC_PACKAGES.take(1)
+
+/**
+ * Security review S-L8: [pkg] is the music app - one of [trustedMusicNames] **and** signed by the launcher's own signer
+ * ([sameSigner]: `checkSignatures(ours, pkg) == SIGNATURE_MATCH`; the music app is signed with the launcher's key).
+ * The grants, the managed config, the nudge, the budget exemption and the bridge's every call go only to such a one.
+ */
+fun musicTrusted(pkg: String?, debugBuild: Boolean, sameSigner: (String) -> Boolean): Boolean =
+    pkg != null && pkg in trustedMusicNames(debugBuild) && sameSigner(pkg)
+
+/** Only the music app may use the bridge ([musicTrusted]; on top of the service's signature permission). */
+fun callerAllowed(callerPackages: List<String>?, debugBuild: Boolean, sameSigner: (String) -> Boolean): Boolean =
+    callerPackages.orEmpty().any { musicTrusted(it, debugBuild, sameSigner) }
 
 /** A "playing" with no `setNowPlaying` for this long no longer holds an update back (a stuck player). */
 const val PLAYING_STALE_MS = 6 * 3_600_000L

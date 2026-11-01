@@ -40,7 +40,7 @@ class VoipCallGuardTest {
             Regex("Notification\\.(EXTRA_[A-Z_]+)").findAll(reader).map { it.groupValues[1] }.toSet(),
         )
         assertTrue(reader.contains("getInt(Notification.EXTRA_CALL_TYPE"))
-        assertTrue(reader.contains("CallAction(it.actionIntent, it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true)"))
+        assertTrue(reader.contains("CallAction(it.actionIntent.ofApp(pkg), it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true)"))
     }
 
     @Test

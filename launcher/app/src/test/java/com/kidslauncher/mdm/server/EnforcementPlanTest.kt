@@ -31,7 +31,7 @@ class EnforcementPlanTest {
     ) = computeEnforcementPlan(
         allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
         callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
-        scheduleLocked = locked, alarmApp = alarm, inputMethods = ime,
+        scheduleLocked = locked, alarmApps = setOfNotNull(alarm), inputMethods = ime,
         lockUsableApps = usable, ruleBlocksCalls = noCalls, timeRulesSet = rules, budgetSet = budget,
     )
 

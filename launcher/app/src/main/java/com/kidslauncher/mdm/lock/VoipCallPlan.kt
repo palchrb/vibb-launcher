@@ -180,6 +180,14 @@ fun <T> pickAnswerIntent(answerExtra: T?, decline: T?, actions: List<CallAction<
     return added.singleOrNull()
 }
 
+/**
+ * Security review S-L1: an intent of [noticePackage]'s notification is kept - and ever sent by the lock, with its
+ * visible-sender start privilege - only when that app created it ([creatorPackage], `PendingIntent.creatorPackage`).
+ * An allowed app could otherwise put another app's PendingIntent into its CallStyle ring and have the lock fire it.
+ */
+fun intentOfApp(creatorPackage: String?, noticePackage: String): Boolean =
+    creatorPackage != null && creatorPackage == noticePackage
+
 /** What the card's Svar sent (17b): the answer action, the app's ring screen (no answer action),
  * or nothing. */
 enum class VoipAnswerSent { NOTHING, ANSWER_ACTION, RING_SCREEN }

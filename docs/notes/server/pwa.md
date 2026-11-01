@@ -1392,10 +1392,21 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (qa-s-i18n-1-code L1), so a screen reader never reads English text with a Norwegian voice. A handler takes `lang: Lang` as an extractor and hands it to the helper that builds the page. Since
   slice 1 every template struct has it (`/sw.js` has no words, §4: its template is the one without); Device ›
   Calendar, its rule editor, its preview and the summary's Calendar row (`calendar.md`) and Settings › Account (with
-  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. One English sentence
-  is left on Account until slice 3a: the "Wrong codes before this sign-in" banner, which `admin_auth::login_warning`
-  builds at sign-in and the session keeps as text (3a keeps the count and addresses instead, worded by the page, with
-  the Devices list's row).
+  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. Since slice 3a the
+  "Wrong codes before this sign-in" banner is facts in the session (`admin_auth::LoginWarning`: the count and the
+  addresses), worded by the page that shows it (`account.warning.login*`, the Devices list's row `devices.warning.*`);
+  a session from before keeps an English sentence that no longer reads, so its banner is gone.
+- **Slice 3a (Devices)**: the Devices list, a phone's summary and its sub-pages but Locate's and Music's, Add Phone,
+  Setup Code and Connect, and the shared partials (`tab_bar`, `bell`, `info_row`, `note_*`, `recent`, `exceptions`,
+  `budget_rows`, `device_app_row`, `app_permissions_form`, ...) are worded, with their handlers' titles, notices,
+  sub-page rows and error bodies (`i18n::error`; `device_pages::load_device`/`load_policy` answer a status and a
+  key) and `app_permissions::words`. `i18n::tests::moved_templates_have_no_literal_words` scans the moved templates
+  (`MOVED`); the every-page scripts read `partials/js_words.html` (`#js-words`, `data-w-*`: `reconnect.js`'s chip,
+  `nav-timing.js`'s On/Off), `reveal.js` its button's own `data-w-copied`/`-select`, and `jstest/words.test.js` keeps
+  the moved scripts free of words. Left for slice 4: the summary rows and Attention, the badge and screen-time words,
+  the helper modules' words (`kid_lock`, `kiosk_escapes`, `window_relock`, `lifts`, `activity`, `app_downloads`,
+  `sound_mode`, `boot_witness`, `models`, `streams`, `config`, `photos`, `phone`); for 3c Locate's command rows
+  (`locate::CommandRow`), for 3e Time Rules' day and limit words (`schedules`) shared with Device › Time.
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

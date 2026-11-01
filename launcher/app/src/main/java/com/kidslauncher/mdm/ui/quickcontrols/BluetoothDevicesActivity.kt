@@ -23,6 +23,10 @@ import com.kidslauncher.mdm.server.BtAttemptEvent
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.btAttemptStep
+import com.kidslauncher.mdm.server.AppEnforcer
+import com.kidslauncher.mdm.server.cachedPolicy
+import com.kidslauncher.mdm.ui.kidsettings.bluetoothPageAllowed
+import com.kidslauncher.mdm.ui.kidsettings.controlsSection
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -91,8 +95,21 @@ class BluetoothDevicesActivity : UIObjectActivity() {
         registerStateReceiver()
     }
 
+    /** Security review S-L5: the page leaves as soon as the parent takes the Bluetooth row away (a sync's apply). */
+    private val appliedListener: () -> Unit = { finishIfNotAllowed() }
+
+    /** True when it finished: the cached policy no longer shows the Bluetooth row ([bluetoothPageAllowed]). */
+    private fun finishIfNotAllowed(): Boolean {
+        if (isFinishing) return true
+        if (bluetoothPageAllowed(controlsSection(dpm.isDeviceOwnerApp(packageName), cachedPolicy()))) return false
+        finish()
+        return true
+    }
+
     override fun onStart() {
         super.onStart()
+        AppEnforcer.addAppliedListener(appliedListener)
+        if (finishIfNotAllowed()) return
         session = BluetoothAudio.Session(this)
         if (firstStart) {
             firstStart = false
@@ -103,6 +120,7 @@ class BluetoothDevicesActivity : UIObjectActivity() {
     }
 
     override fun onStop() {
+        AppEnforcer.removeAppliedListener(appliedListener)
         session?.close()
         session = null
         super.onStop()

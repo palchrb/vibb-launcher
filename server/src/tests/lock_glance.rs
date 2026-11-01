@@ -307,7 +307,9 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
     let cookie = app.admin_cookie().await;
     let page = app.get_page(&lock_page(id), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(subsection(&page.text()).contains("The apps couldn't be read. Check the server log."));
+    assert!(
+        subsection(&page.text()).contains("The apps couldn&#39;t be read. Check the server log.")
+    );
 }
 
 // ---- the routes -------------------------------------------------------------------------------------
@@ -706,16 +708,14 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     assert!(!summary.contains("lock-screen"), "{summary}");
     let section = subsection(&page);
     assert!(section.contains("SMS login codes included"));
-    assert!(
-        section.contains(
-            "swiped away there, as on Android's own lock screen; nothing can be answered"
-        )
-    );
+    assert!(section.contains(
+        "swiped away there, as on Android&#39;s own lock screen; nothing can be answered"
+    ));
     // The footer says what Name only is for a chat and for any other app (the launcher's
     // `glanceLevel`), and what Full text costs.
     assert!(
         section.contains(
-            "Name only: the sender's name for chats, otherwise the app's name and how many."
+            "Name only: the sender&#39;s name for chats, otherwise the app&#39;s name and how many."
         ),
         "{section}"
     );
@@ -836,7 +836,7 @@ async fn unlisted_ticks_and_the_empty_list_say_the_right_thing() {
         section.contains("No allowed apps to choose from"),
         "{section}"
     );
-    assert!(!section.contains("hasn't reported its apps"));
+    assert!(!section.contains("hasn&#39;t reported its apps"));
 }
 
 #[tokio::test]

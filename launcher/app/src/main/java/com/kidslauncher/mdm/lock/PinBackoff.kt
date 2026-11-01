@@ -4,10 +4,12 @@ package com.kidslauncher.mdm.lock
  * The wait after wrong kid PINs (design §5, QA 10 #3). Pure, tested in PinBackoffTest; stored by
  * PinLockStore in CE prefs `pin_lock_state` with commit().
  *
- * Tries 1-4 are free; after the 5th wrong PIN the phone waits 30 s, then 1, 2, 5 and 15 minutes
- * (cap) - about 100 tries a day, so about 50 days on average for one 4-digit PIN (accepted, QA 10
- * #12). It never wipes. The parent code on the lock has its own counter (ParentPin, design 24)
- * and works during the wait.
+ * Tries 1-4 are free; after the 5th wrong PIN the phone waits 30 s, then 1, 2, 5 and 15 minutes, and
+ * from there (security review S-L6) the wait doubles - 30 minutes, then 1 hour - up to [PIN_BACKOFF_CAP_MS]
+ * a try (1 hour, the user's choice 2026-11-01): the count only resets on the right PIN or a new PIN from
+ * the parent, so a patient guesser gets about 24 tries a day instead of the ~100 the old 15-minute cap
+ * gave (one 4-digit PIN in about 200 days on average, not weeks). It never wipes. The parent code on the
+ * lock has its own counter (ParentPin, design 24) and works during the wait.
  *
  * The clock only extends a wait, unlike timedWindowActive (RestrictionsPause.kt), whose windows
  * end on a reboot or a forward clock jump: here a different boot count restarts the full wait
@@ -16,7 +18,20 @@ package com.kidslauncher.mdm.lock
  */
 
 const val PIN_FREE_ATTEMPTS = 4
-private val BACKOFF_STEPS_MS = longArrayOf(30_000L, 60_000L, 120_000L, 300_000L, 900_000L)
+
+/** The longest wait a wrong kid PIN can bring (S-L6): 1 hour (the user, 2026-11-01). The one number to change - the
+ * steps double up to it. */
+const val PIN_BACKOFF_CAP_MS = 3_600_000L
+
+/** 30 s, 1, 2, 5, 15 minutes, then doubling from 30 minutes up to [PIN_BACKOFF_CAP_MS]. */
+private val BACKOFF_STEPS_MS: LongArray = buildList {
+    for (step in longArrayOf(30_000L, 60_000L, 120_000L, 300_000L, 900_000L)) add(minOf(step, PIN_BACKOFF_CAP_MS))
+    var next = 1_800_000L
+    while (last() < PIN_BACKOFF_CAP_MS) {
+        add(minOf(next, PIN_BACKOFF_CAP_MS))
+        next *= 2
+    }
+}.toLongArray()
 
 /** The wait after [failures] wrong PINs in a row (0 while they are free). */
 fun backoffDurationMs(failures: Int): Long {
@@ -95,8 +110,9 @@ fun beginAttempt(state: BackoffState, now: LockClocks): BackoffState {
 
 fun attemptSucceeded(state: BackoffState): BackoffState = state.copy(failures = 0, window = null)
 
-/** "0:28" for the lock screen's "Try again in 0:28". */
+/** "0:28" for the lock screen's "Try again in 0:28"; "2:00:00" from an hour on (S-L6's longer waits). */
 fun backoffText(remainingMs: Long): String {
     val seconds = (remainingMs + 999L) / 1000L
+    if (seconds >= 3600L) return "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
     return "%d:%02d".format(seconds / 60, seconds % 60)
 }

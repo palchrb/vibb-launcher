@@ -151,7 +151,7 @@
                 <div class="edit-body" role="status">
                     <p class="field-label">{{ self.tp(o.title, [("name", o.name.as_str()), ("username", o.username.as_str())]) }}</p>
                     <p class="secret-once" translate="no">{% for chunk in o.chunks %}<span>{{ chunk }}</span>{% endfor %}</p>
-                    <button type="button" class="button-small button-secondary copy-secret" data-copy-secret hidden>{{ self.t("account.otp.copy") }}</button>
+                    <button type="button" class="button-small button-secondary copy-secret" data-copy-secret data-w-copied="{{ self.t("common.copied") }}" data-w-select="{{ self.t("common.select_copy") }}" hidden>{{ self.t("account.otp.copy") }}</button>
                     <p class="field-hint pin-line">{{ self.tp("account.otp.hint", [("until", o.until.as_str()), ("name", o.name.as_str())]) }}</p>
                 </div>
             </div>
@@ -218,6 +218,6 @@
         <p class="group-footer">{{ self.t("account.parents.footer") }}</p>
     </section>
 </main>
-{% if otp.is_some() %}<script src="/static/reveal.js?v=3"></script>{% endif %}
+{% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
 </body>
 </html>

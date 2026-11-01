@@ -458,7 +458,7 @@ class LockGlanceTest {
         assertEquals("own mode keeps it", GlancePrompt.UNUSABLE, glancePrompt(false, false, false, false, null, androidFace = false))
         val activity = listOf(File("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), File("app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"))
             .first { it.exists() }.readText()
-        assertTrue(activity.contains("glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)"))
+        assertTrue(activity.contains("glancePrompt(PinLockRuntime.pinUsable && !unusableShown, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)"))
     }
 
     @Test

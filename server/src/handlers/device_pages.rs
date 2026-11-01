@@ -35,7 +35,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening};
 use crate::streams::ConnectionState;
 
@@ -124,36 +124,31 @@ impl PolicyProblem {
     }
 
     /// The row's value: at most 4 words.
-    pub fn title(&self) -> &'static str {
-        match self {
-            PolicyProblem::CacheCorrupt => "Saved settings unreadable",
-            PolicyProblem::ServerError => "Server error",
-            PolicyProblem::RejectedSuspect => "Last settings refused",
-            PolicyProblem::FreshDecodeFailed => "New settings unreadable",
-            PolicyProblem::Other(_) => "Problem reported",
-        }
+    pub fn title(&self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                PolicyProblem::CacheCorrupt => "device.about.policy.cache_corrupt",
+                PolicyProblem::ServerError => "device.about.policy.server_error",
+                PolicyProblem::RejectedSuspect => "device.about.policy.rejected",
+                PolicyProblem::FreshDecodeFailed => "device.about.policy.decode_failed",
+                PolicyProblem::Other(_) => "device.about.policy.unknown",
+            },
+        )
     }
 
     /// The ⓘ: what the phone does now, and what to check.
-    pub fn detail(&self) -> String {
-        match self {
-            PolicyProblem::CacheCorrupt => "The phone can't read its saved settings. It enforces \
-                the last app list it had (or nothing but Vibb One), and takes no changes until it gets \
-                good settings from this server."
-                .to_string(),
-            PolicyProblem::ServerError => "This server answered with an error, so the phone keeps \
-                its last settings. Check the server log (\"failed to build device policy\")."
-                .to_string(),
-            PolicyProblem::RejectedSuspect => "The phone ignored the last settings from this \
-                server: they looked like a server falling back to defaults (no app list after it \
-                had one). Check the server log and version."
-                .to_string(),
-            PolicyProblem::FreshDecodeFailed => "The phone couldn't read the last settings from \
-                this server; Vibb One and the server versions probably don't match. It keeps its \
-                current restrictions."
-                .to_string(),
-            PolicyProblem::Other(code) => format!("The phone reported \"{code}\"."),
-        }
+    pub fn detail(&self, lang: Lang) -> String {
+        let key = match self {
+            PolicyProblem::CacheCorrupt => "device.about.policy.cache_corrupt_sub",
+            PolicyProblem::ServerError => "device.about.policy.server_error_sub",
+            PolicyProblem::RejectedSuspect => "device.about.policy.rejected_sub",
+            PolicyProblem::FreshDecodeFailed => "device.about.policy.decode_failed_sub",
+            PolicyProblem::Other(code) => {
+                return t_params(lang, "device.about.policy.unknown_sub", &[("code", code)]);
+            }
+        };
+        t(lang, key).to_string()
     }
 }
 
@@ -172,50 +167,60 @@ pub enum PlayNote {
 
 impl PlayNote {
     pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
+        let lang = zone.lang();
         match self {
             PlayNote::InstallMode { until_ms } => Note {
                 warning: true,
-                title: format!(
-                    "Play Store open until {}",
-                    DateTime::from_timestamp_millis(*until_ms)
-                        .map(|t| zone.until(t, now))
-                        .unwrap_or_default()
+                title: t_params(
+                    lang,
+                    "device.advanced.play.install_mode",
+                    &[(
+                        "until",
+                        &DateTime::from_timestamp_millis(*until_ms)
+                            .map(|t| zone.until(t, now))
+                            .unwrap_or_default(),
+                    )],
                 ),
                 value: None,
-                detail: Some(
-                    "Install mode is on. Apps installed now stay hidden until you allow them."
-                        .to_string(),
-                ),
+                detail: Some(t(lang, "device.advanced.play.install_mode_sub").to_string()),
                 fix: None,
             },
             PlayNote::UpdateWindow => Note {
                 warning: false,
-                title: "Play Store".to_string(),
-                value: Some("Updating apps".to_string()),
-                detail: Some(
-                    "The nightly update window is open while the screen is off.".to_string(),
-                ),
+                title: t(lang, "device.advanced.play.store").to_string(),
+                value: Some(t(lang, "device.advanced.play.updating").to_string()),
+                detail: Some(t(lang, "device.advanced.play.updating_sub").to_string()),
                 fix: None,
             },
             PlayNote::RestartOnce(effects) => Note {
                 warning: true,
-                title: "Restart the phone once".to_string(),
+                title: t(lang, "device.advanced.play.restart").to_string(),
                 value: None,
-                detail: Some(format!(
-                    "After a Vibb One update, Android hasn't yet given Vibb One what it needs to {}.",
-                    effects.join(", and to ")
+                detail: Some(t_params(
+                    lang,
+                    "device.advanced.play.restart_sub",
+                    &[(
+                        "effects",
+                        &effects.join(t(lang, "device.advanced.play.restart_and")),
+                    )],
                 )),
                 fix: None,
             },
             PlayNote::NotSuspendable { block_on } => Note {
                 warning: true,
-                title: "Play can't be paused on this phone".to_string(),
+                title: t(lang, "device.advanced.play.not_suspendable").to_string(),
                 value: None,
-                detail: Some(if *block_on {
-                    "Play is blocked only while Block other apps' screens is on.".to_string()
-                } else {
-                    "Block other apps' screens is off, so apps can open the Play Store.".to_string()
-                }),
+                detail: Some(
+                    t(
+                        lang,
+                        if *block_on {
+                            "device.advanced.play.blocked_while_on"
+                        } else {
+                            "device.advanced.play.block_off"
+                        },
+                    )
+                    .to_string(),
+                ),
                 fix: None,
             },
         }
@@ -323,17 +328,25 @@ pub(crate) fn version_of_code(code: i64) -> Option<String> {
 /// The music app as the phone reported it: its version from the versionCode ("Installed" without
 /// one), the package and the code behind ⓘ (§4.2). About This Phone (`key` "music-app") and
 /// Device › Music ("app") show the same row (qa-31-s7-code N2).
-pub(crate) fn music_app_row(key: &'static str, music: &crate::music::MusicState) -> Option<Row> {
+pub(crate) fn music_app_row(
+    lang: Lang,
+    key: &'static str,
+    music: &crate::music::MusicState,
+) -> Option<Row> {
     let package = music.package.as_deref()?;
     let version = music.version_code.and_then(version_of_code);
     Some(
         Row::new(
             key,
-            "Music app",
-            version.unwrap_or_else(|| "Installed".to_string()),
+            t(lang, "device.about.music_app"),
+            version.unwrap_or_else(|| t(lang, "device.apps.installed").to_string()),
         )
         .detail(Some(match music.version_code {
-            Some(code) => format!("{package}, version code {code}."),
+            Some(code) => t_params(
+                lang,
+                "device.about.music_app_code",
+                &[("package", package), ("code", &code.to_string())],
+            ),
             None => format!("{package}."),
         })),
     )
@@ -400,13 +413,10 @@ pub(crate) async fn load_device(
         .await
     {
         Ok(Some(device)) => Ok(device),
-        Ok(None) => Err((StatusCode::NOT_FOUND, "Device not found")),
+        Ok(None) => Err((StatusCode::NOT_FOUND, "error.device_not_found")),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the device");
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            ))
+            Err((StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone"))
         }
     }
 }
@@ -429,10 +439,7 @@ pub(crate) async fn load_policy(
         })),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the device's settings");
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            ))
+            Err((StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone"))
         }
     }
 }
@@ -469,50 +476,85 @@ fn connection_rows(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Vec<Row> {
+    let lang = zone.lang();
     let mut rows = Vec::new();
     let mut status = Row::new(
         "status",
-        "Status",
+        t(lang, "device.about.status"),
         match connection {
-            ConnectionState::Online { since, .. } => format!("since {}", zone.when(*since, now)),
-            ConnectionState::Disconnected => "· access removed".to_string(),
+            ConnectionState::Online { since, .. } => t_params(
+                lang,
+                "device.about.since",
+                &[("at", &zone.when(*since, now))],
+            ),
+            ConnectionState::Disconnected => {
+                format!("· {}", t(lang, "device.about.access_removed"))
+            }
             _ => String::new(),
         },
     )
     .title(connection.online_since().map(|t| zone.exact(t)));
-    status.lead = Some((connection.word(), connection.css()));
+    let word = match connection {
+        ConnectionState::NotSetUp => "devices.status.not_set_up",
+        ConnectionState::Disconnected => "device.about.disconnected",
+        ConnectionState::NotSeenYet => "devices.status.not_seen_yet",
+        ConnectionState::Online { .. } => "devices.status.online",
+        ConnectionState::Away { .. } => "devices.status.away",
+        ConnectionState::Offline { .. } => "devices.status.offline",
+    };
+    status.lead = Some((t(lang, word), connection.css()));
     rows.push(status);
     if matches!(connection, ConnectionState::NotSetUp) {
         return rows;
     }
     rows.push(match last_contact {
-        Some(t) => {
-            let relative = zone.relative(t, now);
-            let value = if zone.local(t).date_naive() == zone.today(now) && t <= now {
-                format!("{} · {relative}", zone.clock(t))
+        Some(at) => {
+            let relative = zone.relative(at, now);
+            let value = if zone.local(at).date_naive() == zone.today(now) && at <= now {
+                format!("{} · {relative}", zone.clock(at))
             } else {
                 relative
             };
-            Row::new("last-contact", "Last contact", value).title(Some(zone.exact(t)))
+            Row::new("last-contact", t(lang, "device.about.last_contact"), value)
+                .title(Some(zone.exact(at)))
         }
-        None => Row::new("last-contact", "Last contact", "Never"),
+        None => Row::new(
+            "last-contact",
+            t(lang, "device.about.last_contact"),
+            t(lang, "device.about.never"),
+        ),
     });
     rows.push(match reported_at {
-        Some(t) => Row::new("last-report", "Last full report", zone.when(t, now))
-            .title(Some(zone.exact(t))),
-        None => Row::new("last-report", "Last full report", "None yet"),
+        Some(at) => Row::new(
+            "last-report",
+            t(lang, "device.about.last_report"),
+            zone.when(at, now),
+        )
+        .title(Some(zone.exact(at))),
+        None => Row::new(
+            "last-report",
+            t(lang, "device.about.last_report"),
+            t(lang, "device.about.none_yet"),
+        ),
     });
     rows.push(match last_access {
-        Some(access) => Row::new("network", "Network", access.via.label())
-            .class(if access.via == crate::limits::Via::Public {
-                "row-value-action"
-            } else {
-                ""
-            })
-            .detail(access.detail()),
-        None => Row::new("network", "Network", "None since restart").detail(Some(
-            "This server keeps the last request in memory, so it starts empty after a restart.",
-        )),
+        Some(access) => Row::new(
+            "network",
+            t(lang, "device.about.network"),
+            access.via.label(),
+        )
+        .class(if access.via == crate::limits::Via::Public {
+            "row-value-action"
+        } else {
+            ""
+        })
+        .detail(access.detail()),
+        None => Row::new(
+            "network",
+            t(lang, "device.about.network"),
+            t(lang, "device.about.network_none"),
+        )
+        .detail(Some(t(lang, "device.about.network_none_sub"))),
     });
     rows
 }
@@ -525,15 +567,15 @@ pub async fn view_about(
 ) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(&state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(&state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
@@ -562,11 +604,14 @@ pub async fn view_about(
             status.interruption_filter.as_deref(),
         );
         if let Some(ringer) = sound_state.ringer {
-            sound.push(Row::new("ringer", "Ringer", ringer.label()).detail(ringer.detail()));
+            sound.push(
+                Row::new("ringer", t(lang, "device.about.ringer"), ringer.label())
+                    .detail(ringer.detail()),
+            );
         }
         if let Some(dnd) = sound_state.dnd {
             sound.push(
-                Row::new("do-not-disturb", "Do Not Disturb", dnd.label())
+                Row::new("do-not-disturb", t(lang, "device.about.dnd"), dnd.label())
                     .class(if dnd.is_on() { "row-value-alarm" } else { "" })
                     .detail(dnd.detail()),
             );
@@ -575,49 +620,68 @@ pub async fn view_about(
         if let Some(full) = status.app_version.as_deref().filter(|v| !v.is_empty()) {
             let short = short_version(full);
             software.push(
-                Row::new("vibb", "Vibb One", short)
-                    .detail((short != full).then(|| format!("Full version: {full}."))),
+                Row::new("vibb", "Vibb One", short).detail(
+                    (short != full)
+                        .then(|| t_params(lang, "device.about.full_version", &[("full", full)])),
+                ),
             );
         }
         if let Some(row) = crate::music::parse_music_state(status.music_state_json.as_deref())
-            .and_then(|music| music_app_row("music-app", &music))
+            .and_then(|music| music_app_row(lang, "music-app", &music))
         {
             software.push(row);
         }
         if let Some(policy_state) = status.policy_state.as_deref() {
             software.push(match PolicyProblem::parse(policy_state) {
-                None => Row::new("settings", "Settings from server", "Applied"),
-                Some(problem) => Row::new("settings", "Settings from server", problem.title())
-                    .class("row-value-alarm")
-                    .detail(Some(problem.detail())),
+                None => Row::new(
+                    "settings",
+                    t(lang, "device.about.settings"),
+                    t(lang, "device.about.applied"),
+                ),
+                Some(problem) => Row::new(
+                    "settings",
+                    t(lang, "device.about.settings"),
+                    problem.title(lang),
+                )
+                .class("row-value-alarm")
+                .detail(Some(problem.detail(lang))),
             });
         }
         match status.battery_optimization_exempt {
-            Some(true) => software.push(Row::new("battery", "Battery optimisation", "Off")),
+            Some(true) => software.push(Row::new(
+                "battery",
+                t(lang, "device.about.battery"),
+                t(lang, "common.off"),
+            )),
             Some(false) => software.push(
-                Row::new("battery", "Battery optimisation", "On")
-                    .class("row-value-action")
-                    .detail(Some(
-                        "Changes may arrive late while the phone sleeps. To fix it on the phone: \
-                         Vibb One's Settings › Pause all restrictions › Background connection › \
-                         Allow, then end the pause. Or, with USB debugging allowed: adb shell \
-                         dumpsys deviceidle whitelist +me.vibb.launcher",
-                    )),
+                Row::new(
+                    "battery",
+                    t(lang, "device.about.battery"),
+                    t(lang, "common.on"),
+                )
+                .class("row-value-action")
+                .detail(Some(t(lang, "device.about.battery_sub"))),
             ),
             None => {}
         }
         match status.write_settings_granted {
             Some(true) => software.push(Row::new(
                 "write-settings",
-                "Modify system settings",
-                "Allowed",
+                t(lang, "apps.perms.access.write_settings"),
+                t(lang, "device.summary.blocked.allowed"),
             )),
             Some(false) => software.push(
-                Row::new("write-settings", "Modify system settings", "Not allowed")
-                    .class("row-value-action")
-                    .detail(Some(format!(
-                        "The touch sounds switches and the clock format need it. {WRITE_SETTINGS_STEPS}"
-                    ))),
+                Row::new(
+                    "write-settings",
+                    t(lang, "apps.perms.access.write_settings"),
+                    t(lang, "device.summary.blocked.not_allowed"),
+                )
+                .class("row-value-action")
+                .detail(Some(format!(
+                    "{} {}",
+                    t(lang, "device.about.write_settings_sub"),
+                    t(lang, "device.write_settings_steps")
+                ))),
             ),
             None => {}
         }
@@ -646,10 +710,14 @@ pub async fn view_about(
             )
         });
         diagnostics.push(match boots {
-            Some(boots) => Row::new("starts", "Starts without Vibb One", boots.value())
+            Some(boots) => Row::new("starts", t(lang, "device.about.starts"), boots.value())
                 .class("row-value-alarm")
                 .detail(Some(boots.detail(&zone, now))),
-            None => Row::new("starts", "Starts without Vibb One", "None"),
+            None => Row::new(
+                "starts",
+                t(lang, "device.about.starts"),
+                t(lang, "device.about.none"),
+            ),
         });
         if let Some(status) = latest.as_ref() {
             let report = status
@@ -660,22 +728,26 @@ pub async fn view_about(
                     crate::time_state::TimeReport::from_lock_reason(&status.lock_reason)
                 });
             let value = if !report.locking() {
-                "None".to_string()
+                t(lang, "device.about.none").to_string()
             } else if let Some(name) = report.active_rule_name.clone() {
                 name
             } else {
-                match report.lock_reason.as_str() {
-                    "BEDTIME" => "Bedtime",
-                    "SCHOOL" => "School",
-                    "SCREEN_TIME" => "Screen time used up",
-                    "RULE" => "A time rule",
-                    _ => "Locked",
-                }
+                t(
+                    lang,
+                    match report.lock_reason.as_str() {
+                        "BEDTIME" => "devices.status.lock.bedtime",
+                        "SCHOOL" => "devices.status.lock.school",
+                        "SCREEN_TIME" => "devices.status.lock.screen_time",
+                        "RULE" => "device.about.lock_rule",
+                        _ => "devices.status.lock.locked",
+                    },
+                )
                 .to_string()
             };
             diagnostics.push(
-                Row::new("time-lock", "Time lock", value)
-                    .title(reported_at.map(|t| format!("At the last report, {}", zone.exact(t)))),
+                Row::new("time-lock", t(lang, "device.time.lock"), value).title(reported_at.map(
+                    |at| t_params(lang, "device.about.at_report", &[("at", &zone.exact(at))]),
+                )),
             );
         }
     }
@@ -701,15 +773,14 @@ pub async fn view_about(
         Vec::new()
     };
     let crashes_value = match crashes.len() {
-        0 => "None in 30 days".to_string(),
-        1 => "1 kind".to_string(),
-        n => format!("{n} kinds"),
+        0 => t(lang, "device.about.no_crashes").to_string(),
+        n => crate::i18n::t_count(lang, "device.about.crash_kinds", n as i64, &[]),
     };
 
     Html(
         AboutTemplate {
             lang,
-            title: format!("About {}", device.name),
+            title: t_params(lang, "device.about.title", &[("name", &device.name)]),
             device,
             connection: connection_rows,
             sound,
@@ -775,15 +846,15 @@ pub async fn view_advanced(
 ) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(&state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(&state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
@@ -805,7 +876,7 @@ pub async fn view_advanced(
     Html(
         AdvancedTemplate {
             lang,
-            title: format!("Advanced · {}", device.name),
+            title: format!("{} · {}", t(lang, "device.page.advanced"), device.name),
             hardening: policy.hardening.clone(),
             backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
             block_activity_start: play.block_activity_start,
@@ -904,11 +975,11 @@ struct RevealView {
 }
 
 impl RevealView {
-    fn of(reveal: Reveal) -> RevealView {
+    fn of(lang: Lang, reveal: Reveal) -> RevealView {
         use crate::kid_lock::{PhoneHas, ShownPin};
         let mut view = RevealView {
             pin: None,
-            label: "Child PIN",
+            label: t(lang, "device.lock.child_pin"),
             line: None,
             prev: None,
             message: None,
@@ -916,46 +987,43 @@ impl RevealView {
         };
         match reveal {
             Reveal::Wrong { left } => {
-                view.error = Some(match left {
-                    1 => "Wrong password. One more wrong one signs you out.".to_string(),
-                    _ => "Wrong password.".to_string(),
-                });
+                view.error = Some(
+                    t(
+                        lang,
+                        match left {
+                            1 => "device.lock.wrong_last",
+                            _ => "device.lock.wrong",
+                        },
+                    )
+                    .to_string(),
+                );
             }
             Reveal::Shown(ShownPin::Pin { pin, phone }) => {
                 view.pin = Some(pin.as_str().to_string());
                 match phone {
                     PhoneHas::This => {}
                     PhoneHas::Earlier(Some(prev)) => {
-                        view.label = "New Child PIN";
-                        view.line = Some("Until the phone gets it, its PIN is still");
+                        view.label = t(lang, "device.lock.new_child_pin");
+                        view.line = Some(t(lang, "device.lock.still_prev"));
                         view.prev = Some(prev.as_str().to_string());
                     }
                     PhoneHas::Earlier(None) => {
-                        view.label = "New Child PIN";
-                        view.line =
-                            Some("The phone still has an earlier PIN until it gets this one.");
+                        view.label = t(lang, "device.lock.new_child_pin");
+                        view.line = Some(t(lang, "device.lock.still_earlier"));
                     }
                     PhoneHas::Changed => {
-                        view.line =
-                            Some("The phone's PIN was changed on the phone: it isn't this one.");
+                        view.line = Some(t(lang, "device.lock.changed_on_phone"));
                     }
                 }
             }
             Reveal::Shown(ShownPin::NotStored) => {
-                view.message =
-                    Some("Not stored on this server. Set the Child PIN again to see it here.");
+                view.message = Some(t(lang, "device.lock.not_stored"));
             }
             Reveal::Shown(ShownPin::Unreadable) => {
-                view.message = Some(
-                    "Not readable on this server: it was kept with another server's key. Set the \
-                     Child PIN again to see it here.",
-                );
+                view.message = Some(t(lang, "device.lock.unreadable_key"));
             }
             Reveal::Shown(ShownPin::NoKey) => {
-                view.message = Some(
-                    "This server can't read its key file, so it keeps no Child PIN to show. The \
-                     server log says why.",
-                );
+                view.message = Some(t(lang, "device.lock.no_key"));
             }
         }
         view
@@ -995,15 +1063,11 @@ pub async fn lock_action(
     axum::Form(form): axum::Form<std::collections::HashMap<String, String>>,
 ) -> Response {
     if form.get("action").map(String::as_str) != Some("reveal_kid_pin") {
-        return (
-            StatusCode::BAD_REQUEST,
-            "This page is out of date - reload it.",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
     }
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let password = form.get("password").map(String::as_str).unwrap_or_default();
     let log = |event: &'static str| {
@@ -1032,11 +1096,11 @@ pub async fn lock_action(
         crate::admin_auth::Reauth::Right => {
             let latest = match load_latest(&state, id).await {
                 Ok(latest) => latest,
-                Err(err) => return read_failed(id, "the last report", err),
+                Err(err) => return read_failed(lang, id, "the last report", err),
             };
             let kept = match crate::kid_lock::KeptPin::load(&state.db, id).await {
                 Ok(kept) => kept,
-                Err(err) => return read_failed(id, "the Child PIN", err),
+                Err(err) => return read_failed(lang, id, "the Child PIN", err),
             };
             let lock_state = crate::kid_lock::parse_lock_state(
                 latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
@@ -1113,15 +1177,15 @@ async fn render_lock(
 ) -> Response {
     let device = match load_device(state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
@@ -1134,7 +1198,7 @@ async fn render_lock(
     let pin_send = if keyguard_android {
         match newest_pin_send(state, id, &zone, now).await {
             Ok(send) => send,
-            Err(err) => return read_failed(id, "the Child PIN's command", err),
+            Err(err) => return read_failed(lang, id, "the Child PIN's command", err),
         }
     } else {
         None
@@ -1185,7 +1249,7 @@ async fn render_lock(
     let rows =
         match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang).await {
             Ok(rows) => rows,
-            Err(err) => return read_failed(id, "the phone's apps", err),
+            Err(err) => return read_failed(lang, id, "the phone's apps", err),
         };
     let lock_screen =
         crate::handlers::devices::lock_screen_card(state, &policy, latest.as_ref(), &rows).await;
@@ -1204,7 +1268,7 @@ async fn render_lock(
         crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
     let child_flash = notice.and_then(crate::kid_lock::flash_text);
     let reveal_answer = reveal.is_some();
-    let mut reveal_view = reveal.map(RevealView::of);
+    let mut reveal_view = reveal.map(|reveal| RevealView::of(lang, reveal));
     let reveal_error = reveal_view.as_mut().and_then(|r| r.error.take());
     let reveal_shown = reveal_view.filter(|r| r.pin.is_some() || r.message.is_some());
     let status = if reveal_error.is_some() {
@@ -1215,7 +1279,7 @@ async fn render_lock(
 
     let page = LockTemplate {
         lang,
-        title: format!("Lock Screen & PINs · {}", device.name),
+        title: format!("{} · {}", t(lang, "device.page.lock"), device.name),
         child_warnings,
         child_rows,
         child_flash,
@@ -1253,54 +1317,38 @@ async fn render_lock(
 
 /// A read a sub-page can't do without: logged, and the page is a 500 - never an empty list that
 /// reads as "nothing set" (qa-31-s4-code L4).
-fn read_failed(id: i64, what: &str, err: sqlx::Error) -> Response {
+fn read_failed(lang: Lang, id: i64, what: &str, err: sqlx::Error) -> Response {
     tracing::error!(device_id = id, %err, "can't read {what}");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read this phone - check the server log.",
-    )
-        .into_response()
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
 }
 
 /// The last report says Vibb can't read notifications (`notification_listener_enabled` false):
 /// Home Screen's warning, and the Attention row that links to it.
-pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<Note> {
+pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>) -> Option<Note> {
     latest
         .is_some_and(|s| s.notification_listener_enabled == Some(false))
         .then(|| Note {
             warning: true,
-            title: "Notification access off".to_string(),
+            title: t(lang, "device.home.no_notification_access").to_string(),
             value: None,
-            detail: Some(
-                "Unread counts and the music card are off, and the lock screen shows only missed \
-                 calls."
-                    .to_string(),
-            ),
+            detail: Some(t(lang, "device.home.no_notification_access_sub").to_string()),
             // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
             // qa-31-s5-code N2).
-            fix: Some(
-                "Android can't turn this on for Vibb One. With USB debugging allowed, run: adb shell cmd notification allow_listener \
-                 me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService (a debug build: \
-                 me.vibb.launcher.debug; a launcher from before 2026-10-06: com.kidslauncher.mdm)."
-                    .to_string(),
-            ),
+            fix: Some(t(lang, "device.home.no_notification_access_fix").to_string()),
         })
 }
-
-/// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24): the on-phone
-/// path first - Vibb One's Settings row that opens Android's page -, adb as the shortcut. About
-/// This Phone's row (after a line saying what needs it) and the clock format's warning (code QA Q-9).
-const WRITE_SETTINGS_STEPS: &str = "To fix it on the phone: Vibb One's Settings › Pause all \
-     restrictions › Modify system settings › turn on Allow, then end the pause. Or, with USB \
-     debugging allowed: adb shell appops set me.vibb.launcher WRITE_SETTINGS allow (a debug build: \
-     me.vibb.launcher.debug).";
 
 /// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
 /// settings" access, or Android refused the write. Home Screen's warning above the Language
 /// group; the adb grant and the Settings path behind its ⓘ. "Follow the phone" never warns, nor
 /// does an older launcher that doesn't report it.
+/// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
+/// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
+/// the shortcut. About This Phone's row (after a line saying what needs it) and the clock format's warning (code QA
+/// Q-9).
 pub(crate) fn clock_format_note(
+    lang: Lang,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
 ) -> Option<Note> {
@@ -1308,12 +1356,13 @@ pub(crate) fn clock_format_note(
         && latest.is_some_and(|s| s.clock_format_applied == Some(false)))
     .then(|| Note {
         warning: true,
-        title: "Clock format not applied".to_string(),
+        title: t(lang, "device.home.clock_not_applied").to_string(),
         value: None,
-        detail: Some("The phone can't change its clock format yet.".to_string()),
+        detail: Some(t(lang, "device.home.clock_not_applied_sub").to_string()),
         fix: Some(format!(
-            "Vibb One needs Android's \"Modify system settings\" access, which a device owner can't \
-             grant. {WRITE_SETTINGS_STEPS}"
+            "{} {}",
+            t(lang, "device.home.clock_not_applied_fix"),
+            t(lang, "device.write_settings_steps")
         )),
     })
 }
@@ -1355,28 +1404,28 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
     };
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(&state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     // A failed read must not render an empty grid: its Save would untick every wallpaper.
     let wallpapers = match crate::handlers::wallpapers::device_choices(&state, id).await {
         Ok(wallpapers) => wallpapers,
-        Err(err) => return read_failed(id, "the wallpapers", err),
+        Err(err) => return read_failed(lang, id, "the wallpapers", err),
     };
     let latest = match load_latest(&state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
     Html(
         HomeTemplate {
             lang,
-            title: format!("Home Screen · {}", device.name),
-            notification_warning: notification_access_note(latest.as_ref()),
-            clock_warning: clock_format_note(&policy, latest.as_ref()),
+            title: format!("{} · {}", t(lang, "device.page.home"), device.name),
+            notification_warning: notification_access_note(lang, latest.as_ref()),
+            clock_warning: clock_format_note(lang, &policy, latest.as_ref()),
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
             clock_format: crate::models::clock_format(&policy.clock_format),
@@ -1466,11 +1515,11 @@ pub async fn view_filter(
 ) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(&state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let lists = match sqlx::query_as::<_, (i64, String, bool, Option<bool>)>(
         "SELECT b.id, b.name, b.enabled, o.enabled FROM dns_blocklists b \
@@ -1482,7 +1531,7 @@ pub async fn view_filter(
     .await
     {
         Ok(rows) => rows,
-        Err(err) => return read_failed(id, "the blocklists", err),
+        Err(err) => return read_failed(lang, id, "the blocklists", err),
     };
     let lists = {
         let compiled = state.dns_compiled.read().await;
@@ -1509,7 +1558,7 @@ pub async fn view_filter(
     .await
     {
         Ok(domains) => domains,
-        Err(err) => return read_failed(id, "the phone's domains", err),
+        Err(err) => return read_failed(lang, id, "the phone's domains", err),
     };
     let (blocked, allowed): (Vec<_>, Vec<_>) =
         domains.into_iter().partition(|d| d.list_type == "block");
@@ -1533,7 +1582,7 @@ pub async fn view_filter(
                 .into_iter()
                 .filter(|d| crate::spotify::is_spotify_host(d))
                 .collect(),
-            Err(err) => return read_failed(id, "the site-wide domains", err),
+            Err(err) => return read_failed(lang, id, "the site-wide domains", err),
         }
     } else {
         Vec::new()
@@ -1548,7 +1597,7 @@ pub async fn view_filter(
         .await
         {
             Ok(events) => events,
-            Err(err) => return read_failed(id, "the blocked-domain log", err),
+            Err(err) => return read_failed(lang, id, "the blocked-domain log", err),
         }
     } else {
         Vec::new()
@@ -1565,7 +1614,10 @@ pub async fn view_filter(
     let events = events
         .into_iter()
         .map(|(at, e)| LogRow {
-            when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+            when: at.map_or_else(
+                || t(lang, "device.filter.time_unknown").to_string(),
+                |at| zone.when(at, now),
+            ),
             exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
             domain: e.domain,
             category: e.category,
@@ -1579,7 +1631,7 @@ pub async fn view_filter(
     Html(
         FilterTemplate {
             lang,
-            title: format!("Web Filter · {}", device.name),
+            title: format!("{} · {}", t(lang, "device.page.filter"), device.name),
             refused,
             doh_allowed: crate::handlers::dns_filter::doh_allowed_notice(&query),
             filter_on: policy.vpn_filter_enabled,
@@ -1706,11 +1758,12 @@ async fn apps_nav(
     state: &AppState,
     device: &Device,
     from: Option<AppsFrom>,
+    lang: Lang,
 ) -> Result<(Tab, String, String, Option<AppsFrom>), sqlx::Error> {
     let list = (
         Tab::Apps,
         format!("/apps#phone-{}", device.id),
-        "Apps".to_string(),
+        t(lang, "nav.apps").to_string(),
         Some(AppsFrom::List),
     );
     Ok(match from {
@@ -1799,7 +1852,7 @@ pub async fn view_apps(
     let refused = query.get("app").and_then(|row| {
         query
             .get("notice")
-            .and_then(|code| crate::handlers::devices::toggle_refusal(code))
+            .and_then(|code| crate::handlers::devices::toggle_refusal(lang, code))
             .map(|text| (row.as_str(), text))
     });
     let from = query.get("from").and_then(|f| AppsFrom::parse(f));
@@ -1823,43 +1876,43 @@ pub(crate) async fn render_apps(
     use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
     let device = match load_device(state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let rows =
         match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref(), lang).await {
             Ok(rows) => rows,
-            Err(err) => return read_failed(id, "the phone's apps", err),
+            Err(err) => return read_failed(lang, id, "the phone's apps", err),
         };
     // Names and icons: a failed read must not show every app as "its own".
     let defaults = match display::catalog_defaults(&state.db).await {
         Ok(defaults) => defaults,
-        Err(err) => return read_failed(id, "the catalog's app names", err),
+        Err(err) => return read_failed(lang, id, "the catalog's app names", err),
     };
     let own = match display::device_rows(&state.db, id).await {
         Ok(own) => own,
-        Err(err) => return read_failed(id, "the phone's app names", err),
+        Err(err) => return read_failed(lang, id, "the phone's app names", err),
     };
     let off_home = match display::off_home(&state.db, id).await {
         Ok(off) => off,
-        Err(err) => return read_failed(id, "the phone's apps off Home", err),
+        Err(err) => return read_failed(lang, id, "the phone's apps off Home", err),
     };
     // Design 68: the parent's camera-off apps (what the phone reports per app rides on the row, `access`).
     let camera_off = match crate::app_permissions::camera_denied(&state.db, id).await {
         Ok(denied) => denied,
-        Err(err) => return read_failed(id, "the phone's app permissions", err),
+        Err(err) => return read_failed(lang, id, "the phone's app permissions", err),
     };
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
-    let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from).await {
+    let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from, lang).await {
         Ok(nav) => nav,
-        Err(err) => return read_failed(id, "the catalog app it came from", err),
+        Err(err) => return read_failed(lang, id, "the catalog app it came from", err),
     };
     let from = from.map(AppsFrom::value);
     let zone = Zone::load(&state.db, lang).await;
@@ -1875,14 +1928,14 @@ pub(crate) async fn render_apps(
                 .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
             Row::new(
                 "network",
-                "Network",
+                t(lang, "device.about.network"),
                 match at {
                     Some(at) => format!("{value} · {}", zone.when(at, now)),
                     None => value.to_string(),
                 },
             )
             .title(at.map(|t| zone.exact(t)))
-            .detail(Some("At the phone's last report."))
+            .detail(Some(t(lang, "device.apps.network_sub")))
         });
     // A refused save is the answer to a POST: a reload would ask to send it again (L1).
     let installing = entered.is_none() && rows.apps.iter().any(|a| a.is_installing);
@@ -1936,6 +1989,7 @@ pub(crate) async fn render_apps(
         let perms = (row.checked && !row.is_launcher)
             .then(|| {
                 crate::app_permissions::PermsView::of(
+                    lang,
                     id,
                     &package,
                     &row.label,
@@ -1966,31 +2020,23 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             lang,
-            title: format!("Apps · {}", device.name),
+            title: format!("{} · {}", t(lang, "nav.apps"), device.name),
             nav_tab,
             back_href,
             back_label,
             from,
             corrupt: rows.allowlist_corrupt.then(|| Note {
                 warning: true,
-                title: "App list unreadable".to_string(),
+                title: t(lang, "device.apps.corrupt").to_string(),
                 value: None,
-                detail: Some(
-                    "The phone keeps the last list it had, and switching apps here fails until \
-                     it is fixed."
-                        .to_string(),
-                ),
-                fix: Some(
-                    "The stored allowlist isn't valid JSON. Check the server log (\"failed to \
-                     build device policy\"), or restore a backup."
-                        .to_string(),
-                ),
+                detail: Some(t(lang, "device.apps.corrupt_sub").to_string()),
+                fix: Some(t(lang, "device.apps.corrupt_fix").to_string()),
             }),
             allowed,
             not_allowed,
             update_note: (latest.is_some()
                 && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
-            .then_some(crate::app_permissions::words::UPDATE_NOTE),
+            .then_some(crate::i18n::t(lang, "apps.perms.update_note")),
             reported: latest.is_some(),
             installing,
             wifi_only: policy.app_updates_wifi_only,
@@ -2032,15 +2078,15 @@ pub async fn view_music(
 ) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(&state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(&state, id).await {
         Ok(latest) => latest,
-        Err(err) => return read_failed(id, "the last report", err),
+        Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let music = match crate::handlers::music::device_card(
         &state,
@@ -2053,7 +2099,7 @@ pub async fn view_music(
     .await
     {
         Ok(music) => music,
-        Err(err) => return read_failed(id, "the phone's music", err),
+        Err(err) => return read_failed(lang, id, "the phone's music", err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let reported = latest
@@ -2253,15 +2299,17 @@ mod tests {
         ] {
             let parsed = PolicyProblem::parse(state).unwrap();
             assert_eq!(parsed, problem);
-            assert!(parsed.title().split_whitespace().count() <= 4);
-            assert!(!parsed.detail().is_empty());
+            for lang in crate::i18n::Lang::ALL {
+                assert!(parsed.title(lang).split_whitespace().count() <= 4);
+                assert!(!parsed.detail(lang).is_empty());
+            }
         }
         let other = PolicyProblem::parse("weird").unwrap();
-        assert_eq!(other.title(), "Problem reported");
-        assert!(other.detail().contains("weird"));
+        assert_eq!(other.title(crate::i18n::Lang::En), "Problem reported");
+        assert!(other.detail(crate::i18n::Lang::Nb).contains("weird"));
         assert!(
             PolicyProblem::ServerError
-                .detail()
+                .detail(crate::i18n::Lang::En)
                 .contains("failed to build device policy")
         );
     }
@@ -2300,6 +2348,11 @@ mod tests {
         let now = DateTime::from_timestamp_millis(5_000).unwrap();
         let words: Vec<Note> = notes.iter().map(|n| n.note(&zone, now)).collect();
         assert_eq!(words[0].title, "Play Store open until 01:00");
+        let nb: Vec<Note> = notes
+            .iter()
+            .map(|n| n.note(&zone.in_lang(crate::i18n::Lang::Nb), now))
+            .collect();
+        assert_eq!(nb[0].title, "Play Butikk er åpen til 01:00");
         assert!(words[0].warning);
         assert!(!words[1].warning);
         assert_eq!(words[2].title, "Restart the phone once");

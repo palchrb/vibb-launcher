@@ -546,13 +546,15 @@ class LockGlanceGuardTest {
         assertTrue(installed, installed.contains("= clockAppVerified("))
         assertTrue(installed.contains("PackageManager.GET_SIGNING_CERTIFICATES"))
         // The alarm exemption's clock packages: Fossify only while verified.
-        assertTrue(code("PinLockRuntime.kt").contains("fun clockPackages(): Set<String> = lockClockPackages(systemClockPackage, ClockApp.verified)"))
+        assertTrue(code("PinLockRuntime.kt").contains("fun clockPackages(): Set<String> = lockClockPackages(systemClocks, ClockApp.verified)"))
         // The kiosk-off helper pin: Fossify only when installed with the signer.
         assertTrue(code("AppEnforcer.kt").contains("clockApp = com.kidslauncher.mdm.lock.ClockApp.PACKAGE.takeIf { com.kidslauncher.mdm.lock.ClockApp.installed(context) },"))
-        // And the system clock is resolved from the system's own handlers, never the next alarm's creator (L8).
+        // And the system clocks are resolved from the system's own handlers, never the next alarm's creator (L8) -
+        // one resolver for the lock and the time-rule lock (code QA L2).
         val runtime = code("PinLockRuntime.kt")
-        assertTrue(runtime.contains("systemClockPackage = systemClockApp(app)"))
-        assertTrue(body(runtime, "systemClockApp").contains("MATCH_SYSTEM_ONLY"))
+        assertTrue(runtime.contains("systemClocks = ClockApp.systemClocks(app)"))
+        assertTrue(body(code("ClockApp.kt"), "systemClocks").contains("MATCH_SYSTEM_ONLY"))
+        assertTrue(code("AppEnforcer.kt").contains("ClockApp.systemClocks(context)"))
     }
 
     @Test

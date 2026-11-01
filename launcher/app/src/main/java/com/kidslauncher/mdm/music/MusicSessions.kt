@@ -54,7 +54,12 @@ object MusicSessions {
         if (listeners.isEmpty()) unwatch()
     }
 
+    /** For the signer check of the session pick ([MusicTrust], S-L8 with code QA L3). */
+    @Volatile
+    private var appContext: Context? = null
+
     private fun watch(app: Context) {
+        appContext = app
         val m = app.getSystemService(MediaSessionManager::class.java) ?: return
         try {
             m.addOnActiveSessionsChangedListener(sessionsChanged, component(app), main)
@@ -94,7 +99,8 @@ object MusicSessions {
     }
 
     private fun pick(controllers: List<MediaController>) {
-        val music = controllers.firstOrNull { it.packageName in MUSIC_PACKAGES }
+        val app = appContext
+        val music = controllers.firstOrNull { app != null && MusicTrust.trusted(app, it.packageName) }
         if (music?.sessionToken != watched?.sessionToken) {
             watched?.let { runCatching { it.unregisterCallback(callback) } }
             watched = music
@@ -166,7 +172,7 @@ object MusicSessions {
      * music app among them re-renders the shown surfaces, which look its state up again.
      */
     fun packagesChanged(packages: List<String>?) {
-        if (packages.orEmpty().any { it in MUSIC_PACKAGES } && listeners.isNotEmpty()) changed()
+        if (packages.orEmpty().any { it in trustedMusicNames(com.kidslauncher.mdm.BuildConfig.DEBUG) } && listeners.isNotEmpty()) changed()
     }
 
     /**
@@ -175,6 +181,7 @@ object MusicSessions {
      * listener access the music app pauses itself on `MY_PACKAGE_SUSPENDED` (QA #8).
      */
     fun pauseBeforeSuspend(context: Context, pkg: String) {
+        if (!MusicTrust.trusted(context, pkg)) return
         try {
             val m = context.getSystemService(MediaSessionManager::class.java) ?: return
             for (c in m.getActiveSessions(component(context)).filter { it.packageName == pkg }) {
@@ -204,7 +211,9 @@ object MusicSessions {
      * Home - `ALLOW_IF_VISIBLE` (QA #8, as `VoipCalls`). Never used by the lock.
      */
     fun openSessionActivity(context: Context, controller: MediaController?): Boolean {
-        val intent = controller?.sessionActivity ?: return false
+        // Security review S-L1: only the player's own activity - never a PendingIntent of another app.
+        val intent = controller?.sessionActivity
+            ?.takeIf { com.kidslauncher.mdm.lock.intentOfApp(it.creatorPackage, controller.packageName) } ?: return false
         return try {
             intent.send(context, 0, null, null, null, null, VisibleSender.options())
             true

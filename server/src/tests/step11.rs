@@ -187,7 +187,7 @@ async fn device_page_explains_the_fence_and_the_filter() {
     app.post_status(&token, json!({ "capabilities": ["pin_lock_v1"] }))
         .await;
     let html = advanced().await;
-    assert!(html.contains("Updates &amp; notifications"), "{html}");
+    assert!(html.contains("Updates &#38; notifications"), "{html}");
     assert!(
         html.contains("Update Vibb One for these switches"),
         "{html}"
@@ -234,7 +234,10 @@ async fn device_page_explains_the_fence_and_the_filter() {
     assert!(html.contains("no notification access"), "{html}");
     assert!(html.contains("com.google.android.gms (nag)"), "{html}");
     assert!(html.contains("1 snoozed for an hour"), "{html}");
-    assert!(html.contains("never reads a notification's text"), "{html}");
+    assert!(
+        html.contains("never reads a notification&#39;s text"),
+        "{html}"
+    );
     // The warnings sit above the group, the rest in it.
     let warnings = html.matches("data-warning").count();
     assert!(

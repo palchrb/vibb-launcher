@@ -600,7 +600,7 @@ async fn the_otp_is_shown_once_and_never_stored() {
     assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
     let html = res.text();
     assert!(html.contains("<body data-post-answer"));
-    assert!(html.contains("<script src=\"/static/reveal.js?v=3\"></script>"));
+    assert!(html.contains("<script src=\"/static/reveal.js?v=4\"></script>"));
     let otp = otp_of(&html);
     assert_eq!(otp.len(), 24, "{otp}");
     let block = part(&html, "id=\"parent-otp\"", "</section>");
@@ -1863,8 +1863,11 @@ async fn language_is_each_parents() {
     assert!(!once.contains(r#"lang="nb" selected"#));
     assert_eq!(stored("pappa").await.as_deref(), Some("en"));
     // A page not moved yet keeps lang="en" over its English words (qa-s-i18n-1-code L1).
-    let unmoved = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
+    let unmoved = get_in(&app, "/apps?lang=nb", &pappa, None).await.text();
     assert!(unmoved.contains(r#"<html lang="en">"#));
+    // Devices is moved (slice 3a): Norwegian words under lang="nb".
+    let moved = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
+    assert!(moved.contains(r#"<html lang="nb">"#) && moved.contains("Legg til telefon"));
     // An unknown `?lang=` is ignored.
     let ignored = get_in(&app, "/account?lang=zz", &pappa, None).await.text();
     assert!(ignored.contains(r#"<html lang="en">"#));

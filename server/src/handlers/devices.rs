@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::handlers::activity::ActivityRow;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
@@ -94,11 +94,11 @@ pub async fn list_devices(
                 .collect(),
             Err(err) => {
                 tracing::error!(%err, "can't read the phones' power events");
-                return (
+                return crate::i18n::error(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't read the phones - check the server log.",
-                )
-                    .into_response();
+                    "error.read_phones",
+                );
             }
         };
 
@@ -111,17 +111,18 @@ pub async fn list_devices(
     Html(
         DevicesListTemplate {
             lang,
-            title: "Devices".to_string(),
+            title: t(lang, "nav.devices").to_string(),
             devices: rows,
             login_warning: crate::handlers::auth::login_warning_row(
                 crate::handlers::auth::login_warning_of(&session)
                     .await
-                    .as_deref(),
+                    .as_ref(),
+                lang,
             ),
             live_warning: crate::handlers::auth::live_warning_row(&admin, &zone, now),
             warning_back: "/devices",
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
-            push_warning: crate::handlers::notifications::warning_row(&state, admin.id).await,
+            push_warning: crate::handlers::notifications::warning_row(&state, admin.id, lang).await,
             push_offer: push_offer(&state, params.get("notice").map(String::as_str)).await,
         }
         .render()
@@ -424,7 +425,7 @@ fn device_add_page(
 ) -> Response {
     let page = DeviceAddTemplate {
         lang,
-        title: "Add Phone".to_string(),
+        title: t(lang, "devices.list.add").to_string(),
         name,
         error,
         max_name: MAX_DEVICE_NAME_CHARS,
@@ -458,9 +459,9 @@ pub async fn create_device(
 ) -> axum::response::Response {
     let name = form.name.trim();
     let refusal = if name.is_empty() {
-        Some("Give the phone a name.")
+        Some(t(lang, "devices.add.name_empty"))
     } else if name.chars().count() > MAX_DEVICE_NAME_CHARS {
-        Some("Use at most 40 characters.")
+        Some(t(lang, "devices.add.name_long"))
     } else {
         None
     };
@@ -472,11 +473,11 @@ pub async fn create_device(
         Ok(id) => Redirect::to(&format!("/devices/{id}/provision")).into_response(),
         Err(err) => {
             tracing::error!(?err, "failed to create device");
-            (
+            crate::i18n::error(
+                lang,
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't create the device - nothing was saved. Check the server log.",
+                "error.create_device",
             )
-                .into_response()
         }
     }
 }
@@ -559,11 +560,7 @@ pub async fn regenerate_code(
         Ok(made) => made,
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't make a code - nothing was changed. Check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.make_code");
         }
     };
     security::record_security_event(
@@ -584,7 +581,7 @@ pub async fn regenerate_code(
     let now = chrono::Utc::now();
     let page = EnrollCodeTemplate {
         lang,
-        title: format!("Setup Code for {}", device.name),
+        title: t_params(lang, "devices.code.page_title", &[("name", &device.name)]),
         code: crate::enrollment::display(&code),
         until: zone.until_db(&expires_at, now),
         enrolled: device.enrolled_at.is_some(),
@@ -696,11 +693,14 @@ pub(crate) fn access_card(
                 .filter(|t| *t > now)
                 .map(|t| {
                     (
-                        if kind == "qr" {
-                            "Setup QR code"
-                        } else {
-                            "Setup code"
-                        },
+                        crate::i18n::t(
+                            zone.lang(),
+                            if kind == "qr" {
+                                "devices.access.live_qr"
+                            } else {
+                                "devices.access.live_code"
+                            },
+                        ),
                         zone.until(t, now),
                     )
                 })
@@ -714,14 +714,14 @@ pub(crate) fn access_card(
             .enrollment
             .typed_paused_until(now)
             .map(|until| zone.until(until, now)),
-        notice: notice.and_then(access_notice),
+        notice: notice.and_then(|code| access_notice(zone.lang(), code)),
     }
 }
 
-fn access_notice(code: &str) -> Option<(&'static str, bool)> {
+fn access_notice(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
-        "access_revoked" => ("Phone disconnected.", false),
-        "revoke_unconfirmed" => ("Nothing changed: tick the box first.", true),
+        "access_revoked" => (t(lang, "devices.access.disconnected"), false),
+        "revoke_unconfirmed" => (t(lang, "devices.access.unconfirmed"), true),
         _ => return None,
     })
 }
@@ -891,6 +891,7 @@ impl DeviceDetailTemplate {
 /// sign-in sheets). The off switch exists for a phone where it breaks something it shouldn't.
 pub async fn update_kiosk_block(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -904,7 +905,7 @@ pub async fn update_kiosk_block(
     .await;
     match result {
         Ok(r) if r.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
@@ -914,11 +915,7 @@ pub async fn update_kiosk_block(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -1011,7 +1008,7 @@ pub async fn save_app_display(
         .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     let package = field("package_name").trim().to_string();
     if !crate::app_display::valid_package_name(&package) || crate::play::is_play_core(&package) {
-        return (StatusCode::BAD_REQUEST, "Not an app this page can name.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app_name");
     }
     let exists: Option<i64> = match sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
         .bind(id)
@@ -1021,15 +1018,15 @@ pub async fn save_app_display(
         Ok(found) => found,
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't read the device");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response();
+                "error.save_failed",
+            );
         }
     };
     if exists.is_none() {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
     }
     let refuse = |error: FieldError| {
         let entered = Entered {
@@ -1075,11 +1072,11 @@ pub async fn save_app_display(
         Ok(defaults) => defaults.get(&package).cloned(),
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't read the catalog's app names");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response();
+                "error.save_failed",
+            );
         }
     };
     // Design 69 §4.4: "On Home" - only a page that shows the switch says so (`on_home_shown`); an older page keeps
@@ -1103,11 +1100,11 @@ pub async fn save_app_display(
             Ok(rows) => rows,
             Err(err) => {
                 tracing::error!(device_id = id, %err, "couldn't count the phone's app names");
-                return (
+                return crate::i18n::error(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't save - nothing was changed.",
-                )
-                    .into_response();
+                    "error.save_failed",
+                );
             }
         };
         if rows >= crate::app_display::MAX_ROWS_PER_DEVICE {
@@ -1151,11 +1148,7 @@ pub async fn save_app_display(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app's name and icon");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -1167,6 +1160,7 @@ pub async fn save_app_display(
 /// package outside the grammar (no row has one) is a 400, an unknown phone a 404, a DB error a 500.
 pub async fn save_app_permissions(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1181,20 +1175,16 @@ pub async fn save_app_permissions(
     let deny = match form.get("camera").map(String::as_str) {
         None | Some("deny") => true,
         Some("default") => false,
-        Some(_) => return (StatusCode::BAD_REQUEST, "Not a camera setting.").into_response(),
+        Some(_) => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_camera"),
     };
     // No row has a name outside the grammar (the launcher's `isValidPackageName`, stricter than the status intake's),
     // so there is no row to return to (no page sends one).
     if !crate::app_display::valid_package_name(&package) {
-        return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
     }
     let failed = |err: sqlx::Error| {
         tracing::error!(device_id = id, %err, "couldn't save an app's permissions");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save - nothing was changed.",
-        )
-            .into_response()
+        crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
     };
     match sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE id = ?")
         .bind(id)
@@ -1202,7 +1192,9 @@ pub async fn save_app_permissions(
         .await
     {
         Ok(Some(_)) => {}
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
         Err(err) => return failed(err),
     }
     let anchor = app_anchor(&package, None);
@@ -1250,6 +1242,7 @@ pub async fn save_app_permissions(
 /// an unknown device; nudges the phone.
 pub async fn update_app_updates(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1266,7 +1259,7 @@ pub async fn update_app_updates(
     .await;
     match result {
         Ok(r) if r.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
@@ -1280,11 +1273,7 @@ pub async fn update_app_updates(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app update switch");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -1296,6 +1285,7 @@ pub async fn update_app_updates(
 /// its group, Advanced's `#updates` (a save never jumps, §5.1.4).
 pub async fn update_kiosk_escapes(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1311,7 +1301,7 @@ pub async fn update_kiosk_escapes(
     .await;
     match result {
         Ok(r) if r.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
@@ -1321,11 +1311,7 @@ pub async fn update_kiosk_escapes(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -1443,13 +1429,13 @@ pub(crate) async fn app_rows(
         let update = tracked_match.and_then(|t| download_of(t.id));
         apps.push(UnifiedAppRow {
             status_label: if app.preinstalled {
-                "Preinstalled".to_string()
+                t(lang, "device.apps.preinstalled").to_string()
             } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
-                "Installed from Play".to_string()
+                t(lang, "device.apps.from_play").to_string()
             } else if let Some(update) = update {
                 crate::app_downloads::update_label(update, &zone, now)
             } else {
-                "Installed".to_string()
+                t(lang, "device.apps.installed").to_string()
             },
             is_installing: false,
             // An update the phone refused (security review M10) shows like a failed install.
@@ -1483,14 +1469,30 @@ pub(crate) async fn app_rows(
                 false,
                 true,
             ),
-            (Some((_, true)), _) => ("Install failed".to_string(), false, true),
-            (Some((percent, false)), _) => (format!("Installing {percent}%"), true, false),
+            (Some((_, true)), _) => (
+                crate::i18n::t(lang, "device.apps.install_failed").to_string(),
+                false,
+                true,
+            ),
+            (Some((percent, false)), _) => (
+                t_params(
+                    lang,
+                    "device.apps.installing",
+                    &[("percent", &percent.to_string())],
+                ),
+                true,
+                false,
+            ),
             (None, Some(download)) => (
                 crate::app_downloads::new_app_label(download, &zone, now),
                 false,
                 false,
             ),
-            (None, None) => ("Not installed".to_string(), false, false),
+            (None, None) => (
+                crate::i18n::t(lang, "device.apps.not_installed").to_string(),
+                false,
+                false,
+            ),
         };
         apps.push(UnifiedAppRow {
             status_label,
@@ -1521,7 +1523,7 @@ pub(crate) async fn app_rows(
                     .as_ref()
                     .and_then(|d| d.entry(launcher.id))
                     .map(|e| crate::app_downloads::launcher_label(e, &zone, now))
-                    .unwrap_or_else(|| "Installed".to_string()),
+                    .unwrap_or_else(|| t(lang, "device.apps.installed").to_string()),
                 is_installing: false,
                 install_failed: false,
                 checked: true,
@@ -1557,39 +1559,32 @@ async fn render_device(
     use crate::handlers::device_pages::{load_device, load_latest, load_policy};
     let device = match load_device(state, id).await {
         Ok(device) => device,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let policy = match load_policy(state, id).await {
         Ok(policy) => policy,
-        Err(answer) => return answer.into_response(),
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let latest = match load_latest(state, id).await {
         Ok(latest) => latest,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the last report");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
-    let lifts =
-        match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now).await {
-            // Only what End now can still end: an ended lift (or added screen time) is history,
-            // on Device › Time only (the user, 2026-10-20).
-            Ok(lifts) => lifts.into_iter().filter(|l| l.can_end).collect::<Vec<_>>(),
-            Err(err) => {
-                tracing::error!(device_id = id, %err, "can't read the lifts");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't read this phone - check the server log.",
-                )
-                    .into_response();
-            }
-        };
+    let lifts = match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now)
+        .await
+    {
+        // Only what End now can still end: an ended lift (or added screen time) is history,
+        // on Device › Time only (the user, 2026-10-20).
+        Ok(lifts) => lifts.into_iter().filter(|l| l.can_end).collect::<Vec<_>>(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the lifts");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     // Design 38 §3.4: "Turned off 21:14 · battery was 3 %" while the newest `phone_off` is later
     // than the newest `phone_on` and than every status report (`parent_events::offs_now`, the
     // Devices list's read).
@@ -1599,11 +1594,7 @@ async fn render_device(
             .and_then(|row| crate::parent_events::off_since_of(row, now)),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's power events");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
 
@@ -1619,11 +1610,7 @@ async fn render_device(
         Ok((zones, fresh)) => zone_now(&zones, fresh),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's zones");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
 
@@ -1702,11 +1689,7 @@ async fn render_device(
         Ok(relock) => relock,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the relock parts");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
     // The Music row (design 31 step 7): the entries switched on for this phone.
@@ -1821,11 +1804,7 @@ async fn render_device(
         Ok(activity) => activity,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's activity");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
@@ -1924,15 +1903,12 @@ pub(crate) fn app_anchor(package: &str, tracked_app_id: Option<i64>) -> String {
 
 /// The reason under a refused switch's row (`?notice=<code>&app=<row>`, design 31 step 6);
 /// `None` for a code this page doesn't know.
-pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
+pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
     match code {
-        "from_play" => Some(
-            "Installed from the Play Store, so it can't also come from the catalog. Uninstall \
-             that copy first.",
-        ),
-        "not_an_app" => Some("This app changed in the catalog since the page loaded. Try again."),
-        "perms" => Some(crate::app_permissions::words::REFUSED),
-        "perms_full" => Some(crate::app_permissions::words::FULL),
+        "from_play" => Some(t(lang, "device.apps.refused_play")),
+        "not_an_app" => Some(t(lang, "device.apps.refused_changed")),
+        "perms" => Some(t(lang, "apps.perms.refused")),
+        "perms_full" => Some(t(lang, "apps.perms.full")),
         _ => None,
     }
 }
@@ -1967,6 +1943,7 @@ pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
 /// a 500.
 pub async fn toggle_app(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1989,15 +1966,11 @@ pub async fn toggle_app(
             .into_response();
     }
     if package_name.is_empty() && tracked_app_id.is_none() {
-        return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
     }
     let failed = |err: sqlx::Error| {
         tracing::error!(device_id = id, package_name, %err, "couldn't change an app");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't change this app - check the server log.",
-        )
-            .into_response()
+        crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.change_app")
     };
     match sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE id = ?")
         .bind(id)
@@ -2005,7 +1978,9 @@ pub async fn toggle_app(
         .await
     {
         Ok(Some(_)) => {}
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
         Err(err) => return failed(err),
     }
     // Vibb is on every phone and never switched: its row has no switch, and a post naming it by
@@ -2020,7 +1995,9 @@ pub async fn toggle_app(
     .await
     {
         Ok(0) => {}
-        Ok(_) => return (StatusCode::BAD_REQUEST, "Vibb One is always on.").into_response(),
+        Ok(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.launcher_always_on");
+        }
         Err(err) => return failed(err),
     }
     // Opened from the Apps tab: every way back to Device › Apps keeps it.
@@ -2077,7 +2054,7 @@ pub async fn toggle_app(
         && catalog_package.as_deref() != Some(package_name.as_str())
     {
         if tracked_app_id.is_none() {
-            return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
         }
         return refused("not_an_app", &anchor);
     }
@@ -2315,6 +2292,7 @@ pub(crate) async fn remove_from_allowlist(
 /// nothing here is a repeated-name checkbox group.
 pub async fn update_policy(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(fields): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -2323,7 +2301,11 @@ pub async fn update_policy(
         Some("quick") => (true, false, format!("/devices/{id}/home#quick-controls")),
         Some("filter") => (false, true, format!("/devices/{id}/filter#filter")),
         Some(_) => {
-            return (axum::http::StatusCode::BAD_REQUEST, "Unknown section").into_response();
+            return crate::i18n::error(
+                lang,
+                axum::http::StatusCode::BAD_REQUEST,
+                "error.unknown_section",
+            );
         }
     };
     // Home, status bar info, recents, notifications, and the power button menu don't let a kid
@@ -2383,9 +2365,11 @@ pub async fn update_policy(
     .execute(&state.db)
     .await;
     match result {
-        Ok(done) if done.rows_affected() == 0 => {
-            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
-        }
+        Ok(done) if done.rows_affected() == 0 => crate::i18n::error(
+            lang,
+            axum::http::StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ),
         Ok(_) => {
             // Nudges the device to re-sync at once over its SSE connection rather than waiting
             // out the background poll - the nudge carries no data, the device just re-fetches
@@ -2395,11 +2379,11 @@ pub async fn update_policy(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the policy form");
-            (
+            crate::i18n::error(
+                lang,
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }
@@ -2413,6 +2397,7 @@ pub async fn update_policy(
 /// outcome redirects to `/devices/{id}/lock?notice=<code>#child-pin` (the flash in its group).
 pub async fn update_kid_lock(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<std::collections::HashMap<String, String>>,
@@ -2424,14 +2409,16 @@ pub async fn update_kid_lock(
             .await
         {
             Ok(Some(policy)) => policy,
-            Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+            Ok(None) => {
+                return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+            }
             Err(err) => {
                 tracing::error!(device_id = id, %err, "can't read the policy for the kid lock");
-                return (
+                return crate::i18n::error(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't save - nothing was changed. Check the server log.",
-                )
-                    .into_response();
+                    "error.save_failed_log",
+                );
             }
         };
     let back = |code: &str| {
@@ -2482,11 +2469,11 @@ pub async fn update_kid_lock(
             Ok(Err(refusal)) => return crate::settings_log::refused(back(refusal.code())),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "kid PIN hashing failed");
-                return (
+                return crate::i18n::error(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't save - nothing was changed. Check the server log.",
-                )
-                    .into_response();
+                    "error.save_failed_log",
+                );
             }
         };
         // The first kid PIN turns the safe-boot block on; later changes leave the switch alone.
@@ -2559,11 +2546,11 @@ pub async fn update_kid_lock(
     };
     if let Err(err) = result {
         tracing::error!(device_id = id, %err, "failed to save the kid PIN");
-        return (
+        return crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save - nothing was changed. Check the server log.",
-        )
-            .into_response();
+            "error.save_failed_log",
+        );
     }
     security::record_security_event(
         &state.db,
@@ -2587,6 +2574,7 @@ pub async fn update_kid_lock(
 /// 404 for an unknown phone, 500 with nothing written on a DB error.
 pub async fn update_kid_keyguard(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<std::collections::HashMap<String, String>>,
@@ -2594,19 +2582,15 @@ pub async fn update_kid_keyguard(
     let keyguard = match form.get("keyguard").map(String::as_str) {
         Some(k @ (crate::kid_lock::KEYGUARD_OWN | crate::kid_lock::KEYGUARD_ANDROID)) => k,
         _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "This page is out of date - reload it.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
         }
     };
     let failed = || {
-        (
+        crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save - nothing was changed. Check the server log.",
+            "error.save_failed_log",
         )
-            .into_response()
     };
     let (was, has_pin): (String, bool) = match sqlx::query_as(
         "SELECT kid_keyguard, kid_pin_hash IS NOT NULL FROM device_policy WHERE device_id = ?",
@@ -2616,7 +2600,9 @@ pub async fn update_kid_keyguard(
     .await
     {
         Ok(Some(row)) => row,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the lock switch");
             return failed();
@@ -2689,6 +2675,7 @@ pub async fn update_kid_keyguard(
 /// a DB error.
 pub async fn send_kid_pin(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
@@ -2697,11 +2684,7 @@ pub async fn send_kid_pin(
     };
     let failed = |err: sqlx::Error| {
         tracing::error!(device_id = id, %err, "couldn't send the Child PIN again");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't send - nothing was queued. Check the server log.",
-        )
-            .into_response()
+        crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.send_failed")
     };
     let kept: Option<bool> = match sqlx::query_scalar(
         "SELECT kid_pin_sealed IS NOT NULL FROM device_policy WHERE device_id = ?",
@@ -2714,7 +2697,7 @@ pub async fn send_kid_pin(
         Err(err) => return failed(err),
     };
     match kept {
-        None => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        None => return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Some(false) => return back("pin_not_kept"),
         Some(true) => {}
     }
@@ -2741,6 +2724,7 @@ pub async fn send_kid_pin(
 /// the phone like every other policy change.
 pub async fn update_hardening(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -2775,9 +2759,11 @@ pub async fn update_hardening(
     .execute(&state.db)
     .await;
     match result {
-        Ok(done) if done.rows_affected() == 0 => {
-            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
-        }
+        Ok(done) if done.rows_affected() == 0 => crate::i18n::error(
+            lang,
+            axum::http::StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ),
         Ok(_) => {
             let _ = state.command_notify.send(id);
             // Its group (design 31 §5.1.4); scroll-restore.js keeps the exact position.
@@ -2785,11 +2771,11 @@ pub async fn update_hardening(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save hardening switches");
-            (
+            crate::i18n::error(
+                lang,
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }
@@ -2801,6 +2787,7 @@ pub async fn update_hardening(
 /// `/devices/{id}/home#layout` (§5.1.4).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -2814,11 +2801,11 @@ pub async fn update_launcher_ui(
         || !(columns == 3 || columns == 4)
         || clock_format.is_some_and(|f| !crate::models::CLOCK_FORMATS.contains(&f))
     {
-        return (
+        return crate::i18n::error(
+            lang,
             axum::http::StatusCode::BAD_REQUEST,
-            "Unknown language, column count or clock format",
-        )
-            .into_response();
+            "error.unknown_launcher_ui",
+        );
     }
     let result = sqlx::query(
         "UPDATE device_policy SET launcher_language = ?, home_columns = ?, \
@@ -2832,20 +2819,22 @@ pub async fn update_launcher_ui(
     .execute(&state.db)
     .await;
     match result {
-        Ok(done) if done.rows_affected() == 0 => {
-            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
-        }
+        Ok(done) if done.rows_affected() == 0 => crate::i18n::error(
+            lang,
+            axum::http::StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ),
         Ok(_) => {
             let _ = state.command_notify.send(id);
             Redirect::to(&format!("/devices/{id}/home#layout")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save launcher settings");
-            (
+            crate::i18n::error(
+                lang,
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }
@@ -2855,6 +2844,7 @@ pub async fn update_launcher_ui(
 /// written. Back to its group, `/devices/{id}/lock#screen` (§5.1.4).
 pub async fn update_screen_timeout(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -2863,11 +2853,11 @@ pub async fn update_screen_timeout(
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|s| crate::models::SCREEN_TIMEOUTS.iter().any(|(v, _)| v == s))
     else {
-        return (
+        return crate::i18n::error(
+            lang,
             axum::http::StatusCode::BAD_REQUEST,
-            "Unknown screen timeout",
-        )
-            .into_response();
+            "error.unknown_timeout",
+        );
     };
     let result = sqlx::query(
         "UPDATE device_policy SET screen_timeout_seconds = ?, updated_at = datetime('now') \
@@ -2878,20 +2868,22 @@ pub async fn update_screen_timeout(
     .execute(&state.db)
     .await;
     match result {
-        Ok(done) if done.rows_affected() == 0 => {
-            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
-        }
+        Ok(done) if done.rows_affected() == 0 => crate::i18n::error(
+            lang,
+            axum::http::StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ),
         Ok(_) => {
             let _ = state.command_notify.send(id);
             Redirect::to(&format!("/devices/{id}/lock#screen")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the screen timeout");
-            (
+            crate::i18n::error(
+                lang,
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }

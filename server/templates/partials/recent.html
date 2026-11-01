@@ -8,7 +8,7 @@
                 {% if let Some(cancel_id) = c.cancel_id %}
                 <form method="post" action="/devices/{{ device_id }}/commands/{{ cancel_id }}/cancel#{{ group }}" class="row-form">
                     <input type="hidden" name="back" value="{{ back }}">
-                    <button type="submit" class="row-action" aria-label="Cancel {{ c.label }} asked for at {{ c.asked }}">Cancel</button>
+                    <button type="submit" class="row-action" aria-label="{{ self.tp("device.recent.cancel_label", [("what", c.label), ("at", c.asked.as_str())]) }}">{{ self.t("common.cancel") }}</button>
                 </form>
                 {% endif %}
             </div>

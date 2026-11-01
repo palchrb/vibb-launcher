@@ -4,8 +4,8 @@
 {% for b in budget %}
 <label class="row" for="b{{ b.index }}">
     <span class="row-label">{{ b.name }}</span>
-    <input type="number" class="row-num" id="b{{ b.index }}" name="b{{ b.index }}" value="{{ b.value }}" min="0" max="1440" inputmode="numeric" placeholder="No limit"{% if b.error.is_some() %} aria-invalid="true" aria-describedby="b{{ b.index }}-error" autofocus{% endif %}>
-    <span class="row-unit" aria-hidden="true">min</span>
+    <input type="number" class="row-num" id="b{{ b.index }}" name="b{{ b.index }}" value="{{ b.value }}" min="0" max="1440" inputmode="numeric" placeholder="{{ self.t("device.time.no_limit") }}"{% if b.error.is_some() %} aria-invalid="true" aria-describedby="b{{ b.index }}-error" autofocus{% endif %}>
+    <span class="row-unit" aria-hidden="true">{{ self.t("common.unit_min") }}</span>
 </label>
-{% if let Some(why) = b.error %}<p class="flash flash-error" id="b{{ b.index }}-error" role="status" data-flash="screen-time">{{ why }} Nothing was saved.</p>{% endif %}
+{% if let Some(why) = b.error %}<p class="flash flash-error" id="b{{ b.index }}-error" role="status" data-flash="screen-time">{{ why }} {{ self.t("common.nothing_saved") }}</p>{% endif %}
 {% endfor %}

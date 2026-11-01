@@ -181,18 +181,24 @@ test("About's Page timing row shows the state and links to the other one", () =>
     const attrs = {};
     const state = { textContent: "Off" };
     const row = { setAttribute: (k, v) => (attrs[k] = v), querySelector: () => state };
-    const doc = { readyState: "complete", querySelector: () => row };
+    // The words come from the page (partials/js_words.html, design 70 §5.3).
+    const words = { getAttribute: (name) => ({ "data-w-on": "På", "data-w-off": "Av" })[name] || null };
+    const getElementById = (id) => (id === "js-words" ? words : null);
+    const doc = { readyState: "complete", querySelector: () => row, getElementById };
     toggle(doc, true);
-    assert.strictEqual(state.textContent, "On");
+    assert.strictEqual(state.textContent, "På");
     assert.strictEqual(attrs.href, "/updates?timing=0#timing");
     toggle(doc, false);
-    assert.strictEqual(state.textContent, "Off");
+    assert.strictEqual(state.textContent, "Av");
     assert.strictEqual(attrs.href, "/updates?timing=1#timing");
     // A page without the row, and one still loading: nothing until it has loaded.
     toggle({ readyState: "complete", querySelector: () => null }, true);
     const waiting = [];
-    toggle({ readyState: "loading", querySelector: () => row, addEventListener: (t, fn) => waiting.push([t, fn]) }, true);
+    toggle({ readyState: "loading", querySelector: () => row, getElementById, addEventListener: (t, fn) => waiting.push([t, fn]) }, true);
     assert.strictEqual(waiting[0][0], "DOMContentLoaded");
     waiting[0][1]();
-    assert.strictEqual(state.textContent, "On");
+    assert.strictEqual(state.textContent, "På");
+    // A page without the words shows the word's name.
+    toggle({ readyState: "complete", querySelector: () => row }, false);
+    assert.strictEqual(state.textContent, "off");
 });

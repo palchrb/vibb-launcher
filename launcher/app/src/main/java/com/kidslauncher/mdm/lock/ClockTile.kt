@@ -157,5 +157,9 @@ fun glanceAlarm(triggerMs: Long?, creator: String?, clockPackages: Set<String>, 
  * The clock apps whose alarms show over the lock and under the date (§1.2): the system clock app
  * (FLAG_SYSTEM, as before) and Fossify Clock only while its pinned signer is verified.
  */
+fun lockClockPackages(systemClocks: Set<String>, clockAppVerified: Boolean): Set<String> =
+    systemClocks + setOfNotNull(ClockApp.PACKAGE.takeIf { clockAppVerified })
+
+/** One system clock app ([lockClockPackages] over a set: every system `SHOW_ALARMS` handler, code QA L2). */
 fun lockClockPackages(systemClock: String?, clockAppVerified: Boolean): Set<String> =
-    setOfNotNull(systemClock, ClockApp.PACKAGE.takeIf { clockAppVerified })
+    lockClockPackages(setOfNotNull(systemClock), clockAppVerified)

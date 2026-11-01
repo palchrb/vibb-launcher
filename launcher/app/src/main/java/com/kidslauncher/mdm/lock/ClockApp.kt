@@ -44,6 +44,22 @@ object ClockApp {
         },
     )
 
+    /**
+     * The system clock apps: every system handler of `AlarmClock.ACTION_SHOW_ALARMS` - never the next alarm's creator,
+     * which may be the catalog's clock app (qa-r6-b-code L8) or any allowlisted app (security review S-L3). A set (code
+     * QA L2): a phone with two system clocks spares both. The one resolver of the lock's alarm exemption
+     * (`PinLockRuntime.clockPackages`) and the time-rule lock's spared alarm apps (`AppEnforcer.alarmAppPackages`).
+     * A PackageManager call; empty when unreadable.
+     */
+    fun systemClocks(context: Context): Set<String> = try {
+        context.packageManager.queryIntentActivities(
+            android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS),
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong()),
+        ).map { it.activityInfo.packageName }.filterTo(mutableSetOf()) { it != "android" }
+    } catch (e: Exception) {
+        emptySet()
+    }
+
     /** Off the main thread: [verified] again; a lost verification drops the timer tile at once. */
     fun refresh(context: Context) {
         try {

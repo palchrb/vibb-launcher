@@ -27,16 +27,16 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::AppState;
 use crate::handlers::schedules::{
     AppChoice, app_choices, apps_value, field, form_pairs, log_change, minutes_to_time_input,
-    nudge, parse_exempt_apps_form, read_failed, render, reported_apps, server_error,
+    nudge, parse_exempt_apps_form, read_failed_in, render, reported_apps, server_error_in,
     time_input_to_minutes, window_text,
 };
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 use crate::security::CurrentAdmin;
 use crate::time_rules::{self, BEDTIME_NAME, DayWindow, LAST_MINUTE, NOON, Nights, TimeRuleRow};
 
 /// The two rows: their labels, Sun-Thu first, with a non-breaking hyphen (U+2011) so a narrow
 /// phone never breaks "Sun-Thu" (qa-66-code N1).
-const ROWS: [&str; 2] = ["Sun\u{2011}Thu nights", "Fri\u{2011}Sat nights"];
+const ROWS: [&str; 2] = ["device.bedtime.school_nights", "device.bedtime.free_nights"];
 /// A new bedtime's rows.
 const DEFAULT_NIGHT: DayWindow = DayWindow {
     start: 21 * 60,
@@ -73,20 +73,33 @@ fn nights_detail(device_id: i64, nights: &Nights) -> crate::security::Detail {
     detail.with_facts(format!("device {device_id}"))
 }
 
-pub(crate) fn nights_summary(nights: &Nights) -> String {
+pub(crate) fn nights_summary(lang: Lang, nights: &Nights) -> String {
     match (nights.school, nights.free) {
-        (Some(school), Some(free)) if school == free => {
-            format!("Every night {}", window_text(school))
-        }
-        (Some(school), Some(free)) => format!(
-            "Sun-Thu {} · Fri-Sat {}",
-            window_text(school),
-            window_text(free)
+        (Some(school), Some(free)) if school == free => t_params(
+            lang,
+            "device.bedtime.every_night",
+            &[("window", &window_text(school))],
         ),
-        (Some(school), None) => format!("Sun-Thu nights {}", window_text(school)),
-        (None, Some(free)) => format!("Fri-Sat nights {}", window_text(free)),
+        (Some(school), Some(free)) => t_params(
+            lang,
+            "device.bedtime.both",
+            &[
+                ("school", &window_text(school)),
+                ("free", &window_text(free)),
+            ],
+        ),
+        (Some(school), None) => t_params(
+            lang,
+            "device.bedtime.school_only",
+            &[("window", &window_text(school))],
+        ),
+        (None, Some(free)) => t_params(
+            lang,
+            "device.bedtime.free_only",
+            &[("window", &window_text(free))],
+        ),
         // Never stored by the form, and read as unreadable ([nights_of]).
-        (None, None) => "No nights".to_string(),
+        (None, None) => t(lang, "device.bedtime.no_nights").to_string(),
     }
 }
 
@@ -106,8 +119,8 @@ fn nights_of(row: &TimeRuleRow) -> Option<Nights> {
 
 /// The bedtime's words for Device › Time and Settings › Time Rules; `None` for a row that
 /// doesn't read ("Can't be read", `text-alarm`).
-pub(crate) fn bedtime_summary(row: &TimeRuleRow) -> Option<String> {
-    stored_nights(row).map(|n| nights_summary(&n))
+pub(crate) fn bedtime_summary(lang: Lang, row: &TimeRuleRow) -> Option<String> {
+    stored_nights(row).map(|n| nights_summary(lang, &n))
 }
 
 /// One row of nights on the page.
@@ -134,11 +147,11 @@ impl BedtimeForm {
     }
 }
 
-fn nights_inputs(nights: &[Option<DayWindow>; 2]) -> Vec<NightsInput> {
+fn nights_inputs(lang: Lang, nights: &[Option<DayWindow>; 2]) -> Vec<NightsInput> {
     (0..2)
         .map(|i| NightsInput {
             index: i,
-            label: ROWS[i],
+            label: t(lang, ROWS[i]),
             start: nights[i]
                 .map(|w| minutes_to_time_input(w.start))
                 .unwrap_or_default(),
@@ -189,32 +202,42 @@ pub(crate) enum BedtimeError {
 /// 12:00-23:59, the morning in 00:00-11:59 (every window crosses midnight, under 24 h); not both
 /// rows empty. The exempt apps as a rule's.
 pub(crate) fn parse_bedtime_form(
+    lang: Lang,
     fields: &[(String, String)],
 ) -> Result<BedtimeInput, BedtimeError> {
     let mut rows = [None; 2];
-    for (i, label) in ROWS.iter().enumerate() {
+    for (i, label) in ROWS.iter().map(|key| t(lang, key)).enumerate() {
         let start = field(fields, &format!("n{i}_start")).trim();
         let end = field(fields, &format!("n{i}_end")).trim();
         if start.is_empty() && end.is_empty() {
             continue;
         }
-        let refused = |why: &str| Err(BedtimeError::Row(i, format!("{label}: {why}")));
+        let refused = |why: &str| {
+            Err(BedtimeError::Row(
+                i,
+                t_params(
+                    lang,
+                    "device.bedtime.refused",
+                    &[("nights", label), ("why", t(lang, why))],
+                ),
+            ))
+        };
         if start.is_empty() || end.is_empty() {
-            return refused("give both times, or leave both empty.");
+            return refused("device.bedtime.both_times");
         }
         let (Some(start), Some(end)) = (time_input_to_minutes(start), time_input_to_minutes(end))
         else {
-            return refused("use times like 21:00.");
+            return refused("device.bedtime.time_format");
         };
         if !(NOON..=LAST_MINUTE).contains(&start) || end >= NOON {
-            return refused("bedtime starts after noon and ends before noon.");
+            return refused("device.bedtime.noon");
         }
         rows[i] = Some(DayWindow { start, end });
     }
     if rows == [None, None] {
         return Err(BedtimeError::Row(
             0,
-            "Give the times, or remove the bedtime.".to_string(),
+            t(lang, "device.bedtime.no_times").to_string(),
         ));
     }
     Ok(BedtimeInput {
@@ -229,7 +252,7 @@ pub(crate) fn parse_bedtime_form(
 
 /// The phone's name (a device with its policy row), or the answer: 404 for an unknown phone, 500
 /// on a DB error.
-async fn phone_or_answer(state: &AppState, id: i64) -> Result<String, Box<Response>> {
+async fn phone_or_answer(state: &AppState, id: i64, lang: Lang) -> Result<String, Box<Response>> {
     match sqlx::query_scalar(
         "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
     )
@@ -238,42 +261,50 @@ async fn phone_or_answer(state: &AppState, id: i64) -> Result<String, Box<Respon
     .await
     {
         Ok(Some(name)) => Ok(name),
-        Ok(None) => Err(Box::new(
-            (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        )),
-        Err(err) => Err(Box::new(read_failed(err, "the device"))),
+        Ok(None) => Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ))),
+        Err(err) => Err(Box::new(read_failed_in(lang, err, "the device"))),
     }
 }
 
 /// The stored bedtime, and the phone's reported apps (package -> label).
 type StoredAndApps = (Option<TimeRuleRow>, BTreeMap<String, String>);
 
-async fn stored_and_apps(state: &AppState, id: i64) -> Result<StoredAndApps, Box<Response>> {
+async fn stored_and_apps(
+    state: &AppState,
+    id: i64,
+    lang: Lang,
+) -> Result<StoredAndApps, Box<Response>> {
     let stored = time_rules::bedtime_row(&state.db, id)
         .await
-        .map_err(|err| Box::new(read_failed(err, "the bedtime")))?;
+        .map_err(|err| Box::new(read_failed_in(lang, err, "the bedtime")))?;
     let apps = reported_apps(state, &[id])
         .await
-        .map_err(|err| Box::new(read_failed(err, "the reported apps")))?;
+        .map_err(|err| Box::new(read_failed_in(lang, err, "the reported apps")))?;
     Ok((stored, apps))
 }
 
 /// The parts of a stored bedtime that don't read, for the page's warning.
-fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
+fn unreadable_parts(lang: Lang, row: &TimeRuleRow) -> Option<String> {
     let nights = nights_of(row).is_some();
     let apps = time_rules::parse_exempt_apps(&row.exempt_apps_json).is_ok();
-    let parts = match (nights, apps) {
-        (true, true) => return None,
-        (false, true) => "Its nights couldn't",
-        (true, false) => "Its apps couldn't",
-        (false, false) => "Its nights and apps couldn't",
-    };
-    let error = if row.to_policy().is_err() {
-        "The phone gets an error instead of its rules. "
+    let parts = t(
+        lang,
+        match (nights, apps) {
+            (true, true) => return None,
+            (false, true) => "device.bedtime.unreadable_nights",
+            (true, false) => "device.bedtime.unreadable_apps",
+            (false, false) => "device.bedtime.unreadable_both",
+        },
+    );
+    Some(if row.to_policy().is_err() {
+        format!("{} {parts}", t(lang, "device.bedtime.phone_gets_error"))
     } else {
-        ""
-    };
-    Some(format!("{error}{parts} be read"))
+        parts.to_string()
+    })
 }
 
 /// GET `/devices/{id}/bedtime`: the page, with the stored bedtime or a new one's defaults.
@@ -283,11 +314,11 @@ pub async fn show_bedtime(
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let device_name = match phone_or_answer(&state, id).await {
+    let device_name = match phone_or_answer(&state, id, lang).await {
         Ok(name) => name,
         Err(answer) => return *answer,
     };
-    let (stored, available) = match stored_and_apps(&state, id).await {
+    let (stored, available) = match stored_and_apps(&state, id, lang).await {
         Ok(found) => found,
         Err(answer) => return *answer,
     };
@@ -296,14 +327,14 @@ pub async fn show_bedtime(
             let nights = nights_of(row).map_or([None, None], |n| [n.school, n.free]);
             let exempt = time_rules::parse_exempt_apps(&row.exempt_apps_json).unwrap_or_default();
             BedtimeForm {
-                rows: nights_inputs(&nights),
+                rows: nights_inputs(lang, &nights),
                 calls_allowed: row.calls_allowed,
                 apps: app_choices(&available, &exempt),
                 apps_error: None,
             }
         }
         None => BedtimeForm {
-            rows: nights_inputs(&[Some(DEFAULT_NIGHT); 2]),
+            rows: nights_inputs(lang, &[Some(DEFAULT_NIGHT); 2]),
             calls_allowed: true,
             apps: app_choices(&available, &[]),
             apps_error: None,
@@ -312,10 +343,10 @@ pub async fn show_bedtime(
     render(
         BedtimeTemplate {
             lang,
-            title: "Bedtime".to_string(),
+            title: t(lang, "device.bedtime.title").to_string(),
             device_id: id,
             device_name,
-            corrupt: stored.as_ref().and_then(unreadable_parts),
+            corrupt: stored.as_ref().and_then(|row| unreadable_parts(lang, row)),
             stored: stored.is_some(),
             saved: params.contains_key("saved"),
             refusal: None,
@@ -334,7 +365,7 @@ async fn refuse(
     error: BedtimeError,
     lang: Lang,
 ) -> Response {
-    let (stored, available) = match stored_and_apps(state, id).await {
+    let (stored, available) = match stored_and_apps(state, id, lang).await {
         Ok(found) => found,
         Err(answer) => return *answer,
     };
@@ -349,7 +380,7 @@ async fn refuse(
         rows: (0..2)
             .map(|i| NightsInput {
                 index: i,
-                label: ROWS[i],
+                label: t(lang, ROWS[i]),
                 start: typed(&format!("n{i}_start")),
                 end: typed(&format!("n{i}_end")),
                 error: None,
@@ -372,10 +403,10 @@ async fn refuse(
     render(
         BedtimeTemplate {
             lang,
-            title: "Bedtime".to_string(),
+            title: t(lang, "device.bedtime.title").to_string(),
             device_id: id,
             device_name,
-            corrupt: stored.as_ref().and_then(unreadable_parts),
+            corrupt: stored.as_ref().and_then(|row| unreadable_parts(lang, row)),
             stored: stored.is_some(),
             saved: false,
             refusal: Some(refusal),
@@ -394,11 +425,11 @@ pub async fn save_bedtime(
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let device_name = match phone_or_answer(&state, id).await {
+    let device_name = match phone_or_answer(&state, id, lang).await {
         Ok(name) => name,
         Err(answer) => return *answer,
     };
-    let input = match parse_bedtime_form(&fields) {
+    let input = match parse_bedtime_form(lang, &fields) {
         Ok(input) => input,
         Err(error) => return refuse(&state, id, device_name, &fields, error, lang).await,
     };
@@ -419,7 +450,7 @@ pub async fn save_bedtime(
     .execute(&state.db)
     .await
     {
-        return server_error(err, "failed to save a bedtime");
+        return server_error_in(lang, err, "failed to save a bedtime");
     }
     crate::security::record_security_event(
         &state.db,
@@ -438,10 +469,11 @@ pub async fn save_bedtime(
 /// already gone lands there too, with nothing written.
 pub async fn remove_bedtime(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
 ) -> Response {
-    if let Err(answer) = phone_or_answer(&state, id).await {
+    if let Err(answer) = phone_or_answer(&state, id, lang).await {
         return *answer;
     }
     match sqlx::query("DELETE FROM time_rules WHERE device_id = ? AND bedtime = 1")
@@ -454,7 +486,7 @@ pub async fn remove_bedtime(
             nudge(&state, Some(id)).await;
         }
         Ok(_) => {}
-        Err(err) => return server_error(err, "failed to remove a bedtime"),
+        Err(err) => return server_error_in(lang, err, "failed to remove a bedtime"),
     }
     Redirect::to(&format!(
         "/devices/{id}/time?notice=bedtime_removed#bedtime"
@@ -478,14 +510,17 @@ mod tests {
 
     #[test]
     fn the_bedtime_form() {
-        let ok = parse_bedtime_form(&pairs(&[
-            ("n0_start", "21:00"),
-            ("n0_end", "07:00"),
-            ("n1_start", "22:30"),
-            ("n1_end", "09:00"),
-            ("calls_allowed", "on"),
-            ("exempt_apps", "me.vibb.music"),
-        ]))
+        let ok = parse_bedtime_form(
+            Lang::En,
+            &pairs(&[
+                ("n0_start", "21:00"),
+                ("n0_end", "07:00"),
+                ("n1_start", "22:30"),
+                ("n1_end", "09:00"),
+                ("calls_allowed", "on"),
+                ("exempt_apps", "me.vibb.music"),
+            ]),
+        )
         .unwrap();
         assert_eq!(
             ok.nights,
@@ -504,8 +539,11 @@ mod tests {
         assert_eq!(days[6], w(1260, 420));
 
         // One empty row is no bedtime those nights; the edges of the ranges are taken.
-        let one =
-            parse_bedtime_form(&pairs(&[("n1_start", "12:00"), ("n1_end", "11:59")])).unwrap();
+        let one = parse_bedtime_form(
+            Lang::En,
+            &pairs(&[("n1_start", "12:00"), ("n1_end", "11:59")]),
+        )
+        .unwrap();
         assert_eq!(
             one.nights,
             Nights {
@@ -514,9 +552,16 @@ mod tests {
             }
         );
         assert!(!one.calls_allowed);
-        assert!(parse_bedtime_form(&pairs(&[("n0_start", "23:59"), ("n0_end", "00:00")])).is_ok());
+        assert!(
+            parse_bedtime_form(
+                Lang::En,
+                &pairs(&[("n0_start", "23:59"), ("n0_end", "00:00")])
+            )
+            .is_ok()
+        );
 
-        let refused = |list: &[(&str, &str)]| parse_bedtime_form(&pairs(list)).unwrap_err();
+        let refused =
+            |list: &[(&str, &str)]| parse_bedtime_form(Lang::En, &pairs(list)).unwrap_err();
         assert_eq!(
             refused(&[]),
             BedtimeError::Row(0, "Give the times, or remove the bedtime.".to_string())
@@ -526,7 +571,7 @@ mod tests {
                 row,
                 format!(
                     "{}: bedtime starts after noon and ends before noon.",
-                    ROWS[row]
+                    t(Lang::En, ROWS[row])
                 ),
             )
         };
@@ -541,12 +586,18 @@ mod tests {
             refused(&[("n0_start", "21:00")]),
             BedtimeError::Row(
                 0,
-                format!("{}: give both times, or leave both empty.", ROWS[0])
+                format!(
+                    "{}: give both times, or leave both empty.",
+                    t(Lang::En, ROWS[0])
+                )
             )
         );
         assert_eq!(
             refused(&[("n0_start", "9pm"), ("n0_end", "07:00")]),
-            BedtimeError::Row(0, format!("{}: use times like 21:00.", ROWS[0]))
+            BedtimeError::Row(
+                0,
+                format!("{}: use times like 21:00.", t(Lang::En, ROWS[0]))
+            )
         );
         assert!(matches!(
             refused(&[
@@ -560,7 +611,7 @@ mod tests {
 
     #[test]
     fn the_bedtimes_words() {
-        let nights = |school, free| nights_summary(&Nights { school, free });
+        let nights = |school, free| nights_summary(Lang::En, &Nights { school, free });
         assert_eq!(
             nights(w(1260, 420), w(1260, 420)),
             "Every night 21:00-07:00"
@@ -585,7 +636,7 @@ mod tests {
         };
         let every = serde_json::to_string(&[w(1260, 420); 7]).unwrap();
         assert_eq!(
-            bedtime_summary(&row(&every, "[]")).as_deref(),
+            bedtime_summary(Lang::En, &row(&every, "[]")).as_deref(),
             Some("Every night 21:00-07:00")
         );
         for (days, apps) in [
@@ -596,8 +647,12 @@ mod tests {
             ),
             (every.as_str(), "nope"),
         ] {
-            assert_eq!(bedtime_summary(&row(days, apps)), None, "{days} {apps}");
-            assert!(unreadable_parts(&row(days, apps)).is_some());
+            assert_eq!(
+                bedtime_summary(Lang::En, &row(days, apps)),
+                None,
+                "{days} {apps}"
+            );
+            assert!(unreadable_parts(Lang::En, &row(days, apps)).is_some());
         }
     }
 }
