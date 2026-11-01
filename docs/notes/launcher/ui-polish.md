@@ -199,6 +199,26 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (nb "t", en "h"; "min").
 - Not emulator-checked yet: each rule kind and the budget in nb and en at `wm density 240` (font scale 1.0/1.3/2.0),
   TalkBack on the rows and buttons, 112 with Telecom refusing (`docs/testing/emulator.md` §6 item 9).
+- **The lock glance's look (launcher round L6, branch `rule-screen`; the user, 2026-10-26, Jelly Star screenshots of
+  school mode: the screen looked dated next to the glance)**: the clock, the kind's 52 dp disc, the 22 sp title and the
+  message paragraph are gone; the screen is the glance's top in the glance's parts - **the clock face**
+  (`lock/LockClockFace`, moved out of `GlancePanel` and used by both: the 56 sp clock in `kid_ink` and the long date,
+  or with the phone's clock profile design 59d step L's Nunito Light clock, short date and left alignment, placed in the
+  window's coordinates under the keyguard status bar - so the clock stands where the glance's does; the alarm line,
+  `bindAlarm`, with its `ACTION_NEXT_ALARM_CLOCK_CHANGED` receiver between onStart and onStop; `follow()` places it at
+  every root height/padding change and skips the frame that moved it), **the rule card** (`view_lock_rule_card.xml`,
+  `<include>`d by both layouts, bound by `lock/RuleCardView` for both: the glyph disc, the rule's name, "Til 14:34" only
+  with a certain end, and here line 3 - the budget and calls sentences, `lock_rule_card_note`, gone on the glance;
+  TalkBack one node "Skole, til 14:34. Bare nødanrop fungerer nå.", `lock_rule_card_spoken_note`), the rows' card 14 dp
+  under it (the glance's `ROWS_TOP_DP`), and "Nødsamtale" as the glance's bottom-row button (`pin_lock_emergency`,
+  8 dp under the content, no flashlight). **The ground** is the lock's (`lockGround`, the parent's lock picture or
+  Home's wallpaper under its scrim, once `WallpaperStore.state.lockReady`; the night until then). Behaviour unchanged:
+  `decideTimeLock`, the rows, Back off, Emergency's flow and its three code lines, `start`'s CLEAR_TOP | SINGLE_TOP
+  and `onNewIntent`'s `render()`. `TimeLockModelTest` compares each shared part's attributes with the glance's
+  (clock, date, alarm, Emergency) and pins the one include; `LockGlanceLayoutTest` inlines includes in its model (the
+  card is still 82 dp there). Not emulator- or device-checked yet: the profile clock's place on the Jelly Star against
+  the glance's (no jump at the unlock), a long rule name (one line, cut, as on the glance), the lock picture behind the
+  rows' card, font scale 2.0.
 
 ## The keypad's tonal emergency button and the spacing rule (design 34 step 8, P7, `docs/design/34-launcher-polish.md`, at the monorepo root)
 

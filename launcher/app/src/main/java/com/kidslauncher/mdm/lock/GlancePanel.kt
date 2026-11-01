@@ -14,10 +14,7 @@ import android.graphics.drawable.Drawable
 import android.os.PowerManager
 import android.text.format.DateFormat
 import android.util.Log
-import android.util.TypedValue
-import android.os.Build
 import android.os.Bundle
-import android.text.method.TransformationMethod
 import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
@@ -25,7 +22,6 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -33,7 +29,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
@@ -131,17 +126,13 @@ class GlancePanel(
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
-    /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
-    private val profile: ClockGeometry? = try {
-        val density = activity.resources.displayMetrics.density
-        val widthDp = activity.resources.configuration.screenWidthDp
-        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp).also {
-            // JL-6: a phone with no profile says so once (nothing here is personal).
-            if (it == null) Log.i(LOG_TAG, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the centred clock")
-        }
-    } catch (e: Throwable) {
-        null
-    }
+    /** The clock, the date and the alarm line (launcher round L6: one face with the time-rule screen's), with design
+     * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). */
+    private val clockFace = LockClockFace(
+        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,
+        extra = listOf(glance.lockGlanceNext), logTag = LOG_TAG,
+    )
+    private val profile: ClockGeometry? = clockFace.profile
 
     /**
      * Design 59d §8.13: Android's gesture handle, drawn by us where SystemUI's is (lock task hides SystemUI's while we are
@@ -246,11 +237,6 @@ class GlancePanel(
 
     init {
         KidInsets.apply(glance.root)
-        val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
-        val datePattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))
-        glance.lockGlanceDate.format12Hour = datePattern
-        glance.lockGlanceDate.format24Hour = datePattern
-        profile?.let { profileLook(it, locale) }
         handleAction(handle)
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
@@ -278,120 +264,6 @@ class GlancePanel(
             refitPending = false
             false
         }
-    }
-
-    /**
-     * Design 59d step L: the clock, the date and the alarm line left-aligned as Android's small clock - Nunito Light for
-     * the clock (JL-2), the short date capitalised as Android's ("Fre. 23. okt."), the date's
-     * size; where they sit is [placeProfile]'s, at every layout.
-     */
-    private fun profileLook(p: ClockGeometry, locale: Locale) {
-        Log.i(LOG_TAG, "Glance clock: ${p.name} profile")
-        val clock = glance.lockGlanceClock
-        // JL-2: Android's small clock is thin - Nunito Light (300), bundled for this clock only (not in nunito.xml's family).
-        ResourcesCompat.getFont(activity, R.font.nunito_light)?.let { clock.typeface = it }
-        val date = glance.lockGlanceDate
-        date.transformationMethod = FirstCapital(locale)
-        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.dateSp)
-        for (view in listOf(clock, date, glance.lockGlanceAlarm, glance.lockGlanceNext)) {
-            (view.layoutParams as LinearLayout.LayoutParams).let { view.layoutParams = it.apply { gravity = Gravity.START } }
-        }
-        date.gravity = Gravity.START
-        glance.lockGlanceAlarm.gravity = Gravity.START
-        glance.lockGlanceNext.gravity = Gravity.START
-        // The first digit's ink keeps its place when the hour's first digit changes (its side bearing does).
-        clock.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-            override fun afterTextChanged(s: android.text.Editable?) = guarded("clock start") {
-                if (glance.root.height > 0) margins(clock, clockStartPx(p), (clock.layoutParams as ViewGroup.MarginLayoutParams).topMargin)
-            }
-        })
-    }
-
-    /** Design 59d step L: the clock's start margin that puts its first digit's ink at the profile's
-     * [ClockGeometry.clockInkStartDp] in the window ([startMarginPx] less the glyph's side bearing). */
-    private fun clockStartPx(p: ClockGeometry): Int {
-        val at = IntArray(2)
-        glance.root.getLocationOnScreen(at)
-        val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()
-        val clock = glance.lockGlanceClock
-        val text = clock.text?.toString().orEmpty()
-        val first = android.graphics.Rect()
-        if (text.isNotEmpty()) clock.paint.getTextBounds(text, 0, 1, first)
-        return startMarginPx(p.clockInkStartDp * activity.resources.displayMetrics.density - first.left, contentStart)
-    }
-
-    /** The date's first letter capitalised on screen ([glanceDateCapitalised]); the TextClock's own text is unchanged. */
-    private class FirstCapital(private val locale: Locale) : TransformationMethod {
-        override fun getTransformation(source: CharSequence?, view: View?): CharSequence? = source?.let { glanceDateCapitalised(it.toString(), locale) }
-
-        override fun onFocusChanged(view: View?, sourceText: CharSequence?, focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) = Unit
-    }
-
-    /**
-     * Design 59d step L: the clock's and the date's margins so their boxes start and their baselines sit where the
-     * profile says, in the window's coordinates ([baselineMarginPx], [startMarginPx]) - the baselines under SystemUI's
-     * keyguard status bar ([keyguardBarPx], the glance-topinset round); the alarm line under the date at the date's
-     * start. Measured at [width] first; a margin is written only when it changed (no layout loop). Returns whether one
-     * was.
-     */
-    private fun placeProfile(p: ClockGeometry, width: Int): Boolean {
-        val density = activity.resources.displayMetrics.density
-        val at = IntArray(2)
-        glance.root.getLocationOnScreen(at)
-        val contentTop = (at[1] + glance.root.paddingTop + glance.lockGlanceTop.paddingTop).toFloat()
-        val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()
-        val bar = keyguardBarPx(density)
-        val clock = glance.lockGlanceClock
-        measured(clock, width)
-        // The clock's box may reach above the page's content (the emulator's 136 px status bar ends below Android's
-        // clock's top), as long as its digits' ink stays inside: its floor is minus the empty room above the ink.
-        val ink = android.graphics.Rect()
-        clock.paint.getTextBounds(CLOCK_DIGITS, 0, CLOCK_DIGITS.length, ink)
-        val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)
-        val clockTop = baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
-        var moved = margins(clock, clockStartPx(p), clockTop)
-        val date = glance.lockGlanceDate
-        measured(date, width)
-        val clockBottom = contentTop + clockTop + clock.measuredHeight
-        val descent = (clock.measuredHeight - clock.baseline).toFloat()
-        val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
-        val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
-        moved = margins(date, dateStart, baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(), floorPx = -descent)) || moved
-        if (bar != placedBarPx) {
-            placedBarPx = bar
-            Log.i(LOG_TAG, "Glance clock: keyguard status bar ${bar.roundToInt()} px, the clock's baseline at ${clockTarget.roundToInt()} px, the date's at ${dateTarget.roundToInt()} px")
-        }
-        val alarm = glance.lockGlanceAlarm
-        val next = glance.lockGlanceNext
-        moved = margins(next, dateStart, (next.layoutParams as ViewGroup.MarginLayoutParams).topMargin) || moved
-        return margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin) || moved
-    }
-
-    /** The keyguard status bar [placeProfile] last placed under (logged once per value). */
-    private var placedBarPx = -1f
-
-    /**
-     * SystemUI's keyguard status bar on this window ([keyguardStatusBarPx]): the status bar's top inset whether shown or
-     * not (lock task may hide its content, never its height) and the cutout's, from the window's own insets - the root's
-     * listener consumes them for the views, not for `rootWindowInsets`. No insets yet: the 40 dp floor alone.
-     */
-    private fun keyguardBarPx(density: Float): Float {
-        val insets = glance.root.rootWindowInsets
-        val bar = insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top ?: 0
-        val cutout = insets?.getInsets(WindowInsets.Type.displayCutout())?.top ?: 0
-        return keyguardStatusBarPx(bar, cutout, density)
-    }
-
-    /** Writes the margins only when they differ; returns whether it did. */
-    private fun margins(view: View, start: Int, top: Int): Boolean {
-        val params = view.layoutParams as ViewGroup.MarginLayoutParams
-        if (params.marginStart == start && params.topMargin == top) return false
-        params.marginStart = start
-        params.topMargin = top
-        view.layoutParams = params
-        return true
     }
 
     /** onStart: watching the rows and the session; the stage decided if the lock comes up now. */
@@ -465,23 +337,16 @@ class GlancePanel(
         null
     }
 
-    /** The card from the kept model: the kind's glyph, line 1 the rule's name or the kind's label, line 2 "Til 14:30"
-     * only with a certain end; TalkBack reads one text ("Skole, til 14:30"). No tap, no action. */
+    /** The card from the kept model ([RuleCardView]): the kind's glyph, line 1 the rule's name or the kind's label, line 2
+     * "Til 14:30" only with a certain end; TalkBack reads one text ("Skole, til 14:30"). No tap, no action. */
     private fun bindRuleCard() {
-        val view = glance.lockRuleCard
         val card = ruleCard
         if (card == null) {
-            view.visibility = View.GONE
+            glance.lockRuleCard.root.visibility = View.GONE
             return
         }
         val label = com.kidslauncher.mdm.ui.LockActivity.labelText(activity, card.label)
-        val until = card.until?.let { ClockFormat.formatUntil(activity, it) }
-        glance.lockRuleCardGlyph.setImageResource(com.kidslauncher.mdm.ui.LockActivity.glyphRes(card.kind.glyph()))
-        glance.lockRuleCardTitle.text = label
-        glance.lockRuleCardUntil.visibility = if (until != null) View.VISIBLE else View.GONE
-        if (until != null) glance.lockRuleCardUntil.text = activity.getString(R.string.lock_until, until)
-        view.contentDescription = if (until != null) activity.getString(R.string.glance_rule_card_description, label, until) else label
-        view.visibility = View.VISIBLE
+        RuleCardView.bind(activity, glance.lockRuleCard, com.kidslauncher.mdm.ui.LockActivity.glyphRes(card.kind.glyph()), label, card.until)
     }
 
     /**
@@ -1259,20 +1124,8 @@ class GlancePanel(
         return (root.width - root.paddingStart - root.paddingEnd - top.paddingStart - top.paddingEnd).takeIf { it > 0 }
     }
 
-    /** The next alarm under the date (design 42 §1.3): the system clock app's or the pinned clock
-     * app's only ([PinLockRuntime.clockPackages]), "Alarm 07:00" - with the weekday more than 24 h
-     * away; always shown while there is one (r11 §1.2: nothing drops it). */
-    private fun bindAlarm() {
-        val next = try {
-            activity.getSystemService(AlarmManager::class.java)?.nextAlarmClock
-        } catch (e: Exception) {
-            null
-        }
-        val alarm = glanceAlarm(next?.triggerTime, next?.showIntent?.creatorPackage, PinLockRuntime.clockPackages(), System.currentTimeMillis())
-        val view = glance.lockGlanceAlarm
-        view.text = alarm?.let { activity.getString(R.string.lock_alarm, alarmText(it)) }
-        view.visibility = if (alarm != null) View.VISIBLE else View.GONE
-    }
+    /** The next alarm under the date (design 42 §1.3), the face's ([LockClockFace.bindAlarm]). */
+    private fun bindAlarm() = clockFace.bindAlarm()
 
     /** Dagen's "Neste" line (design 69 §5.1): the parent's switch, the next timed event today with its shown title; it
      * yields while a reminder row is up (C names the event already) and when it doesn't fit ([fitNext]). */
@@ -1344,14 +1197,6 @@ class GlancePanel(
         else res.getQuantityString(R.plurals.glance_reminder_minutes, row.minutesLeft, row.minutesLeft)
         view.root.contentDescription = activity.getString(R.string.glance_reminder_spoken, row.title, left, time)
         openAction(view.root, activity.getString(R.string.glance_reminder_action))
-    }
-
-    private fun alarmText(alarm: GlanceAlarm): String {
-        val time = ClockFormat.formatUntil(activity, alarm.atMs)
-        if (!alarm.withWeekday) return time
-        val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
-        val day = DateFormat.format(DateFormat.getBestDateTimePattern(locale, "EEE"), alarm.atMs).toString().trimEnd('.')
-        return "$day $time"
     }
 
     /** The flashlight button (design 41 §1.3): hidden, off, or lit - a filled peach disc with the
@@ -1681,7 +1526,7 @@ class GlancePanel(
 
     /**
      * The layout (r11 §1.2): nothing is measured to make room any more - the no-profile clock's 56 sp, or the profile's
-     * clock placed under the keyguard status bar ([placeProfile]), then the rule's layout ([glanceLayout]) applied.
+     * clock placed under the keyguard status bar ([LockClockFace.place]), then the rule's layout ([glanceLayout]) applied.
      * Only once the page is laid out (the profile reads the window's insets); the listener keys it on the available
      * height, so the bars arriving as padding still move the profile's clock.
      */
@@ -1690,16 +1535,8 @@ class GlancePanel(
         val width = pageWidth() ?: return
         val room = available(root.height)
         placedFor = room
-        val clock = glance.lockGlanceClock
-        val p = profile
-        var moved = false
-        if (p != null) {
-            // Design 59d step L: one clock, Android's size, placed under the keyguard status bar.
-            clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)
-            moved = placeProfile(p, width)
-        } else {
-            clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
-        }
+        // The no-profile clock's 56 sp, or the profile's clock placed under the keyguard status bar (the face's).
+        val moved = clockFace.place(width)
         val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         if (layout != laidOut || room != loggedFor) logLayout(layout, room)
         if (layout != laidOut || moved) refitPending = true
@@ -1761,10 +1598,6 @@ class GlancePanel(
     }
 
     private companion object {
-        const val CLOCK_BIG_SP = 56f
-
-        /** Design 59d step L: the digits whose ink the profile's clock keeps inside the page. */
-        const val CLOCK_DIGITS = "0123456789"
         const val ROWS_TOP_DP = 14f
         const val ROWS_TOP_NO_TILE_DP = 22f
 

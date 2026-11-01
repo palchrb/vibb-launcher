@@ -1,7 +1,10 @@
 package com.kidslauncher.mdm.ui
 
+import android.app.AlarmManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
@@ -12,10 +15,15 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.ButtonRole
+import com.kidslauncher.mdm.lock.LockClockFace
+import com.kidslauncher.mdm.lock.RuleCardView
+import com.kidslauncher.mdm.lock.holdForLockGround
+import com.kidslauncher.mdm.lock.lockGround
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
@@ -29,19 +37,33 @@ import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.home.AppIconLoader
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.TONE_SLATE
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 
 /**
  * Full-screen block shown while [LockReason] isn't [LockReason.NONE]: a time rule (school,
- * bedtime, a custom rule) or the used-up screen-time budget (handy step 6). Since design 34 P6 one
- * calm card: the time, the kind's icon and the rule's name, what still works as rows of one card -
- * the phone book while calls are managed and allowed, then the rule's exempt apps or, for the
- * budget, the contacts' messaging apps and the music app ([timeLockRows]) - and always Emergency
- * call (a red text button). No code entry (the user, 2026-10-26: the parent lifts a rule from the
+ * bedtime, a custom rule) or the used-up screen-time budget (handy step 6). Since launcher round L6
+ * in the lock glance's look (one design with it): the glance's clock face ([LockClockFace] - the clock,
+ * the date, the next alarm) on the lock's ground, the glance's rule card ([RuleCardView] - the kind's
+ * glyph, the rule's name, its certain end, and here what still works), the rows of one card - the
+ * phone book while calls are managed and allowed, then the rule's exempt apps or, for the budget,
+ * the contacts' messaging apps and the music app ([timeLockRows]) - and always Emergency call (the
+ * glance's red text button). No code entry (the user, 2026-10-26: the parent lifts a rule from the
  * PWA only, no path on the phone). No timer: the boundary alarm updates `lock_reason`/`lock_key` and
  * this re-renders or finishes. One instance in Home's task: [start] reuses it (E6's L5).
  */
 class LockActivity : UIObjectActivity() {
     private lateinit var binding: ActivityLockBinding
+
+    /** The glance's clock face (L6): the clock, the date and the alarm line, placed as the glance's. */
+    private lateinit var clockFace: LockClockFace
+
+    /** The next alarm changed (design 42 §1.3): the line under the date again. */
+    private val alarmChanged = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) = clockFace.bindAlarm()
+    }
+
+    /** The lock's ground changed (the parent's lock picture or Home's wallpaper). */
+    private val wallpaperListener: () -> Unit = { applyGround() }
 
     private val sharedPreferencesListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, prefKey ->
@@ -58,6 +80,11 @@ class LockActivity : UIObjectActivity() {
         setContentView(binding.root)
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        clockFace = LockClockFace(this, binding.root, binding.lockTop, binding.lockClock, binding.lockDate, binding.lockAlarm, logTag = "LockActivity")
+        clockFace.follow()
+        // The glance's card is information only; here it names the rule, so TalkBack's heading navigation lands on it
+        // (the old title's heading; the glance's card stays no heading).
+        binding.lockRuleCard.root.isAccessibilityHeading = true
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {}
@@ -83,6 +110,30 @@ class LockActivity : UIObjectActivity() {
         clockWatch = ClockFormat.watch(this) {
             ClockFormat.bind(binding.lockClock)
             render()
+        }
+        ContextCompat.registerReceiver(
+            this, alarmChanged, IntentFilter(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        // The glance's ground (design 25, "Lock background"): its picture under its scrim once the store has worked it
+        // out, the plain night until then.
+        WallpaperStore.addListener(wallpaperListener)
+        WallpaperStore.ensureLoaded(this)
+        applyGround()
+        // As the PIN lock's (qa-25b-25f L2): after a process start the first frame waits for the store (at most
+        // LOCK_GROUND_WAIT_MS, `holdForLockGround`) rather than switching from the night to the picture in view.
+        if (!WallpaperStore.state.lockReady) {
+            var since = 0L
+            val tree = binding.root.viewTreeObserver
+            tree.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (since == 0L) since = now
+                    if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false
+                    if (tree.isAlive) tree.removeOnPreDrawListener(this)
+                    applyGround()
+                    return true
+                }
+            })
         }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
@@ -110,8 +161,24 @@ class LockActivity : UIObjectActivity() {
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
         ClockFormat.unwatch(this, clockWatch)
         clockWatch = null
+        try {
+            unregisterReceiver(alarmChanged)
+        } catch (e: IllegalArgumentException) {
+            // Never registered.
+        }
+        WallpaperStore.removeListener(wallpaperListener)
         icons.cancel()
         super.onStop()
+    }
+
+    /** The lock's ground, as the glance's ([lockGround]); a fault keeps the plain night. */
+    private fun applyGround() {
+        try {
+            val state = WallpaperStore.state
+            if (state.lockReady) binding.root.background = lockGround(state)
+        } catch (e: Throwable) {
+            Log.w("LockActivity", "The lock's ground couldn't be set: ${e.javaClass.simpleName}")
+        }
     }
 
     private fun render() {
@@ -127,14 +194,12 @@ class LockActivity : UIObjectActivity() {
         }
         val lock = snap?.lock
         val rule = lock?.rules?.firstOrNull()
-        // Design r13 D1: the glance card's line 1 is this title (one rule, `ruleLabel`).
-        binding.lockTitle.text = labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty()))
-        binding.lockKindIcon.setImageResource(glyphRes(lockGlyph(rule?.kind)))
+        clockFace.bindAlarm()
         // Emergency call is shown in every state (QA step 4 #1, qa-34-s7-code L1): set on every render,
         // and the only line that touches its visibility (TimeLockModelTest).
         binding.lockEmergencyButton.visibility = View.VISIBLE
         val callsManaged = CallPolicyStore.state.managed
-        // What still works, as one paragraph; the rule's end on its own line above it.
+        // What still works, as one paragraph: the card's line 3.
         val sentences = mutableListOf<String>()
         when (val line = budgetLine(rule != null, snap?.budget, lock?.budgetExhausted == true)) {
             is BudgetLine.Used -> sentences += getString(
@@ -158,9 +223,12 @@ class LockActivity : UIObjectActivity() {
             Log.w("LockActivity", "Couldn't work out the rule's end: ${e.javaClass.simpleName}")
             null
         }
-        val until = end?.let { getString(R.string.lock_until, ClockFormat.formatUntil(this, it)) }
-        binding.lockMessage.text = listOfNotNull(until, sentences.joinToString(" ").takeIf { it.isNotEmpty() })
-            .joinToString("\n")
+        // The glance's card (L6): design r13 D1's title (one rule, `ruleLabel`), the kind's glyph, the certain end, and
+        // what still works; shown on every render, whatever the rule.
+        RuleCardView.bind(
+            this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind)), labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty())),
+            end, sentences.joinToString(" ").takeIf { it.isNotEmpty() },
+        )
         renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty())))
     }
 

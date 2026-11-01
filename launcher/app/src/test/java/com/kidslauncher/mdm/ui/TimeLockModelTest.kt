@@ -163,46 +163,83 @@ class TimeLockModelTest {
         )
         assertEquals(LockGlyph.entries.toSet(), wired.keys)
         for ((glyph, res) in wired) assertTrue("$glyph", "LockGlyph.$glyph -> R.drawable.$res" in activity)
-        assertTrue("setImageResource(glyphRes(lockGlyph(rule?.kind)))" in activity)
+        assertTrue("this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind))," in activity)
     }
 
+    /** Launcher round L6 (the user, 2026-10-26: the screen looked dated next to the lock glance): the glance's face. */
     @Test
-    fun `the screen - clock, icon, title, one card, and two quiet buttons at the bottom`() {
+    fun `the screen - the glance's clock face and rule card, one card of rows, Emergency call at the bottom`() {
         val views = layout("activity_lock")
-        val clock = views.byId("lock_clock")
-        assertEquals("52sp", clock.attr("textSize"))
-        assertEquals("@font/nunito_bold", clock.attr("fontFamily"))
-        val icon = views.byId("lock_kind_icon")
-        assertEquals("no", icon.attr("importantForAccessibility"))
-        assertEquals("@drawable/bg_lock_kind_disc", icon.attr("background"))
-        assertEquals("@color/kid_accent", icon.attr("tint"))
-        assertEquals("true", views.byId("lock_title").attr("accessibilityHeading"))
-        assertEquals("@drawable/bg_lock_card", views.byId("lock_rows").attr("background"))
-        // No saturated full-width buttons any more: nothing on this screen is tinted a colour field.
+        // No saturated full-width buttons: nothing on this screen is tinted a colour field or styled apart.
         assertTrue(views.none { it.attr("backgroundTint").isNotEmpty() || it.attr("style").isNotEmpty() })
-        // The order: clock, icon, title, message, card, then emergency at the bottom - and no code entry (2026-11-01,
-        // the parent lifts a rule from the PWA only).
+        // The order: the clock, the date, the alarm line, the rule card, the rows' card, then emergency at the bottom - and
+        // no code entry (2026-11-01, the parent lifts a rule from the PWA only), no title or icon of its own any more.
         val ids = views.map { it.attr("id").removePrefix("@+id/") }.filter { it.isNotEmpty() }
         assertEquals(
-            listOf("lock_clock", "lock_kind_icon", "lock_title", "lock_message", "lock_rows", "lock_emergency_button"),
+            listOf("lock_top", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card", "lock_rows", "lock_emergency_button"),
             ids,
         )
+        // The rule name is the screen's heading (TalkBack's heading navigation), on this screen's card only.
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        assertTrue("binding.lockRuleCard.root.isAccessibilityHeading = true" in body(activity, "override fun onCreate("))
+        val glance = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt") + code("java/com/kidslauncher/mdm/lock/RuleCardView.kt")
+        assertFalse("isAccessibilityHeading" in glance)
+        assertEquals("", layout("view_lock_rule_card").first().attr("accessibilityHeading"))
+        // The rule card is the glance's own view, included by both screens.
+        val card = views.byId("lock_rule_card")
+        assertEquals("include", card.tagName)
+        assertEquals("@layout/view_lock_rule_card", card.getAttribute("layout"))
+        assertEquals(card.getAttribute("layout"), layout("view_lock_glance").byId("lock_rule_card").getAttribute("layout"))
+        // The rows sit 14 dp under it, as the glance's rows under its card (GlancePanel's ROWS_TOP_DP).
+        assertEquals("14dp", views.byId("lock_rows").attr("layout_marginTop"))
+        assertTrue("const val ROWS_TOP_DP = 14f" in file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText())
+    }
+
+    /** L6: one design - each part the glance also has is drawn with the glance's attributes, so a change to one face
+     * fails here until the other follows. */
+    @Test
+    fun `the clock, the date, the alarm line and Emergency call are the glance's`() {
+        val screen = layout("activity_lock")
+        val glance = layout("view_lock_glance")
+        val look = listOf(
+            "fontFamily", "textColor", "textSize", "includeFontPadding", "gravity", "format12Hour", "format24Hour",
+            "layout_width", "layout_height", "layout_marginTop", "visibility",
+        )
+        for ((ours, theirs) in listOf("lock_clock" to "lock_glance_clock", "lock_date" to "lock_glance_date", "lock_alarm" to "lock_glance_alarm")) {
+            val a = screen.byId(ours)
+            val b = glance.byId(theirs)
+            assertEquals(ours, b.tagName, a.tagName)
+            for (attr in look) assertEquals("$ours $attr", b.attr(attr), a.attr(attr))
+        }
+        // The emergency button: the same text button; the glance's side margins are room for its flashlight.
+        val button = listOf("fontFamily", "textColor", "textSize", "gravity", "minHeight", "paddingStart", "paddingEnd", "background", "text", "clickable", "focusable")
+        for (attr in button) assertEquals("emergency $attr", glance.byId("lock_glance_emergency").attr(attr), screen.byId("lock_emergency_button").attr(attr))
+        assertEquals(glance.byId("lock_glance_bottom").attr("layout_marginTop"), screen.byId("lock_emergency_button").attr("layout_marginTop"))
+        // The code: both screens build the one face and bind the one card; the ground is the glance's.
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        assertTrue("clockFace = LockClockFace(this, binding.root, binding.lockTop, binding.lockClock, binding.lockDate, binding.lockAlarm," in activity)
+        assertTrue("clockFace.follow()" in activity)
+        assertTrue("clockFace.bindAlarm()" in body(activity, "private fun render()"))
+        assertTrue("RuleCardView.bind(" in body(activity, "private fun render()"))
+        assertTrue("if (state.lockReady) binding.root.background = lockGround(state)" in activity)
+        assertTrue("WallpaperStore.addListener(wallpaperListener)" in activity && "WallpaperStore.removeListener(wallpaperListener)" in activity)
+        // A cold start holds the first frame for the ground as the PIN lock does (at most LOCK_GROUND_WAIT_MS).
+        assertTrue("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false" in body(activity, "override fun onStart()"))
+        // The profile clock's box may reach into the status bar's padding: the root never clips it.
+        assertEquals("false", screen.first().attr("clipToPadding"))
+        assertTrue("AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED" in activity && "unregisterReceiver(alarmChanged)" in activity)
+        val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
+        assertTrue("LockClockFace(" in panel && "RuleCardView.bind(" in panel)
     }
 
     @Test
     fun `emergency call is a red text button of at least 48 dp, like the glance page's`() {
-        val views = layout("activity_lock")
-        val emergency = views.byId("lock_emergency_button")
-        assertEquals("@string/calls_emergency", emergency.attr("text"))
+        val emergency = layout("activity_lock").byId("lock_emergency_button")
+        assertEquals("@string/pin_lock_emergency", emergency.attr("text"))
         assertEquals("@color/kid_emergency_text", emergency.attr("textColor"))
         assertTrue(dp(emergency.attr("minHeight")) >= 48f)
         assertEquals("wrap_content", emergency.attr("layout_height"))
-        assertEquals("true", emergency.attr("clickable"))
-        assertEquals("true", emergency.attr("focusable"))
         assertTrue(emergency.attr("visibility").isEmpty()) // always shown
-        // The same red as the glance page's "Nødsamtale".
-        val glance = layout("view_lock_glance").byId("lock_glance_emergency")
-        assertEquals(glance.attr("textColor"), emergency.attr("textColor"))
     }
 
     @Test

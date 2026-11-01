@@ -189,7 +189,8 @@ class ClockFormatTest {
         val surfaces = mapOf(
             "lock/GlancePanel.kt" to """RelativeDay\.TODAY -> ClockFormat\.formatTime\(activity, ms, zone\)""",
             "ui/home/MissedCallText.kt" to """val time = [\w.]*ClockFormat\.formatTime\(context, summary\.lastAtMs, zone\)""",
-            "ui/LockActivity.kt" to """getString\(R\.string\.lock_until, ClockFormat\.formatUntil\(this, it\)\)""",
+            // Both lock screens' "until" (launcher round L6: the time-rule screen binds the glance's card).
+            "lock/RuleCardView.kt" to """val time = until\?\.let \{ ClockFormat\.formatUntil\(context, it\) \}""",
             "ui/HomeActivity.kt" to """getString\(R\.string\.home_window_open, ClockFormat\.formatUntil\(this, until\)\)""",
             "server/WindowRelock.kt" to """val time = [\w.]*ClockFormat\.formatUntil\(app, untilMs\)""",
             "play/PlayRuntime.kt" to """val time = [\w.]*ClockFormat\.formatUntil\(context, untilMs\)""",
