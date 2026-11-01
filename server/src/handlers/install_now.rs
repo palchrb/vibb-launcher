@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
+use crate::i18n::Lang;
 use crate::install_now::{self, Offer, Report};
 use crate::models::{Device, DeviceCommand, DeviceStatus, TrackedApp};
 use crate::security::{self, CurrentAdmin};
@@ -120,6 +121,7 @@ pub(crate) async fn install_row(
     flash: Option<&str>,
 ) -> Result<InstallRow, sqlx::Error> {
     let (offer, newest) = phone_offer(state, app, device_id, zone, now).await?;
+    let lang = zone.lang();
     let answer = newest
         .as_ref()
         .filter(|c| install_now::answer_fresh(c, now.naive_utc()))
@@ -133,37 +135,43 @@ pub(crate) async fn install_row(
             )
         });
     Ok(InstallRow {
-        value: offer.value().map(str::to_string),
-        sub: offer.sub().unwrap_or_default(),
+        value: offer.value(lang).map(str::to_string),
+        sub: offer.sub(lang).unwrap_or_default(),
         install: offer.install(),
         cancel_id: offer.cancel_id(),
         state: offer.state(),
         answer,
-        flash: flash.and_then(install_now::flash),
+        flash: flash.and_then(|word| install_now::flash(lang, word)),
     })
 }
 
-fn db_error(app_id: i64, err: sqlx::Error) -> Response {
+fn db_error(app_id: i64, err: sqlx::Error, lang: Lang) -> Response {
     tracing::error!(app_id, %err, "Install Now can't read the phones");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the phones - check the server log. Nothing was sent.",
+        "error.install_read",
     )
-        .into_response()
 }
 
 /// The launcher's row, or the 404 every other app (or none) gets.
-async fn launcher_app(state: &AppState, app_id: i64) -> Result<TrackedApp, Box<Response>> {
+async fn launcher_app(
+    state: &AppState,
+    app_id: i64,
+    lang: Lang,
+) -> Result<TrackedApp, Box<Response>> {
     match sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(app_id)
         .fetch_optional(&state.db)
         .await
     {
         Ok(Some(app)) if app.is_launcher => Ok(app),
-        Ok(_) => Err(Box::new(
-            (StatusCode::NOT_FOUND, "Not the launcher's page").into_response(),
-        )),
-        Err(err) => Err(Box::new(db_error(app_id, err))),
+        Ok(_) => Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.not_launcher",
+        ))),
+        Err(err) => Err(Box::new(db_error(app_id, err, lang))),
     }
 }
 
@@ -191,17 +199,18 @@ async fn load_device(state: &AppState, device_id: i64) -> Result<Option<Device>,
 /// offers it ([install_now::refusal]); a waiting one is replaced.
 pub async fn install(
     State(state): State<AppState>,
+    lang: Lang,
     Path((app_id, device_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    let app = match launcher_app(&state, app_id).await {
+    let app = match launcher_app(&state, app_id, lang).await {
         Ok(app) => app,
         Err(response) => return *response,
     };
     let device = match load_device(&state, device_id).await {
         Ok(Some(device)) => device,
         Ok(None) => return back(app_id, "unknown_phone", None),
-        Err(err) => return db_error(app_id, err),
+        Err(err) => return db_error(app_id, err, lang),
     };
     if device.enrolled_at.is_none() {
         return back(app_id, "not_set_up", Some(&device));
@@ -223,11 +232,11 @@ pub async fn install(
         Ok(Queued::Refused(word)) => back(app_id, word, Some(&device)),
         Err(err) => {
             tracing::error!(device_id, %err, "can't queue Install Now");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't send it - nothing was queued. Check the server log.",
+                "error.install_send",
             )
-                .into_response()
         }
     }
 }
@@ -335,15 +344,16 @@ async fn queue_install(
 /// Cancel, while the phone hasn't fetched it (`locate::cancel_waiting`, only `install_update`).
 pub async fn cancel(
     State(state): State<AppState>,
+    lang: Lang,
     Path((app_id, device_id, command_id)): Path<(i64, i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    if let Err(response) = launcher_app(&state, app_id).await {
+    if let Err(response) = launcher_app(&state, app_id, lang).await {
         return *response;
     }
     let device = match load_device(&state, device_id).await {
         Ok(device) => device,
-        Err(err) => return db_error(app_id, err),
+        Err(err) => return db_error(app_id, err, lang),
     };
     match crate::handlers::locate::cancel_waiting(
         &state,
@@ -358,11 +368,11 @@ pub async fn cancel(
         Ok(false) => back(app_id, "too_late", device.as_ref()),
         Err(err) => {
             tracing::error!(device_id, command_id, %err, "can't cancel Install Now");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't cancel it - check the server log. It may still reach the phone.",
+                "error.install_cancel",
             )
-                .into_response()
         }
     }
 }
@@ -376,14 +386,10 @@ struct PolledPhone {
 }
 
 /// `GET /apps/tracked/{app_id}/install-now.json`: every set-up phone's state word and sub-line,
-/// for `static/install-now.js` (it swaps the sub-lines and reloads the page when a state word
-/// changes). A DB error is a 500.
-pub async fn poll(
-    State(state): State<AppState>,
-    lang: crate::i18n::Lang,
-    Path(app_id): Path<i64>,
-) -> Response {
-    let app = match launcher_app(&state, app_id).await {
+/// for `static/install-now.js` (it swaps the sub-lines - in the reader's language - and reloads the
+/// page when a state word changes). A DB error is a 500.
+pub async fn poll(State(state): State<AppState>, lang: Lang, Path(app_id): Path<i64>) -> Response {
+    let app = match launcher_app(&state, app_id, lang).await {
         Ok(app) => app,
         Err(response) => return *response,
     };
@@ -393,7 +399,7 @@ pub async fn poll(
             .await
         {
             Ok(devices) => devices,
-            Err(err) => return db_error(app_id, err),
+            Err(err) => return db_error(app_id, err, lang),
         };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
@@ -403,9 +409,9 @@ pub async fn poll(
             Ok((offer, _)) => phones.push(PolledPhone {
                 id: device.id,
                 state: offer.state(),
-                sub: offer.sub().unwrap_or_default(),
+                sub: offer.sub(lang).unwrap_or_default(),
             }),
-            Err(err) => return db_error(app_id, err),
+            Err(err) => return db_error(app_id, err, lang),
         }
     }
     Json(serde_json::json!({ "phones": phones })).into_response()

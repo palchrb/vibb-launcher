@@ -1,6 +1,6 @@
 // The "Name and icon" forms' live preview (design 14, templates/partials/app_display_form.html; the
 // three icon states of design 34 P1): the tile's colour (the phone's tone for a chosen colour; "the
-// app's tone" previews as slate), the glyph or the state's words ("Vibb style", "Its own logo") and
+// app's tone" previews as slate), the glyph or the state's words (the page's, "Vibb style", "Its own logo") and
 // the name follow the fields as they change, and the colours are off while "The app's own logo" is
 // chosen (the logo has no tile; a disabled fieldset posts nothing, which the server reads as auto).
 // The form works without this.
@@ -10,6 +10,12 @@
     // app_display::AUTO_PREVIEW and app_display::OWN_PREVIEW.
     var AUTO_PREVIEW = "#606B80";
     var OWN_PREVIEW = "#5C6370";
+
+    // The state's words are the element's own `data-w-own`/`data-w-vibb` (design 70 §5.3): a missing one shows its
+    // name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
 
     function update(form) {
         var tile = form.querySelector("[data-preview-tile]");
@@ -32,7 +38,7 @@
         } else {
             // Without a glyph the tile only names the state: the darker grey keeps that text at 4.5:1.
             tile.style.background = OWN_PREVIEW;
-            own.textContent = logo ? "Its own logo" : "Vibb style";
+            own.textContent = w(own, logo ? "own" : "vibb");
             glyph.hidden = true;
             own.hidden = false;
         }
