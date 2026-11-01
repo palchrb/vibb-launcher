@@ -26,11 +26,9 @@ const val PARENT_LEVEL_DECAY_MS = 24 * 60 * 60_000L
 /** parentLockoutMs(8) is already the cap. */
 const val PARENT_LEVEL_MAX = 8
 
-/** Where the parent PIN was typed (`entry` on the wire, design 24 §1). */
+/** Where the parent PIN was typed (`entry` on the wire, design 24 §1). The time lock's `override` (its "Enter
+ * unlock code") went on 2026-11-01 - the parent lifts a rule from the PWA only; the server still words older events. */
 enum class ParentPinEntry(val wire: String) {
-    /** LockActivity's "Enter unlock code": the 2-hour offline override. */
-    OVERRIDE("override"),
-
     /** The PIN lock's "Parent code": opens that lock only. */
     PIN_LOCK("pin_lock"),
 
@@ -45,7 +43,7 @@ enum class ParentPinEntry(val wire: String) {
 }
 
 sealed interface ParentPinResult {
-    /** For OVERRIDE, PAUSE and INSTALL_MODE the window has started already. */
+    /** For PAUSE and INSTALL_MODE the window has started already. */
     data object Ok : ParentPinResult
 
     data class Wrong(val triesLeft: Int, val nextLockoutMs: Long) : ParentPinResult

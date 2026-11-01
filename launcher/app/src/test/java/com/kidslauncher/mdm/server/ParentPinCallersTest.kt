@@ -35,8 +35,10 @@ class ParentPinCallersTest {
     }
 
     @Test
-    fun `only the gate starts an override, a pause or install mode`() {
-        assertEquals(setOf("ParentPin.kt"), callers("OfflineOverride.activate("))
+    fun `only the gate starts a pause or install mode - nothing starts an override`() {
+        // The time lock's code entry is gone (2026-11-01, PWA only): no starter of the override is left.
+        assertEquals(emptySet<String>(), callers("OfflineOverride.activate("))
+        assertTrue(sources.values.none { "fun activate(" in it && "offlineOverrideActive(true)" in it })
         // And the parent app's `start_pause` (24b fix round, QA High 1): no PIN on the phone.
         assertEquals(setOf("ParentPin.kt", "MdmSyncWorker.kt"), callers("RestrictionsPause.start("))
         assertTrue("\"start_pause\" -> {" in sources.getValue("server/MdmSyncWorker.kt"))
@@ -65,7 +67,7 @@ class ParentPinCallersTest {
         // Toasts don't show while a budget sets DISALLOW_CREATE_WINDOWS (QA #5): the four dialogs
         // and the PIN lock show every result in their error line.
         val pinTexts = listOf(
-            "lock_unlock_code_wrong", "lock_unlock_code_locked_out", "lock_unlock_code_not_configured",
+            "lock_unlock_code_wrong", "lock_unlock_code_locked_out",
             "settings_gate_no_pin", "toast_mdm_pause_needs_pin", "toast_play_install_mode_needs_pin",
             "pin_lock_parent_wrong", "pin_lock_parent_locked_out", "parent_pin_",
         )
@@ -95,9 +97,9 @@ class ParentPinCallersTest {
         assertTrue("status.foreignAccess ->" in sources.getValue("ui/ParentPinDialog.kt"))
         assertTrue("ParentPinResult.ForeignAccessOn ->" in sources.getValue("ui/ParentPinDialog.kt"))
         assertTrue("ParentPinDialog.opening(" in sources.getValue("lock/PinLockActivity.kt"))
-        for (file in listOf("ui/LockActivity.kt", "ui/settings/SettingsActivity.kt")) {
-            assertTrue(file, "ParentPinDialog.show(" in sources.getValue(file))
-        }
+        assertTrue("ParentPinDialog.show(" in sources.getValue("ui/settings/SettingsActivity.kt"))
+        // The time-rule screen asks for no code (2026-11-01, PWA only).
+        assertTrue("ParentPinDialog" !in sources.getValue("ui/LockActivity.kt"))
     }
 
     @Test

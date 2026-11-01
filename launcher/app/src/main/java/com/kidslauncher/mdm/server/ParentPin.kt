@@ -12,10 +12,10 @@ import java.security.MessageDigest
 
 /**
  * The one gate for the parent PIN (the offline override PIN) on the phone, design 24 §2: the
- * time lock's "Enter unlock code", the PIN lock's "Parent code", the Settings gate, "Pause all
- * restrictions" and Play install mode all go through [check]. The escalating lockout is inside it
- * (ParentPinLockout.kt), every try is counted - with its event - before PBKDF2 runs, and a
- * correct PIN starts its window (override, pause, install mode) here, after its `unlocked` event
+ * PIN lock's "Parent code", the Settings gate, "Pause all restrictions" and Play install mode all
+ * go through [check] (the time lock's "Enter unlock code" is gone since 2026-11-01: PWA only). The
+ * escalating lockout is inside it (ParentPinLockout.kt), every try is counted - with its event -
+ * before PBKDF2 runs, and a correct PIN starts its window (pause, install mode) here, after its `unlocked` event
  * is committed: no caller can start one without the gate, and no use goes unrecorded.
  *
  * One lock for everything ([check], [status], the queue). [check] never takes another
@@ -152,16 +152,14 @@ object ParentPin {
     }
 
     private fun windowDuration(entry: ParentPinEntry): Long? = when (entry) {
-        ParentPinEntry.OVERRIDE -> OVERRIDE_DURATION_MS
         ParentPinEntry.PAUSE -> RESTRICTIONS_PAUSE_DURATION_MS
         ParentPinEntry.INSTALL_MODE -> INSTALL_MODE_DURATION_MS
         ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS -> null
     }
 
-    /** The only callers of the three starters (ParentPinCallersTest). */
+    /** The only callers of the two starters (ParentPinCallersTest). */
     private fun startWindow(context: Context, entry: ParentPinEntry, start: WindowStart) {
         when (entry) {
-            ParentPinEntry.OVERRIDE -> OfflineOverride.activate(context, start)
             ParentPinEntry.PAUSE -> RestrictionsPause.start(context, start)
             ParentPinEntry.INSTALL_MODE -> PlayRuntime.startInstallMode(context, start)
             ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS -> Unit

@@ -31,9 +31,6 @@
     <string name="duration_unit_hours">h</string>
     <string name="duration_unit_minutes">min</string>
     <string name="lock_budget_also_used">Today\'s screen time is used up too.</string>
-    <string name="lock_enter_unlock_code">Enter unlock code</string>
-    <string name="lock_unlock_code_dialog_title">Unlock code</string>
-    <string name="lock_unlock_code_not_configured">No unlock code has been set up for this phone.</string>
     <string name="lock_unlock_code_wrong">That code didn\'t match. Try again.</string>
 
     <!--

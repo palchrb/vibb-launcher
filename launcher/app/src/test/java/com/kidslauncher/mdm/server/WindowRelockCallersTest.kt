@@ -75,17 +75,13 @@ class WindowRelockCallersTest {
     }
 
     @Test
-    fun `both starters record the window before they lift anything`() {
-        val activate = body("server/OfflineOverride.kt", "fun activate(")
-        for (lift in listOf("offlineOverrideActive(true)", "offlineOverrideExpiresAt(", "AppEnforcer.apply(")) {
-            assertBefore(activate, "WindowRelock.opened(context, WindowKind.OVERRIDE", lift)
-        }
+    fun `the starter records the window before it lifts anything`() {
         val start = body("server/RestrictionsPause.kt", "fun start(")
         for (lift in listOf("restrictionsPaused(true)", "restrictionsPausedUntil(", "reapply(")) {
             assertBefore(start, "WindowRelock.opened(context, WindowKind.PAUSE", lift)
         }
-        // The starters stay the gate's (design 24): nobody else opens a window.
-        assertEquals(setOf("OfflineOverride.kt", "RestrictionsPause.kt", "WindowRelock.kt"), sources.filterValues { "WindowRelock.opened(" in it || "fun opened(" in it }.keys.map { File(it).name }.toSet())
+        // The starter stays the gate's (design 24): nobody else opens a window - the override has none since 2026-11-01.
+        assertEquals(setOf("RestrictionsPause.kt", "WindowRelock.kt"), sources.filterValues { "WindowRelock.opened(" in it || "fun opened(" in it }.keys.map { File(it).name }.toSet())
     }
 
     @Test

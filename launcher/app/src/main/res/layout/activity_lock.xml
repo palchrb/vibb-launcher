@@ -3,7 +3,7 @@
      04-time-lock-after): the clock, the kind's icon in a peach disc, the rule's name and what still
      works, then one card of rows - the phone book when calls are allowed and the usable apps
      (LockActivity, item_lock_row.xml) - and at the bottom "Emergency call" as a red text button
-     (like the glance page's) and the unlock code. Nothing saturated and full-width. -->
+     (like the glance page's). No code entry (2026-10-26: PWA only). Nothing saturated and full-width. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -82,7 +82,7 @@
             android:showDividers="middle"
             android:visibility="gone" />
 
-        <!-- The rest of the screen; the two buttons sit at the bottom when there is room, else scroll. -->
+        <!-- The rest of the screen; Emergency call sits at the bottom when there is room, else scrolls. -->
         <Space
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -105,22 +105,6 @@
             android:paddingEnd="18dp"
             android:text="@string/calls_emergency"
             android:textColor="@color/kid_emergency_text"
-            android:textSize="15sp" />
-
-        <TextView
-            android:id="@+id/lock_unlock_code_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?android:attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true"
-            android:fontFamily="@font/nunito_extrabold"
-            android:gravity="center"
-            android:minHeight="48dp"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:text="@string/lock_enter_unlock_code"
-            android:textColor="@color/kid_core_dim"
             android:textSize="15sp" />
     </LinearLayout>
 </ScrollView>

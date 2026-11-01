@@ -13,7 +13,6 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import com.kidslauncher.mdm.R
-import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.ButtonRole
@@ -23,9 +22,6 @@ import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
 import com.kidslauncher.mdm.databinding.ItemLockRowBinding
 import com.kidslauncher.mdm.server.LockReason
-import com.kidslauncher.mdm.server.OfflineOverride
-import com.kidslauncher.mdm.server.ParentPin
-import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -40,9 +36,9 @@ import com.kidslauncher.mdm.ui.home.TONE_SLATE
  * calm card: the time, the kind's icon and the rule's name, what still works as rows of one card -
  * the phone book while calls are managed and allowed, then the rule's exempt apps or, for the
  * budget, the contacts' messaging apps and the music app ([timeLockRows]) - and always Emergency
- * call (a red text button) and "Enter unlock code" (a deliberately undisguised entry point for
- * [OfflineOverride]; the PIN is the security boundary, not the button being hard to find). No
- * timer: the boundary alarm updates `lock_reason`/`lock_key` and this re-renders or finishes.
+ * call (a red text button). No code entry (the user, 2026-10-26: the parent lifts a rule from the
+ * PWA only, no path on the phone). No timer: the boundary alarm updates `lock_reason`/`lock_key` and
+ * this re-renders or finishes. One instance in Home's task: [start] reuses it (E6's L5).
  */
 class LockActivity : UIObjectActivity() {
     private lateinit var binding: ActivityLockBinding
@@ -67,27 +63,12 @@ class LockActivity : UIObjectActivity() {
             override fun handleOnBackPressed() {}
         })
 
-        binding.lockUnlockCodeButton.setOnClickListener { showUnlockCodeDialog() }
         // Every other way to the system dialer is closed during the lock, and a phone without a
         // secure lock screen has no keyguard Emergency button - so this one is always shown,
         // whatever the call state (QA step 4 #1).
         binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
-        // TalkBack reads both as buttons ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
+        // TalkBack reads it as a button ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
         binding.lockEmergencyButton.accessibilityDelegate = ButtonRole
-        binding.lockUnlockCodeButton.accessibilityDelegate = ButtonRole
-    }
-
-    /** The parent PIN (design 24): checked with the escalating lockout by [ParentPin], which also
-     * starts the override; every result shows in the dialog. A wrong code keeps it open - the
-     * whole point of a failsafe is not making the parent re-type everything after one typo. */
-    private fun showUnlockCodeDialog() {
-        ParentPinDialog.show(
-            this,
-            lifecycleScope,
-            ParentPinEntry.OVERRIDE,
-            title = R.string.lock_unlock_code_dialog_title,
-            notConfigured = R.string.lock_unlock_code_not_configured,
-        ) { finish() }
     }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rule's end again. */

@@ -180,10 +180,11 @@ class TimeLockModelTest {
         assertEquals("@drawable/bg_lock_card", views.byId("lock_rows").attr("background"))
         // No saturated full-width buttons any more: nothing on this screen is tinted a colour field.
         assertTrue(views.none { it.attr("backgroundTint").isNotEmpty() || it.attr("style").isNotEmpty() })
-        // The order: clock, icon, title, message, card, then emergency and the code at the bottom.
+        // The order: clock, icon, title, message, card, then emergency at the bottom - and no code entry (2026-11-01,
+        // the parent lifts a rule from the PWA only).
         val ids = views.map { it.attr("id").removePrefix("@+id/") }.filter { it.isNotEmpty() }
         assertEquals(
-            listOf("lock_clock", "lock_kind_icon", "lock_title", "lock_message", "lock_rows", "lock_emergency_button", "lock_unlock_code_button"),
+            listOf("lock_clock", "lock_kind_icon", "lock_title", "lock_message", "lock_rows", "lock_emergency_button"),
             ids,
         )
     }
@@ -202,9 +203,6 @@ class TimeLockModelTest {
         // The same red as the glance page's "Nødsamtale".
         val glance = layout("view_lock_glance").byId("lock_glance_emergency")
         assertEquals(glance.attr("textColor"), emergency.attr("textColor"))
-        val code = views.byId("lock_unlock_code_button")
-        assertEquals("@color/kid_core_dim", code.attr("textColor"))
-        assertTrue(dp(code.attr("minHeight")) >= 48f)
     }
 
     @Test
@@ -221,10 +219,9 @@ class TimeLockModelTest {
         assertEquals("@color/kid_core", views.byId("lock_row_label").attr("textColor"))
         val activity = file("java/com/kidslauncher/mdm/ui/LockActivity.kt").readText()
         assertTrue("view.root.contentDescription = row.label" in activity)
-        // The role is step 8's shared ButtonRole, on the rows and both text buttons (qa-34-s7-code N1).
+        // The role is step 8's shared ButtonRole, on the rows and the emergency text button (qa-34-s7-code N1).
         assertTrue("view.root.accessibilityDelegate = ButtonRole" in activity)
         assertTrue("binding.lockEmergencyButton.accessibilityDelegate = ButtonRole" in activity)
-        assertTrue("binding.lockUnlockCodeButton.accessibilityDelegate = ButtonRole" in activity)
         assertTrue("info.className = Button::class.java.name" in file("java/com/kidslauncher/mdm/lock/ButtonRole.kt").readText())
         // The card clips the rows' ripple to its rounded corners (N3).
         assertEquals("true", layout("activity_lock").byId("lock_rows").attr("clipToOutline"))
@@ -235,7 +232,16 @@ class TimeLockModelTest {
         val activity = file("java/com/kidslauncher/mdm/ui/LockActivity.kt").readText()
         // Emergency: the same confirm (Telecom, then EmergencyDialer's fallback), always bound in onCreate.
         assertTrue("binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }" in activity)
-        assertTrue("binding.lockUnlockCodeButton.setOnClickListener { showUnlockCodeDialog() }" in activity)
+        // No code entry on this screen (the user, 2026-10-26: PWA only): no button, no dialog, no override.
+        for (gone in listOf("lockUnlockCode", "showUnlockCodeDialog", "ParentPinDialog", "ParentPinEntry", "OfflineOverride")) {
+            assertFalse(gone, gone in activity)
+        }
+        for (dir in listOf("values", "values-nb")) {
+            val s = strings(dir)
+            for (name in listOf("lock_enter_unlock_code", "lock_unlock_code_dialog_title", "lock_unlock_code_not_configured")) {
+                assertFalse("$dir $name", name in s)
+            }
+        }
         assertTrue("startActivity(PhoneBookActivity.intent(this))" in activity)
         assertTrue("startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))" in activity)
         // The rows come from the lock's own decision, filtered as before (launchable, not suspended).

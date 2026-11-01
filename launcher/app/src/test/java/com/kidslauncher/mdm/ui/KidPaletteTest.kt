@@ -259,10 +259,10 @@ class KidPaletteTest {
             views.single { it.getAttributeNS(ns, "id") == "@+id/$id" }.getAttributeNS(ns, attr)
         val screen = views("activity_lock")
         assertEquals("@color/kid_ground", screen.first().getAttributeNS(ns, "background"))
-        // On the night: the clock, title, message, the red emergency text and the code button.
+        // On the night: the clock, title, message and the red emergency text.
         for ((id, minimum) in listOf(
             "lock_clock" to 4.5, "lock_title" to 4.5, "lock_message" to 4.5,
-            "lock_emergency_button" to 4.5, "lock_unlock_code_button" to 4.5,
+            "lock_emergency_button" to 4.5,
         )) {
             val ink = colourOf(screen, id, "textColor")
             val ratio = contrast(ink, "kid_ground")
