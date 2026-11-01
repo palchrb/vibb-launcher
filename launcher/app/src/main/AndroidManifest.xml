@@ -530,6 +530,10 @@
         <receiver
             android:name=".timerules.TimeRuleAlarmReceiver"
             android:exported="false" />
+        <!-- The lock reminder's ping (lock_reminders "ping"): only our own alarm targets it. -->
+        <receiver
+            android:name=".calendar.ReminderPingReceiver"
+            android:exported="false" />
         <!-- The flashlight's auto-off after 10 minutes (design 41): only our own alarm targets it. -->
         <receiver
             android:name=".torch.TorchOffReceiver"

@@ -32,14 +32,23 @@ internal class GlanceCalendar(private val activity: Activity, private val change
     fun start() {
         if (started) return
         started = true
+        shown++
         CalendarStore.addListener(listener)
         load()
     }
 
     fun stop() {
+        if (started) shown--
         started = false
         CalendarStore.removeListener(listener)
         main.removeCallbacks(boundary)
+    }
+
+    companion object {
+        /** Glance pages started now (main thread): the reminder row can be seen - the ping's `rowVisible`. */
+        private var shown = 0
+
+        val showing: Boolean get() = shown > 0
     }
 
     private class Loaded(val today: TodayCalendar?, val day: LocalDate)

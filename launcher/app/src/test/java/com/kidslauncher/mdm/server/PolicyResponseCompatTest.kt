@@ -620,6 +620,17 @@ class PolicyResponseCompatTest {
             assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
         }
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        // The quiet row plus a ping (migration 0113): `ping`, sent only to a launcher claiming calendar_ping_v1 - the
+        // row with its sound, carried as is. An older launcher is sent `row` (it reads anything else as off).
+        val pinged = (
+            decodeFresh(
+                withCalendar(
+                    """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "ping", "calendars": [], "rules": [], "feeds": []}""",
+                ),
+            ) as FreshDecode.Ok
+            ).policy
+        with(com.kidslauncher.mdm.day.calendarPolicy(pinged.calendar)) { assertTrue(lockReminders && lockPing) }
+        assertEquals(CachedPolicy.Ok(pinged), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), pinged)))
         // A calendar row as the server sends it since 2026-10-27 (`color`: one of eight names or null, the server's
         // `calendar::COLORS`, pinned by its `the_policy_carries_the_rules_and_the_calendars`): read, carried as is.
         val coloured = withCalendar(
