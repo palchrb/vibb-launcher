@@ -42,7 +42,7 @@ async fn add_rule(app: &TestApp, name: &str) -> i64 {
 }
 
 /// §3.2 item 1, §3.10 (the user's pick C, 2026-11-01): "Not seen yet"; away and online say what
-/// the phone reported, never "seen …"; offline "last seen" alone; Disconnected's link; the name
+/// the phone reported, never "seen …"; offline "last heard" alone; Disconnected's link; the name
 /// escaped; the sub-page header (no brand bar).
 #[tokio::test]
 async fn the_header_says_whether_the_phone_is_connected() {
@@ -73,7 +73,8 @@ async fn the_header_says_whether_the_phone_is_connected() {
     );
     assert!(!html.contains("class=\"app-header\""), "{html}");
 
-    // A report, no stream: Away - the orange dot -, the battery under it.
+    // A report, no stream: Away, under 10 min read as online - the green dot -, the battery under
+    // it (a sleeping phone drops its stream for a moment; 2026-11-01).
     app.post_status(
         &token,
         json!({ "battery": { "level": 100, "charging": false, "low": false } }),
@@ -81,8 +82,9 @@ async fn the_header_says_whether_the_phone_is_connected() {
     .await;
     let html = page().await;
     let head = header(&html);
-    assert!(head.contains("avatar-dot dot-away"), "{head}");
-    assert_eq!(status_lines(head), ["Away", "100 %"]);
+    assert!(head.contains("avatar-dot dot-online"), "{head}");
+    assert!(head.contains("data-status=\"online\""), "{head}");
+    assert_eq!(status_lines(head), ["Online", "100 %"]);
     assert!(!head.contains("seen"), "{head}");
     // A stream open: Online.
     let _stream = app.state.command_streams.open(id);
@@ -112,7 +114,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     let head = header(&html);
     assert_eq!(status_lines(head), ["Disconnected · access removed"]);
     assert!(head.contains("data-connect-again"), "{head}");
-    // Two hours of silence (nothing in memory, as after a restart): Offline, "last seen" alone.
+    // Two hours of silence (nothing in memory, as after a restart): Offline, "last heard" alone.
     let (emil, _) = app.enrolled_device("Emil").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-2 hours') WHERE id = ?")
         .bind(emil)
@@ -136,7 +138,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     assert_eq!(
         status_lines(head),
         [format!(
-            "Offline · last seen {}",
+            "Offline · last heard {}",
             zone.since(seen, chrono::Utc::now())
         )]
     );

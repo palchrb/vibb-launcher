@@ -146,6 +146,11 @@ zone). The server's `calendar_feeds::tests::the_contract` produces `feed` and `k
 rewrites them), `intake_limits` keeps `report`'s keys; the launcher's `CalendarFeedsTest` maps `feed` to exactly
 `provider`, checks the key and decodes and encodes the rows; both compare the copies. The policy's `calendar.feeds` is
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a raw number and a country code) is
+`server/testdata/emergency_numbers.json`, byte-identical in `launcher/app/src/test/resources/`: the server's
+`emergency::tests` and the launcher's `EmergencyMenuTest` check their constants (`emergency::ALWAYS`/`BY_COUNTRY`,
+`Emergency.ALWAYS`/`BY_COUNTRY`) against it, run every vector and compare the copies. The policy's
+`call_policy.emergency_menu` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 ## CI and releases
 
@@ -154,7 +159,7 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json` and the three `calendar_*.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the three `calendar_*.json` and `emergency_numbers.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -163,7 +168,7 @@ pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json` and the three `calendar_*.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the three `calendar_*.json` and `emergency_numbers.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

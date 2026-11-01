@@ -25,6 +25,7 @@ mod devices_list;
 mod dns_blocklist;
 mod docker;
 mod edge;
+mod emergency_menu;
 mod enrollment;
 mod fdroid;
 mod hardening;

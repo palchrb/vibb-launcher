@@ -181,16 +181,10 @@ class PhoneBookActivity : UIObjectActivity() {
     /** Only when no call rules can be read at all: 112 (an emergency number on every GSM phone;
      * Telecom routes it to the preloaded dialer, exempt from every call restriction), confirmed
      * first; if Telecom refuses, the platform's emergency dialer (explicit, pinned in kiosk). */
+    /** The fail-closed 112 tile: the emergency menu, as every Nødsamtale (design 73) - its non-emergency numbers
+     * are dimmed, the rules can't be read. */
     private fun confirmEmergencyCall() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.calls_confirm_title, PhoneBookAdapter.EMERGENCY_NUMBER))
-            .setPositiveButton(R.string.calls_call) { _, _ ->
-                if (!CallSystem.placeCall(this, PhoneBookAdapter.EMERGENCY_NUMBER)) {
-                    EmergencyDialer.open(this, PhoneBookAdapter.EMERGENCY_NUMBER)
-                }
-            }
-            .setNegativeButton(R.string.calls_cancel, null)
-            .show()
+        EmergencyCall.confirm(this)
     }
 
     private fun handleNumber(intent: Intent?) {

@@ -16,6 +16,7 @@ mod device_routes;
 mod display_time;
 mod dns_engine;
 mod dns_server;
+mod emergency;
 mod enrollment;
 mod fdroid;
 mod gate;
@@ -1076,6 +1077,18 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/calls/settings",
             post(handlers::calls::save_settings),
+        )
+        .route(
+            "/devices/{id}/calls/emergency",
+            post(handlers::calls::add_emergency),
+        )
+        .route(
+            "/devices/{id}/calls/emergency/{entry}/move",
+            post(handlers::calls::move_emergency),
+        )
+        .route(
+            "/devices/{id}/calls/emergency/{entry}/remove",
+            post(handlers::calls::remove_emergency),
         )
         .route(
             "/devices/{id}/kiosk-block",

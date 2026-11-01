@@ -624,6 +624,9 @@ async fn build_call_policy(
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
             .fetch_one(&state.db)
             .await?;
+    let emergency_menu = crate::emergency::policy_menu(
+        &crate::emergency::device_menu(&state.db, policy.device_id).await?,
+    );
     if !policy.calls_managed {
         return Ok(CallPolicy {
             managed: false,
@@ -631,6 +634,7 @@ async fn build_call_policy(
             sms_enabled: true,
             default_country_code,
             contacts: Vec::new(),
+            emergency_menu,
         });
     }
 
@@ -658,6 +662,7 @@ async fn build_call_policy(
         sms_enabled: policy.sms_enabled,
         default_country_code,
         contacts,
+        emergency_menu,
     })
 }
 

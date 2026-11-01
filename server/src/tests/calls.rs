@@ -1051,6 +1051,23 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         Option<(&'a str, Option<&'a str>)>,
     );
     let table: Vec<Row> = vec![
+        // Design 73: the emergency menu at the top - Add Number and the two suggestions (112 alone has no buttons),
+        // each back to its new row ("E:<number>").
+        (
+            format!("/devices/{id}/calls/emergency#add-emergency"),
+            vec![("number", "90000003"), ("name", "Mormor")],
+            Some((calls.as_str(), Some("E:+4790000003"))),
+        ),
+        (
+            format!("/devices/{id}/calls/emergency#emergency"),
+            vec![],
+            Some((calls.as_str(), Some("E:113"))),
+        ),
+        (
+            format!("/devices/{id}/calls/emergency#emergency"),
+            vec![],
+            Some((calls.as_str(), Some("E:110"))),
+        ),
         (
             format!("/devices/{id}/calls/settings#settings"),
             vec![("managed", "on"), ("default_message_app", "sms")],
@@ -1128,7 +1145,15 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         let res = app
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
-        if *fragment == Some("NEW") {
+        if let Some(number) = fragment.and_then(|f| f.strip_prefix("E:")) {
+            let new: i64 =
+                sqlx::query_scalar("SELECT id FROM device_emergency_numbers WHERE number = ?")
+                    .bind(number)
+                    .fetch_one(&app.db)
+                    .await
+                    .unwrap();
+            assert_redirect(&res, path, Some(&format!("emergency-{new}")));
+        } else if *fragment == Some("NEW") {
             let new: i64 =
                 sqlx::query_scalar("SELECT id FROM contacts WHERE phone_number = '+4790000002'")
                     .fetch_one(&app.db)

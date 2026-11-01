@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
+use crate::emergency;
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
@@ -158,8 +159,89 @@ struct DeviceCallsTemplate {
     add_name: String,
     add_number: String,
     add_error: Option<(&'static str, String)>,
+    /// Design 73: the emergency menu's rows, in order.
+    emergency: Vec<EmergencyRow>,
+    /// Room for another number (at most `emergency::MAX_ENTRIES`).
+    emergency_can_add: bool,
+    /// The suggestions not on the list yet: `(number, name)`.
+    emergency_suggestions: Vec<(&'static str, &'static str)>,
+    /// The group's line (`?notice=`): a number kept or already gone.
+    emergency_notice: Option<&'static str>,
+    /// Add Number is open (a refusal), with what was typed and the field's reason.
+    emergency_add_open: bool,
+    emergency_add_number: String,
+    emergency_add_name: String,
+    emergency_add_error: Option<(&'static str, String)>,
 }
 crate::i18n::words!(DeviceCallsTemplate);
+
+/// One row of the emergency menu (design 73).
+struct EmergencyRow {
+    /// `None` for the default 112 nothing has stored yet (alone, so it has no buttons).
+    id: Option<i64>,
+    number: String,
+    /// The parent's name; for an emergency number without one, "Emergency number".
+    name: String,
+    /// The sub-line's word key, and whether it is orange (a number that follows the call rules).
+    sub: &'static str,
+    warn: bool,
+    /// A second line: on a managed phone, a non-emergency number that isn't an outbound phone-book contact (the
+    /// phone dims it).
+    extra: Option<&'static str>,
+    first: bool,
+    last: bool,
+    removable: bool,
+}
+
+impl EmergencyRow {
+    fn anchor(&self) -> String {
+        match self.id {
+            Some(id) => format!("emergency-{id}"),
+            None => "emergency-default".to_string(),
+        }
+    }
+}
+
+/// `phone_book`: the outbound contacts' numbers while calls are managed, `None` while they aren't.
+fn emergency_rows(
+    lang: Lang,
+    menu: &[emergency::MenuEntry],
+    cc: &str,
+    phone_book: Option<&[String]>,
+) -> Vec<EmergencyRow> {
+    let big = emergency::big_row(menu, cc);
+    menu.iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let real = emergency::is_emergency(&e.number, cc);
+            let name = if e.name.is_empty() && real {
+                t(lang, "device.emergency.default_name").to_string()
+            } else {
+                e.name.clone()
+            };
+            let (sub, warn) = if !real {
+                ("device.emergency.not_emergency", true)
+            } else if big == Some(i) {
+                ("device.emergency.big", false)
+            } else {
+                ("device.emergency.always", false)
+            };
+            EmergencyRow {
+                id: e.id,
+                number: e.number.clone(),
+                name,
+                sub,
+                warn,
+                extra: phone_book
+                    .filter(|book| !real && !book.contains(&e.number))
+                    .map(|_| "device.emergency.not_in_phone_book"),
+                first: i == 0,
+                last: i + 1 == menu.len(),
+                removable: e.id.is_some() && emergency::can_remove(menu, i, cc),
+            }
+        })
+        .collect()
+}
 
 /// What a request shows besides the stored state: an open contact, a notice, a refusal.
 #[derive(Default)]
@@ -172,6 +254,19 @@ struct Shown<'a> {
     add: Option<(&'a str, &'a str, &'static str, String)>,
     /// A refused contact save or photo.
     contact: Option<ContactRefusal<'a>>,
+    /// `?notice=` for the emergency menu.
+    emergency_notice: Option<&'static str>,
+    /// A refused Add Number: the number and name typed, the field and why.
+    emergency_add: Option<(&'a str, &'a str, &'static str, String)>,
+}
+
+/// `?notice=` codes for the emergency menu.
+fn emergency_notice(lang: Lang, code: &str) -> Option<&'static str> {
+    match code {
+        "emergency_kept" => Some(t(lang, "device.emergency.kept")),
+        "emergency_gone" => Some(t(lang, "device.emergency.gone")),
+        _ => None,
+    }
 }
 
 /// A refused contact save or photo: the contact, the field and why, and the form it sent (`None`
@@ -202,6 +297,9 @@ pub async fn show_calls(
         notice: query
             .get("notice")
             .and_then(|code| contacts_notice(lang, code)),
+        emergency_notice: query
+            .get("notice")
+            .and_then(|code| emergency_notice(lang, code)),
         ..Default::default()
     };
     render(&state, id, StatusCode::OK, shown, lang).await
@@ -251,6 +349,21 @@ async fn load_page(
             .fetch_one(&state.db)
             .await?;
     let refused = shown.contact.as_ref().map(|r| r.id);
+    let menu = emergency::device_menu(&state.db, id).await?;
+    let emergency_suggestions = emergency::suggestions(&menu, &default_country_code)
+        .into_iter()
+        .map(|(number, key)| (number, t(lang, key)))
+        .collect();
+    let (emergency_add_open, emergency_add_number, emergency_add_name, emergency_add_error) =
+        match shown.emergency_add {
+            Some((number, name, field, why)) => (
+                true,
+                number.to_string(),
+                name.to_string(),
+                Some((field, why)),
+            ),
+            None => (false, String::new(), String::new(), None),
+        };
     let contacts: Vec<ContactView> = device_contacts(state, id)
         .await?
         .into_iter()
@@ -320,8 +433,22 @@ async fn load_page(
     };
     // Never on a refusal's page (the answer to a POST): a reload would send it again, or lose
     // what was typed (qa-09-code #9).
-    let auto_refresh = report.auto_refresh && add_error.is_none() && refused.is_none();
+    let auto_refresh = report.auto_refresh
+        && add_error.is_none()
+        && refused.is_none()
+        && emergency_add_error.is_none();
 
+    let phone_book: Vec<String> = contacts
+        .iter()
+        .filter(|c| c.outbound)
+        .map(|c| c.number.clone())
+        .collect();
+    let emergency_view = emergency_rows(
+        lang,
+        &menu,
+        &default_country_code,
+        policy.calls_managed.then_some(phone_book.as_slice()),
+    );
     Ok(Some(DeviceCallsTemplate {
         lang,
         title: format!("{} - Calls & Contacts", device.name),
@@ -339,6 +466,14 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
+        emergency: emergency_view,
+        emergency_can_add: menu.len() < emergency::MAX_ENTRIES,
+        emergency_suggestions,
+        emergency_notice: shown.emergency_notice,
+        emergency_add_open,
+        emergency_add_number,
+        emergency_add_name,
+        emergency_add_error,
         device,
     }))
 }
@@ -1394,6 +1529,236 @@ pub async fn view_photo(State(state): State<AppState>, Path(hash): Path<String>)
         )
             .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// The emergency menu's group, with a line (`?notice=`): a refusal for [crate::settings_log].
+fn emergency_group(id: i64, notice: &str) -> Response {
+    crate::settings_log::refused(Redirect::to(&format!(
+        "/devices/{id}/calls?notice={notice}#emergency"
+    )))
+}
+
+/// Why an Add Number was refused (design 73 §3), checked in its transaction.
+enum AddRefusal {
+    Full,
+    Duplicate,
+}
+
+/// POST `/devices/{id}/calls/emergency`: adds a number at the end of the emergency menu (design 73). The number is
+/// normalised as a contact's; the name is optional, at most 40 characters. A phone without rows gets its 112 stored
+/// first. Back to the new row; a refusal renders the page (400) with Add Number open, what was typed and why.
+pub async fn add_emergency(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let raw_number = form.get("number").map(String::as_str).unwrap_or("");
+    let name = form.get("name").map(|s| s.trim()).unwrap_or("");
+    let state = &state;
+    let refuse = |field: &'static str, why: String| async move {
+        let shown = Shown {
+            emergency_add: Some((raw_number, name, field, why)),
+            ..Default::default()
+        };
+        crate::settings_log::refused(render(state, id, StatusCode::BAD_REQUEST, shown, lang).await)
+    };
+    if name.chars().count() > emergency::MAX_NAME_CHARS {
+        return refuse(
+            "emergency_name",
+            t(lang, "device.emergency.name_refused").into(),
+        )
+        .await;
+    }
+    let cc: String =
+        match sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await
+        {
+            Ok(cc) => cc,
+            Err(err) => return db_error(lang, id, err),
+        };
+    let number = match phone::normalize(raw_number, &cc) {
+        Ok(number) => number,
+        Err(err) => {
+            return refuse(
+                "emergency_number",
+                t_params(
+                    lang,
+                    "device.calls.number_refused",
+                    &[("why", &err.to_string())],
+                ),
+            )
+            .await;
+        }
+    };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let device_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?)")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !device_exists {
+            return Ok(None);
+        }
+        emergency::store_default(&mut tx, id).await?;
+        let numbers: Vec<String> = sqlx::query_scalar(
+            "SELECT number FROM device_emergency_numbers WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if numbers.contains(&number) {
+            return Ok(Some(Err(AddRefusal::Duplicate)));
+        }
+        if numbers.len() >= emergency::MAX_ENTRIES {
+            return Ok(Some(Err(AddRefusal::Full)));
+        }
+        let entry: i64 = sqlx::query_scalar(
+            "INSERT INTO device_emergency_numbers (device_id, number, name, sort_order) \
+             VALUES (?, ?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 1) FROM device_emergency_numbers \
+                               WHERE device_id = ?)) RETURNING id",
+        )
+        .bind(id)
+        .bind(&number)
+        .bind(name)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(Some(Ok(entry)))
+    }
+    .await;
+    match result {
+        Ok(None) => not_found(lang),
+        Ok(Some(Ok(entry))) => saved(state, id, format!("/devices/{id}/calls#emergency-{entry}")),
+        Ok(Some(Err(AddRefusal::Duplicate))) => {
+            refuse(
+                "emergency_number",
+                t(lang, "device.emergency.duplicate").into(),
+            )
+            .await
+        }
+        Ok(Some(Err(AddRefusal::Full))) => {
+            refuse("emergency_number", t(lang, "device.emergency.full").into()).await
+        }
+        Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// The phone's stored rows in order (numbers only), or `None` when `entry` isn't one of them (already gone, or
+/// another phone's).
+async fn stored_menu(
+    tx: &mut sqlx::SqliteConnection,
+    id: i64,
+    entry: i64,
+) -> Result<Option<Vec<emergency::MenuEntry>>, sqlx::Error> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, number FROM device_emergency_numbers WHERE device_id = ? ORDER BY sort_order, id",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if !rows.iter().any(|(row, _)| *row == entry) {
+        return Ok(None);
+    }
+    Ok(Some(
+        rows.into_iter()
+            .map(|(row, number)| emergency::MenuEntry {
+                id: Some(row),
+                number,
+                name: String::new(),
+            })
+            .collect(),
+    ))
+}
+
+/// POST `/devices/{id}/calls/emergency/{entry}/move`: `dir` `up` or `down` swaps it with its neighbour (as Dagen's
+/// title rules); back to `#emergency-<entry>`. A number already gone returns to the group, saying so.
+pub async fn move_emergency(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, entry)): Path<(i64, i64)>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let up = match form.get("dir").map(String::as_str) {
+        Some("up") => true,
+        Some("down") => false,
+        _ => return bad_request(lang, "device.emergency.bad_move"),
+    };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let Some(order) = stored_menu(&mut tx, id, entry).await? else {
+            return Ok(false);
+        };
+        let at = order.iter().position(|e| e.id == Some(entry)).unwrap_or(0);
+        let other = if up {
+            at.checked_sub(1)
+        } else {
+            Some(at + 1).filter(|o| *o < order.len())
+        };
+        if let Some(other) = other {
+            let mut ids: Vec<Option<i64>> = order.iter().map(|e| e.id).collect();
+            // Renumber in the new order, so equal sort orders can't stall a move.
+            ids.swap(at, other);
+            for (i, row) in ids.iter().enumerate() {
+                sqlx::query("UPDATE device_emergency_numbers SET sort_order = ? WHERE id = ?")
+                    .bind(i as i64 + 1)
+                    .bind(row)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(true)
+    }
+    .await;
+    match result {
+        Ok(true) => saved(&state, id, format!("/devices/{id}/calls#emergency-{entry}")),
+        Ok(false) => emergency_group(id, "emergency_gone"),
+        Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// POST `/devices/{id}/calls/emergency/{entry}/remove`: back to `#emergency`. Refused when it would leave the menu
+/// without a number of the fixed list (design 73 §3: never without an emergency number, never empty).
+pub async fn remove_emergency(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, entry)): Path<(i64, i64)>,
+) -> Response {
+    let cc: String =
+        match sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await
+        {
+            Ok(cc) => cc,
+            Err(err) => return db_error(lang, id, err),
+        };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let Some(order) = stored_menu(&mut tx, id, entry).await? else {
+            return Ok(Some("emergency_gone"));
+        };
+        let at = order.iter().position(|e| e.id == Some(entry)).unwrap_or(0);
+        if !emergency::can_remove(&order, at, &cc) {
+            return Ok(Some("emergency_kept"));
+        }
+        sqlx::query("DELETE FROM device_emergency_numbers WHERE id = ? AND device_id = ?")
+            .bind(entry)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(None)
+    }
+    .await;
+    match result {
+        Ok(None) => saved(&state, id, format!("/devices/{id}/calls#emergency")),
+        Ok(Some(notice)) => emergency_group(id, notice),
+        Err(err) => db_error(lang, id, err),
     }
 }
 

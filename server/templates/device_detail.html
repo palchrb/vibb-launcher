@@ -23,7 +23,7 @@
             <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="avatar-form">
                 <input class="avatar-input" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>
                 <label class="avatar-pick" for="avatar-file">
-                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
+                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ dot }}"></span></span>
                     <span class="visually-hidden">{% if photo.is_some() %}{{ self.tp("device.summary.change_picture_for", [("name", device.name.as_str())]) }}{% else %}{{ self.tp("device.summary.add_picture_for", [("name", device.name.as_str())]) }}{% endif %}</span>
                 </label>
                 <noscript><button type="submit" class="button-small avatar-save">{{ self.t("device.summary.save_picture") }}</button></noscript>
@@ -40,7 +40,7 @@
         <h1 class="summary-name">{{ device.name }}</h1>
         {#- The lines under the name (the user's pick C, 2026-11-01, phone_status::header): the first fact that holds,
             then the zone and the battery; a phone turned off or offline has the first alone. -#}
-        {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ connection.css() }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
+        {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ dot }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
         {% endfor %}
         {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>{{ self.t("device.summary.connect_again") }} &rsaquo;</a>{% endif %}
         {% if let Some(percent) = meter %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}

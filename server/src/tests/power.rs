@@ -259,7 +259,7 @@ async fn the_shutdowns_last_position_is_on_locate() {
     )
     .unwrap();
     assert!(
-        detail.starts_with("Last position from ") && detail.ends_with(": shown on Locate"),
+        detail.starts_with("Last position ") && detail.ends_with(" – see the map in Locate"),
         "{detail}"
     );
     let rows = events(&app, id).await;
@@ -283,7 +283,7 @@ async fn the_shutdowns_last_position_is_on_locate() {
     );
     let cookie = app.admin_cookie().await;
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    assert!(inbox.contains("shown on Locate"), "{inbox}");
+    assert!(inbox.contains("see the map in Locate"), "{inbox}");
     // Locate: the newest fix is the shutdown's, the phone hasn't reported since.
     let path = format!("/devices/locate?device={id}");
     // Q-5: as the status lines' "Turned off", nothing while the off's push is still held.
@@ -291,6 +291,11 @@ async fn the_shutdowns_last_position_is_on_locate() {
     assert!(!page.contains("data-fix-before-off"), "held");
     assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
     sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes') WHERE kind = 'phone_off'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The report came before the off arrived (the reports are weighed against the arrival).
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-7 minutes')")
         .execute(&app.db)
         .await
         .unwrap();
@@ -734,12 +739,12 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 "{nb}"
             );
             assert_eq!(
-                en.contains("shown on Locate"),
+                en.contains("see the map in Locate"),
                 !pruned,
                 "pruned {pruned}: {en}"
             );
             assert_eq!(
-                nb.contains("vist under Finn"),
+                nb.contains("se kartet i Finn"),
                 !pruned,
                 "pruned {pruned}: {nb}"
             );
@@ -947,6 +952,46 @@ async fn a_report_after_the_shutdown_ends_off_since() {
         .await;
     assert_eq!(status.status, StatusCode::NO_CONTENT);
     assert!(!page().await.contains("data-power-off"));
+}
+
+/// 2026-11-01 (Sverre, off at 20:35 and the list orange): the reports are weighed against the off's
+/// arrival, not the phone's clock - a phone 3 min behind whose last report came 30 s after its off
+/// is still turned off, and its dot is grey at once.
+#[tokio::test]
+async fn a_phone_clock_behind_and_a_report_at_shutdown_still_say_off() {
+    let (app, id, token) = setup().await;
+    let cookie = app.admin_cookie().await;
+    // Arrived 6 min ago (past the push hold); the phone's clock said 3 min earlier.
+    let shutdown = Utc::now() - Duration::minutes(9);
+    post(&app, &token, json!({ "off": off(shutdown, 41, json!({})) })).await;
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The report it sent as it shut down, 30 s after the off arrived.
+    let status = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true })),
+        )
+        .await;
+    assert_eq!(status.status, StatusCode::NO_CONTENT);
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-330 seconds')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("data-power-off"), "{summary}");
+    assert!(summary.contains("avatar-dot dot-offline"), "{summary}");
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(list.contains("data-power-off"), "{list}");
+    assert!(list.contains("avatar-dot dot-offline"), "{list}");
+    assert!(list.contains("data-status=\"offline\""), "{list}");
 }
 
 /// qa-38-code nit 3: two shutdowns before a start got through - the newest off is kept and told,

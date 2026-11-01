@@ -60,17 +60,21 @@ struct LocateTemplate {
 crate::i18n::words!(LocateTemplate);
 
 /// A phone in the switcher (or the list): its state as a dot and, for screen readers, in its
-/// `aria-label` ("Anna, online", §5.4).
+/// `aria-label` ("Anna, online", §5.4) - the dot and the word as on Devices (`phone_status::dot`).
 struct PhoneLink {
     id: i64,
     name: String,
     initial: String,
     avatar: &'static str,
     photo: Option<String>,
-    connection: crate::streams::ConnectionState,
-    /// "Anna, online".
+    /// The dot's class suffix (`online`, `away`, `offline`).
+    dot: &'static str,
+    /// "Online", "No contact", "Offline", "Turned off 20:35", in the reader's language.
+    word: String,
+    /// "Anna, online", "Anna, no contact", "Anna, turned off 20:35".
     aria: String,
-    /// "seen 3 min ago", "access removed" (the list's line), and the exact last contact.
+    /// "last heard 13:05", "access removed" (the list's line, in the reader's language), and the exact
+    /// last contact.
     seen: Option<String>,
     seen_exact: Option<String>,
     current: bool,
@@ -342,6 +346,11 @@ struct FixView {
 /// off: a report racing the shutdown, the phone's clock (the device page's "Off since" minute).
 const BEFORE_OFF_SLACK_SECONDS: i64 = 60;
 
+/// An off whose arrival is this close to its shutdown's instant (the phone's clock) arrived as the
+/// phone shut down: [before_off] weighs the reports against the arrival. Further apart it was told
+/// late, at the next start.
+const ARRIVAL_NEAR_OFF_MINUTES: i64 = 5;
+
 /// Locate's "Last position before the phone went off" (2026-10-25): the newest fix is a shutdown's
 /// (`shutdown_at`, migration 0097), no status report came after that shutdown - once the phone
 /// reports again it is on, whatever fix it re-sends - and the off's event may be said
@@ -358,10 +367,21 @@ fn before_off(
     let Some(off) = shutdown_at else {
         return false;
     };
+    // The reports against the off's arrival, both this server's clock (`parent_events::offs_now`,
+    // 2026-11-01: a phone clock behind hid the off) - while it arrived near the shutdown. A late off,
+    // told with the next start, arrives at the boot: a report just after that boot is the phone on
+    // again, so then (and without the event) the shutdown's own instant.
+    let arrived = off_row
+        .map(|(_, _, created)| created)
+        .filter(|created| {
+            (*created - off).abs() <= chrono::Duration::minutes(ARRIVAL_NEAR_OFF_MINUTES)
+        })
+        .unwrap_or(off);
     off_row.is_none_or(|(title, params, created)| {
         crate::parent_events::off_said(title, params, created, now)
-    }) && last_report
-        .is_none_or(|report| report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS))
+    }) && last_report.is_none_or(|report| {
+        report <= arrived + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS)
+    })
 }
 
 /// The newest Update Location's row under the fix (2026-10-25, PLAN "Locate: the \"Answer to
@@ -984,20 +1004,52 @@ fn phone_links(
     state: &AppState,
     devices: &[Device],
     selected: Option<i64>,
+    offs: &HashMap<i64, crate::parent_events::OffSince>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Vec<PhoneLink> {
     use crate::handlers::devices::{avatar_class, avatar_photo, connection_of, initial};
+    use crate::phone_status::Dot;
     use crate::streams::ConnectionState;
+    let lang = zone.lang();
     devices
         .iter()
         .map(|device| {
             let connection = connection_of(state, device, now);
+            let off = offs
+                .get(&device.id)
+                .filter(|_| device.enrolled_at.is_some());
+            let dot = crate::phone_status::dot(&connection, off.is_some(), now);
+            let word = match (off, dot, connection) {
+                (Some(off), _, _) => off.lead(zone, now),
+                (None, Dot::Green, _) => crate::i18n::t(lang, "devices.status.online").to_string(),
+                (None, Dot::Orange, _) => {
+                    crate::i18n::t(lang, "devices.status.no_contact").to_string()
+                }
+                (None, Dot::Grey, state) => crate::i18n::t(
+                    lang,
+                    match state {
+                        ConnectionState::NotSetUp => "devices.status.not_set_up",
+                        ConnectionState::Disconnected => "device.about.disconnected",
+                        ConnectionState::NotSeenYet => "devices.status.not_seen_yet",
+                        _ => "devices.status.offline",
+                    },
+                )
+                .to_string(),
+            };
             let (seen, seen_exact) = match connection {
-                ConnectionState::Disconnected => (Some("access removed".to_string()), None),
+                ConnectionState::Disconnected => (
+                    Some(crate::i18n::t(lang, "device.about.access_removed").to_string()),
+                    None,
+                ),
+                // "last heard 13:05", as the Devices row says it.
                 c => match c.last_contact() {
                     Some(at) => (
-                        Some(format!("seen {}", zone.relative(at, now))),
+                        Some(crate::i18n::t_params(
+                            lang,
+                            "devices.status.last_heard",
+                            &[("at", &zone.since(at, now))],
+                        )),
                         Some(zone.exact(at)),
                     ),
                     None => (None, None),
@@ -1009,8 +1061,9 @@ fn phone_links(
                 initial: initial(&device.name),
                 avatar: avatar_class(device),
                 photo: avatar_photo(device),
-                aria: format!("{}, {}", device.name, connection.word().to_lowercase()),
-                connection,
+                aria: format!("{}, {}", device.name, word.to_lowercase()),
+                dot: dot.css(),
+                word,
                 seen,
                 seen_exact,
                 current: selected == Some(device.id),
@@ -1053,7 +1106,22 @@ async fn render_locate_page(
         .and_then(|id| devices.iter().find(|d| d.id == id))
         .or_else(|| (devices.len() == 1).then(|| &devices[0]))
         .cloned();
-    let phones = phone_links(state, &devices, device.as_ref().map(|d| d.id), &zone, now);
+    // Which phones are turned off, for the dots (one read; a failure is the page's error, as on
+    // Devices - read as "none is off" it would show a turned-off phone as reachable).
+    let offs: HashMap<i64, crate::parent_events::OffSince> =
+        crate::parent_events::offs_now(&state.db, None)
+            .await?
+            .iter()
+            .filter_map(|row| Some((row.0, crate::parent_events::off_since_of(row, now)?)))
+            .collect();
+    let phones = phone_links(
+        state,
+        &devices,
+        device.as_ref().map(|d| d.id),
+        &offs,
+        &zone,
+        now,
+    );
     let selected = match device {
         Some(device) => Some(locate_view(state, device, &zone, now, asked).await?),
         None => None,
@@ -2093,6 +2161,23 @@ mod tests {
             off + crate::parent_events::OFF_HOLD
         ));
         assert!(line(None, None), "the event gone with the inbox's days");
+        // The phone's clock 3 min behind, its last report 30 s after the off arrived: still off;
+        // a report a minute after the arrival is on again.
+        let arrived = off + chrono::Duration::minutes(3);
+        let behind = Some(("Anna was turned off", None, arrived));
+        assert!(line(at(180 + 30), behind), "a clock behind");
+        assert!(!line(at(180 + 61), behind), "on again");
+        // A late off, told with the next start an hour on: a report 30 s after that boot is the
+        // phone on again, not a report racing the shutdown.
+        let boot = off + chrono::Duration::hours(1);
+        let late = Some(("Anna was turned off", None, boot));
+        let after_boot = super::before_off(
+            Some(off),
+            Some(boot + chrono::Duration::seconds(30)),
+            late,
+            boot + chrono::Duration::minutes(10),
+        );
+        assert!(!after_boot, "a late off");
     }
 
     use super::*;

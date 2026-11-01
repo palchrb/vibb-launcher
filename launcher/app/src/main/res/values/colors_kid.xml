@@ -64,4 +64,8 @@
     <!-- The tonal emergency red's ground (design 34): the 112 avatar (EMERGENCY_AVATAR, which
          KidPaletteTest keeps equal to this pair) and P7's emergency pill. -->
     <color name="kid_emergency_tonal">#3A1E24</color>
+    <!-- The emergency menu's large row (design 73, mockup variant A's red a shade deeper): white on it 6.4:1, its
+         sub-line a pale pink 4.9:1 (KidPaletteTest); the other rows are kid_sheet_button with kid_core text. -->
+    <color name="kid_emergency_big">#B32A24</color>
+    <color name="kid_emergency_big_sub">#FFD9D5</color>
 </resources>

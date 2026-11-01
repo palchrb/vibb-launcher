@@ -267,9 +267,10 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `#events` redirect are design 35's). The device page's header (`devices::render_device`, `data-power-off`): "Off
   since 21:14 · battery was 3 %" while the newest `phone_off` has a later `happened_at` than the newest `phone_on` and
   no `device_status` report is newer than it (qa-38-code M1: a report proves the phone is on, whatever start never
-  came - a re-enrollment, a boot count of -1, a dropped start; compared as `datetime(happened_at, '+60 seconds') >=
-  MAX(reported_at)` - RFC 3339 against SQLite's `datetime` text never as raw strings -, the minute for the phone's
-  clock); one query (`parent_events::offs_now`, since 2026-11-01 for every phone at once on the Devices list too, and
+  came - a re-enrollment, a boot count of -1, a dropped start; compared as `datetime(created_at, '+60 seconds') >=
+  datetime(MAX(reported_at))` - the off's arrival, the server's clock like the reports, since 2026-11-01 (was
+  `happened_at`, the phone's: a clock behind hid the off; `pwa.md`, "Off or out of touch says so") -, the minute for
+  a report racing the shutdown); one query (`parent_events::offs_now`, since 2026-11-01 for every phone at once on the Devices list too, and
   worded "Turned off 21:14 · battery was 3 %" there and in the header: `pwa.md`, "Tidier status"); the battery read
   back from the off's stored words (`parent_events::off_since`, which also
   says nothing while the off's push is held - `created_at` within `OFF_HOLD`, a restart may still fold it - or for a
@@ -292,7 +293,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   said - `parent_events::off_said`, the device page's "Off since" exclusions: not for "… is restarting", not while its
   push is held (`locate::before_off`, qa-last-position-code Q-5). The `params`' provider is `models::location_provider`'s
   word (N-3). `Phone::phone_off` puts `{"location": ..}` in
-  the event's `params` and "Last position from 21:10: shown on Locate" in its inbox-only `detail`; title, summary and
+  the event's `params` and "Last position at 21:10 – see the map in Locate" (nb "Siste posisjon kl. 21:10 – se kartet i Finn"; "… from 21:10:
+  shown on Locate" until 2026-11-01) in its inbox-only `detail`; title, summary and
   push unchanged (`told` keeps a `phone_off`'s stored words). `retention::prune` clears a `phone_off`'s params and
   detail after the phone's location retention. Location Settings' footer: a sudden power loss or airplane mode
   leaves nothing. Tests: `power::the_shutdowns_last_position_is_on_locate` (the hold, a newer fix, a report),

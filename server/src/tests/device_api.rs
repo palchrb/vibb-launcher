@@ -384,11 +384,17 @@ async fn policy_json_keys_snapshot() {
             "calls_enabled",
             "contacts",
             "default_country_code",
+            "emergency_menu",
             "managed",
             "sms_enabled",
         ]
     );
     assert!(call_policy.values().all(|v| !v.is_null()));
+    // Design 73: the launcher's PolicyEmergencyEntry - 112 alone by default.
+    assert_eq!(
+        call_policy["emergency_menu"],
+        serde_json::json!([{"number": "112", "name": ""}])
+    );
 
     // Design 36: `dns_upstream` is null until Custom has a valid pair, then the launcher's
     // `DnsUpstream` (a target, `rev`, `backup`) and `DnsTarget` shapes.

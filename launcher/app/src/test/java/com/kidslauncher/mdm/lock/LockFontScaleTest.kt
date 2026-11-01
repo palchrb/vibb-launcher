@@ -113,11 +113,15 @@ class LockFontScaleTest {
         assertTrue("AlertDialog.Builder(activity, R.style.KidAlertDialog)" in emergency)
         assertFalse("AlertDialogCustom" in emergency)
         // Both of the PIN lock's pills (keypad and ring card) and the time-rule screen use it.
-        assertEquals(2, Regex("""EmergencyCall\.confirm\(this\)""").findAll(src("lock/PinLockActivity.kt")).count())
+        assertEquals(2, Regex("""EmergencyCall\.confirm\(this, locked = true\)""").findAll(src("lock/PinLockActivity.kt")).count())
         assertTrue("EmergencyCall.confirm(this)" in src("ui/LockActivity.kt"))
-        // The flow is unchanged: confirm, then onCalling, then the call.
-        val confirm = emergency.substringAfter("fun confirm(").substringBefore("fun call(")
-        assertTrue(confirm.indexOf("onCalling()") in 0 until confirm.indexOf("call(activity)"))
+        // The flow (design 73): confirm - one number the dialog with Cancel, more the sheet -, then onCalling, then
+        // the call. The phone book's 112 tile shows the same.
+        val confirm = emergency.substringAfter("fun confirm(").substringBefore("fun place(")
         assertTrue(".setNegativeButton(R.string.calls_cancel, null)" in confirm)
+        assertTrue("EmergencySheet.show(" in confirm)
+        val place = emergency.substringAfter("fun place(").substringBefore("fun callEmergency(")
+        assertTrue(place.indexOf("onCalling()") in 0 until place.indexOf("callEmergency(activity"))
+        assertTrue("EmergencyCall.confirm(this)" in src("calls/PhoneBookActivity.kt"))
     }
 }

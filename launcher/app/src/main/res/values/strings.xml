@@ -53,6 +53,13 @@
     <string name="calls_message">Message</string>
     <string name="calls_confirm_title">Call %1$s?</string>
     <string name="calls_cancel">Cancel</string>
+    <!-- The emergency menu (design 73). -->
+    <string name="emergency_menu_title">Call an emergency number</string>
+    <string name="emergency_menu_always">Always works</string>
+    <string name="emergency_menu_rules">Follows the call rules</string>
+    <string name="emergency_menu_unlock">Unlock to call</string>
+    <string name="emergency_menu_default_name">Emergency number</string>
+    <string name="emergency_menu_row_description">Call %1$s, %2$s</string>
     <string name="calls_not_allowed">This number is not allowed.</string>
     <string name="calls_busy">Hang up the call you are in first.</string>
     <string name="calls_could_not_call">Couldn\'t start the call.</string>

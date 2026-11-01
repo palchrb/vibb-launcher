@@ -365,6 +365,9 @@ pub async fn save_country_code(
             .bind(code)
             .execute(&mut *tx)
             .await?;
+        // Design 73: a menu the new code leaves without an emergency number gets 112 first (every phone is
+        // nudged below anyway).
+        crate::emergency::repair_menus(&mut tx, code).await?;
         let devices: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices")
             .fetch_all(&mut *tx)
             .await?;

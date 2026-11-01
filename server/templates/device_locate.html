@@ -24,7 +24,7 @@
     {#- The phone switcher (§3.6): plain links, the state as a dot and in the aria-label. -#}
     <nav class="phone-switch" aria-label="Phones">
         {% for p in phones %}
-        <a href="/devices/locate?device={{ p.id }}" aria-label="{{ p.aria }}"{% if p.current %} aria-current="true"{% endif %}><span class="dot dot-{{ p.connection.css() }}" aria-hidden="true"></span><span class="phone-switch-name">{{ p.name }}</span></a>
+        <a href="/devices/locate?device={{ p.id }}" aria-label="{{ p.aria }}"{% if p.current %} aria-current="true"{% endif %}><span class="dot dot-{{ p.dot }}" aria-hidden="true"></span><span class="phone-switch-name">{{ p.name }}</span></a>
         {% endfor %}
     </nav>
 
@@ -225,10 +225,10 @@
     <div class="group group-avatars" data-group="phones">
         {% for p in phones %}
         <a class="row device-row" href="/devices/locate?device={{ p.id }}">
-            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ p.connection.css() }}"></span></span>
+            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ p.dot }}"></span></span>
             <span class="row-label">
                 <span class="device-row-name">{{ p.name }}</span>
-                <span class="row-sub device-line"><span class="state-{{ p.connection.css() }}">{{ p.connection.word() }}</span>{% if let Some(seen) = p.seen %} · {% if let Some(exact) = p.seen_exact %}<span title="{{ exact }}">{{ seen }}</span>{% else %}{{ seen }}{% endif %}{% endif %}</span>
+                <span class="row-sub device-line"><span class="state-{{ p.dot }}">{{ p.word }}</span>{% if let Some(seen) = p.seen %} · {% if let Some(exact) = p.seen_exact %}<span title="{{ exact }}">{{ seen }}</span>{% else %}{{ seen }}{% endif %}{% endif %}</span>
             </span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>

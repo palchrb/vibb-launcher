@@ -1,0 +1,34 @@
+{
+  "comment": "The fixed emergency list (design 73 §4): numbers that always pass the call rules and the locks, on the phone ORed with TelephonyManager.isEmergencyNumber. always = every country; by_country = the default country code's own. vectors: a raw number and a default country code, and whether it is on the fixed list. Byte-identical in launcher/app/src/test/resources/; the server's emergency::tests and the launcher's EmergencyMenuTest read it.",
+  "always": ["112", "911"],
+  "by_country": {
+    "45": ["112", "114"],
+    "46": ["112"],
+    "47": ["110", "112", "113"]
+  },
+  "vectors": [
+    {"input": "112", "cc": "47", "emergency": true},
+    {"input": "113", "cc": "47", "emergency": true},
+    {"input": "110", "cc": "47", "emergency": true},
+    {"input": "911", "cc": "47", "emergency": true},
+    {"input": "1 1 3", "cc": "47", "emergency": true},
+    {"input": "11-0", "cc": "47", "emergency": true},
+    {"input": "113", "cc": "46", "emergency": false},
+    {"input": "110", "cc": "46", "emergency": false},
+    {"input": "112", "cc": "46", "emergency": true},
+    {"input": "114", "cc": "45", "emergency": true},
+    {"input": "114", "cc": "47", "emergency": false},
+    {"input": "112", "cc": "1", "emergency": true},
+    {"input": "116 117", "cc": "47", "emergency": false},
+    {"input": "116117", "cc": "47", "emergency": false},
+    {"input": "0112", "cc": "47", "emergency": false},
+    {"input": "1121234", "cc": "47", "emergency": false},
+    {"input": "+47 112", "cc": "47", "emergency": false},
+    {"input": "+4791234567", "cc": "47", "emergency": false},
+    {"input": "91234567", "cc": "47", "emergency": false},
+    {"input": "112#", "cc": "47", "emergency": false},
+    {"input": "*112", "cc": "47", "emergency": false},
+    {"input": "000", "cc": "47", "emergency": false},
+    {"input": "999", "cc": "47", "emergency": false}
+  ]
+}

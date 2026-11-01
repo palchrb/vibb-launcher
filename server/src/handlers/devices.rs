@@ -22,8 +22,10 @@ struct DeviceListRow {
     initial: String,
     avatar: &'static str,
     photo: Option<String>,
-    connection: crate::streams::ConnectionState,
-    /// "4 min today · 100 %", "Offline · last seen 13:05", "Turned off 21:14 · battery was 3 %".
+    /// The avatar's dot (`phone_status::dot`), saying what `line` leads with.
+    dot: &'static str,
+    /// "4 min today · 100 %", "No contact · last heard 12 min ago · 100 %", "Offline · last heard
+    /// 13:05", "Turned off 21:14 · battery was 3 %".
     line: crate::phone_status::Line,
     /// Today's screen-time bar (its fill), under the line while a limit is set and the line says
     /// the screen time.
@@ -196,14 +198,14 @@ async fn list_row(
         meter: meter_of(screen_time.as_ref(), std::slice::from_ref(&line)),
         id: device.id,
         name: device.name,
-        connection,
+        dot: crate::phone_status::dot(&connection, off.is_some(), now).css(),
         line,
         attention,
     }
 }
 
 /// The screen-time bar's fill, while a limit is set and one of the `lines` says the screen time
-/// (never a bar beside "Offline · last seen 13:05").
+/// (never a bar beside "Offline · last heard 13:05").
 pub(crate) fn meter_of(
     screen: Option<&crate::time_state::ScreenTime>,
     lines: &[crate::phone_status::Line],
@@ -808,9 +810,11 @@ struct DeviceDetailTemplate {
     photo: Option<String>,
     avatar_error: Option<&'static str>,
     connection: crate::streams::ConnectionState,
+    /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
+    dot: &'static str,
     /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
-    /// since 22:19 · 100 %"; "Turned off 21:14 · battery was 3 %" or "Offline · last seen 13:05"
-    /// alone.
+    /// since 22:19 · 100 %"; "No contact · last heard 12 min ago" then the rest; "Turned off
+    /// 21:14 · battery was 3 %" or "Offline · last heard 13:05" alone.
     status: Vec<crate::phone_status::Line>,
     /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
     meter: Option<i64>,
@@ -1765,10 +1769,12 @@ async fn render_device(
         }
         _ => (None, None),
     };
+    let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
+    let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
     let status = crate::phone_status::header(
         &crate::phone_status::Facts {
             connection: &connection,
-            off: power_off.as_ref().filter(|_| device.enrolled_at.is_some()),
+            off,
             lock: lock.as_ref(),
             battery: latest.as_ref().and_then(|s| {
                 crate::phone_status::Battery::of(s.battery_level, s.battery_charging)
@@ -1827,6 +1833,7 @@ async fn render_device(
                 query.get("avatar").map(String::as_str),
             ),
             connection,
+            dot,
             status,
             meter,
             attention,
