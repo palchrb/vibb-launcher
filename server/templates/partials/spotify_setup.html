@@ -85,6 +85,7 @@
                 </label>
                 {% if let Some(error) = spotify.clear_error %}<p class="field-error" id="spotify-clear-error">{{ error }}</p>{% endif %}
                 <button type="submit" class="button-destructive">Remove the App</button>
+                {% include "partials/confirm_cancel.html" %}
             </form>
         </details>
         {% endif %}
@@ -130,6 +131,7 @@
                     </label>
                     {% if let Some(error) = account.remove_error %}<p class="field-error" id="spotify-remove-error-{{ account.id }}">{{ error }}</p>{% endif %}
                     <button type="submit" class="button-destructive">Remove Login</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>

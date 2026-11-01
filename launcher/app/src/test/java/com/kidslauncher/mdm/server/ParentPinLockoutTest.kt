@@ -116,7 +116,7 @@ class ParentPinLockoutTest {
 
         // A wrong try after 25 h: level 2 now, and its decay starts again (2 days).
         val later = at(start.wallMs + 25 * hour)
-        val counted = beginParentAttempt(level3, later, ParentPinEntry.OVERRIDE, "id").state
+        val counted = beginParentAttempt(level3, later, ParentPinEntry.PAUSE, "id").state
         assertEquals(2, levelNow(counted, later))
         assertEquals(2 * day, counted.decay!!.durationMs)
         assertEquals(2, levelNow(counted, at(later.wallMs + day - 1)))
@@ -124,7 +124,7 @@ class ParentPinLockoutTest {
         assertEquals(hour, wrongResult(counted, later).nextLockoutMs)
 
         // No level: no decay window at all.
-        val fresh = beginParentAttempt(ParentLockoutState(pinFingerprint = fp), later, ParentPinEntry.OVERRIDE, "id").state
+        val fresh = beginParentAttempt(ParentLockoutState(pinFingerprint = fp), later, ParentPinEntry.PAUSE, "id").state
         assertEquals(0, levelNow(fresh, later))
         assertNull(fresh.decay)
     }

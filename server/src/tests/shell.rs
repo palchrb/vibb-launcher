@@ -1638,3 +1638,55 @@ async fn every_startup_image_has_its_screens_size() {
         .collect();
     assert_eq!(themes, ["#0C0C14"]);
 }
+
+/// Every confirm has a Cancel (PLAN "PWA small things" (3), 2026-11-01): each `<details>` whose class has `confirm` in the
+/// templates, partials too, ends its form with the Cancel partial, which `static/confirm.js` (deferred, from the head)
+/// shows and wires; rendered, it is hidden without JS and in the reader's language.
+#[tokio::test]
+async fn every_confirm_has_a_cancel() {
+    let mut files = super::device_api::template_files();
+    for entry in std::fs::read_dir("templates/partials").unwrap() {
+        let path = entry.unwrap().path();
+        // The Cancel itself names the confirm in its comment.
+        if !path.ends_with("confirm_cancel.html") {
+            files.push(path);
+        }
+    }
+    // Any class order (the summary's "Unlock 2 h…" is `act-sheet confirm`).
+    let opening = regex::Regex::new(r#"<details\s+class="[^"]*\bconfirm\b"#).unwrap();
+    let mut confirms = 0;
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut from = 0;
+        while let Some(found) = opening.find_at(&text, from) {
+            let start = found.start();
+            let end = start + text[start..].find("</details>").unwrap();
+            let block = &text[start..end];
+            let cancel = block
+                .find("{% include \"partials/confirm_cancel.html\" %}")
+                .unwrap_or_else(|| panic!("{}: a confirm without its Cancel", path.display()));
+            assert!(
+                cancel < block.rfind("</form>").unwrap(),
+                "{}",
+                path.display()
+            );
+            confirms += 1;
+            from = end;
+        }
+    }
+    assert!(confirms >= 33, "{confirms} confirms");
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    assert!(head.contains("<script src=\"/static/confirm.js?v=1\" defer></script>"));
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    let page = device_page(id, Section::Advanced);
+    let html = app.get_page(&page, &cookie).await.text();
+    const CANCEL: &str = "<button type=\"button\" class=\"button-cancel\" data-confirm-cancel hidden>Cancel</button>";
+    assert!(html.contains(CANCEL), "{html}");
+    let nb = app
+        .get_page(&format!("{page}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(nb.contains(&CANCEL.replace(">Cancel<", ">Avbryt<")));
+}

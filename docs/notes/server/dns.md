@@ -66,10 +66,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   detail `{"server":..,"kind":..,"backup_kind":..}` - kinds only, never a host or path; nothing logs either value.
 - **The secure-DNS bypass** (design 67 §2, `docs/design/67-dns-bypass.md`; the phone's side in launcher/CLAUDE.md,
   "The browsers' secure DNS"): nothing new in the policy or the blocklist contract - the Web Filter switch drives it.
-  The Blocklists group has a fixed row without a switch, "Secure DNS servers" / "Built into Vibb One, on with the
+  The lists group ("Lists for every phone" since 2026-11-01) has a fixed row without a switch, "Secure DNS servers" / "Built into Vibb One, on with the
   filter" (`data-list="builtin-doh"`; the parent can't lift it, design 67 §6), and its footer says what it does:
   "Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are blocked. Firefox and Cromite
-  can still be set to another secure-DNS server by hand." The Each Phone group's footer has lines only where something
+  can still be set to another secure-DNS server by hand." **What a switch means for the phones** (the user, 2026-10-26; 2026-11-01): a list's
+  switch is every phone's default and a phone's own Web Filter page can set it otherwise (`device_blocklist_overrides`),
+  so each list row's line says it from the phones whose own setting differs from the switch, by name
+  (`dns_filter::list_scope`, `data-scope`): "On for every phone", "On for every phone except Testtelefon", "Off for
+  every phone", "Off · on for Testtelefon" (`settings.web_filter.*`; an own setting equal to the switch isn't named);
+  the footer starts "A phone's own Web Filter page can set a list otherwise for that phone." Test
+  `device_pages::web_filter_holds_the_phones_parts`. The Each Phone group's footer has lines only where something
   is owed, only while that phone's filter is on (`dns_filter::bypass_lines`, `data-bypass-phone`): "Anna · Update Vibb
   One to close the secure-DNS bypass" while its last report lacks `dns_bypass_v1`, and a line for each browser of
   `DOH_IGNORING_BROWSERS` (server only) on its allowlist - Cromite ("set its Secure DNS to Off on the phone, or it

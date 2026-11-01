@@ -13,7 +13,6 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import com.kidslauncher.mdm.R
-import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.ButtonRole
@@ -23,9 +22,6 @@ import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
 import com.kidslauncher.mdm.databinding.ItemLockRowBinding
 import com.kidslauncher.mdm.server.LockReason
-import com.kidslauncher.mdm.server.OfflineOverride
-import com.kidslauncher.mdm.server.ParentPin
-import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -40,9 +36,9 @@ import com.kidslauncher.mdm.ui.home.TONE_SLATE
  * calm card: the time, the kind's icon and the rule's name, what still works as rows of one card -
  * the phone book while calls are managed and allowed, then the rule's exempt apps or, for the
  * budget, the contacts' messaging apps and the music app ([timeLockRows]) - and always Emergency
- * call (a red text button) and "Enter unlock code" (a deliberately undisguised entry point for
- * [OfflineOverride]; the PIN is the security boundary, not the button being hard to find). No
- * timer: the boundary alarm updates `lock_reason`/`lock_key` and this re-renders or finishes.
+ * call (a red text button). No code entry (the user, 2026-10-26: the parent lifts a rule from the
+ * PWA only, no path on the phone). No timer: the boundary alarm updates `lock_reason`/`lock_key` and
+ * this re-renders or finishes. One instance in Home's task: [start] reuses it (E6's L5).
  */
 class LockActivity : UIObjectActivity() {
     private lateinit var binding: ActivityLockBinding
@@ -67,27 +63,12 @@ class LockActivity : UIObjectActivity() {
             override fun handleOnBackPressed() {}
         })
 
-        binding.lockUnlockCodeButton.setOnClickListener { showUnlockCodeDialog() }
         // Every other way to the system dialer is closed during the lock, and a phone without a
         // secure lock screen has no keyguard Emergency button - so this one is always shown,
         // whatever the call state (QA step 4 #1).
         binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
-        // TalkBack reads both as buttons ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
+        // TalkBack reads it as a button ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
         binding.lockEmergencyButton.accessibilityDelegate = ButtonRole
-        binding.lockUnlockCodeButton.accessibilityDelegate = ButtonRole
-    }
-
-    /** The parent PIN (design 24): checked with the escalating lockout by [ParentPin], which also
-     * starts the override; every result shows in the dialog. A wrong code keeps it open - the
-     * whole point of a failsafe is not making the parent re-type everything after one typo. */
-    private fun showUnlockCodeDialog() {
-        ParentPinDialog.show(
-            this,
-            lifecycleScope,
-            ParentPinEntry.OVERRIDE,
-            title = R.string.lock_unlock_code_dialog_title,
-            notConfigured = R.string.lock_unlock_code_not_configured,
-        ) { finish() }
     }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rule's end again. */
@@ -105,6 +86,14 @@ class LockActivity : UIObjectActivity() {
         }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
+        render()
+    }
+
+    /** A redirect brought this instance back ([start]'s SINGLE_TOP, E6's L5): already resumed, onStart doesn't run, so
+     * a moved end or budget is drawn here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
         render()
     }
 
@@ -292,7 +281,8 @@ class LockActivity : UIObjectActivity() {
 
         /** Starts the time-rule screen. It is never held back by handy's PIN lock (QA 10 #4): while
          * that is LOCKED it is brought back on top right away, so the kid sees the PIN first, then
-         * this screen. */
+         * this screen. One instance (E6's L5): a redirect while one is in Home's task reuses it -
+         * [startNow]'s CLEAR_TOP | SINGLE_TOP, what it opened above it there (the phone book) closes. */
         fun start(context: Context) {
             // Design 59d step A (qa-59b-code B-1): not showWhenLocked - as Android's face with its keyguard locked it
             // waits for the unlock (it would land behind the keyguard and un-occlude it); at once otherwise.
@@ -301,7 +291,9 @@ class LockActivity : UIObjectActivity() {
 
         private fun startNow(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // E6's L5: each redirect (the rule's start, Home, Dagen, Kid Settings) stacked another instance in Home's
+            // task - the one there is brought back instead (onNewIntent, then onStart's render).
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             // Design 59b §3: one of our own starts - the face's loss rule doesn't cover it (the glance comes on top next).
             PinLockRuntime.startOwn(context, intent, "the time-rule screen")
             PinLockRuntime.afterTimeRuleShown(context)

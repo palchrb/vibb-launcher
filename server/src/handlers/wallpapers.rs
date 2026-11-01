@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::photos::{self, PhotoError, Shape, WALLPAPERS};
 use crate::security::{self, CurrentAdmin};
 use crate::wallpapers::{self as store, WallpaperRow};

@@ -60,6 +60,7 @@
                 <form method="post" action="/devices/{{ device_id }}/bedtime/remove" class="confirm-body">
                     <p>Remove the bedtime? {{ device_name }}'s phone is no longer locked at night.</p>
                     <button type="submit" class="button-destructive">Remove Bedtime</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>

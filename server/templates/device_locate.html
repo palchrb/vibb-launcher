@@ -154,6 +154,7 @@
                     <input type="text" id="confirm_wipe" name="confirm_name" autocomplete="off" required{% if view.erase_refused %} aria-invalid="true" aria-describedby="confirm_wipe-error"{% endif %}>
                     {% if view.erase_refused %}<p class="field-error" id="confirm_wipe-error" data-flash="erase">That isn't the phone's name. Nothing was erased.</p>{% endif %}
                     <button type="submit" class="button-destructive">Erase {{ view.device.name }}'s phone</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>

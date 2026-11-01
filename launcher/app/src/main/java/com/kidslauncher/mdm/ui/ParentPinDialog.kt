@@ -27,8 +27,8 @@ object ParentPinDialog {
 
     /**
      * Shows the dialog for [entry]. The check runs on [scope] off the main thread with OK disabled
-     * meanwhile; [onOk] runs on the main thread after a correct PIN, whose window (override,
-     * pause, install mode) [ParentPin.check] has started already. [onCancel]: Cancel was tapped.
+     * meanwhile; [onOk] runs on the main thread after a correct PIN, whose window (pause,
+     * install mode) [ParentPin.check] has started already. [onCancel]: Cancel was tapped.
      */
     fun show(
         context: Context,

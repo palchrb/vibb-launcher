@@ -25,7 +25,7 @@ use tokio::io::AsyncWriteExt;
 use crate::AppState;
 use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
 use crate::handlers::device_pages::AppsFrom;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 

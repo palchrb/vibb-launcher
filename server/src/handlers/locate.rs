@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{
     AdminUser, CancelledBy, CommandStatus, Device, DeviceCommand, DeviceLocation, Unconfirmed,
     command_label,

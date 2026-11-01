@@ -306,8 +306,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   while 24 h or 12 h is chosen and the last report says `clock_format_applied` false. A failed wallpaper read is a
   500, never an empty grid (its Save would untick everything).
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
-  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - Default (the
-  list as everyone has it) / On / Off (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
+  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - "As for
+  everyone (On|Off)" (the list as everyone has it; "Default (On)" until 2026-11-01) / On / Off, the footer "As for
+  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
   older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
   problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
   on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back
@@ -1295,6 +1296,16 @@ man er inne på en device". Branch `pwa-fixes-b`.
   two pages are exactly the ones that call it (`notifications.js`, `register-sw.js`'s Sign Out lookup). A Playwright
   artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
   pages too. Desktop Safari has a real push implementation, so it says nothing about it.
+
+## A Cancel in every confirm (2026-11-01, PLAN "PWA small things left from the old list" (3), branch `small-c`)
+
+- Every `<details>` whose class has `confirm` (33, in the pages and partials - the summary's "Unlock 2 h…" is `act-sheet confirm`) ends its form with `partials/confirm_cancel.html`:
+  `<button type="button" class="button-cancel" data-confirm-cancel hidden>` "Cancel" / "Avbryt" (`common.cancel`), a
+  quiet text button under the red one. `static/confirm.js` (deferred, from the head partial; one listener on the
+  document) shows them and, on a click, closes the confirm it sits in and focuses its summary
+  (`preventScroll`): the page stays where it is, nothing is posted. Without JS the button stays hidden
+  (`.button-cancel[hidden]`) - the summary closes the details then, as before. A new confirm gets the include before
+  its form's `</form>` (`shell::every_confirm_has_a_cancel`, `jstest/confirm.test.js`).
 
 
 ## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
