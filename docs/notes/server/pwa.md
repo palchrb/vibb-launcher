@@ -604,7 +604,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## The Locate tab (design 31 step 13, `docs/design/31-pwa-redesign.md` §3.6)
 
 - **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
-  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · seen 3 min ago" ›,
+  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · last heard 13:05" ›, "seen 3 min ago" until 2026-11-01;
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online" (since 2026-11-01 the Devices dot and word, "Off or out
   of touch says so"); the chosen one `aria-current="true"` - the tab bar has the
@@ -1385,8 +1385,11 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (`created_at`, `datetime('now')` text like `reported_at`, both through `datetime()`) + 60 s, not `happened_at`;
   the off against the starts stays `happened_at` (both the phone's), and the line's time is `happened_at`. A late
   off (told at the next start) comes with its start, which ends it. Locate's "Last position before the phone went
-  off" (`locate::before_off`) weighs the report against the same arrival (the shutdown's instant when the event is
-  gone).
+  off" (`locate::before_off`) weighs the report against the same arrival while it is within
+  `ARRIVAL_NEAR_OFF_MINUTES` (5) of the shutdown's instant - else (a late off, told at the next boot, or the event
+  gone) the shutdown's instant: a report just after that boot is the phone on again (light QA L1). Locate's list line
+  says "last heard 13:05" / "access removed" from the catalogs (`devices.status.last_heard`,
+  `device.about.access_removed`; was the English "seen 3 min ago", L2).
 - **The off's last position**: "Last position at 20:26 – see the map in Locate" (nb "Siste posisjon kl. 20:26 – se
   kartet i Finn": "Finn" was read as a verb), "Last position yesterday 20:26 – …" on another day
   (`events.phone_off.detail.position_on`), "Last position – …" without a time.

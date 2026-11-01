@@ -73,7 +73,8 @@ struct PhoneLink {
     word: String,
     /// "Anna, online", "Anna, no contact", "Anna, turned off 20:35".
     aria: String,
-    /// "seen 3 min ago", "access removed" (the list's line), and the exact last contact.
+    /// "last heard 13:05", "access removed" (the list's line, in the reader's language), and the exact
+    /// last contact.
     seen: Option<String>,
     seen_exact: Option<String>,
     current: bool,
@@ -345,6 +346,11 @@ struct FixView {
 /// off: a report racing the shutdown, the phone's clock (the device page's "Off since" minute).
 const BEFORE_OFF_SLACK_SECONDS: i64 = 60;
 
+/// An off whose arrival is this close to its shutdown's instant (the phone's clock) arrived as the
+/// phone shut down: [before_off] weighs the reports against the arrival. Further apart it was told
+/// late, at the next start.
+const ARRIVAL_NEAR_OFF_MINUTES: i64 = 5;
+
 /// Locate's "Last position before the phone went off" (2026-10-25): the newest fix is a shutdown's
 /// (`shutdown_at`, migration 0097), no status report came after that shutdown - once the phone
 /// reports again it is on, whatever fix it re-sends - and the off's event may be said
@@ -362,8 +368,15 @@ fn before_off(
         return false;
     };
     // The reports against the off's arrival, both this server's clock (`parent_events::offs_now`,
-    // 2026-11-01: a phone clock behind hid the off); the shutdown's own instant without the event.
-    let arrived = off_row.map_or(off, |(_, _, created)| created);
+    // 2026-11-01: a phone clock behind hid the off) - while it arrived near the shutdown. A late off,
+    // told with the next start, arrives at the boot: a report just after that boot is the phone on
+    // again, so then (and without the event) the shutdown's own instant.
+    let arrived = off_row
+        .map(|(_, _, created)| created)
+        .filter(|created| {
+            (*created - off).abs() <= chrono::Duration::minutes(ARRIVAL_NEAR_OFF_MINUTES)
+        })
+        .unwrap_or(off);
     off_row.is_none_or(|(title, params, created)| {
         crate::parent_events::off_said(title, params, created, now)
     }) && last_report.is_none_or(|report| {
@@ -1025,10 +1038,18 @@ fn phone_links(
                 .to_string(),
             };
             let (seen, seen_exact) = match connection {
-                ConnectionState::Disconnected => (Some("access removed".to_string()), None),
+                ConnectionState::Disconnected => (
+                    Some(crate::i18n::t(lang, "device.about.access_removed").to_string()),
+                    None,
+                ),
+                // "last heard 13:05", as the Devices row says it.
                 c => match c.last_contact() {
                     Some(at) => (
-                        Some(format!("seen {}", zone.relative(at, now))),
+                        Some(crate::i18n::t_params(
+                            lang,
+                            "devices.status.last_heard",
+                            &[("at", &zone.since(at, now))],
+                        )),
                         Some(zone.exact(at)),
                     ),
                     None => (None, None),
@@ -2146,6 +2167,17 @@ mod tests {
         let behind = Some(("Anna was turned off", None, arrived));
         assert!(line(at(180 + 30), behind), "a clock behind");
         assert!(!line(at(180 + 61), behind), "on again");
+        // A late off, told with the next start an hour on: a report 30 s after that boot is the
+        // phone on again, not a report racing the shutdown.
+        let boot = off + chrono::Duration::hours(1);
+        let late = Some(("Anna was turned off", None, boot));
+        let after_boot = super::before_off(
+            Some(off),
+            Some(boot + chrono::Duration::seconds(30)),
+            late,
+            boot + chrono::Duration::minutes(10),
+        );
+        assert!(!after_boot, "a late off");
     }
 
     use super::*;
