@@ -1884,6 +1884,33 @@ code.key {
     outline: none;
 }
 
+/* Add Calendar's source (Device › Calendar, 2026-11-01): Add App's choice for two kinds - a link or a CalDAV
+   account - each its own form, shown by its radio alone (no script). */
+#kind-link:checked ~ .group .check-link,
+#kind-caldav:checked ~ .group .check-caldav {
+    visibility: visible;
+}
+
+.caldav-only,
+#kind-caldav:checked ~ .link-only {
+    display: none;
+}
+
+#kind-caldav:checked ~ .caldav-only {
+    display: block;
+}
+
+#kind-link:focus ~ .group label[for="kind-link"],
+#kind-caldav:focus ~ .group label[for="kind-caldav"] {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
+}
+
+#kind-link:focus:not(:focus-visible) ~ .group label[for="kind-link"],
+#kind-caldav:focus:not(:focus-visible) ~ .group label[for="kind-caldav"] {
+    outline: none;
+}
+
 @media (forced-colors: active) {
     .choice-check {
         color: CanvasText;

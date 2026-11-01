@@ -86,7 +86,8 @@ copies). Regex rules are design 69 §3.5's later step (RE2/J on the phone).
 more, not ICSx5, not phone-local; a saved pick the last report doesn't list - a re-login, a sync turned off, an
 unreadable provider - stays the selected choice, "The chosen calendar - not on the phone now", and a save keeps it,
 `tests::calendar::the_kids_calendar_survives_a_report_without_it`), On the lock screen (`#lock`: the "Next" line; the reminders' master select
-"Reminders on the lock screen", Off or Quiet row), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
+"Reminders on the lock screen", Off or Quiet row), Fetched by the server (`#sources`: the calendar links and CalDAV
+accounts, below "Device › Calendar's sources"), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
 was sent - a missing `remind_<key>` keeps it -, a saved calendar gone from the phone greyed with Remove, the setup
 steps without a report), Title rules (`#rules`: the list in order, up/down back to `#rule-<id>`, "Add a rule…").
 "This phone's Vibb One doesn't know Dagen yet" until the last report claims `calendar_v1`.
@@ -204,18 +205,21 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's
   `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows with a valid id, the counts capped at 2000 - QA L1) says
   what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`). Capability `calendar_feeds_v1`.
-- **The page** (`#links`, above "Calendars shown"): each link's name (auto-saving, back to `#link-<uid>`), its host, its
-  status lines ("Hentet 27.10. 14:05 · 182 hendelser" - the date's form is the catalog's `calendar.links.when_date`,
-  "10/27 14:05" in English -, the error in words with the set's age, "Venter på telefonen" until the
-  report lists its key, "Oppdater Vibb One …" without `calendar_feeds_v1`, the phone's refused series, `unknown_tz`,
-  `cut`, churn, the LAN warning), "Hent nå" (`/fetch`: at most once per source per 5 minutes - else
-  `?notice=fetch_wait` -, the fetch before the answer, in `settings_log::NOT_SAVES`), "Fjern…" (confirmed, back to
-  `#links`). The add form (`POST /devices/{id}/calendar/links`): the link and an optional name (empty → the feed's
+- **The page** (since 2026-11-01 the look of variant B, below - "Device › Calendar's sources"): the link's own page
+  (`GET .../calendar/links/{uid}`): its name (auto-saving, back to `#name`), its host, Fetching (`#fetch`: the failure
+  in words with the set's age - orange -, Last fetched and Events once a fetch was stored ("27.10. 14:05" - the
+  date's form is the catalog's `calendar.links.when_date`, "10/27 14:05" in English), Next (not while the key is
+  lost), the notes - "Venter på telefonen" until the report lists its key, "Oppdater Vibb One …" without
+  `calendar_feeds_v1`, the phone's refused series, `unknown_tz`, `cut`, churn, the LAN warning -, "Hent nå" (`/fetch`:
+  at most once per source per 5 minutes - else `?notice=fetch_wait` -, the fetch before the answer, in
+  `settings_log::NOT_SAVES`, back to `#fetch`)), "Fjern…" (confirmed, back to the Calendar page's `#sources`). The add
+  form (Add Calendar's link, `POST /devices/{id}/calendar/links`): the link and an optional name (empty → the feed's
   `X-WR-CALNAME`, else the host); plain http judged by what the name resolves to (`lan_addresses`: LAN or tailnet only -
   the tailnet without the warning -, else refused); no userinfo; at most 2000 characters; without the music key the
-  form says why and has no submit (QA L11); the add check is one fetch that must give a VCALENDAR (an empty one is
-  fine); a refusal renders the page again as typed (400), never the body; a link already a source is attached with no
-  fetch; a save is a 303 to `#link-<uid>`. "Calendars shown" lists a link's calendar at once by its computed key
+  page says why and has no form (QA L11); the add check is one fetch that must give a VCALENDAR (an empty one is
+  fine); a refusal renders Add Calendar again as typed (400), the reason under the link, never the body; a link
+  already a source is attached with no fetch; a save is a 303 to the link's page. "Calendars shown" lists a link's
+  calendar at once by its computed key
   (`calendar_feeds::calendar_key`: LOCAL, `Vibb One`, `vibb-feed-<uid>`), "Kalenderlenke · Venter på telefonen" until
   reported, then "Kalenderlenke"; an ICSx5 calendar with a link's host says "Kan være den samme som kalenderlenken …".
   The kid's calendar is never a link's (LOCAL, access 200). Every route behind the full session
@@ -227,8 +231,8 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
 
 ## CalDAV accounts (design 72 step 2, `src/caldav.rs`, branch `caldav-read`)
 
-Read-only. The parent signs in to a CalDAV account with an **app password** on Device › Calendar (`#caldav`, below
-the links); each calendar ticked on a phone's page becomes a `calendar_sources` row of kind `caldav` and reaches the
+Read-only. The parent signs in to a CalDAV account with an **app password** on Device › Calendar (Add Calendar, below
+"Device › Calendar's sources"); each calendar ticked on a phone's page becomes a `calendar_sources` row of kind `caldav` and reaches the
 phone exactly as a link (`calendar.feeds`, `GET /api/devices/calendar/feeds/{uid}`, the phone's `vibb-feed-<uid>`
 calendar): the launcher and the contract are unchanged. Scope: basic auth (iCloud, Fastmail, Nextcloud, Radicale);
 out: Google (OAuth only - its secret ICS address works as a link), digest, client certificates.
@@ -279,19 +283,57 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   401/403 marks the account `login_refused`** (QA M5) and **another host `host_changed`**: no request for any of its
   calendars until Test passes; every phone's row says so at once (`LinkRow.account_state`). A fetch that read an older
   password never stops the account over a Test that saved a new one (`AND password_nonce = ?`, QA L4).
-- **The page**: each account (`data-caldav`): the username and server host, "Logget inn 14:05 · 3 kalendere" or the
-  stop ("Passordet ble avvist - …", "Serveren svarte fra en ny vert - …", "Serverens nøkkel er byttet - …"), a later
-  Test's failure ("Siste test: …"), the hosts line, the LAN warning; a switch per calendar for this phone (one form,
-  `cal` per listed calendar + `on_<id>`, auto-saving; a newly ticked calendar is fetched before the answer; at most 10
-  links and calendars a phone, `?notice=caldav_full`), "Test på nytt" with an optional new app password (the stored
-  one otherwise; none to use → `?notice=caldav_retype`), "Fjern konto…" (confirmed: off every phone, the password
-  deleted). The new-account form: server or e-mail, username, app password, Test (a refusal re-renders it as typed,
-  400, never the password; no music key → no form). A ticked calendar is a row in the links group too ("CalDAV ·
-  <username> · <host>", renamable, Hent nå, Fjern = untick) and "CalDAV" in "Calendars shown". Test routes are in
-  `settings_log::NOT_SAVES`; the ticks and Remove are saves (route and ids only).
+- **The page** (since 2026-11-01 the account's own page, `GET .../calendar/caldav/{account}`, below): the stop as the
+  page's alarm ("Passordet ble avvist - …", "Serveren svarte fra en ny vert - …", "Serverens nøkkel er byttet - …"),
+  Server (iCloud's and Fastmail's names, else the host) and Logget inn, the hosts line ("Passordet sendes bare til:
+  …") and the LAN warning; "På denne telefonen" (`#calendars`): a switch per calendar for this phone (one form, `cal`
+  per listed calendar + `on_<id>`, auto-saving; a ticked one says "Hentet 15:10 · 12 hendelser" or its failure; a
+  newly ticked calendar is fetched before the answer; at most 10 links and calendars a phone, `?notice=caldav_full`),
+  and a calendar of this phone the account no longer lists (`not_listed`) without a switch, with Remove
+  (`.../links/{uid}/remove`, back to `#calendars`); "Test på nytt…" (`#test`, a disclosure: an optional new app
+  password, the stored one otherwise; back with `?notice=caldav_tested` - "Logget inn 15:12." or "Siste test: …" -,
+  `caldav_wait`, `caldav_retype` (none to use) or `caldav_too_long`, the form open for the last three); "Fjern konto…"
+  (confirmed: off every phone, the password deleted; back to the Calendar page's `#sources`). The new-account form is
+  Add Calendar's CalDAV account: server or e-mail, username, app password, "Test og logg inn" (a pass goes to the
+  account's page; a refusal re-renders Add Calendar as typed with CalDAV chosen, 400, the reason under its field -
+  the username's or the password's own, else the server's -, never the password; no music key → no form). A ticked
+  calendar is "CalDAV" in "Calendars shown"; it has no link page of its own (its uid's page goes to the account's).
+  Test routes are in `settings_log::NOT_SAVES`; the ticks and Remove are saves (route and ids only).
 - Tests: `caldav::tests` (the server field, the multistatus reader, uids), `tests::caldav` (a fake CalDAV in the test
   source - `CannedFetch::answer_method`/`redirect_method`/`basic`: iCloud's shape with a redirect chain and the
   calendars on another host, Nextcloud's by path, the challenge order, the ticks and the phone's policy, an unchanged
   and a changed ctag, a revoked password with no further request, Test's gap, another host, the refusals, removal).
   `testdata/caldav/` holds answers written in iCloud's and Nextcloud's shape (fake ids), **not captures**: a real
   server confirms them (design 72 §10's Radicale run, and an iCloud/Fastmail/Nextcloud account).
+
+## Device › Calendar's sources (the look of 2026-11-01, variant B, branch `calendar-sources-ui`)
+
+The user's pick of the mockups (variant B, version 2, drawn with the PWA's own parts): the calendar links and the CalDAV
+accounts are one group on Device › Calendar and each has a page of its own (`handlers::calendar_sources`).
+
+- **The group** "Hentes av serveren" / "Fetched by the server" (`#sources`, `calendar_sources::source_rows`, above
+  "Calendars shown"): a `.group-icons` group, one `<a class="row">` per link (`.tile-teal`, its name, "host · Hentet
+  15:10" - or, orange, the failure and "Prøver igjen 16:10", the held empty answer, the lost key) and one per CalDAV
+  account (`.tile-indigo`, the username, "iCloud · 1 av 3 kalendere" - or, orange, the short stop "Passordet ble
+  avvist - test på nytt" or "… · 1 kalender kan ikke hentes"), each with its chevron, then "Legg til kalender…"
+  (`a.row.row-button`, to Add Calendar) or the no-key line (`data-sources="off"`) or the 10-a-phone line
+  (`data-sources="full"`). The key-new alarm (`links-key-new`) stays above it. One footer and one ⓘ for both kinds
+  (`calendar.sources.*`). No status dots: a failure is `tone-orange` text, as the Devices status line.
+- **Add Calendar** (`GET .../calendar/add`, `device_calendar_add.html`): "Kilde" with two choice rows - "Lenke (https
+  eller webcal)", "CalDAV-konto" - and the check mark, Add App's CSS-only swap (two radios outside the forms,
+  `#kind-link`/`#kind-caldav` `:checked ~`, `style.css?v=66`); `?kind=caldav` chooses the account. Each kind is its
+  own form to the route it always had (`POST .../calendar/links`, `POST .../calendar/caldav`), its fields as
+  `.form-group .field` with the label over the field, a footer, the filled `.button-wide` ("Legg til", "Test og logg
+  inn"). A refusal renders this page again (400) as typed with its kind chosen and the reason under its field
+  (`aria-invalid`, autofocus); a pass is a 303 to the new source's page. The forms leave the page, so they have no
+  fragment (`settings_pages::leaves_the_page`).
+- **A link's page** and **an account's page**: above ("Calendar links", "CalDAV accounts"). Every POST goes back to
+  the page its form is on, at its group (`#name`, `#fetch`, `#calendars`, `#test`; a removal to the Calendar page's
+  `#sources`), so a save never jumps to the top; a source or account gone since the page loaded is a 303 to
+  `#sources`. Without JS: the name and the switches have their `<noscript>` Save, the choice and the disclosures work
+  as they are. Room is left on the account's page for design 72 step 3's "the kid's own calendar" (nothing built).
+- Tests: `tests::calendar_feeds::add_calendar_picks_its_kind_and_a_gone_source_goes_back`, the rows and pages in
+  `the_page_shows_a_link_and_waits_for_the_phone` and `tests::caldav::test_lists_the_calendars_and_where_the_password_goes`,
+  the refusals' kind and field in `a_refused_add_renders_the_form_as_typed` and
+  `a_refused_test_renders_the_form_as_typed_and_never_the_password`, the three GETs in
+  `every_calendar_route_needs_a_session` and `shell::every_form_on_every_page_lands_on_its_own_group`.

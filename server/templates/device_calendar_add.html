@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container container-narrow">
+    <a class="nav-back" href="/devices/{{ device_id }}/calendar#sources"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
+    <h1 class="page-title">{{ title }}</h1>
+
+    {% if off %}
+    <p class="group-footer" data-sources="off">{{ self.t("calendar.sources.no_key") }}</p>
+    {% else %}
+    {#- The source: two radios before the groups, so CSS marks the chosen row and shows only its form (Add App's way,
+        no script). The radios belong to no form: each kind posts to its own route (the link to .../calendar/links, the
+        account to .../calendar/caldav), and a refusal renders this page again (400) as typed, its kind chosen, the reason
+        under its field - never the password. -#}
+    <h2 class="group-header">{{ self.t("calendar.add.source") }}</h2>
+    <div class="source-choice">
+        <input type="radio" class="choice-radio" id="kind-link" name="kind" value="link"{% if !caldav %} checked{% endif %}>
+        <input type="radio" class="choice-radio" id="kind-caldav" name="kind" value="caldav"{% if caldav %} checked{% endif %}>
+        <div class="group">
+            <label class="row choice-row" for="kind-link"><span class="row-label">{{ self.t("calendar.add.kind_link") }}</span><svg class="choice-check check-link" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+            <label class="row choice-row" for="kind-caldav"><span class="row-label">{{ self.t("calendar.add.kind_caldav") }}</span><svg class="choice-check check-caldav" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+        </div>
+
+        <div class="link-only" data-add="link">
+            {% if phone_full %}
+            <p class="group-footer" data-sources="full">{{ self.t("calendar.caldav.error.too_many_calendars") }}</p>
+            {% else %}
+            <form method="post" action="/devices/{{ device_id }}/calendar/links">
+                <div class="group form-group">
+                    <div class="field">
+                        <label class="field-label" for="link-url">{{ self.t("calendar.links.url") }}</label>
+                        <input type="url" id="link-url" name="url" value="{{ link.url }}" maxlength="2100" placeholder="webcal://…" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if link.error.is_some() %} aria-invalid="true" aria-describedby="link-url-error" autofocus{% endif %}>
+                        {% if let Some(why) = link.error %}<p class="field-error" id="link-url-error" role="alert" data-flash="link-refused">{{ why }}</p>{% endif %}
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="link-name">{{ self.t("calendar.links.name_optional") }}</label>
+                        <input type="text" id="link-name" name="name" value="{{ link.name }}" maxlength="60" autocomplete="off">
+                    </div>
+                </div>
+                <p class="group-footer">{{ self.t("calendar.add.link_footer") }}</p>
+                <button type="submit" class="button-wide">{{ self.t("common.add") }}</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <div class="caldav-only" data-add="caldav">
+            {% if accounts_full %}
+            <p class="group-footer" data-caldav-form="full">{{ self.t("calendar.caldav.error.too_many") }}</p>
+            {% else %}
+            <form method="post" action="/devices/{{ device_id }}/calendar/caldav">
+                <div class="group form-group">
+                    <div class="field">
+                        <label class="field-label" for="caldav-server">{{ self.t("calendar.caldav.server") }}</label>
+                        <input type="text" id="caldav-server" name="server" value="{{ account.server }}" maxlength="500" placeholder="caldav.icloud.com" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if account.error_field == "server" %} aria-invalid="true" aria-describedby="caldav-server-error" autofocus{% endif %}>
+                        {% if account.error_field == "server" %}{% if let Some(why) = account.error %}<p class="field-error" id="caldav-server-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}{% endif %}
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="caldav-username">{{ self.t("calendar.caldav.username") }}</label>
+                        <input type="text" id="caldav-username" name="username" value="{{ account.username }}" maxlength="200" placeholder="{{ self.t("calendar.add.username_placeholder") }}" autocomplete="username" autocapitalize="none" spellcheck="false"{% if account.error_field == "username" %} aria-invalid="true" aria-describedby="caldav-username-error" autofocus{% endif %}>
+                        {% if account.error_field == "username" %}{% if let Some(why) = account.error %}<p class="field-error" id="caldav-username-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}{% endif %}
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="caldav-password">{{ self.t("calendar.caldav.password") }}</label>
+                        <input type="password" id="caldav-password" name="password" maxlength="500" autocomplete="new-password" autocapitalize="none" spellcheck="false" required{% if account.error_field == "password" %} aria-invalid="true" aria-describedby="caldav-password-error" autofocus{% endif %}>
+                        {% if account.error_field == "password" %}{% if let Some(why) = account.error %}<p class="field-error" id="caldav-password-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}{% endif %}
+                    </div>
+                </div>
+                <p class="group-footer">{{ self.t("calendar.add.caldav_footer") }}</p>
+                <button type="submit" class="button-wide">{{ self.t("calendar.add.caldav_submit") }}</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</main>
+</body>
+</html>

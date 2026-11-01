@@ -923,39 +923,51 @@ pub fn build_admin_router(
             "/devices/{id}/calendar/rules/{rule}/delete",
             post(handlers::calendar::delete_rule),
         )
-        // Design 72: the phone's calendar links.
+        // Design 72: the calendars the server fetches - links and CalDAV accounts (the family's), each with its own
+        // page (the look of 2026-11-01), and Add Calendar.
+        .route(
+            "/devices/{id}/calendar/add",
+            get(handlers::calendar_sources::show_add),
+        )
         .route(
             "/devices/{id}/calendar/links",
-            post(handlers::calendar::add_link),
+            post(handlers::calendar_sources::add_link),
+        )
+        .route(
+            "/devices/{id}/calendar/links/{uid}",
+            get(handlers::calendar_sources::show_link),
         )
         .route(
             "/devices/{id}/calendar/links/{uid}/name",
-            post(handlers::calendar::rename_link),
+            post(handlers::calendar_sources::rename_link),
         )
         .route(
             "/devices/{id}/calendar/links/{uid}/fetch",
-            post(handlers::calendar::fetch_link),
+            post(handlers::calendar_sources::fetch_link),
         )
         .route(
             "/devices/{id}/calendar/links/{uid}/remove",
-            post(handlers::calendar::remove_link),
+            post(handlers::calendar_sources::remove_link),
         )
-        // Design 72 step 2: CalDAV accounts (the family's) and each phone's ticked calendars.
         .route(
             "/devices/{id}/calendar/caldav",
-            post(handlers::calendar::test_caldav),
+            post(handlers::calendar_sources::test_caldav),
+        )
+        .route(
+            "/devices/{id}/calendar/caldav/{account}",
+            get(handlers::calendar_sources::show_caldav),
         )
         .route(
             "/devices/{id}/calendar/caldav/{account}/test",
-            post(handlers::calendar::test_caldav_again),
+            post(handlers::calendar_sources::test_caldav_again),
         )
         .route(
             "/devices/{id}/calendar/caldav/{account}/calendars",
-            post(handlers::calendar::save_caldav_calendars),
+            post(handlers::calendar_sources::save_caldav_calendars),
         )
         .route(
             "/devices/{id}/calendar/caldav/{account}/remove",
-            post(handlers::calendar::remove_caldav),
+            post(handlers::calendar_sources::remove_caldav),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(

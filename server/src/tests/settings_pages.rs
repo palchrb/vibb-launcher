@@ -104,6 +104,15 @@ fn leaves_the_page(action: &str) -> bool {
         path.as_slice(),
         // A title rule's delete lands on Device › Calendar's #rules (design 69).
         ["devices", d, "calendar", "rules", n, "delete"] if number(d) && number(n)
+    ) || matches!(
+        path.as_slice(),
+        // Add Calendar's two forms go to the new link's or account's page; a link's Remove and Remove Account to
+        // Device › Calendar's #sources (the look of 2026-11-01).
+        ["devices", d, "calendar", "links" | "caldav"]
+            | ["devices", d, "calendar", "links", _, "remove"] if number(d)
+    ) || matches!(
+        path.as_slice(),
+        ["devices", d, "calendar", "caldav", n, "remove"] if number(d) && number(n)
     )
 }
 

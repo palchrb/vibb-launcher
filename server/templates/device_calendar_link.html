@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device_id }}/calendar#sources"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
+    <h1 class="page-title">{{ name }}</h1>
+
+    {#- A calendar link's page (design 72, the look of 2026-11-01): the name saves on change and returns to #name, Fetch
+        now to #fetch; Remove goes back to the Calendar page's #sources. The link itself is sealed on the server and never
+        shown again - only its host. -#}
+    <section id="name" aria-label="{{ self.t("calendar.links.name") }}">
+        <div class="group">
+            <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ uid }}/name#name" class="cell">
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.links.name") }}</span>
+                    <input type="text" class="row-input row-input-end" name="name" value="{{ name }}" maxlength="60" autocomplete="off" data-autosave>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            <div class="row"><span class="row-label">{{ self.t("calendar.links.url") }}</span><span class="row-value" data-link-host>{{ host }}</span></div>
+        </div>
+    </section>
+
+    <section id="fetch" aria-labelledby="fetch-title">
+        <h2 class="group-header" id="fetch-title">{{ self.t("calendar.link.fetching") }}</h2>
+        {% if let Some(key) = notice %}<p class="flash" role="status" data-flash="fetch-wait">{{ self.t(key) }}</p>{% endif %}
+        <div class="group">
+            {% if let Some(line) = failing %}<p class="row row-sub tone-orange" data-link-failing>{{ line }}</p>{% endif %}
+            {% if let Some(when) = last_fetched %}
+            <div class="row"><span class="row-label">{{ self.t("calendar.link.last_fetched") }}</span><span class="row-value" data-value="last-fetched">{{ when }}</span></div>
+            <div class="row"><span class="row-label">{{ self.t("calendar.link.events") }}</span><span class="row-value" data-value="events">{{ events }}</span></div>
+            {% endif %}
+            {% if let Some(when) = next %}
+            <div class="row"><span class="row-label">{{ self.t("calendar.link.next") }}</span><span class="row-value" data-value="next">{{ when }}</span></div>
+            {% endif %}
+            {% for line in notes %}<p class="row row-sub" data-link-note>{{ line }}</p>{% endfor %}
+            <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ uid }}/fetch#fetch" class="cell">
+                <button type="submit" class="row row-button">{{ self.t("calendar.links.fetch_now") }}</button>
+            </form>
+        </div>
+        <p class="group-footer">{{ self.t("calendar.link.footer") }}</p>
+    </section>
+
+    <section id="remove" aria-label="{{ self.t("calendar.links.remove") }}">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row row-button row-danger">{{ self.t("calendar.links.remove") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ uid }}/remove" class="confirm-body">
+                    <p>{{ self.t("calendar.links.remove_confirm") }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("calendar.links.remove") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+        </div>
+    </section>
+</main>
+</body>
+</html>

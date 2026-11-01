@@ -178,9 +178,8 @@ async fn test_lists_the_calendars_and_where_the_password_goes() {
     let account = account_id(&app).await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/calendar#caldav-{account}").as_str())
+        Some(format!("/devices/{id}/calendar/caldav/{account}").as_str())
     );
-    app.assert_lands(&res, &cookie).await;
     // One hop at a time: each host gets the password only after it asked for it, and no request is followed by
     // the client itself.
     let asked = requests_since(&app, 0);
@@ -240,18 +239,26 @@ async fn test_lists_the_calendars_and_where_the_password_goes() {
             .any(|w| w == PASSWORD.as_bytes())
     );
 
+    // The Calendar page: a row to the account's page; the account's page: who, where, its calendars to switch on.
     let page = app
         .get_page(&format!("/devices/{id}/calendar"), &cookie)
         .await
         .text();
     assert!(!page.contains(PASSWORD));
-    let at = page.find(&format!("data-caldav=\"{account}\"")).unwrap();
-    let cell = &page[at..at + page[at..].find("</details>").unwrap()];
+    let row = super::settings_pages::part(&page, &format!("data-caldav=\"{account}\""), "</a>");
+    assert!(row.contains("tile-indigo") && row.contains(USER), "{row}");
+    assert!(row.contains("dav.example.net · 0 of 2 calendars"), "{row}");
+    assert!(page.contains(&format!("href=\"/devices/{id}/calendar/caldav/{account}\"")));
+    let cell = app
+        .get_page(&format!("/devices/{id}/calendar/caldav/{account}"), &cookie)
+        .await
+        .text();
+    assert!(!cell.contains(PASSWORD));
     assert!(
-        cell.contains(USER) && cell.contains(">dav.example.net<"),
+        cell.contains(USER) && cell.contains("data-value=\"server\">dav.example.net<"),
         "{cell}"
     );
-    assert!(cell.contains("Signed in"), "{cell}");
+    assert!(cell.contains("Signed In"), "{cell}");
     assert!(cell.contains("The password goes only to: dav.example.net, p07-dav.example.net"));
     // The calendars with events: "Påminnelser" (tasks only) and the inbox are not offered.
     assert!(
@@ -266,11 +273,14 @@ async fn test_lists_the_calendars_and_where_the_password_goes() {
         "no address in the form"
     );
     let nb = app
-        .get_page(&format!("/devices/{id}/calendar?lang=nb"), &cookie)
+        .get_page(
+            &format!("/devices/{id}/calendar/caldav/{account}?lang=nb"),
+            &cookie,
+        )
         .await
         .text();
     assert!(nb.contains("Passordet sendes bare til: dav.example.net, p07-dav.example.net"));
-    assert!(nb.contains("Logget inn"));
+    assert!(nb.contains("Logget inn") && nb.contains("På denne telefonen"));
 }
 
 #[tokio::test]
@@ -288,8 +298,9 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{anna}/calendar#caldav-{account}").as_str())
+        Some(format!("/devices/{anna}/calendar/caldav/{account}#calendars").as_str())
     );
+    app.assert_lands(&res, &cookie).await;
     assert_eq!(nudges.try_recv().unwrap(), anna);
     // Fetched before the answer: the ctag, then the report - the password only to the confirmed hosts.
     let asked = requests_since(&app, before);
@@ -344,13 +355,31 @@ async fn a_ticked_calendar_reaches_the_phone_and_an_unchanged_ctag_asks_no_more(
             .unwrap()
             .is_empty()
     );
-    // The link rows say what it is; the settings log names the route and ids only.
+    // The account's row counts it, its page says the fetch; the settings log names the route and ids only.
     let page = app
         .get_page(&format!("/devices/{anna}/calendar"), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("CalDAV · {USER} · p07-dav.example.net")));
-    assert!(page.contains("Fetched") && page.contains("2 events"));
+    assert!(
+        page.contains("dav.example.net · 1 of 2 calendars"),
+        "{page}"
+    );
+    let account_page = app
+        .get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}"),
+            &cookie,
+        )
+        .await
+        .text();
+    let home = super::settings_pages::part(
+        &account_page,
+        &format!("data-caldav-calendar=\"{}\"", caldav::calendar_id(HOME)),
+        "</label>",
+    );
+    assert!(
+        home.contains("Fetched") && home.contains("2 events") && home.contains(" checked"),
+        "{home}"
+    );
     let details: Vec<String> = sqlx::query_scalar(
         "SELECT COALESCE(detail, '') FROM security_events WHERE event_type = 'settings_saved'",
     )
@@ -481,9 +510,12 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         assert!(matches!(outcome, Outcome::Failed(ref e) if e.code == "login_refused"));
     }
     assert_eq!(app.fetch.count(), before + 1);
-    // Every row says so at once, and the account.
+    // Every calendar says so at once, and the account - its row and its page's alarm.
     let page = app
-        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}"),
+            &cookie,
+        )
         .await
         .text();
     assert_eq!(
@@ -491,7 +523,14 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
             .count(),
         2
     );
-    assert!(page.contains("data-caldav-failing>The password was refused - nothing is fetched"));
+    assert!(page.contains(
+        "data-caldav-failing><div class=\"attention-text\">The password was refused - nothing is fetched"
+    ));
+    let list = app
+        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(list.contains("data-caldav-failing>The password was refused - test again<"));
 
     // Test again at once: too soon (the last Test was moments ago), nothing asked.
     let again = format!("/devices/{anna}/calendar/caldav/{account}/test");
@@ -500,8 +539,9 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{anna}/calendar?notice=caldav_wait#caldav-{account}").as_str())
+        Some(format!("/devices/{anna}/calendar/caldav/{account}?notice=caldav_wait#test").as_str())
     );
+    app.assert_lands(&res, &cookie).await;
     assert_eq!(app.fetch.count(), before + 1);
     let wait = app.get_page(res.location().unwrap(), &cookie).await.text();
     assert!(wait.contains("Tested a moment ago - wait a few seconds."));
@@ -561,11 +601,17 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         .await
         .unwrap();
     assert_eq!(outcome, Outcome::Unchanged, "the same set, fetched again");
-    let page = app
-        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
-        .await
-        .text();
-    assert!(!page.contains("data-caldav-failing"));
+    for page in [
+        format!("/devices/{anna}/calendar"),
+        format!("/devices/{anna}/calendar/caldav/{account}"),
+    ] {
+        assert!(
+            !app.get_page(&page, &cookie)
+                .await
+                .text()
+                .contains("data-caldav-failing")
+        );
+    }
     // A mistyped new password is refused and never kept: the account stays signed in with the working one (code QA
     // L5).
     sqlx::query("UPDATE caldav_accounts SET tested_at = ?")
@@ -573,13 +619,23 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         .execute(&app.db)
         .await
         .unwrap();
-    app.request_form(
-        Method::POST,
-        &again,
-        Some(&cookie),
-        &[("password", "mistyped")],
-    )
-    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &again,
+            Some(&cookie),
+            &[("password", "mistyped")],
+        )
+        .await;
+    // Back at Test Again, which says the new one was refused.
+    assert_eq!(
+        res.location(),
+        Some(
+            format!("/devices/{anna}/calendar/caldav/{account}?notice=caldav_tested#test").as_str()
+        )
+    );
+    let tested = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(tested.contains("data-flash=\"caldav-test\">Last test: The password was refused."));
     let (state, error): (String, Option<String>) =
         sqlx::query_as("SELECT state, test_error FROM caldav_accounts")
             .fetch_one(&app.db)
@@ -632,7 +688,10 @@ async fn another_host_stops_the_account_before_any_request_to_it() {
     );
     assert_eq!(account_state(&app).await, "host_changed");
     let page = app
-        .get_page(&format!("/devices/{anna}/calendar?lang=nb"), &cookie)
+        .get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}?lang=nb"),
+            &cookie,
+        )
         .await
         .text();
     assert!(
@@ -683,7 +742,10 @@ async fn another_host_stops_the_account_before_any_request_to_it() {
     assert_eq!(app.fetch.count(), before);
     assert_eq!(account_state(&app).await, "ok");
     let page = app
-        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}"),
+            &cookie,
+        )
         .await
         .text();
     assert!(page.contains("data-link-failing>The account no longer lists this calendar"));
@@ -691,6 +753,34 @@ async fn another_host_stops_the_account_before_any_request_to_it() {
     assert!(
         !page.contains("p09-dav"),
         "the hosts line: only the hosts that asked"
+    );
+    // The Calendar page's row says one can't be fetched; the account's page removes it, back to its calendars.
+    let list = app
+        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(
+        list.contains("data-caldav-failing>dav.example.net · 1 calendar can&#39;t be fetched<"),
+        "{list}"
+    );
+    let remove = format!("/devices/{anna}/calendar/links/{}/remove", home_uid());
+    assert!(page.contains(&format!("formaction=\"{remove}\"")));
+    let res = app
+        .request_form(Method::POST, &remove, Some(&cookie), &[])
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{anna}/calendar/caldav/{account}#calendars").as_str())
+    );
+    app.assert_lands(&res, &cookie).await;
+    assert!(
+        !app.get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}"),
+            &cookie
+        )
+        .await
+        .text()
+        .contains("data-caldav-gone")
     );
 }
 
@@ -745,10 +835,7 @@ async fn the_servers_own_addresses_never_reach_the_lan() {
         .unwrap();
     let res = test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-    let page = app
-        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
-        .await
-        .text();
+    let page = app.get_page(res.location().unwrap(), &cookie).await.text();
     assert!(page.contains(">Hjem<") && !page.contains("Ruteren"));
     assert!(page.contains("The password goes only to: dav.example.net, p07-dav.example.net<"));
     assert!(
@@ -810,8 +897,15 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
         let res = test_form(&app, &cookie, id, server, password).await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{server}");
         let page = res.text();
-        assert!(page.contains(why), "{server}: {page}");
-        assert!(page.contains("data-flash=\"caldav-refused\""));
+        // Add Calendar again with the CalDAV account chosen, the reason under its field.
+        assert!(page.contains("id=\"kind-caldav\" name=\"kind\" value=\"caldav\" checked"));
+        let at = page
+            .find("data-flash=\"caldav-refused\"")
+            .expect("the reason");
+        assert!(
+            page[at..].split("</p>").next().unwrap().contains(why),
+            "{server}: {page}"
+        );
         assert!(
             page.contains(&format!("value=\"{USER}\"")),
             "the form as typed"
@@ -871,9 +965,7 @@ async fn a_refused_test_renders_the_form_as_typed_and_never_the_password() {
     )
     .await
     .text();
-    assert!(
-        page.contains("data-caldav-form=\"off\"") && !page.contains("data-caldav-form=\"add\"")
-    );
+    assert!(page.contains("data-sources=\"off\"") && !page.contains("data-sources=\"add\""));
 }
 
 /// Nextcloud: the address typed with its path, the principal and the home set on the same host, a calendar named
@@ -959,7 +1051,7 @@ async fn removing_the_account_takes_its_calendars_off_every_phone() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{ola}/calendar#caldav").as_str())
+        Some(format!("/devices/{ola}/calendar#sources").as_str())
     );
     let mut nudged = vec![nudges.try_recv().unwrap(), nudges.try_recv().unwrap()];
     nudged.sort();
