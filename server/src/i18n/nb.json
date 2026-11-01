@@ -289,6 +289,11 @@
   "apps.on_home": "På Hjem",
   "apps.on_home_sub": "Av: appen er fortsatt tillatt og kjører, men barnet ser den ikke på Hjem eller i applisten, unntatt i en pause - for en synkapp som ICSx5 eller DAVx5.",
   "apps.not_on_home": "ikke på Hjem",
+  "apps.sync.repo_signature": "Repoets signatur stemmer ikke",
+  "apps.sync.repo_key": "Repoets signeringsnøkkel er endret",
+  "apps.sync.index_signer": "Nøkkelen er ikke den repoet oppgir",
+  "apps.sync.repo_rollback": "Repoet sendte en eldre indeks",
+  "apps.sync.older_version": "Repoet tilbyr en eldre versjon",
 
   "error.csrf": "Avvist: dette skjemaet ble sendt fra et annet nettsted.",
 
