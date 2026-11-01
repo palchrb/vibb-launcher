@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,13 +8,13 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <div class="title-bar">
-        <a class="title-action title-add" href="/apps/tracked/new" aria-label="Add app"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
+        <a class="title-action title-add" href="/apps/tracked/new" aria-label="{{ self.t("apps.list.add_aria") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
         {% include "partials/bell.html" %}
     </div>
-    <h1 class="page-title">Apps</h1>
+    <h1 class="page-title">{{ self.t("nav.apps") }}</h1>
 
     {% if !phones.is_empty() %}
-    <h2 class="group-header">On phones</h2>
+    <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
     <div class="group group-avatars group-small" data-group="phones">
         {% for p in phones %}
         <a class="row" href="{{ p.href }}" id="phone-{{ p.id }}" data-phone="{{ p.id }}">
@@ -27,9 +27,9 @@
     </div>
     {% endif %}
 
-    <h2 class="group-header">Catalog</h2>
+    <h2 class="group-header">{{ self.t("apps.list.catalog") }}</h2>
     {% if apps.is_empty() %}
-    <p class="empty-state">No apps yet.</p>
+    <p class="empty-state">{{ self.t("apps.list.empty") }}</p>
     {% else %}
     <div class="group group-avatars group-small" data-group="catalog">
         {% for a in apps %}
@@ -49,13 +49,13 @@
         </a>
         {% endfor %}
     </div>
-    <p class="group-footer">Apps here are kept up to date on every phone that has them.</p>
+    <p class="group-footer">{{ self.t("apps.list.footer") }}</p>
     {% endif %}
 
     <div class="group">
         <a class="row row-button" href="/apps/tracked/new" data-row="add-app">
             <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span class="row-label">Add App</span>
+            <span class="row-label">{{ self.t("apps.add.title") }}</span>
         </a>
     </div>
 </main>

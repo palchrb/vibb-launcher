@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,55 +7,55 @@
 {% let tab = "apps" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Apps</a>
+    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.apps") }}</a>
     <h1 class="page-title">{{ app.name }}</h1>
 
     <div class="group" id="check">
         <div class="row" data-row="version">
-            <span class="row-label">Version</span>
-            <span class="row-value">{% if let Some(v) = version %}{{ v }}{% else %}No release yet{% endif %}</span>
+            <span class="row-label">{{ self.t("apps.app.version") }}</span>
+            <span class="row-value">{% if let Some(v) = version %}{{ v }}{% else %}{{ self.t("device.apps.no_release") }}{% endif %}</span>
         </div>
         {% if let Some(checked) = last_checked %}
         <div class="row" data-row="last-checked">
-            <span class="row-label">{% if app.source_type == "manual" %}Last upload{% else %}Last checked{% endif %}</span>
+            <span class="row-label">{% if app.source_type == "manual" %}{{ self.t("apps.app.last_upload") }}{% else %}{{ self.t("apps.app.last_checked") }}{% endif %}</span>
             <span class="row-value" title="{{ checked.exact }}">{{ checked.text }}</span>
         </div>
         {% endif %}
         {% if let Some(since) = sync_running %}
         <div class="row" data-sync="running">
-            <span class="row-label">Checking now…<span class="row-sub" title="{{ since.exact }}">Started {{ since.text }}. Reload to see the result.</span></span>
+            <span class="row-label">{{ self.t("apps.app.checking") }}<span class="row-sub" title="{{ since.exact }}">{{ self.tp("apps.app.checking_since", [("when", since.text.as_str())]) }}</span></span>
         </div>
         {% else if let Some(failed) = sync_failure %}
         <details class="info cell" data-sync="failed">
-            <summary class="row"><span class="row-label"><span class="text-alarm">{{ failed.title }}</span>{% if let Some(when) = failed.when %}<span class="row-sub" title="{{ when.exact }}">Last check, {{ when.text }}</span>{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More about the failed check"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <summary class="row"><span class="row-label"><span class="text-alarm">{{ failed.title }}</span>{% if let Some(when) = failed.when %}<span class="row-sub" title="{{ when.exact }}">{{ self.tp("apps.app.last_check", [("when", when.text.as_str())]) }}</span>{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.app.failed_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
             <div class="info-panel"><p>{{ failed.detail }}</p>{% if let Some(when) = failed.when %}<p>{{ when.exact }}</p>{% endif %}</div>
         </details>
         {% endif %}
         {% if app.source_type != "manual" %}
         <form method="post" action="/apps/tracked/{{ app.id }}/check#check" class="cell">
-            <button type="submit" class="row row-button">Check Now</button>
+            <button type="submit" class="row row-button">{{ self.t("apps.app.check_now") }}</button>
         </form>
         {% endif %}
     </div>
     {% if app.is_launcher %}
-    <p class="group-footer">Vibb One itself: on every phone, and it can't be removed.</p>
+    <p class="group-footer">{{ self.t("apps.app.launcher_footer") }}</p>
     {% endif %}
 
-    <h2 class="group-header">Show on phones as</h2>
+    <h2 class="group-header">{{ self.t("apps.app.display_header") }}</h2>
     <div class="group group-display">
         {% include "partials/app_display_form.html" %}
     </div>
-    <p class="group-footer">{% if app.package_name.is_empty() %}Applies once a release says which app it is.{% else %}Phones use this unless one has its own.{% endif %}</p>
-    <script src="/static/app-display.js?v=3" defer></script>
+    <p class="group-footer">{% if app.package_name.is_empty() %}{{ self.t("apps.app.display_no_package") }}{% else %}{{ self.t("apps.app.display_footer") }}{% endif %}</p>
+    <script src="/static/app-display.js?v=4" defer></script>
 
-    <h2 class="group-header">On phones</h2>
+    <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
     {#- The group is always rendered with its id: Install Now's answers land on `#phone-{id}` or,
         for a phone without a row, here (design 37 §2.1). -#}
     {% if phones.is_empty() %}
-    <div class="group" id="phones">{% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}<p class="row row-note" data-row="no-phones">No phone has it yet.</p></div>
-    <p class="group-footer">Turn it on in a phone's apps to install it.</p>
+    <div class="group" id="phones">{% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}<p class="row row-note" data-row="no-phones">{{ self.t("apps.app.no_phones") }}</p></div>
+    <p class="group-footer">{{ self.t("apps.app.no_phones_footer") }}</p>
     {% else %}
-    <div class="group group-avatars group-small" data-group="phones" id="phones"{% if install_polling %} data-install-poll="/apps/tracked/{{ app.id }}/install-now.json"{% endif %}>
+    <div class="group group-avatars group-small" data-group="phones" id="phones"{% if install_polling %} data-install-poll="/apps/tracked/{{ app.id }}/install-now.json?lang={{ lang.code() }}"{% endif %}>
         {% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}
         {% for p in phones %}
         {% if let Some(i) = p.install %}
@@ -64,16 +64,16 @@
             <span class="row-label"><a class="phone-link" href="{{ p.href }}">{{ p.name }}</a><span class="row-sub" data-install-sub>{{ i.sub }}</span></span>
             {% if let Some(v) = i.value %}<span class="row-value row-value-keep">{{ v }}</span>{% endif %}
             {% if i.install %}
-            <form method="post" action="/apps/tracked/{{ app.id }}/install-now/{{ p.id }}#phone-{{ p.id }}" class="row-form"><button type="submit" class="button-small">Install Now</button></form>
+            <form method="post" action="/apps/tracked/{{ app.id }}/install-now/{{ p.id }}#phone-{{ p.id }}" class="row-form"><button type="submit" class="button-small">{{ self.t("apps.install.button") }}</button></form>
             {% else if let Some(command) = i.cancel_id %}
-            <form method="post" action="/apps/tracked/{{ app.id }}/install-now/{{ p.id }}/cancel/{{ command }}#phone-{{ p.id }}" class="row-form"><button type="submit" class="button-small button-secondary">Cancel</button></form>
+            <form method="post" action="/apps/tracked/{{ app.id }}/install-now/{{ p.id }}/cancel/{{ command }}#phone-{{ p.id }}" class="row-form"><button type="submit" class="button-small button-secondary">{{ self.t("common.cancel") }}</button></form>
             {% endif %}
         </div>
         {% if let Some((text, _)) = i.flash %}<p class="row row-note" data-install-flash="{{ p.id }}">{{ text }}</p>{% endif %}
         {% if let Some(a) = i.answer %}
         <details class="info cell" data-install-answer="{{ p.id }}">
-            <summary class="row"><span class="row-label row-label-quiet">{{ a.label }} · <span title="{{ a.asked_exact }}">{{ a.asked }}</span> · <span class="tone-{{ a.tone }}">{{ a.word }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="What the phone said"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel">{% if let Some(detail) = a.detail %}<p{% if let Some(raw) = a.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</p>{% else %}<p>No words from the phone.</p>{% endif %}</div>
+            <summary class="row"><span class="row-label row-label-quiet">{{ a.label }} · <span title="{{ a.asked_exact }}">{{ a.asked }}</span> · <span class="tone-{{ a.tone }}">{{ a.word }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.install.answer_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel">{% if let Some(detail) = a.detail %}<p{% if let Some(raw) = a.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</p>{% else %}<p>{{ self.t("apps.install.no_words") }}</p>{% endif %}</div>
         </details>
         {% endif %}
         {% else %}
@@ -86,169 +86,169 @@
         {% endfor %}
     </div>
     {% if app.is_launcher %}
-    <div class="group-footer" data-install-about>Install Now installs the newest release found by Check Now right away, also on mobile data. It waits only for a call. <details class="info"><summary aria-label="About Install Now"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For about a minute while Vibb One restarts, the phone shows its own home screen and calls aren't filtered. Update fence (the phone's Advanced) hides that home screen.</p></div></details></div>
+    <div class="group-footer" data-install-about>{{ self.t("apps.install.about") }} <details class="info"><summary aria-label="{{ self.t("apps.install.about_aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.install.about_info") }}</p></div></details></div>
     {% if install_polling %}<script src="/static/install-now.js?v=2" defer></script>{% endif %}
     {% endif %}
     {% endif %}
 
     <details class="section" id="source"{% if source_open %} open{% endif %}>
-        <summary class="row section-toggle"><span class="row-label">Source &amp; Signing</span><span class="row-value">{{ source_label }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+        <summary class="row section-toggle"><span class="row-label">{{ self.t("apps.app.source_signing") }}</span><span class="row-value">{{ source_label }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 
-        <h2 class="group-header">Release</h2>
+        <h2 class="group-header">{{ self.t("apps.app.release") }}</h2>
         <div class="group" id="release">
             {% if app.source_type == "github" %}
             <a class="row" href="https://github.com/{{ app.github_repo }}" data-row="source">
-                <span class="row-label">GitHub</span>
+                <span class="row-label">{{ self.t("apps.source.github") }}</span>
                 <span class="row-value">{{ app.github_repo }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% else if let Some(source) = fdroid_source %}
             {% if let Some(href) = fdroid_page %}
             <a class="row" href="{{ href }}" data-row="source">
-                <span class="row-label">Source<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span>
+                <span class="row-label">{{ self.t("apps.field.source") }}<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span>
                 <span class="row-value">{{ source }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% else %}
-            <div class="row" data-row="source"><span class="row-label">Source<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span><span class="row-value">{{ source }}</span></div>
+            <div class="row" data-row="source"><span class="row-label">{{ self.t("apps.field.source") }}<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span><span class="row-value">{{ source }}</span></div>
             {% endif %}
             {% else %}
-            <div class="row" data-row="source"><span class="row-label">Source</span><span class="row-value">Uploaded by you</span></div>
+            <div class="row" data-row="source"><span class="row-label">{{ self.t("apps.field.source") }}</span><span class="row-value">{{ self.t("apps.app.uploaded_by_you") }}</span></div>
             {% endif %}
             <div class="row" data-row="release">
-                <span class="row-label">Release</span>
-                <span class="row-value">{% if let Some(tag) = app.latest_release_tag %}{{ tag }}{% else %}None yet{% endif %}</span>
+                <span class="row-label">{{ self.t("apps.app.release") }}</span>
+                <span class="row-value">{% if let Some(tag) = app.latest_release_tag %}{{ tag }}{% else %}{{ self.t("apps.app.none_yet") }}{% endif %}</span>
             </div>
             {% if let Some(file) = app.asset_label() %}
-            <div class="row" data-row="file"><span class="row-label">File</span><span class="row-value">{{ file }}</span></div>
+            <div class="row" data-row="file"><span class="row-label">{{ self.t("apps.app.file") }}</span><span class="row-value">{{ file }}</span></div>
             {% endif %}
             <details class="info cell" data-row="package">
-                <summary class="row"><span class="row-label">Package</span><span class="row-value">{% if app.package_name.is_empty() %}Not known yet{% else %}{{ app.package_name }}{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About the package"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Read from the first release; a release of another package is refused.</p></div>
+                <summary class="row"><span class="row-label">{{ self.t("apps.field.package") }}</span><span class="row-value">{% if app.package_name.is_empty() %}{{ self.t("apps.app.package_unknown") }}{% else %}{{ app.package_name }}{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.field.package_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("apps.app.package_info") }}</p></div>
             </details>
             {% if app.package_name.is_empty() && !package_candidates.is_empty() %}
-            <p class="row row-note">The release didn't say which app it is. Vibb One installed these on a phone that has it - pick the one that is this app.</p>
+            <p class="row row-note">{{ self.t("apps.app.candidates") }}</p>
             {% for candidate in package_candidates %}
             <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package#release" class="cell">
                 <input type="hidden" name="package" value="{{ candidate }}">
-                <div class="row"><span class="row-label">{{ candidate }}</span><button type="submit" class="button-small">Use This</button></div>
+                <div class="row"><span class="row-label">{{ candidate }}</span><button type="submit" class="button-small">{{ self.t("apps.app.use_this") }}</button></div>
             </form>
             {% endfor %}
             {% endif %}
             {% if let Some(flash) = package_note %}
-            {% let flash_at = "package" %}{% let flash_class = "" %}{% let flash_about = "More about the refused package" %}
+            {% let flash_at = "package" %}{% let flash_class = "" %}{% let flash_about = self.t("apps.app.package_refused_about") %}
             {% include "partials/flash_note.html" %}
             {% endif %}
             <details class="info cell" data-row="signer">
-                <summary class="row"><span class="row-label">Signing key</span><span class="row-value">{% if let Some(short) = signer_short %}{{ short }}{% else %}From the next release{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About the signing key"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">{% if let Some(signer) = app.signer_sha256 %}<p>SHA-256: <code class="key">{{ signer }}</code></p>{% endif %}<p>Pinned from the first release: a release signed with another key is refused.</p></div>
+                <summary class="row"><span class="row-label">{{ self.t("apps.app.signer") }}</span><span class="row-value">{% if let Some(short) = signer_short %}{{ short }}{% else %}{{ self.t("apps.app.signer_next") }}{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.app.signer_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">{% if let Some(signer) = app.signer_sha256 %}<p>{{ self.t("apps.app.sha256") }}: <code class="key">{{ signer }}</code></p>{% endif %}<p>{{ self.t("apps.app.signer_info") }}</p></div>
             </details>
             {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
             <details class="confirm cell" id="forget">
-                <summary class="row">Forget Package and Key…</summary>
+                <summary class="row">{{ self.t("apps.app.forget_summary") }}</summary>
                 <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name#release" class="confirm-body">
-                    <p>Forget them? The next release is then trusted as it comes, whatever app or key it has.</p>
-                    <button type="submit" class="button-destructive">Forget Package and Key</button>
+                    <p>{{ self.t("apps.app.forget_confirm") }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("apps.app.forget") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
         </div>
         {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
-        <p class="group-footer">Forget them only for a wrong app, or a developer who changed keys.</p>
+        <p class="group-footer">{{ self.t("apps.app.forget_footer") }}</p>
         {% endif %}
 
-        <h2 class="group-header">Details</h2>
+        <h2 class="group-header">{{ self.t("apps.app.details") }}</h2>
         <form method="post" action="/apps/tracked/{{ app.id }}#details" class="group form-group" id="details">
             <input type="hidden" name="source_type" value="{{ app.source_type }}">
             {% if details.error_field == "source_type" %}{% if let Some(e) = details.error %}<p class="field-error" id="source_type-error" data-error="source_type">{{ e }}</p>{% endif %}{% endif %}
             <div class="field">
-                <label class="field-label" for="name">Name</label>
+                <label class="field-label" for="name">{{ self.t("apps.field.name") }}</label>
                 <input type="text" id="name" name="name" value="{{ details.name }}" required>
             </div>
             {% if app.source_type == "github" %}
             <div class="field">
-                <label class="field-label" for="github_repo">GitHub repo</label>
-                <input type="text" id="github_repo" name="github_repo" value="{{ details.github_repo }}" placeholder="owner/repo, or its link">
+                <label class="field-label" for="github_repo">{{ self.t("apps.field.github_repo") }}</label>
+                <input type="text" id="github_repo" name="github_repo" value="{{ details.github_repo }}" placeholder="{{ self.t("apps.field.github_repo_example") }}">
             </div>
             <div class="field">
-                <label class="field-label" for="asset_pattern">File name contains</label>
-                <details class="info field-info"><summary aria-label="About the file name filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$). Blank: the first .apk.</p></div></details>
-                <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Any .apk"{% if details.error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
+                <label class="field-label" for="asset_pattern">{{ self.t("apps.field.filter") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("apps.field.filter_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.app.filter_info") }}</p></div></details>
+                <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="{{ self.t("apps.field.filter_any") }}"{% if details.error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
                 {% if details.error_field == "asset_pattern" %}{% if let Some(e) = details.error %}<p class="field-error" id="asset_pattern-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             <div class="field">
-                <label class="field-label" for="release_tag_prefix">Tag starts with</label>
-                <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a repo with several apps: launcher-v or music-v in this project's repo. Blank: any release but server-v and music-v.</p></div></details>
-                <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ details.release_tag_prefix }}" placeholder="e.g. launcher-v"{% if details.error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
+                <label class="field-label" for="release_tag_prefix">{{ self.t("apps.field.tag_prefix") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("apps.field.tag_prefix_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.field.tag_prefix_info") }}</p></div></details>
+                <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ details.release_tag_prefix }}" placeholder="{{ self.t("apps.field.tag_prefix_example") }}"{% if details.error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
                 {% if details.error_field == "release_tag_prefix" %}{% if let Some(e) = details.error %}<p class="field-error" id="release_tag_prefix-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             {% endif %}
             {% if app.source_type == "fdroid" %}
             <div class="field">
-                <label class="field-label" for="fdroid_package">Package</label>
-                <input type="text" id="fdroid_package" name="fdroid_package" value="{{ details.fdroid_package }}" placeholder="e.g. ws.xsoh.etar" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
+                <label class="field-label" for="fdroid_package">{{ self.t("apps.field.package") }}</label>
+                <input type="text" id="fdroid_package" name="fdroid_package" value="{{ details.fdroid_package }}" placeholder="{{ self.t("apps.field.package_example") }}" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
                 {% if details.error_field == "fdroid_package" %}{% if let Some(e) = details.error %}<p class="field-error" id="fdroid_package-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             <div class="field">
-                <label class="field-label" for="fdroid_repo">Repo</label>
-                <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ details.fdroid_repo }}" placeholder="https://f-droid.org/repo" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
+                <label class="field-label" for="fdroid_repo">{{ self.t("apps.field.repo") }}</label>
+                <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ details.fdroid_repo }}" placeholder="{{ crate::fdroid::DEFAULT_REPO }}" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
                 {% if details.error_field == "fdroid_repo" %}{% if let Some(e) = details.error %}<p class="field-error" id="fdroid_repo-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             {% endif %}
-            <button type="submit" class="button-wide">Save</button>
+            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
 
-        <h2 class="group-header">Updates</h2>
+        <h2 class="group-header">{{ self.t("apps.app.updates") }}</h2>
         <div class="group" id="updates">
             {% if app.source_type == "github" %}
             <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">Include pre-releases<span class="row-sub">For a repo that publishes only pre-releases</span></span>
+                    <span class="row-label">{{ self.t("apps.field.prereleases") }}<span class="row-sub">{{ self.t("apps.app.prereleases_sub") }}</span></span>
                     <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if app.include_prereleases %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+                <noscript><div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div></noscript>
             </form>
             {% endif %}
             <form method="post" action="/apps/tracked/{{ app.id }}/enabled#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">Enabled</span>
+                    <span class="row-label">{{ self.t("apps.app.enabled") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="enabled" value="on"{% if app.enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+                <noscript><div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div></noscript>
             </form>
             {#- Vibb One updates itself from its GitHub releases: an F-Droid app is never the launcher. -#}
             {% if app.source_type != "fdroid" %}
             <form method="post" action="/apps/tracked/{{ app.id }}/is-launcher#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">This is the launcher app</span>
+                    <span class="row-label">{{ self.t("apps.app.is_launcher") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="is_launcher" value="on"{% if app.is_launcher %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+                <noscript><div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div></noscript>
             </form>
             {% endif %}
             <details class="info cell">
-                <summary class="row"><span class="row-label row-label-quiet">About these switches</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About Enabled and the launcher app"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Off: phones get nothing new. Mark exactly one app as the launcher: Vibb One itself, on every phone.</p></div>
+                <summary class="row"><span class="row-label row-label-quiet">{{ self.t("apps.app.switches_about") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.app.switches_aria") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("apps.app.switches_info") }}</p></div>
             </details>
         </div>
 
         {% if app.source_type == "manual" %}
-        <h2 class="group-header">Upload a new version</h2>
+        <h2 class="group-header">{{ self.t("apps.app.upload_header") }}</h2>
         <form method="post" action="/apps/tracked/{{ app.id }}/upload#upload" enctype="multipart/form-data" class="group form-group" id="upload">
             <div class="field">
-                <label class="field-label" for="release_label">Version</label>
-                <input type="text" id="release_label" name="release_label" placeholder="e.g. 1.2.0" required>
+                <label class="field-label" for="release_label">{{ self.t("apps.app.version") }}</label>
+                <input type="text" id="release_label" name="release_label" placeholder="{{ self.t("apps.app.version_example") }}" required>
             </div>
             <div class="field">
-                <label class="field-label" for="apk">APK file</label>
+                <label class="field-label" for="apk">{{ self.t("apps.app.apk_file") }}</label>
                 <input type="file" id="apk" name="apk" accept=".apk" required>
             </div>
             {% if let Some(flash) = upload_note %}
-            {% let flash_at = "upload" %}{% let flash_class = "form-flash" %}{% let flash_about = "More about the refused upload" %}
+            {% let flash_at = "upload" %}{% let flash_class = "form-flash" %}{% let flash_about = self.t("apps.app.upload_refused_about") %}
             {% include "partials/flash_note.html" %}
             {% endif %}
-            <button type="submit" class="button-wide">Upload</button>
+            <button type="submit" class="button-wide">{{ self.t("apps.app.upload") }}</button>
         </form>
         {% endif %}
     </details>
@@ -256,10 +256,10 @@
     {% if !app.is_launcher %}
     <div class="group">
         <details class="confirm cell" id="remove">
-            <summary class="row">Remove App…</summary>
+            <summary class="row">{{ self.t("apps.app.remove_summary") }}</summary>
             <form method="post" action="/apps/tracked/{{ app.id }}/delete" class="confirm-body">
-                <p>Remove {{ app.name }} from the catalog? Phones that have it keep it, without updates.</p>
-                <button type="submit" class="button-destructive">Remove App</button>
+                <p>{{ self.tp("apps.app.remove_confirm", [("name", app.name.as_str())]) }}</p>
+                <button type="submit" class="button-destructive">{{ self.t("apps.app.remove") }}</button>
                 {% include "partials/confirm_cancel.html" %}
             </form>
         </details>

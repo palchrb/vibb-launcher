@@ -10,6 +10,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 
 use crate::app_icons::{COLORS, ICONS};
+use crate::i18n::{Lang, t, t_params};
 
 /// A label is at most this many characters (Unicode scalar values) - Home shows about 10.
 pub const MAX_LABEL_CHARS: usize = 20;
@@ -79,23 +80,27 @@ impl DisplayValues {
         self.icon.as_deref() == Some(OWN)
     }
 
-    /// "Chat, with the chat icon on rose" - for the pages.
-    pub fn describe(&self) -> String {
+    /// "Chat, with the chat icon on rose" - for the pages, in the reader's language.
+    pub fn describe(&self, lang: Lang) -> String {
         let icon = match self.icon.as_deref() {
-            None => "the Vibb-style icon".to_string(),
-            Some(OWN) => "the app's own logo".to_string(),
-            Some(icon) => {
-                let on = if self.color == AUTO {
-                    "the app's tone".to_string()
-                } else {
-                    color_label(&self.color).to_lowercase()
-                };
-                format!("the {} icon on {on}", icon.replace('_', " "))
-            }
+            None => t(lang, "apps.display.describe.vibb").to_string(),
+            Some(OWN) => t(lang, "apps.display.describe.own").to_string(),
+            Some(icon) => t_params(
+                lang,
+                "apps.display.describe.glyph",
+                &[
+                    ("icon", &icon_label(lang, icon)),
+                    ("colour", &t(lang, color_label(&self.color)).to_lowercase()),
+                ],
+            ),
         };
         match &self.label {
-            Some(label) => format!("{label}, with {icon}"),
-            None => format!("its own name, with {icon}"),
+            Some(label) => t_params(
+                lang,
+                "apps.display.describe.named",
+                &[("name", label), ("icon", &icon)],
+            ),
+            None => t_params(lang, "apps.display.describe.unnamed", &[("icon", &icon)]),
         }
     }
 }
@@ -116,17 +121,48 @@ pub fn icon_known(key: &str) -> bool {
     ICONS.iter().any(|(k, _)| *k == key)
 }
 
-/// What the PWA calls a colour key (design 34 P1, QA M3): design 14's keys stay (stored rows stay
-/// valid), their tiles are the launcher's tones and the names follow the tiles.
+/// The catalog key of what the PWA calls a colour key (design 34 P1, QA M3): design 14's keys stay
+/// (stored rows stay valid), their tiles are the launcher's tones and the names follow the tiles.
 pub fn color_label(key: &str) -> &'static str {
     match key {
-        "peach" => "Rose",
-        "plum" => "Plum",
-        "sky" => "Blue",
-        "sunset" => "Indigo",
-        "night" => "Teal",
-        "grey" => "Slate",
-        _ => "The app's tone",
+        "peach" => "apps.display.color.peach",
+        "plum" => "apps.display.color.plum",
+        "sky" => "apps.display.color.sky",
+        "sunset" => "apps.display.color.sunset",
+        "night" => "apps.display.color.night",
+        "grey" => "apps.display.color.grey",
+        _ => "apps.display.color.auto",
+    }
+}
+
+/// The catalog key of an icon's name ("photo camera"); `None` for a key the catalog doesn't word.
+fn icon_word(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "chat" => "apps.display.icon.chat",
+        "mail" => "apps.display.icon.mail",
+        "photo_camera" => "apps.display.icon.photo_camera",
+        "photo_library" => "apps.display.icon.photo_library",
+        "music_note" => "apps.display.icon.music_note",
+        "play_circle" => "apps.display.icon.play_circle",
+        "sports_esports" => "apps.display.icon.sports_esports",
+        "menu_book" => "apps.display.icon.menu_book",
+        "school" => "apps.display.icon.school",
+        "calculate" => "apps.display.icon.calculate",
+        "map" => "apps.display.icon.map",
+        "calendar_month" => "apps.display.icon.calendar_month",
+        "alarm" => "apps.display.icon.alarm",
+        "public" => "apps.display.icon.public",
+        "partly_cloudy_day" => "apps.display.icon.partly_cloudy_day",
+        "star" => "apps.display.icon.star",
+        _ => return None,
+    })
+}
+
+/// An icon's name in `lang`: its key with spaces when the catalog doesn't word it (`every_icon_is_worded`).
+fn icon_label(lang: Lang, key: &str) -> String {
+    match icon_word(key) {
+        Some(word) => t(lang, word).to_string(),
+        None => key.replace('_', " "),
     }
 }
 
@@ -143,11 +179,12 @@ pub fn tile_of(color: &str) -> &'static str {
         .unwrap_or(AUTO_PREVIEW)
 }
 
-/// A refused field: which one (`label`, `icon`, `color`) and why.
+/// A refused field: which one (`label`, `icon`, `color`) and why (a catalog key; `{max}` is
+/// [MAX_LABEL_CHARS], `{rows}` [MAX_ROWS_PER_DEVICE]).
 #[derive(Debug, PartialEq, Eq)]
 pub struct FieldError {
     pub field: &'static str,
-    pub message: String,
+    pub key: &'static str,
 }
 
 /// The form's values, checked: the label trimmed (empty = none), 1-20 characters, no control
@@ -160,14 +197,12 @@ pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, F
     } else if label.chars().count() > MAX_LABEL_CHARS {
         return Err(FieldError {
             field: "label",
-            message: format!(
-                "At most {MAX_LABEL_CHARS} characters - the home screen shows about 10."
-            ),
+            key: "apps.display.error.label_long",
         });
     } else if label.chars().any(char::is_control) {
         return Err(FieldError {
             field: "label",
-            message: "The name can't contain control characters.".to_string(),
+            key: "apps.display.error.label_control",
         });
     } else {
         Some(label.to_string())
@@ -179,7 +214,7 @@ pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, F
         _ => {
             return Err(FieldError {
                 field: "icon",
-                message: "Pick one of the icons, Vibb style or the app's own logo.".to_string(),
+                key: "apps.display.error.icon",
             });
         }
     };
@@ -190,7 +225,7 @@ pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, F
         _ => {
             return Err(FieldError {
                 field: "color",
-                message: "Pick one of the colours.".to_string(),
+                key: "apps.display.error.color",
             });
         }
     };
@@ -310,7 +345,7 @@ pub struct IconChoice {
     pub checked: bool,
 }
 
-/// One colour radio (`tile` is what the phone draws, `label` its name - [color_label]).
+/// One colour radio (`tile` is what the phone draws, `label` its name - [color_label], worded).
 pub struct ColorChoice {
     pub key: &'static str,
     pub tile: &'static str,
@@ -332,7 +367,7 @@ pub struct AppDisplayForm {
     /// Empty = Vibb style, [OWN] = the app's own logo, else a glyph key.
     pub icon: String,
     pub color: String,
-    /// What the phone shows now, for the summary line.
+    /// What the phone shows now, for the summary line (in the page's language).
     pub summary: String,
     /// Device page: the catalog default, if there is one.
     pub catalog_default: Option<String>,
@@ -341,7 +376,7 @@ pub struct AppDisplayForm {
     pub own_row: bool,
     /// Something is stored for this form's level (the catalog default on the catalog page).
     pub has_choice: bool,
-    /// The refused field ("label", "icon", "color") and why.
+    /// The refused field ("label", "icon", "color") and why, in the page's language.
     pub error_field: String,
     pub error: Option<String>,
     /// Shown open (after a refused save).
@@ -368,7 +403,10 @@ pub struct Entered {
 }
 
 impl AppDisplayForm {
+    /// The form in `lang`: the summary, the icons' and colours' names and a refusal are worded
+    /// here, the rest by the template.
     pub fn new(
+        lang: Lang,
         action: String,
         anchor: String,
         package_name: String,
@@ -393,7 +431,7 @@ impl AppDisplayForm {
             .iter()
             .map(|(key, _)| IconChoice {
                 key,
-                label: key.replace('_', " "),
+                label: icon_label(lang, key),
                 checked: icon == *key,
             })
             .collect();
@@ -402,7 +440,7 @@ impl AppDisplayForm {
             .map(|(key, _, tile)| ColorChoice {
                 key,
                 tile,
-                label: color_label(key),
+                label: t(lang, color_label(key)),
                 checked: color == *key,
             })
             .collect();
@@ -410,7 +448,7 @@ impl AppDisplayForm {
             action,
             anchor,
             package_name,
-            summary: current.describe(),
+            summary: current.describe(lang),
             app_label,
             preview_tile: if icon.trim().is_empty() || icon.trim() == OWN {
                 OWN_PREVIEW.to_string()
@@ -426,7 +464,16 @@ impl AppDisplayForm {
             error_field: entered
                 .map(|e| e.error.field.to_string())
                 .unwrap_or_default(),
-            error: entered.map(|e| e.error.message.clone()),
+            error: entered.map(|e| {
+                t_params(
+                    lang,
+                    e.error.key,
+                    &[
+                        ("max", &MAX_LABEL_CHARS.to_string()),
+                        ("rows", &MAX_ROWS_PER_DEVICE.to_string()),
+                    ],
+                )
+            }),
             open: entered.is_some(),
             icons,
             colors,
@@ -470,26 +517,27 @@ impl AppDisplayForm {
         }
     }
 
-    /// What Reset does here: the catalog form clears its default, the device form deletes the
-    /// phone's row (it then follows the catalog default, else Vibb style). Empty without Reset.
+    /// What Reset does here, as a catalog key: the catalog form clears its default, the device
+    /// form deletes the phone's row (it then follows the catalog default, else Vibb style). Empty
+    /// without Reset.
     pub fn reset_hint(&self) -> &'static str {
         if !self.can_reset() {
             ""
         } else if self.package_name.is_empty() {
-            "Reset: no default - Vibb style unless a phone has its own choice."
+            "apps.display.reset_catalog"
         } else if self.catalog_default.is_some() {
-            "Reset: this phone follows the catalog default."
+            "apps.display.reset_follow"
         } else {
-            "Reset: back to Vibb style."
+            "apps.display.reset_vibb"
         }
     }
 
-    /// The preview tile's text without a glyph: "Vibb style" or "Its own logo".
+    /// The preview tile's text without a glyph, as a catalog key: "Vibb style" or "Its own logo".
     pub fn preview_text(&self) -> &'static str {
         if self.own_checked() {
-            "Its own logo"
+            "apps.display.preview_own"
         } else {
-            "Vibb style"
+            "apps.display.vibb_style"
         }
     }
 }
@@ -613,7 +661,8 @@ mod tests {
         )
         .unwrap();
         assert!(script.contains(OWN_PREVIEW) && script.contains(AUTO_PREVIEW));
-        assert!(script.contains("Its own logo") && script.contains("Vibb style"));
+        // The state's words come from the page (`data-w-own`, `data-w-vibb`).
+        assert!(script.contains("\"own\"") && script.contains("\"vibb\""));
     }
 
     #[test]
@@ -670,7 +719,7 @@ mod tests {
                 icon: Some("chat".into()),
                 color: "peach".into()
             }
-            .describe(),
+            .describe(Lang::En),
             "Chat, with the chat icon on rose"
         );
         assert_eq!(
@@ -679,11 +728,11 @@ mod tests {
                 icon: Some("chat".into()),
                 color: AUTO.into()
             }
-            .describe(),
+            .describe(Lang::En),
             "its own name, with the chat icon on the app's tone"
         );
         assert_eq!(
-            DisplayValues::empty().describe(),
+            DisplayValues::empty().describe(Lang::En),
             "its own name, with the Vibb-style icon"
         );
         assert_eq!(
@@ -692,7 +741,7 @@ mod tests {
                 icon: None,
                 color: AUTO.into()
             }
-            .describe(),
+            .describe(Lang::En),
             "Chat, with the Vibb-style icon"
         );
     }
@@ -718,8 +767,12 @@ mod tests {
         assert_eq!(stored.icon.as_deref(), Some(OWN));
         assert_eq!(stored.color, AUTO);
         assert!(!stored.is_empty());
-        assert_eq!(stored.describe(), "its own name, with the app's own logo");
-        assert_eq!(labelled.describe(), "Chat, with the app's own logo");
+        assert_eq!(
+            stored.describe(Lang::En),
+            "its own name, with the app's own logo"
+        );
+        assert_eq!(labelled.describe(Lang::En), "Chat, with the app's own logo");
+        assert_eq!(labelled.describe(Lang::Nb), "Chat, med appens egen logo");
         // Vibb style is the empty choice, not `own`.
         assert!(DisplayValues::empty().is_empty() && !DisplayValues::empty().is_own());
     }
@@ -752,6 +805,7 @@ mod tests {
     fn reset_is_offered_only_with_something_to_reset() {
         let form = |package: &str, current: DisplayValues| {
             AppDisplayForm::new(
+                Lang::En,
                 String::new(),
                 String::new(),
                 package.into(),
@@ -774,15 +828,35 @@ mod tests {
         assert!(!device.can_reset());
         device.own_row = true;
         assert!(device.can_reset());
-        assert_eq!(device.reset_hint(), "Reset: back to Vibb style.");
+        assert_eq!(
+            t(Lang::En, device.reset_hint()),
+            "Reset: back to Vibb style."
+        );
     }
 
     /// QA M3: design 14's colour keys stay, their names follow the tones.
     #[test]
     fn every_colour_has_a_tone_name() {
-        let names: Vec<&str> = COLORS.iter().map(|(key, _, _)| color_label(key)).collect();
+        let names: Vec<&str> = COLORS
+            .iter()
+            .map(|(key, _, _)| t(Lang::En, color_label(key)))
+            .collect();
         assert_eq!(names, ["Rose", "Plum", "Blue", "Indigo", "Teal", "Slate"]);
-        assert_eq!(color_label(AUTO), "The app's tone");
+        assert_eq!(t(Lang::En, color_label(AUTO)), "The app's tone");
+    }
+
+    /// Every icon of the table has its name in both catalogs: a new one in
+    /// `testdata/app_icons.json` needs its `apps.display.icon.<key>`.
+    #[test]
+    fn every_icon_is_worded() {
+        for (key, _) in ICONS {
+            let word = icon_word(key).unwrap_or_else(|| panic!("{key} has no word"));
+            assert_eq!(word, format!("apps.display.icon.{key}"));
+            for lang in [Lang::En, Lang::Nb] {
+                assert!(crate::i18n::has(lang, word), "{key}");
+            }
+            assert_eq!(icon_label(Lang::En, key), key.replace('_', " "));
+        }
     }
 
     /// The form's three states: the preview text, the glyph, the radio.
@@ -790,6 +864,7 @@ mod tests {
     fn the_form_knows_the_three_states() {
         let form = |icon: &str| {
             AppDisplayForm::new(
+                Lang::En,
                 String::new(),
                 String::new(),
                 String::new(),
@@ -805,13 +880,13 @@ mod tests {
         let vibb = form("");
         assert_eq!(
             (vibb.preview_text(), vibb.glyph(), vibb.own_checked()),
-            ("Vibb style", None, false)
+            ("apps.display.vibb_style", None, false)
         );
         assert_eq!(vibb.preview_tile, OWN_PREVIEW);
         let own = form(OWN);
         assert_eq!(
             (own.preview_text(), own.glyph(), own.own_checked()),
-            ("Its own logo", None, true)
+            ("apps.display.preview_own", None, true)
         );
         assert_eq!(own.preview_tile, OWN_PREVIEW);
         assert!(own.icons.iter().all(|choice| !choice.checked));
