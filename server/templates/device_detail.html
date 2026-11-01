@@ -5,6 +5,7 @@
 </head>
 <body>
 {% import "partials/recent.html" as recent_group %}
+{% import "partials/status_line.html" as status_line %}
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
@@ -37,19 +38,12 @@
             {% if let Some(error) = avatar_error %}<p class="field-error avatar-error" id="avatar-error" role="alert">{{ error }}</p>{% endif %}
         </div>
         <h1 class="summary-name">{{ device.name }}</h1>
-        <p class="summary-state" data-status="{{ connection.css() }}"><span class="state-{{ connection.css() }}">{{ connection.word() }}</span>
-            {%- if let Some((seen, exact)) = seen %} · <span title="{{ exact }}" data-seen>seen {{ seen }}</span>{% endif %}
-            {%- if self.disconnected() %} · access removed{% endif %}
-            {%- if let Some(tail) = seen_tail %} · {{ tail }}{% endif %}</p>
-        {% if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>Connect again &rsaquo;</a>{% endif %}
-        {% if let Some(lock) = lock %}<span class="badge badge-lock summary-lock" data-lock>{{ lock }}</span>{% endif %}
-        {% if let Some(st) = screen_time %}
-        {% if let Some(percent) = st.percent() %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
-        <span class="summary-screen" data-screen-time>{{ st.text() }}</span>
-        {% endif %}
-        {% if let Some(battery) = battery %}<span class="summary-screen" data-battery>{{ battery }}</span>{% endif %}
-        {% if let Some(off) = power_off %}<span class="summary-screen" data-power-off>{{ off }}</span>{% endif %}
-        {% if let Some(line) = zone_now %}<span class="summary-screen" data-zone-now>{{ line }}</span>{% endif %}
+        {#- The lines under the name (the user's pick C, 2026-11-01, phone_status::header): the first fact that holds,
+            then the zone and the battery; a phone turned off or offline has the first alone. -#}
+        {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ connection.css() }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
+        {% endfor %}
+        {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>Connect again &rsaquo;</a>{% endif %}
+        {% if let Some(percent) = meter %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}

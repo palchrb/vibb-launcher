@@ -154,8 +154,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `calls::CallProblem` types the call report's warnings), a target (the sub-page that fixes it, or since step 10 a group of the summary: Restrictions
   paused → `#quick`, the foreign app → `#foreign-access`, blocked apps → `#blocked-apps`) and `at_last_report`. A phone not set up has none; an Offline or Disconnected phone's
   report-based rows are marked "At last report" and still count. The summary shows them in its Attention group; the Devices list shows their count as the badge - the same `items`, so they agree.
-- **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, "Online · seen 3 min ago" (or
-  the lock part while a rule locks it), the screen-time bar, the badge, Add Phone. The sign-in warnings are short
+- **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, one status line (since
+  2026-11-01, "Tidier status" below; was "Online · seen 3 min ago" or the lock part, the screen time and the battery
+  each on a line), the screen-time bar, the badge, Add Phone. The sign-in warnings are short
   orange rows at the top (`auth::live_warning_row`/`login_warning_row`); the full sentences stay on Account. Tests:
   `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`, `src/tests/devices_list.rs`,
   `src/tests/attention.rs` (a row per fact).
@@ -453,11 +454,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## The phone's summary (design 31 step 10, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **`/devices/{id}`** (`devices::view_device` → `render_device`, `device_detail.html`; a sub-page header "‹ Devices",
-  `partials/tab_bar.html` alone), top to bottom: the **header** (the large avatar and dot, the name, "Online · seen 3
-  min ago" with the exact time in `title`, "· changes may be delayed" while Away, "· changes wait until it's back"
-  while Offline, "Disconnected · access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet",
-  "Not set up"; the lock badge only while a rule locks - `devices::badge_and_screen`, the Devices list's rules, so no
-  end unless the phone reports Phone Setup's zone -; today's bar); **Attention** (`attention::items`, the list's count); the
+  `partials/tab_bar.html` alone), top to bottom: the **header** (the large avatar and dot, the name, and since
+  2026-11-01 one or two status lines - "Tidier status" below; "Disconnected · access removed" keeps "Connect again ›"
+  to Advanced › Connection; the lock only while a rule locks - `devices::badge_and_screen`, the Devices list's rules,
+  so no end unless the phone reports Phone Setup's zone -; today's bar while a line says the screen time); **Attention** (`attention::items`, the list's count); the
   **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: while the last report has the restrictions paused, one plain line first,
   `.quick-note` - "The pause ends by itself, or tap Lock again to end it now.", an older launcher's own words; no red
   since 2026-10-26: the Attention row "Restrictions paused ›" that lands here is the one red alert -; +15 min, +30 min, +1 h,
@@ -1194,8 +1194,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   clamps it into the range; a typed coordinate redraws on `change`; "Use Phone's Location" moves the centre. Every
   change writes both coordinates (6 decimals, a longitude wrapped into -180..180), so Save posts what the map shows.
   Long-press isn't used (a tap is enough; iOS's long-press opens its own menu). `--map-zone` for the circle.
-- **The phone's summary**: the header line "At Home since 15:42" (`data-zone-now`, after the battery and "Off since"),
-  only while the phone is in the zone now (no other side pending, the newest fix fresh).
+- **The phone's summary**: "Home since 15:42" on the header's second line, before the battery (`data-zone-now`,
+  "Tidier status" below), only while the phone is in the zone now (no other side pending, the newest fix fresh).
 - **Notify Me About** gains "Zones: arrived and left" from `Kind::switch()`, once (`Kind::switches()`); no template
   change.
 - CSS under "Design 64" at the end of `style.css` (`?v=50`): `.zone-slider`, the two `[hidden]` rules; the token
@@ -1296,6 +1296,47 @@ man er inne på en device". Branch `pwa-fixes-b`.
   artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
   pages too. Desktop Safari has a real push implementation, so it says nothing about it.
 
+
+## Tidier status on Devices and the summary (the user's pick C, 2026-11-01, branch `status-tidy`)
+
+- **Why**: the row said "Online · seen for 7 min siden", "4 min today", "Battery 100 % · for 7 min siden" and the
+  header added "At Test since 24. okt. 22:19" - the ages repeated what the dot says. The user picked mockup C, the
+  minimal (artifact "Vibb phone status"), with "Slått av" told apart from "Frakoblet".
+- **The rule** (`src/phone_status.rs`, pure; `phone_status::tests`): the name, then on the Devices row ONE line, the
+  first that holds: (1) not set up / "Disconnected · access removed" / not seen yet; (2) **turned off** - design 38's
+  `phone_off` later than every `phone_on` and status report and past its push hold (`parent_events::offs_now` +
+  `off_since`, the rule the summary had): "Turned off 21:14 · battery was 3 %" (nb "Slått av 21:14 · batteriet var
+  3 %"); (3) **offline** (`streams::connection_state`): "Offline · last seen 13:05" (nb "Frakoblet · sist sett
+  13:05"), the exact time in `title`; (4) **a rule locks**: the lock's words (`LockBadge::words`: "Leggetid until
+  07:00 · calls off", nb "Leggetid til 07:00 · anrop av", "at last report (…)" as before) · the battery; (5) **low
+  battery** - `devices.battery_low_since` set (the phone's own `low`, design 35 §2.5) and the last report not
+  charging: "Low battery, 9 %" · today's screen time; (6) else today's screen time · the battery ("4 min today ·
+  100 %", "62 %, charging"), or the connection's word ("Online", "Away") when the phone said neither. No "seen N min
+  ago" and no battery age while the phone is online or away: the last contact is said only as "last seen" once it
+  is offline. Away (no stream, contact within 45 min) reads as online - its orange dot says it; the summary's
+  "changes may be delayed" / "changes wait until it's back" went with the ages.
+- **The header** (`phone_status::header`): line 1 the same lead, the screen time named ("4 min screen time today", nb
+  "4 min skjermtid i dag"); line 2 the zone the phone is in now ("Test since 22:19", `devices::zone_now`) · the
+  battery - the screen time instead when the lead is the battery; a phone turned off, offline or not reachable has
+  line 1 alone. The lock is orange text now (`tone-orange`), not the lock badge's pill.
+- **The dot** stays the connection's (green online, orange away, grey otherwise): orange for a low battery would
+  read as Away, so the low battery is said in the line, in orange.
+- **Times**: `Zone::since` - the clock alone today (never "24. okt." for today), "yesterday 21:40", the weekday within
+  the week ("Sat 22:19"), else "24 Oct 22:19". Screen time with `display_time::duration` ("1 h 12 min of 1 h 30 min
+  today"). Device › Time keeps `ScreenTime::text` and the badge's English `text_beside` until its slice.
+- **Words**: `devices.status.*` in both catalogs, the reader's language (the pages around them are still English
+  until S-i18n slice 3a); `events.phone_off.off_since*` went (the line is `devices.status.off`/`off_battery`).
+- **Markup**: `partials/status_line.html`'s `parts` macro - the parts with " · " between them, each `<span>` with its
+  tone class, its `data-` hook (`lock`, `battery`, `screen-time`, `power-off`, `seen`, `zone-now`) and `title`; the
+  battery part has a small CSS battery (`.bat`, filled to the level, `aria-hidden`) and a visually-hidden "Battery".
+  The row's line is `span.device-line[data-line]`, the header's `p.summary-state[data-line]`; the bar
+  (`devices::meter_of`) shows only while a line says the screen time. `tests::status_lines` reads the lines as a
+  reader sees them. Reads: the Devices list reads the power events once for every phone (`offs_now(db, None)`, a
+  failure logged and read as none off - the list reads leniently); the summary reads its own (`offs_now(db,
+  Some(id))`, a failure a 500 as before); everything else the pages already read.
+- Tests: `phone_status::tests`, `display_time::tests::since_says_the_clock_today_and_the_weekday_within_the_week`,
+  `src/tests/devices_list.rs`, `summary.rs`, `power.rs` (the row and the header "Turned off"), `notifications.rs`
+  (the low battery), `zones.rs`, `enrollment.rs`.
 
 ## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
 

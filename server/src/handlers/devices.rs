@@ -12,7 +12,8 @@ use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp
 use crate::security::{self, CurrentAdmin};
 
 /// One phone on the Devices list (design 31 §3.2): the avatar with the connection dot, the name,
-/// the status line, today's screen time and the Attention count.
+/// the one status line (the user's pick C, 2026-11-01, `phone_status::row`), the screen-time bar
+/// and the Attention count.
 struct DeviceListRow {
     id: i64,
     name: String,
@@ -22,15 +23,11 @@ struct DeviceListRow {
     avatar: &'static str,
     photo: Option<String>,
     connection: crate::streams::ConnectionState,
-    /// After the state word: "seen 3 min ago", "access removed".
-    detail: Option<String>,
-    /// The exact last contact, for the detail's `title`.
-    detail_title: Option<String>,
-    /// While a rule locks the phone: "Skole until 14:30".
-    lock: Option<String>,
-    screen_time: Option<crate::time_state::ScreenTime>,
-    /// "Battery 14 %, charging" from the last report (design 35 §2.5); `None` without one.
-    battery: Option<String>,
+    /// "4 min today · 100 %", "Offline · last seen 13:05", "Turned off 21:14 · battery was 3 %".
+    line: crate::phone_status::Line,
+    /// Today's screen-time bar (its fill), under the line while a limit is set and the line says
+    /// the screen time.
+    meter: Option<i64>,
     /// Attention rows on the phone's page (the red badge).
     attention: usize,
 }
@@ -76,10 +73,24 @@ pub async fn list_devices(
         .unwrap_or_default();
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
+    // Which phones are turned off (design 38 §3.4): one read for the whole list. The list reads
+    // leniently - a failed read is logged and says no phone is off.
+    let offs: std::collections::HashMap<i64, crate::parent_events::OffSince> =
+        match crate::parent_events::offs_now(&state.db, None).await {
+            Ok(rows) => rows
+                .iter()
+                .filter_map(|row| Some((row.0, crate::parent_events::off_since_of(row, now)?)))
+                .collect(),
+            Err(err) => {
+                tracing::error!(%err, "can't read the phones' power events");
+                Default::default()
+            }
+        };
 
     let mut rows = Vec::with_capacity(devices.len());
     for device in devices {
-        rows.push(list_row(&state, device, &zone, now).await);
+        let off = offs.get(&device.id);
+        rows.push(list_row(&state, device, off, &zone, now).await);
     }
 
     Html(
@@ -103,25 +114,16 @@ pub async fn list_devices(
 }
 
 /// A phone's row: one in-memory lookup for the connection, its last report, its rules when one
-/// is locking, and the Attention count (about 10 small reads, §3.8).
+/// is locking, and the Attention count (about 10 small reads, §3.8); `off` from the list's one
+/// read of the power events.
 async fn list_row(
     state: &AppState,
     device: Device,
+    off: Option<&crate::parent_events::OffSince>,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> DeviceListRow {
-    use crate::streams::ConnectionState;
     let connection = connection_of(state, &device, now);
-    let (detail, detail_title) = match connection {
-        ConnectionState::Disconnected => (Some("access removed".to_string()), None),
-        state => match state.last_contact() {
-            Some(at) => (
-                Some(format!("seen {}", zone.relative(at, now))),
-                Some(zone.exact(at)),
-            ),
-            None => (None, None),
-        },
-    };
     let facts = crate::attention::facts(state, &device, connection).await;
     let attention = crate::attention::items(device.id, &facts).len();
     let (lock, screen_time, battery) = if device.enrolled_at.is_some() {
@@ -137,30 +139,43 @@ async fn list_row(
     } else {
         (None, None, None)
     };
-    let lock = lock.map(|badge| match &detail {
-        Some(seen) => badge.text_beside(seen.trim_start_matches("seen ")),
-        None => badge.text(),
-    });
-    // Online with a lock: the lock says more than "seen just now" (the mockup's "Online · Skole
-    // until 14:30").
-    let (detail, detail_title) = match (&connection, &lock) {
-        (ConnectionState::Online { .. }, Some(_)) => (None, None),
-        _ => (detail, detail_title),
-    };
+    let line = crate::phone_status::row(
+        &crate::phone_status::Facts {
+            connection: &connection,
+            off,
+            lock: lock.as_ref(),
+            battery,
+            low_latched: device.battery_low_since.is_some(),
+            screen: screen_time.as_ref(),
+            zone_now: None,
+        },
+        zone,
+        now,
+    );
     DeviceListRow {
         initial: initial(&device.name),
         avatar: avatar_class(&device),
         photo: avatar_photo(&device),
+        meter: meter_of(screen_time.as_ref(), std::slice::from_ref(&line)),
         id: device.id,
         name: device.name,
         connection,
-        detail,
-        detail_title,
-        lock,
-        screen_time,
-        battery,
+        line,
         attention,
     }
+}
+
+/// The screen-time bar's fill, while a limit is set and one of the `lines` says the screen time
+/// (never a bar beside "Offline · last seen 13:05").
+pub(crate) fn meter_of(
+    screen: Option<&crate::time_state::ScreenTime>,
+    lines: &[crate::phone_status::Line],
+) -> Option<i64> {
+    let said = lines
+        .iter()
+        .flatten()
+        .any(|part| part.hook == Some("screen-time"));
+    screen.filter(|_| said).and_then(|s| s.percent())
 }
 
 /// A phone's avatar class beside `avatar` (also on the Apps tab): grey until it is set up, else
@@ -221,9 +236,9 @@ pub(crate) fn connection_inputs(
     }
 }
 
-/// The lock badge, today's screen time and the battery ("Battery 14 %", design 35 §2.5) from the
-/// phone's last report (design 31 §3.10, M4), for the Devices list: one small read, and the rules
-/// only while one locks the phone. A failed read is logged and shows none of them.
+/// The lock badge, today's screen time and the battery (design 35 §2.5) from the phone's last
+/// report (design 31 §3.10, M4), for the Devices list: one small read, and the rules only while one
+/// locks the phone. A failed read is logged and shows none of them.
 pub(crate) async fn time_glance(
     state: &AppState,
     device_id: i64,
@@ -234,7 +249,7 @@ pub(crate) async fn time_glance(
 ) -> (
     Option<crate::time_state::LockBadge>,
     Option<crate::time_state::ScreenTime>,
-    Option<String>,
+    Option<crate::phone_status::Battery>,
 ) {
     type Latest = (String, String, Option<String>, Option<i64>, Option<bool>);
     let latest: Option<Latest> = sqlx::query_as(
@@ -250,7 +265,7 @@ pub(crate) async fn time_glance(
     });
     let battery = latest
         .as_ref()
-        .and_then(|l| crate::parent_events::battery_line(l.3, l.4, &l.0, zone, now));
+        .and_then(|l| crate::phone_status::Battery::of(l.3, l.4));
     let Some((reported_at, report)) = latest
         .as_ref()
         .and_then(|(at, reason, json, ..)| time_report(at, reason, json.as_deref()))
@@ -757,8 +772,8 @@ struct DeviceDetailTemplate {
     lang: Lang,
     title: String,
     device: Device,
-    /// The header (design 31 §3.2 item 1): the avatar, the connection word and "seen 3 min ago"
-    /// with the exact time, what the state means for changes, the lock badge and today's bar.
+    /// The header (design 31 §3.2 item 1; the user's pick C, 2026-11-01): the avatar with the
+    /// connection's dot, the name and `status`.
     avatar: &'static str,
     initial: String,
     /// The phone's own picture (server round C): the header's avatar is its picker, and a refused
@@ -766,17 +781,12 @@ struct DeviceDetailTemplate {
     photo: Option<String>,
     avatar_error: Option<&'static str>,
     connection: crate::streams::ConnectionState,
-    seen: Option<(String, String)>,
-    /// "changes may be delayed" (Away), "changes wait until it's back" (Offline).
-    seen_tail: Option<&'static str>,
-    lock: Option<String>,
-    screen_time: Option<crate::time_state::ScreenTime>,
-    /// "Battery 14 %, charging" from the last report (design 35 §2.5).
-    battery: Option<String>,
-    /// "Off since 21:14 · battery was 3 %" between a shutdown and the next start (design 38 §3.4).
-    power_off: Option<String>,
-    /// "At Home since 15:42" while a zone says the phone is in it (design 64 §3.5).
-    zone_now: Option<String>,
+    /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
+    /// since 22:19 · 100 %"; "Turned off 21:14 · battery was 3 %" or "Offline · last seen 13:05"
+    /// alone.
+    status: Vec<crate::phone_status::Line>,
+    /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
+    meter: Option<i64>,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -1544,41 +1554,13 @@ async fn render_device(
                     .into_response();
             }
         };
-    // Design 38 §3.4: "Off since 21:14 · battery was 3 %" while the newest `phone_off` is later
-    // than the newest `phone_on` and than every status report (qa-38-code M1: a report after the
-    // shutdown proves the phone is on, whatever start never arrived - a re-enrollment, a boot count
-    // of -1, a dropped start). `happened_at` is RFC 3339 and `reported_at` SQLite's `datetime`
-    // text: compared through `datetime()`, never as raw strings. A minute's slack for the phone's
-    // clock and a report racing the shutdown (no start reports within a minute of its shutdown).
-    // The newest off: `(happened_at, created_at, title, summary, params)`.
-    type OffRow = (String, String, String, String, Option<String>);
-    let off: Result<Option<OffRow>, sqlx::Error> = sqlx::query_as(
-        "SELECT o.happened_at, o.created_at, o.title, o.summary, o.params FROM parent_events o \
-         WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
-             COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
-                       WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
-         AND datetime(o.happened_at, '+60 seconds') >= COALESCE((SELECT MAX(s.reported_at) \
-                       FROM device_status s \
-                       WHERE s.device_id = ?1), '') \
-         ORDER BY o.happened_at DESC, o.id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await;
-    let power_off = match off {
-        Ok(off) => off.and_then(|(at, created, title, summary, params)| {
-            let at = crate::display_time::parse_db_utc(&at)?;
-            let created = crate::display_time::parse_db_utc(&created)?;
-            crate::parent_events::off_since_line(
-                at,
-                created,
-                &title,
-                &summary,
-                params.as_deref(),
-                &zone,
-                now,
-            )
-        }),
+    // Design 38 §3.4: "Turned off 21:14 · battery was 3 %" while the newest `phone_off` is later
+    // than the newest `phone_on` and than every status report (`parent_events::offs_now`, the
+    // Devices list's read).
+    let power_off = match crate::parent_events::offs_now(&state.db, Some(id)).await {
+        Ok(offs) => offs
+            .first()
+            .and_then(|row| crate::parent_events::off_since_of(row, now)),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's power events");
             return (
@@ -1589,8 +1571,8 @@ async fn render_device(
         }
     };
 
-    // Design 64 §3.5: "At Home since 15:42" (two zones: "At Home · Garden since 15:42", the
-    // newest arrival's time).
+    // Design 64 §3.5: "Home since 15:42" (two zones: "Home · Garden since 15:42", the newest
+    // arrival's time).
     let zone_now = match async {
         let zones = crate::zones::list(&state.db, id).await?;
         let (newest, mode, interval) = crate::zones::freshness_inputs(&state.db, id).await?;
@@ -1598,7 +1580,7 @@ async fn render_device(
     }
     .await
     {
-        Ok((zones, fresh)) => zone_now_line(&zones, fresh, &zone, now),
+        Ok((zones, fresh)) => zone_now(&zones, fresh),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's zones");
             return (
@@ -1750,17 +1732,8 @@ async fn render_device(
         Ok(_) => ("Everyone's rules", false),
     };
 
-    // The header (§3.2 item 1, §3.10): "Online · seen 3 min ago", the lock only while a rule
-    // locks, today's bar only for today's report.
-    use crate::streams::ConnectionState;
-    let seen = connection
-        .last_contact()
-        .map(|at| (zone.relative(at, now), zone.exact(at)));
-    let seen_tail = match connection {
-        ConnectionState::Away { .. } => Some("changes may be delayed"),
-        ConnectionState::Offline { .. } => Some("changes wait until it's back"),
-        _ => None,
-    };
+    // The header (§3.2 item 1, §3.10; the user's pick C, 2026-11-01): the first fact that holds
+    // (`phone_status`), the lock only while a rule locks, today's bar only for today's report.
     let (lock, screen_time) = match latest
         .as_ref()
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
@@ -1775,14 +1748,28 @@ async fn render_device(
                 &zone,
                 now,
             );
-            let lock = badge.map(|badge| match &seen {
-                Some((seen, _)) => badge.text_beside(seen),
-                None => badge.text(),
-            });
-            (lock, screen)
+            (badge, screen)
         }
         _ => (None, None),
     };
+    let status = crate::phone_status::header(
+        &crate::phone_status::Facts {
+            connection: &connection,
+            off: power_off.as_ref().filter(|_| device.enrolled_at.is_some()),
+            lock: lock.as_ref(),
+            battery: latest.as_ref().and_then(|s| {
+                crate::phone_status::Battery::of(s.battery_level, s.battery_charging)
+            }),
+            low_latched: device.battery_low_since.is_some(),
+            screen: screen_time.as_ref(),
+            zone_now: zone_now
+                .as_ref()
+                .map(|(names, since)| (names.as_str(), *since)),
+        },
+        &zone,
+        now,
+    );
+    let meter = meter_of(screen_time.as_ref(), &status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
     let activity = match crate::handlers::activity::rows(
@@ -1823,21 +1810,8 @@ async fn render_device(
                 query.get("avatar").map(String::as_str),
             ),
             connection,
-            seen,
-            seen_tail,
-            lock,
-            screen_time,
-            battery: latest.as_ref().and_then(|s| {
-                crate::parent_events::battery_line(
-                    s.battery_level,
-                    s.battery_charging,
-                    &s.reported_at,
-                    &zone,
-                    now,
-                )
-            }),
-            power_off,
-            zone_now,
+            status,
+            meter,
             attention,
             pause_rules: time_rules
                 .as_deref()
@@ -2919,18 +2893,17 @@ pub async fn delete_device(
     Redirect::to("/devices")
 }
 
-/// The summary's zone line (design 64 §3.5): the zones the phone is in now ([Zone::here_now]:
-/// inside, nothing pending, the newest fix `fresh` - code QA Q-1, Q-2), "At Home since 15:42",
-/// with the latest `side_since` among them; `None` otherwise (a stale phone's summary says
-/// nothing; its Locate row says when it was last seen there).
+/// The summary's zones (design 64 §3.5): the zones the phone is in now ([Zone::here_now]: inside,
+/// nothing pending, the newest fix `fresh` - code QA Q-1, Q-2), their names ("Home · Garden") and
+/// the latest `side_since` among them, which the header words as "Home since 15:42"
+/// (`phone_status`); `None` otherwise (a stale phone's summary says nothing; its Locate row says
+/// when it was last seen there).
 ///
 /// [Zone::here_now]: crate::zones::Zone::here_now
-pub(crate) fn zone_now_line(
+pub(crate) fn zone_now(
     zones: &[crate::zones::Zone],
     fresh: bool,
-    zone: &crate::display_time::Zone,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Option<String> {
+) -> Option<(String, Option<chrono::DateTime<chrono::Utc>>)> {
     let here: Vec<&crate::zones::Zone> = zones.iter().filter(|z| z.here_now(fresh)).collect();
     if here.is_empty() {
         return None;
@@ -2945,10 +2918,7 @@ pub(crate) fn zone_now_line(
         .filter_map(|z| z.side_since.as_deref())
         .filter_map(crate::display_time::parse_db_utc)
         .max();
-    Some(match since {
-        Some(since) => format!("At {names} since {}", zone.at(since, now)),
-        None => format!("At {names}"),
-    })
+    Some((names, since))
 }
 
 #[cfg(test)]

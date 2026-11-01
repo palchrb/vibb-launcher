@@ -9,7 +9,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 
 use super::settings_pages::forms;
-use super::{Section, TestApp, assert_redirect, device_page};
+use super::{Section, TestApp, assert_redirect, device_page, status_lines};
 
 /// One group of the summary: `<section id="…">` to its end.
 fn group<'a>(html: &'a str, id: &str) -> &'a str {
@@ -41,8 +41,9 @@ async fn add_rule(app: &TestApp, name: &str) -> i64 {
     .unwrap()
 }
 
-/// §3.2 item 1, §3.10: the state word and "seen …", what it means for changes, Disconnected's
-/// link, "Not seen yet"; the name escaped; the sub-page header (no brand bar).
+/// §3.2 item 1, §3.10 (the user's pick C, 2026-11-01): "Not seen yet"; away and online say what
+/// the phone reported, never "seen …"; offline "last seen" alone; Disconnected's link; the name
+/// escaped; the sub-page header (no brand bar).
 #[tokio::test]
 async fn the_header_says_whether_the_phone_is_connected() {
     let app = TestApp::new().await;
@@ -65,25 +66,25 @@ async fn the_header_says_whether_the_phone_is_connected() {
         head.contains("<span class=\"state-offline\">Not seen yet</span></p>"),
         "{head}"
     );
+    assert_eq!(status_lines(head), ["Not seen yet"]);
     assert!(
         html.contains("<a class=\"nav-back\" href=\"/devices\">"),
         "{html}"
     );
     assert!(!html.contains("class=\"app-header\""), "{html}");
 
-    // A report, no stream: Away, and changes may be delayed.
-    app.post_status(&token, json!({})).await;
+    // A report, no stream: Away - the orange dot -, the battery under it.
+    app.post_status(
+        &token,
+        json!({ "battery": { "level": 100, "charging": false, "low": false } }),
+    )
+    .await;
     let html = page().await;
     let head = header(&html);
-    assert!(
-        head.contains("<span class=\"state-away\">Away</span> · <span title=\""),
-        "{head}"
-    );
-    assert!(
-        head.contains("seen just now</span> · changes may be delayed"),
-        "{head}"
-    );
-    // A stream open: Online, nothing about delays.
+    assert!(head.contains("avatar-dot dot-away"), "{head}");
+    assert_eq!(status_lines(head), ["Away", "100 %"]);
+    assert!(!head.contains("seen"), "{head}");
+    // A stream open: Online.
     let _stream = app.state.command_streams.open(id);
     let html = page().await;
     let head = header(&html);
@@ -91,9 +92,27 @@ async fn the_header_says_whether_the_phone_is_connected() {
         head.contains("<span class=\"state-online\">Online</span>"),
         "{head}"
     );
-    assert!(!head.contains("changes"), "{head}");
+    assert_eq!(status_lines(head), ["Online", "100 %"]);
+    let nb = app
+        .get_page(
+            &format!("{}?lang=nb", device_page(id, Section::Summary)),
+            &cookie,
+        )
+        .await
+        .text();
+    assert_eq!(status_lines(header(&nb)), ["På nett", "100 %"]);
     drop(_stream);
-    // Two hours of silence (nothing in memory, as after a restart): Offline, changes wait.
+    // Disconnected: one line and the way back.
+    sqlx::query("UPDATE devices SET token_hash = NULL WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = page().await;
+    let head = header(&html);
+    assert_eq!(status_lines(head), ["Disconnected · access removed"]);
+    assert!(head.contains("data-connect-again"), "{head}");
+    // Two hours of silence (nothing in memory, as after a restart): Offline, "last seen" alone.
     let (emil, _) = app.enrolled_device("Emil").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-2 hours') WHERE id = ?")
         .bind(emil)
@@ -105,18 +124,26 @@ async fn the_header_says_whether_the_phone_is_connected() {
         .await
         .text();
     let head = header(&html);
-    assert!(head.contains("Offline</span>"), "{head}");
-    // Two hours ago is "2 h ago" on the same local day, "yesterday HH:MM" right after local
-    // midnight (`display_time::relative`); the test runs at any hour.
-    assert!(
-        head.contains("seen 2 h ago</span> · changes wait until it&#39;s back")
-            || (head.contains("seen yesterday ")
-                && head.contains("</span> · changes wait until it&#39;s back")),
-        "{head}"
+    let seen: String = sqlx::query_scalar("SELECT last_seen_at FROM devices WHERE id = ?")
+        .bind(emil)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
+    let seen = crate::display_time::parse_db_utc(&seen).unwrap();
+    // Its clock time today, "yesterday HH:MM" right after local midnight (`Zone::since`); the
+    // test runs at any hour.
+    assert_eq!(
+        status_lines(head),
+        [format!(
+            "Offline · last seen {}",
+            zone.since(seen, chrono::Utc::now())
+        )]
     );
+    assert!(!head.contains("changes"), "{head}");
 }
 
-/// The lock badge only while a rule locks, the bar only with a limit and today's report.
+/// The lock only while a rule locks, the bar only with a limit and today's report on a line.
 #[tokio::test]
 async fn the_header_shows_the_lock_and_todays_screen_time() {
     let app = TestApp::new().await;
@@ -138,8 +165,12 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .text();
     let head = header(&html);
     assert!(!head.contains("data-lock"), "{head}");
+    assert_eq!(
+        status_lines(head),
+        ["42 min of 1 h 30 min screen time today"]
+    );
     assert!(
-        head.contains("<span class=\"summary-screen\" data-screen-time>42 of 90 min today</span>"),
+        head.contains("<span data-screen-time>42 min of 1 h 30 min screen time today</span>"),
         "{head}"
     );
     assert!(head.contains("<i style=\"width: 46%\"></i>"), "{head}");
@@ -155,6 +186,9 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .text();
     let head = header(&html);
     assert!(head.contains("data-lock>Leggetid</span>"), "{head}");
+    // The lock leads; the screen time and its bar wait on Device › Time.
+    assert_eq!(status_lines(head), ["Leggetid"]);
+    assert!(!head.contains("meter"), "{head}");
 }
 
 /// §3.2 item 3: the tiles, Pause a rule… only with rules that apply, Unlock for 2 h… behind its
@@ -432,6 +466,7 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
         .await
         .text();
     assert!(header(&html).contains("<span class=\"state-offline\">Not set up</span></p>"));
+    assert_eq!(status_lines(header(&html)), ["Not set up"]);
     let access = group(&html, "access");
     assert!(access.contains("Connect This Phone"), "{access}");
     assert!(

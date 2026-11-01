@@ -29,6 +29,7 @@
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 use crate::display_time::Zone;
+use crate::i18n::{Lang, t, t_params};
 use crate::streams::ConnectionState;
 use crate::time_rules::DayWindow;
 
@@ -108,24 +109,23 @@ impl TimeReport {
         matches!((self.used_minutes, self.budget_minutes), (Some(used), Some(budget)) if used >= budget)
     }
 
-    /// The badge's name: the rule's, else the kind of lock.
-    fn lock_name(&self) -> Option<String> {
+    /// The badge's name: the rule's, else the kind of lock - in English and as its catalog key
+    /// (the status lines', 2026-11-01).
+    fn lock_name(&self) -> Option<(String, Option<&'static str>)> {
         if !self.locking() {
             return None;
         }
         if let Some(name) = &self.active_rule_name {
-            return Some(name.clone());
+            return Some((name.clone(), None));
         }
-        Some(
-            match self.lock_reason.as_str() {
-                "SCREEN_TIME" => "Screen time used up",
-                "BEDTIME" => "Bedtime",
-                "SCHOOL" => "School",
-                "RULE" => "Time rule",
-                _ => "Locked",
-            }
-            .to_string(),
-        )
+        let (name, key) = match self.lock_reason.as_str() {
+            "SCREEN_TIME" => ("Screen time used up", "devices.status.lock.screen_time"),
+            "BEDTIME" => ("Bedtime", "devices.status.lock.bedtime"),
+            "SCHOOL" => ("School", "devices.status.lock.school"),
+            "RULE" => ("Time rule", "devices.status.lock.rule"),
+            _ => ("Locked", "devices.status.lock.locked"),
+        };
+        Some((name.to_string(), Some(key)))
     }
 }
 
@@ -148,6 +148,8 @@ pub fn rule_days(rules: &[crate::time_rules::TimeRuleRow]) -> Vec<(i64, Vec<Opti
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockBadge {
     pub name: String,
+    /// The name's catalog key when it is the kind of lock, not a rule's own name.
+    pub name_key: Option<&'static str>,
     /// "14:30" or "07:00 tomorrow", only when provably right.
     pub until: Option<String>,
     pub calls_off: bool,
@@ -182,6 +184,39 @@ impl LockBadge {
             _ => self.text(),
         }
     }
+
+    /// The status lines' words for the lock in `lang` (the user's pick C, 2026-11-01): "Leggetid
+    /// til 07:00 · samtaler av", "Skole · ved siste melding (i går 21:40)"; the time of the last
+    /// report left out when it is `contact`'s (the phone's last contact, worded the same way).
+    pub fn words(&self, lang: Lang, contact: Option<&str>) -> String {
+        let name = self
+            .name_key
+            .map(|key| t(lang, key).to_string())
+            .unwrap_or_else(|| self.name.clone());
+        let mut parts = vec![match &self.until {
+            Some(until) => t_params(
+                lang,
+                "devices.status.lock.until",
+                &[("name", &name), ("at", until)],
+            ),
+            None => name,
+        }];
+        if self.calls_off {
+            parts.push(t(lang, "devices.status.lock.calls_off").to_string());
+        }
+        match &self.at_last_report {
+            Some(when) if Some(when.as_str()) == contact => {
+                parts.push(t(lang, "devices.status.lock.at_last_report").to_string());
+            }
+            Some(when) => parts.push(t_params(
+                lang,
+                "devices.status.lock.at_last_report_when",
+                &[("when", when)],
+            )),
+            None => {}
+        }
+        parts.join(" · ")
+    }
 }
 
 /// Today's screen time.
@@ -203,6 +238,31 @@ impl ScreenTime {
                 (self.used * 100 / budget).clamp(0, 100)
             }
         })
+    }
+
+    /// The status lines' words in `lang` (the user's pick C, 2026-11-01): "4 min today", "1 h 12
+    /// min of 1 h 30 min today", "42 min on 13 Oct" in the fallback zone; `summary` names it
+    /// ("4 min screen time today", the summary's header).
+    pub fn words(&self, lang: Lang, summary: bool) -> String {
+        let used = crate::display_time::duration(lang, self.used);
+        let budget = self.budget.map(|b| crate::display_time::duration(lang, b));
+        let key = match (summary, &budget, &self.day) {
+            (false, None, None) => "devices.status.screen.today",
+            (false, Some(_), None) => "devices.status.screen.today_budget",
+            (false, None, Some(_)) => "devices.status.screen.on_day",
+            (false, Some(_), Some(_)) => "devices.status.screen.on_day_budget",
+            (true, None, None) => "devices.status.screen_summary.today",
+            (true, Some(_), None) => "devices.status.screen_summary.today_budget",
+            (true, None, Some(_)) => "devices.status.screen_summary.on_day",
+            (true, Some(_), Some(_)) => "devices.status.screen_summary.on_day_budget",
+        };
+        let budget = budget.unwrap_or_default();
+        let day = self.day.clone().unwrap_or_default();
+        t_params(
+            lang,
+            key,
+            &[("used", &used), ("budget", &budget), ("day", &day)],
+        )
     }
 
     /// "42 of 90 min today", "42 min today" without a limit, "42 of 90 min on 13 Oct" in the
@@ -269,7 +329,7 @@ pub fn lock_badge(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Option<LockBadge> {
-    let name = report.lock_name()?;
+    let (name, name_key) = report.lock_name()?;
     // A report from another day; one without a day (an older launcher) can't be judged by it.
     let mut stale = report.day.is_some_and(|day| !current_day(day, zone, now))
         || match ctx.connection {
@@ -289,11 +349,16 @@ pub fn lock_badge(
         } else if end.date() == today {
             until = Some(zone.clock_of(end));
         } else if Some(end.date()) == today.succ_opt() {
-            until = Some(format!("{} tomorrow", zone.clock_of(end)));
+            until = Some(t_params(
+                zone.lang(),
+                "time.tomorrow",
+                &[("clock", &zone.clock_of(end))],
+            ));
         }
     }
     Some(LockBadge {
         name,
+        name_key,
         until,
         calls_off: report.calls_blocked && ctx.calls_enforced,
         at_last_report: stale.then(|| zone.relative(ctx.reported_at, now)),

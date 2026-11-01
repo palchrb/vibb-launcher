@@ -81,8 +81,9 @@ at each fix, as below.
   Regularly, else 1 h; `zones::freshness_inputs`). Inside and nothing pending but stale: the row says "Last seen at
   Home 14:02" (the newest fix's time, `data-last-seen`), the summary nothing.
 - **Pages**: the Locate page's `#zones` and the zone's page (`handlers::zones`, `device_zone.html`, `static/zones.js`)
-  - see `pwa.md`, "Locate: zones (design 64 step 1)". The phone's summary header: "At Home since 15:42"
-  (`devices::zone_now_line`, `data-zone-now`: the zones the phone is in now, the latest `side_since`).
+  - see `pwa.md`, "Locate: zones (design 64 step 1)". The phone's summary header: "Home since 15:42" on its second
+  line, before the battery (`devices::zone_now`, worded by `phone_status`, `data-zone-now`: the zones the phone is in
+  now, the latest `side_since`; since 2026-11-01, `pwa.md`, "Tidier status").
 - **A zone's name**: 1-40 characters after trimming, unique per phone ignoring case, any visible character (letters,
   digits, spaces, punctuation, emoji); refused: control characters (`Cc`) and Unicode's format characters (`Cf`:
   zero-width spaces and joiners, bidi overrides, the soft hyphen, the BOM - `handlers::zones::is_format`), which would

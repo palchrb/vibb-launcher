@@ -444,7 +444,7 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
     )));
     // And the header says so, with "Connect again" there (L2).
     assert!(
-        summary.contains("Disconnected</span> · access removed"),
+        summary.contains(">Disconnected · access removed</span></p>"),
         "{summary}"
     );
     assert!(summary.contains(&format!(

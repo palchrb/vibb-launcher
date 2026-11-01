@@ -220,6 +220,28 @@ impl Zone {
         }
     }
 
+    /// Since when something holds, for the phone's status lines ("last seen 13:05", "Home since
+    /// 22:19", "Turned off 21:14"; the user's pick of 2026-11-01): its clock alone today - never
+    /// a date for today -, "yesterday 21:40", the weekday within the week ("Sat 22:19"), else
+    /// "24 Oct 22:19" ("24 Oct 2025 22:19"). A time ahead of `now` reads as [at].
+    pub fn since(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        match (today - day).num_days() {
+            0 => self.clock(t),
+            1 => self.with_clock("time.yesterday", t),
+            2..=6 => t_params(
+                self.lang,
+                "time.weekday_clock",
+                &[
+                    ("weekday", &self.weekday_name(day)),
+                    ("clock", &self.clock(t)),
+                ],
+            ),
+            _ if t > now => self.at(t, now),
+            _ => self.date_clock(t, now),
+        }
+    }
+
     /// [until] for a stored time (`datetime('now')` text, UTC); a text that doesn't parse is shown
     /// as stored, labelled "UTC".
     pub fn until_db(&self, stored: &str, now: DateTime<Utc>) -> String {
@@ -557,6 +579,34 @@ mod tests {
         let other_year = NaiveDate::from_ymd_opt(2025, 3, 5).unwrap();
         assert_eq!(oslo().date_of(other_year, today), "5 Mar 2025");
         assert_eq!(nb().date_of(other_year, today), "5. mars 2025");
+    }
+
+    /// The status lines' "since" (2026-11-01): the clock alone today, never a date for today.
+    #[test]
+    fn since_says_the_clock_today_and_the_weekday_within_the_week() {
+        // Sunday 1 Nov 2026, 13:00 in Oslo (CET).
+        let now = utc("2026-11-01 12:00:00");
+        for (at, en, nb_words) in [
+            ("2026-11-01 08:05:00", "09:05", "09:05"),
+            ("2026-10-31 20:40:00", "yesterday 21:40", "i går 21:40"),
+            ("2026-10-29 21:19:00", "Thu 22:19", "tor. 22:19"),
+            // Eight days back, still in summer time.
+            ("2026-10-24 20:19:00", "24 Oct 22:19", "24. okt. 22:19"),
+            (
+                "2025-12-30 07:00:00",
+                "30 Dec 2025 08:00",
+                "30. des. 2025 08:00",
+            ),
+        ] {
+            assert_eq!(oslo().since(utc(at), now), en, "{at}");
+            assert_eq!(nb().since(utc(at), now), nb_words, "{at}");
+        }
+        // Later today (a clock that moved back): its clock; another day ahead: [Zone::at].
+        assert_eq!(oslo().since(utc("2026-11-01 14:00:00"), now), "15:00");
+        assert_eq!(
+            oslo().since(utc("2026-11-03 14:00:00"), now),
+            oslo().at(utc("2026-11-03 14:00:00"), now)
+        );
     }
 
     #[test]

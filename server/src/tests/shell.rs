@@ -1277,7 +1277,7 @@ fn css_classes(css: &str) -> std::collections::HashSet<String> {
 /// allowlist holds the names that have no rule on purpose.
 #[test]
 fn every_class_a_template_uses_is_in_style_css() {
-    const NO_RULE: [(&str, &str); 12] = [
+    const NO_RULE: [(&str, &str); 11] = [
         (
             "attention-",
             "a dynamic prefix (attention-{{ level }}): the levels have the rules",
@@ -1313,10 +1313,6 @@ fn every_class_a_template_uses_is_in_style_css() {
         (
             "day-row",
             "names the rule editor's day rows; styled by .row",
-        ),
-        (
-            "lock-part",
-            "a hook for tests::devices_list (the lock part of a phone's line)",
         ),
         (
             "source-choice",

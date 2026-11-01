@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% import "partials/status_line.html" as status_line %}
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
@@ -50,12 +51,10 @@
             <span class="avatar {{ d.avatar }}" aria-hidden="true">{{ d.initial }}{% if let Some(src) = d.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ d.connection.css() }}"></span></span>
             <span class="row-label">
                 <span class="device-row-name">{{ d.name }}</span>
-                <span class="row-sub device-line" data-status="{{ d.connection.css() }}"><span class="state-{{ d.connection.css() }}">{{ d.connection.word() }}</span>{% if let Some(detail) = d.detail %} · {% if let Some(exact) = d.detail_title %}<span title="{{ exact }}">{{ detail }}</span>{% else %}{{ detail }}{% endif %}{% endif %}{% if let Some(lock) = d.lock %} · <span class="lock-part" data-lock>{{ lock }}</span>{% endif %}</span>
-                {% if let Some(st) = d.screen_time %}
-                {% if let Some(percent) = st.percent() %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
-                <span class="row-sub" data-screen-time>{{ st.text() }}</span>
-                {% endif %}
-                {% if let Some(battery) = d.battery %}<span class="row-sub" data-battery>{{ battery }}</span>{% endif %}
+                {#- One line under the name (the user's pick C, 2026-11-01): the dot says online or not, the line the first
+                    fact that holds (phone_status). -#}
+                <span class="row-sub device-line" data-status="{{ d.connection.css() }}" data-line>{% call status_line::parts(d.line) %}{% endcall %}</span>
+                {% if let Some(percent) = d.meter %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
             </span>
             {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">, {{ d.attention }} to check</span></span>{% endif %}
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -395,6 +395,18 @@ async fn the_battery_latches_once() {
         .unwrap()
         .1;
     assert_eq!(title, "Battery low on Anna (14 %)");
+    // Latched and on battery: the status lines lead with it (the user's pick C, 2026-11-01).
+    let list = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert_eq!(super::status_lines(&list), ["Lavt batteri, 14 %"]);
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert_eq!(super::status_lines(&summary)[0], "Low battery, 14 %");
+    assert!(
+        summary.contains("<span class=\"tone-orange\" data-battery>Low battery, 14 %</span>"),
+        "{summary}"
+    );
     // Plugged in (Android clears `low`), unplugged at 12 % (`low` again): still the one latch.
     app.post_status(&token, battery(13, true, false)).await;
     app.post_status(&token, battery(12, false, true)).await;
@@ -403,11 +415,7 @@ async fn the_battery_latches_once() {
     // The line on the Devices row and the device page.
     for page in ["/devices".to_string(), device_page(id, Section::Summary)] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert_eq!(
-            line(&html).as_deref(),
-            Some("Battery 12 %, charging · just now"),
-            "{page}"
-        );
+        assert_eq!(line(&html).as_deref(), Some("12 %, charging"), "{page}");
     }
     // On battery above the level: armed again; the next low is a second event.
     app.post_status(&token, battery(25, false, false)).await;

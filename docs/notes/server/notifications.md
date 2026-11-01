@@ -26,8 +26,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `lenient_battery`: not an object with a level in 0..=100 drops the reading, never the report) ->
   `device_status.battery_level`/`battery_charging`; the pure `battery_edge(latched, &battery)` (armed + `low` → Raise,
   latched + neither low nor charging → Rearm), `battery_report` latches `devices.battery_low_since` with a conditional
-  UPDATE and raises only when that changed the row, in one transaction. "Battery 14 %, charging · 3 min ago"
-  (`battery_line`, the report's age) on the Devices row (`time_glance` reads it with the badge) and in the summary's header.
+  UPDATE and raises only when that changed the row, in one transaction. The Devices row and the summary's header say
+  the battery without an age since 2026-11-01 ("100 %", "62 %, charging" with a small battery icon; `time_glance`
+  reads it with the badge), and lead with "Low battery, 9 %" while the latch is set and the phone isn't charging
+  (`phone_status`; `pwa.md`, "Tidier status").
 - **PWA**: the bell (`partials/bell.html`, `parent_events::Bell::load`, one partial-index COUNT, no cache) in the
   `.title-bar` of the five tab pages (Locate and Settings gained the bar), before the page's own action; the count
   renders server-side ("99+", `data-unread`). `/notifications` (`handlers::notifications`, full auth): back link to the
@@ -267,7 +269,9 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   no `device_status` report is newer than it (qa-38-code M1: a report proves the phone is on, whatever start never
   came - a re-enrollment, a boot count of -1, a dropped start; compared as `datetime(happened_at, '+60 seconds') >=
   MAX(reported_at)` - RFC 3339 against SQLite's `datetime` text never as raw strings -, the minute for the phone's
-  clock); one query; the battery read back from the off's stored words (`parent_events::off_since_line`, which also
+  clock); one query (`parent_events::offs_now`, since 2026-11-01 for every phone at once on the Devices list too, and
+  worded "Turned off 21:14 · battery was 3 %" there and in the header: `pwa.md`, "Tidier status"); the battery read
+  back from the off's stored words (`parent_events::off_since`, which also
   says nothing while the off's push is held - `created_at` within `OFF_HOLD`, a restart may still fold it - or for a
   restart the phone announced, "is restarting"; qa-38-code nit 1); gone with the next start or report; a read error is
   a 500 like the page's other reads.
