@@ -26,6 +26,9 @@ const MOVED = {
         "[timing] ",
     ],
     "reveal.js": [".pin-digits, .pin-inline, .secret-once"],
+    // 3b: Apps (install-now.js's sub-lines come worded in its JSON).
+    "app-display.js": [],
+    "install-now.js": [],
 };
 
 /** Every string literal outside comments, in order. */

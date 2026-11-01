@@ -1407,6 +1407,18 @@ man er inne på en device". Branch `pwa-fixes-b`.
   the helper modules' words (`kid_lock`, `kiosk_escapes`, `window_relock`, `lifts`, `activity`, `app_downloads`,
   `sound_mode`, `boot_witness`, `models`, `streams`, `config`, `photos`, `phone`); for 3c Locate's command rows
   (`locate::CommandRow`), for 3e Time Rules' day and limit words (`schedules`) shared with Device › Time.
+- **Slice 3b (Apps)**: the Apps tab, Add App, an app's page and the "Name and icon" form
+  (`partials/app_display_form.html`, on Device › Apps too) are worded (`apps.*`), with the handlers' titles, notes,
+  field refusals (the file name filter as `tracked_apps::FilterRefusal`, the tag prefix, the F-Droid source and its
+  pins, a source change), the sync titles (`SyncProblem::title(lang)`; the log keeps English through `Display`) and
+  error bodies (`i18n::error`). `app_display` is worded by the form: `AppDisplayForm::new(lang, …)` words the summary
+  (`DisplayValues::describe(lang)`), the icons' names (`apps.display.icon.<key>`, `every_icon_is_worded`: a new icon
+  needs its key) and the colours (`color_label` gives a key), and a refusal (`FieldError.key`); `reset_hint` and
+  `preview_text` are keys the template words. Install Now's rows, flashes and `install-now.json`'s sub-lines come
+  from `install_now` in the reader's language (`Offer::sub(lang)`, `value(lang)`, `flash(lang, word)`, the working
+  words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4:
+  a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `fdroid::normalize_repo`/`parse_package`'s refusals,
+  `app_downloads::progress`; for 3c Install Now's answer row (`locate::CommandRow`).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

@@ -1956,6 +1956,7 @@ pub(crate) async fn render_apps(
         let display = (row.checked && !row.is_launcher && display::valid_package_name(&package))
             .then(|| {
                 let mut form = AppDisplayForm::new(
+                    lang,
                     format!("/devices/{id}/apps/display#{anchor}"),
                     format!("display-{package}"),
                     package.clone(),
@@ -1966,7 +1967,7 @@ pub(crate) async fn render_apps(
                         .filter(|(entered, _)| *entered == package)
                         .map(|(_, e)| e),
                 );
-                form.catalog_default = default.map(DisplayValues::describe);
+                form.catalog_default = default.map(|values| values.describe(lang));
                 form.own_row = phone_row.is_some() || off_home.contains(&package);
                 form.from = from.clone();
                 form.on_home = Some(!off_home.contains(&package));
@@ -1975,7 +1976,11 @@ pub(crate) async fn render_apps(
                     crate::i18n::t(lang, "apps.on_home_sub"),
                 ));
                 if phone_row.is_none() && default.is_some() {
-                    form.summary = format!("{} (from the catalog)", form.summary);
+                    form.summary = crate::i18n::t_params(
+                        lang,
+                        "apps.display.from_catalog",
+                        &[("summary", &form.summary)],
+                    );
                 }
                 if off_home.contains(&package) {
                     form.summary = format!(

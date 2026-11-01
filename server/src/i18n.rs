@@ -566,6 +566,11 @@ mod tests {
         "partials/status_line.html",
         "partials/push_offer.html",
         "partials/confirm_cancel.html",
+        // 3b: Apps.
+        "apps_list.html",
+        "tracked_app_add.html",
+        "tracked_app_detail.html",
+        "partials/app_display_form.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,
