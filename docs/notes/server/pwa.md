@@ -604,7 +604,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## The Locate tab (design 31 step 13, `docs/design/31-pwa-redesign.md` §3.6)
 
 - **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
-  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · last heard 13:05" ›, "seen 3 min ago" until 2026-11-01;
+  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · last seen 13:05" ›, "seen 3 min ago" until 2026-11-01;
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online" (since 2026-11-01 the Devices dot and word, "Off or out
   of touch says so"); the chosen one `aria-current="true"` - the tab bar has the
@@ -1321,8 +1321,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   first that holds: (1) not set up / "Disconnected · access removed" / not seen yet; (2) **turned off** - design 38's
   `phone_off` later than every `phone_on` and status report and past its push hold (`parent_events::offs_now` +
   `off_since`, the rule the summary had): "Turned off 21:14 · battery was 3 %" (nb "Slått av 21:14 · batteriet var
-  3 %"); (3) **offline** (`streams::connection_state`): "Offline · last heard 13:05" (nb "Frakoblet · sist hørt
-  13:05"; "last seen"/"sist sett" until 2026-11-01), the exact time in `title`; (4) **a rule locks**: the lock's words (`LockBadge::words`: "Leggetid until
+  3 %"); (3) **offline** (`streams::connection_state`): "Offline · last seen 13:05" (nb "Frakoblet · sist sett
+  13:05"), the exact time in `title`; (4) **a rule locks**: the lock's words (`LockBadge::words`: "Leggetid until
   07:00 · calls off", nb "Leggetid til 07:00 · anrop av", "at last report (…)" as before) · the battery; (5) **low
   battery** - `devices.battery_low_since` set (the phone's own `low`, design 35 §2.5) and the last report not
   charging: "Low battery, 9 %" · today's screen time; (6) else today's screen time · the battery ("4 min today ·
@@ -1342,7 +1342,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   the week ("Sat 22:19"), else "24 Oct 22:19". Screen time with `display_time::duration` ("1 h 12 min of 1 h 30 min
   today"). Device › Time keeps `ScreenTime::text` and the badge's English `text_beside` until its slice.
 - **Words**: `devices.status.*` in both catalogs, the reader's language (the pages around them are still English
-  until S-i18n slice 3a); `events.phone_off.off_since*` went (the line is `devices.status.off`/`off_battery`).
+  until S-i18n slice 3a); `events.phone_off.off_since*` went (the line is `devices.status.off`/`off_battery`). Wording 2026-11-01: "last seen" / nb "sist sett" (was "last heard" / "sist hørt"); keys unchanged.
 - **Markup**: `partials/status_line.html`'s `parts` macro - the parts with " · " between them, each `<span>` with its
   tone class, its `data-` hook (`lock`, `battery`, `screen-time`, `power-off`, `seen`, `zone-now`) and `title`; the
   battery part has a small CSS battery (`.bat`, filled to the level, `aria-hidden`) and a visually-hidden "Battery",
@@ -1369,12 +1369,12 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The rule** (`phone_status::dot`, `no_contact`, `NO_CONTACT_AFTER_MINUTES` = 10): turned off - grey at once,
   "Turned off 20:35 · battery was 100 %"; online (stream open, `ONLINE_WINDOW_MINUTES`) or Away under 10 min -
   green, the line as before ("Online" when the phone said nothing; a sleeping phone drops its stream for a moment,
-  not worth a word); Away 10-45 min (`AWAY_WINDOW_MINUTES`) - orange, the line leads with **"No contact · last heard
-  20 min ago"** (nb "Ingen kontakt · sist hørt for 20 min siden"; `data-no-contact` in `state-away`, then `data-seen`
+  not worth a word); Away 10-45 min (`AWAY_WINDOW_MINUTES`) - orange, the line leads with **"No contact · last seen
+  20 min ago"** (nb "Ingen kontakt · sist sett for 20 min siden"; `data-no-contact` in `state-away`, then `data-seen`
   with the exact time in `title`) and then the rest of the row's line as before (the lock · the battery, the low
-  battery · the screen time, the screen time · the battery); Offline (over 45 min) - grey, "Offline · last heard
-  13:05" (nb "Frakoblet · sist hørt 13:05"; en "last heard" too, for one wording with the orange line); not set up,
-  access removed, not seen yet - grey. The header without contact: line 1 "No contact · last heard …", line 2 the
+  battery · the screen time, the screen time · the battery); Offline (over 45 min) - grey, "Offline · last seen
+  13:05" (nb "Frakoblet · sist sett 13:05"; en "last seen" too, for one wording with the orange line); not set up,
+  access removed, not seen yet - grey. The header without contact: line 1 "No contact · last seen …", line 2 the
   row's rest with the screen time named, no zone (where it was then isn't where it is now).
 - **Where**: the Devices row (`DeviceListRow.dot`, also its line's `data-status`), the summary's header
   (`DeviceDetailTemplate.dot`), and Locate's switcher and list (`PhoneLink.dot`/`word`; `render_locate_page` reads
@@ -1388,7 +1388,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   off" (`locate::before_off`) weighs the report against the same arrival while it is within
   `ARRIVAL_NEAR_OFF_MINUTES` (5) of the shutdown's instant - else (a late off, told at the next boot, or the event
   gone) the shutdown's instant: a report just after that boot is the phone on again (light QA L1). Locate's list line
-  says "last heard 13:05" / "access removed" from the catalogs (`devices.status.last_heard`,
+  says "last seen 13:05" / "access removed" from the catalogs (`devices.status.last_heard`,
   `device.about.access_removed`; was the English "seen 3 min ago", L2).
 - **The off's last position**: "Last position at 20:26 – see the map in Locate" (nb "Siste posisjon kl. 20:26 – se
   kartet i Finn": "Finn" was read as a verb), "Last position yesterday 20:26 – …" on another day
@@ -1418,8 +1418,10 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The language of a request** (`Lang::of_request`, the extractor), first match wins: `?lang=en|nb` - that request
   only, never stored, any other value ignored (QA, screenshots, the sign-in page); the account's `admin_users.lang`
   (migration 0104), read from the `CurrentAdmin` that `require_session`/`require_full_auth` put in the extensions -
-  no database read; `Accept-Language` (its q-values; `nb`, `nn`, `no` are Norwegian); English. Before a choice,
-  `require_full_auth` stores the first signed-in request's `Accept-Language` language (never `?lang=`) with one
+  no database read; `PWA_DEFAULT_LANG` (`en` or `nb`, `ForkConfig::pwa_default_lang`, read once at start; unset or invalid =
+  skipped, 2026-11-01); `Accept-Language` (its q-values; `nb`, `nn`, `no` are Norwegian); English. The sign-in pages
+  (no account) use the same order. Before a choice,
+  `require_full_auth` stores the first signed-in request's language (the env default when set, else `Accept-Language`; never `?lang=`) with one
   `UPDATE ... WHERE id = ? AND lang IS NULL`, so today's sessions get it at their next page. One language per
   account, not per device. `provisioning_settings.locale` (0034, `nb_NO`) is the phones' locale, not a parent's,
   and never this fallback.

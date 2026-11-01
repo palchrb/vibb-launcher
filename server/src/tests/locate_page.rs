@@ -1029,7 +1029,7 @@ async fn the_locations_page_pages_every_fix_once() {
 }
 
 /// 2026-11-01 (status-off): the list's dots and words are the Devices row's - away 20 min is orange
-/// "No contact" with "last heard", access removed says so - in the reader's language, the
+/// "No contact" with "last seen", access removed says so - in the reader's language, the
 /// switcher's `aria-label` too.
 #[tokio::test]
 async fn the_list_says_no_contact_and_last_heard_in_the_readers_language() {
@@ -1053,7 +1053,7 @@ async fn the_list_says_no_contact_and_last_heard_in_the_readers_language() {
         html.contains("<span class=\"state-away\">Ingen kontakt</span> · <span title="),
         "{html}"
     );
-    assert!(html.contains("\">sist hørt "), "{html}");
+    assert!(html.contains("\">sist sett "), "{html}");
     assert!(!html.contains(">seen "), "{html}");
     assert!(
         html.contains("Frakoblet</span> · tilgangen er fjernet"),

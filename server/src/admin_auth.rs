@@ -627,7 +627,12 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
             )
             .await;
         // Before the session layer: `?lang=` or the browser's language.
-        let lang = crate::i18n::Lang::of_request(request.uri(), request.headers(), None);
+        let lang = crate::i18n::Lang::of_request(
+            request.uri(),
+            request.headers(),
+            None,
+            state.config.pwa_default_lang,
+        );
         return crate::i18n::error(lang, StatusCode::FORBIDDEN, "error.csrf");
     }
     next.run(request).await

@@ -5,14 +5,14 @@
 //! 1. not set up, access removed, not seen yet (the phone can't tell more);
 //! 2. **turned off** - design 38's `phone_off` later than every `phone_on` and status report
 //!    (`parent_events::offs_now`): "Turned off 21:14 · battery was 3 %";
-//! 3. **offline** (`streams::connection_state`): "Offline · last heard 13:05";
+//! 3. **offline** (`streams::connection_state`): "Offline · last seen 13:05";
 //! 4. **a rule locks now**: the lock's words · the battery;
 //! 5. **low battery** (the phone's own `low`, latched in `devices.battery_low_since`, while it
 //!    isn't charging): "Low battery, 9 %" · today's screen time;
 //! 6. otherwise today's screen time · the battery ("4 min today · 100 %, charging"), or "Online"
 //!    when the phone said neither.
 //!
-//! 4 to 6 get **"No contact · last heard 12 min ago"** before them while the phone has been away
+//! 4 to 6 get **"No contact · last seen 12 min ago"** before them while the phone has been away
 //! (no stream) for [NO_CONTACT_AFTER_MINUTES] or more (the user's pick of 2026-11-01, "a phone that
 //! is off or out of touch says so"); under that it reads as online - a sleeping phone drops its
 //! stream for a moment all the time, not worth a word. The avatar's [dot] says the same: green
@@ -34,7 +34,7 @@ use crate::parent_events::OffSince;
 use crate::streams::ConnectionState;
 use crate::time_state::{LockBadge, ScreenTime};
 
-/// Away (no stream) this long or longer: "No contact · last heard 12 min ago" and the orange dot;
+/// Away (no stream) this long or longer: "No contact · last seen 12 min ago" and the orange dot;
 /// under it the phone reads as online. Away lasts `streams::AWAY_WINDOW_MINUTES` (45); past that it
 /// is Offline.
 pub const NO_CONTACT_AFTER_MINUTES: i64 = 10;
@@ -261,7 +261,7 @@ fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>, summary: bo
     }
 }
 
-/// "No contact · last heard 12 min ago" (nb "Ingen kontakt · sist hørt for 12 min siden"): away
+/// "No contact · last seen 12 min ago" (nb "Ingen kontakt · sist sett for 12 min siden"): away
 /// [NO_CONTACT_AFTER_MINUTES] or longer, before a lead that would otherwise read as in touch.
 fn no_contact_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Option<Line> {
     if !matches!(lead, Lead::Lock(_) | Lead::Low(_) | Lead::Plain) {
@@ -291,7 +291,7 @@ fn no_contact_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) 
 
 /// The summary header's lines under the name: one for a phone that can't be reached, else the
 /// lead and then the zone · the battery (the screen time when the lead is the battery); without
-/// contact "No contact · last heard 12 min ago" and then the rest of the row's line.
+/// contact "No contact · last seen 12 min ago" and then the rest of the row's line.
 pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
     let lead = lead(facts);
     if let Some(first) = no_contact_line(&lead, facts, zone, now) {
@@ -603,13 +603,10 @@ mod tests {
         assert_eq!(
             both(&f2),
             [
+                pair("Offline · last seen 12:05", &["Offline · last seen 12:05"]),
                 pair(
-                    "Offline · last heard 12:05",
-                    &["Offline · last heard 12:05"]
-                ),
-                pair(
-                    "Frakoblet · sist hørt 12:05",
-                    &["Frakoblet · sist hørt 12:05"]
+                    "Frakoblet · sist sett 12:05",
+                    &["Frakoblet · sist sett 12:05"]
                 ),
             ]
         );
@@ -802,12 +799,12 @@ mod tests {
             both(&facts(&ten)),
             [
                 pair(
-                    "No contact · last heard 10 min ago · 100 %",
-                    &["No contact · last heard 10 min ago", "100 %"]
+                    "No contact · last seen 10 min ago · 100 %",
+                    &["No contact · last seen 10 min ago", "100 %"]
                 ),
                 pair(
-                    "Ingen kontakt · sist hørt for 10 min siden · 100 %",
-                    &["Ingen kontakt · sist hørt for 10 min siden", "100 %"]
+                    "Ingen kontakt · sist sett for 10 min siden · 100 %",
+                    &["Ingen kontakt · sist sett for 10 min siden", "100 %"]
                 ),
             ]
         );
@@ -836,9 +833,9 @@ mod tests {
         assert_eq!(
             both(&f)[1],
             pair(
-                "Ingen kontakt · sist hørt for 20 min siden · Skole til 14:30 · 64 %",
+                "Ingen kontakt · sist sett for 20 min siden · Skole til 14:30 · 64 %",
                 &[
-                    "Ingen kontakt · sist hørt for 20 min siden",
+                    "Ingen kontakt · sist sett for 20 min siden",
                     "Skole til 14:30 · 64 %"
                 ]
             )
@@ -847,9 +844,9 @@ mod tests {
         assert_eq!(
             both(&f)[0],
             pair(
-                "No contact · last heard 20 min ago · 4 min today · 64 %",
+                "No contact · last seen 20 min ago · 4 min today · 64 %",
                 &[
-                    "No contact · last heard 20 min ago",
+                    "No contact · last seen 20 min ago",
                     "4 min screen time today · 64 %"
                 ]
             )
@@ -860,8 +857,8 @@ mod tests {
         assert_eq!(
             both(&quiet)[0],
             pair(
-                "No contact · last heard 20 min ago",
-                &["No contact · last heard 20 min ago"]
+                "No contact · last seen 20 min ago",
+                &["No contact · last seen 20 min ago"]
             )
         );
         // Turned off wins over "No contact".

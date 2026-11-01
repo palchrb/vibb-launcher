@@ -73,7 +73,7 @@ struct PhoneLink {
     word: String,
     /// "Anna, online", "Anna, no contact", "Anna, turned off 20:35".
     aria: String,
-    /// "last heard 13:05", "access removed" (the list's line, in the reader's language), and the exact
+    /// "last seen 13:05", "access removed" (the list's line, in the reader's language), and the exact
     /// last contact.
     seen: Option<String>,
     seen_exact: Option<String>,
@@ -1042,7 +1042,7 @@ fn phone_links(
                     Some(crate::i18n::t(lang, "device.about.access_removed").to_string()),
                     None,
                 ),
-                // "last heard 13:05", as the Devices row says it.
+                // "last seen 13:05", as the Devices row says it.
                 c => match c.last_contact() {
                     Some(at) => (
                         Some(crate::i18n::t_params(

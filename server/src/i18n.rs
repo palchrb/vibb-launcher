@@ -1,6 +1,6 @@
 //! The PWA's words in English and Norwegian (design 69 introduced it for the Calendar pages; round S-i18n, design 70,
 //! moves the rest). A page's language is [Lang], resolved per request ([Lang::of_request]): `?lang=en|nb` for this
-//! request only, else the account's `admin_users.lang`, else `Accept-Language`, else English. The words are two flat
+//! request only, else the account's `admin_users.lang`, else `PWA_DEFAULT_LANG`, else `Accept-Language`, else English. The words are two flat
 //! catalogs compiled in, `src/i18n/en.json` and `src/i18n/nb.json` (key → plain text, `{name}` for a parameter, no
 //! markup), read through [t], [t_params] and [t_count], or a template's [Words]. `i18n::tests` checks that both have
 //! every key with the same parameters, the plural pairs, no markup, and that every key the templates and handlers name
@@ -103,8 +103,14 @@ impl Lang {
 
     /// A request's language, first match wins (design 70 §3): `?lang=en|nb` (this request only, never stored; any
     /// other value is ignored), the signed-in account's own (`admin`, the [CurrentAdmin] the session layer put in the
-    /// extensions - no database read), `Accept-Language`, English.
-    pub fn of_request(uri: &Uri, headers: &HeaderMap, admin: Option<&CurrentAdmin>) -> Lang {
+    /// extensions - no database read), `default` (`PWA_DEFAULT_LANG`, `config::ForkConfig::pwa_default_lang`),
+    /// `Accept-Language`, English.
+    pub fn of_request(
+        uri: &Uri,
+        headers: &HeaderMap,
+        admin: Option<&CurrentAdmin>,
+        default: Option<Lang>,
+    ) -> Lang {
         let asked = uri.query().and_then(|query| {
             form_urlencoded::parse(query.as_bytes())
                 .filter(|(name, _)| name == "lang")
@@ -114,18 +120,29 @@ impl Lang {
             .or_else(|| {
                 admin.and_then(|CurrentAdmin(admin)| Lang::from_code(admin.lang.as_deref()?))
             })
+            .or(default)
             .unwrap_or_else(|| Lang::of_headers(headers))
+    }
+
+    /// The language a request without a choice of its own gets: `PWA_DEFAULT_LANG` when set, else the
+    /// `Accept-Language` one ([Self::of_headers]).
+    pub fn fallback(headers: &HeaderMap, default: Option<Lang>) -> Lang {
+        default.unwrap_or_else(|| Lang::of_headers(headers))
     }
 }
 
-impl<S: Send + Sync> FromRequestParts<S> for Lang {
+impl FromRequestParts<crate::AppState> for Lang {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &crate::AppState,
+    ) -> Result<Self, Self::Rejection> {
         Ok(Lang::of_request(
             &parts.uri,
             &parts.headers,
             parts.extensions.get::<CurrentAdmin>(),
+            state.config.pwa_default_lang,
         ))
     }
 }
@@ -427,7 +444,7 @@ mod tests {
         nb.insert(ACCEPT_LANGUAGE, "nb-NO".parse().unwrap());
         let none = HeaderMap::new();
         let of = |uri: &str, headers: &HeaderMap, admin: Option<&CurrentAdmin>| {
-            Lang::of_request(&uri.parse::<Uri>().unwrap(), headers, admin)
+            Lang::of_request(&uri.parse::<Uri>().unwrap(), headers, admin, None)
         };
         assert_eq!(of("/devices", &none, None), Lang::En);
         assert_eq!(of("/devices", &nb, None), Lang::Nb);

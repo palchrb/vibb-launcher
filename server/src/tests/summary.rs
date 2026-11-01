@@ -42,7 +42,7 @@ async fn add_rule(app: &TestApp, name: &str) -> i64 {
 }
 
 /// §3.2 item 1, §3.10 (the user's pick C, 2026-11-01): "Not seen yet"; away and online say what
-/// the phone reported, never "seen …"; offline "last heard" alone; Disconnected's link; the name
+/// the phone reported, never "seen …"; offline "last seen" alone; Disconnected's link; the name
 /// escaped; the sub-page header (no brand bar).
 #[tokio::test]
 async fn the_header_says_whether_the_phone_is_connected() {
@@ -114,7 +114,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     let head = header(&html);
     assert_eq!(status_lines(head), ["Disconnected · access removed"]);
     assert!(head.contains("data-connect-again"), "{head}");
-    // Two hours of silence (nothing in memory, as after a restart): Offline, "last heard" alone.
+    // Two hours of silence (nothing in memory, as after a restart): Offline, "last seen" alone.
     let (emil, _) = app.enrolled_device("Emil").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-2 hours') WHERE id = ?")
         .bind(emil)
@@ -138,7 +138,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     assert_eq!(
         status_lines(head),
         [format!(
-            "Offline · last heard {}",
+            "Offline · last seen {}",
             zone.since(seen, chrono::Utc::now())
         )]
     );

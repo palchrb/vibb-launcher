@@ -24,7 +24,7 @@ struct DeviceListRow {
     photo: Option<String>,
     /// The avatar's dot (`phone_status::dot`), saying what `line` leads with.
     dot: &'static str,
-    /// "4 min today · 100 %", "No contact · last heard 12 min ago · 100 %", "Offline · last heard
+    /// "4 min today · 100 %", "No contact · last seen 12 min ago · 100 %", "Offline · last seen
     /// 13:05", "Turned off 21:14 · battery was 3 %".
     line: crate::phone_status::Line,
     /// Today's screen-time bar (its fill), under the line while a limit is set and the line says
@@ -205,7 +205,7 @@ async fn list_row(
 }
 
 /// The screen-time bar's fill, while a limit is set and one of the `lines` says the screen time
-/// (never a bar beside "Offline · last heard 13:05").
+/// (never a bar beside "Offline · last seen 13:05").
 pub(crate) fn meter_of(
     screen: Option<&crate::time_state::ScreenTime>,
     lines: &[crate::phone_status::Line],
@@ -813,8 +813,8 @@ struct DeviceDetailTemplate {
     /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
     dot: &'static str,
     /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
-    /// since 22:19 · 100 %"; "No contact · last heard 12 min ago" then the rest; "Turned off
-    /// 21:14 · battery was 3 %" or "Offline · last heard 13:05" alone.
+    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago" then the rest; "Turned off
+    /// 21:14 · battery was 3 %" or "Offline · last seen 13:05" alone.
     status: Vec<crate::phone_status::Line>,
     /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
     meter: Option<i64>,
