@@ -148,7 +148,8 @@ object TimeRulesRuntime {
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
         val lock = decideTimeLock(
             tp, at, overrideActive, activeRuleLifts(records, tp.lifts, clocks), budget, messagingApps(context),
-            musicApps = com.kidslauncher.mdm.music.MUSIC_PACKAGES.toSet(),
+            // Security review S-L8: only the music app with our signer is exempt from the budget.
+            musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
         return Snapshot(lock, tp, ledger, budget, records, clocks, zone)
     }

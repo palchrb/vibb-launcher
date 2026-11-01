@@ -108,7 +108,7 @@ data class EnforcementPlan(
  *   while SMS is blocked they're suspended whatever the allowlist says, override or not.
  * - [scheduleLocked]: bedtime or outside screen time ([KidModeEnforcer.lockReasonNow] isn't NONE,
  *   so never under an override). Every controllable package except [neverRestrict] and
- *   [alarmApp] (the default alarm/clock app, so alarms ring) is suspended - but not hidden -
+ *   [alarmApps] (the system clock apps and a verified clock app holding the next alarm, so alarms ring) is suspended - but not hidden -
  *   whatever the allowlist (also an unmanaged one - the lock comes from a server policy), and
  *   kiosk pins only our own package (which holds LockActivity, the phone book and the in-call UI)
  *   plus an allowlisted system dialer while calls are unmanaged.
@@ -158,7 +158,7 @@ fun computeEnforcementPlan(
     ourDialerActive: Boolean = false,
     smsPackages: Set<String> = emptySet(),
     scheduleLocked: Boolean = false,
-    alarmApp: String? = null,
+    alarmApps: Set<String> = emptySet(),
     inputMethods: Set<String> = emptySet(),
     lockUsableApps: Set<String> = emptySet(),
     ruleBlocksCalls: Boolean = false,
@@ -203,7 +203,7 @@ fun computeEnforcementPlan(
     // would also spare them the hide of an app that isn't allowed).
     if (locked) {
         controllable.filterTo(suspend) {
-            it !in neverRestrict && it != alarmApp && it !in lockUsableApps && !(it in CALENDAR_SYNC_APPS && it in allowed)
+            it !in neverRestrict && it !in alarmApps && it !in lockUsableApps && !(it in CALENDAR_SYNC_APPS && it in allowed)
         }
     }
     // The Play Store follows its own rule, whatever the allowlist or the lock's usable apps say.
@@ -375,3 +375,19 @@ fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<Stri
         }
     }.toSet()
 }
+
+/**
+ * Security review S-L3 (with code QA L2): the alarm apps the schedule lock spares - every [systemClocks] app (each
+ * system `SHOW_ALARMS` handler), plus the next alarm's creator ([nextAlarmCreator]) or the `SHOW_ALARMS` resolver
+ * ([resolvedClock]) only when it is one of the lock's clock apps (a system clock, or Fossify Clock while
+ * [clockAppVerified]: [com.kidslauncher.mdm.lock.lockClockPackages]). An allowlisted app that calls `setAlarmClock` is
+ * never spared by it.
+ */
+fun sparedAlarmApps(nextAlarmCreator: String?, resolvedClock: String?, systemClocks: Set<String>, clockAppVerified: Boolean): Set<String> {
+    val clocks = com.kidslauncher.mdm.lock.lockClockPackages(systemClocks, clockAppVerified)
+    return systemClocks + listOfNotNull(nextAlarmCreator, resolvedClock).filter { it in clocks }
+}
+
+/** Security review S-L5: `DISALLOW_BLUETOOTH_SHARING` while the phone is [managed] (hardening's sense), lifted by the
+ * override and the pause ([overrideActive]) - Bluetooth headphones (design 52) are unaffected. */
+fun bluetoothSharingRestricted(managed: Boolean, overrideActive: Boolean): Boolean = managed && !overrideActive

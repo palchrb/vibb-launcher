@@ -252,7 +252,8 @@ fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yielded
 
 /*
  * Crash guard (design §2(b), QA 10 #14, qa-10-code #6): only real crashes of the lock count -
- * recorded (commit) by the process's uncaught-exception handler while PinLockActivity exists. A
+ * recorded (commit) by the process's uncaught-exception handler while PinLockActivity exists, and since
+ * security review S-L2 only a throwable with a frame of the lock's package ([lockCrash]). A
  * configuration-change recreation or a plain process kill isn't one. 3 crashes within 2 minutes
  * switch the lock off at the next PinLockActivity start (reported as `crash_guard`); a sync re-arms
  * it at most once every 10 minutes.
@@ -271,6 +272,27 @@ data class CrashGuard(
 /** A crash while the lock screen existed. */
 fun guardOnCrash(guard: CrashGuard, nowMs: Long): CrashGuard =
     guard.copy(crashes = guard.crashes.filter { nowMs - it in 0 until GUARD_WINDOW_MS } + nowMs)
+
+/**
+ * Security review S-L2 (with code QA L1): whether an uncaught [throwable] is the lock screen's own. The deepest cause
+ * that has a frame of ours decides, by its innermost frame of ours (where the crash happened, not who called it): only
+ * the lock's UI classes count ([LOCK_UI_CLASSES]: PinLockActivity, its keypad, clock face and rule card - never the
+ * glance, the VoIP calls or any panel that renders another app's notification, which a crafted notification could crash
+ * three times to switch the lock off).
+ */
+fun lockCrash(throwable: Throwable): Boolean {
+    val chain = generateSequence(throwable) { t -> t.cause?.takeIf { it !== t } }.take(8).toList()
+    val origin = chain.asReversed().firstNotNullOfOrNull { t -> t.stackTrace.firstOrNull { it.className.startsWith(OUR_PREFIX) } }
+        ?: return false
+    if (!origin.className.startsWith(LOCK_PREFIX)) return false
+    return origin.className.removePrefix(LOCK_PREFIX).substringBefore('$').removeSuffix("Kt") in LOCK_UI_CLASSES
+}
+
+private const val OUR_PREFIX = "com.kidslauncher.mdm."
+private const val LOCK_PREFIX = "com.kidslauncher.mdm.lock."
+
+/** The PIN lock screen's own UI (S-L2): nothing in it shows another app's content. */
+val LOCK_UI_CLASSES = setOf("PinLockActivity", "PinKeypadLayout", "PinKeyHighlight", "LockClockFace", "RuleCardView")
 
 /** A PinLockActivity.onCreate: trips when [GUARD_CRASHES] crashes happened within the window. */
 fun guardOnCreate(guard: CrashGuard, nowMs: Long): CrashGuard {

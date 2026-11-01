@@ -293,9 +293,18 @@ object BootstrapDiskCache {
 
 /** [text] into [file] through a temp file next to it and a rename, so a reader finds the old file or
  * the new one, never half of one. */
-fun writeAtomically(file: java.io.File, text: String) {
+fun writeAtomically(file: java.io.File, text: String) = writeAtomically(file) { it.write(text) }
+
+/** [write] into [file] the same way - a temp file next to it, then a rename (security review S-L9: the DNS block
+ * list); a throw leaves the old file and no temp file. */
+fun writeAtomically(file: java.io.File, write: (java.io.Writer) -> Unit) {
     val temp = java.io.File(file.parentFile, file.name + ".tmp")
-    temp.writeText(text)
+    try {
+        temp.bufferedWriter().use(write)
+    } catch (e: Exception) {
+        temp.delete()
+        throw e
+    }
     if (!temp.renameTo(file)) {
         temp.delete()
         throw java.io.IOException("rename failed")

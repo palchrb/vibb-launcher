@@ -104,7 +104,7 @@ class Application : android.app.Application() {
                         // Design 68: an update that adds CAMERA, or a camera-off app reinstalled, is denied before its start.
                         AppEnforcer.enforceCameraOnPackage(this@Application, packageName)
                         // The music app updated (a catalog install, Play, adb): it syncs and reports now.
-                        com.kidslauncher.mdm.music.musicNudgeOnChange(packageName)?.let {
+                        com.kidslauncher.mdm.music.musicNudgeOnChange(packageName) { com.kidslauncher.mdm.music.MusicTrust.trusted(this@Application, it) }?.let {
                             com.kidslauncher.mdm.music.MusicSync.nudge(this@Application, it)
                         }
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
@@ -215,8 +215,9 @@ class Application : android.app.Application() {
         // DynamicColors.applyToActivitiesIfAvailable(this)
 
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-            // Handy's PIN lock crash guard (step 10): only crashes while the lock screen exists.
-            if (com.kidslauncher.mdm.lock.PinLockActivity.instances > 0) {
+            // Handy's PIN lock crash guard (step 10): only crashes while the lock screen exists, and only the
+            // lock's own (security review S-L2: a frame in the lock's package).
+            if (com.kidslauncher.mdm.lock.PinLockActivity.instances > 0 && com.kidslauncher.mdm.lock.lockCrash(throwable)) {
                 try {
                     com.kidslauncher.mdm.lock.PinLockStore.recordCrash(this@Application)
                 } catch (t: Throwable) {
