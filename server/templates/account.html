@@ -108,6 +108,7 @@
                     <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
                     {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}
                     <button type="submit" class="button-destructive">{{ self.t("account.totp.reset") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -132,6 +133,7 @@
                 <form method="post" action="/account/sign-out-everywhere" class="confirm-body">
                     <p>{{ self.t("account.sessions.sign_out_confirm") }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("account.sessions.sign_out") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>
@@ -170,6 +172,7 @@
                     <input type="password" id="reset_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.parent_reset_error(p.id) %} aria-invalid="true" aria-describedby="reset-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="reset-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
                     <button type="submit" class="button-destructive">{% if p.waiting %}{{ self.t("account.parents.new_otp") }}{% else %}{{ self.tp("account.parents.reset", [("name", p.name.as_str())]) }}{% endif %}</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             <details class="confirm cell" id="remove-{{ p.id }}"{% if self.remove_error(p.id).is_some() %} open{% endif %}>
@@ -181,6 +184,7 @@
                     <input type="password" id="remove_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.remove_error(p.id) %} aria-invalid="true" aria-describedby="remove-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="remove-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
                     <button type="submit" class="button-destructive">{% if p.waiting %}{{ self.t("account.parents.withdraw") }}{% else %}{{ self.tp("account.parents.remove", [("name", p.name.as_str())]) }}{% endif %}</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {%- endif %}

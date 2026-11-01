@@ -90,6 +90,7 @@
                 <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/delete" class="confirm-body">
                     <p>Delete {{ stored_name }}? Its past arrivals stay in Notifications as long as the location history is kept.</p>
                     <button type="submit" class="button-destructive">Delete Zone</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>

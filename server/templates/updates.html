@@ -72,6 +72,7 @@
                 <form method="post" action="/update/trigger#app" class="confirm-body">
                     <p>Download and install the newest version? The server restarts, which takes about a minute.</p>
                     <button type="submit" class="button-destructive">Update Now</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -80,6 +81,7 @@
                 <form method="post" action="/update/restart#app" class="confirm-body">
                     <p>Restart the server? It is back in a few seconds.</p>
                     <button type="submit" class="button-destructive">Restart Server</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -121,6 +123,7 @@
                 <form method="post" action="/system/os/upgrade#os" class="confirm-body">
                     <p>Install the waiting system updates? A Pi's first upgrade can take a long time.</p>
                     <button type="submit" class="button-destructive"{% if os.watcher_busy %} disabled{% endif %}>Install Updates</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% if os.reboot_required %}
@@ -129,6 +132,7 @@
                 <form method="post" action="/system/reboot#os" class="confirm-body">
                     <p>Restart the Pi? Vibb Phone is away for about a minute.</p>
                     <button type="submit" class="button-destructive"{% if os.watcher_busy %} disabled{% endif %}>Restart Pi</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}

@@ -1113,6 +1113,31 @@ details.confirm > summary.row {
     background: var(--destructive-hover);
 }
 
+/* A confirm's Cancel (partials/confirm_cancel.html): a quiet text button under the red one; hidden without JS,
+   so its display must not beat the attribute. */
+.button-cancel,
+.button-cancel:hover {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 11px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--tint);
+    font: inherit;
+    font-size: 1.0625rem;
+    cursor: pointer;
+}
+
+.button-cancel:hover {
+    background: var(--row-active);
+}
+
+.button-cancel[hidden] {
+    display: none;
+}
+
 /* ---- Fields ---- */
 
 .field-label {

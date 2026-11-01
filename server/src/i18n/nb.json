@@ -3,6 +3,7 @@
   "common.add": "Legg til",
   "common.not_saved": "Ikke lagret.",
   "common.why": "Hvorfor",
+  "common.cancel": "Avbryt",
 
   "devices.push_offer.title": "Få varsler på denne telefonen?",
   "devices.push_offer.sub": "Få vite med en gang når en telefon trenger deg - en nødsamtale, lavt batteri, en forespørsel om mer tid. Du kan endre det senere under varselinnstillingene.",

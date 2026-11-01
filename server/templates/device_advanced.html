@@ -254,6 +254,7 @@
                         <span>Yes, disconnect it</span>
                     </label>
                     <button type="submit" class="button-destructive">Disconnect Phone</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -272,6 +273,7 @@
                 <form method="post" action="/devices/{{ device.id }}/delete" class="confirm-body">
                     <p>Remove {{ device.name }}? Its settings and history are deleted, and it can't reach this server any more. This can't be undone.</p>
                     <button type="submit" class="button-destructive">Remove Phone</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>

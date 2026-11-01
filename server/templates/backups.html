@@ -37,6 +37,7 @@
                             <input type="text" id="confirm_{{ b.filename }}" name="confirm_filename" autocomplete="off" autocapitalize="none" spellcheck="false"{% if refused.is_some() %} aria-invalid="true" aria-describedby="restore-error" autofocus{% endif %}>
                             {% if let Some(why) = refused %}<p class="field-error" id="restore-error">{{ why }}</p>{% endif %}
                             <button type="submit" class="button-destructive">Restore This Backup</button>
+                            {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
                     <details class="confirm">
@@ -44,6 +45,7 @@
                         <form method="post" action="/backups/{{ b.filename }}/delete#backups" class="confirm-body">
                             <p>Delete this backup? This can't be undone.</p>
                             <button type="submit" class="button-destructive">Delete Backup</button>
+                            {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
                 </div>
@@ -153,6 +155,7 @@
                     <input type="text" id="confirm_{{ d.device }}" name="confirm_size" autocomplete="off"{% if refused.is_some() %} aria-invalid="true" aria-describedby="format-error" autofocus{% endif %}>
                     {% if let Some(why) = refused %}<p class="field-error" id="format-error">{{ why }}</p>{% endif %}
                     <button type="submit" class="button-destructive">Format Drive</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% else %}

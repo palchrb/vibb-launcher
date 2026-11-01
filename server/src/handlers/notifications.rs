@@ -27,7 +27,7 @@ use sqlx::Row as _;
 
 use crate::AppState;
 use crate::display_time::Zone;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::parent_events::{self, Kind};
 use crate::push::{self, Health};
 use crate::security::CurrentAdmin;

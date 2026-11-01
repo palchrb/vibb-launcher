@@ -3,6 +3,7 @@
   "common.add": "Add",
   "common.not_saved": "Not saved.",
   "common.why": "Why",
+  "common.cancel": "Cancel",
 
   "devices.push_offer.title": "Get notifications on this phone?",
   "devices.push_offer.sub": "Hear at once when a phone needs you - an emergency call, a low battery, a request for more time. You can change it later in Notification Settings.",

@@ -82,6 +82,7 @@
                     {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
                     <p>Stop notifications to {{ d.label }}? It can turn them on again under This Device.</p>
                     <button type="submit" class="button-destructive">Remove</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% if let Some((text, error)) = d.notice %}

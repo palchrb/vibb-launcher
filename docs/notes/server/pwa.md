@@ -1297,6 +1297,16 @@ man er inne på en device". Branch `pwa-fixes-b`.
   artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
   pages too. Desktop Safari has a real push implementation, so it says nothing about it.
 
+## A Cancel in every confirm (2026-11-01, PLAN "PWA small things left from the old list" (3), branch `small-c`)
+
+- Every `<details class="confirm">` (32, in the pages and partials) ends its form with `partials/confirm_cancel.html`:
+  `<button type="button" class="button-cancel" data-confirm-cancel hidden>` "Cancel" / "Avbryt" (`common.cancel`), a
+  quiet text button under the red one. `static/confirm.js` (deferred, from the head partial; one listener on the
+  document) shows them and, on a click, closes the confirm it sits in and focuses its summary
+  (`preventScroll`): the page stays where it is, nothing is posted. Without JS the button stays hidden
+  (`.button-cancel[hidden]`) - the summary closes the details then, as before. A new confirm gets the include before
+  its form's `</form>` (`shell::every_confirm_has_a_cancel`, `jstest/confirm.test.js`).
+
 
 ## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
 

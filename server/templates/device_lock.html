@@ -97,6 +97,7 @@
                     <input type="hidden" name="clear_kid_pin" value="on">
                     <p>Remove {{ device.name }}'s Child PIN? The phone then opens without a code.</p>
                     <button type="submit" class="button-destructive">Remove Child PIN</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
