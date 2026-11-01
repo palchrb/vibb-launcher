@@ -48,7 +48,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - Jelly Star "App blocker" hidden/suspended at enrolment (waits for the user's package dump).
   - **Round B2 - emergency menu** (`emergency-menu`, launcher + server, mockup + design note first):
     - Configurable emergency menu
-  - **Round L4 - the launcher's security Lows** (`launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
+  - **Round L4 - the launcher's security Lows** (**IN BUILD 2026-11-01 on `launcher-sec-lows`**, items re-verified against today's code first; `launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
   - **Round L5 - missed Element X calls** (`missed-voip-calls`, after the user's capture):
     - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - **Emulator session E2 - screen sizes** (the coordinator's, after L1 and M1):
