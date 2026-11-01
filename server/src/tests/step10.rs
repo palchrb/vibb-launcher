@@ -463,7 +463,7 @@ async fn lock_page_warns_about_the_lock_state() {
         "qa-10-code #8"
     );
     assert!(
-        group.contains("It doesn&#x27;t encrypt the phone&#x27;s data"),
+        group.contains("It doesn&#39;t encrypt the phone&#39;s data"),
         "qa-pwa-polish-a Q-4"
     );
 }

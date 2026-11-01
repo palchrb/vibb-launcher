@@ -1499,10 +1499,10 @@
   "device.about.policy.server_error": "Server error",
   "device.about.policy.rejected": "Last settings refused",
   "device.about.policy.decode_failed": "New settings unreadable",
-  "device.about.policy.other": "Problem reported",
+  "device.about.policy.unknown": "Problem reported",
   "device.about.policy.cache_corrupt_sub": "The phone can't read its saved settings. It enforces the last app list it had (or nothing but Vibb One), and takes no changes until it gets good settings from this server.",
   "device.about.policy.server_error_sub": "This server answered with an error, so the phone keeps its last settings. Check the server log (\"failed to build device policy\").",
   "device.about.policy.rejected_sub": "The phone ignored the last settings from this server: they looked like a server falling back to defaults (no app list after it had one). Check the server log and version.",
   "device.about.policy.decode_failed_sub": "The phone couldn't read the last settings from this server; Vibb One and the server versions probably don't match. It keeps its current restrictions.",
-  "device.about.policy.other_sub": "The phone reported \"{code}\"."
+  "device.about.policy.unknown_sub": "The phone reported \"{code}\"."
 }

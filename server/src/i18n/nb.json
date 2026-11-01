@@ -1499,10 +1499,10 @@
   "device.about.policy.server_error": "Feil på serveren",
   "device.about.policy.rejected": "Siste innstillinger avvist",
   "device.about.policy.decode_failed": "Nye innstillinger uleselige",
-  "device.about.policy.other": "Problem meldt",
+  "device.about.policy.unknown": "Problem meldt",
   "device.about.policy.cache_corrupt_sub": "Telefonen kan ikke lese de lagrede innstillingene sine. Den bruker den siste applisten den hadde (eller ingenting annet enn Vibb One), og tar ikke imot endringer før den får gyldige innstillinger fra denne serveren.",
   "device.about.policy.server_error_sub": "Denne serveren svarte med en feil, så telefonen beholder de siste innstillingene sine. Sjekk serverloggen («failed to build device policy»).",
   "device.about.policy.rejected_sub": "Telefonen overså de siste innstillingene fra denne serveren: de så ut som en server som faller tilbake til standardverdier (ingen appliste etter at den hadde en). Sjekk serverloggen og versjonen.",
   "device.about.policy.decode_failed_sub": "Telefonen kunne ikke lese de siste innstillingene fra denne serveren; versjonene av Vibb One og serveren passer trolig ikke sammen. Den beholder de nåværende begrensningene.",
-  "device.about.policy.other_sub": "Telefonen meldte «{code}»."
+  "device.about.policy.unknown_sub": "Telefonen meldte «{code}»."
 }

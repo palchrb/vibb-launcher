@@ -64,7 +64,7 @@ async fn provision_page_with_checksum_shows_qr() {
     assert!(!page.contains("data-missing=\"checksum\""));
     // The launcher's name (design 34 P11, qa-34-s12-code L1).
     assert!(
-        page.contains("You type it in Vibb One&#x27;s settings on the phone."),
+        page.contains("You type it in Vibb One&#39;s settings on the phone."),
         "{page}"
     );
     assert!(page.contains("make Vibb One the device owner"), "{page}");

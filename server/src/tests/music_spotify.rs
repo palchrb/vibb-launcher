@@ -4279,7 +4279,7 @@ mod entries {
         assert!(
             !filter(ella)
                 .await
-                .contains("Spotify's hosts are allowed on this phone")
+                .contains("Spotify&#39;s hosts are allowed on this phone")
         );
         let save = |device: i64, account: String| {
             let cookie = cookie.clone();
@@ -4320,7 +4320,7 @@ mod entries {
         assert!(
             filter(ella)
                 .await
-                .contains("Spotify's hosts are allowed on this phone while it plays Spotify")
+                .contains("Spotify&#39;s hosts are allowed on this phone while it plays Spotify")
         );
         // An account that isn't logged in here, or junk: refused, nothing changed.
         for junk in ["999".to_string(), "x".to_string()] {
@@ -4461,7 +4461,7 @@ mod entries {
         assert!(
             !filter(ella)
                 .await
-                .contains("Spotify's hosts are allowed on this phone")
+                .contains("Spotify&#39;s hosts are allowed on this phone")
         );
         // Unbound, neither its outcome nor its account raises a row.
         let summary = page_text(&app.get_page(&format!("/devices/{ella}"), &cookie).await);
@@ -4973,7 +4973,7 @@ mod phones {
             "{unbound}"
         );
         assert!(!unbound.contains("while this phone plays Spotify"));
-        assert!(!unbound.contains("Spotify's hosts are allowed"));
+        assert!(!unbound.contains("Spotify&#39;s hosts are allowed"));
 
         let account = ready(&app).await;
         bind(&app, ella, account).await;
@@ -4989,7 +4989,7 @@ mod phones {
         // One footer under the filter switch while bound; the rest behind its ⓘ (qa-26c-merge2-code
         // M2).
         assert!(bound.contains(
-            "Blocks the lists and domains below, except Spotify&#x27;s while this phone plays Spotify."
+            "Blocks the lists and domains below, except Spotify&#39;s while this phone plays Spotify."
         ));
         let filter = &bound[bound.find("<section id=\"filter\"").unwrap()..];
         let filter = &filter[..filter.find("</section>").unwrap()];
@@ -4998,7 +4998,9 @@ mod phones {
         assert!(panel.contains(
             "Not applied on Ella for that reason, from Settings › Web Filter: i.scdn.co."
         ));
-        assert!(panel.contains("Spotify's hosts are allowed on this phone while it plays Spotify"));
+        assert!(
+            panel.contains("Spotify&#39;s hosts are allowed on this phone while it plays Spotify")
+        );
         // `/dns?device=` (an old link) goes to that page.
         let res = app.get_page(&format!("/dns?device={ella}"), &cookie).await;
         assert_eq!(

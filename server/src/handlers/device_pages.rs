@@ -132,7 +132,7 @@ impl PolicyProblem {
                 PolicyProblem::ServerError => "device.about.policy.server_error",
                 PolicyProblem::RejectedSuspect => "device.about.policy.rejected",
                 PolicyProblem::FreshDecodeFailed => "device.about.policy.decode_failed",
-                PolicyProblem::Other(_) => "device.about.policy.other",
+                PolicyProblem::Other(_) => "device.about.policy.unknown",
             },
         )
     }
@@ -145,7 +145,7 @@ impl PolicyProblem {
             PolicyProblem::RejectedSuspect => "device.about.policy.rejected_sub",
             PolicyProblem::FreshDecodeFailed => "device.about.policy.decode_failed_sub",
             PolicyProblem::Other(code) => {
-                return t_params(lang, "device.about.policy.other_sub", &[("code", code)]);
+                return t_params(lang, "device.about.policy.unknown_sub", &[("code", code)]);
             }
         };
         t(lang, key).to_string()
