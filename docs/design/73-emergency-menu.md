@@ -66,7 +66,7 @@ the call rules - not the screen lock - are what limits calls. The lock's "emerge
   country code → emergency), byte-identical in `launcher/app/src/test/resources/`. The server's
   `emergency::tests` and the launcher's `EmergencyMenuTest` check their constants against it, run every vector and
   compare the copies; both CI path filters include it.
-- **Storage:** migration 0113, `device_emergency_numbers (id, device_id, number, name, sort_order)`, unique per
+- **Storage:** migration 0114 (0113 is `reminder-ping`'s), `device_emergency_numbers (id, device_id, number, name, sort_order)`, unique per
   phone and number, deleted with the phone.
 - **Routes:** `POST /devices/{id}/calls/emergency` (add; a refusal renders the page 400 with the form open),
   `.../emergency/{entry}/move` (`dir` up/down, back to `#emergency-<id>`), `.../emergency/{entry}/remove` (back to

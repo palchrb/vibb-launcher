@@ -5,6 +5,7 @@ import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.CallState
 import com.kidslauncher.mdm.server.dto.LauncherUi
 import com.kidslauncher.mdm.server.dto.PolicyContact
+import com.kidslauncher.mdm.server.dto.PolicyEmergencyEntry
 import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.ParentPinEvent
 import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
@@ -833,6 +834,7 @@ class PolicyResponseCompatTest {
         )
         val callPolicy = (decodeCached(withEmpty) as CachedPolicy.Ok).policy.callPolicy!!
         assertEquals(CallPolicy(managed = true, callsEnabled = false, smsEnabled = false), callPolicy)
+        assertEquals("an older server's: no menu (112 alone)", null, callPolicy.emergencyMenu)
         assertTrue(callPolicy.contacts.isEmpty())
     }
 
@@ -849,7 +851,8 @@ class PolicyResponseCompatTest {
                  "show_on_home": true, "message_app": "element", "message_address": "@mamma:example.org"},
                 {"id": 4, "name": "Pappa", "number": "+4790000002", "inbound": true, "outbound": false,
                  "show_on_home": false, "message_app": "sms", "message_address": null}
-              ]
+              ],
+              "emergency_menu": [{"number": "112", "name": ""}, {"number": "113", "name": "Ambulanse"}]
             },
             "packages_to_uninstall"
             """.trimIndent()
@@ -863,6 +866,11 @@ class PolicyResponseCompatTest {
             callPolicy.contacts[0],
         )
         assertEquals(null, callPolicy.contacts[1].messageAddress)
+        // Design 73: the emergency menu, in the parent's order.
+        assertEquals(
+            listOf(PolicyEmergencyEntry("112", ""), PolicyEmergencyEntry("113", "Ambulanse")),
+            callPolicy.emergencyMenu,
+        )
         // And survives the cache round trip (defaults are not encoded).
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
         assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))

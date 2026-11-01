@@ -48,3 +48,23 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 - **17b, the app's own ring screen first**: the resumed lock (300 ms settled, screen on) sends the ring's FSI once per ring (`voipFsiDue`); the card only as the fallback (`voipRingUi`: no FSI - an FSI-denied ring with an answer intent now rings -, the send threw, the lock came back, or it never left the front within 1.5 s); Svar = the CallStyle answer action (`EXTRA_ANSWER_INTENT`, else - incoming CallStyle only - the one `key_action_priority` action that isn't the decline), silences the ring only after the answer action, same 1.5 s check; no send over the lock's own dialogs, the calls gate re-checked at the send (`sendRing`), a pause that isn't our wake activity's counts as the app's screen having come up (qa-17b-code); every VoIP send goes through `VoipCalls.send` behind `PinLockRuntime.voipCallOrEmergency` (our/Telecom call, emergency flow; the card and FSI also yield to an alarm, `voipOtherScreen`). Device checks: the 17 doc's "17b implementation status".
 - **Kiosk off**: the package + permission controller are pinned with the app-block bit while pinned (`lockTaskWhileLocked(voipPackages)` - LockTaskChrome stays the only setter), and the lock starts no lock task while the call rings or lives (PiP hang-up; `lockTaskEntry(voipCall)`, re-entered when the phase ends). Kiosk on: the list is untouched.
 - **Also**: the lock's system-call yield uses `isInManagedCall` (self-managed apps held it open with no cap); screen time counts while exempt (`screenTimeCounts(voipExempt)`); apps whose FSI Android dropped are reported (`lock_state.voip_fsi_denied`, device-page warning). Not device-tested: the 17 doc's "Implementation status".
+
+## The emergency menu (design 73, `docs/design/73-emergency-menu.md`)
+
+- **Every Nødsamtale** (the PIN lock's keypad and glance, its VoIP ring card, the time-rule screen, the phone book's
+  fail-closed 112 tile) calls `EmergencyCall.confirm`: one number (the default, 112) is the old "Call 112?" dialog, more
+  are `EmergencySheet` ("Call an emergency number", `sheet_emergency.xml` / `item_emergency_row.xml`, `KidSheetDialog`):
+  the first real emergency number large and red on top (`kid_emergency_big`), the others in the parent's order, Cancel.
+  One tap calls - the sheet is the confirm.
+- **Pure** `calls/EmergencyMenu.kt` (`EmergencyMenuTest`): `emergencyMenu` cleans the server's list (normalised,
+  no duplicates, at most 6, names clipped to 40; `null`/`[]` or a list without an emergency number gets 112 first),
+  `emergencyRows` decides each row - `EMERGENCY` (`Emergency.isEmergencyOutgoing`: the platform ORed with the fixed
+  list, shared as `emergency_numbers.json` with the server), else `decideOutgoing(.., isEmergency = false)` over
+  `CallPolicyStore.effectiveState()` (`ALLOWED`/`BLOCKED`; `BLOCKED` too while another call is live) -, `emergencyTap`
+  (emergency path: CALL_PHONE self-granted, Telecom, else `EmergencyDialer`; rules' path: `CallSystem.placeCall` only,
+  as a phone-book call; a blocked row is dimmed and does nothing). A non-emergency row calls from the lock without the
+  kid's PIN when the rules allow it (design 73 §2).
+- **Store:** `CallPolicyStore.emergencyMenuRaw`, read with the CE cache in `refresh` (`storedEmergencyMenu`: the cached
+  policy's list, else the one in `last_call_rules` - `CallRules.emergencyMenu`); the DE boot copy is unchanged (no
+  entry point runs before the first unlock).
+

@@ -44,6 +44,9 @@ data class CallRules(
     val smsEnabled: Boolean = false,
     val defaultCc: String = "47",
     val contacts: List<RuleContact> = emptyList(),
+    /** Design 73: the policy's emergency menu, kept with the rules so a cache that can't be read still has it;
+     * `null` = none sent (112 alone). Never decides a call: [Emergency] and the sets below do. */
+    val emergencyMenu: List<EmergencyEntry>? = null,
 ) {
     @Transient
     val inbound: Set<String> = contacts.filter { it.inbound }.mapTo(mutableSetOf()) { it.number }
@@ -126,9 +129,10 @@ fun decideIncoming(
 object Emergency {
     /** Used only to ALLOW an outgoing call (never to open the callback window), together with the
      * platform's answer: 112 and 911 work on every GSM phone, plus the national numbers of the
-     * default country. Deliberately not 000/08/118/999 (QA blocker 2). */
-    private val ALWAYS = setOf("112", "911")
-    private val BY_COUNTRY = mapOf(
+     * default country. Deliberately not 000/08/118/999 (QA blocker 2). The server shows the same list as "always
+     * works" on the emergency menu (design 73): both are the shared `emergency_numbers.json` (EmergencyMenuTest). */
+    internal val ALWAYS = setOf("112", "911")
+    internal val BY_COUNTRY = mapOf(
         "47" to setOf("110", "112", "113"),
         "46" to setOf("112"),
         "45" to setOf("112", "114"),

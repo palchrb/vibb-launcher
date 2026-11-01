@@ -18,6 +18,66 @@
     {% include "partials/note_warning.html" %}
     {% endfor %}
 
+    {#- Design 73: the emergency menu, at the top. A row's up/down returns to the row (#emergency-<id>), Remove and a
+        refusal's line to #emergency, Add Number and a suggestion to the new row; a refused Add Number renders here
+        (400) with its form open. The default 112 nothing has stored yet is alone, so it has no buttons. -#}
+    <section id="emergency" aria-labelledby="emergency-title">
+        <h2 class="group-header" id="emergency-title">{{ self.t("device.emergency.title") }}</h2>
+        {% if let Some(text) = emergency_notice %}
+        <div class="group"><p class="flash flash-error" role="status" data-flash="emergency">{{ text }}</p></div>
+        {% endif %}
+        <div class="group">
+            {% for row in emergency %}
+            <div class="row emergency-row" id="{{ row.anchor() }}" data-emergency="{{ row.number }}">
+                <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span></span>
+                {% if let Some(entry) = row.id %}
+                {% if !(row.first && row.last) %}
+                <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/move#emergency-{{ entry }}" class="emergency-move">
+                    {% if !row.first %}<button type="submit" class="row-action" name="dir" value="up" aria-label="{{ self.t("device.emergency.up") }}">&uarr;</button>{% endif %}
+                    {% if !row.last %}<button type="submit" class="row-action" name="dir" value="down" aria-label="{{ self.t("device.emergency.down") }}">&darr;</button>{% endif %}
+                </form>
+                {% endif %}
+                {% if row.removable %}
+                <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/remove#emergency" class="row-end">
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.emergency.remove_label", [("number", row.number.as_str())]) }}">{{ self.t("device.emergency.remove") }}</button>
+                </form>
+                {% endif %}
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% if emergency_can_add || emergency_add_open %}
+            <details class="edit cell" id="add-emergency"{% if emergency_add_open %} open{% endif %}>
+                <summary class="row row-button">{{ self.t("device.emergency.add") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/calls/emergency#add-emergency" class="edit-body">
+                    <label class="field-label" for="emergency_number">{{ self.t("device.emergency.number") }}</label>
+                    <input type="tel" id="emergency_number" name="number" value="{{ emergency_add_number }}" required{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_number" %} aria-invalid="true" aria-describedby="emergency_number-error" autofocus{% endif %}{% endif %}>
+                    {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_number" %}<p class="field-error" id="emergency_number-error">{{ why }}</p>{% endif %}{% endif %}
+                    <label class="field-label" for="emergency_name">{{ self.t("device.emergency.name") }}</label>
+                    <input type="text" id="emergency_name" name="name" value="{{ emergency_add_name }}" maxlength="40"{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_name" %} aria-invalid="true" aria-describedby="emergency_name-error" autofocus{% endif %}{% endif %}>
+                    {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_name" %}<p class="field-error" id="emergency_name-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.t("device.emergency.name_hint") }}</p>{% endif %}
+                    <button type="submit" class="button-wide">{{ self.t("device.emergency.add") }}</button>
+                </form>
+            </details>
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("device.emergency.footer") }}</p>
+        {% if !emergency_suggestions.is_empty() %}
+        <h3 class="group-header" id="emergency-suggestions">{{ self.t("device.emergency.suggestions") }}</h3>
+        <div class="group">
+            {% for (number, name) in emergency_suggestions %}
+            <div class="row emergency-row" data-suggestion="{{ number }}">
+                <span class="row-label"><span class="emergency-number">{{ number }}</span> {{ name }}<span class="row-sub">{{ self.t("device.emergency.always") }}</span></span>
+                <form method="post" action="/devices/{{ device.id }}/calls/emergency#emergency" class="row-end">
+                    <input type="hidden" name="number" value="{{ number }}">
+                    <input type="hidden" name="name" value="{{ name }}">
+                    <button type="submit" class="row-action" aria-label="{{ self.tp("device.emergency.add_label", [("name", name), ("number", number)]) }}">{{ self.t("common.add") }}</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </section>
+
     {#- One form (§5.6, H1): the handler writes every switch, a missing one is off. -#}
     <section id="settings" aria-label="{{ self.t("device.calls.settings_label") }}">
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">

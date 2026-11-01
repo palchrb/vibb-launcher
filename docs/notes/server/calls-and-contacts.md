@@ -62,3 +62,26 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   warnings and the screening row, local times, the country code), `calls::tests` (every finding's words),
   `settings_pages` (Phone Setup's table), repointed `launcher_ui.rs`, `step9.rs`, `step10.rs`, `catalog_pins.rs`,
   `cleanup.rs`, `attention.rs`.
+
+## The emergency menu (design 73, `docs/design/73-emergency-menu.md`)
+
+- **Storage:** `device_emergency_numbers` (0114): a phone's numbers in order (`sort_order`), unique per phone and
+  number, deleted with the phone. No rows = 112 alone (`emergency::device_menu`); the first write stores 112 first
+  (`emergency::store_default`), then applies the change.
+- **Policy:** `call_policy.emergency_menu: [{number, name}]` (`emergency::policy_menu`), always, managed or not, never
+  empty (`policy_json_keys_snapshot`; the launcher's `PolicyEmergencyEntry`).
+- **The fixed list:** `emergency::ALWAYS`/`BY_COUNTRY` = `testdata/emergency_numbers.json`, shared with the launcher
+  (its `Emergency.staticSet`, which the phone ORs with the platform's own answer). `is_emergency` judges a normalised
+  number; it decides the sub-lines and the removal rule only - the phone decides every call.
+- **Device › Calls › Emergency Menu** (at the top of the page): a row per number (the number in bold, the name, a
+  sub-line - "First and largest on the phone" for the first number on the fixed list, the phone's large red row;
+  "Emergency number: always works"; orange "Not an emergency number: follows the call rules"), ↑↓
+  (`POST .../calls/emergency/{entry}/move`, back to `#emergency-<entry>`), Remove (`.../remove`, back to
+  `#emergency`; not shown, and refused with `?notice=emergency_kept`, when it would leave no number of the fixed
+  list), "Add Number…" (`POST .../calls/emergency`: normalised with the default country code, a name of at most 40
+  characters, no duplicates, at most `emergency::MAX_ENTRIES` = 6; a refusal renders the page, 400, the form open;
+  back to the new row), and "Suggestions" (`emergency::SUGGESTIONS`: 113 Ambulance and 110 Fire while the default
+  country code is 47, each while it isn't on the list and the list has room; the name in the parent's language).
+  A row gone (another tab) lands on `?notice=emergency_gone#emergency`. Tests: `tests::emergency_menu`, `emergency::tests`,
+  and the page's form table in `tests::calls::every_form_on_the_calls_page_returns_to_its_place`.
+

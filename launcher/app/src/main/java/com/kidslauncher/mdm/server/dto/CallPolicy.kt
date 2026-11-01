@@ -18,6 +18,16 @@ data class CallPolicy(
     val smsEnabled: Boolean = false,
     val defaultCountryCode: String = "47",
     val contacts: List<PolicyContact> = emptyList(),
+    /** Design 73: the emergency menu in the parent's order (normalised numbers, at least one); `null` from a server
+     * before it - the phone then offers 112 alone ([com.kidslauncher.mdm.calls.emergencyMenu]). Sent managed or not. */
+    val emergencyMenu: List<PolicyEmergencyEntry>? = null,
+)
+
+/** One number of [CallPolicy.emergencyMenu]: the server's `emergency::PolicyEntry`; [name] may be empty. */
+@Serializable
+data class PolicyEmergencyEntry(
+    val number: String = "",
+    val name: String = "",
 )
 
 /** One contact. [number] is normalised server-side (E.164 or a 3-6 digit short number);
