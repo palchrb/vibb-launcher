@@ -85,6 +85,9 @@ object MediaCache {
 
     private val publicClient: OkHttpClient by lazy { guarded(lanClient, Dns.SYSTEM) }
 
+    /** A public entry's audio (NRK, RSS): the guarded client asking an `http://` enclosure over https first (S-L4). */
+    private val enclosureClient: OkHttpClient by lazy { publicClient.newBuilder().addInterceptor(HttpsFirst()).build() }
+
     /** [base] refusing private addresses: names resolved by [dns], and the connected address. */
     internal fun guarded(base: OkHttpClient, dns: Dns): OkHttpClient = base.newBuilder()
         .proxy(Proxy.NO_PROXY)
@@ -131,7 +134,12 @@ object MediaCache {
      * job alike (design 30 §1.6, M5).
      */
     private fun http(context: Context, publicOnly: Boolean, followRedirects: Boolean = true): DataSource.Factory {
-        val okhttp = OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))
+        val client = when {
+            !followRedirects -> noRedirectClients.getValue(publicOnly)
+            publicOnly -> enclosureClient
+            else -> lanClient
+        }
+        val okhttp = OkHttpDataSource.Factory(client)
             .setUserAgent("VibbMusic/${BuildConfig.VERSION_NAME}")
             .setContentTypePredicate { type -> !type.lowercase().startsWith("text/html") }
         val cache = get(context)

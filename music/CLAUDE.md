@@ -125,7 +125,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Cleartext http is allowed** (`res/xml/network_security_config.xml`, qa-30-s3b-code H2; `SourceScanTest`): Sonos
   SOAP to a speaker's LAN address, http enclosures, `lan` feeds and the emulator's fakes all need it, and a config
   can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
-  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2, round 53-c): the
+  Sonos URLs from IP literals). A public entry's `http://` audio (port 80) is asked over `https://` first
+  (`media/HttpsFirst`, security review S-L4): any failure falls back to the listed URL and that host stays http for
+  24 h; the rows, keys and `sameSource` keep the listed URL; never `lan`, Sonos or Storytel. Trust is the system's CAs only - **with one exception** (design 53 §2.2, round 53-c): the
   Sonos event socket's own client (`speakerSocketClient`, `SonosSocket.kt`) trusts **the pinned Sonos Device
   Authentication Root CA alone** (`SONOS_ROOT_PEM`, its SHA-256 checked by `SonosTrustTest`; a `KeyStore` holding only
   it - never the system's CAs, never trust-all; intermediates the speaker sends are path-built under it) **and the

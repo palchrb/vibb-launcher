@@ -639,7 +639,9 @@ class SourceScanTest {
         assertTrue(downloads.contains("followRedirects = !storytel"))
         val cache = code(moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt"))
         assertTrue(cache.contains(".followRedirects(false).followSslRedirects(false)"))
-        assertTrue(cache.contains("OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))"))
+        // (S-L4: a public entry's redirecting client asks https first; the no-redirect one never does)
+        assertTrue(cache.contains("!followRedirects -> noRedirectClients.getValue(publicOnly)\n            publicOnly -> enclosureClient"))
+        assertTrue(cache.contains("OkHttpDataSource.Factory(client)"))
     }
 
     @Test
