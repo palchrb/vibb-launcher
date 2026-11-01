@@ -84,7 +84,7 @@ object MusicCalls {
     private fun musicSession(ctx: Context): MediaController? = try {
         ctx.getSystemService(MediaSessionManager::class.java)
             ?.getActiveSessions(ComponentName(ctx, BadgeListenerService::class.java))
-            ?.firstOrNull { it.packageName in MUSIC_PACKAGES }
+            ?.firstOrNull { MusicTrust.trusted(ctx, it.packageName) } // S-L8 (code QA L3): our signer
     } catch (e: SecurityException) {
         null // no listener access: no media surfaces, and no call rule here (the music app's backstop)
     } catch (e: Exception) {

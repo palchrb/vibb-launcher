@@ -115,8 +115,16 @@ fun resolveDoT(
         if (remainingMs() <= 0) break
         var connected = false
         var written = false
+        // Code QA L5: one deadline for the whole attempt, the TLS handshake included - at it the socket is closed, so a
+        // server trickling its handshake can't hold the query past the budget either (a close then reads as a timeout).
+        val expired = java.util.concurrent.atomic.AtomicBoolean(false)
+        var watchdog: java.util.concurrent.ScheduledFuture<*>? = null
         try {
             protectedSocket(protect).use { plain ->
+                watchdog = DOT_WATCHDOG.schedule(
+                    { expired.set(true); runCatching { plain.close() } },
+                    remainingMs().coerceAtLeast(1).toLong(), TimeUnit.MILLISECONDS,
+                )
                 plain.connect(InetSocketAddress(address, port), minOf(budget.connectMs, remainingMs()).coerceAtLeast(1))
                 connected = true
                 val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
@@ -151,12 +159,21 @@ fun resolveDoT(
         } catch (e: Exception) {
             Log.w(LOG_TAG, "DoT attempt failed: ${e.javaClass.simpleName}")
             if (unprotected(e)) return Attempt.Unprotected
-            if (written) return afterWriteOutcome(e)
-            outcome = Attempt.Transport(transportReason(e, connected))
+            // The watchdog's close at the deadline is a timeout, whatever the socket threw for it.
+            val failure = if (expired.get()) java.net.SocketTimeoutException("DoT attempt past its deadline") else e
+            if (written) return afterWriteOutcome(failure)
+            outcome = Attempt.Transport(transportReason(failure, connected))
+        } finally {
+            watchdog?.cancel(false)
         }
     }
     return outcome
 }
+
+/** Closes a DoT attempt's socket at its deadline ([resolveDoT]); one daemon thread for every attempt. */
+private val DOT_WATCHDOG: java.util.concurrent.ScheduledThreadPoolExecutor =
+    java.util.concurrent.ScheduledThreadPoolExecutor(1) { r -> Thread(r, "dot-deadline").apply { isDaemon = true } }
+        .apply { removeOnCancelPolicy = true }
 
 /**
  * [buf] filled from [input] before the deadline (security review S-L9): before every read the socket's timeout is set

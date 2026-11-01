@@ -29,10 +29,12 @@ class MusicPlanTest {
 
     @Test
     fun `only a music app's update nudges it`() {
-        assertEquals("me.vibb.music", musicNudgeOnChange("me.vibb.music"))
-        assertEquals("me.vibb.music.debug", musicNudgeOnChange("me.vibb.music.debug"))
-        assertNull(musicNudgeOnChange("org.example.chat"))
-        assertNull(musicNudgeOnChange(null))
+        val ours = { _: String -> true }
+        assertEquals("me.vibb.music", musicNudgeOnChange("me.vibb.music", ours))
+        assertEquals("me.vibb.music.debug", musicNudgeOnChange("me.vibb.music.debug", ours))
+        assertNull("another signer (S-L8)", musicNudgeOnChange("me.vibb.music") { false })
+        assertNull(musicNudgeOnChange("org.example.chat", ours))
+        assertNull(musicNudgeOnChange(null, ours))
     }
 
     @Test

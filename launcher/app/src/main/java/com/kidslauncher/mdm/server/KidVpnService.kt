@@ -279,10 +279,19 @@ class KidVpnService : VpnService() {
                 continue
             }
             val packetData = buffer.copyOfRange(0, length)
+            val readAt = SystemClock.elapsedRealtime()
             dnsInFlight.incrementAndGet()
             scope.launch {
                 try {
-                    dnsSlots.withPermit { handlePacket(packetData, output, writeLock) }
+                    dnsSlots.withPermit {
+                        // Code QA L5: a query that waited too long for its slot goes - a backlog never holds the slots.
+                        if (dnsStillFresh(readAt, SystemClock.elapsedRealtime())) {
+                            handlePacket(packetData, output, writeLock)
+                        } else {
+                            val dropped = dnsDropped.incrementAndGet()
+                            if (dropped == 1L || dropped % 1_000L == 0L) Log.w(LOG_TAG, "DNS queries over the limit dropped: $dropped")
+                        }
+                    }
                 } finally {
                     dnsInFlight.decrementAndGet()
                 }
@@ -333,17 +342,18 @@ class KidVpnService : VpnService() {
             } catch (e: Exception) {
                 return
             }
-            // S-L9: only the first question is classified, so a query with more than one is never forwarded.
-            if (!dnsQuestionsOk(message.header.getCount(Section.QUESTION))) return
-            val question = message.question ?: return
-            val domain = question.name.toString(true)
-
             fun reply(responseBytes: ByteArray) {
                 val responsePacket = buildResponsePacket(ipPacket, udpPacket, responseBytes)
                 synchronized(writeLock) {
                     output.write(responsePacket.rawData)
                 }
             }
+
+            // S-L9: only the first question is classified, so a query with more (or none) is never forwarded - FORMERR.
+            if (!dnsQuestionsOk(message.header.getCount(Section.QUESTION))) return reply(formerrResponse(message))
+            val question = message.question ?: return
+            val domain = question.name.toString(true)
+
 
             // Firefox's canary (design 67 §2.3): NXDOMAIN turns off the DoH it enabled by default.
             // Firefox's own probe, not the kid's doing: never forwarded, logged or counted.

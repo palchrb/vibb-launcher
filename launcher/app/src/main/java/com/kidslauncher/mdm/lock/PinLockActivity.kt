@@ -72,6 +72,9 @@ class PinLockActivity : AppCompatActivity() {
     private var checking = false
     private var waitMs = 0L
     private var wrongShown = false
+    /** Code QA L4: the last try came back Unusable (the count couldn't be committed, S-L6) - "only the parent code"
+     * shows until the next digit. */
+    private var unusableShown = false
     private var finishingAfterUnlock = false
     private var startedLockTask = false
     private var resumed = false
@@ -945,6 +948,7 @@ class PinLockActivity : AppCompatActivity() {
     private fun onDigit(digit: Char) {
         if (!keypadEnabled()) return
         wrongShown = false
+        unusableShown = false
         if (entered.isEmpty()) enteredAt = PinLockRuntime.screenOffs
         entered = appendDigit(entered, digit, PinLockRuntime.pinLength)
         render()
@@ -989,7 +993,7 @@ class PinLockActivity : AppCompatActivity() {
                     shake()
                 }
                 is PinLockRuntime.PinResult.Waiting -> waitMs = result.waitMs
-                PinLockRuntime.PinResult.Unusable -> Unit
+                PinLockRuntime.PinResult.Unusable -> unusableShown = true
             }
             render()
             if (waitMs > 0L) {
@@ -1010,7 +1014,7 @@ class PinLockActivity : AppCompatActivity() {
         val length = PinLockRuntime.pinLength
         // The usual texts first; else a glance row's hint (design 25 §1.1); else the plain prompt. "Only the parent code"
         // only in own mode (r10 run F1): as Android's face the kid PIN opens Android's pad.
-        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)) {
+        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable && !unusableShown, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)) {
             GlancePrompt.UNUSABLE -> getString(R.string.pin_lock_unusable)
             GlancePrompt.WAIT -> getString(R.string.pin_lock_wait, backoffText(waitMs))
             GlancePrompt.CHECKING -> getString(R.string.pin_lock_checking)

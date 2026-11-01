@@ -274,22 +274,25 @@ fun guardOnCrash(guard: CrashGuard, nowMs: Long): CrashGuard =
     guard.copy(crashes = guard.crashes.filter { nowMs - it in 0 until GUARD_WINDOW_MS } + nowMs)
 
 /**
- * Security review S-L2: whether an uncaught [throwable] is the lock's own - one of its frames (or of a cause's) is in
- * `com.kidslauncher.mdm.lock`. Only those count toward the guard: a crash of another part of the process while the
- * lock screen exists (a listener reader, a sync coroutine) must not be able to switch the lock off.
+ * Security review S-L2 (with code QA L1): whether an uncaught [throwable] is the lock screen's own. The deepest cause
+ * that has a frame of ours decides, by its innermost frame of ours (where the crash happened, not who called it): only
+ * the lock's UI classes count ([LOCK_UI_CLASSES]: PinLockActivity, its keypad, clock face and rule card - never the
+ * glance, the VoIP calls or any panel that renders another app's notification, which a crafted notification could crash
+ * three times to switch the lock off).
  */
 fun lockCrash(throwable: Throwable): Boolean {
-    var t: Throwable? = throwable
-    var depth = 0
-    while (t != null && depth < 8) {
-        if (t.stackTrace.any { it.className.startsWith(LOCK_PACKAGE_PREFIX) }) return true
-        t = t.cause?.takeIf { it !== t }
-        depth++
-    }
-    return false
+    val chain = generateSequence(throwable) { t -> t.cause?.takeIf { it !== t } }.take(8).toList()
+    val origin = chain.asReversed().firstNotNullOfOrNull { t -> t.stackTrace.firstOrNull { it.className.startsWith(OUR_PREFIX) } }
+        ?: return false
+    if (!origin.className.startsWith(LOCK_PREFIX)) return false
+    return origin.className.removePrefix(LOCK_PREFIX).substringBefore('$').removeSuffix("Kt") in LOCK_UI_CLASSES
 }
 
-private const val LOCK_PACKAGE_PREFIX = "com.kidslauncher.mdm.lock."
+private const val OUR_PREFIX = "com.kidslauncher.mdm."
+private const val LOCK_PREFIX = "com.kidslauncher.mdm.lock."
+
+/** The PIN lock screen's own UI (S-L2): nothing in it shows another app's content. */
+val LOCK_UI_CLASSES = setOf("PinLockActivity", "PinKeypadLayout", "PinKeyHighlight", "LockClockFace", "RuleCardView")
 
 /** A PinLockActivity.onCreate: trips when [GUARD_CRASHES] crashes happened within the window. */
 fun guardOnCreate(guard: CrashGuard, nowMs: Long): CrashGuard {

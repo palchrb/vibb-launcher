@@ -176,22 +176,18 @@ private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
  * The alarm/clock app the schedule lock spares, so an alarm set inside bedtime still rings (QA step 4 #2): the one
  * holding the next alarm, else the resolver of `AlarmClock.ACTION_SHOW_ALARMS` - but since security review S-L3 only
  * when it is a lock clock app (`lockClockPackages`: the system clock app, or Fossify Clock with its pinned signer),
- * else the system clock app ([sparedAlarmApp]). Any allowlisted app may call `setAlarmClock`; it is not spared for it.
- * `null` if there's none.
+ * plus every system clock app ([sparedAlarmApps], code QA L2). Any allowlisted app may call `setAlarmClock`; it is
+ * not spared for it. Empty if there's none.
  */
-internal fun alarmAppPackage(context: Context): String? = try {
+internal fun alarmAppPackages(context: Context): Set<String> = try {
     val pm = context.packageManager
     val next = context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent?.creatorPackage
     val resolved = pm.resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)
         ?.activityInfo?.packageName?.takeIf { it != "android" }
-    val systemClock = pm.queryIntentActivities(
-        Intent(AlarmClock.ACTION_SHOW_ALARMS),
-        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong()),
-    ).map { it.activityInfo.packageName }.firstOrNull { it != "android" }
-    sparedAlarmApp(next, resolved, systemClock, com.kidslauncher.mdm.lock.ClockApp.installed(context))
+    sparedAlarmApps(next, resolved, com.kidslauncher.mdm.lock.ClockApp.systemClocks(context), com.kidslauncher.mdm.lock.ClockApp.installed(context))
 } catch (e: Exception) {
     Log.w(LOG_TAG, "Couldn't look up the alarm app", e)
-    null
+    emptySet()
 }
 
 /**
@@ -403,7 +399,7 @@ object AppEnforcer {
             ourDialerActive = CallSystem.dialerRoleHeld(context),
             smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
             scheduleLocked = scheduleLocked,
-            alarmApp = alarmAppPackage(context),
+            alarmApps = alarmAppPackages(context),
             inputMethods = keptInputMethods(enabledImes, systemImes, allowlist),
             lockUsableApps = lock.usableApps,
             ruleBlocksCalls = lock.callsBlocked,
@@ -629,9 +625,8 @@ object AppEnforcer {
             resolved[HelperKind.EMERGENCY_DIALER]?.packageName,
             resolved[HelperKind.TELECOM]?.packageName,
             resolved[HelperKind.CELL_BROADCAST]?.packageName,
-            alarmAppPackage(context),
             CallSystem.defaultSmsPackage(context).takeIf { smsOn },
-        ) + cellBroadcast + inputMethodPackages(context)
+        ) + alarmAppPackages(context) + cellBroadcast + inputMethodPackages(context)
     }
 
     /**
@@ -1083,7 +1078,8 @@ object AppEnforcer {
             emergencyDialer = resolved[HelperKind.EMERGENCY_DIALER],
             telecom = resolved[HelperKind.TELECOM],
             systemDialer = helperInfo(context, systemDialerPackage(context)),
-            alarmApp = helperInfo(context, alarmAppPackage(context)),
+            alarmApp = null,
+            alarmApps = alarmAppPackages(context).mapNotNull { helperInfo(context, it) },
             forbidden = forbidden,
             ourDialerHeld = CallSystem.dialerRoleHeld(context),
             emergencySos = resolved[HelperKind.EMERGENCY_SOS],

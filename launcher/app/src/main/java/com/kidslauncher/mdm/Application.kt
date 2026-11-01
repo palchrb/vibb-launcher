@@ -104,7 +104,7 @@ class Application : android.app.Application() {
                         // Design 68: an update that adds CAMERA, or a camera-off app reinstalled, is denied before its start.
                         AppEnforcer.enforceCameraOnPackage(this@Application, packageName)
                         // The music app updated (a catalog install, Play, adb): it syncs and reports now.
-                        com.kidslauncher.mdm.music.musicNudgeOnChange(packageName)?.let {
+                        com.kidslauncher.mdm.music.musicNudgeOnChange(packageName) { com.kidslauncher.mdm.music.MusicTrust.trusted(this@Application, it) }?.let {
                             com.kidslauncher.mdm.music.MusicSync.nudge(this@Application, it)
                         }
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {

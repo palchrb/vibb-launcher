@@ -31,7 +31,8 @@ val MUSIC_PACKAGES = listOf("me.vibb.music", "me.vibb.music.debug")
  * finished): the music app to nudge, so the new app syncs and Device > Music gets its report at
  * once - its managed config didn't change, so nothing else would nudge it. Null for any other app.
  */
-fun musicNudgeOnChange(changedPackage: String?): String? = changedPackage?.takeIf { it in MUSIC_PACKAGES }
+fun musicNudgeOnChange(changedPackage: String?, trusted: (String) -> Boolean): String? =
+    changedPackage?.takeIf { it in MUSIC_PACKAGES && trusted(it) } // S-L8 (code QA L3): only the music app with our signer
 
 /** The bridge's nudge to the music app: carries nothing, only starts its sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"

@@ -263,7 +263,9 @@ fun pinLockHelpers(
     ourDialerHeld: Boolean = false,
     emergencySos: ResolvedHelper? = null,
     clockApp: String? = null,
-): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp, emergencySos)
+    /** Code QA L2: every spared alarm app (each system clock among them) - filtered like the rest. */
+    alarmApps: List<ResolvedHelper> = emptyList(),
+): Set<String> = (listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp, emergencySos) + alarmApps)
     .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
     .mapTo(mutableSetOf()) { it.packageName }
     .apply { clockApp?.takeIf { it !in forbidden }?.let(::add) }

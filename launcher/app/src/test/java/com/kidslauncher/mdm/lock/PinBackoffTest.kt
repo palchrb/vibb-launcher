@@ -22,25 +22,26 @@ class PinBackoffTest {
     }
 
     @Test
-    fun `four free tries, then 30 s, 1, 2, 5, 15 minutes and doubling to 24 hours (S-L6)`() {
+    fun `four free tries, then 30 s, 1, 2, 5, 15 minutes and doubling up to the cap (S-L6)`() {
         assertEquals(listOf(0L, 0L, 0L, 0L, 0L), (0..4).map(::backoffDurationMs))
         assertEquals(30_000L, backoffDurationMs(5))
         assertEquals(60_000L, backoffDurationMs(6))
         assertEquals(120_000L, backoffDurationMs(7))
         assertEquals(300_000L, backoffDurationMs(8))
         assertEquals(900_000L, backoffDurationMs(9))
-        // S-L6: no 15-minute cap any more - a patient guesser gets a few tries a day.
-        assertEquals(1_800_000L, backoffDurationMs(10))
-        assertEquals(57_600_000L, backoffDurationMs(15))
-        assertEquals(86_400_000L, backoffDurationMs(16))
-        assertEquals(86_400_000L, backoffDurationMs(50))
-        val waits = (5..20).map(::backoffDurationMs)
+        // S-L6: past 15 minutes each wait doubles until it reaches the cap, which is where it stays.
+        assertEquals(minOf(1_800_000L, PIN_BACKOFF_CAP_MS), backoffDurationMs(10))
+        val waits = (9..60).map(::backoffDurationMs)
         assertEquals(waits.sorted(), waits)
-        // A day of tries after the free ones: far fewer than the ~100 the old cap allowed.
+        for ((a, b) in waits.zipWithNext()) assertEquals("$a -> $b", minOf(a * 2, PIN_BACKOFF_CAP_MS), b)
+        assertEquals(PIN_BACKOFF_CAP_MS, backoffDurationMs(60))
+        assertEquals(PIN_BACKOFF_CAP_MS, backoffDurationMs(Int.MAX_VALUE))
+        // The user's choice (2026-11-01): 1 hour - about 24 tries a day, not the ~100 of the old 15-minute cap.
+        assertEquals(3_600_000L, PIN_BACKOFF_CAP_MS)
         var spent = 0L
         var tries = 0
         while (spent < 86_400_000L) spent += backoffDurationMs(PIN_FREE_ATTEMPTS + ++tries)
-        assertTrue("$tries", tries <= 12)
+        assertTrue("$tries", tries <= 30)
         assertEquals(0L, backoffRemaining(failed(4), t0))
         assertEquals(30_000L, backoffRemaining(failed(5), t0))
         assertEquals(10_000L, backoffRemaining(failed(5), later(20_000L)))

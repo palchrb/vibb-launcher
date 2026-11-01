@@ -8,11 +8,14 @@ import com.kidslauncher.mdm.server.DedupTimes
 import com.kidslauncher.mdm.server.HardeningRestriction
 import com.kidslauncher.mdm.server.bluetoothSharingRestricted
 import com.kidslauncher.mdm.server.dnsAdmit
+import com.kidslauncher.mdm.server.DNS_SLOT_WAIT_MAX_MS
 import com.kidslauncher.mdm.server.dnsQuestionsOk
+import com.kidslauncher.mdm.server.dnsStillFresh
+import com.kidslauncher.mdm.server.formerrResponse
 import com.kidslauncher.mdm.server.dto.HardeningPolicy
 import com.kidslauncher.mdm.server.hardeningPlan
 import com.kidslauncher.mdm.server.readFully
-import com.kidslauncher.mdm.server.sparedAlarmApp
+import com.kidslauncher.mdm.server.sparedAlarmApps
 import com.kidslauncher.mdm.server.withFilterVpnLock
 import com.kidslauncher.mdm.server.writeAtomically
 import com.kidslauncher.mdm.timerules.TimeRuleWake
@@ -21,6 +24,7 @@ import com.kidslauncher.mdm.ui.kidsettings.ControlsSection
 import com.kidslauncher.mdm.ui.kidsettings.bluetoothPageAllowed
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -59,17 +63,28 @@ class SecurityLowsTest {
         fun thrown(className: String) = RuntimeException("x").apply {
             stackTrace = arrayOf(StackTraceElement(className, "run", "F.kt", 1), StackTraceElement("android.os.Looper", "loop", "L.java", 2))
         }
+        fun stack(vararg classes: String) = RuntimeException("x").apply {
+            stackTrace = classes.map { StackTraceElement(it, "run", "F.kt", 1) }.toTypedArray()
+        }
         assertTrue(lockCrash(thrown("com.kidslauncher.mdm.lock.PinLockActivity")))
+        assertTrue(lockCrash(thrown("com.kidslauncher.mdm.lock.PinLockActivity\$onCreate\$1")))
+        assertTrue("Android's view code under the lock's onCreate", lockCrash(stack("android.view.View", "com.kidslauncher.mdm.lock.PinLockActivity")))
         assertFalse(lockCrash(thrown("com.kidslauncher.mdm.badges.GlanceReader")))
-        assertTrue(lockCrash(IllegalStateException("wrapped", thrown("com.kidslauncher.mdm.lock.LockGlance"))))
+        // Code QA L1: the glance and the VoIP calls render other apps' notifications - their crashes never count, not even
+        // wrapped, nor when the lock screen called into them.
+        assertFalse(lockCrash(IllegalStateException("wrapped", thrown("com.kidslauncher.mdm.lock.LockGlance"))))
+        assertFalse(lockCrash(thrown("com.kidslauncher.mdm.lock.VoipCalls")))
+        assertFalse(lockCrash(stack("com.kidslauncher.mdm.lock.GlancePanel", "com.kidslauncher.mdm.lock.PinLockActivity")))
+        assertTrue(lockCrash(RuntimeException("Unable to start activity", stack("com.kidslauncher.mdm.lock.RuleCardView"))))
     }
 
     @Test
-    fun `S-L3 - an allowlisted app's alarm isn't spared at bedtime, the system clock is`() {
-        assertEquals("com.android.deskclock", sparedAlarmApp("com.example.game", "com.example.game", "com.android.deskclock", clockAppVerified = false))
-        assertEquals("org.fossify.clock", sparedAlarmApp("org.fossify.clock", null, "com.android.deskclock", clockAppVerified = true))
-        assertEquals("com.android.deskclock", sparedAlarmApp("org.fossify.clock", null, "com.android.deskclock", clockAppVerified = false))
-        assertNull(sparedAlarmApp("com.example.game", null, null, clockAppVerified = false))
+    fun `S-L3 - an allowlisted app's alarm isn't spared at bedtime, every system clock is`() {
+        val system = setOf("com.android.deskclock", "com.oem.clock")
+        assertEquals(system, sparedAlarmApps("com.example.game", "com.example.game", system, clockAppVerified = false))
+        assertEquals(system + "org.fossify.clock", sparedAlarmApps("org.fossify.clock", null, system, clockAppVerified = true))
+        assertEquals(system, sparedAlarmApps("org.fossify.clock", null, system, clockAppVerified = false))
+        assertEquals(emptySet<String>(), sparedAlarmApps("com.example.game", null, emptySet(), clockAppVerified = false))
     }
 
     @Test
@@ -115,6 +130,17 @@ class SecurityLowsTest {
 
         assertTrue(dnsAdmit(DNS_IN_FLIGHT_MAX - 1))
         assertFalse(dnsAdmit(DNS_IN_FLIGHT_MAX))
+        assertTrue(dnsStillFresh(readAtMs = 1_000L, nowMs = 1_000L + DNS_SLOT_WAIT_MAX_MS))
+        assertFalse("a query that waited past the limit leaves its slot", dnsStillFresh(1_000L, 1_001L + DNS_SLOT_WAIT_MAX_MS))
+        val twoQuestions = org.xbill.DNS.Message.newQuery(
+            org.xbill.DNS.Record.newRecord(org.xbill.DNS.Name.fromString("ads.example."), org.xbill.DNS.Type.A, org.xbill.DNS.DClass.IN),
+        ).apply {
+            addRecord(org.xbill.DNS.Record.newRecord(org.xbill.DNS.Name.fromString("ok.example."), org.xbill.DNS.Type.A, org.xbill.DNS.DClass.IN), org.xbill.DNS.Section.QUESTION)
+        }
+        val answer = org.xbill.DNS.Message(formerrResponse(twoQuestions))
+        assertEquals(org.xbill.DNS.Rcode.FORMERR, answer.rcode)
+        assertEquals(twoQuestions.header.id, answer.header.id)
+        assertEquals(0, answer.header.getCount(org.xbill.DNS.Section.QUESTION))
         assertTrue(dnsQuestionsOk(1))
         assertFalse(dnsQuestionsOk(2))
         assertFalse(dnsQuestionsOk(0))
@@ -151,13 +177,20 @@ class SecurityLowsTest {
 
     @Test
     fun `P-L1 - no shortcut id or contact-like channel id is logged or reported`() {
-        assertEquals("messages", reportableChannel("messages : +4791234567"))
-        assertEquals("com.google.android.gms.availability", reportableChannel("com.google.android.gms.availability"))
-        assertNull(reportableChannel(null))
-        val hashed = reportableChannel("contact_4791234567")!!
+        val key = ByteArray(32) { it.toByte() }
+        assertEquals("messages", reportableChannel("messages : +4791234567", key))
+        assertEquals("com.google.android.gms.availability", reportableChannel("com.google.android.gms.availability", key))
+        assertNull(reportableChannel(null, key))
+        val hashed = reportableChannel("contact_4791234567", key)!!
         assertTrue(hashed, Regex("#[0-9a-f]{8}").matches(hashed))
-        assertEquals(hashed, reportableChannel("contact_4791234567"))
-        assertTrue(Regex("#[0-9a-f]{8}").matches(reportableChannel("dm_ola@example.org")!!))
+        assertEquals("stable per channel", hashed, reportableChannel("contact_4791234567", key))
+        assertTrue(Regex("#[0-9a-f]{8}").matches(reportableChannel("dm_ola@example.org", key)!!))
+        // Code QA M1: never a plain SHA-256 of the id (brute-forced over every phone number in seconds) - keyed, so
+        // another install's key gives another tag, and without a key nothing of the id is shown.
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest("contact_4791234567".toByteArray())
+        assertNotEquals("#" + sha.take(4).joinToString("") { "%02x".format(it) }, hashed)
+        assertNotEquals(hashed, reportableChannel("contact_4791234567", ByteArray(32) { 7 }))
+        assertEquals("#contact", reportableChannel("contact_4791234567", null))
     }
 
     @Test

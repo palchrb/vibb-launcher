@@ -223,6 +223,17 @@ internal fun blockedResponse(request: Message): ByteArray = negativeResponse(req
  * RCODE but NOERROR turns off the DoH that Firefox enabled by default. */
 internal fun nxdomainResponse(request: Message): ByteArray = negativeResponse(request, Rcode.NXDOMAIN)
 
+/** FORMERR for a query the phone won't classify (more or fewer than one question, S-L9 with code QA L5): its id, no
+ * question echoed, no records - the asking app's resolver fails fast instead of waiting out its timeout. */
+internal fun formerrResponse(request: Message): ByteArray {
+    val response = Message(request.header.id)
+    response.header.setFlag(Flags.QR.toInt())
+    if (request.header.getFlag(Flags.RD.toInt())) response.header.setFlag(Flags.RD.toInt())
+    response.header.setFlag(Flags.RA.toInt())
+    response.header.rcode = Rcode.FORMERR
+    return response.toWire()
+}
+
 /** [rcode], the question echoed, and a negative-cache SOA (RFC 2308) in the authority section. */
 private fun negativeResponse(request: Message, rcode: Int): ByteArray {
     val response = answerTo(request, rcode)

@@ -33,6 +33,9 @@ fun voipExcluded(defaultSms: String?, essential: Set<String>, own: Set<String>):
  * callbacks on the main thread only read it), the re-post budget and the counts for the status
  * report. `null` until the first apply in this process: nothing is cancelled then.
  */
+private const val CHANNEL_KEY_PREFS = "notification_rule"
+private const val CHANNEL_KEY = "channel_key"
+
 object NotificationRuleRuntime {
     @Volatile
     var policy: NagPolicy? = null
@@ -67,6 +70,21 @@ object NotificationRuleRuntime {
      * policy (`LastEnforcedPlan` doesn't carry it), so with an unknown policy nothing is
      * cancelled; an override or pause counts as unmanaged (the standing rule).
      */
+    /** P-L1 (code QA M1): this install's key for [reportableChannel] - 32 random bytes in CE prefs
+     * `notification_rule`, made once; never logged or reported. `null` until the first [refresh]. */
+    @Volatile
+    private var channelKey: ByteArray? = null
+
+    private fun loadChannelKey(context: Context): ByteArray? = try {
+        val prefs = context.applicationContext.getSharedPreferences(CHANNEL_KEY_PREFS, Context.MODE_PRIVATE)
+        prefs.getString(CHANNEL_KEY, null)?.let { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) }?.takeIf { it.size == 32 }
+            ?: ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }.takeIf {
+                prefs.edit().putString(CHANNEL_KEY, android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)).commit()
+            }
+    } catch (e: Exception) {
+        null
+    }
+
     fun refresh(
         context: Context,
         enforced: PolicyResponse?,
@@ -75,6 +93,7 @@ object NotificationRuleRuntime {
         callState: CallPolicyState,
         essential: Set<String>,
     ) {
+        if (channelKey == null) channelKey = loadChannelKey(context)
         val rules = (callState as? CallPolicyState.Managed)?.rules
         val defaultSms = CallSystem.defaultSmsPackage(context)
         val messaging = messagingAppPackages(rules, defaultSms)
@@ -129,7 +148,7 @@ object NotificationRuleRuntime {
     fun act(facts: NotificationFacts): NagAction {
         val action = budget.action(facts.packageName, facts.channelId, SystemClock.elapsedRealtime())
         // P-L1: counted, logged and reported by the reportable channel only - never a contact.
-        val channel = reportableChannel(facts.channelId)
+        val channel = reportableChannel(facts.channelId, channelKey)
         counts.record(facts.packageName, channel, action)
         val total = counts.total(facts.packageName, channel)
         if (nagLogDue(total)) {
@@ -166,10 +185,10 @@ object NotificationRuleRuntime {
     /** A cancel or snooze that threw (unbound in between, or the platform refused with an exception):
      * under the filter's one tag, so B6's `-s NotificationRule` shows it (qa-nf-keep-log-code Q-4). */
     fun removeFailed(facts: NotificationFacts, e: Exception) =
-        Log.w(LOG_TAG, "couldn't remove ${facts.packageName} / ${reportableChannel(facts.channelId) ?: "-"}: ${e.javaClass.simpleName}")
+        Log.w(LOG_TAG, "couldn't remove ${facts.packageName} / ${reportableChannel(facts.channelId, channelKey) ?: "-"}: ${e.javaClass.simpleName}")
 
     private fun logKept(packageName: String, channelId: String?, reason: String, label: String, due: (Int) -> Boolean) {
-        val channel = reportableChannel(channelId)
+        val channel = reportableChannel(channelId, channelKey)
         val total = keeps.record(packageName, channel, reason)
         if (due(total)) Log.i(LOG_TAG, "kept $packageName / ${channel ?: "-"}: $label ($total so far)")
     }
@@ -189,7 +208,7 @@ object NotificationRuleRuntime {
             if (skipped > 0) Log.i(LOG_TAG, "post-cancel checks skipped ($skipped)")
             val live = listener?.takeIf { it === service } ?: return@postDelayed
             if (!platformKeptAfterCancel(live.activePostTime(key), postTime)) return@postDelayed
-            val channel = reportableChannel(facts.channelId)
+            val channel = reportableChannel(facts.channelId, channelKey)
             if (platformKeptLogged.add(facts.packageName to channel)) {
                 while (platformKeptLogged.size > 64) platformKeptLogged.remove(platformKeptLogged.first())
                 Log.i(LOG_TAG, "platform kept ${facts.packageName} / ${channel ?: "-"}")

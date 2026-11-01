@@ -131,6 +131,7 @@ class MusicMediaPlanTest {
         assertFalse("already suspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = true))
         assertFalse("unsuspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = false, currentlySuspended = true))
         assertFalse("another app", pauseBeforeSuspend("org.other", shouldBeSuspended = true, currentlySuspended = false))
+        assertFalse("a release build never trusts the debug name (S-L8)", pauseBeforeSuspend("me.vibb.music.debug", true, false, debugBuild = false))
     }
 
     @Test
@@ -286,7 +287,7 @@ class MusicSuspensionGuardTest {
             assertFalse(source.contains("playbackInfo"))
             assertFalse(source.contains("PLAYBACK_TYPE"))
         }
-        assertTrue(sessions.contains("val music = controllers.firstOrNull { it.packageName in MUSIC_PACKAGES }"))
+        assertTrue(sessions.contains("val music = controllers.firstOrNull { app != null && MusicTrust.trusted(app, it.packageName) }"))
         assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(newArt = true)"))
         assertTrue(lock.contains("val art = MusicSessions.reading.art"))
         assertTrue(lock.contains("val position = positionNow(s, SystemClock.elapsedRealtime())"))
