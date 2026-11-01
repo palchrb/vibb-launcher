@@ -118,11 +118,15 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
     )
     .await;
     add_rule(&app, Some(emil), "Emil's own", SCHOOL_DAYS).await;
-    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
-        .bind(emil)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    // Emil has Skole and Broken switched off (migration 0115).
+    for rule in [skole, broken] {
+        sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
+            .bind(emil)
+            .bind(rule)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
     sqlx::query(
         "UPDATE global_schedule SET daily_budget_json = '[90,90,90,90,90,120,120]' WHERE id = 1",
     )
@@ -138,6 +142,17 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
     let rules = section(&html, "rules");
     assert!(rules.contains(&format!("href=\"/schedules/rules/{skole}\"")));
     assert!(rules.contains("Mon-Fri 08:15-14:30 · calls off"), "{rules}");
+    // Where a phone has one of everyone's rules off, the rule's row says so.
+    let skole_row = &rules[rules
+        .find(&format!("href=\"/schedules/rules/{skole}\""))
+        .unwrap()..];
+    assert!(
+        skole_row[..skole_row.find("</a>").unwrap()]
+            .contains("<span data-off-for>Off for Emil</span>"),
+        "{skole_row}"
+    );
+    assert_eq!(rules.matches("data-off-for").count(), 2, "Skole and Broken");
+    assert!(rules.contains("Each rule is on for every phone until it is switched off"));
     assert!(
         rules.contains("Fri 20:00-23:59, Sat 00:00-23:59 · calls off"),
         "{rules}"
@@ -157,11 +172,12 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
     let anna_row = &phones[phones
         .find(&format!("href=\"/devices/{anna}/time\""))
         .unwrap()..];
-    assert!(anna_row[..anna_row.find("</a>").unwrap()].contains("Everyone's rules"));
+    // Each phone's rules in force: Anna everyone's three, Emil Helg and his own.
+    assert!(anna_row[..anna_row.find("</a>").unwrap()].contains("data-in-force>3 rules<"));
     let emil_row = &phones[phones
         .find(&format!("href=\"/devices/{emil}/time\""))
         .unwrap()..];
-    assert!(emil_row[..emil_row.find("</a>").unwrap()].contains("Own rules"));
+    assert!(emil_row[..emil_row.find("</a>").unwrap()].contains("data-in-force>2 rules<"));
     assert!(phones.contains("Emergency calls always work."));
     // No device picker any more.
     assert!(!html.contains("Select a device"));
@@ -451,7 +467,7 @@ async fn a_refused_rule_renders_in_place_as_typed() {
 }
 
 /// §5.1's table for the time pages, posted from the rendered forms: each lands on its own group
-/// (Device › Time's `#extra`, `#pause`, `#lifts`, `#rules`, `#screen-time`; Daily Limit's
+/// (Device › Time Rules' `#everyone`, `#own-rules`, `#screen-time`; Daily Limit's
 /// `#screen-time`), a rule's save on its page's form (`#rule`: Save is at the top), a new rule on
 /// its new page, a delete on the list it was in. Each fragment is checked to be the element that
 /// holds its form, the action's fragment to be the redirect's, every auto-save to have a
@@ -463,15 +479,20 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
     let (id, _) = app.enrolled_device("Anna").await;
     let global = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
     let own = add_rule(&app, Some(id), "Leggetid", SCHOOL_DAYS).await;
-    // A running pause, for End now.
-    sqlx::query(
-        "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at) \
-         VALUES (?, 'rule', NULL, NULL, 30, datetime('now', '+30 minutes'))",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // An own rule switched off (kept from before migration 0115) shows its switch; the Own limit
+    // on shows the day rows' form.
+    let kept = add_rule(&app, Some(id), "Gammel", SCHOOL_DAYS).await;
+    sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
+        .bind(id)
+        .bind(kept)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let time = device_page(id, Section::Time);
     let pages = [
         time.clone(),
@@ -499,61 +520,56 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                     .await
                     .unwrap()
             };
-            let mut expected: (String, Option<&str>) = if target == format!("/devices/{id}/lifts") {
-                let back = hidden.iter().any(|(k, v)| k == "back" && v == "time");
-                assert!(back, "{action}: back=time");
-                if hidden.iter().any(|(k, v)| k == "target" && v == "rule") {
-                    add(&mut sent, "rule", "all");
-                    add(&mut sent, "minutes", "15");
-                    (format!("{time}?done=pause"), Some("pause"))
+            let mut expected: (String, Option<&str>) =
+                if target == format!("/devices/{id}/time/rules/{global}") {
+                    // Unticked: off for the phone.
+                    (time.clone(), Some("everyone"))
+                } else if target == format!("/devices/{id}/time/rules/{kept}") {
+                    add(&mut sent, "on", "on");
+                    (time.clone(), Some("own-rules"))
+                } else if target == format!("/schedules/device/{id}") {
+                    if hidden.contains(&("section".to_string(), "limit".to_string())) {
+                        add(&mut sent, "own_limit", "on");
+                        (time.clone(), Some("screen-time"))
+                    } else {
+                        add(&mut sent, "b0", "45");
+                        (format!("{time}?saved=budget"), Some("screen-time"))
+                    }
+                } else if target == "/schedules/global" {
+                    add(&mut sent, "b6", "120");
+                    (
+                        "/schedules/screen-time?saved=1".to_string(),
+                        Some("screen-time"),
+                    )
+                } else if target == "/schedules/rules" {
+                    for (k, v) in [
+                        ("name", "Ny"),
+                        ("kind", "custom"),
+                        ("d1_start", "10:00"),
+                        ("d1_end", "11:00"),
+                    ] {
+                        add(&mut sent, k, v);
+                    }
+                    (String::new(), Some("rule")) // the new id, after the post
+                } else if target.ends_with("/delete") {
+                    if page.ends_with(&format!("/{own}")) {
+                        (format!("{time}?notice=deleted"), Some("own-rules"))
+                    } else {
+                        ("/schedules?notice=deleted".to_string(), Some("rules"))
+                    }
+                } else if target.starts_with("/schedules/rules/") {
+                    for (k, v) in [
+                        ("name", "Saved"),
+                        ("kind", "school"),
+                        ("d2_start", "08:00"),
+                        ("d2_end", "09:00"),
+                    ] {
+                        add(&mut sent, k, v);
+                    }
+                    (format!("{target}?saved=1"), Some("rule"))
                 } else {
-                    (format!("{time}?done=extra"), Some("extra"))
-                }
-            } else if target.starts_with(&format!("/devices/{id}/lifts/")) {
-                (format!("{time}?done=ended"), Some("lifts"))
-            } else if target == format!("/schedules/device/{id}") {
-                if hidden.contains(&("section".to_string(), "switch".to_string())) {
-                    add(&mut sent, "custom_schedule_enabled", "on");
-                    (time.clone(), Some("rules"))
-                } else {
-                    add(&mut sent, "b0", "45");
-                    (format!("{time}?saved=budget"), Some("screen-time"))
-                }
-            } else if target == "/schedules/global" {
-                add(&mut sent, "b6", "120");
-                (
-                    "/schedules/screen-time?saved=1".to_string(),
-                    Some("screen-time"),
-                )
-            } else if target == "/schedules/rules" {
-                for (k, v) in [
-                    ("name", "Ny"),
-                    ("kind", "custom"),
-                    ("d1_start", "10:00"),
-                    ("d1_end", "11:00"),
-                ] {
-                    add(&mut sent, k, v);
-                }
-                (String::new(), Some("rule")) // the new id, after the post
-            } else if target.ends_with("/delete") {
-                if page.ends_with(&format!("/{own}")) {
-                    (format!("{time}?notice=deleted"), Some("own-rules"))
-                } else {
-                    ("/schedules?notice=deleted".to_string(), Some("rules"))
-                }
-            } else if target.starts_with("/schedules/rules/") {
-                for (k, v) in [
-                    ("name", "Saved"),
-                    ("kind", "school"),
-                    ("d2_start", "08:00"),
-                    ("d2_end", "09:00"),
-                ] {
-                    add(&mut sent, k, v);
-                }
-                (format!("{target}?saved=1"), Some("rule"))
-            } else {
-                panic!("{page}: a form the table doesn't know: {action}");
-            };
+                    panic!("{page}: a form the table doesn't know: {action}");
+                };
             // A form whose answer is this page lands on the group that holds it (a delete goes to
             // the list it was in, another page).
             let same_page = expected.0.is_empty()
@@ -596,19 +612,12 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
             seen.push(target);
         }
     }
-    let lift: i64 = sqlx::query_scalar("SELECT MIN(id) FROM time_lifts")
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
     let d = |r: &str| format!("/devices/{id}/{r}");
     assert_eq!(
         seen,
         [
-            d("lifts"),
-            d("lifts"),
-            d("lifts"),
-            d("lifts"),
-            d(&format!("lifts/{lift}/end")),
+            d(&format!("time/rules/{global}")),
+            d(&format!("time/rules/{kept}")),
             format!("/schedules/device/{id}"),
             format!("/schedules/device/{id}"),
             "/schedules/global".to_string(),
@@ -633,11 +642,21 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
             .unwrap();
     assert_eq!(
         names,
-        [(None, "Ny".to_string()), (Some(id), "Ny".to_string())]
+        [
+            (Some(id), "Gammel".to_string()),
+            (None, "Ny".to_string()),
+            (Some(id), "Ny".to_string())
+        ]
     );
+    // Skole was switched off, then deleted (its switch with it); Gammel switched on.
+    let off: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_rule_off")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(off, 0);
 }
 
-/// H1 (§5.6): the own-rules switch and the own limits share `/schedules/device/{id}`; a post with
+/// H1 (§5.6): the Own limit switch and the own limits share `/schedules/device/{id}`; a post with
 /// a section writes only that section. A switch-only post keeps the limits (an unticked switch
 /// sends nothing, and an absent limit used to mean "no limit"); a limits-only post keeps the
 /// switch. A post without a section (an older tab) writes both, as before.
@@ -665,25 +684,27 @@ async fn a_switch_only_post_keeps_the_limits() {
         ("[60,null,null,null,null,null,120]".to_string(), false)
     );
 
-    // The switch on, then off: the limits stay.
-    for on in [true, false] {
-        let mut fields = vec![("section", "switch")];
-        if on {
-            fields.push(("custom_schedule_enabled", "on"));
+    // The Own limit switch on, then off: the limits stay. An older tab's Own rules switch
+    // (`section=switch`) writes the same column, now the limit's switch alone.
+    for (section, name) in [
+        ("limit", "own_limit"),
+        ("switch", "custom_schedule_enabled"),
+    ] {
+        for on in [true, false] {
+            let mut fields = vec![("section", section)];
+            if on {
+                fields.push((name, "on"));
+            }
+            let res = post(fields).await;
+            assert_redirect(&res, &format!("/devices/{id}/time"), Some("screen-time"));
+            assert_eq!(
+                budget_of(&app, id).await,
+                ("[60,null,null,null,null,null,120]".to_string(), on)
+            );
         }
-        let res = post(fields).await;
-        assert_redirect(&res, &format!("/devices/{id}/time"), Some("rules"));
-        assert_eq!(
-            budget_of(&app, id).await,
-            ("[60,null,null,null,null,null,120]".to_string(), on)
-        );
     }
     // The limits while the switch is on: the switch stays on.
-    post(vec![
-        ("section", "switch"),
-        ("custom_schedule_enabled", "on"),
-    ])
-    .await;
+    post(vec![("section", "limit"), ("own_limit", "on")]).await;
     post(vec![("section", "budget"), ("b2", "30")]).await;
     assert_eq!(
         budget_of(&app, id).await,
@@ -703,7 +724,7 @@ async fn a_switch_only_post_keeps_the_limits() {
     let res = post(vec![("section", "budget"), ("b4", "1441")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    assert!(html.contains("<h1 class=\"page-title\">Time</h1>"));
+    assert!(html.contains("<h1 class=\"page-title\">Time Rules</h1>"));
     let b4 = tags(&html, "input")
         .into_iter()
         .find(|t| t.attr("name") == Some("b4"))
@@ -726,89 +747,120 @@ async fn a_switch_only_post_keeps_the_limits() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
-/// Device › Time: the groups in order, the own-rules switch saving itself (with a `<noscript>`
-/// Save), the phone's own rules linking to the editor, Pause a rule only with rules to pause,
-/// everyone's rules as a row while the switch is off.
+/// The form on `html` whose action is `action`, up to its `</form>`.
+fn form_with<'a>(html: &'a str, action: &str) -> &'a str {
+    let at = html
+        .find(&format!("action=\"{action}\""))
+        .unwrap_or_else(|| panic!("no form to {action}"));
+    let start = html[..at].rfind("<form").unwrap();
+    &html[start..at + html[at..].find("</form>").unwrap()]
+}
+
+/// Device › Time Rules ("Tidsregler", 2026-11-01): Now, Bedtime, everyone's rules with a switch
+/// each for this phone, the phone's own rules, the daily limit - and no Extra Time Today, Pause a
+/// Rule or Recent (the summary's Quick actions and Activity have them). Every switch saves itself
+/// (with a `<noscript>` Save); one switched off is dimmed; the Own limit switch folds out the days.
 #[tokio::test]
-async fn device_time_holds_the_moved_card() {
+async fn device_time_rules_has_the_rules_alone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let html = app
-        .get_page(&device_page(id, Section::Time), &cookie)
-        .await
-        .text();
+    let skole = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
+    let middag = add_rule(&app, None, "Middag", SCHOOL_DAYS).await;
+    let own = add_rule(&app, Some(id), "Fotball", SCHOOL_DAYS).await;
+    // A running pause: the page no longer lists it.
+    sqlx::query(
+        "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at) \
+         VALUES (?, 'rule', NULL, NULL, 30, datetime('now', '+30 minutes'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = device_page(id, Section::Time);
+    let html = app.get_page(&page, &cookie).await.text();
     assert_eq!(nav_current(&html), "devices");
     assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
-    assert!(html.contains("<h1 class=\"page-title\">Time</h1>"));
-    let order: Vec<usize> = ["now", "extra", "rules", "own-rules", "screen-time"]
+    assert!(html.contains("<h1 class=\"page-title\">Time Rules</h1>"));
+    assert!(html.contains("<title>Time Rules · Anna"), "the tab's title");
+    let order: Vec<usize> = ["now", "bedtime", "everyone", "own-rules", "screen-time"]
         .iter()
         .map(|g| html.find(&format!("<section id=\"{g}\"")).expect(g))
         .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
-    // Nothing to pause and no lifts yet.
-    assert!(!html.contains("<section id=\"pause\""));
-    assert!(!html.contains("<section id=\"lifts\""));
+    for gone in ["extra", "pause", "lifts", "rules"] {
+        assert!(!html.contains(&format!("<section id=\"{gone}\"")), "{gone}");
+    }
+    assert!(!html.contains("/lifts"), "no lift form");
+    assert!(!html.contains("End now"));
     assert!(section(&html, "now").contains("No report yet"));
-    assert!(autosaves(&html, "custom_schedule_enabled"));
-    assert_eq!(
-        input_checked(&html, "custom_schedule_enabled", ""),
-        Some(false)
-    );
-    assert!(section(&html, "rules").contains("<noscript>"));
-    assert!(section(&html, "rules").contains("href=\"/schedules\""));
-    assert!(
-        section(&html, "own-rules").contains(&format!("href=\"/schedules/rules/new?device={id}\""))
-    );
 
-    add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
-    let own = add_rule(&app, Some(id), "Leggetid", SCHOOL_DAYS).await;
-    let html = app
-        .get_page(&device_page(id, Section::Time), &cookie)
-        .await
-        .text();
-    let pause = section(&html, "pause");
-    assert!(pause.contains(">Skole</option>"), "everyone's rules apply");
-    assert!(!pause.contains("Leggetid"));
-    assert!(section(&html, "own-rules").contains(&format!("href=\"/schedules/rules/{own}\"")));
-    assert!(section(&html, "own-rules").contains("Used once Own rules is on."));
-    assert!(section(&html, "rules").contains("1 rule"));
+    // Everyone's rules: a switch each, on, saving itself, back on #everyone.
+    let everyone = section(&html, "everyone");
+    for rule in [skole, middag] {
+        let form = form_with(
+            everyone,
+            &format!("/devices/{id}/time/rules/{rule}#everyone"),
+        );
+        assert!(autosaves(form, "on"));
+        assert_eq!(input_checked(form, "on", "on"), Some(true));
+        assert!(form.contains("<noscript>"));
+        assert!(!form.contains("row-dim"));
+    }
+    assert!(everyone.contains("Mon-Fri 08:15-14:30 · calls off"));
+    assert!(everyone.contains("href=\"/schedules#rules\""));
+    assert!(everyone.contains("A rule added later is on."));
+    // The own rules: rows to the editor, no switch while on.
+    let own_rules = section(&html, "own-rules");
+    assert!(own_rules.contains("Anna&#39;s Own Rules"), "{own_rules}");
+    assert!(own_rules.contains(&format!("href=\"/schedules/rules/{own}\"")));
+    assert!(own_rules.contains(&format!("href=\"/schedules/rules/new?device={id}\"")));
+    assert!(tags(own_rules, "form").is_empty());
+    assert!(own_rules.contains("They apply as well as everyone&#39;s rules that are on."));
+    // The daily limit: the Own limit switch off, everyone's limit as the row's value.
+    let limit = section(&html, "screen-time");
+    assert!(autosaves(limit, "own_limit"));
+    assert_eq!(input_checked(limit, "own_limit", ""), Some(false));
+    assert!(limit.contains("<noscript>"));
+    assert!(limit.contains("data-row=\"everyone-limit\""));
+    assert!(!limit.contains("name=\"b0\""), "no day rows while off");
 
+    // Skole switched off for Anna: dimmed and unticked; Middag stays on.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/time/rules/{skole}"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_redirect(&res, &page, Some("everyone"));
+    let html = app.get_page(&page, &cookie).await.text();
+    let everyone = section(&html, "everyone");
+    let form = form_with(
+        everyone,
+        &format!("/devices/{id}/time/rules/{skole}#everyone"),
+    );
+    assert!(form.contains("class=\"cell row-dim\""), "{form}");
+    assert_eq!(input_checked(form, "on", "on"), Some(false));
+    let form = form_with(
+        everyone,
+        &format!("/devices/{id}/time/rules/{middag}#everyone"),
+    );
+    assert_eq!(input_checked(form, "on", "on"), Some(true));
+
+    // The Own limit on: the seven days and Save fold out, everyone's row goes.
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    let html = app
-        .get_page(&device_page(id, Section::Time), &cookie)
-        .await
-        .text();
-    assert!(section(&html, "pause").contains(">Leggetid</option>"));
-    assert!(!section(&html, "rules").contains("href=\"/schedules\""));
-    assert!(!section(&html, "own-rules").contains("Used once"));
-
-    // A flash from each lift form lands in its own group; an unknown code shows nothing.
-    for (code, group) in [("extra", "extra"), ("pause", "pause"), ("gone", "pause")] {
-        let html = app
-            .get_page(
-                &format!("{}?done={code}", device_page(id, Section::Time)),
-                &cookie,
-            )
-            .await
-            .text();
-        assert!(
-            section(&html, group).contains(&format!("data-flash=\"{group}\"")),
-            "{code}"
-        );
-    }
-    let html = app
-        .get_page(
-            &format!("{}?done=%3Cb%3E", device_page(id, Section::Time)),
-            &cookie,
-        )
-        .await
-        .text();
-    assert!(!html.contains("data-flash"));
+    let html = app.get_page(&page, &cookie).await.text();
+    let limit = section(&html, "screen-time");
+    assert_eq!(input_checked(limit, "own_limit", ""), Some(true));
+    assert!((0..7).all(|i| limit.contains(&format!("name=\"b{i}\""))));
+    assert!(!limit.contains("data-row=\"everyone-limit\""));
+    assert!(limit.contains("Minutes a day. Empty means no limit."));
 }
 
 /// The phone's state on Device › Time comes from its last report, in the Phone Setup zone: the
@@ -914,7 +966,7 @@ async fn device_time_fails_loudly_and_works_before_setup() {
         .await;
     assert_eq!(res.status, StatusCode::OK);
     assert!(res.text().contains("No report yet"));
-    for table in ["time_lifts", "time_rules"] {
+    for table in ["device_rule_off", "time_rules"] {
         let app = TestApp::new().await;
         let cookie = app.admin_cookie().await;
         let (id, _) = app.enrolled_device("Anna").await;
@@ -931,27 +983,36 @@ async fn device_time_fails_loudly_and_works_before_setup() {
     }
 }
 
-/// The summary: the Time card is a row now ("Time · Everyone's rules" / "Own rules"); its lifts
-/// are the quick actions (design 31 step 10), never the rules' own forms.
+/// The summary: the Time card is a row ("Time Rules · 2 rules", the rules in force since each has
+/// its own switch, 2026-11-01); its lifts are the quick actions (design 31 step 10), never the
+/// rules' own forms.
 #[tokio::test]
 async fn the_device_page_has_a_time_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
+    let skole = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
+    add_rule(&app, Some(id), "Fotball", SCHOOL_DAYS).await;
+    let row_of = |html: &str| {
+        let row = &html[html.find("data-row=\"time\"").unwrap()..];
+        row[..row.find("</a>").unwrap()].to_string()
+    };
     let html = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
-    let row = &html[html.find("data-row=\"time\"").unwrap()..];
-    let row = &row[..row.find("</a>").unwrap()];
+    let row = row_of(&html);
     assert!(html.contains(&format!("href=\"/devices/{id}/time\" data-row=\"time\"")));
-    assert!(row.contains(">Everyone&#39;s rules<"), "{row}");
+    assert!(row.contains(">Time Rules<"), "{row}");
+    assert!(row.contains(">2 rules<"), "{row}");
     assert!(!html.contains("id=\"time\""));
     assert!(!html.contains("/schedules/device/"));
     assert!(!html.contains("/schedules?device="));
-    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+    assert!(!html.contains("/time/rules/"));
+    // Skole switched off: one rule in force; Pause a rule… offers only it.
+    sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
         .bind(id)
+        .bind(skole)
         .execute(&app.db)
         .await
         .unwrap();
@@ -959,8 +1020,10 @@ async fn the_device_page_has_a_time_row() {
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
-    let row = &html[html.find("data-row=\"time\"").unwrap()..];
-    assert!(row[..row.find("</a>").unwrap()].contains(">Own rules<"));
+    assert!(row_of(&html).contains(">1 rule<"));
+    let quick = &html[html.find("<section id=\"quick\"").unwrap()..];
+    assert!(quick.contains(">Fotball</option>"));
+    assert!(!quick.contains(">Skole</option>"));
 }
 
 /// The editor's Save stays in reach (a sticky top bar) and a save's flash shows in that bar, so it
@@ -993,9 +1056,13 @@ async fn the_editor_bar_holds_save_and_its_flash() {
         .get_page(&format!("/schedules/rules/{own}?saved=1"), &cookie)
         .await
         .text();
-    assert!(bar(&html).contains("Saved. Used once Own rules is on."));
-    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+    // A phone's own rule applies at once (migration 0115) ...
+    assert!(bar(&html).contains("Saved. The phones get it within seconds when online."));
+    assert!(html.contains(&format!("href=\"/devices/{id}/time\"")));
+    // ... unless it is switched off for the phone.
+    sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
         .bind(id)
+        .bind(own)
         .execute(&app.db)
         .await
         .unwrap();
@@ -1003,7 +1070,7 @@ async fn the_editor_bar_holds_save_and_its_flash() {
         .get_page(&format!("/schedules/rules/{own}?saved=added"), &cookie)
         .await
         .text();
-    assert!(bar(&html).contains("Rule added. The phones get it within seconds when online."));
+    assert!(bar(&html).contains("Rule added. Switched off for Anna, so not in use there."));
 }
 
 /// An unreadable stored rule names what didn't read - it shows empty and a save writes it as
@@ -1073,7 +1140,7 @@ async fn an_unreadable_rule_says_what_will_be_reset() {
         .await
         .text();
     let row = &summary[summary.find("data-row=\"time\"").unwrap()..];
-    assert!(row[..row.find("</a>").unwrap()].contains(">Everyone&#39;s rules<"));
+    assert!(row[..row.find("</a>").unwrap()].contains(">1 rule<"));
 }
 
 /// The Time row says "Couldn't read" when the rules can't be read - the summary's only sign of it
@@ -1269,14 +1336,18 @@ async fn the_bedtime_page_adds_saves_refuses_and_removes_in_place() {
     );
     let phones = app.get_page("/schedules", &cookie).await.text();
     assert!(section(&phones, "phones").contains(&format!("Bedtime {summary}")));
-    // The phone gets it, and Pause a Rule offers it.
+    // The phone gets it, and the summary's Pause a rule… offers it.
     let rules = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await
         .json()["time_policy"]["rules"]
         .clone();
     assert_eq!(rules[0]["kind"], "bedtime");
-    assert!(section(&device_time, "pause").contains(">Bedtime</option>"));
+    let summary_page = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(section(&summary_page, "quick").contains(">Bedtime</option>"));
 
     // A save is the same upsert: still one row.
     let res = app

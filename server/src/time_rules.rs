@@ -459,6 +459,15 @@ pub async fn migrate_legacy(db: &SqlitePool) -> Result<(), sqlx::Error> {
     if let Some(row) = global {
         let mut tx = db.begin().await?;
         insert_converted(&mut tx, None, &legacy_to_rules(&row.schedule())).await?;
+        // A phone with its own schedule keeps only its own (migration 0115 ran before these
+        // rules existed).
+        sqlx::query(
+            "INSERT OR IGNORE INTO device_rule_off (device_id, rule_id) SELECT p.device_id, r.id \
+             FROM device_policy p JOIN time_rules r ON r.device_id IS NULL AND r.bedtime = 0 \
+             WHERE p.custom_schedule_enabled = 1",
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE global_schedule SET rules_migrated = 1 WHERE id = 1")
             .execute(&mut *tx)
             .await?;
@@ -481,6 +490,15 @@ pub async fn migrate_legacy(db: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
         if let Some(row) = row {
             insert_converted(&mut tx, Some(device_id), &legacy_to_rules(&row.schedule())).await?;
+            // A phone that follows everyone's rules has its converted ones switched off.
+            sqlx::query(
+                "INSERT OR IGNORE INTO device_rule_off (device_id, rule_id) SELECT r.device_id, \
+                 r.id FROM time_rules r JOIN device_policy p ON p.device_id = r.device_id \
+                 WHERE r.device_id = ? AND r.bedtime = 0 AND p.custom_schedule_enabled = 0",
+            )
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query("UPDATE device_policy SET rules_migrated = 1 WHERE device_id = ?")
                 .bind(device_id)
                 .execute(&mut *tx)
@@ -638,9 +656,9 @@ async fn split_rule(
         .bind(row.id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query(
+    let morning_id: i64 = sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+         days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(row.device_id)
     .bind(morning_name(&row.name))
@@ -649,6 +667,15 @@ async fn split_rule(
     .bind(&row.exempt_apps_json)
     .bind(serde_json::to_string(&morning).expect("windows serialize"))
     .bind(row.sort_order)
+    .fetch_one(&mut *conn)
+    .await?;
+    // The morning part is off wherever the rule is (migration 0115).
+    sqlx::query(
+        "INSERT INTO device_rule_off (device_id, rule_id) SELECT device_id, ? \
+         FROM device_rule_off WHERE rule_id = ?",
+    )
+    .bind(morning_id)
+    .bind(row.id)
     .execute(&mut *conn)
     .await?;
     log_conversion(
@@ -688,14 +715,21 @@ async fn normalise_all(db: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Step 3 for one phone, one transaction: on Own rules, its first bedtime-shaped rule becomes its
-/// bedtime in place (id, calls and apps kept) unless it has one; every other own rule that still
-/// crosses is split.
-async fn convert_phone(db: &SqlitePool, device_id: i64, own: bool) -> Result<(), sqlx::Error> {
+/// Step 3 for one phone, one transaction: its first bedtime-shaped own rule in force (not
+/// switched off, migration 0115 - before it: with Own rules on) becomes its bedtime in place (id,
+/// calls and apps kept) unless it has one; every other own rule that still crosses is split.
+async fn convert_phone(db: &SqlitePool, device_id: i64) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
-    let mut rules = readable_rules(&mut tx, Some(device_id)).await?;
-    if own
-        && !has_bedtime(&mut tx, device_id).await?
+    let off: Vec<i64> =
+        sqlx::query_scalar("SELECT rule_id FROM device_rule_off WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let (mut rules, dormant): (Vec<_>, Vec<_>) = readable_rules(&mut tx, Some(device_id))
+        .await?
+        .into_iter()
+        .partition(|(row, _)| !off.contains(&row.id));
+    if !has_bedtime(&mut tx, device_id).await?
         && let Some(i) = first_bedtime(&rules)
     {
         let (row, _) = rules.remove(i);
@@ -715,16 +749,16 @@ async fn convert_phone(db: &SqlitePool, device_id: i64, own: bool) -> Result<(),
         )
         .await?;
     }
-    for (row, days) in &rules {
+    for (row, days) in rules.iter().chain(&dormant) {
         split_rule(&mut tx, row, days).await?;
     }
     tx.commit().await
 }
 
-/// Step 3 for everyone's first bedtime-shaped rule, one transaction: copied into every phone that
-/// follows everyone's rules as its bedtime (those phones' lifts on it repointed to the copy) and
-/// deleted - or split, when no phone follows them or one already has a bedtime (no phone loses a
-/// lock).
+/// Step 3 for everyone's first bedtime-shaped rule, one transaction: copied into every phone it
+/// applies to (not switched off there, migration 0115) as its bedtime (those phones' lifts on it
+/// repointed to the copy) and deleted - or split, when it applies to no phone or one of them
+/// already has a bedtime (no phone loses a lock).
 async fn convert_global_bedtime(
     db: &SqlitePool,
     row: &TimeRuleRow,
@@ -733,9 +767,10 @@ async fn convert_global_bedtime(
     let mut tx = db.begin().await?;
     let followers: Vec<(i64, bool)> = sqlx::query_as(
         "SELECT d.id, EXISTS (SELECT 1 FROM time_rules r WHERE r.device_id = d.id \
-         AND r.bedtime = 1) FROM devices d LEFT JOIN device_policy p ON p.device_id = d.id \
-         WHERE COALESCE(p.custom_schedule_enabled, 0) = 0 ORDER BY d.id",
+         AND r.bedtime = 1) FROM devices d WHERE NOT EXISTS (SELECT 1 FROM device_rule_off o \
+         WHERE o.device_id = d.id AND o.rule_id = ?) ORDER BY d.id",
     )
+    .bind(row.id)
     .fetch_all(&mut *tx)
     .await?;
     if followers.is_empty() || followers.iter().any(|(_, has)| *has) {
@@ -798,14 +833,11 @@ async fn copy_as_bedtime(
 /// gets a second (the unique index is never hit). Only a database error is returned.
 pub async fn migrate_crossing(db: &SqlitePool) -> Result<(), sqlx::Error> {
     normalise_all(db).await?;
-    let phones: Vec<(i64, bool)> = sqlx::query_as(
-        "SELECT d.id, COALESCE(p.custom_schedule_enabled, 0) FROM devices d \
-         LEFT JOIN device_policy p ON p.device_id = d.id ORDER BY d.id",
-    )
-    .fetch_all(db)
-    .await?;
-    for (device_id, own) in phones {
-        convert_phone(db, device_id, own).await?;
+    let phones: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices ORDER BY id")
+        .fetch_all(db)
+        .await?;
+    for device_id in phones {
+        convert_phone(db, device_id).await?;
     }
     let mut everyone = readable_rules(&mut *db.acquire().await?, None).await?;
     if let Some(i) = first_bedtime(&everyone) {
@@ -845,16 +877,38 @@ pub async fn bedtime_row(
         .await
 }
 
-/// The rules in force for a device: its own set when `custom` (the override switch), else
-/// everyone's, then the phone's bedtime - which the switch never adds or drops (design 66 §3.1).
+/// The rules in force for a device (migration 0115): everyone's rules, then its own, each unless
+/// switched off for it (`device_rule_off`), then the phone's bedtime - which is never switched off
+/// (design 66 §3.1). A rule added to everyone's later is on for every phone.
 pub async fn effective_rule_rows(
     db: &SqlitePool,
     device_id: i64,
-    custom: bool,
 ) -> Result<Vec<TimeRuleRow>, sqlx::Error> {
-    let mut rows = rule_set_rows(db, custom.then_some(device_id)).await?;
+    let mut rows = sqlx::query_as::<_, TimeRuleRow>(
+        "SELECT r.* FROM time_rules r WHERE (r.device_id IS NULL OR r.device_id = ?) \
+         AND r.bedtime = 0 AND NOT EXISTS (SELECT 1 FROM device_rule_off o \
+         WHERE o.device_id = ? AND o.rule_id = r.id) \
+         ORDER BY r.device_id IS NOT NULL, r.sort_order, r.id",
+    )
+    .bind(device_id)
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
     rows.extend(bedtime_row(db, device_id).await?);
     Ok(rows)
+}
+
+/// The rules switched off for a phone (`device_rule_off`): everyone's and its own.
+pub async fn rules_off(
+    db: &SqlitePool,
+    device_id: i64,
+) -> Result<std::collections::HashSet<i64>, sqlx::Error> {
+    let ids: Vec<i64> =
+        sqlx::query_scalar("SELECT rule_id FROM device_rule_off WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_all(db)
+            .await?;
+    Ok(ids.into_iter().collect())
 }
 
 /// Lifts the phone should still see: not ended early, not expired.
@@ -887,6 +941,27 @@ pub async fn all_device_ids(db: &SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar("SELECT id FROM devices")
         .fetch_all(db)
         .await
+}
+
+/// Migration 0115's switches for the rules stored now, its own `INSERT`s run again (a test's
+/// rules are stored after the migrations ran): a phone with `custom_schedule_enabled` (Own rules
+/// on, before 0115) gets everyone's rules off, any other phone its own rules.
+#[cfg(test)]
+pub(crate) async fn switch_like_0115(db: &SqlitePool) {
+    let migration = include_str!("../migrations/0115_device_rule_off.sql");
+    for statement in migration.split(';') {
+        let sql: String = statement
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if sql.trim_start().starts_with("INSERT") {
+            sqlx::query(&sql.replace("INSERT INTO", "INSERT OR IGNORE INTO"))
+                .execute(db)
+                .await
+                .unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1217,8 +1292,8 @@ mod tests {
     }
 
     /// ... and as the policy serves them now.
-    async fn served_after(db: &SqlitePool, device: i64, own: bool) -> Served {
-        effective_rule_rows(db, device, own)
+    async fn served_after(db: &SqlitePool, device: i64) -> Served {
+        effective_rule_rows(db, device)
             .await
             .unwrap()
             .iter()
@@ -1338,14 +1413,15 @@ mod tests {
             for (kind, days) in &own {
                 add(&db, Some(emil), kind, days).await;
             }
+            switch_like_0115(&db).await;
             let before = [
                 week(&served_before(&db, anna, false).await),
                 week(&served_before(&db, emil, true).await),
             ];
             migrate_crossing(&db).await.unwrap();
             let after = [
-                week(&served_after(&db, anna, false).await),
-                week(&served_after(&db, emil, true).await),
+                week(&served_after(&db, anna).await),
+                week(&served_after(&db, emil).await),
             ];
             for phone in 0..2 {
                 assert_eq!(
@@ -1388,9 +1464,10 @@ mod tests {
         // A 24 h window at 23:59 can't be told from "23:59 to midnight": the one difference.
         let (_dir, db, _, emil) = two_phones().await;
         add(&db, Some(emil), "custom", &on(&[4], w(1439, 1439))).await;
+        switch_like_0115(&db).await;
         let before = week(&served_before(&db, emil, true).await);
         migrate_crossing(&db).await.unwrap();
-        let after = week(&served_after(&db, emil, true).await);
+        let after = week(&served_after(&db, emil).await);
         let saturday: Vec<(usize, usize)> = (0..1439).map(|m| (5, m)).collect();
         assert_eq!(differences(&before, &after), saturday);
         assert!(
@@ -1420,6 +1497,7 @@ mod tests {
         add(&db, Some(anna), "custom", &on(&[2], w(1200, 300))).await;
         add(&db, Some(emil), "custom", &vec![w(1290, 390); 7]).await;
         add(&db, Some(emil), "school", &on(&[6], w(1380, 30))).await;
+        switch_like_0115(&db).await;
         (dir, db, anna)
     }
 
@@ -1446,8 +1524,8 @@ mod tests {
                 .fetch_all(db)
                 .await
                 .unwrap();
-            for (i, id) in phones.iter().enumerate() {
-                convert_phone(db, *id, i == 1).await.unwrap();
+            for id in &phones {
+                convert_phone(db, *id).await.unwrap();
             }
             let everyone = readable_rules(&mut db.acquire().await.unwrap(), None)
                 .await

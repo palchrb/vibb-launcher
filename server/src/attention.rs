@@ -486,7 +486,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         }
     };
     let incoming_calls_not_blocked = !policy.calls_managed
-        && crate::time_rules::effective_rule_rows(&state.db, id, policy.custom_schedule_enabled)
+        && crate::time_rules::effective_rule_rows(&state.db, id)
             .await
             .unwrap_or_default()
             .iter()

@@ -1325,7 +1325,7 @@ pub fn extra_time_request(
         dedup_key: id.to_string(),
         title: String::new(),
         summary: String::new(),
-        target: format!("/devices/{device_id}/time#extra"),
+        target: format!("/devices/{device_id}#quick"),
         detail: None,
         params: Some(serde_json::to_string(&params).expect("strings serialize")),
         push_title: String::new(),
@@ -1387,7 +1387,8 @@ fn extra_time_told(
     (title, push_body(&at, state))
 }
 
-/// The request still open for Device › Time's "Asked for more time at 17:21" (design r13 §2.7):
+/// The request still open for the summary's "Asked for more time at 17:21" above Quick actions' tiles
+/// (design r13 §2.7; on Device › Time until its Extra Time Today went, 2026-11-01):
 /// when the kid asked, if the phone's newest `extra_time_request` was raised in the server zone's
 /// today and no lift for the phone was made since (`time_lifts.created_at` at or after the
 /// event's `created_at` - both the server's `datetime('now')`, compared through `datetime()`; any
@@ -2608,7 +2609,7 @@ mod tests {
                 extra_time_request(3, "Anna", "ab12", two, &TimeAsk::UsedUp, Push::Now),
                 "",
                 "",
-                "/devices/3/time#extra",
+                "/devices/3#quick",
             ),
             // App update notices (2026-10-25): told from their parameters too.
             (
@@ -2999,7 +3000,7 @@ mod tests {
     }
 
     /// Design r13 §2.6: a request for more time is told from its parameters - each state's words,
-    /// a long name cut to 60, the day after; its key is the phone's id, its target `#extra`.
+    /// a long name cut to 60, the day after; its key is the phone's id, its target `#quick`.
     #[test]
     fn a_request_for_more_time_is_told_from_its_parameters() {
         let phone = anna();
@@ -3064,7 +3065,7 @@ mod tests {
         let event = extra_time_request(3, "Anna", "ab12", at, &TimeAsk::UsedUp, Push::No);
         assert_eq!(event.kind, Kind::ExtraTimeRequest);
         assert_eq!(event.dedup_key, "ab12");
-        assert_eq!(event.target, "/devices/3/time#extra");
+        assert_eq!(event.target, "/devices/3#quick");
         assert!(event.title.is_empty() && event.summary.is_empty());
         assert_eq!(Kind::of("extra_time_request"), Some(Kind::ExtraTimeRequest));
         assert!(!Kind::ExtraTimeRequest.urgent());

@@ -17,13 +17,14 @@
         <div class="group">
             {% for r in rules %}
             <a class="row" href="/schedules/rules/{{ r.id }}" data-rule="{{ r.id }}">
-                <span class="row-label">{{ r.name }}<span class="row-sub{% if r.corrupt %} text-alarm{% endif %}">{{ r.summary }}</span></span>
+                <span class="row-label">{{ r.name }}<span class="row-sub{% if r.corrupt %} text-alarm{% endif %}">{{ r.summary }}{% if let Some(off) = r.off_for %} · <span data-off-for>{{ off }}</span>{% endif %}</span></span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endfor %}
             <a class="row row-button" href="/schedules/rules/new">Add Rule</a>
             {% if let Some((text, refused)) = notice %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="rules">{{ text }}</p>{% endif %}
         </div>
+        <p class="group-footer">{{ self.t("settings.time_rules.rules_footer") }}</p>
     </section>
 
     <section id="screen-time" aria-labelledby="screen-time-title">
@@ -43,7 +44,7 @@
             <a class="row" href="/devices/{{ p.id }}/time" data-phone="{{ p.id }}">
                 <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
                 <span class="row-label">{{ p.name }}<span class="row-sub{% if p.bedtime.unreadable() %} text-alarm{% endif %}" data-bedtime>{{ p.bedtime.line() }}</span></span>
-                <span class="row-value">{% if p.own %}Own rules{% else %}Everyone's rules{% endif %}</span>
+                <span class="row-value" data-in-force>{{ p.rules }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% else %}

@@ -872,6 +872,10 @@ pub fn build_admin_router(
             get(handlers::schedules::view_device_time),
         )
         .route(
+            "/devices/{id}/time/rules/{rule_id}",
+            post(handlers::schedules::switch_device_rule),
+        )
+        .route(
             "/devices/{id}/bedtime",
             get(handlers::bedtime::show_bedtime).post(handlers::bedtime::save_bedtime),
         )

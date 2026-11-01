@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::handlers::activity::ActivityRow;
-use crate::i18n::{Lang, Words, t, t_params};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
@@ -313,16 +313,7 @@ pub(crate) async fn time_glance(
     // locks the phone. A rule whose days don't read is kept as "always on" (no end).
     let mut rules = Vec::new();
     if report.active_rule_id.is_some() && report.locking() {
-        let custom: bool = sqlx::query_scalar(
-            "SELECT custom_schedule_enabled FROM device_policy WHERE device_id = ?",
-        )
-        .bind(device_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(false);
-        rules = crate::time_rules::effective_rule_rows(&state.db, device_id, custom)
+        rules = crate::time_rules::effective_rule_rows(&state.db, device_id)
             .await
             .unwrap_or_default();
     }
@@ -832,6 +823,9 @@ struct DeviceDetailTemplate {
     activity: crate::handlers::activity::Activity,
     /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
     pause_rules: Vec<(i64, String)>,
+    /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
+    /// until a lift or the day's end; a request's push opens `#quick`.
+    asked: Option<String>,
     /// A lift form's flash (`?done=`): the summary group ("quick"), text, refused.
     done: Option<(&'static str, &'static str, bool)>,
     /// The last report has the phone's restrictions paused: said at the top of Quick actions,
@@ -851,7 +845,7 @@ struct DeviceDetailTemplate {
     music_value: String,
     /// Device › Music or Device › Time shows a warning: the value in orange ("Needs attention").
     music_attention: bool,
-    time_value: &'static str,
+    time_value: String,
     time_attention: bool,
     /// Device › Calendar's row (design 69), in the request's language.
     calendar_label: &'static str,
@@ -1577,8 +1571,8 @@ async fn render_device(
     let lifts = match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now)
         .await
     {
-        // Only what End now can still end: an ended lift (or added screen time) is history,
-        // on Device › Time only (the user, 2026-10-20).
+        // Only what End now can still end: an ended lift (or added screen time) is history, in
+        // the security log (Device › Time Rules' Recent went on 2026-11-01).
         Ok(lifts) => lifts.into_iter().filter(|l| l.can_end).collect::<Vec<_>>(),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the lifts");
@@ -1662,10 +1656,9 @@ async fn render_device(
 
     // The phone's effective rules: the Time row, Pause a rule…, the badge, and whether a calls-off
     // rule applies while calls aren't managed (an Attention row).
-    let time_rules =
-        crate::time_rules::effective_rule_rows(&state.db, id, policy.custom_schedule_enabled)
-            .await
-            .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
+    let time_rules = crate::time_rules::effective_rule_rows(&state.db, id)
+        .await
+        .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
     let incoming_calls_unblocked = !policy.calls_managed
         && time_rules
             .as_ref()
@@ -1734,9 +1727,9 @@ async fn render_device(
     };
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
-        Err(_) => ("Couldn't read", false),
+        Err(_) => ("Couldn't read".to_string(), false),
         Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
-            ("Needs attention", true)
+            ("Needs attention".to_string(), true)
         }
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
@@ -1745,10 +1738,14 @@ async fn render_device(
                 || (policy.custom_schedule_enabled
                     && crate::time_rules::parse_budget(&policy.daily_budget_json).is_err()) =>
         {
-            ("Needs attention", true)
+            ("Needs attention".to_string(), true)
         }
-        Ok(_) if policy.custom_schedule_enabled => ("Own rules", false),
-        Ok(_) => ("Everyone's rules", false),
+        // The rules in force, its bedtime too (each rule has its own switch since 0115).
+        Ok(rules) if rules.is_empty() => (t(lang, "device.about.none").to_string(), false),
+        Ok(rules) => (
+            t_count(lang, "device.time.rule_count", rules.len() as i64, &[]),
+            false,
+        ),
     };
 
     // The header (§3.2 item 1, §3.10; the user's pick C, 2026-11-01): the first fact that holds
@@ -1808,6 +1805,14 @@ async fn render_device(
         }
     };
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
+    let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
+    {
+        Ok(asked) => asked.map(|at| zone.clock(at)),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the request for more time");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
@@ -1834,6 +1839,7 @@ async fn render_device(
                 .iter()
                 .map(|r| (r.id, r.name.clone()))
                 .collect(),
+            asked,
             done,
             lifts,
             paused,

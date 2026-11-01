@@ -78,7 +78,7 @@ async fn global_rule_reaches_every_device_and_nudges_them() {
 }
 
 #[tokio::test]
-async fn device_override_uses_its_own_rules_and_budget() {
+async fn every_rule_has_its_switch_and_the_limit_its_own() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -118,39 +118,180 @@ async fn device_override_uses_its_own_rules_and_budget() {
         Some("rule"),
     );
 
-    // Not in force until the override is on.
+    let names = |p: &serde_json::Value| -> Vec<String> {
+        p["time_policy"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // Since migration 0115 a phone's own rule applies at once, beside everyone's.
     let p = app.policy(&token).await;
-    assert_eq!(p["time_policy"]["rules"][0]["name"], "Skole");
+    assert_eq!(names(&p), ["Skole", "Kveld"]);
+    let kveld = &p["time_policy"]["rules"][1];
+    assert_eq!(kveld["calls_allowed"], true);
+    assert_eq!(kveld["days"][6], json!({"start": 1140, "end": 1200}));
     assert_eq!(
         p["time_policy"]["daily_budget_minutes"],
         json!([60, null, null, null, null, 120, null])
     );
 
+    // Everyone's Skole switched off for this phone: not in its policy; the phone is nudged.
+    let skole: i64 = sqlx::query_scalar("SELECT id FROM time_rules WHERE device_id IS NULL")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let switch = format!("/devices/{id}/time/rules/{skole}");
     let mut nudges = app.state.command_notify.subscribe();
+    let res = app
+        .request_form(Method::POST, &switch, Some(&cookie), &[])
+        .await;
+    assert_redirect(&res, &format!("/devices/{id}/time"), Some("everyone"));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(names(&app.policy(&token).await), ["Kveld"]);
+    // Off again (a second tap, another tab): nothing written, no nudge.
+    app.request_form(Method::POST, &switch, Some(&cookie), &[])
+        .await;
+    assert!(nudges.try_recv().is_err());
+
+    // A rule added to everyone's later is on for every phone.
+    app.request_form(
+        Method::POST,
+        "/schedules/rules",
+        Some(&cookie),
+        &[
+            ("scope", ""),
+            ("name", "Middag"),
+            ("kind", "custom"),
+            ("d0_start", "17:00"),
+            ("d0_end", "17:45"),
+        ],
+    )
+    .await;
+    assert_eq!(names(&app.policy(&token).await), ["Middag", "Kveld"]);
+    // Skole on again.
+    let res = app
+        .request_form(Method::POST, &switch, Some(&cookie), &[("on", "on")])
+        .await;
+    assert_redirect(&res, &format!("/devices/{id}/time"), Some("everyone"));
+    assert_eq!(
+        names(&app.policy(&token).await),
+        ["Skole", "Middag", "Kveld"]
+    );
+
+    // The Own limit switch picks the phone's own limits over everyone's, and back.
     let res = app
         .request_form(
             Method::POST,
             &format!("/schedules/device/{id}"),
             Some(&cookie),
-            &[("custom_schedule_enabled", "on"), ("b2", "45")],
+            &[("section", "limit"), ("own_limit", "on")],
         )
         .await;
-    assert!(res.status.is_redirection(), "{}", res.text());
-    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_redirect(&res, &format!("/devices/{id}/time"), Some("screen-time"));
+    app.request_form(
+        Method::POST,
+        &format!("/schedules/device/{id}"),
+        Some(&cookie),
+        &[("section", "budget"), ("b2", "45")],
+    )
+    .await;
     let p = app.policy(&token).await;
-    let rules = p["time_policy"]["rules"].as_array().unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0]["name"], "Kveld");
-    assert_eq!(rules[0]["calls_allowed"], true);
-    assert_eq!(rules[0]["days"][6], json!({"start": 1140, "end": 1200}));
     assert_eq!(
         p["time_policy"]["daily_budget_minutes"],
         json!([null, null, 45, null, null, null, null])
+    );
+    assert_eq!(names(&p), ["Skole", "Middag", "Kveld"], "the rules stay");
+    app.request_form(
+        Method::POST,
+        &format!("/schedules/device/{id}"),
+        Some(&cookie),
+        &[("section", "limit")],
+    )
+    .await;
+    assert_eq!(
+        app.policy(&token).await["time_policy"]["daily_budget_minutes"],
+        json!([60, null, null, null, null, 120, null])
     );
 
     let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.text().contains("Kveld"));
+}
+
+/// The switch route takes everyone's rules and the phone's own, never its bedtime or another
+/// phone's rule (404, nothing written); a rule deleted meanwhile lands back on `#everyone`.
+#[tokio::test]
+async fn a_rule_switch_is_scoped_to_the_phone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let emils = stored_rule(
+        &app,
+        Some(emil),
+        "Emils",
+        "[null,null,null,null,null,null,null]",
+    )
+    .await;
+    let bedtime = stored_bedtime(&app, anna).await;
+    for rule in [emils, bedtime] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{anna}/time/rules/{rule}"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{rule}");
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/9999/time/rules/1",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{anna}/time/rules/9999"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_redirect(&res, &format!("/devices/{anna}/time"), Some("everyone"));
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_rule_off").await, 0);
+    // A phone's own rule switched off and on again lands on its group.
+    let annas = stored_rule(
+        &app,
+        Some(anna),
+        "Annas",
+        "[null,null,null,null,null,null,null]",
+    )
+    .await;
+    for fields in [vec![], vec![("on", "on")]] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{anna}/time/rules/{annas}"),
+                Some(&cookie),
+                &fields,
+            )
+            .await;
+        assert_redirect(&res, &format!("/devices/{anna}/time"), Some("own-rules"));
+    }
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_rule_off").await, 0);
+    let logged = count(
+        &app,
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'time_rule_updated'",
+    )
+    .await;
+    assert_eq!(logged, 2, "each switch in the log");
 }
 
 #[tokio::test]
@@ -379,10 +520,14 @@ async fn lifts_are_recorded_delivered_and_end() {
             .await
             .unwrap();
     assert_eq!(events, 2);
-    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
+    let page = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await;
     assert!(page.text().contains("Skole paused for 30 min"));
     assert!(page.text().contains("End now"));
-    assert!(page.text().contains("+15 min screen time"));
+    // Added screen time is history: the security log has it, the summary shows only running
+    // pauses (Device › Time Rules lost its Recent group on 2026-11-01).
+    assert!(!page.text().contains("+15 min screen time"));
 
     // End the rule pause early: no longer delivered; ending it again changes nothing and lands
     // back (a second tap); a pause this phone never had is a 404.
@@ -456,8 +601,11 @@ async fn lifts_are_recorded_delivered_and_end() {
         .await
         .unwrap();
     assert_eq!(app.policy(&token).await["time_policy"]["lifts"], json!([]));
-    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
-    assert!(page.text().contains("Ended early"));
+    let page = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await;
+    // Over: no longer on the summary (only what End now can end); the security log keeps it.
+    assert!(!page.text().contains("data-lift="));
 }
 
 #[tokio::test]
@@ -494,40 +642,10 @@ async fn invalid_lifts_are_rejected() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
     }
     // A rule that doesn't apply to this phone (deleted or switched off since the page loaded):
-    // back to the page with nothing written.
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/lifts"),
-            Some(&cookie),
-            &[
-                ("target", "rule"),
-                ("rule", &foreign),
-                ("minutes", "30"),
-                ("back", "time"),
-            ],
-        )
-        .await;
-    assert_redirect(
-        &res,
-        &format!("/devices/{id}/time?done=gone"),
-        Some("pause"),
-    );
-    // No rule applies to this phone at all: Pause a Rule still shows, with the reason, so the
-    // fragment lands on it (qa-31-s9-code M1).
-    let html = app
-        .get_page(&format!("/devices/{id}/time?done=gone"), &cookie)
-        .await
-        .text();
-    let pause = &html[html.find("<section id=\"pause\"").expect("the pause group")..];
-    let pause = &pause[..pause.find("</section>").unwrap()];
-    assert!(pause.contains("data-flash=\"pause\""), "{pause}");
-    assert!(pause.contains("No rules apply to this phone right now."));
-    assert!(pause.contains("flash-error"));
-    // From the summary (or an older tab without `back`) the reason lands in its quick actions
-    // (design 31 step 10; qa-31-s9-code N4 sent it to Device › Time while the summary had no word
-    // for it).
-    for back in [&[("back", "summary")][..], &[][..]] {
+    // back with nothing written, the reason in the summary's quick actions (design 31 step 10) -
+    // also from an older Device › Time tab (`back=time`: the page lost its lift forms on
+    // 2026-11-01) or one without `back`.
+    for back in [&[("back", "summary")][..], &[("back", "time")][..], &[][..]] {
         let fields: Vec<(&str, &str)> = [("target", "rule"), ("rule", &foreign), ("minutes", "30")]
             .into_iter()
             .chain(back.iter().copied())
@@ -852,6 +970,19 @@ async fn legacy_schedules_become_rules_once() {
     assert_eq!(rows[4].1, "Bedtime");
     assert!(rows[4].5, "the phone's own bedtime is its Bedtime");
     assert_eq!(day(4, 6), json!({"start": 1200, "end": 360}));
+    // The phone had its own schedule: everyone's converted rules, and their split mornings, are
+    // switched off for it (migration 0115 ran before they existed), so its bedtime alone applies.
+    let effective = crate::time_rules::effective_rule_rows(&db, custom)
+        .await
+        .unwrap();
+    assert_eq!(effective.len(), 1, "{effective:?}");
+    assert!(effective[0].bedtime);
+    let off: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_rule_off WHERE device_id = ?")
+        .bind(custom)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(off, 4);
     let migrated: Vec<i64> = sqlx::query_scalar(
         "SELECT rules_migrated FROM global_schedule UNION ALL SELECT rules_migrated FROM device_policy",
     )
@@ -944,6 +1075,11 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
             vec![("custom_schedule_enabled", "on"), ("b0", "5")],
         ),
         (
+            format!("/schedules/device/{id}"),
+            vec![("section", "limit"), ("own_limit", "on")],
+        ),
+        (format!("/devices/{id}/time/rules/7"), vec![]),
+        (
             format!("/devices/{id}/lifts"),
             vec![("target", "budget"), ("minutes", "15")],
         ),
@@ -978,6 +1114,7 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
         .await,
         1
     );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_rule_off").await, 0);
     assert_eq!(count(&app, "SELECT COUNT(*) FROM time_lifts").await, 1);
     assert_eq!(
         count(
@@ -1118,7 +1255,7 @@ async fn lift_status_comes_from_the_phone() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    let time = device_page(id, Section::Time);
+    let time = device_page(id, Section::Summary);
     let status = |text: &str| -> String {
         let row = &text[text.find(&format!("data-lift=\"{lift}\"")).unwrap()..];
         let value = &row[row.find("class=\"row-value\">").unwrap() + 18..];
@@ -1262,7 +1399,7 @@ async fn parent_edits_are_in_the_security_log() {
     // A phone's Screen Time save names the phone (qa-s-i18n-2-code M1): its fact `device {id}`
     // shown as the reader's "phone {id}: …".
     assert!(
-        events[4].2.starts_with(&format!("phone {id}: Own rules ")),
+        events[4].2.starts_with(&format!("phone {id}: Own limit ")),
         "{}",
         events[4].2
     );
@@ -1336,18 +1473,15 @@ async fn a_rule_name_is_never_script() {
         .await
         .unwrap();
     }
-    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    // The list, both editors (title, name field, the delete's sentence) and Device › Time (its own
-    // rules and the Pause picker) show it escaped; no confirm() is built from it any more.
+    // The list, both editors (title, name field, the delete's sentence), Device › Time Rules (both
+    // groups of rules) and the summary (the Pause picker) show it escaped; no confirm() is built
+    // from it any more.
     for page in [
         "/schedules".to_string(),
         "/schedules/rules/7".to_string(),
         "/schedules/rules/8".to_string(),
         device_page(id, Section::Time),
+        device_page(id, Section::Summary),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
         assert!(html.contains(escaped), "{page}: {html}");
@@ -1390,6 +1524,8 @@ async fn stored_bedtime(app: &TestApp, device: i64) -> i64 {
     .unwrap()
 }
 
+/// Own rules on as a phone had it before migration 0115 (the column is the Own limit switch now);
+/// `time_rules::switch_like_0115` then turns it into the per-rule switches, as the migration did.
 async fn own_rules_on(app: &TestApp, device: i64) {
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(device)
@@ -1428,6 +1564,7 @@ async fn the_bedtime_is_served_after_the_rule_set_once_and_without_a_name() {
                "exempt_apps": [], "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap()})
     );
     own_rules_on(&app, id).await;
+    crate::time_rules::switch_like_0115(&app.db).await;
     let rules = app.policy(&token).await["time_policy"]["rules"].clone();
     assert_eq!(rules.as_array().unwrap().len(), 1, "{rules}");
     assert_eq!(rules[0]["id"], bedtime);
@@ -1478,6 +1615,7 @@ async fn everyones_bedtime_becomes_each_followers_and_their_pauses_follow() {
         .unwrap();
     }
 
+    crate::time_rules::switch_like_0115(&app.db).await;
     crate::time_rules::migrate_crossing(&app.db).await.unwrap();
 
     for device in [anna, emil] {
@@ -1544,6 +1682,7 @@ async fn an_own_rule_becomes_the_bedtime_in_place_and_never_a_second() {
     let olas = stored_rule(&app, Some(ola), "Natt", NIGHTS).await;
     let global = stored_rule(&app, None, "Natt", NIGHTS).await;
 
+    crate::time_rules::switch_like_0115(&app.db).await;
     crate::time_rules::migrate_crossing(&app.db).await.unwrap();
 
     let rows = bedtime_of(&app, emil).await;
@@ -1633,4 +1772,107 @@ async fn an_unreadable_rule_is_left_and_the_start_goes_on() {
         0
     );
     assert_eq!(bedtime_of(&app, anna).await.len(), 1);
+}
+
+// Tidsregler (2026-11-01): a switch per rule (migration 0115).
+
+/// Migration 0115 keeps every phone's rules in force exactly: one on Own rules keeps its own and
+/// gets everyone's switched off; one on everyone's rules keeps them and gets its own (kept from a
+/// time on Own rules) switched off; each keeps its bedtime. A rule added to everyone's afterwards
+/// is on for both. A request for more time opens the summary's Quick actions now.
+#[tokio::test]
+async fn the_switch_per_rule_migration_keeps_every_phones_rules() {
+    let (db, _dir) = super::cleanup::migrated_before(115).await;
+    let mut phones = Vec::new();
+    for (name, own) in [("Anna", false), ("Emil", true)] {
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+            .bind(name)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_policy (device_id, kiosk_desired, custom_schedule_enabled) \
+             VALUES (?, 1, ?)",
+        )
+        .bind(id)
+        .bind(own)
+        .execute(&db)
+        .await
+        .unwrap();
+        phones.push(id);
+    }
+    let (anna, emil) = (phones[0], phones[1]);
+    let rule = |device: Option<i64>, name: &'static str, bedtime: bool| {
+        let db = &db;
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, \
+                 bedtime) VALUES (?, ?, 'custom', 1, ?, ?) RETURNING id",
+            )
+            .bind(device)
+            .bind(name)
+            .bind(if bedtime {
+                NIGHTS
+            } else {
+                "[null,null,null,null,null,null,null]"
+            })
+            .bind(bedtime)
+            .fetch_one(db)
+            .await
+            .unwrap()
+        }
+    };
+    let skole = rule(None, "Skole", false).await;
+    let middag = rule(None, "Middag", false).await;
+    rule(Some(anna), "Annas, from a time on Own rules", false).await;
+    let anna_bedtime = rule(Some(anna), "Bedtime", true).await;
+    let emils = rule(Some(emil), "Emils", false).await;
+    let emil_bedtime = rule(Some(emil), "Bedtime", true).await;
+    sqlx::query(
+        "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, \
+         happened_at) VALUES (?, 'extra_time_request', 'r1', '', '', ?, datetime('now'))",
+    )
+    .bind(anna)
+    .bind(format!("/devices/{anna}/time#extra"))
+    .execute(&db)
+    .await
+    .unwrap();
+
+    super::cleanup::finish(&db).await;
+
+    let in_force = |device: i64| {
+        let db = &db;
+        async move {
+            crate::time_rules::effective_rule_rows(db, device)
+                .await
+                .unwrap()
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(in_force(anna).await, [skole, middag, anna_bedtime]);
+    assert_eq!(in_force(emil).await, [emils, emil_bedtime]);
+    let target: String =
+        sqlx::query_scalar("SELECT target FROM parent_events WHERE kind = 'extra_time_request'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(target, format!("/devices/{anna}#quick"));
+
+    let lekser = rule(None, "Lekser", false).await;
+    assert_eq!(in_force(anna).await, [skole, middag, lekser, anna_bedtime]);
+    assert_eq!(in_force(emil).await, [lekser, emils, emil_bedtime]);
+    // A phone gone takes its switches with it.
+    sqlx::query("DELETE FROM devices WHERE id = ?")
+        .bind(emil)
+        .execute(&db)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_rule_off WHERE device_id = ?")
+        .bind(emil)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }
