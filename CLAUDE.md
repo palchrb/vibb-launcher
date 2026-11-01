@@ -14,6 +14,12 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
 - `docs/notes/server/` - the server's area notes, moved out of `server/CLAUDE.md` (which keeps the core and an index)
+- `docs/notes/launcher/` - the launcher's area notes, moved out of `launcher/CLAUDE.md` on 2026-11-01 (which keeps the core
+  and an index "Where the rest is"; read only the notes your task touches)
+- `docs/notes/music/` - the music app's area notes, moved out of `music/CLAUDE.md` on 2026-11-01 (the same pattern)
+- `docs/plan/plan-archive.md` - PLAN.md's history, moved out on 2026-11-01: the fork decision, repos, early status,
+  phases, the old fix batches and the older "Done" entries; PLAN.md keeps the queue, what was asked for and not settled,
+  the Done entries that ship in the next release, and the open questions
 - `music/` - the Vibb music app (Kotlin, Compose, Media3; applicationId `me.vibb.music`, debug
   `me.vibb.music.debug`), designs 20/21/21b, Sonos 26a, Storytel 26b, Spotify 26c. Details: `music/CLAUDE.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
