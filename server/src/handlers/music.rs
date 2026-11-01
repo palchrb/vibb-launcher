@@ -30,7 +30,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 use crate::handlers::device_pages::{Note, Row};
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{DevicePolicy, DeviceStatus, InstalledApp};
 use crate::music::{
     self, CACHE_CHOICES, MAX_CATEGORY_NAME_CHARS, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES_PER_ENTRY,

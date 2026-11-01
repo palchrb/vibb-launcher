@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::handlers::activity::ActivityRow;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
@@ -58,14 +58,25 @@ struct DevicesListTemplate {
     bell: crate::parent_events::Bell,
     /// A device that may not be showing notifications (design 35 §6).
     push_warning: Option<crate::handlers::auth::WarningRow>,
+    /// The first opening's offer (2026-11-01, `partials/push_offer.html`); `None` while push is off on this server.
+    push_offer: Option<PushOffer>,
 }
 crate::i18n::words!(DevicesListTemplate);
+
+/// What the first opening's card needs: This Device's key and known endpoints, and whether the card's Turn On just
+/// came back (`?notice=push_on`).
+struct PushOffer {
+    key: String,
+    subscribed: String,
+    done: bool,
+}
 
 pub async fn list_devices(
     State(state): State<AppState>,
     lang: Lang,
     session: tower_sessions::Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name")
         .fetch_all(&state.db)
@@ -107,10 +118,30 @@ pub async fn list_devices(
             warning_back: "/devices",
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
             push_warning: crate::handlers::notifications::warning_row(&state, admin.id).await,
+            push_offer: push_offer(&state, params.get("notice").map(String::as_str)).await,
         }
         .render()
         .unwrap(),
     )
+}
+
+/// The first opening's card, with every account's active endpoints as This Device reads them (a browser subscribed for
+/// another parent shows no card either); no key, no card. A read error is no card too: the script drops a browser's
+/// subscription the list doesn't name.
+async fn push_offer(state: &AppState, notice: Option<&str>) -> Option<PushOffer> {
+    let key = state.push.key.as_ref()?;
+    let known = match crate::push::active_endpoint_hashes(&state.db).await {
+        Ok(known) => known,
+        Err(err) => {
+            tracing::error!(%err, "can't read the notification subscriptions");
+            return None;
+        }
+    };
+    Some(PushOffer {
+        key: key.public.clone(),
+        subscribed: known.join(","),
+        done: notice == Some("push_on"),
+    })
 }
 
 /// A phone's row: one in-memory lookup for the connection, its last report, its rules when one

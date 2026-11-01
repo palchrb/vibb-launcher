@@ -22,9 +22,6 @@
     <string name="duration_unit_hours">t</string>
     <string name="duration_unit_minutes">min</string>
     <string name="lock_budget_also_used">Skjermtiden for i dag er også brukt opp.</string>
-    <string name="lock_enter_unlock_code">Skriv inn opplåsingskode</string>
-    <string name="lock_unlock_code_dialog_title">Opplåsingskode</string>
-    <string name="lock_unlock_code_not_configured">Det er ikke satt opp noen opplåsingskode for denne telefonen.</string>
     <string name="lock_unlock_code_wrong">Feil kode. Prøv igjen.</string>
 
     <!-- Calls -->

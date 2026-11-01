@@ -88,6 +88,7 @@
             <form method="post" action="/music/storytel/clear#storytel" class="confirm-body">
                 <p>Remove the Storytel login from this server and every phone? Their Storytel books go too.</p>
                 <button type="submit" class="button-destructive">Remove Login</button>
+                {% include "partials/confirm_cancel.html" %}
             </form>
         </details>
         {% endif %}
@@ -130,6 +131,7 @@
             <form method="post" action="/music/orphans/delete#orphans" class="confirm-body">
                 <p>Delete these files from the server for good? Keep them while you might put a newer database back.</p>
                 <button type="submit" class="button-destructive">Delete Files</button>
+                {% include "partials/confirm_cancel.html" %}
             </form>
         </details>
     </div>

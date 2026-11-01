@@ -213,6 +213,8 @@ struct CalendarTemplate {
     can_add_link: bool,
     /// No music key: nothing can be sealed, the form says why and has no submit (QA L11).
     links_off: bool,
+    /// A link is sealed with a music key the server no longer has (E6's L3): paste it again.
+    links_key_new: bool,
     add: AddForm,
     links_notice: Option<&'static str>,
 }
@@ -548,12 +550,30 @@ async fn render_page(
         .flat_map(|r| &r.calendars)
         .map(|c| c.key.as_str())
         .collect();
+    // E6's L3: the server made a new music key (its file was gone at the start) - a link sealed with the old one turns
+    // `key_lost` only at its next fetch, so the page says so at once, on the group and on each such row.
+    let key_lost = |l: &calendar_feeds::LinkRow| {
+        state
+            .music_key
+            .as_ref()
+            .is_some_and(|key| key.fingerprint != l.key_fp)
+    };
+    let links_key_new = links.iter().any(key_lost);
     let link_views = links
         .iter()
         .map(|l| {
             let on_phone = reported_keys.contains(calendar_feeds::calendar_key(&l.uid).as_str());
             let applied = report.iter().flat_map(|r| &r.feeds).find(|f| f.id == l.uid);
-            link_view(lang, &zone, now, l, feeds_capable, on_phone, applied)
+            link_view(
+                lang,
+                &zone,
+                now,
+                l,
+                key_lost(l),
+                feeds_capable,
+                on_phone,
+                applied,
+            )
         })
         .collect();
     let can_add_link = links.len() < calendar_feeds::MAX_LINKS_PER_PHONE as usize;
@@ -592,6 +612,7 @@ async fn render_page(
             links: link_views,
             can_add_link,
             links_off: state.music_key.is_none(),
+            links_key_new,
             add,
             links_notice: match notice {
                 Some("fetch_wait") => Some("calendar.links.fetch_wait"),
@@ -649,17 +670,25 @@ pub fn why_text(lang: Lang, code: &str, status: Option<i64>) -> String {
 }
 
 /// A link's status lines (§5): the fetch (or its error with the set's age), then the phone, the counts, the warning.
+/// `key_lost`: sealed with a music key the server no longer has - said before the next fetch stores it (E6's L3).
+#[allow(clippy::too_many_arguments)]
 fn link_view(
     lang: Lang,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
     link: &calendar_feeds::LinkRow,
+    key_lost: bool,
     capable: bool,
     on_phone: bool,
     applied: Option<&calendar::ReportedFeed>,
 ) -> LinkView {
     let when = when_text(lang, zone, link.ok_at.as_deref(), now);
-    let (first, failing) = match link.error.as_deref() {
+    let error = if key_lost {
+        Some("key_lost")
+    } else {
+        link.error.as_deref()
+    };
+    let (first, failing) = match error {
         Some("empty") => (
             t_params(lang, "calendar.links.status.held_empty", &[("when", &when)]),
             true,

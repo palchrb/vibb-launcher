@@ -43,7 +43,7 @@ use chrono::Utc;
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::handlers::device_pages::Note;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp};
 use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{

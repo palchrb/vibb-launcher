@@ -23,7 +23,7 @@ use crate::AppState;
 use crate::display_time::Zone;
 use crate::dns_engine;
 use crate::dns_server::{self, DnsServer, Refusal};
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{Device, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
 use crate::security::CurrentAdmin;
 use crate::streams::ConnectionState;
@@ -36,6 +36,29 @@ struct FeedRow {
     sub: String,
     failing: bool,
     detail: Option<String>,
+    /// What the switch means for the phones ([list_scope]): "On for every phone except Testtelefon".
+    scope: String,
+}
+
+/// A list's line from the phones' own choices (the user, 2026-10-26: the switch is every phone's default, a phone's
+/// Web Filter page can set it otherwise - say so here): `others` are the phones whose own setting differs from the
+/// switch, by name. An own setting equal to the switch changes nothing and isn't named.
+fn list_scope(lang: Lang, enabled: bool, others: &[&str]) -> String {
+    let names = others.join(", ");
+    match (enabled, others.is_empty()) {
+        (true, true) => crate::i18n::t(lang, "settings.web_filter.scope.on_all").to_string(),
+        (true, false) => crate::i18n::t_params(
+            lang,
+            "settings.web_filter.scope.on_except",
+            &[("names", &names)],
+        ),
+        (false, true) => crate::i18n::t(lang, "settings.web_filter.scope.off_all").to_string(),
+        (false, false) => crate::i18n::t_params(
+            lang,
+            "settings.web_filter.scope.off_but",
+            &[("names", &names)],
+        ),
+    }
 }
 
 /// How a feed's last download went (`dns_engine::CompiledBlocklist`), typed (design 31 M5): a
@@ -570,10 +593,17 @@ async fn render_page(
         let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
             .fetch_all(&state.db)
             .await?;
-        Ok::<_, sqlx::Error>((settings, blocklists, custom, devices))
+        // Each phone's own setting of a list (its Web Filter page), for the lists' lines.
+        let overrides = sqlx::query_as::<_, (i64, bool, String)>(
+            "SELECT o.blocklist_id, o.enabled, d.name FROM device_blocklist_overrides o \
+             JOIN devices d ON d.id = o.device_id ORDER BY d.name, d.id",
+        )
+        .fetch_all(&state.db)
+        .await?;
+        Ok::<_, sqlx::Error>((settings, blocklists, custom, devices, overrides))
     }
     .await;
-    let (settings, blocklists, custom, devices) = match read {
+    let (settings, blocklists, custom, devices, overrides) = match read {
         Ok(read) => read,
         Err(err) => return read_failed(err),
     };
@@ -592,11 +622,17 @@ async fn render_page(
                     (FeedState::Loaded(n), None) => format!("{n} domains"),
                     (_, None) => String::new(),
                 };
+                let others: Vec<&str> = overrides
+                    .iter()
+                    .filter(|(id, on, _)| *id == list.id && *on != list.enabled)
+                    .map(|(_, _, name)| name.as_str())
+                    .collect();
                 FeedRow {
-                    list,
+                    scope: list_scope(lang, list.enabled, &others),
                     failing: feed.problem().is_some(),
                     detail: feed.detail(),
                     sub,
+                    list,
                 }
             })
             .collect()

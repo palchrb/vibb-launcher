@@ -544,3 +544,30 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   "Added the app to the Home Screen again? Turn notifications on in the new copy and remove the old device here."
   The health rule is unchanged: the old row is marked once its pushes go unreceipted, as before.
 - Test: `web_push::the_device_list_says_what_to_do_after_adding_the_app_again`.
+
+## The first opening offers notifications (2026-11-01, branch `small-c`)
+
+- **Why** (the user, 2026-10-27): the subscription lived only under Notification Settings › This Device. Browsers
+  (iOS Safari standalone, Chrome) grant the permission prompt only inside a tap, so the app can't ask at launch; it
+  offers a one-tap card instead.
+- **The card** (`partials/push_offer.html`, at the top of Devices - the app's start page - under the title): a
+  `<form class="group" id="push-offer" hidden>` with This Device's `data-key` and `data-subscribed` (every account's
+  active endpoints, `push::active_endpoint_hashes`, as This Device reads them), "Get notifications on this phone?",
+  Turn On and Not Now, its words from the catalogs (`devices.push_offer.*`). `DevicesListTemplate.push_offer` is
+  `None` while the server has no push key, and on a read error of the endpoints (the script would drop a browser
+  subscription the list doesn't name).
+- **The rule** (`static/notifications.js` `offerShown`, pure, jstest's table; `offer` runs from `install` on every page
+  that has the card): the app opened from the Home Screen (`display-mode: standalone` or iOS's `navigator.standalone`)
+  or just installed (Chrome's `appinstalled`, in the tab it was installed from); Push here (PushManager, a secure
+  context, a service worker); `Notification.permission` still `default`; Not Now not tapped in this browser
+  (`localStorage` `vibb.push-offer` = `not-now`, every access in try/catch - storage that throws shows the card). Then,
+  with the worker ready, no subscription the server knows: a known one keeps the card hidden, an unknown one is dropped
+  first (as on This Device). A plain Safari tab never shows it; the Devices list's `push-warning` and This Device stay
+  the way back.
+- **Turn On** is This Device's: `pushManager.subscribe` first in the tap, then the form post to
+  `POST /notifications/subscriptions` with `from=devices` and `offer=devices`. A success comes back to
+  `/devices?notice=push_on#push-offer-done` (the flash "Notifications are on for this phone.", the card stays hidden -
+  the subscription is known now); a refusal goes to This Device with its notice, which says why. A refused prompt
+  turns the card's line into "blocked" and drops Turn On; any other failure says try again.
+- Tests: `web_push::the_first_opening_offers_notifications_on_devices`, `jstest/notifications.test.js` (the table,
+  the card from the Home Screen and from `appinstalled`, the known and unknown subscription, Not Now, the refusals).

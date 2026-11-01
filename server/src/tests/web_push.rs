@@ -459,7 +459,7 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
             assert!(!text.contains(secret), "{secret} is on the {page} page");
         }
     }
-    assert!(html.contains("<script src=\"/static/notifications.js?v=2\" defer></script>"));
+    assert!(html.contains("<script src=\"/static/notifications.js?v=3\" defer></script>"));
     assert!(!inbox.contains("notifications.js"));
     check_forms("/notifications/settings", &html);
     check_forms("/notifications", &inbox);
@@ -1229,6 +1229,84 @@ async fn the_device_list_says_what_to_do_after_adding_the_app_again() {
     assert!(list.contains(NOTE), "{list}");
     // Under the list: after the last device's group.
     assert!(list.find(NOTE) > list.rfind("data-subscription="));
+}
+
+/// The first opening's offer (2026-11-01): Devices carries the hidden card with This Device's key and known
+/// endpoints, the words from the catalog, and the script; its Turn On posts This Device's form, and a success comes
+/// back to Devices with the flash, a refusal goes to This Device, which says why.
+#[tokio::test]
+async fn the_first_opening_offers_notifications_on_devices() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let key = app.state.push.key.clone().unwrap();
+    let html = app.get_page("/devices", &cookie).await.text();
+    let card = super::settings_pages::part(&html, "id=\"push-offer\"", "</form>");
+    assert!(html.contains(&format!("data-key=\"{}\"", key.public)));
+    assert!(card.contains("data-subscribed=\"\""));
+    assert!(html.contains(
+        "action=\"/notifications/subscriptions#push-offer\" class=\"group\" id=\"push-offer\""
+    ));
+    assert!(
+        card.contains(" hidden>"),
+        "hidden until the script shows it"
+    );
+    assert!(card.contains("<input type=\"hidden\" name=\"offer\" value=\"devices\">"));
+    assert!(card.contains("Get notifications on this phone?") && card.contains("Not Now"));
+    assert!(html.contains("<script src=\"/static/notifications.js?v=3\" defer></script>"));
+    assert!(!html.contains("id=\"push-offer-done\""));
+    // The page is in Norwegian for a Norwegian reader.
+    let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert!(nb.contains("Få varsler på denne telefonen?") && nb.contains("Ikke nå"));
+
+    // Turn On from the card: the subscription is stored and the answer is Devices with its flash.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[
+            ("from", "devices"),
+            ("offer", "devices"),
+            ("endpoint", ENDPOINT),
+            ("p256dh", test_browser::UA_PUBLIC),
+            ("auth", test_browser::AUTH),
+        ],
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        Some("/devices?notice=push_on#push-offer-done")
+    );
+    let back = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(back.contains("Notifications are on for this phone."));
+    // The browser's subscription is known now: the script keeps the card hidden.
+    assert!(back.contains(&format!(
+        "data-subscribed=\"{}\"",
+        crate::push::endpoint_hash(ENDPOINT)
+    )));
+    // A refusal goes to This Device, which has the reason.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions",
+        Some(&cookie),
+        None,
+        &[
+            ("from", "devices"),
+            ("offer", "devices"),
+            ("endpoint", ENDPOINT),
+        ],
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications/settings?from=devices&notice=push_origin#this-device")
+    );
+    // This Device's own Turn On still comes back to its group.
+    let res = subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications/settings?from=devices&notice=push_on#this-device")
+    );
 }
 
 /// §7: Sign Out Everywhere and `reset-2fa` delete every subscription; a backup's copy holds none.

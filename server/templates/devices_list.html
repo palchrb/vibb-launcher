@@ -17,6 +17,8 @@
     </div>
     <h1 class="page-title">Devices</h1>
 
+    {% include "partials/push_offer.html" %}
+
     {% if let Some(warning) = live_warning %}
     <a class="attention attention-action" href="/account" id="live-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
@@ -74,5 +76,6 @@
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}
 <script src="/static/pull-refresh.js?v=1" defer></script>
+{% if push_offer.is_some() %}<script src="/static/notifications.js?v=3" defer></script>{% endif %}
 </body>
 </html>

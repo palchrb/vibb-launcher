@@ -112,11 +112,13 @@ class ParentPinStoreTest {
     fun `five wrong tries lock every entry, and a lockout counts and logs nothing`() {
         val now = at(1_000_000L)
         for (n in 1..4) {
-            assertEquals(ParentPinResult.Wrong(5 - n, 15 * min), check("000000", now, ParentPinEntry.entries[n]))
+            assertEquals(ParentPinResult.Wrong(5 - n, 15 * min), check("000000", now, ParentPinEntry.entries[n - 1]))
         }
-        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.OVERRIDE))
+        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.PIN_LOCK))
         assertEquals(listOf("wrong", "wrong", "wrong", "wrong", "lockout"), kinds())
-        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "override"), store.queue().map { it.entry })
+        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "pin_lock"), store.queue().map { it.entry })
+        // The time lock's `override` is gone (2026-11-01, PWA only): four entries.
+        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode"), ParentPinEntry.entries.map { it.wire })
         val before = prefs.map.toMap()
         // Even the right PIN: refused without hashing, nothing counted, no event.
         assertEquals(ParentPinResult.LockedOut(10 * min), check(pin, at(now.wallMs + 5 * min), ParentPinEntry.PIN_LOCK))
@@ -130,7 +132,7 @@ class ParentPinStoreTest {
         val fp = parentPinFingerprint(hash, salt)
         var now = at(1_000_000L)
         assertEquals(ParentPinStatus(true, 0L, 5, 15 * min), parentPinStatus(store, fp, now))
-        repeat(4) { check("000000", now, ParentPinEntry.OVERRIDE) }
+        repeat(4) { check("000000", now, ParentPinEntry.PAUSE) }
         // Days later, a dialog for Settings opens: one try left, and how long the next lockout is.
         now = at(now.wallMs + 3 * 24 * 60 * min)
         assertEquals(ParentPinStatus(true, 0L, 1, 15 * min), parentPinStatus(store, fp, now))
@@ -158,12 +160,12 @@ class ParentPinStoreTest {
         val locked = state(now)
         assertEquals(1, levelNow(locked, now))
         val window = WindowStart(now.wallMs + 120 * min, now.elapsedMs, 3)
-        assertEquals(ParentPinResult.Ok, check(pin, now, ParentPinEntry.OVERRIDE, window = window))
+        assertEquals(ParentPinResult.Ok, check(pin, now, ParentPinEntry.PAUSE, window = window))
         assertEquals(listOf(window), started)
         val after = state(now)
         assertEquals(locked.copy(failures = 0), after)
         val used = store.queue().last()
-        assertEquals(ParentPinEvent(used.id, "unlocked", "override", now.wallMs, window.untilWallMs, null, null), used)
+        assertEquals(ParentPinEvent(used.id, "unlocked", "pause", now.wallMs, window.untilWallMs, null, null), used)
         // The level is kept: four wrong tries later the warning names level 2's 30 minutes.
         repeat(3) { check("000000", now) }
         assertEquals(ParentPinResult.Wrong(1, 30 * min), check("000000", now))

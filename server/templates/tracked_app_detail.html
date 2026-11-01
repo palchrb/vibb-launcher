@@ -149,6 +149,7 @@
                 <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name#release" class="confirm-body">
                     <p>Forget them? The next release is then trusted as it comes, whatever app or key it has.</p>
                     <button type="submit" class="button-destructive">Forget Package and Key</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -259,6 +260,7 @@
             <form method="post" action="/apps/tracked/{{ app.id }}/delete" class="confirm-body">
                 <p>Remove {{ app.name }} from the catalog? Phones that have it keep it, without updates.</p>
                 <button type="submit" class="button-destructive">Remove App</button>
+                {% include "partials/confirm_cancel.html" %}
             </form>
         </details>
     </div>

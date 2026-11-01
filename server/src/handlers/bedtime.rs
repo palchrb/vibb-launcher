@@ -30,7 +30,7 @@ use crate::handlers::schedules::{
     nudge, parse_exempt_apps_form, read_failed, render, reported_apps, server_error,
     time_input_to_minutes, window_text,
 };
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::security::CurrentAdmin;
 use crate::time_rules::{self, BEDTIME_NAME, DayWindow, LAST_MINUTE, NOON, Nights, TimeRuleRow};
 

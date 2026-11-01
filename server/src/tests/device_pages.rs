@@ -1046,9 +1046,74 @@ async fn web_filter_holds_the_phones_parts() {
         &html[at..at + html[at..].find("</form>").unwrap()]
     };
     assert!(list(1).contains("<option value=\"off\" selected>Off</option>"));
-    assert!(list(1).contains("<option value=\"default\">Default (On)</option>"));
-    assert!(list(2).contains("<option value=\"default\" selected>Default (Off)</option>"));
+    assert!(list(1).contains("<option value=\"default\">As for everyone (On)</option>"));
+    assert!(list(2).contains("<option value=\"default\" selected>As for everyone (Off)</option>"));
     assert!(list(1).contains("<input type=\"hidden\" name=\"back\" value=\"filter\">"));
+    assert!(html.contains("As for everyone follows the switch in Settings › Web Filter."));
+    let nb = app
+        .get_page(
+            &format!("{}?lang=nb", device_page(id, Section::Filter)),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(nb.contains("<option value=\"default\">Som for alle (på)</option>"));
+    assert!(nb.contains("<option value=\"off\" selected>Av</option>"));
+    // Settings › Web Filter tells each list's story from the phones' own settings (the user, 2026-10-26): Anna's
+    // own Off under an On list, nobody's under an Off one; then Emil's own On under the Off list, and Anna's own On
+    // under the On list (the same as the switch: not named).
+    let global = |html: &str, list_id: i64| {
+        let at = html.find(&format!("data-list=\"{list_id}\"")).unwrap();
+        html[at..at + html[at..].find("</form>").unwrap()].to_string()
+    };
+    let scope = |html: &str, list_id: i64| {
+        let row = global(html, list_id);
+        let line = &row[row.find("data-scope>").unwrap() + "data-scope>".len()..];
+        line[..line.find("</span>").unwrap()].to_string()
+    };
+    let web = app.get_page("/dns", &cookie).await.text();
+    assert!(
+        web.contains("<h2 class=\"group-header\" id=\"lists-title\">Lists for every phone</h2>")
+    );
+    assert_eq!(scope(&web, 1), "On for every phone except Anna");
+    assert_eq!(scope(&web, 2), "Off for every phone");
+    assert!(
+        web.contains("A phone&#39;s own Web Filter page can set a list otherwise for that phone.")
+    );
+    sqlx::query(
+        "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, 2, 1), (?, 1, 1)",
+    )
+    .bind(other)
+    .bind(other)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let web = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(scope(&web, 1), "On for every phone except Anna");
+    assert_eq!(scope(&web, 2), "Off · on for Emil");
+    sqlx::query("UPDATE device_blocklist_overrides SET enabled = 0 WHERE device_id = ? AND blocklist_id = 1")
+        .bind(other)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let web = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(scope(&web, 1), "On for every phone except Anna, Emil");
+    let nb = app.get_page("/dns?lang=nb", &cookie).await.text();
+    assert_eq!(scope(&nb, 1), "På for alle telefoner unntatt Anna, Emil");
+    assert_eq!(scope(&nb, 2), "Av · på for Emil");
+    assert!(nb.contains("Lister for alle telefoner"));
+    sqlx::query("UPDATE dns_blocklists SET enabled = 0 WHERE id = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        scope(&app.get_page("/dns", &cookie).await.text(), 1),
+        "Off for every phone"
+    );
+    sqlx::query("UPDATE dns_blocklists SET enabled = 1 WHERE id = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
     // Only this phone's domains, each with Remove; the add rows carry the phone and `back`.
     let group = |id: &str| {
         let at = html.find(&format!("<section id=\"{id}\"")).unwrap();

@@ -54,13 +54,14 @@ private const val PAUSE_NOTIFICATION_ID = 1008
 
 /**
  * Parent-PIN windows that lock again by themselves (design 24b §1, M9): an override (the time
- * lock's "Enter unlock code") or a pause (Settings) opens the phone completely for up to 2 hours;
+ * lock's "Enter unlock code", gone since 2026-11-01 - one opened before the update still runs out) or a pause
+ * (Settings) opens the phone completely for up to 2 hours;
  * when it ends - the boundary alarm, a reboot, screen on, the sync that ends an override, "Lock
  * again", the Settings switch, the PWA's `end_windows` - this resets what the device owner can and
  * records the rest for the status report ([runRelock], WindowRelockPlan.kt).
  *
- * - [opened]: the two starters (`OfflineOverride.activate`, `RestrictionsPause.start`, only ever
- *   called by `ParentPin.check`) call it before anything is lifted.
+ * - [opened]: the starter (`RestrictionsPause.start`, only ever called by `ParentPin.check` and the PWA's
+ *   `start_pause`) calls it before anything is lifted.
  * - [check] never blocks: it hands off to one IO worker (a conflated channel: one relock at a
  *   time, a request during one runs once more after it).
  * - [relockInSync]: the sync's own, before its status report, so the report carries the relock.

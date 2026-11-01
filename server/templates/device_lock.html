@@ -97,6 +97,7 @@
                     <input type="hidden" name="clear_kid_pin" value="on">
                     <p>Remove {{ device.name }}'s Child PIN? The phone then opens without a code.</p>
                     <button type="submit" class="button-destructive">Remove Child PIN</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% endif %}
@@ -163,7 +164,7 @@
             <details class="info">
                 <summary aria-label="About the Parent PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>On a time lock it lifts the rules for up to two hours, never Calls or Restrictions. Locked out after wrong tries, or your child saw it? Save a new PIN here: the wait ends once the phone checks in.</p>
+                    <p>Locked out after wrong tries, or your child saw it? Save a new PIN here: the wait ends once the phone checks in.</p>
                 </div>
             </details>
         </div>

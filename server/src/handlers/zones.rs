@@ -19,7 +19,7 @@ use axum::{Extension, Form};
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{AdminUser, Device};
 use crate::security::{self, CurrentAdmin};
 use crate::zones::{self, MAX_ZONES, NAME_MAX, RADIUS};

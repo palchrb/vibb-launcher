@@ -67,6 +67,7 @@
                     <form method="post" action="/wallpapers/{{ w.id }}/delete#all" class="confirm-body">
                         <p>Delete "{{ w.label }}" from this server and every phone?</p>
                         <button type="submit" class="button-destructive">Delete Photo</button>
+                        {% include "partials/confirm_cancel.html" %}
                     </form>
                 </details>
                 {% endif %}

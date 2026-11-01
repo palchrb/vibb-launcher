@@ -24,7 +24,7 @@ use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;

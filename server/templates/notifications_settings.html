@@ -82,6 +82,7 @@
                     {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
                     <p>Stop notifications to {{ d.label }}? It can turn them on again under This Device.</p>
                     <button type="submit" class="button-destructive">Remove</button>
+                    {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% if let Some((text, error)) = d.notice %}
@@ -120,6 +121,6 @@
         <p class="group-footer">Just for you - each parent chooses their own. Off: still in the inbox, no notification. Events arrive as soon as the phone next reports.</p>
     </section>
 </main>
-{% if push_key.is_some() %}<script src="/static/notifications.js?v=2" defer></script>{% endif %}
+{% if push_key.is_some() %}<script src="/static/notifications.js?v=3" defer></script>{% endif %}
 </body>
 </html>
