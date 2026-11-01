@@ -22,6 +22,7 @@ import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.ButtonRole
 import com.kidslauncher.mdm.lock.LockClockFace
 import com.kidslauncher.mdm.lock.RuleCardView
+import com.kidslauncher.mdm.lock.holdForLockGround
 import com.kidslauncher.mdm.lock.lockGround
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.calls.PhoneBookActivity
@@ -81,6 +82,9 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
         clockFace = LockClockFace(this, binding.root, binding.lockTop, binding.lockClock, binding.lockDate, binding.lockAlarm, logTag = "LockActivity")
         clockFace.follow()
+        // The glance's card is information only; here it names the rule, so TalkBack's heading navigation lands on it
+        // (the old title's heading; the glance's card stays no heading).
+        binding.lockRuleCard.root.isAccessibilityHeading = true
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {}
@@ -115,6 +119,22 @@ class LockActivity : UIObjectActivity() {
         WallpaperStore.addListener(wallpaperListener)
         WallpaperStore.ensureLoaded(this)
         applyGround()
+        // As the PIN lock's (qa-25b-25f L2): after a process start the first frame waits for the store (at most
+        // LOCK_GROUND_WAIT_MS, `holdForLockGround`) rather than switching from the night to the picture in view.
+        if (!WallpaperStore.state.lockReady) {
+            var since = 0L
+            val tree = binding.root.viewTreeObserver
+            tree.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (since == 0L) since = now
+                    if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false
+                    if (tree.isAlive) tree.removeOnPreDrawListener(this)
+                    applyGround()
+                    return true
+                }
+            })
+        }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
         render()

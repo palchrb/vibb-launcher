@@ -179,6 +179,12 @@ class TimeLockModelTest {
             listOf("lock_top", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card", "lock_rows", "lock_emergency_button"),
             ids,
         )
+        // The rule name is the screen's heading (TalkBack's heading navigation), on this screen's card only.
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        assertTrue("binding.lockRuleCard.root.isAccessibilityHeading = true" in body(activity, "override fun onCreate("))
+        val glance = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt") + code("java/com/kidslauncher/mdm/lock/RuleCardView.kt")
+        assertFalse("isAccessibilityHeading" in glance)
+        assertEquals("", layout("view_lock_rule_card").first().attr("accessibilityHeading"))
         // The rule card is the glance's own view, included by both screens.
         val card = views.byId("lock_rule_card")
         assertEquals("include", card.tagName)
@@ -217,6 +223,10 @@ class TimeLockModelTest {
         assertTrue("RuleCardView.bind(" in body(activity, "private fun render()"))
         assertTrue("if (state.lockReady) binding.root.background = lockGround(state)" in activity)
         assertTrue("WallpaperStore.addListener(wallpaperListener)" in activity && "WallpaperStore.removeListener(wallpaperListener)" in activity)
+        // A cold start holds the first frame for the ground as the PIN lock does (at most LOCK_GROUND_WAIT_MS).
+        assertTrue("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false" in body(activity, "override fun onStart()"))
+        // The profile clock's box may reach into the status bar's padding: the root never clips it.
+        assertEquals("false", screen.first().attr("clipToPadding"))
         assertTrue("AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED" in activity && "unregisterReceiver(alarmChanged)" in activity)
         val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
         assertTrue("LockClockFace(" in panel && "RuleCardView.bind(" in panel)
