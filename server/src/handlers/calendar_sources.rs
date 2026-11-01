@@ -149,6 +149,14 @@ fn failing_line(lang: Lang, zone: &Zone, now: Now, link: &LinkRow, code: &str) -
     )
 }
 
+/// A CalDAV calendar's own failure: a refused password or a new host is the account's (its alarm while it lasts, and
+/// a passing Test makes the calendar due at once), so it is not said again for each calendar.
+fn own_error(link: &LinkRow) -> Option<&str> {
+    link.error
+        .as_deref()
+        .filter(|code| !matches!(*code, "login_refused" | "host_changed"))
+}
+
 /// What stops a CalDAV account (no request for any of its calendars): the key its password is sealed with gone, a
 /// refused password, a new host. Each says "test again".
 fn account_stop(state: &AppState, account: &AccountView) -> Option<&'static str> {
@@ -255,7 +263,7 @@ pub(super) fn source_rows(
                 false,
             ),
             Some("empty") => (failing_line(lang, zone, now, link, "empty"), true),
-            Some("key_lost") => (why_text(lang, "key_lost", None), true),
+            Some(code @ "key_lost") => (why_text(lang, code, None), true),
             Some(code) => (
                 t_params(
                     lang,
@@ -283,7 +291,7 @@ pub(super) fn source_rows(
             .iter()
             .filter(|l| l.account_id == Some(account.id))
             .collect();
-        let broken = mine.iter().filter(|l| l.error.is_some()).count() as i64;
+        let broken = mine.iter().filter(|l| own_error(l).is_some()).count() as i64;
         let (sub, failing) = match account_stop(state, account) {
             Some(stop) => (
                 t(
@@ -306,15 +314,23 @@ pub(super) fn source_rows(
                 ),
                 true,
             ),
-            None => (
-                t_count(
-                    lang,
-                    "calendar.sources.caldav_sub",
-                    account.calendars().len() as i64,
-                    &[("provider", &provider), ("ticked", &mine.len().to_string())],
-                ),
-                false,
-            ),
+            None => {
+                // Of the calendars the account lists, those on this phone (one it no longer lists is `broken`).
+                let listed = account.calendars();
+                let ticked = listed
+                    .iter()
+                    .filter(|c| mine.iter().any(|l| l.uid == account.uid(c)))
+                    .count();
+                (
+                    t_count(
+                        lang,
+                        "calendar.sources.caldav_sub",
+                        listed.len() as i64,
+                        &[("provider", &provider), ("ticked", &ticked.to_string())],
+                    ),
+                    false,
+                )
+            }
         };
         rows.push(SourceRow {
             caldav: true,
@@ -664,7 +680,7 @@ pub async fn show_caldav(
             // The account's own stop is the page's alarm; each calendar says only its own failure.
             let (sub, failing) = match link {
                 None => (None, false),
-                Some(l) => match l.error.as_deref() {
+                Some(l) => match own_error(l) {
                     Some(code) => (Some(failing_line(lang, &zone, now, l, code)), true),
                     None if l.ok_at.is_some() => (
                         Some(t_count(

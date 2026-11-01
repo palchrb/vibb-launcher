@@ -510,7 +510,7 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         assert!(matches!(outcome, Outcome::Failed(ref e) if e.code == "login_refused"));
     }
     assert_eq!(app.fetch.count(), before + 1);
-    // Every calendar says so at once, and the account - its row and its page's alarm.
+    // The account says so at once - its row and its page's alarm -, not each calendar again.
     let page = app
         .get_page(
             &format!("/devices/{anna}/calendar/caldav/{account}"),
@@ -518,11 +518,7 @@ async fn a_refused_password_stops_the_account_until_test_passes() {
         )
         .await
         .text();
-    assert_eq!(
-        page.matches("data-link-failing>The password was refused. Use an app password")
-            .count(),
-        2
-    );
+    assert!(!page.contains("data-link-failing"), "{page}");
     assert!(page.contains(
         "data-caldav-failing><div class=\"attention-text\">The password was refused - nothing is fetched"
     ));
