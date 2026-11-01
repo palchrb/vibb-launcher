@@ -281,7 +281,7 @@ async fn lock_again_follows_the_status_and_the_capability() {
     assert!(quick.contains(paused), "{quick}");
     assert!(
         quick.contains(
-            "The pause ends by itself; this version of Vibb One can't be locked again from here."
+            "The pause ends by itself; this version of Vibb One can&#x27;t be locked again from here."
         ),
         "{quick}"
     );
@@ -461,7 +461,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     assert!(blocked.contains(&button), "{blocked}");
     // The confirm names it (M6), by its package while the phone reported no name.
     assert!(
-        blocked.contains("Show me.vibb.music.debug again on phone's phone?"),
+        blocked.contains("Show me.vibb.music.debug again on phone&#x27;s phone?"),
         "{blocked}"
     );
     assert!(!blocked.contains("more the phone doesn"), "{blocked}");
@@ -746,7 +746,9 @@ async fn the_pause_button_shows_while_no_pause_is_on() {
         .expect("the confirm");
     assert!(quick[confirm..].contains(&button), "{quick}");
     assert!(
-        quick.contains("Unlock phone's phone for 2 hours? Apps, Settings and the Play Store open."),
+        quick.contains(
+            "Unlock phone&#x27;s phone for 2 hours? Apps, Settings and the Play Store open."
+        ),
         "{quick}"
     );
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
@@ -787,7 +789,7 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         .text();
     let warning = group(&html, "foreign-access");
     assert!(
-        warning.contains("Don't type the Parent PIN on the phone"),
+        warning.contains("Don&#x27;t type the Parent PIN on the phone"),
         "{warning}"
     );
     // By the phone's name, escaped; the package behind the ⓘ.

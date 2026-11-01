@@ -1,3 +1,4 @@
+use crate::i18n::Words;
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
@@ -177,7 +178,7 @@ impl ProvisionQrTemplate {
         let now = chrono::Utc::now();
         ProvisionQrTemplate {
             lang,
-            title: format!("Connect {}", device.name),
+            title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
             enrolled: device.enrolled_at.is_some(),
             device,
             qr_svg: String::new(),
@@ -260,33 +261,25 @@ pub async fn provision_form(
 }
 
 /// A Wi-Fi field that can't go into the QR code: the field and why.
-pub(crate) fn wifi_refusal(ssid: &str, password: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn wifi_refusal(
+    lang: Lang,
+    ssid: &str,
+    password: &str,
+) -> Option<(&'static str, &'static str)> {
+    let t = |key| crate::i18n::t(lang, key);
     if ssid.len() > MAX_SSID_BYTES {
-        return Some((
-            "wifi_ssid",
-            "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count \
-             as two). Nothing was made.",
-        ));
+        return Some(("wifi_ssid", t("devices.qr.ssid_long")));
     }
     let raw_key = password.len() == 64 && password.chars().all(|c| c.is_ascii_hexdigit());
     let chars = password.chars().count();
     if !password.is_empty() && !raw_key && chars < MIN_WIFI_PASSWORD_CHARS {
-        return Some((
-            "wifi_password",
-            "A Wi-Fi password has at least 8 characters. Nothing was made.",
-        ));
+        return Some(("wifi_password", t("devices.qr.password_short")));
     }
     if !raw_key && chars > MAX_WIFI_PASSWORD_CHARS {
-        return Some((
-            "wifi_password",
-            "A Wi-Fi password has at most 63 characters (or is a 64-digit key). Nothing was made.",
-        ));
+        return Some(("wifi_password", t("devices.qr.password_long")));
     }
     if ssid.is_empty() && !password.is_empty() {
-        return Some((
-            "wifi_ssid",
-            "Add the network's name, or leave the password empty. Nothing was made.",
-        ));
+        return Some(("wifi_ssid", t("devices.qr.ssid_missing")));
     }
     None
 }
@@ -311,7 +304,7 @@ pub async fn provision_qr(
     let password = form.wifi_password.trim();
     let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings).await;
 
-    if let Some((field, why)) = wifi_refusal(ssid, password) {
+    if let Some((field, why)) = wifi_refusal(lang, ssid, password) {
         page.error_field = field;
         page.error = Some(why);
         page.password_dropped = !password.is_empty();
@@ -335,18 +328,14 @@ pub async fn provision_qr(
             device_id = id,
             "the provisioning payload doesn't fit a QR code"
         );
-        return too_long();
+        return too_long(lang);
     }
 
     let (code, expires_at) = match crate::enrollment::new_code(&state, id, Kind::Qr).await {
         Ok(made) => made,
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't make a code - nothing was changed. Check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.make_code");
         }
     };
 
@@ -358,7 +347,7 @@ pub async fn provision_qr(
             device_id = id,
             "the provisioning payload doesn't fit a QR code"
         );
-        return too_long();
+        return too_long(lang);
     };
     page.qr_svg = qr
         .render()
@@ -371,13 +360,12 @@ pub async fn provision_qr(
 }
 
 /// A QR code holds about 2.9 kB: only a very long server address or Tailscale key overflows it.
-fn too_long() -> Response {
-    (
+fn too_long(lang: Lang) -> Response {
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "The setup details are too long for a QR code - check the server address and Tailscale \
-         key in Settings › Phone Setup. Nothing was changed.",
+        "devices.qr.too_long",
     )
-        .into_response()
 }
 
 /// The setup QR's payload for Phone Setup's `settings` and an enrollment `code`: its server address

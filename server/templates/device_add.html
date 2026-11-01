@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,21 +7,21 @@
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/devices"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Devices</a>
-    <h1 class="page-title">Add Phone</h1>
+    <a class="nav-back" href="/devices"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.devices") }}</a>
+    <h1 class="page-title">{{ self.t("devices.list.add") }}</h1>
 
     {#- Step 1 of 3 (design 31 §3.7): the name. Saving goes on to Connect (the QR code or a setup
         code); a refusal renders here (400) with what was typed and the reason under the field. -#}
     <form method="post" action="/devices/new">
         <div class="group form-group">
             <div class="field">
-                <label class="field-label" for="name">Name</label>
-                <input type="text" id="name" name="name" value="{{ name }}" placeholder="e.g. Anna" maxlength="{{ max_name }}" required autofocus autocomplete="off"{% if error.is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
+                <label class="field-label" for="name">{{ self.t("devices.add.name") }}</label>
+                <input type="text" id="name" name="name" value="{{ name }}" placeholder="{{ self.t("devices.add.name_example") }}" maxlength="{{ max_name }}" required autofocus autocomplete="off"{% if error.is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
                 {% if let Some(why) = error %}<p class="field-error" id="name-error">{{ why }}</p>{% endif %}
             </div>
         </div>
-        <p class="group-footer">Next, you connect the phone with a QR code or a setup code.</p>
-        <button type="submit" class="button-wide">Next</button>
+        <p class="group-footer">{{ self.t("devices.add.footer") }}</p>
+        <button type="submit" class="button-wide">{{ self.t("devices.add.next") }}</button>
     </form>
 </main>
 </body>

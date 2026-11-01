@@ -64,7 +64,7 @@ async fn provision_page_with_checksum_shows_qr() {
     assert!(!page.contains("data-missing=\"checksum\""));
     // The launcher's name (design 34 P11, qa-34-s12-code L1).
     assert!(
-        page.contains("You type it in Vibb One's settings on the phone."),
+        page.contains("You type it in Vibb One&#x27;s settings on the phone."),
         "{page}"
     );
     assert!(page.contains("make Vibb One the device owner"), "{page}");
@@ -713,8 +713,9 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
 /// two), a WPA password 8-63 characters or the raw 64-hex-digit key.
 #[test]
 fn wifi_fields_are_judged_at_their_edges() {
-    let refused =
-        |ssid: &str, password: &str| provisioning::wifi_refusal(ssid, password).map(|r| r.0);
+    let refused = |ssid: &str, password: &str| {
+        provisioning::wifi_refusal(crate::i18n::Lang::En, ssid, password).map(|r| r.0)
+    };
     assert_eq!(refused(&"N".repeat(32), ""), None);
     assert_eq!(refused(&"ø".repeat(16), ""), None, "16 × ø = 32 bytes");
     assert_eq!(

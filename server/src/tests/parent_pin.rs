@@ -660,7 +660,7 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     post_status_caps(&app, &token, &["pin_lock_v1"], true).await;
     let html = page(lock.clone()).await;
     assert!(
-        events_group(&html).contains("Vibb One on this phone doesn't report this yet."),
+        events_group(&html).contains("Vibb One on this phone doesn&#x27;t report this yet."),
         "{html}"
     );
     assert!(html.contains("data-warning=\"override-used\""), "{html}");

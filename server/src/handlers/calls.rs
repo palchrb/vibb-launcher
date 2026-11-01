@@ -24,7 +24,7 @@ use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
@@ -48,24 +48,36 @@ struct SelectOption {
     selected: bool,
 }
 
-fn message_app_options(current: Option<&str>, with_default: Option<&str>) -> Vec<SelectOption> {
+fn message_app_options(
+    lang: Lang,
+    current: Option<&str>,
+    with_default: Option<&str>,
+) -> Vec<SelectOption> {
+    // "No message button" is a word; the others are the apps' names.
+    let label_of = |label: &'static str| {
+        if label == MESSAGE_APP_LABELS[0] {
+            t(lang, "device.calls.no_message_button")
+        } else {
+            label
+        }
+    };
     let mut options = Vec::new();
     if let Some(default) = with_default {
         let label = MESSAGE_APPS
             .iter()
             .position(|app| *app == default)
-            .map(|i| MESSAGE_APP_LABELS[i])
+            .map(|i| label_of(MESSAGE_APP_LABELS[i]))
             .unwrap_or(default);
         options.push(SelectOption {
             value: String::new(),
-            label: format!("Phone's default ({label})"),
+            label: t_params(lang, "device.calls.phone_default", &[("app", label)]),
             selected: current.is_none(),
         });
     }
     for (value, label) in MESSAGE_APPS.iter().zip(MESSAGE_APP_LABELS) {
         options.push(SelectOption {
             value: value.to_string(),
-            label: label.to_string(),
+            label: label_of(label).to_string(),
             selected: current == Some(*value),
         });
     }
@@ -104,15 +116,18 @@ fn initial_of(name: &str) -> String {
 /// A contact row's value: which way calls go, and the home-screen button - only for a contact in
 /// the phone book, as the launcher shows it (`CallRules.kt`: `outbound && showOnHome`;
 /// qa-31-s8-code L2). The switch keeps its value for when the contact goes back in the book.
-fn contact_summary(inbound: bool, outbound: bool, home: bool) -> String {
-    let calls = match (inbound, outbound) {
-        (true, true) => "Both ways",
-        (true, false) => "Calls in only",
-        (false, true) => "Calls out only",
-        (false, false) => "No calls",
-    };
+fn contact_summary(lang: Lang, inbound: bool, outbound: bool, home: bool) -> String {
+    let calls = t(
+        lang,
+        match (inbound, outbound) {
+            (true, true) => "device.calls.both_ways",
+            (true, false) => "device.calls.in_only",
+            (false, true) => "device.calls.out_only",
+            (false, false) => "device.calls.no_calls",
+        },
+    );
     if home && outbound {
-        format!("{calls} · Home")
+        format!("{calls} · {}", t(lang, "device.calls.home"))
     } else {
         calls.to_string()
     }
@@ -169,9 +184,9 @@ struct ContactRefusal<'a> {
 }
 
 /// `?notice=` codes for the Contacts group.
-fn contacts_notice(code: &str) -> Option<&'static str> {
+fn contacts_notice(lang: Lang, code: &str) -> Option<&'static str> {
     match code {
-        "contact_gone" => Some("That contact was already removed, so nothing was saved."),
+        "contact_gone" => Some(t(lang, "device.calls.contact_gone")),
         _ => None,
     }
 }
@@ -184,7 +199,9 @@ pub async fn show_calls(
 ) -> Response {
     let shown = Shown {
         open: query.get("open").and_then(|v| v.parse().ok()),
-        notice: query.get("notice").and_then(|code| contacts_notice(code)),
+        notice: query
+            .get("notice")
+            .and_then(|code| contacts_notice(lang, code)),
         ..Default::default()
     };
     render(&state, id, StatusCode::OK, shown, lang).await
@@ -200,14 +217,10 @@ async fn render(
 ) -> Response {
     match load_page(state, id, shown, lang).await {
         Ok(Some(page)) => (status, Html(page.render().unwrap())).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the calls page");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read this phone - check the server log.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
         }
     }
 }
@@ -245,13 +258,14 @@ async fn load_page(
             let mut view = ContactView {
                 initial: initial_of(&c.name),
                 id: c.contact_id,
-                summary: contact_summary(c.allow_inbound, c.allow_outbound, c.show_on_home),
+                summary: contact_summary(lang, c.allow_inbound, c.allow_outbound, c.show_on_home),
                 name: c.name,
                 number: c.phone_number,
                 inbound: c.allow_inbound,
                 outbound: c.allow_outbound,
                 show_on_home: c.show_on_home,
                 message_options: message_app_options(
+                    lang,
                     c.message_app.as_deref(),
                     Some(&policy.default_message_app),
                 ),
@@ -272,6 +286,7 @@ async fn load_page(
                     view.show_on_home = sent.contains_key("show_on_home");
                     let app = sent.get("message_app").map(String::as_str);
                     view.message_options = message_app_options(
+                        lang,
                         app.filter(|a| MESSAGE_APPS.contains(a)),
                         Some(&policy.default_message_app),
                     );
@@ -292,7 +307,7 @@ async fn load_page(
         .map(|f| f.note(&zone, now))
         .partition(|note| note.warning);
     if report.screening_hint {
-        notes.push(screening_note());
+        notes.push(screening_note(lang));
     }
     let (add_open, add_name, add_number, add_error) = match shown.add {
         Some((name, number, field, why)) => (
@@ -313,7 +328,7 @@ async fn load_page(
         managed: policy.calls_managed,
         calls_enabled: policy.calls_enabled,
         sms_enabled: policy.sms_enabled,
-        default_message_options: message_app_options(Some(&policy.default_message_app), None),
+        default_message_options: message_app_options(lang, Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
         warnings,
@@ -331,16 +346,15 @@ async fn load_page(
 /// The call-screening role is missing while Vibb is the phone app: a plain row, not a warning
 /// (the user's emulator, 2026-10-12), with the adb fix behind its ⓘ. No "accept the prompt":
 /// Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS.
-fn screening_note() -> Note {
+fn screening_note(lang: Lang) -> Note {
     Note {
         warning: false,
-        title: "Call screening".to_string(),
-        value: Some("Not granted".to_string()),
-        detail: Some(format!(
-            "Vibb One is the phone app and hangs up calls that aren't allowed, but another app could \
-             screen incoming calls first. The phone can't tell which apps can. With USB debugging \
-             allowed: adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
-             {LAUNCHER_FOR_ADB}"
+        title: t(lang, "device.calls.screening").to_string(),
+        value: Some(t(lang, "device.calls.not_granted").to_string()),
+        detail: Some(t_params(
+            lang,
+            "device.calls.screening_sub",
+            &[("launcher", LAUNCHER_FOR_ADB)],
         )),
         fix: None,
     }
@@ -450,135 +464,118 @@ impl Finding {
     /// times, an expert detail (an adb command, a package name, the phone's own error) behind the
     /// ⓘ only. Everything but [Finding::Waiting] is a warning.
     pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
-        let package = |package: &str| Some(format!("Its package name is {package}."));
+        let lang = zone.lang();
+        let say = |key: &str| t(lang, key).to_string();
+        let package = |package: &str| {
+            Some(t_params(
+                lang,
+                "device.calls.finding.package",
+                &[("package", package)],
+            ))
+        };
         let (detail, fix): (String, Option<String>) = match self {
             Finding::EmergencyCall { at } => (
-                format!(
-                    "The phone called an emergency number ({}).",
-                    zone.when(*at, now)
+                t_params(
+                    lang,
+                    "device.calls.finding.emergency_call",
+                    &[("at", &zone.when(*at, now))],
                 ),
                 None,
             ),
             Finding::CallbackWindow { until } => (
-                format!(
-                    "Anyone can call this phone until {}, so the emergency services can call back.",
-                    zone.until(*until, now)
+                t_params(
+                    lang,
+                    "device.calls.finding.callback",
+                    &[("until", &zone.until(*until, now))],
                 ),
                 None,
             ),
             Finding::CallScreenFailed { at } => (
-                format!(
-                    "A call rang ({}) but couldn't show over the lock, so your child may not have \
-                     been able to answer.",
-                    zone.when(*at, now)
+                t_params(
+                    lang,
+                    "device.calls.finding.screen_failed",
+                    &[("at", &zone.when(*at, now))],
                 ),
-                Some("Please report this with Vibb One's version (About This Phone).".to_string()),
+                Some(say("device.calls.finding.screen_failed_fix")),
             ),
             Finding::Waiting { report } => (
                 match report {
-                    Some(t) => format!(
-                        "Its last report ({}) is from before the change. Reload the page in a \
-                         minute.",
-                        stamp(zone, *t, now)
+                    Some(at) => t_params(
+                        lang,
+                        "device.calls.finding.waiting_at",
+                        &[("at", &stamp(zone, *at, now))],
                     ),
-                    None => "Its last report is from before the change. Reload the page in a \
-                             minute."
-                        .to_string(),
+                    None => say("device.calls.finding.waiting"),
                 },
                 None,
             ),
             Finding::Unconfirmed { changed, report } => (
-                format!(
-                    "The phone hasn't reported since the change{}; it may be off or offline. The \
-                     notes here are from its last report{}.",
-                    changed.map_or(String::new(), |t| format!(" at {}", zone.when(t, now))),
-                    report.map_or(String::new(), |t| format!(" ({})", stamp(zone, t, now))),
-                ),
+                {
+                    let changed = changed.map_or(String::new(), |at| {
+                        t_params(
+                            lang,
+                            "device.calls.finding.changed_at",
+                            &[("at", &zone.when(at, now))],
+                        )
+                    });
+                    let report =
+                        report.map_or(String::new(), |at| format!(" ({})", stamp(zone, at, now)));
+                    t_params(
+                        lang,
+                        "device.calls.finding.unconfirmed",
+                        &[("changed", &changed), ("report", &report)],
+                    )
+                },
                 None,
             ),
             Finding::DialerNotAllowed { dialer } => (
-                "The phone app isn't allowed under Apps, and calls aren't managed here. Turn it \
-                 on under Apps, or turn on Manage calls and SMS."
-                    .to_string(),
+                say("device.calls.finding.dialer_not_allowed"),
                 package(dialer),
             ),
             Finding::MessagesHidden { sms_app } => (
-                "It isn't allowed under Apps, so texts can't be read or sent. Turn it on there."
-                    .to_string(),
+                say("device.calls.finding.messages_hidden"),
                 package(sms_app),
             ),
-            Finding::NotEnforced { stopped: true } => (
-                "Vibb One on this phone stopped reporting that it screens calls; an older version may \
-                 have been installed."
-                    .to_string(),
-                None,
-            ),
-            Finding::NotEnforced { stopped: false } => (
-                "Vibb One on this phone is too old to screen calls. Update it.".to_string(),
-                None,
-            ),
-            Finding::FailClosed => (
-                "Only emergency calls work until it gets good settings from this server."
-                    .to_string(),
-                None,
-            ),
-            Finding::NotPhoneApp => (
-                "It can only call emergency numbers, and withheld numbers may ring through. On \
-                 the phone, open the home screen and accept \"Set as default phone app\"."
-                    .to_string(),
-                None,
-            ),
-            Finding::AnyoneCanCall => (
-                "Incoming calls aren't screened, and only emergency calls go out. On the phone, \
-                 open the home screen and accept \"Set as default phone app\"."
-                    .to_string(),
-                None,
-            ),
+            Finding::NotEnforced { stopped: true } => {
+                (say("device.calls.finding.stopped_screening"), None)
+            }
+            Finding::NotEnforced { stopped: false } => (say("device.calls.finding.too_old"), None),
+            Finding::FailClosed => (say("device.calls.finding.fail_closed"), None),
+            Finding::NotPhoneApp => (say("device.calls.finding.not_phone_app"), None),
+            Finding::AnyoneCanCall => (say("device.calls.finding.anyone_can_call"), None),
             Finding::NoRedirection => (
-                "Calls to numbers that aren't allowed are hung up only after they start."
-                    .to_string(),
-                Some(format!(
-                    "With USB debugging allowed: adb shell cmd role add-role-holder \
-                     android.app.role.CALL_REDIRECTION {LAUNCHER_FOR_ADB}"
+                say("device.calls.finding.no_redirection"),
+                Some(t_params(
+                    lang,
+                    "device.calls.finding.no_redirection_fix",
+                    &[("launcher", LAUNCHER_FOR_ADB)],
                 )),
             ),
-            Finding::CallLogUnreadable => (
-                "Vibb One can't read the call log, so after an emergency call the emergency services \
-                 may not get through. Check that Vibb One is the phone app."
-                    .to_string(),
-                None,
-            ),
+            Finding::CallLogUnreadable => (say("device.calls.finding.call_log"), None),
             Finding::RulesAfterRestart { unreadable } => (
-                format!(
-                    "The phone {} its call rules for right after a restart: until it's unlocked \
-                     once, only emergency calls work.{}",
-                    if *unreadable {
-                        "can't read"
-                    } else {
-                        "couldn't save"
-                    },
-                    if *unreadable {
-                        ""
-                    } else {
-                        " It tries again at every sync."
-                    }
-                ),
+                say(if *unreadable {
+                    "device.calls.finding.restart_unreadable"
+                } else {
+                    "device.calls.finding.restart_unsaved"
+                }),
                 None,
             ),
             Finding::Reported { error } => (
-                "Vibb One on the phone reported an error with the call rules.".to_string(),
-                Some(format!("The phone said: {error}")),
+                say("device.calls.finding.reported"),
+                Some(t_params(
+                    lang,
+                    "device.calls.finding.reported_fix",
+                    &[("error", error)],
+                )),
             ),
             Finding::SmsAppAllowed { sms_app } => (
-                "The phone keeps it hidden anyway, since it can chat over RCS. Turn it off under \
-                 Apps."
-                    .to_string(),
+                say("device.calls.finding.sms_app_allowed"),
                 package(sms_app),
             ),
         };
         Note {
             warning: self.problem().needs_attention(),
-            title: self.problem().title().to_string(),
+            title: self.problem().title(lang).to_string(),
             value: None,
             detail: Some(detail),
             fix,
@@ -825,26 +822,29 @@ pub enum CallProblem {
 }
 
 impl CallProblem {
-    /// The Attention row's title: at most 8 words, no package names.
-    pub fn title(self) -> &'static str {
-        match self {
-            CallProblem::EmergencyCall => "Emergency call made from this phone",
-            CallProblem::CallbackWindow => "Emergency services can call back now",
-            CallProblem::CallScreenFailed => "A call may have rung unanswered",
-            CallProblem::Waiting => "Waiting for the phone to confirm",
-            CallProblem::Unconfirmed => "Calls change not confirmed yet",
-            CallProblem::DialerNotAllowed => "Only emergency calls work",
-            CallProblem::MessagesHidden => "Messages app is hidden",
-            CallProblem::NotEnforced => "Calls aren't screened",
-            CallProblem::FailClosed => "Phone can't read its call rules",
-            CallProblem::NotPhoneApp => "Vibb One isn't the phone app",
-            CallProblem::AnyoneCanCall => "Anyone can call this phone",
-            CallProblem::NoRedirection => "Blocked numbers may ring briefly",
-            CallProblem::CallLogUnreadable => "Emergency callback may not work",
-            CallProblem::RulesAfterRestart => "Calls blocked after a restart",
-            CallProblem::Reported => "Phone reported a calls problem",
-            CallProblem::SmsAppAllowed => "Messages app allowed with SMS off",
-        }
+    /// The Attention row's title and the Calls page's warning: at most 8 words, no package names.
+    pub fn title(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                CallProblem::EmergencyCall => "device.calls.problem.emergency_call",
+                CallProblem::CallbackWindow => "device.calls.problem.callback",
+                CallProblem::CallScreenFailed => "device.calls.problem.screen_failed",
+                CallProblem::Waiting => "device.calls.problem.waiting",
+                CallProblem::Unconfirmed => "device.calls.problem.unconfirmed",
+                CallProblem::DialerNotAllowed => "device.calls.problem.dialer_not_allowed",
+                CallProblem::MessagesHidden => "device.calls.problem.messages_hidden",
+                CallProblem::NotEnforced => "device.calls.problem.not_enforced",
+                CallProblem::FailClosed => "device.calls.problem.fail_closed",
+                CallProblem::NotPhoneApp => "device.calls.problem.not_phone_app",
+                CallProblem::AnyoneCanCall => "device.calls.problem.anyone_can_call",
+                CallProblem::NoRedirection => "device.calls.problem.no_redirection",
+                CallProblem::CallLogUnreadable => "device.calls.problem.call_log",
+                CallProblem::RulesAfterRestart => "device.calls.problem.restart",
+                CallProblem::Reported => "device.calls.problem.reported",
+                CallProblem::SmsAppAllowed => "device.calls.problem.sms_app_allowed",
+            },
+        )
     }
 
     /// Something to look at (everything but `Waiting`).
@@ -883,17 +883,17 @@ pub(crate) fn parse_time(value: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-fn db_error(device_id: i64, err: sqlx::Error) -> Response {
+fn db_error(lang: Lang, device_id: i64, err: sqlx::Error) -> Response {
     tracing::error!(device_id, %err, "calls page database error");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
+        "error.save_failed_log",
     )
-        .into_response()
 }
 
-fn not_found() -> Response {
-    (StatusCode::NOT_FOUND, "Device not found").into_response()
+fn not_found(lang: Lang) -> Response {
+    crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
 }
 
 /// Nudges the phone and returns to `to` (a path on its calls page).
@@ -920,8 +920,8 @@ fn contacts_group(id: i64, gone: bool) -> Response {
     }
 }
 
-fn bad_request(message: &str) -> Response {
-    (StatusCode::BAD_REQUEST, message.to_string()).into_response()
+fn bad_request(lang: Lang, key: &str) -> Response {
+    crate::i18n::error(lang, StatusCode::BAD_REQUEST, key)
 }
 
 /// Whether the phone exists (`None`: it doesn't) and has this contact.
@@ -946,6 +946,7 @@ async fn contact_on_device(
 /// exact place).
 pub async fn save_settings(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -954,7 +955,7 @@ pub async fn save_settings(
         .map(String::as_str)
         .unwrap_or("sms");
     if !MESSAGE_APPS.contains(&default_message_app) {
-        return bad_request("Unknown messaging app");
+        return bad_request(lang, "error.unknown_message_app");
     }
     let managed = form.contains_key("managed");
     let result = async {
@@ -982,9 +983,9 @@ pub async fn save_settings(
     }
     .await;
     match result {
-        Ok(0) => not_found(),
+        Ok(0) => not_found(lang),
         Ok(_) => saved(&state, id, format!("/devices/{id}/calls#settings")),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1011,11 +1012,7 @@ pub async fn add_contact(
 
     let name_len = name.chars().count();
     if name_len == 0 || name_len > 60 {
-        return refuse(
-            "name",
-            "Give the contact a name (at most 60 characters).".into(),
-        )
-        .await;
+        return refuse("name", t(lang, "device.calls.name_refused").into()).await;
     }
     let cc: String =
         match sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
@@ -1023,11 +1020,21 @@ pub async fn add_contact(
             .await
         {
             Ok(cc) => cc,
-            Err(err) => return db_error(id, err),
+            Err(err) => return db_error(lang, id, err),
         };
     let number = match phone::normalize(raw_number, &cc) {
         Ok(number) => number,
-        Err(err) => return refuse("number", format!("That number can't be used: {err}.")).await,
+        Err(err) => {
+            return refuse(
+                "number",
+                t_params(
+                    lang,
+                    "device.calls.number_refused",
+                    &[("why", &err.to_string())],
+                ),
+            )
+            .await;
+        }
     };
 
     let result = async {
@@ -1063,13 +1070,13 @@ pub async fn add_contact(
     }
     .await;
     match result {
-        Ok(None) => not_found(),
+        Ok(None) => not_found(lang),
         Ok(Some(contact_id)) => saved(
             state,
             id,
             format!("/devices/{id}/calls#contact-{contact_id}"),
         ),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1135,7 +1142,7 @@ pub async fn update_contact(
     let message_app = match form.get("message_app").map(String::as_str) {
         None | Some("") => None,
         Some(app) if MESSAGE_APPS.contains(&app) => Some(app),
-        Some(_) => return bad_request("Unknown messaging app"),
+        Some(_) => return bad_request(lang, "error.unknown_message_app"),
     };
     let message_address = match form.get("message_address").map(|s| s.trim()) {
         None | Some("") => None,
@@ -1146,14 +1153,14 @@ pub async fn update_contact(
             match contact_on_device(&state, id, contact_id).await {
                 Ok(Some(true)) => {}
                 Ok(Some(false)) => return contacts_group(id, true),
-                Ok(None) => return not_found(),
-                Err(err) => return db_error(id, err),
+                Ok(None) => return not_found(lang),
+                Err(err) => return db_error(lang, id, err),
             }
             let shown = Shown {
                 contact: Some(ContactRefusal {
                     id: contact_id,
                     field: "message_address",
-                    why: "A Matrix ID looks like @name:matrix.org. Nothing was saved.".to_string(),
+                    why: t(lang, "device.calls.matrix_refused").to_string(),
                     sent: Some(&form),
                 }),
                 ..Default::default()
@@ -1183,19 +1190,19 @@ pub async fn update_contact(
     }
     .await;
     match result {
-        Ok(0) => gone(&state, id, contact_id, true).await,
+        Ok(0) => gone(&state, id, contact_id, true, lang).await,
         Ok(_) => saved(&state, id, contact_row(id, contact_id)),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
 /// A form for a contact that isn't on this phone: an unknown phone is a 404, else back to the
 /// Contacts group (`said`: with "nothing was saved"). Nothing was written either way.
-async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool) -> Response {
+async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool, lang: Lang) -> Response {
     match contact_on_device(state, id, contact_id).await {
-        Ok(None) => not_found(),
+        Ok(None) => not_found(lang),
         Ok(Some(_)) => crate::settings_log::refused(contacts_group(id, said)),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1203,6 +1210,7 @@ async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool) -> Respons
 /// it any more. Back to the Contacts group - also when it was already gone (a second tap).
 pub async fn remove_contact(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, contact_id)): Path<(i64, i64)>,
 ) -> Response {
     let result = async {
@@ -1227,14 +1235,14 @@ pub async fn remove_contact(
     }
     .await;
     match result {
-        Ok(0) => gone(&state, id, contact_id, false).await,
+        Ok(0) => gone(&state, id, contact_id, false, lang).await,
         Ok(_) => {
             // The address-book entry may be gone, and its photo with it.
             photos::prune(&state).await;
             let _ = state.command_notify.send(id);
             contacts_group(id, false)
         }
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1269,6 +1277,7 @@ async fn photo_saved(
     id: i64,
     contact_id: i64,
     result: Result<Vec<i64>, sqlx::Error>,
+    lang: Lang,
 ) -> Response {
     match result {
         Ok(devices) => {
@@ -1278,7 +1287,7 @@ async fn photo_saved(
             }
             Redirect::to(&contact_row(id, contact_id)).into_response()
         }
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1295,9 +1304,9 @@ pub async fn upload_photo(
 ) -> Response {
     match contact_on_device(&state, id, contact_id).await {
         Ok(Some(true)) => {}
-        Ok(None) => return not_found(),
+        Ok(None) => return not_found(lang),
         Ok(Some(false)) => return contacts_group(id, true),
-        Err(err) => return db_error(id, err),
+        Err(err) => return db_error(lang, id, err),
     }
     let photo_error = |message: &str| {
         let state = state.clone();
@@ -1347,12 +1356,13 @@ pub async fn upload_photo(
         }
         commit_photo(&state, contact_id, Some(&processed.hash)).await
     };
-    photo_saved(&state, id, contact_id, result).await
+    photo_saved(&state, id, contact_id, result, lang).await
 }
 
 /// Removes a contact's photo (for every device that has the contact). Back to the contact's row.
 pub async fn remove_photo(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, contact_id)): Path<(i64, i64)>,
 ) -> Response {
     match contact_on_device(&state, id, contact_id).await {
@@ -1361,12 +1371,12 @@ pub async fn remove_photo(
                 let _files = photos::lock_files().await;
                 commit_photo(&state, contact_id, None).await
             };
-            photo_saved(&state, id, contact_id, result).await
+            photo_saved(&state, id, contact_id, result, lang).await
         }
         // Nothing was removed: say so, as for a save (qa-31-s8-code N3).
         Ok(Some(false)) => contacts_group(id, true),
-        Ok(None) => not_found(),
-        Err(err) => db_error(id, err),
+        Ok(None) => not_found(lang),
+        Err(err) => db_error(lang, id, err),
     }
 }
 
@@ -1456,13 +1466,31 @@ mod tests {
 
     #[test]
     fn a_contact_row_says_which_way_calls_go() {
-        assert_eq!(contact_summary(true, true, true), "Both ways · Home");
-        assert_eq!(contact_summary(true, false, false), "Calls in only");
-        assert_eq!(contact_summary(false, true, true), "Calls out only · Home");
-        assert_eq!(contact_summary(false, false, false), "No calls");
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, true, true, true),
+            "Both ways · Home"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, true, false, false),
+            "Calls in only"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, false, true, true),
+            "Calls out only · Home"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, false, false, false),
+            "No calls"
+        );
         // Home only for a contact in the phone book, as the launcher shows it (qa-31-s8-code L2).
-        assert_eq!(contact_summary(true, false, true), "Calls in only");
-        assert_eq!(contact_summary(false, false, true), "No calls");
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, true, false, true),
+            "Calls in only"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, false, false, true),
+            "No calls"
+        );
     }
 
     /// Every finding's words (design 31 §2.2b, §4.2): the title is the Attention row's, the
@@ -1514,7 +1542,7 @@ mod tests {
         assert_eq!(kinds, super::CallProblem::ALL, "one finding per problem");
         for finding in &all {
             let note = finding.note(&zone, now);
-            assert_eq!(note.title, finding.problem().title());
+            assert_eq!(note.title, finding.problem().title(crate::i18n::Lang::En));
             assert_eq!(
                 note.warning,
                 *finding

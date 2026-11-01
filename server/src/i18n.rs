@@ -216,10 +216,30 @@ pub trait Words {
         t_params(self.lang(), key, params)
     }
 
-    // No template counts yet (Account's counted warning is worded in Rust); round S-i18n's tabs use it.
-    #[allow(dead_code)]
-    fn tc(&self, key: &str, n: i64, params: &[(&str, &str)]) -> String {
-        t_count(self.lang(), key, n, params)
+    fn tc(&self, key: &str, n: impl Count, params: &[(&str, &str)]) -> String {
+        t_count(self.lang(), key, n.count(), params)
+    }
+}
+
+/// A number [Words::tc] counts by: a template hands it a field's reference (`bell.unread`) or a length.
+pub trait Count {
+    fn count(&self) -> i64;
+}
+
+macro_rules! count {
+    ($($ty:ty),+) => {
+        $(impl Count for $ty {
+            fn count(&self) -> i64 {
+                i64::try_from(*self).unwrap_or(i64::MAX)
+            }
+        })+
+    };
+}
+count!(i64, i32, u32, usize);
+
+impl<T: Count + ?Sized> Count for &T {
+    fn count(&self) -> i64 {
+        (**self).count()
     }
 }
 
@@ -505,6 +525,134 @@ mod tests {
         assert_eq!(
             page.tp("account.name.hint", &[("username", "mamma")]),
             t_params(Lang::Nb, "account.name.hint", &[("username", "mamma")])
+        );
+    }
+
+    /// The templates whose words are in the catalogs (design 70 §5.2): each slice-3 PR adds its files, 3e every file
+    /// in `templates/` and `templates/partials/`.
+    const MOVED: &[&str] = &[
+        // Device › Calendar and Settings › Account (design 69, slice 1).
+        // (Their pages keep a few examples and a command: `device_calendar*.html` and `account.html` join in 3e.)
+        "partials/calendar_preview.html",
+        // 3a: Devices.
+        "devices_list.html",
+        "device_detail.html",
+        "device_about.html",
+        "device_add.html",
+        "device_advanced.html",
+        "device_apps.html",
+        "device_bedtime.html",
+        "device_calls.html",
+        "device_filter.html",
+        "device_home.html",
+        "device_lock.html",
+        "device_time.html",
+        "enroll_code.html",
+        "provision_qr.html",
+        "partials/tab_bar.html",
+        "partials/bell.html",
+        "partials/head.html",
+        "partials/js_words.html",
+        "partials/flash_note.html",
+        "partials/group_flash.html",
+        "partials/info_row.html",
+        "partials/note_row.html",
+        "partials/note_warning.html",
+        "partials/recent.html",
+        "partials/exceptions.html",
+        "partials/budget_rows.html",
+        "partials/device_app_row.html",
+        "partials/app_permissions_form.html",
+        "partials/status_line.html",
+        "partials/push_offer.html",
+        "partials/confirm_cancel.html",
+    ];
+
+    /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,
+    /// `placeholder`, `alt`, every `data-w-*`, a button's `value`), with every `{{ }}` as a blank and `{# #}`,
+    /// `{% %}`, comments, scripts and styles gone.
+    fn literal_words(template: &str) -> String {
+        let gone = regex::Regex::new(
+            r"(?s)\{#.*?#\}|<!--.*?-->|<!DOCTYPE[^>]*>|<script\b.*?</script>|<style\b.*?</style>|\{%.*?%\}",
+        )
+        .unwrap();
+        let text = gone.replace_all(template, " ");
+        let text = regex::Regex::new(r"(?s)\{\{.*?\}\}")
+            .unwrap()
+            .replace_all(&text, " ");
+        let tag = regex::Regex::new(r"(?s)<(/?[a-zA-Z][a-zA-Z0-9-]*)([^>]*)>").unwrap();
+        let attribute =
+            regex::Regex::new(r#"([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#)
+                .unwrap();
+        let text = tag.replace_all(&text, |caps: &regex::Captures| {
+            let name = caps[1].to_ascii_lowercase();
+            let attributes: Vec<(String, String)> = attribute
+                .captures_iter(&caps[2])
+                .map(|a| {
+                    (
+                        a[1].to_ascii_lowercase(),
+                        a[2].trim_matches(['"', '\'']).to_string(),
+                    )
+                })
+                .collect();
+            // An input button shows its `value`; a `<button>`'s is only sent (its words are its text).
+            let button = name == "input"
+                && attributes
+                    .iter()
+                    .any(|(n, v)| n == "type" && (v == "submit" || v == "button"));
+            let mut kept = String::from(" ");
+            for (n, v) in &attributes {
+                if ["title", "aria-label", "placeholder", "alt"].contains(&n.as_str())
+                    || n.starts_with("data-w-")
+                    || (button && n == "value")
+                {
+                    kept.push_str(v);
+                    kept.push(' ');
+                }
+            }
+            kept
+        });
+        let text = regex::Regex::new(r"&#?[a-zA-Z0-9]+;")
+            .unwrap()
+            .replace_all(&text, " ");
+        // The names: "Vibb Phone", "Vibb One" and the brand row's "vibb".
+        regex::Regex::new(r"\b(Vibb Phone|Vibb One|vibb)\b")
+            .unwrap()
+            .replace_all(&text, " ")
+            .into_owned()
+    }
+
+    /// A moved template has no word of its own (design 70 §5.2), and no word of the catalog's gets `|safe`.
+    #[test]
+    fn moved_templates_have_no_literal_words() {
+        let mut found = Vec::new();
+        for name in MOVED {
+            let template = std::fs::read_to_string(format!("templates/{name}"))
+                .unwrap_or_else(|err| panic!("templates/{name}: {err}"));
+            for line in literal_words(&template).lines() {
+                let line = line.trim();
+                if line.chars().any(char::is_alphabetic) {
+                    found.push(format!("{name}: {line}"));
+                }
+            }
+            for line in template.lines() {
+                if line.contains("|safe")
+                    && ["t(", "tp(", "tc("].iter().any(|call| line.contains(call))
+                {
+                    found.push(format!("{name}: |safe on a word: {}", line.trim()));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "words left in moved templates:\n{}",
+            found.join("\n")
+        );
+        // The scan sees what a reader does.
+        let sample = r#"<p title="Hi">{{ self.t("a.b") }}<!-- a note -->{# x #}{% if a > b %}<b>{% endif %}<input type="submit" value="Go"><button value="up"></button><img alt="{{ x }}"> &rsaquo; Vibb One</p>"#;
+        assert_eq!(
+            literal_words(sample).split_whitespace().collect::<Vec<_>>(),
+            ["Hi", "Go"]
         );
     }
 

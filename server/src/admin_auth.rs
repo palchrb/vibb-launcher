@@ -381,8 +381,37 @@ pub async fn lock_minutes_left(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i
 }
 
 /// The banner after a complete login (§3.2.1): how many 2FA codes failed since the last complete
-/// login, and from where - whoever typed them knew the password.
-pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64) -> Option<String> {
+/// login, and from where - whoever typed them knew the password. Kept in the session as facts and
+/// worded by the page that shows it (design 70 slice 3a), so it reads in the parent's language.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LoginWarning {
+    pub failures: i64,
+    /// The addresses the codes came from, newest first (at most 5).
+    pub ips: Vec<String>,
+}
+
+impl LoginWarning {
+    /// Account's sentence: "3 wrong two-factor codes were entered before this sign-in (from
+    /// 203.0.113.7). Whoever entered them knew your password - change it now."
+    pub fn words(&self, lang: crate::i18n::Lang) -> String {
+        if self.ips.is_empty() {
+            crate::i18n::t_count(lang, "account.warning.login", self.failures, &[])
+        } else {
+            crate::i18n::t_count(
+                lang,
+                "account.warning.login_from",
+                self.failures,
+                &[("ips", &self.ips.join(", "))],
+            )
+        }
+    }
+}
+
+pub async fn login_warning(
+    db: &sqlx::SqlitePool,
+    username: &str,
+    failures: i64,
+) -> Option<LoginWarning> {
     if failures <= 0 {
         return None;
     }
@@ -397,16 +426,7 @@ pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64)
     .fetch_all(db)
     .await
     .unwrap_or_default();
-    let from = if ips.is_empty() {
-        String::new()
-    } else {
-        format!(" (from {})", ips.join(", "))
-    };
-    Some(format!(
-        "{failures} wrong two-factor code{} entered before this sign-in{from}. Whoever entered \
-         them knew your password - change it now.",
-        if failures == 1 { " was" } else { "s were" }
-    ))
+    Some(LoginWarning { failures, ips })
 }
 
 /// The forced first password change's write (design 62 §2, qa-62-design Q62-2): the new hash and

@@ -1112,7 +1112,7 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         "{confirm}"
     );
     assert!(
-        confirm.contains("Remove Mamma from phone's phone?"),
+        confirm.contains("Remove Mamma from phone&#x27;s phone?"),
         "{confirm}"
     );
 

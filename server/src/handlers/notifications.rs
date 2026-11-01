@@ -27,7 +27,7 @@ use sqlx::Row as _;
 
 use crate::AppState;
 use crate::display_time::Zone;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::parent_events::{self, Kind};
 use crate::push::{self, Health};
 use crate::security::CurrentAdmin;
@@ -347,7 +347,10 @@ pub async fn page(
             paged: before.is_some(),
             unread_after,
             badge,
-            not_showing: subscriptions.iter().filter_map(warning_of).collect(),
+            not_showing: subscriptions
+                .iter()
+                .filter_map(|sub| warning_of(lang, sub))
+                .collect(),
             clock_warning: push::signature_refused(&state.db, now).await,
         }
         .render()
@@ -662,14 +665,22 @@ fn db_error(err: sqlx::Error) -> Response {
 }
 
 /// A subscription's warning, `(title, sub-line)`, when it needs the parent (§6, qa-35-s2-code M1).
-fn warning_of(sub: &push::Subscription) -> Option<(String, String)> {
+fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, String)> {
     match sub.health {
         Health::MayNotShow => Some((
-            format!("Notifications may not be showing on {}", sub.label),
-            "Pushed, but that device didn't confirm them".to_string(),
+            t_params(
+                lang,
+                "devices.warning.push_may_not_show",
+                &[("label", &sub.label)],
+            ),
+            t(lang, "devices.warning.push_unconfirmed").to_string(),
         )),
         Health::NotGettingThrough => Some((
-            format!("Notifications aren't reaching {}", sub.label),
+            t_params(
+                lang,
+                "devices.warning.push_not_reaching",
+                &[("label", &sub.label)],
+            ),
             sub.failure.clone().unwrap_or_default(),
         )),
         _ => None,
@@ -812,6 +823,7 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
 pub async fn warning_row(
     state: &AppState,
     admin_id: i64,
+    lang: Lang,
 ) -> Option<crate::handlers::auth::WarningRow> {
     let subscriptions = push::subscriptions(&state.db, admin_id, chrono::Utc::now())
         .await
@@ -819,15 +831,18 @@ pub async fn warning_row(
             tracing::error!(%err, "can't read the notification subscriptions");
             Vec::new()
         });
-    let warnings: Vec<(String, String)> = subscriptions.iter().filter_map(warning_of).collect();
+    let warnings: Vec<(String, String)> = subscriptions
+        .iter()
+        .filter_map(|sub| warning_of(lang, sub))
+        .collect();
     let title = match warnings.as_slice() {
         [] => return None,
         [(one, _)] => one.clone(),
-        many => format!("Notifications may not be showing on {} devices", many.len()),
+        many => t_count(lang, "devices.warning.push_many", many.len() as i64, &[]),
     };
     Some(crate::handlers::auth::WarningRow {
         title,
-        sub: "Check it under Notifications".to_string(),
+        sub: t(lang, "devices.warning.push_sub").to_string(),
     })
 }
 

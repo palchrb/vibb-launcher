@@ -763,6 +763,7 @@ async fn toggle(app: &TestApp, id: i64, package: &str, selected: bool) -> axum::
     }
     crate::handlers::devices::toggle_app(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
         axum::Form(form),
     )

@@ -4989,7 +4989,7 @@ mod phones {
         // One footer under the filter switch while bound; the rest behind its ⓘ (qa-26c-merge2-code
         // M2).
         assert!(bound.contains(
-            "Blocks the lists and domains below, except Spotify's while this phone plays Spotify."
+            "Blocks the lists and domains below, except Spotify&#x27;s while this phone plays Spotify."
         ));
         let filter = &bound[bound.find("<section id=\"filter\"").unwrap()..];
         let filter = &filter[..filter.find("</section>").unwrap()];

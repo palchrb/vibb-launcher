@@ -10,6 +10,7 @@
 //! Times ("Today 03:00") and "today" are in the Phone Setup time zone (`display_time`, design 31
 //! §3.10), and say "UTC" when that zone is empty or unknown.
 
+use crate::i18n::Words;
 use askama::Template;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};

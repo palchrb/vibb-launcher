@@ -615,7 +615,7 @@ async fn removing_the_child_pin_confirms_with_details() {
     assert!(inside.contains("<summary class=\"row\">Remove Child PIN&hellip;</summary>"));
     assert!(inside.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
     let form = &html[hidden..hidden + html[hidden..].find("</form>").unwrap()];
-    assert!(form.contains("Remove Anna's Child PIN?"), "{form}");
+    assert!(form.contains("Remove Anna&#x27;s Child PIN?"), "{form}");
     assert!(form.contains("class=\"button-destructive\">Remove Child PIN</button>"));
 }
 
@@ -1555,7 +1555,7 @@ async fn the_filter_routes_refuse_bad_input() {
             .find(&format!("data-flash=\"{group}\""))
             .expect("the refusal in its group");
         assert!(section[..flash].contains(&format!("action=\"/dns/domains/new#{group}\"")));
-        assert!(section[flash..].contains("isn't a domain name"));
+        assert!(section[flash..].contains("isn&#x27;t a domain name"));
         assert_eq!(html.matches("data-flash=").count(), 1);
     }
     let html = app

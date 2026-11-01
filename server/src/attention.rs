@@ -332,7 +332,8 @@ fn title(kind: Kind) -> String {
         Kind::NotHomeApp => "Vibb One isn't the Home app",
         Kind::BootCoverNotShown => "Boot cover wasn't shown",
         Kind::NoNotificationAccess => "Notification access off",
-        Kind::Calls(problem) => problem.title(),
+        // Attention's words move in design 70's slice 4; until then its rows are English.
+        Kind::Calls(problem) => problem.title(crate::i18n::Lang::En),
         Kind::LedgerUnreadable => "Screen-time record unreadable",
         Kind::LauncherWithoutRules => "Vibb One too old for time rules",
         Kind::MusicCantDeliver => "Vibb One can't deliver music yet",
@@ -595,8 +596,12 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .iter()
             .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
         // Home Screen's own warning, so the row and the page agree.
-        no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
-            .is_some(),
+        // (Only whether it shows: its words are the page's.)
+        no_notification_access: crate::handlers::device_pages::notification_access_note(
+            crate::i18n::Lang::default(),
+            latest,
+        )
+        .is_some(),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
         ledger_unreadable: latest

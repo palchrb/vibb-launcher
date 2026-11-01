@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -12,10 +12,10 @@
         page, has vibb's brand row in it (the vibb identity, direction D), on the night band (artboard E). -#}
     <div class="title-bar title-bar-night">
         <span class="vibb-brand"><img class="vibb-mark" src="/static/icons/icon-192.png" width="34" height="34" alt="" decoding="async"><span class="vibb-word">vibb</span></span>
-        <a class="title-action title-add" href="/devices/new" aria-label="Add phone"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
+        <a class="title-action title-add" href="/devices/new" aria-label="{{ self.t("devices.list.add_label") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
         {% include "partials/bell.html" %}
     </div>
-    <h1 class="page-title">Devices</h1>
+    <h1 class="page-title">{{ self.t("nav.devices") }}</h1>
 
     {% include "partials/push_offer.html" %}
 
@@ -32,7 +32,7 @@
         <a class="attention-text" href="/account">{{ warning.title }}<span class="attention-sub">{{ warning.sub }}</span></a>
         <form method="post" action="/account/dismiss-warning">
             <input type="hidden" name="back" value="{{ warning_back }}">
-            <button type="submit" class="attention-dismiss">Dismiss</button>
+            <button type="submit" class="attention-dismiss">{{ self.t("account.warning.dismiss") }}</button>
         </form>
     </div>
     {% endif %}
@@ -46,7 +46,7 @@
     {% endif %}
 
     {% if !devices.is_empty() %}
-    <h2 class="group-header">Phones</h2>
+    <h2 class="group-header">{{ self.t("devices.list.phones") }}</h2>
     <div class="group group-avatars">
         {% for d in devices %}
         <a class="row device-row" href="/devices/{{ d.id }}" data-device="{{ d.id }}">
@@ -58,19 +58,19 @@
                 <span class="row-sub device-line" data-status="{{ d.connection.css() }}" data-line>{% call status_line::parts(d.line) %}{% endcall %}</span>
                 {% if let Some(percent) = d.meter %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
             </span>
-            {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">, {{ d.attention }} to check</span></span>{% endif %}
+            {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">{{ self.tc("devices.list.to_check", d.attention, []) }}</span></span>{% endif %}
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}
     </div>
     {% else %}
-    <p class="empty-state">No phones yet.</p>
+    <p class="empty-state">{{ self.t("devices.list.empty") }}</p>
     {% endif %}
 
     <div class="group">
         <a class="row row-button" href="/devices/new" data-row="add-phone">
             <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span class="row-label">Add Phone</span>
+            <span class="row-label">{{ self.t("devices.list.add") }}</span>
         </a>
     </div>
 </main>

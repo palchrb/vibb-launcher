@@ -110,7 +110,7 @@ async fn the_touch_bit_saves_reaches_the_phone_and_starts_off() {
     );
     assert!(html.contains("<span class=\"row-label\">Touch sounds and vibration</span>"));
     assert!(html.contains(
-        "the \"Modify system settings\" permission the clock format uses - grant it first"
+        "the &quot;Modify system settings&quot; permission the clock format uses - grant it first"
     ));
 
     save(false).await;

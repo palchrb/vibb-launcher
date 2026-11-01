@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,93 +8,93 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">Advanced</h1>
+    <h1 class="page-title">{{ self.t("device.page.advanced") }}</h1>
 
     {#- Restrictions: the 11 switches are one form (H1: a missing box is off), in groups so each
         can have its footer. -#}
     <section id="restrictions" aria-labelledby="restrictions-title">
-        <h2 class="group-header" id="restrictions-title">Restrictions</h2>
+        <h2 class="group-header" id="restrictions-title">{{ self.t("device.advanced.restrictions") }}</h2>
         {% match backup_service_enabled %}
         {% when Some(true) %}
         <div class="attention attention-alarm" data-warning="google-backup">
-            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync (Vibb One's Settings › Sync now). If it stays on, something on the phone keeps turning it on: report it.</span></span>
+            <span class="attention-text">{{ self.t("device.advanced.backup_on") }}<span class="attention-sub">{{ self.t("device.advanced.backup_on_sub") }}</span></span>
         </div>
         {% when _ %}
         {% endmatch %}
         <form method="post" action="/devices/{{ device.id }}/hardening#restrictions">
             <div class="group">
                 <label class="row">
-                    <span class="row-label">Block factory reset</span>
+                    <span class="row-label">{{ self.t("device.advanced.factory_reset") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block new users and guests</span>
+                    <span class="row-label">{{ self.t("device.advanced.add_user") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block account changes</span>
+                    <span class="row-label">{{ self.t("device.advanced.accounts") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block VPN settings</span>
+                    <span class="row-label">{{ self.t("device.advanced.vpn") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block USB file transfer</span>
+                    <span class="row-label">{{ self.t("device.advanced.usb_files") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Keep location on</span>
+                    <span class="row-label">{{ self.t("device.advanced.location") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block airplane mode</span>
+                    <span class="row-label">{{ self.t("device.advanced.airplane") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Lock the phone's language</span>
+                    <span class="row-label">{{ self.t("device.advanced.locale") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <label class="row">
-                    <span class="row-label">Block screenshots</span>
+                    <span class="row-label">{{ self.t("device.advanced.screenshots") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_screen_capture" value="on" {% if hardening.disallow_screen_capture %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">A pause or the Parent PIN doesn't lift these.
+            <div class="group-footer">{{ self.t("device.advanced.restrictions_footer") }}
                 <details class="info">
-                    <summary aria-label="About the restrictions"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <summary aria-label="{{ self.t("device.advanced.restrictions_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
-                        <p>Block screenshots also stops screen recording and casting, and recent-apps previews go blank. Locate needs Keep location on. A reset from the recovery menu can't be blocked.</p>
+                        <p>{{ self.t("device.advanced.restrictions_info") }}</p>
                     </div>
                 </details>
             </div>
 
             <div class="group">
                 <label class="row">
-                    <span class="row-label">Block USB debugging</span>
+                    <span class="row-label">{{ self.t("device.advanced.debugging") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">Turn it off before you work on the phone with a computer.
+            <div class="group-footer">{{ self.t("device.advanced.debugging_footer") }}
                 <details class="info">
-                    <summary aria-label="About USB debugging"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <summary aria-label="{{ self.t("device.advanced.debugging_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
-                        <p>While it is blocked, a computer can't repair the phone: if Vibb One breaks and can't reach this server, only a reset gets it back.</p>
+                        <p>{{ self.t("device.advanced.debugging_info") }}</p>
                     </div>
                 </details>
             </div>
 
             <div class="group">
                 <label class="row">
-                    <span class="row-label">Block safe mode</span>
+                    <span class="row-label">{{ self.t("device.advanced.safe_boot") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">Turned on with the first Child PIN: safe mode skips the lock.
+            <div class="group-footer">{{ self.t("device.advanced.safe_boot_footer") }}
                 <details class="info">
-                    <summary aria-label="About safe mode"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <summary aria-label="{{ self.t("device.advanced.safe_boot_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
-                        <p>Safe mode starts the phone without Vibb One, unfiltered (the restrictions above still apply). It repairs nothing, so blocking it costs nothing once Vibb One works on this phone.</p>
+                        <p>{{ self.t("device.advanced.safe_boot_info") }}</p>
                     </div>
                 </details>
             </div>
@@ -103,89 +103,89 @@
             <div class="group">
                 <details class="info cell" data-row="google-backup">
                     <summary class="row">
-                        <span class="row-label">Backup to Google</span>
-                        <span class="row-value{% if on %} row-value-alarm{% endif %}">{% if on %}On{% else %}Off{% endif %}</span>
-                        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                        <span class="row-label">{{ self.t("device.advanced.backup") }}</span>
+                        <span class="row-value{% if on %} row-value-alarm{% endif %}">{% if on %}{{ self.t("common.on") }}{% else %}{{ self.t("common.off") }}{% endif %}</span>
+                        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                     </summary>
-                    <div class="info-panel"><p>When on, Android may copy app data, calls, SMS and settings to Google. Vibb One keeps it off; there is no switch for it.</p></div>
+                    <div class="info-panel"><p>{{ self.t("device.advanced.backup_info") }}</p></div>
                 </details>
             </div>
             {% endif %}
-            <noscript><div class="group"><button type="submit" class="row row-button">Save Restrictions</button></div></noscript>
+            <noscript><div class="group"><button type="submit" class="row row-button">{{ self.t("device.advanced.save_restrictions") }}</button></div></noscript>
         </form>
     </section>
 
     {% if device.enrolled_at.is_some() %}
     <section id="app-screens" aria-labelledby="app-screens-title">
-        <h2 class="group-header" id="app-screens-title">App screens</h2>
+        <h2 class="group-header" id="app-screens-title">{{ self.t("device.advanced.app_screens") }}</h2>
         {% for note in play_warnings %}
         {% include "partials/note_warning.html" %}
         {% endfor %}
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/kiosk-block#app-screens" class="cell">
                 <label class="row">
-                    <span class="row-label">Block other apps' screens</span>
+                    <span class="row-label">{{ self.t("device.advanced.block_screens") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="block_activity_start" value="on" {% if block_activity_start %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             {% for note in play_rows %}
             {% include "partials/note_row.html" %}
             {% endfor %}
         </div>
-        <div class="group-footer">Turn it off only if something breaks.
+        <div class="group-footer">{{ self.t("device.advanced.block_screens_footer") }}
             <details class="info">
-                <summary aria-label="About blocking other apps' screens"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.advanced.block_screens_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Screens of apps that aren't allowed never open, even from an allowed app. The Play Store stays paused, except in install mode and at night for updates.</p>
+                    <p>{{ self.t("device.advanced.block_screens_info") }}</p>
                 </div>
             </details>
         </div>
     </section>
 
     <section id="updates" aria-labelledby="updates-title">
-        <h2 class="group-header" id="updates-title">Updates &amp; notifications</h2>
+        <h2 class="group-header" id="updates-title">{{ self.t("device.advanced.updates") }}</h2>
         {% for note in escape_warnings %}
         {% include "partials/note_warning.html" %}
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/kiosk-escapes#updates" class="group">
             <label class="row">
-                <span class="row-label">Update fence<span class="row-sub">Hides Android's home screen while Vibb One updates.</span></span>
+                <span class="row-label">{{ self.t("device.advanced.fence") }}<span class="row-sub">{{ self.t("device.advanced.fence_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">Notification filter<span class="row-sub">Removes notifications that open blocked screens.</span></span>
+                <span class="row-label">{{ self.t("device.advanced.notification_filter") }}<span class="row-sub">{{ self.t("device.advanced.notification_filter_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">Boot cover<span class="row-sub">Shows the Vibb logo while the phone starts.</span></span>
+                <span class="row-label">{{ self.t("device.advanced.boot_cover") }}<span class="row-sub">{{ self.t("device.advanced.boot_cover_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% for note in escape_rows %}
             {% include "partials/note_row.html" %}
             {% endfor %}
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer">Vibb One installs its own updates at night, with the screen off.
+        <div class="group-footer">{{ self.t("device.advanced.updates_footer") }}
             <details class="info">
-                <summary aria-label="About these switches"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.advanced.updates_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Test Update fence and Boot cover (from the next restart) on this phone model first. The filter keeps allowed apps, calls, alarms and emergency alerts, and never reads a notification's text.</p>
+                    <p>{{ self.t("device.advanced.updates_info") }}</p>
                 </div>
             </details>
         </div>
         {% if !escapes.removed.is_empty() %}
-        <h3 class="group-header">Removed since last report</h3>
+        <h3 class="group-header">{{ self.t("device.advanced.removed") }}</h3>
         <div class="group" data-removed>
             {% for r in escapes.removed %}
             <div class="row">
-                <span class="row-label">{{ r.package_name }}{% if let Some(channel) = r.channel %} ({{ channel }}){% endif %}{% if r.snoozed > 0 %}<span class="row-sub">{{ r.snoozed }} snoozed for an hour: it kept coming back</span>{% endif %}</span>
+                <span class="row-label">{{ r.package_name }}{% if let Some(channel) = r.channel %} ({{ channel }}){% endif %}{% if r.snoozed > 0 %}<span class="row-sub">{{ self.tc("device.advanced.snoozed", r.snoozed, []) }}</span>{% endif %}</span>
                 <span class="row-value">{{ r.cancelled }}</span>
             </div>
             {% endfor %}
         </div>
         {% if escapes.more_removed > 0 %}
-        <p class="group-footer">And {{ escapes.more_removed }} more.</p>
+        <p class="group-footer">{{ self.tc("device.advanced.more_removed", escapes.more_removed, []) }}</p>
         {% endif %}
         {% endif %}
     </section>
@@ -219,41 +219,41 @@
     {% endif %}
 
     <section id="connection" aria-labelledby="connection-title">
-        <h2 class="group-header" id="connection-title">Connection</h2>
+        <h2 class="group-header" id="connection-title">{{ self.t("device.about.connection") }}</h2>
         {% if !access.has_token %}
         <div class="attention attention-alarm" data-warning="access-removed">
-            <span class="attention-text">Access removed<span class="attention-sub">It can't reach this server until it connects again with a new setup code. It keeps its last settings.</span></span>
+            <span class="attention-text">{{ self.t("device.advanced.access_removed") }}<span class="attention-sub">{{ self.t("device.advanced.access_removed_sub") }}</span></span>
         </div>
         {% endif %}
         {% if let Some(until) = access.typed_paused_until %}
         <div class="attention attention-action" data-warning="typed-paused">
-            <span class="attention-text">Typed codes paused until {{ until }}<span class="attention-sub">{{ access.pause_failures() }} wrong codes were tried this hour. A setup QR code still works.</span></span>
+            <span class="attention-text">{{ self.tp("device.summary.access.paused", [("until", until.as_str())]) }}<span class="attention-sub">{{ self.tc("device.summary.access.paused_sub", access.pause_failures(), []) }}</span></span>
         </div>
         {% endif %}
         <div class="group">
             {% if let Some((kind, until)) = access.live_code %}
             <div class="row" data-row="live-code">
                 <span class="row-label">{{ kind }}</span>
-                <span class="row-value">Works until {{ until }}, once</span>
+                <span class="row-value">{{ self.tp("device.summary.access.works_until", [("until", until.as_str())]) }}</span>
             </div>
             {% endif %}
             <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
-                <button type="submit" class="row row-button">New Setup Code</button>
+                <button type="submit" class="row row-button">{{ self.t("device.summary.access.new_code") }}</button>
             </form>
             <a class="row" href="/devices/{{ device.id }}/provision">
-                <span class="row-label">Set Up with QR Code</span>
+                <span class="row-label">{{ self.t("device.summary.access.qr") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% if access.has_token %}
             <details class="confirm cell">
-                <summary class="row">Disconnect Phone&hellip;</summary>
+                <summary class="row">{{ self.t("device.advanced.disconnect") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device.id }}/revoke#connection" class="confirm-body">
-                    <p>Disconnect {{ device.name }}? It can't reach this server until it connects again with a new setup code. It keeps its last settings.</p>
+                    <p>{{ self.tp("device.advanced.disconnect_confirm", [("name", device.name.as_str())]) }}</p>
                     <label class="checkbox-row">
                         <input type="checkbox" name="confirm" value="yes" required>
-                        <span>Yes, disconnect it</span>
+                        <span>{{ self.t("device.advanced.disconnect_yes") }}</span>
                     </label>
-                    <button type="submit" class="button-destructive">Disconnect Phone</button>
+                    <button type="submit" class="button-destructive">{{ self.t("device.advanced.disconnect") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
@@ -262,17 +262,17 @@
             <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
             {% endif %}
         </div>
-        <p class="group-footer">A new code reconnects the phone after a reset, replacing its current connection.</p>
+        <p class="group-footer">{{ self.t("device.advanced.connection_footer") }}</p>
     </section>
     {% endif %}
 
-    <section id="remove" aria-label="Remove phone">
+    <section id="remove" aria-label="{{ self.t("device.advanced.remove_label") }}">
         <div class="group">
             <details class="confirm cell">
-                <summary class="row">Remove Phone&hellip;</summary>
+                <summary class="row">{{ self.t("device.advanced.remove") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device.id }}/delete" class="confirm-body">
-                    <p>Remove {{ device.name }}? Its settings and history are deleted, and it can't reach this server any more. This can't be undone.</p>
-                    <button type="submit" class="button-destructive">Remove Phone</button>
+                    <p>{{ self.tp("device.advanced.remove_confirm", [("name", device.name.as_str())]) }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("device.advanced.remove") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
