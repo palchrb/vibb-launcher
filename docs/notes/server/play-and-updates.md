@@ -231,7 +231,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `FdroidUnknown`); a version that is cached already (code and tag) ends the check there - no entry.json, no index.
   **Any other repo** (IzzyOnDroid `https://apt.izzysoft.de/fdroid/repo`, a self-hosted one) takes the index alone: the
   highest `versionCode` without a `releaseChannels` entry (betas are never picked; no "include betas" switch yet).
-- **The hash, always from the index**: `<repo>/entry.json` (every check, at most 1 MiB) names the index
+- **The hash, always from the index**: entry.json (read out of the signed `<repo>/entry.jar` since round S4, "The
+  repo's signature" below; every check, at most 1 MiB) names the index
   (`index-v2.json`, a plain file name), its SHA-256 and size; `fdroid::index_file` downloads `<repo>/index-v2.json`
   only when no cached copy has that SHA-256 - streamed to a `.part` file, refused over the size entry.json lists or
   `MAX_INDEX_BYTES` (100 MB; f-droid.org's was 67 MB), its size and SHA-256 checked against entry.json before the
@@ -265,12 +266,64 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The ABI** (Q-4): the pick ignores `manifest.nativecode` and `usesSdk` - fine for an app with one APK for every
   phone (Etar), not for one the repo builds per ABI (the highest code may be an x86_64 build). Add App's ⓘ by the
   package says so; the filter waits for the first such app (PLAN).
-- **Trust statement**: the index and the APK come over HTTPS from the repo, and the APK's SHA-256 must be the one the
-  repo's index lists (and the index's the one entry.json lists) - so a file is never served unverified, which GitHub
-  can't give. The repo's own signature (`entry.jar`, the JAR signature over entry.json by the repo's key) is **not**
-  verified in this round: a JAR signature verifier in Rust is its own piece of work (PLAN, the follow-up). Until then a
-  repo's TLS certificate is the trust anchor; the per-app signing-key pin (security review M10) still refuses a
-  release signed with another key than the first one's.
+- **The repo's signature** (round S4, Q31 + Q32, 2026-11-01, migration `0111_fdroid_repo_keys.sql`): entry.json is
+  read only out of `<repo>/entry.jar` (at most 1 MiB, every check; `entry.json` itself is never fetched), and only
+  after `jar_signature::verify_entry_jar` has checked the repo key's JAR (v1) signature over it:
+  1. `META-INF/MANIFEST.MF`'s one `Name: entry.json` section has `SHA-256-Digest` = base64 SHA-256 of the entry.json
+     read (continuation lines joined, header names case-insensitive);
+  2. the one `META-INF/<NAME>.SF` has `SHA-256-Digest-Manifest` = base64 SHA-256 of the whole manifest (required -
+     no per-section fallback);
+  3. `META-INF/<NAME>.RSA` (or `.EC`) is a CMS SignedData (RFC 5652) with detached content, exactly one certificate
+     and one signer named by that certificate's issuer and serial, digest SHA-256, and a signature by the
+     certificate's key - RSA PKCS#1 v1.5 2048-8192 bits or ECDSA P-256 - over the .SF bytes or, when the signer has
+     signed attributes, over them re-tagged as a SET (their `messageDigest` the .SF's SHA-256, `contentType` data);
+  4. the repo's fingerprint = SHA-256 of that certificate's DER, compared with the repo's pin (`fdroid::RepoKey`).
+  SHA-1 digests, DSA, a second signer, signature file or certificate, a high tag or indefinite DER length are
+  refused: fdroidserver's entry.jar (`Created-By: 1.0 (Android)`, f-droid.org's and IzzyOnDroid's) has none. The
+  certificate is only the key's container (its dates and self-signature aren't checked, as F-Droid's client and
+  Android don't for a pinned key). **No new crate**: `zip` (read), `sha2`, `base64` and `ring`
+  (`UnparsedPublicKey`, `RSA_PKCS1_2048_8192_SHA256`, `ECDSA_P256_SHA256_ASN1`) were the server's already, and the
+  DER reader is ~60 lines over SignedData's fixed shape - `cms`/`x509-cert` (RustCrypto, Apache-2.0/MIT) would have
+  added crates for the same few fields. **The pins** (`fdroid::KNOWN_REPO_KEYS`, by host, any path): `f-droid.org`
+  `43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab` (CN=Ciaran Gultnieks, RSA 2048, 2010-2037) -
+  the SHA-256 of the `certificate` F-Droid's own client ships for `https://f-droid.org/repo`
+  (`gitlab.com/fdroid/fdroidclient`, `app/src/main/assets/default_repos.json`, master on 2026-11-01) and the
+  `?fingerprint=` on https://f-droid.org/repo/; `apt.izzysoft.de`
+  `3bf0d6abfeae2f401707b6d966be743bf0eee49c2561b9ba39073711f628937a` (OU=F-Droid, CN=nebo, RSA 4096, 2016-2043) - the
+  fingerprint IzzyOnDroid publishes on https://apt.izzysoft.de/fdroid/. Each matched the certificate in that repo's
+  live entry.jar the same day; those two jars are the fixtures `server/testdata/fdroid/` (public, signed by the
+  repos; the mutation tests use throwaway P-256 keys made at run time, `jar_signature::tests::TestKey`). **Any other
+  repo** (a parent's self-hosted one) is trust on first use: the first good signature's key is pinned in
+  `fdroid_repo_keys` (`tracked_apps::pin_repo_key`; two first syncs at once - the first insert wins, the other is held
+  to it), and every later entry.jar must be signed by it. Fail-closed instead would make a custom repo unusable
+  without a fingerprint field the parent would have to copy by hand; TOFU gives the same guarantee from the second
+  fetch on, and the per-app APK key pin (M10) still holds from the first release. A repo no catalog app uses any
+  more loses its pin with its cached index (`remove_unused_fdroid_indexes`): removing the repo's apps and adding one
+  again is how a real key change is taken (a known host's key is code, never stored). **Fail closed**: an unsigned,
+  stripped or tampered entry.jar is `RepoSignature` "The repo's signature doesn't check out", another key than the pin
+  `RepoKey` "The repo's signing key changed" (both keys named in the detail) - before entry.json is read, so no index
+  is downloaded, the cached index and release stay and the phones keep what they have; the next hourly check tries
+  again (a 1 MiB jar is cheap, no remembered refusal). A 404 for entry.jar stays `RepoError` ("not an F-Droid repo
+  (index v2)"). The two titles and Q32's are the first `SyncProblem` titles in the parent's language
+  (`SyncProblem::title_in`, `apps.sync.*`; the others move with S-i18n 3b); the detail behind ⓘ stays English.
+  **The signer at the first pin** (Q32, qa-fdroid-source-code N-14): index-v2's `manifest.signer.sha256`
+  (`IndexVersion::signers`) is carried to the download (`ReleaseAsset::index_signers`); while the app has no signer
+  pinned, an APK whose v2/v3 signer isn't one of them is refused (`IndexSigner` "Key differs from the repo's
+  listing", remembered like a wrong key) before anything is pinned. An index that lists none, or an APK without a
+  v2/v3 signer, isn't compared (the phone refuses an app without both pins anyway). No defence against a tampered
+  index (it could change both - that's what the signature above is for), but a mixed-up mirror or wrong file is
+  caught before its key becomes the app's. f-droid.org's API shortcut is unchanged: a version that is cached already
+  ends the check before entry.jar.
+  **Trust statement** since then: entry.json is the repo key's, the index's SHA-256 entry.json's, the APK's the
+  index's - the repo's TLS certificate is no longer the only anchor; the per-app signing-key pin (security review M10) still
+  refuses a release signed with another key than the first one's. Tests: `jar_signature::tests` (the real jars pass
+  with their pins, a test key's with and without signed attributes; a changed entry.json byte refused at each layer -
+  manifest, .SF, signature or attributes' digest; a block signed by another key; a stripped, unsigned or SHA-1-only
+  jar), `fdroid::tests::a_repo_signed_by_another_key_is_refused`,
+  `tracked_apps::tests::an_fdroid_repo_key_is_pinned_and_the_index_signer_checked`. The ABI filter (Q33) is not in
+  this round: it still waits for its first app (above). **Live check on the VM**: an F-Droid app from f-droid.org and
+  one from IzzyOnDroid sync; the log has no `RepoSignature`/`RepoKey`; `fdroid_repo_keys` stays empty for those two
+  (known hosts); a self-hosted repo gets its row at the first sync.
 - **One source per app**: F-Droid signs with its own key, so an app installed from GitHub or Play can't switch to
   F-Droid (or back) without a reinstall. Add App says so under the F-Droid fields, the app's page under its Source
   row ("F-Droid · ws.xsoh.etar", linked to `https://f-droid.org/packages/<id>/`; another repo shows its host, unlinked,
@@ -289,15 +342,17 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Sync problems** (`SyncProblem`, the page's title, the raw detail behind ⓘ): `FdroidUnknown` "F-Droid doesn't know
   this package" (f-droid.org's API's 404), `NotInRepo` "The repo doesn't have this package" (not in a repo's index -
   IzzyOnDroid's, a self-hosted one; Q-9), `RepoUnreachable` "The repo didn't answer" (network,
-  timeout, a non-2xx other than 404), `RepoError` "The repo's answer can't be used" (no entry.json - not an index-v2
+  timeout, a non-2xx other than 404), `RepoError` "The repo's answer can't be used" (no entry.jar - not an index-v2
   repo -, an unreadable or oversized index, no APK for the API's version, a stored repo or package that isn't valid),
-  `ChecksumMismatch` "Download didn't match the repo's checksum" (the APK or the index).
+  `ChecksumMismatch` "Download didn't match the repo's checksum" (the APK or the index); since round S4
+  `RepoSignature`, `RepoKey` and `IndexSigner` ("The repo's signature" above).
 - **The pages**: Add App's third radio (`#source-fdroid`, `.fdroid-only`, `style.css?v=52`), the fields' refusals as
   the GitHub ones (400, the values kept, F-Droid still chosen, `aria-invalid` + `autofocus` + the reason under the
   field); the app's page: Check Now and "Last checked" for every source but uploads, the F-Droid fields in Details,
   no Upload group and no launcher switch; the Apps list unchanged.
 - No F-Droid client on the kid's phone (an app store breaks the model). No `scripts/fake-fdroid.py`: the tests fake the
-  repo in-process (`fdroid::tests::fake_repo`: entry.json, the index, the API, the APKs, with request counters; on
+  repo in-process (`fdroid::tests::fake_repo`: entry.json in an entry.jar signed by the run's throwaway
+  `FAKE_REPO_KEY` - or `jar` as set -, the index, the API, the APKs, with request counters; on
   `127.0.0.1` it has the API, on `localhost` the sync takes the index path).
 - Tests: `fdroid::tests` (the address rules, the two paths, the API's pick, entry.json, the one-package parse, the
   cache keyed on the entry's SHA-256 - no re-download when unchanged, a re-download when changed, a tampered or
