@@ -55,7 +55,7 @@
     <div class="group" id="phones">{% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}<p class="row row-note" data-row="no-phones">{{ self.t("apps.app.no_phones") }}</p></div>
     <p class="group-footer">{{ self.t("apps.app.no_phones_footer") }}</p>
     {% else %}
-    <div class="group group-avatars group-small" data-group="phones" id="phones"{% if install_polling %} data-install-poll="/apps/tracked/{{ app.id }}/install-now.json"{% endif %}>
+    <div class="group group-avatars group-small" data-group="phones" id="phones"{% if install_polling %} data-install-poll="/apps/tracked/{{ app.id }}/install-now.json?lang={{ lang.code() }}"{% endif %}>
         {% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}
         {% for p in phones %}
         {% if let Some(i) = p.install %}

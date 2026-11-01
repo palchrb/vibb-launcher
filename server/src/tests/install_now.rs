@@ -154,6 +154,21 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
         "the poll runs while it waits"
     );
     assert!(page.contains("/static/install-now.js"));
+    // The poll keeps the page's language, a one-off `?lang=` too (qa-s-i18n-3b L1).
+    let nb = app
+        .get_page(&format!("/apps/tracked/{launcher}?lang=nb"), &cookie)
+        .await
+        .text();
+    let poll = format!("/apps/tracked/{launcher}/install-now.json?lang=nb");
+    assert!(
+        nb.contains(&format!("data-install-poll=\"{poll}\"")),
+        "{nb}"
+    );
+    let polled = app.get_page(&poll, &cookie).await.text();
+    assert!(
+        polled.contains("Installer nå: venter på telefonen"),
+        "{polled}"
+    );
 
     // A second tap before the phone fetched it replaces the first.
     let again = post(&app, &cookie, &install_uri(launcher, phone)).await;
