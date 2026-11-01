@@ -565,27 +565,30 @@ pub async fn remove_link(
     if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
-    let account: Option<Option<i64>> =
-        match sqlx::query_scalar("SELECT account_id FROM calendar_sources WHERE uid = ?")
-            .bind(&uid)
-            .fetch_optional(&state.db)
+    // This phone's link only: another phone's (or none) is gone from here.
+    let source_id = match link_of(&state, id, &uid).await {
+        Ok(Some(source)) => source,
+        Ok(None) => return back_to_sources(id),
+        Err(err) => return read_failed(lang, err, "a calendar link"),
+    };
+    let account: Option<i64> =
+        match sqlx::query_scalar("SELECT account_id FROM calendar_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_one(&state.db)
             .await
         {
             Ok(found) => found,
             Err(err) => return read_failed(lang, err, "a calendar link"),
         };
-    let back = match account.flatten() {
+    let back = match account {
         Some(account) => format!("{}#calendars", caldav_page(id, account)),
         None => format!("/devices/{id}/calendar#sources"),
     };
-    match sqlx::query(
-        "DELETE FROM device_calendar_feeds WHERE device_id = ? \
-         AND source_id = (SELECT id FROM calendar_sources WHERE uid = ?)",
-    )
-    .bind(id)
-    .bind(&uid)
-    .execute(&state.db)
-    .await
+    match sqlx::query("DELETE FROM device_calendar_feeds WHERE device_id = ? AND source_id = ?")
+        .bind(id)
+        .bind(source_id)
+        .execute(&state.db)
+        .await
     {
         Ok(_) => {
             colors_after_link_save(&state, id).await;
@@ -636,9 +639,11 @@ struct CaldavTemplate {
     gone: Vec<GoneCalendar>,
     /// A refused tick (too many calendars on the phone, on the server).
     calendars_notice: Option<&'static str>,
-    /// Test Again's result or the last Test's failure; `test_ok` when it passed.
+    /// Test Again's result or the last Test's failure, and its colour: `ok` (it passed, green), `failed` (a Test that
+    /// failed, orange as the account's row) or `refused` (Test Again refused before testing - too soon, no password -,
+    /// red as a refused save).
     test_line: Option<String>,
-    test_ok: bool,
+    test_tone: &'static str,
     /// Test Again's form shown open: its last answer asks for a password or a moment.
     test_open: bool,
 }
@@ -726,16 +731,16 @@ pub async fn show_caldav(
         .as_deref()
         .map(|code| caldav_why(lang, code, account.test_status));
     let signed_in = when_text(lang, &zone, account.ok_at.as_deref(), now);
-    let (test_line, test_ok) = match (asks, stop, last_test) {
-        (Some(key), _, _) => (Some(t(lang, key).to_string()), false),
-        (None, Some(stop), _) if tested => (Some(t(lang, stop_line(stop)).to_string()), false),
+    let (test_line, test_tone) = match (asks, stop, last_test) {
+        (Some(key), _, _) => (Some(t(lang, key).to_string()), "refused"),
+        (None, Some(stop), _) if tested => (Some(t(lang, stop_line(stop)).to_string()), "failed"),
         (None, None, Some(why)) => (
             Some(t_params(
                 lang,
                 "calendar.caldav.status.last_test",
                 &[("why", &why)],
             )),
-            false,
+            "failed",
         ),
         (None, None, None) if tested => (
             Some(t_params(
@@ -743,9 +748,9 @@ pub async fn show_caldav(
                 "calendar.caldav.tested",
                 &[("when", &signed_in)],
             )),
-            true,
+            "ok",
         ),
-        _ => (None, false),
+        _ => (None, "ok"),
     };
     let template = CaldavTemplate {
         lang,
@@ -765,10 +770,11 @@ pub async fn show_caldav(
         calendars_notice: match notice {
             Some("caldav_full") => Some("calendar.caldav.error.too_many_calendars"),
             Some("caldav_sources_full") => Some("calendar.links.error.too_many_sources"),
+            Some("caldav_no_key") => Some("calendar.caldav.error.no_key"),
             _ => None,
         },
         test_line,
-        test_ok,
+        test_tone,
         test_open: asks.is_some(),
         title: account.username.clone(),
         username: account.username,
@@ -870,6 +876,14 @@ pub async fn save_caldav_calendars(
                 id,
                 account,
                 Some("caldav_sources_full"),
+                "calendars",
+            ))
+        }
+        Err(caldav::TickError::Refused("calendar.caldav.error.no_key")) => {
+            crate::settings_log::refused(caldav_back(
+                id,
+                account,
+                Some("caldav_no_key"),
                 "calendars",
             ))
         }

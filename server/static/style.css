@@ -1077,6 +1077,13 @@ div.attention {
     color: var(--red-text);
 }
 
+/* A check that failed (a CalDAV account's Test Again): orange, as the Attention level "action" and a failing row's
+   line; red stays for a refused save. */
+.flash-warn {
+    background: var(--orange-bg);
+    color: var(--orange-text);
+}
+
 /* ---- Confirm (§3.0): a <details> whose summary is the button ---- */
 
 details.confirm > summary.row {
@@ -1811,7 +1818,8 @@ details.section[open] > summary .section-chev {
     font-size: 1.0625rem;
 }
 
-.container > form > .button-wide {
+.container > form > .button-wide,
+.add-form > .button-wide {
     margin-bottom: 20px;
 }
 

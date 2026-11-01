@@ -16,7 +16,7 @@
         Account goes back to the Calendar page's #sources. The password is never rendered back. Design 72 step 3's
         "the kid's own calendar" would be a group of its own under the switches (nothing built). -#}
     {% if let Some(key) = stop %}
-    <div class="attention attention-alarm" data-caldav-failing><div class="attention-text">{{ self.t(key) }}</div></div>
+    <div class="attention attention-action" data-caldav-failing><div class="attention-text">{{ self.t(key) }}</div></div>
     {% endif %}
 
     <section id="account" aria-label="{{ username }}">
@@ -51,7 +51,7 @@
 
     <section id="test" aria-label="{{ self.t("calendar.caldav.test_again") }}">
         <div class="group">
-            {% if let Some(line) = test_line %}<p class="flash{% if !test_ok %} flash-error{% endif %}" role="status" data-flash="caldav-test">{{ line }}</p>{% endif %}
+            {% if let Some(line) = test_line %}<p class="flash{% if test_tone == "failed" %} flash-warn{% else if test_tone == "refused" %} flash-error{% endif %}" role="status" data-flash="caldav-test">{{ line }}</p>{% endif %}
             <details class="edit cell"{% if test_open %} open{% endif %}>
                 <summary class="row row-button">{{ self.t("calendar.caldav.test_again") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/test#test" class="edit-body">
@@ -67,7 +67,7 @@
     <section id="remove" aria-label="{{ self.t("calendar.caldav.remove") }}">
         <div class="group">
             <details class="confirm cell">
-                <summary class="row row-danger">{{ self.t("calendar.caldav.remove") }}&hellip;</summary>
+                <summary class="row row-button row-danger">{{ self.t("calendar.caldav.remove") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/remove" class="confirm-body">
                     <p>{{ self.t("calendar.caldav.remove_confirm") }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("calendar.caldav.remove") }}</button>

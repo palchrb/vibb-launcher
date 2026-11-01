@@ -991,8 +991,8 @@ async fn add_calendar_picks_its_kind_and_a_gone_source_goes_back() {
         assert!(html.contains(&format!(
             "id=\"kind-caldav\" name=\"kind\" value=\"caldav\"{caldav}>"
         )));
-        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/links\"")));
-        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/caldav\"")));
+        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/links#add\"")));
+        assert!(html.contains(&format!("action=\"/devices/{id}/calendar/caldav#add\"")));
     }
     let nb = app
         .get_page(&format!("/devices/{id}/calendar/add?lang=nb"), &cookie)
@@ -1019,6 +1019,23 @@ async fn add_calendar_picks_its_kind_and_a_gone_source_goes_back() {
         );
         app.assert_lands(&res, &cookie).await;
     }
+    // Another phone's link is not this phone's to remove: back to #sources, the sibling keeps it.
+    let (ola, _) = app.enrolled_device("Ola").await;
+    app.fetch.answer(LINK, 200, contract_body());
+    add(&app, &cookie, ola, LINK, "Skolen").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calendar/links/{}/remove", uid()),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/calendar#sources").as_str())
+    );
+    assert_eq!(sources(&app).await, 1);
     assert_eq!(
         app.get_page("/devices/999/calendar/add", &cookie)
             .await

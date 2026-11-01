@@ -18,7 +18,7 @@
         account to .../calendar/caldav), and a refusal renders this page again (400) as typed, its kind chosen, the reason
         under its field - never the password. -#}
     <h2 class="group-header">{{ self.t("calendar.add.source") }}</h2>
-    <div class="source-choice">
+    <div class="source-choice" id="add">
         <input type="radio" class="choice-radio" id="kind-link" name="kind" value="link"{% if !caldav %} checked{% endif %}>
         <input type="radio" class="choice-radio" id="kind-caldav" name="kind" value="caldav"{% if caldav %} checked{% endif %}>
         <div class="group">
@@ -30,7 +30,7 @@
             {% if phone_full %}
             <p class="group-footer" data-sources="full">{{ self.t("calendar.caldav.error.too_many_calendars") }}</p>
             {% else %}
-            <form method="post" action="/devices/{{ device_id }}/calendar/links">
+            <form method="post" action="/devices/{{ device_id }}/calendar/links#add" class="add-form">
                 <div class="group form-group">
                     <div class="field">
                         <label class="field-label" for="link-url">{{ self.t("calendar.links.url") }}</label>
@@ -52,7 +52,7 @@
             {% if accounts_full %}
             <p class="group-footer" data-caldav-form="full">{{ self.t("calendar.caldav.error.too_many") }}</p>
             {% else %}
-            <form method="post" action="/devices/{{ device_id }}/calendar/caldav">
+            <form method="post" action="/devices/{{ device_id }}/calendar/caldav#add" class="add-form">
                 <div class="group form-group">
                     <div class="field">
                         <label class="field-label" for="caldav-server">{{ self.t("calendar.caldav.server") }}</label>

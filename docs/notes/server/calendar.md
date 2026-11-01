@@ -293,7 +293,9 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   (`.../links/{uid}/remove`, back to `#calendars`); "Test på nytt…" (`#test`, a disclosure: an optional new app
   password, the stored one otherwise; back with `?notice=caldav_tested` - "Logget inn 15:12." or "Siste test: …" -,
   `caldav_wait`, `caldav_retype` (none to use) or `caldav_too_long`, the form open for the last three); "Fjern konto…"
-  (confirmed: off every phone, the password deleted; back to the Calendar page's `#sources`). The new-account form is
+  (confirmed: off every phone, the password deleted; back to the Calendar page's `#sources`). A stop or a failed Test
+  is orange (the alarm `attention-action`, the Test line `flash-warn`, as the account's row); red `flash-error` is only
+  for a refusal (too soon, no password, too many calendars, no key). The new-account form is
   Add Calendar's CalDAV account: server or e-mail, username, app password, "Test og logg inn" (a pass goes to the
   account's page; a refusal re-renders Add Calendar as typed with CalDAV chosen, 400, the reason under its field -
   the username's or the password's own, else the server's -, never the password; no music key → no form). A ticked
@@ -325,8 +327,8 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
   own form to the route it always had (`POST .../calendar/links`, `POST .../calendar/caldav`), its fields as
   `.form-group .field` with the label over the field, a footer, the filled `.button-wide` ("Legg til", "Test og logg
   inn"). A refusal renders this page again (400) as typed with its kind chosen and the reason under its field
-  (`aria-invalid`, autofocus); a pass is a 303 to the new source's page. The forms leave the page, so they have no
-  fragment (`settings_pages::leaves_the_page`).
+  (`aria-invalid`, autofocus), at `#add` (both forms' fragment, so it lands on the form); a pass is a 303 to the new
+  source's page.
 - **A link's page** and **an account's page**: above ("Calendar links", "CalDAV accounts"). Every POST goes back to
   the page its form is on, at its group (`#name`, `#fetch`, `#calendars`, `#test`; a removal to the Calendar page's
   `#sources`), so a save never jumps to the top; a source or account gone since the page loaded is a 303 to
