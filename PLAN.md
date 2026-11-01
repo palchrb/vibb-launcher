@@ -48,7 +48,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - Jelly Star "App blocker" hidden/suspended at enrolment (waits for the user's package dump).
   - **Round B2 - emergency menu** (`emergency-menu`, launcher + server, mockup + design note first):
     - Configurable emergency menu
-  - **Round L4 - the launcher's security Lows** (**IN BUILD 2026-11-01 on `launcher-sec-lows`**, items re-verified against today's code first; `launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
+  - **Round L4 - the launcher's security Lows** (**BUILT 2026-11-01 on `launcher-sec-lows`** 74e6ba82, launcher 1919/0, CI 41317510994 green, **in code QA**: S-L1-3, S-L5 part (Bluetooth file sharing blocked, lifted by override/pause), S-L6 (kid-PIN wait doubles to 24 h), S-L7, S-L8 (music app by signer), S-L9 part (DNS limits), S-L10 part, S-L11 (no VPN config on filter-only phones), P-L1, P-L4; **left for `launcher-sec-lows-b`:** S-L4 (needs the Play Protect channel ids from a capture), S-L5 audio-only pairing (needs a server switch), S-L9 DoT reuse, S-L10 death count + "Leave tailnet", P-L2 + P-L3 (with the server half); four defaults asked of the user 2026-11-01: 24 h PIN wait, VPN config off on filter-only phones, signer-mismatched music app, other alarm apps at bedtime; `launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
   - **Round L5 - missed Element X calls** (`missed-voip-calls`, after the user's capture):
     - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - **Emulator session E2 - screen sizes** (the coordinator's, after L1 and M1):
