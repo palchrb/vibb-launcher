@@ -105,6 +105,16 @@ No prior programming experience - build features directly rather than explaining
   `default_sms_package` its `call_state` names (`call_and_text_roles`), since while calls are unmanaged the launcher
   restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3) - never
   everything installed. `calls::call_report` warns when the allowlist leaves either out. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
+- **An F-Droid repo's index is used only under its pinned key (round S4).** entry.json is read only out of the
+  repo's `entry.jar` once `jar_signature::verify_entry_jar` has checked its JAR v1 signature (manifest digest, .SF
+  over the manifest, the CMS SignedData by `ring`, SHA-256 only) and `fdroid::RepoKey` has matched the signer's
+  certificate SHA-256: compiled in for `f-droid.org` and `apt.izzysoft.de` (`fdroid::KNOWN_REPO_KEYS`), any other
+  repo pinned at its first good fetch (`fdroid_repo_keys`, 0111). A bad signature or another key fails closed
+  (`SyncProblem::RepoSignature`/`RepoKey`: nothing downloaded or replaced); at the first pin the APK's signer must be
+  one the index lists (`IndexSigner`). A signed entry.json older than the newest taken (`fdroid_repo_state`, 0112) is
+  a rollback (`RepoRollback`), and the hourly sync never moves a release to a lower versionCode (`OlderVersion`;
+  "Check Now" does). `docs/notes/server/play-and-updates.md`, "F-Droid source", "The repo's
+  signature".
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
 - **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) is an Attention alarm ("Phone can't apply its settings", About This Phone › Software says which). `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, an Attention alarm too ("Restrictions paused", to the summary's Quick actions).
 - **Allowlist writes never guess**: `devices::add_to_allowlist`/`remove_from_allowlist` read-modify-write in one transaction (`edit_allowlist`) and return an error on a DB error, a missing policy row or a stored allowlist that isn't valid JSON - `toggle_app` then answers 500 and writes nothing. The first-heartbeat bootstrap in `device_api::status` is one `UPDATE ... WHERE allowlist_json IS NULL`, so a read error can't make it overwrite a parent's list.
@@ -247,9 +257,12 @@ parameters) follows 0106, and `0108_spotify_diag.sql` (the Spotify diagnostic lo
 `device_policy.music_spotify_diag_until`) follows 0107, and `0109_parent_events_kind_index.sql` (the status lines'
 "Turned off", 2026-11-01: `idx_parent_events_device_kind` on `parent_events(device_id, kind, happened_at)`, for
 `parent_events::offs_now` on the Devices list) follows 0108, and `0110_caldav_accounts.sql` (design 72 step 2:
-`caldav_accounts`, `calendar_sources.account_id`, the triggers `caldav_accounts_unused`/`_used`) follows 0109
-(`migrations_73_to_110_in_order`). `0113_calendar_lock_ping.sql` (the lock reminders' ping, branch `reminder-ping`:
-`device_policy.calendar_lock_ping`) follows the F-Droid trust round's 0111/0112.
+`caldav_accounts`, `calendar_sources.account_id`, the triggers `caldav_accounts_unused`/`_used`) follows 0109,
+and `0111_fdroid_repo_keys.sql` (round S4: `fdroid_repo_keys`, a custom F-Droid repo's key pinned at its first
+fetch) follows 0110, and `0112_fdroid_repo_state.sql` (S4's fix round M1: `fdroid_repo_state`, each repo's newest
+entry.json timestamp taken) follows 0111 (`migrations_73_to_112_in_order`), and `0113_calendar_lock_ping.sql` (the
+lock reminders' ping, 2026-11-01: `device_policy.calendar_lock_ping`, the row's sound) follows 0112. The next free
+number is 0114.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request)
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture")
@@ -257,7 +270,7 @@ parameters) follows 0106, and `0108_spotify_diag.sql` (the Spotify diagnostic lo
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
 - `device_status` - append-only heartbeat log (pruned after 48 hours since 0.57.0, each phone's newest report from before them kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`, `relock_json`, `unseen_boots_count`/`_last_at_ms`, `foreign_access_json`, `relock_blocks_json` (design 24b), `zone_watch_json` (design 64 step 2, 0092)
 - `security_events` / `banned_ips` - admin login audit trail and lockout tracking (180 days, a phone's own lines 30/90, an expired ban at once - `docs/notes/server/retention-and-crashes.md`); since 0.54.0 also `settings_saved`, a parent's saves coalesced per page for 10 minutes (`settings_log`, `docs/notes/server/pwa.md` "The rest of Settings")
-- `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced, manually-uploaded or from an F-Droid repo (`source_type` `fdroid`, `fdroid_repo`/`fdroid_package` since 0094; `docs/notes/server/play-and-updates.md`, "F-Droid source") - see the "Apps tab"/"global catalog" bullets above
+- `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced, manually-uploaded or from an F-Droid repo (`source_type` `fdroid`, `fdroid_repo`/`fdroid_package` since 0094; `docs/notes/server/play-and-updates.md`, "F-Droid source") - see the "Apps tab"/"global catalog" bullets above; `fdroid_repo_keys` (0111) - a custom F-Droid repo's signing key, pinned at its first fetch; `fdroid_repo_state` (0112) - every F-Droid repo's newest entry.json timestamp taken
 - `device_app_permissions` - design 68: one row per phone and package the parent switched away from the default (today
   `camera` 'deny'), sent as the policy's `app_permissions` (`app_permissions.rs`; `docs/notes/server/pwa.md`, "Device ›
   Apps: Permissions")

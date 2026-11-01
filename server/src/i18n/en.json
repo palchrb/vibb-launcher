@@ -292,6 +292,11 @@
   "apps.on_home": "On Home",
   "apps.on_home_sub": "Off: the app stays allowed and runs, but the kid doesn't see it on Home or in the app list, except during a pause - for a sync app such as ICSx5 or DAVx5.",
   "apps.not_on_home": "not on Home",
+  "apps.sync.repo_signature": "The repo's signature doesn't check out",
+  "apps.sync.repo_key": "The repo's signing key changed",
+  "apps.sync.index_signer": "Key differs from the repo's listing",
+  "apps.sync.repo_rollback": "The repo sent an older index",
+  "apps.sync.older_version": "The repo offers an older version",
 
   "error.csrf": "Refused: this form was sent from another site.",
 

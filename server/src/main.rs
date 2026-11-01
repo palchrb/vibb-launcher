@@ -23,6 +23,7 @@ mod handlers;
 mod i18n;
 mod ics;
 mod install_now;
+mod jar_signature;
 mod keys;
 mod kid_lock;
 mod kid_pin;
