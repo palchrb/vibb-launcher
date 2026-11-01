@@ -27,11 +27,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.pcap4j.packet.IpSelector
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.UdpPacket
 import org.pcap4j.packet.UnknownPacket
 import org.xbill.DNS.Message
+import org.xbill.DNS.Section
 
 private const val LOG_TAG = "KidVpnService"
 
@@ -73,6 +76,11 @@ class KidVpnService : VpnService() {
      * `QuietNotificationsTest`); changed on the main thread only - `onRevoke` posts there. */
     private val state = VpnTunnelState<ParcelFileDescriptor>()
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+    /** Security review S-L9: at most [DNS_PARALLEL] queries resolve at once, at most [DNS_IN_FLIGHT_MAX] are held (the
+     * rest are dropped, [dnsAdmit]) - a flood of `192.0.2.2:53` can't starve the sync's IO or grow memory. */
+    private val dnsSlots = Semaphore(DNS_PARALLEL)
+    private val dnsInFlight = java.util.concurrent.atomic.AtomicInteger()
+    private val dnsDropped = java.util.concurrent.atomic.AtomicLong()
 
     /** The parent's own server at work (design 36), while the VPN is up and one is configured. */
     @Volatile
@@ -265,8 +273,20 @@ class KidVpnService : VpnService() {
                 return
             }
             if (length == 0) continue
+            if (!dnsAdmit(dnsInFlight.get())) {
+                val dropped = dnsDropped.incrementAndGet()
+                if (dropped == 1L || dropped % 1_000L == 0L) Log.w(LOG_TAG, "DNS queries over the limit dropped: $dropped")
+                continue
+            }
             val packetData = buffer.copyOfRange(0, length)
-            scope.launch { handlePacket(packetData, output, writeLock) }
+            dnsInFlight.incrementAndGet()
+            scope.launch {
+                try {
+                    dnsSlots.withPermit { handlePacket(packetData, output, writeLock) }
+                } finally {
+                    dnsInFlight.decrementAndGet()
+                }
+            }
         }
     }
 
@@ -313,6 +333,8 @@ class KidVpnService : VpnService() {
             } catch (e: Exception) {
                 return
             }
+            // S-L9: only the first question is classified, so a query with more than one is never forwarded.
+            if (!dnsQuestionsOk(message.header.getCount(Section.QUESTION))) return
             val question = message.question ?: return
             val domain = question.name.toString(true)
 
@@ -332,8 +354,10 @@ class KidVpnService : VpnService() {
             val category = DnsFilterEngine.classify(domain)
             val custom = custom
             val responseBytes = if (category != null) {
+                // S-L9: the answer first, then the log's synchronous commit.
+                reply(blockedResponse(message))
                 BlockedEventLog.record(applicationContext, domain, category)
-                blockedResponse(message)
+                return
             } else if (custom != null) {
                 custom.resolve(query, message)
                     .also { reach.after(it, reachKey(custom.config, null), lastNetwork?.validated == true) }.bytes

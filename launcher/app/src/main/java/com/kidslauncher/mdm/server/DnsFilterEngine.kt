@@ -176,7 +176,9 @@ object DnsFilterEngine {
 
             val map = HashMap<String, String>()
             val listFile = File(context.filesDir, BLOCKLIST_FILE)
-            listFile.bufferedWriter().use { writer ->
+            // S-L9: through a temp file and a rename - a kill mid-write leaves the old list, never a truncated one
+            // that a reboot would then use offline.
+            writeAtomically(listFile) { writer ->
                 for (cat in categories) {
                     for (domain in cat.domains) {
                         map[domain] = cat.category
@@ -187,7 +189,7 @@ object DnsFilterEngine {
                     }
                 }
             }
-            File(context.filesDir, VERSION_FILE).writeText(newVersion)
+            writeAtomically(File(context.filesDir, VERSION_FILE), newVersion)
             blockedDomains = map
             loadedVersion = newVersion
             Log.i(LOG_TAG, "Refreshed blocklist: ${map.size} domains (version=$newVersion)")

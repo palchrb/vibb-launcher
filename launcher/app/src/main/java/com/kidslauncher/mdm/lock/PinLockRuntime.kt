@@ -1970,7 +1970,14 @@ object PinLockRuntime {
                 if (state != stored) PinLockStore.saveBackoff(app, state)
                 return PinResult.Waiting(wait)
             }
-            beginAttempt(state, now).also { PinLockStore.saveBackoff(app, it) }
+            val next = beginAttempt(state, now)
+            // Security review S-L6: a count that wasn't committed is no count - the try is refused, like an
+            // unreadable count, rather than checked uncounted.
+            if (!PinLockStore.saveBackoff(app, next)) {
+                Log.e(LOG_TAG, "Wrong-PIN count not committed - parent code only")
+                return PinResult.Unusable
+            }
+            next
         } catch (e: Exception) {
             // The failure can't be counted first (QA 10 #3): only the parent code opens the lock
             // then (qa-16c-code #3).

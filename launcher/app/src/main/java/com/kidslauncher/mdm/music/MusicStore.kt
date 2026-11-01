@@ -36,8 +36,9 @@ object MusicStore {
 
     fun prefs(context: Context) = context.applicationContext.getSharedPreferences("music_bridge", Context.MODE_PRIVATE)
 
-    /** The installed music app (release first), or null. */
-    fun installedPackage(context: Context): String? = MUSIC_PACKAGES.firstOrNull { isInstalled(context, it) }
+    /** The installed music app (release first) this launcher trusts - its name and our signer (S-L8, [MusicTrust]) -,
+     * or null. */
+    fun installedPackage(context: Context): String? = MusicTrust.installed(context).firstOrNull()
 
     fun isInstalled(context: Context, pkg: String): Boolean = try {
         context.packageManager.getPackageInfo(pkg, 0)

@@ -105,11 +105,21 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `only the music app's two build names may call it`() {
-        assertTrue(callerAllowed(listOf("me.vibb.music")))
-        assertTrue(callerAllowed(listOf("me.vibb.music.debug")))
-        assertFalse(callerAllowed(listOf("com.example.other")))
-        assertFalse(callerAllowed(null))
+    fun `only the music app with our signer may call it - a release launcher only the release name (S-L8)`() {
+        val ours = { _: String -> true }
+        val foreign = { _: String -> false }
+        // Debug: both build names, with our signer.
+        assertTrue(callerAllowed(listOf("me.vibb.music"), debugBuild = true, sameSigner = ours))
+        assertTrue(callerAllowed(listOf("me.vibb.music.debug"), debugBuild = true, sameSigner = ours))
+        // Release: never the debug name, whatever it is signed with.
+        assertTrue(callerAllowed(listOf("me.vibb.music"), debugBuild = false, sameSigner = ours))
+        assertFalse(callerAllowed(listOf("me.vibb.music.debug"), debugBuild = false, sameSigner = ours))
+        // The right name with another signer is not the music app (grants, config, the budget exemption, the bridge).
+        assertFalse(callerAllowed(listOf("me.vibb.music"), debugBuild = false, sameSigner = foreign))
+        assertFalse(musicTrusted("me.vibb.music", debugBuild = true, sameSigner = foreign))
+        assertFalse(callerAllowed(listOf("com.example.other"), debugBuild = true, sameSigner = ours))
+        assertFalse(callerAllowed(null, debugBuild = true, sameSigner = ours))
+        assertEquals(listOf("me.vibb.music"), trustedMusicNames(debugBuild = false))
     }
 
     // What the launcher reads.

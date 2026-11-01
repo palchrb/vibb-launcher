@@ -10,8 +10,8 @@ package com.kidslauncher.mdm.badges
  *
  * Privacy: this rule's input carries only the package, `Notification.channelId` (never the
  * Ranking's conversation channel or a shortcut id - they can encode a contact), the category and
- * flags - no title, text, key or tag. Logs and the status report carry package + channel ids and
- * capped counts only. The listener's one other reader, ElementDmReader (design 15), does read
+ * flags - no title, text, key or tag. Logs and the status report carry package + channel ids
+ * ([reportableChannel]: never a conversation's shortcut id or a contact-like id, P-L1) and capped counts only. The listener's one other reader, ElementDmReader (design 15), does read
  * Element X's tag and person keys - its own ElementDmFacts, never text, never logged or reported.
  */
 
@@ -102,6 +102,22 @@ private val ESSENTIAL_CHANNEL_HINTS = listOf(
 fun essentialChannel(channelId: String?): Boolean {
     val id = channelId?.lowercase() ?: return false
     return ESSENTIAL_CHANNEL_HINTS.any { it in id }
+}
+
+private val CONTACT_LIKE = Regex("""\d{5,}|@|\+\d""")
+
+/**
+ * Security review P-L1: the channel id as it may be logged and reported - never a contact. A conversation channel
+ * (`"<parent> : <shortcutId>"`, and a messaging app's shortcut ids are often phone numbers or addresses) is cut to its
+ * parent; an id that still looks like a contact (a long digit run, an `@`, a `+` and a digit - apps that make a channel
+ * per contact) becomes `#` and 8 hex of its SHA-256. Play services' and the platform's ids pass unchanged. The rule
+ * itself still judges the raw id.
+ */
+fun reportableChannel(channelId: String?): String? {
+    val id = channelId?.substringBefore(" : ") ?: return null
+    if (!CONTACT_LIKE.containsMatchIn(id)) return id
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.toByteArray())
+    return "#" + digest.take(4).joinToString("") { "%02x".format(it) }
 }
 
 enum class NagKeep {

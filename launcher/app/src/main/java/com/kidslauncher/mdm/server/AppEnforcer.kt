@@ -173,15 +173,22 @@ private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
 }
 
 /**
- * The default alarm/clock app: the one holding the next alarm, else the resolver of
- * `AlarmClock.ACTION_SHOW_ALARMS`. The schedule lock doesn't suspend it, so an alarm set inside
- * bedtime still rings (QA step 4 #2). `null` if there's none or only a chooser.
+ * The alarm/clock app the schedule lock spares, so an alarm set inside bedtime still rings (QA step 4 #2): the one
+ * holding the next alarm, else the resolver of `AlarmClock.ACTION_SHOW_ALARMS` - but since security review S-L3 only
+ * when it is a lock clock app (`lockClockPackages`: the system clock app, or Fossify Clock with its pinned signer),
+ * else the system clock app ([sparedAlarmApp]). Any allowlisted app may call `setAlarmClock`; it is not spared for it.
+ * `null` if there's none.
  */
 internal fun alarmAppPackage(context: Context): String? = try {
+    val pm = context.packageManager
     val next = context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent?.creatorPackage
-    next ?: context.packageManager
-        .resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)
+    val resolved = pm.resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)
         ?.activityInfo?.packageName?.takeIf { it != "android" }
+    val systemClock = pm.queryIntentActivities(
+        Intent(AlarmClock.ACTION_SHOW_ALARMS),
+        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong()),
+    ).map { it.activityInfo.packageName }.firstOrNull { it != "android" }
+    sparedAlarmApp(next, resolved, systemClock, com.kidslauncher.mdm.lock.ClockApp.installed(context))
 } catch (e: Exception) {
     Log.w(LOG_TAG, "Couldn't look up the alarm app", e)
     null
@@ -332,7 +339,12 @@ object AppEnforcer {
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
         CallPolicyStore.ensureLoaded(context)
         val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
-        val hardening = hardeningPlan(policy?.hardening, managedForHardening)
+        // Security review S-L11: DISALLOW_CONFIG_VPN also while the Web filter is on (a filter-only phone) - lifted
+        // with the filter by the override and the pause, as the filter is.
+        val hardening = withFilterVpnLock(
+            hardeningPlan(policy?.hardening, managedForHardening), policy?.hardening,
+            filterOn = policy != null && !overrideActive && policy.vpnFilterEnabled,
+        )
         clearHardening(context, dpm, admin, hardening)
         // Design 64 step 2: an unmanaged phone (un-enrolled from the server's side, or never
         // managed) keeps no zone fence, passive feed, motion series or queued fix. Never throws.
@@ -544,6 +556,9 @@ object AppEnforcer {
         com.kidslauncher.mdm.music.VolumeCap.refresh(context, policy, managedForHardening, overrideActive)
 
         clearRadioRestrictions(dpm, admin)
+        // Security review S-L5: no Bluetooth file transfer (OPP) to or from a friend's phone or a PC while managed -
+        // audio devices are untouched. Lifted by the override and the pause, like every restriction of ours.
+        setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH_SHARING, bluetoothSharingRestricted(managedForHardening, overrideActive))
 
         // Same "fully open" treatment as everything else while an override is active - confirmed
         // live this needs to include the VPN filter too: the whole point of the offline-override PIN

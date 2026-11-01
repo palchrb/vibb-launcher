@@ -128,10 +128,12 @@ object NotificationRuleRuntime {
     /** Cancel or snooze (the budget decides) - and count it. Only package and channel are kept. */
     fun act(facts: NotificationFacts): NagAction {
         val action = budget.action(facts.packageName, facts.channelId, SystemClock.elapsedRealtime())
-        counts.record(facts.packageName, facts.channelId, action)
-        val total = counts.total(facts.packageName, facts.channelId)
+        // P-L1: counted, logged and reported by the reportable channel only - never a contact.
+        val channel = reportableChannel(facts.channelId)
+        counts.record(facts.packageName, channel, action)
+        val total = counts.total(facts.packageName, channel)
         if (nagLogDue(total)) {
-            Log.i(LOG_TAG, "${action.name.lowercase()} ${facts.packageName} / ${facts.channelId ?: "-"} ($total since the last report)")
+            Log.i(LOG_TAG, "${action.name.lowercase()} ${facts.packageName} / ${channel ?: "-"} ($total since the last report)")
         }
         return action
     }
@@ -164,11 +166,12 @@ object NotificationRuleRuntime {
     /** A cancel or snooze that threw (unbound in between, or the platform refused with an exception):
      * under the filter's one tag, so B6's `-s NotificationRule` shows it (qa-nf-keep-log-code Q-4). */
     fun removeFailed(facts: NotificationFacts, e: Exception) =
-        Log.w(LOG_TAG, "couldn't remove ${facts.packageName} / ${facts.channelId ?: "-"}: ${e.javaClass.simpleName}")
+        Log.w(LOG_TAG, "couldn't remove ${facts.packageName} / ${reportableChannel(facts.channelId) ?: "-"}: ${e.javaClass.simpleName}")
 
     private fun logKept(packageName: String, channelId: String?, reason: String, label: String, due: (Int) -> Boolean) {
-        val total = keeps.record(packageName, channelId, reason)
-        if (due(total)) Log.i(LOG_TAG, "kept $packageName / ${channelId ?: "-"}: $label ($total so far)")
+        val channel = reportableChannel(channelId)
+        val total = keeps.record(packageName, channel, reason)
+        if (due(total)) Log.i(LOG_TAG, "kept $packageName / ${channel ?: "-"}: $label ($total so far)")
     }
 
     /**
@@ -186,9 +189,10 @@ object NotificationRuleRuntime {
             if (skipped > 0) Log.i(LOG_TAG, "post-cancel checks skipped ($skipped)")
             val live = listener?.takeIf { it === service } ?: return@postDelayed
             if (!platformKeptAfterCancel(live.activePostTime(key), postTime)) return@postDelayed
-            if (platformKeptLogged.add(facts.packageName to facts.channelId)) {
+            val channel = reportableChannel(facts.channelId)
+            if (platformKeptLogged.add(facts.packageName to channel)) {
                 while (platformKeptLogged.size > 64) platformKeptLogged.remove(platformKeptLogged.first())
-                Log.i(LOG_TAG, "platform kept ${facts.packageName} / ${facts.channelId ?: "-"}")
+                Log.i(LOG_TAG, "platform kept ${facts.packageName} / ${channel ?: "-"}")
             }
         }, postCancelToken, POST_CANCEL_CHECK_MS)
     }

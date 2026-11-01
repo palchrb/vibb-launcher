@@ -29,7 +29,8 @@ private data class QueuedEvent(val domain: String, val category: String, val blo
  * before a self-update can SIGKILL this process, and an async write can lose that race).
  */
 object BlockedEventLog {
-    private val lastLoggedAt = HashMap<String, Long>()
+    /** Bounded (S-L9): the least recently logged domain goes once 512 are held. */
+    private val lastLoggedAt = DedupTimes()
     private val lock = Any()
     /** `null` until read from prefs (process start) or set by a sync. */
     @Volatile
@@ -60,9 +61,7 @@ object BlockedEventLog {
         if (!isEnabled(context)) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
-            val last = lastLoggedAt[domain]
-            if (last != null && now - last < DEDUP_WINDOW_MS) return
-            lastLoggedAt[domain] = now
+            if (lastLoggedAt.seenWithin(domain, now, DEDUP_WINDOW_MS)) return
 
             val queue = loadQueue(context).toMutableList()
             queue.add(QueuedEvent(domain, category, now))

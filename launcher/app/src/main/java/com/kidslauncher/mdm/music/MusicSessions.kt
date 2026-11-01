@@ -204,7 +204,9 @@ object MusicSessions {
      * Home - `ALLOW_IF_VISIBLE` (QA #8, as `VoipCalls`). Never used by the lock.
      */
     fun openSessionActivity(context: Context, controller: MediaController?): Boolean {
-        val intent = controller?.sessionActivity ?: return false
+        // Security review S-L1: only the player's own activity - never a PendingIntent of another app.
+        val intent = controller?.sessionActivity
+            ?.takeIf { com.kidslauncher.mdm.lock.intentOfApp(it.creatorPackage, controller.packageName) } ?: return false
         return try {
             intent.send(context, 0, null, null, null, null, VisibleSender.options())
             true

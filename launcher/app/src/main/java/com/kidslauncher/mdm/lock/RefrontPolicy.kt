@@ -252,7 +252,8 @@ fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yielded
 
 /*
  * Crash guard (design §2(b), QA 10 #14, qa-10-code #6): only real crashes of the lock count -
- * recorded (commit) by the process's uncaught-exception handler while PinLockActivity exists. A
+ * recorded (commit) by the process's uncaught-exception handler while PinLockActivity exists, and since
+ * security review S-L2 only a throwable with a frame of the lock's package ([lockCrash]). A
  * configuration-change recreation or a plain process kill isn't one. 3 crashes within 2 minutes
  * switch the lock off at the next PinLockActivity start (reported as `crash_guard`); a sync re-arms
  * it at most once every 10 minutes.
@@ -271,6 +272,24 @@ data class CrashGuard(
 /** A crash while the lock screen existed. */
 fun guardOnCrash(guard: CrashGuard, nowMs: Long): CrashGuard =
     guard.copy(crashes = guard.crashes.filter { nowMs - it in 0 until GUARD_WINDOW_MS } + nowMs)
+
+/**
+ * Security review S-L2: whether an uncaught [throwable] is the lock's own - one of its frames (or of a cause's) is in
+ * `com.kidslauncher.mdm.lock`. Only those count toward the guard: a crash of another part of the process while the
+ * lock screen exists (a listener reader, a sync coroutine) must not be able to switch the lock off.
+ */
+fun lockCrash(throwable: Throwable): Boolean {
+    var t: Throwable? = throwable
+    var depth = 0
+    while (t != null && depth < 8) {
+        if (t.stackTrace.any { it.className.startsWith(LOCK_PACKAGE_PREFIX) }) return true
+        t = t.cause?.takeIf { it !== t }
+        depth++
+    }
+    return false
+}
+
+private const val LOCK_PACKAGE_PREFIX = "com.kidslauncher.mdm.lock."
 
 /** A PinLockActivity.onCreate: trips when [GUARD_CRASHES] crashes happened within the window. */
 fun guardOnCreate(guard: CrashGuard, nowMs: Long): CrashGuard {

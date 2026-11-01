@@ -64,7 +64,7 @@ object MusicSync {
         val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
         if (!dpm.isDeviceOwnerApp(app.packageName)) return
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
-        for (pkg in MUSIC_PACKAGES.filter { MusicStore.isInstalled(app, it) }) {
+        for (pkg in MusicTrust.installed(app)) {
             for ((permission, state) in MUSIC_RUNTIME_GRANTS) {
                 val wanted = state(managed)
                 try {
@@ -108,7 +108,7 @@ object MusicSync {
         if (!dpm.isDeviceOwnerApp(app.packageName)) return false
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
         var changed = false
-        for (pkg in MUSIC_PACKAGES.filter { MusicStore.isInstalled(app, it) }) {
+        for (pkg in MusicTrust.installed(app)) {
             val desired = when {
                 policy == null -> Bundle()
                 music == null -> continue // an older or newer server: keep what is there

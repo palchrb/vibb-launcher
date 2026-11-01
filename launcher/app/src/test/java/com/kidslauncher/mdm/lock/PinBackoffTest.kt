@@ -22,14 +22,25 @@ class PinBackoffTest {
     }
 
     @Test
-    fun `four free tries, then 30 s, 1, 2, 5 and 15 minutes, capped`() {
+    fun `four free tries, then 30 s, 1, 2, 5, 15 minutes and doubling to 24 hours (S-L6)`() {
         assertEquals(listOf(0L, 0L, 0L, 0L, 0L), (0..4).map(::backoffDurationMs))
         assertEquals(30_000L, backoffDurationMs(5))
         assertEquals(60_000L, backoffDurationMs(6))
         assertEquals(120_000L, backoffDurationMs(7))
         assertEquals(300_000L, backoffDurationMs(8))
         assertEquals(900_000L, backoffDurationMs(9))
-        assertEquals(900_000L, backoffDurationMs(50))
+        // S-L6: no 15-minute cap any more - a patient guesser gets a few tries a day.
+        assertEquals(1_800_000L, backoffDurationMs(10))
+        assertEquals(57_600_000L, backoffDurationMs(15))
+        assertEquals(86_400_000L, backoffDurationMs(16))
+        assertEquals(86_400_000L, backoffDurationMs(50))
+        val waits = (5..20).map(::backoffDurationMs)
+        assertEquals(waits.sorted(), waits)
+        // A day of tries after the free ones: far fewer than the ~100 the old cap allowed.
+        var spent = 0L
+        var tries = 0
+        while (spent < 86_400_000L) spent += backoffDurationMs(PIN_FREE_ATTEMPTS + ++tries)
+        assertTrue("$tries", tries <= 12)
         assertEquals(0L, backoffRemaining(failed(4), t0))
         assertEquals(30_000L, backoffRemaining(failed(5), t0))
         assertEquals(10_000L, backoffRemaining(failed(5), later(20_000L)))
@@ -92,6 +103,8 @@ class PinBackoffTest {
     fun `wait text`() {
         assertEquals("0:28", backoffText(27_500L))
         assertEquals("15:00", backoffText(900_000L))
+        assertEquals("24:00:00", backoffText(86_400_000L))
+        assertEquals("1:00:00", backoffText(3_600_000L))
         assertEquals("0:01", backoffText(1L))
     }
 

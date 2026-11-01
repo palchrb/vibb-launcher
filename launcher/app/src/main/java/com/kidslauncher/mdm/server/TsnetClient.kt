@@ -115,6 +115,11 @@ object TsnetClient {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to connect to tailnet", e)
             null
+        } catch (e: LinkageError) {
+            // Security review S-L10: the aar is arm64-only - a missing or bad `.so` (UnsatisfiedLinkError,
+            // ExceptionInInitializerError) fails this connect, it doesn't crash the process from an IO coroutine.
+            Log.w(LOG_TAG, "tsnet's native library couldn't load: ${e.javaClass.simpleName}")
+            null
         }
         proxyChanged(before)
         return ip
@@ -294,6 +299,8 @@ object TsnetClient {
             client?.close()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to close tsnet client", e)
+        } catch (e: LinkageError) {
+            Log.w(LOG_TAG, "Failed to close tsnet client: ${e.javaClass.simpleName}")
         } finally {
             client = null
             clientParams = null

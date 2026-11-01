@@ -10,6 +10,7 @@ import com.kidslauncher.mdm.lock.KEY_CALL_STYLE_ACTION
 import com.kidslauncher.mdm.lock.VoipCalls
 import com.kidslauncher.mdm.lock.VoipNotice
 import com.kidslauncher.mdm.lock.VoipNoticeKind
+import com.kidslauncher.mdm.lock.intentOfApp
 import com.kidslauncher.mdm.lock.pickAnswerIntent
 import com.kidslauncher.mdm.lock.voipNoticeKind
 
@@ -17,7 +18,7 @@ import com.kidslauncher.mdm.lock.voipNoticeKind
  * The notification listener's reader for VoIP calls over the PIN lock (design 17): of every other
  * app's notification only the category, channel id, flags and whether it has a full-screen intent
  * ([voipNoticeKind]) and the CallStyle call type (an int); of a call-shaped one also the intents
- * the lock may send - the ring's full-screen intent and CallStyle decline and answer actions (17b:
+ * the lock may send (only those the app itself created, S-L1) - the ring's full-screen intent and CallStyle decline and answer actions (17b:
  * [pickAnswerIntent] from `EXTRA_ANSWER_INTENT` or the actions' intents and CallStyle marker - never
  * an action's title), and the call service notification's content intent (never the ring's).
  * Never a title, text, person or message (`VoipCallGuardTest` scans this file); nothing is logged
@@ -47,24 +48,29 @@ object VoipCallReader {
         return when (kind) {
             VoipNoticeKind.NONE -> null
             VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind, incoming)
-            VoipNoticeKind.IN_CALL -> VoipNotice(sbn.key, sbn.packageName, kind, content = n.contentIntent)
+            VoipNoticeKind.IN_CALL -> VoipNotice(sbn.key, sbn.packageName, kind, content = n.contentIntent.ofApp(sbn.packageName))
         }
     }
 
     /** A ring: its full-screen intent (none when Android dropped it) and the CallStyle actions. */
     private fun ring(sbn: StatusBarNotification, n: Notification, kind: VoipNoticeKind, incoming: Boolean): VoipNotice {
-        val decline = n.extras?.getParcelable(Notification.EXTRA_DECLINE_INTENT, PendingIntent::class.java)
+        val pkg = sbn.packageName
+        val decline = n.extras?.getParcelable(Notification.EXTRA_DECLINE_INTENT, PendingIntent::class.java).ofApp(pkg)
         val answer = pickAnswerIntent(
-            answerExtra = n.extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java),
+            answerExtra = n.extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java).ofApp(pkg),
             decline = decline,
-            actions = n.actions.orEmpty().map { CallAction(it.actionIntent, it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true) },
+            actions = n.actions.orEmpty().map { CallAction(it.actionIntent.ofApp(pkg), it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true) },
             incoming = incoming,
         )
         return VoipNotice(
-            sbn.key, sbn.packageName, kind,
-            fullScreen = n.fullScreenIntent, decline = decline, answer = answer, incoming = incoming,
+            sbn.key, pkg, kind,
+            fullScreen = n.fullScreenIntent.ofApp(pkg), decline = decline, answer = answer, incoming = incoming,
         )
     }
+
+    /** Security review S-L1: only an intent the notification's own app created ([intentOfApp]) - never another
+     * app's PendingIntent carried in its ring. */
+    private fun PendingIntent?.ofApp(pkg: String): PendingIntent? = this?.takeIf { intentOfApp(it.creatorPackage, pkg) }
 
     private fun readOrNull(context: Context, sbn: StatusBarNotification): VoipNotice? = try {
         read(context, sbn)

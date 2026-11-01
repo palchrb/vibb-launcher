@@ -58,7 +58,8 @@ class CustomUpstreamPrefTest {
     @Test
     fun `nothing logs a server - kinds, reasons, counts and exception classes only`() {
         // retryMs/nextMs: the VPN's tunnel-retry delays (qa-lfix-notifs-code #1), numbers only.
-        val allowed = Regex("""^(mode|isPrimary|label|retryMs|nextMs|[\w.?]*\.(kind|wire|ok|failures|periods|size|simpleName))$""")
+        // dropped: the DNS queries dropped over the intake limit (security review S-L9), a count.
+        val allowed = Regex("""^(mode|isPrimary|label|retryMs|nextMs|dropped|[\w.?]*\.(kind|wire|ok|failures|periods|size|simpleName))$""")
         val offenders = mutableListOf<String>()
         val files = listOf("CustomDns.kt", "UpstreamTransport.kt", "BootstrapDns.kt", "UpstreamChooser.kt", "CustomUpstream.kt", "KidVpnService.kt", "PublicResolver.kt")
         for (name in files) {

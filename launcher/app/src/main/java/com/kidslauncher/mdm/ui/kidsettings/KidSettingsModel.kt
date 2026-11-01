@@ -64,6 +64,10 @@ fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy): ControlsSecti
     return if (rows.wifi || rows.bluetooth || rows.brightness || rows.sound || rows.touch) rows else ControlsSection.NoneEnabled
 }
 
+/** Security review S-L5: the Bluetooth devices page may stay open only while [section] still shows the Bluetooth row
+ * (`quick_controls_mask`'s bit); else it finishes - at its start and after every apply. */
+fun bluetoothPageAllowed(section: ControlsSection): Boolean = (section as? ControlsSection.Rows)?.bluetooth == true
+
 /** One wallpaper in the picker. */
 data class WallpaperTile(val wallpaper: Wallpaper, val selected: Boolean)
 

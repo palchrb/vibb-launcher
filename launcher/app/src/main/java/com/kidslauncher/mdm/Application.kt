@@ -215,8 +215,9 @@ class Application : android.app.Application() {
         // DynamicColors.applyToActivitiesIfAvailable(this)
 
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-            // Handy's PIN lock crash guard (step 10): only crashes while the lock screen exists.
-            if (com.kidslauncher.mdm.lock.PinLockActivity.instances > 0) {
+            // Handy's PIN lock crash guard (step 10): only crashes while the lock screen exists, and only the
+            // lock's own (security review S-L2: a frame in the lock's package).
+            if (com.kidslauncher.mdm.lock.PinLockActivity.instances > 0 && com.kidslauncher.mdm.lock.lockCrash(throwable)) {
                 try {
                     com.kidslauncher.mdm.lock.PinLockStore.recordCrash(this@Application)
                 } catch (t: Throwable) {

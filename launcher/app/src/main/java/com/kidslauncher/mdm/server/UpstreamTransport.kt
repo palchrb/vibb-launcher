@@ -138,11 +138,13 @@ fun resolveDoT(
                     out.write(byteArrayOf((query.size shr 8).toByte(), (query.size and 0xFF).toByte()) + query)
                     out.flush()
                     written = true
-                    tls.soTimeout = remainingMs().coerceAtLeast(1)
                     val input = tls.inputStream
-                    val len = ByteArray(2).also { readFully(input, it) }
+                    // S-L9: one deadline for the whole answer - a server trickling a byte at a time can't hold the
+                    // query past the budget (the timeout no longer resets per read).
+                    val timeout = { ms: Int -> tls.soTimeout = ms }
+                    val len = ByteArray(2).also { readFully(input, it, ::remainingMs, timeout) }
                     val resp = ByteArray(((len[0].toInt() and 0xFF) shl 8) or (len[1].toInt() and 0xFF))
-                    readFully(input, resp)
+                    readFully(input, resp, ::remainingMs, timeout)
                     return classifyAnswer(resp, BackupReason.CONNECT)
                 }
             }
@@ -156,9 +158,17 @@ fun resolveDoT(
     return outcome
 }
 
-private fun readFully(input: InputStream, buf: ByteArray) {
+/**
+ * [buf] filled from [input] before the deadline (security review S-L9): before every read the socket's timeout is set
+ * to what is left ([remainingMs] -> [setTimeoutMs]); none left is a [java.net.SocketTimeoutException], however many
+ * bytes the server keeps trickling.
+ */
+internal fun readFully(input: InputStream, buf: ByteArray, remainingMs: () -> Int, setTimeoutMs: (Int) -> Unit) {
     var offset = 0
     while (offset < buf.size) {
+        val left = remainingMs()
+        if (left <= 0) throw java.net.SocketTimeoutException("DoT answer past its deadline")
+        setTimeoutMs(left)
         val n = input.read(buf, offset, buf.size - offset)
         if (n < 0) throw EOFException()
         offset += n

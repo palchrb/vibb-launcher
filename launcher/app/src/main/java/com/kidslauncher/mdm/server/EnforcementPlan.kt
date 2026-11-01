@@ -375,3 +375,18 @@ fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<Stri
         }
     }.toSet()
 }
+
+/**
+ * Security review S-L3: the alarm app the schedule lock spares - the next alarm's creator ([nextAlarmCreator]) or the
+ * `SHOW_ALARMS` resolver ([resolvedClock]) only when it is one of the lock's clock apps (the [systemClock] app, Fossify
+ * Clock while [clockAppVerified]: [com.kidslauncher.mdm.lock.lockClockPackages]), else the [systemClock] app. An
+ * allowlisted app that calls `setAlarmClock` is never spared by it.
+ */
+fun sparedAlarmApp(nextAlarmCreator: String?, resolvedClock: String?, systemClock: String?, clockAppVerified: Boolean): String? {
+    val clocks = com.kidslauncher.mdm.lock.lockClockPackages(systemClock, clockAppVerified)
+    return nextAlarmCreator?.takeIf { it in clocks } ?: resolvedClock?.takeIf { it in clocks } ?: systemClock
+}
+
+/** Security review S-L5: `DISALLOW_BLUETOOTH_SHARING` while the phone is [managed] (hardening's sense), lifted by the
+ * override and the pause ([overrideActive]) - Bluetooth headphones (design 52) are unaffected. */
+fun bluetoothSharingRestricted(managed: Boolean, overrideActive: Boolean): Boolean = managed && !overrideActive
