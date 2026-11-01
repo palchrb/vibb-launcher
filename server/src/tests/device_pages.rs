@@ -541,7 +541,7 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     let html = res.text();
     assert_eq!(nav_current(&html), "devices");
     assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
-    assert!(html.contains("<h1 class=\"page-title\">Lock Screen &amp; PINs</h1>"));
+    assert!(html.contains("<h1 class=\"page-title\">Lock Screen &#38; PINs</h1>"));
     assert!(!html.contains("class=\"app-header\""));
     // The groups in the mockup's order.
     let at = |id: &str| html.find(&format!("<section id=\"{id}\"")).expect(id);

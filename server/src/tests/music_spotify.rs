@@ -4279,7 +4279,7 @@ mod entries {
         assert!(
             !filter(ella)
                 .await
-                .contains("Spotify&#39;s hosts are allowed on this phone")
+                .contains("Spotify's hosts are allowed on this phone")
         );
         let save = |device: i64, account: String| {
             let cookie = cookie.clone();
@@ -4320,7 +4320,7 @@ mod entries {
         assert!(
             filter(ella)
                 .await
-                .contains("Spotify&#39;s hosts are allowed on this phone while it plays Spotify")
+                .contains("Spotify's hosts are allowed on this phone while it plays Spotify")
         );
         // An account that isn't logged in here, or junk: refused, nothing changed.
         for junk in ["999".to_string(), "x".to_string()] {
@@ -4461,7 +4461,7 @@ mod entries {
         assert!(
             !filter(ella)
                 .await
-                .contains("Spotify&#39;s hosts are allowed on this phone")
+                .contains("Spotify's hosts are allowed on this phone")
         );
         // Unbound, neither its outcome nor its account raises a row.
         let summary = page_text(&app.get_page(&format!("/devices/{ella}"), &cookie).await);

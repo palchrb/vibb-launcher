@@ -486,7 +486,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .text();
     let blocked = group(&html, "blocked-apps");
     assert!(
-        blocked.contains("And 17 more the phone doesn't list"),
+        blocked.contains("And 17 more the phone doesn&#39;t list"),
         "{blocked}"
     );
     // The phone's label, escaped in the row and in the confirm (qa-31-s10-code L3).
