@@ -186,7 +186,11 @@ struct CalendarTemplate {
     on_home: bool,
     kid_choices: Vec<KidChoice>,
     glance_next: bool,
-    reminders_row: bool,
+    /// The select's value: `off`, `row` or `ping` (the row plus one sound, migration 0113).
+    reminders: &'static str,
+    /// `ping` chosen for a phone whose Vibb One shows the row but doesn't know the sound yet (no
+    /// `calendar::PING_CAPABILITY`): it is sent `row`, and the row says so.
+    ping_older: bool,
     state: ReportState,
     calendars: Vec<CalendarView>,
     rules: Vec<RuleView>,
@@ -419,6 +423,11 @@ pub async fn view_calendar(
         .collect();
     let (on_home, kid_adds, glance_next, lock_reminders) =
         switches.unwrap_or_else(calendar::default_switches);
+    let reminders = match lock_reminders.as_str() {
+        "row" => "row",
+        "ping" => "ping",
+        _ => "off",
+    };
     let saved_by_key: BTreeMap<&str, &PolicyCalendar> =
         saved.iter().map(|c| (c.key.as_str(), c)).collect();
     // All eight colours held by this phone's rows (hidden ones too): a calendar without one gets none (QA L6).
@@ -533,7 +542,12 @@ pub async fn view_calendar(
             on_home,
             kid_choices: kid_choices(lang, kid_adds, report.as_ref(), &saved),
             glance_next,
-            reminders_row: lock_reminders == "row",
+            reminders,
+            ping_older: reminders == "ping"
+                && capabilities
+                    .iter()
+                    .any(|c| c == calendar::CALENDAR_CAPABILITY)
+                && !capabilities.iter().any(|c| c == calendar::PING_CAPABILITY),
             state: state_of,
             calendars,
             rules: rule_views,
@@ -730,9 +744,9 @@ async fn prune_default_rows(
     .map(|_| ())
 }
 
-/// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off` or `row`, the select
-/// "Reminders on the lock screen": a select, not a switch, since a third form - a quiet row with a ping - is to come),
-/// back to `#lock`. Any other `reminders` is a 400.
+/// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off`, `row` or `ping` - the
+/// select "Reminders on the lock screen": Off / Quiet row / Quiet row + sound; `ping` is stored as `row` with
+/// `calendar_lock_ping`, migration 0113), back to `#lock`. Any other `reminders` is a 400.
 pub async fn save_lock(
     State(state): State<AppState>,
     lang: Lang,
@@ -743,16 +757,19 @@ pub async fn save_lock(
     if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
-    let reminders = match field(&fields, "reminders") {
-        "" | "off" => "off",
-        "row" => "row",
+    let (reminders, ping) = match field(&fields, "reminders") {
+        "" | "off" => ("off", false),
+        "row" => ("row", false),
+        "ping" => ("row", true),
         _ => return bad(lang, "calendar.error.reminders"),
     };
     match sqlx::query(
-        "UPDATE device_policy SET calendar_glance_next = ?, calendar_lock_reminders = ? WHERE device_id = ?",
+        "UPDATE device_policy SET calendar_glance_next = ?, calendar_lock_reminders = ?, calendar_lock_ping = ? \
+         WHERE device_id = ?",
     )
     .bind(has(&fields, "glance_next"))
     .bind(reminders)
+    .bind(ping)
     .bind(id)
     .execute(&state.db)
     .await

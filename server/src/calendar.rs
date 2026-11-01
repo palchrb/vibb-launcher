@@ -18,6 +18,9 @@ use unicode_normalization::UnicodeNormalization;
 
 /// A launcher with Dagen reports this capability.
 pub const CALENDAR_CAPABILITY: &str = "calendar_v1";
+/// A launcher that knows `lock_reminders: "ping"` (the quiet row plus one sound) reports this capability; an older one
+/// reads anything but `"row"` as off, so it is sent `"row"` ([served_lock_reminders]).
+pub const PING_CAPABILITY: &str = "calendar_ping_v1";
 /// Rules a phone may have.
 pub const MAX_RULES: usize = 30;
 /// A rule's text to match, in code points after [clean].
@@ -434,7 +437,8 @@ pub struct CalendarPolicy {
     pub kid_adds: bool,
     /// The lock's "Neste: …" line (A).
     pub glance_next: bool,
-    /// `off` or `row`: the master switch over every calendar's reminder (C).
+    /// `off`, `row` or `ping` (the row plus one sound, migration 0113): the master switch over every calendar's
+    /// reminder (C). `ping` only to a launcher with [PING_CAPABILITY] ([served_lock_reminders]).
     pub lock_reminders: String,
     pub calendars: Vec<PolicyCalendar>,
     pub rules: Vec<Rule>,
@@ -510,18 +514,31 @@ pub fn default_switches() -> (bool, bool, bool, String) {
     (true, true, false, "off".to_string())
 }
 
-/// The phone-wide switches: (on_home, kid_adds, glance_next, lock_reminders).
+/// The phone-wide switches: (on_home, kid_adds, glance_next, lock_reminders) - `lock_reminders` `off`, `row` or
+/// `ping` (the row with `calendar_lock_ping`, migration 0113).
 pub async fn switches(
     db: &SqlitePool,
     device_id: i64,
 ) -> Result<Option<(bool, bool, bool, String)>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT calendar_on_home, calendar_kid_adds, calendar_glance_next, calendar_lock_reminders \
+        "SELECT calendar_on_home, calendar_kid_adds, calendar_glance_next, \
+         CASE WHEN calendar_lock_reminders = 'row' AND calendar_lock_ping = 1 THEN 'ping' \
+         ELSE calendar_lock_reminders END \
          FROM device_policy WHERE device_id = ?",
     )
     .bind(device_id)
     .fetch_optional(db)
     .await
+}
+
+/// The `lock_reminders` a phone is sent: `ping` reads as `row` to a launcher without [PING_CAPABILITY] - it reads
+/// anything but `row` as off, and the quiet row is what it can do.
+pub fn served_lock_reminders(stored: &str, capabilities: &[String]) -> String {
+    if stored == "ping" && !capabilities.iter().any(|c| c == PING_CAPABILITY) {
+        "row".to_string()
+    } else {
+        stored.to_string()
+    }
 }
 
 /// The policy's `calendar` for one phone. A DB error fails the policy (500, the phone keeps its cache): a missing

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,14 +7,14 @@
 {% let tab = "apps" %}
 {% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Apps</a>
-    <h1 class="page-title">Add App</h1>
+    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.apps") }}</a>
+    <h1 class="page-title">{{ self.t("apps.add.title") }}</h1>
 
     <form method="post" action="/apps/tracked/new">
         <div class="group form-group">
             <div class="field">
-                <label class="field-label" for="name">Name</label>
-                <input type="text" id="name" name="name" value="{{ name }}" placeholder="e.g. Tailscale" required{% if error.is_none() %} autofocus{% endif %}>
+                <label class="field-label" for="name">{{ self.t("apps.field.name") }}</label>
+                <input type="text" id="name" name="name" value="{{ name }}" placeholder="{{ self.t("apps.add.name_example") }}" required{% if error.is_none() %} autofocus{% endif %}>
             </div>
         </div>
 
@@ -22,77 +22,77 @@
             only its fields (GitHub's, F-Droid's, none for uploads) - no script. The wrapper holds
             the fields too, so it has no radiogroup role: the radios with one name are the group
             (qa-31-s11-code L7). -#}
-        <h2 class="group-header">Source</h2>
+        <h2 class="group-header">{{ self.t("apps.field.source") }}</h2>
         <div class="source-choice">
             <input type="radio" class="choice-radio" id="source-github" name="source_type" value="github"{% if source == "github" %} checked{% endif %}>
             <input type="radio" class="choice-radio" id="source-fdroid" name="source_type" value="fdroid"{% if source == "fdroid" %} checked{% endif %}>
             <input type="radio" class="choice-radio" id="source-manual" name="source_type" value="manual"{% if source == "manual" %} checked{% endif %}>
             <div class="group">
-                <label class="row choice-row" for="source-github"><span class="row-label">GitHub releases</span><svg class="choice-check check-github" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
-                <label class="row choice-row" for="source-fdroid"><span class="row-label">F-Droid</span><svg class="choice-check check-fdroid" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
-                <label class="row choice-row" for="source-manual"><span class="row-label">Upload APKs yourself</span><svg class="choice-check check-manual" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+                <label class="row choice-row" for="source-github"><span class="row-label">{{ self.t("apps.add.source_github") }}</span><svg class="choice-check check-github" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+                <label class="row choice-row" for="source-fdroid"><span class="row-label">{{ self.t("apps.source.fdroid") }}</span><svg class="choice-check check-fdroid" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+                <label class="row choice-row" for="source-manual"><span class="row-label">{{ self.t("apps.add.source_manual") }}</span><svg class="choice-check check-manual" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
             </div>
-            <p class="group-footer">Phones get each new version by themselves.</p>
+            <p class="group-footer">{{ self.t("apps.add.source_footer") }}</p>
 
             <div class="fdroid-only">
                 <div class="group form-group">
                     <div class="field">
-                        <label class="field-label" for="fdroid_package">Package</label>
-                        <details class="info field-info"><summary aria-label="About the package"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The app's id in the repo: the end of its address on F-Droid, e.g. ws.xsoh.etar for f-droid.org/packages/ws.xsoh.etar.</p><p data-note="abi">For apps with one APK for every phone: for an app the repo builds per processor type (ABI), the newest build may be one the phone can't install.</p></div></details>
-                        <input type="text" id="fdroid_package" name="fdroid_package" value="{{ fdroid_package }}" placeholder="e.g. ws.xsoh.etar" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
+                        <label class="field-label" for="fdroid_package">{{ self.t("apps.field.package") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("apps.field.package_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.add.fdroid_package_info") }}</p><p data-note="abi">{{ self.t("apps.add.fdroid_abi") }}</p></div></details>
+                        <input type="text" id="fdroid_package" name="fdroid_package" value="{{ fdroid_package }}" placeholder="{{ self.t("apps.field.package_example") }}" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
                         {% if error_field == "fdroid_package" %}{% if let Some(e) = error %}<p class="field-error" id="fdroid_package-error">{{ e }}</p>{% endif %}{% endif %}
                     </div>
                     <div class="field">
-                        <label class="field-label" for="fdroid_repo">Repo</label>
-                        <details class="info field-info"><summary aria-label="About the repo"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>F-Droid's own repo, or another F-Droid repo such as IzzyOnDroid (https://apt.izzysoft.de/fdroid/repo). Each download is checked against the checksum in the repo's index.</p></div></details>
-                        <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ fdroid_repo }}" placeholder="https://f-droid.org/repo" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
+                        <label class="field-label" for="fdroid_repo">{{ self.t("apps.field.repo") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("apps.field.repo_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.add.fdroid_repo_info") }}</p></div></details>
+                        <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ fdroid_repo }}" placeholder="{{ crate::fdroid::DEFAULT_REPO }}" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
                         {% if error_field == "fdroid_repo" %}{% if let Some(e) = error %}<p class="field-error" id="fdroid_repo-error">{{ e }}</p>{% endif %}{% endif %}
                     </div>
                 </div>
-                <p class="group-footer" data-note="one-source">F-Droid signs apps with its own key: an app from F-Droid can't later switch to GitHub or Play without a reinstall.</p>
+                <p class="group-footer" data-note="one-source">{{ self.t("apps.add.fdroid_one_source") }}</p>
             </div>
 
             <div class="github-only">
                 <div class="group form-group">
                     <div class="field">
-                        <label class="field-label" for="github_repo">GitHub repo</label>
-                        <input type="text" id="github_repo" name="github_repo" value="{{ github_repo }}" placeholder="owner/repo, or its link">
+                        <label class="field-label" for="github_repo">{{ self.t("apps.field.github_repo") }}</label>
+                        <input type="text" id="github_repo" name="github_repo" value="{{ github_repo }}" placeholder="{{ self.t("apps.field.github_repo_example") }}">
                     </div>
                 </div>
 
                 <details class="section" id="more"{% if self.more_open() %} open{% endif %}>
-                    <summary class="row section-toggle"><span class="row-label">More Options</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                    <summary class="row section-toggle"><span class="row-label">{{ self.t("apps.add.more") }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
                     <div class="group form-group">
                         <div class="field">
-                            <label class="field-label" for="asset_pattern">File name contains</label>
-                            <details class="info field-info"><summary aria-label="About the file name filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$). Needed when a release has several APKs.</p></div></details>
-                            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Any .apk"{% if error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
+                            <label class="field-label" for="asset_pattern">{{ self.t("apps.field.filter") }}</label>
+                            <details class="info field-info"><summary aria-label="{{ self.t("apps.field.filter_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.add.filter_info") }}</p></div></details>
+                            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="{{ self.t("apps.field.filter_any") }}"{% if error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
                             {% if error_field == "asset_pattern" %}{% if let Some(e) = error %}<p class="field-error" id="asset_pattern-error">{{ e }}</p>{% endif %}{% endif %}
                         </div>
                         <div class="field">
-                            <label class="field-label" for="release_tag_prefix">Tag starts with</label>
-                            <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a repo with several apps: launcher-v or music-v in this project's repo. Blank: any release but server-v and music-v.</p></div></details>
-                            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ release_tag_prefix }}" placeholder="e.g. launcher-v"{% if error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
+                            <label class="field-label" for="release_tag_prefix">{{ self.t("apps.field.tag_prefix") }}</label>
+                            <details class="info field-info"><summary aria-label="{{ self.t("apps.field.tag_prefix_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.field.tag_prefix_info") }}</p></div></details>
+                            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ release_tag_prefix }}" placeholder="{{ self.t("apps.field.tag_prefix_example") }}"{% if error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
                             {% if error_field == "release_tag_prefix" %}{% if let Some(e) = error %}<p class="field-error" id="release_tag_prefix-error">{{ e }}</p>{% endif %}{% endif %}
                         </div>
                         <div class="field">
-                            <label class="field-label" for="package_name">Package (optional)</label>
-                            <details class="info field-info"><summary aria-label="About the package"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Not saved: the package is read from the first release.</p></div></details>
-                            <input type="text" id="package_name" name="package_name" value="{{ package_name }}" placeholder="e.g. com.tailscale.ipn">
+                            <label class="field-label" for="package_name">{{ self.t("apps.add.package_optional") }}</label>
+                            <details class="info field-info"><summary aria-label="{{ self.t("apps.field.package_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.add.package_info") }}</p></div></details>
+                            <input type="text" id="package_name" name="package_name" value="{{ package_name }}" placeholder="{{ self.t("apps.add.package_example") }}">
                         </div>
                     </div>
                     <div class="group">
                         <label class="row">
-                            <span class="row-label">Include pre-releases</span>
+                            <span class="row-label">{{ self.t("apps.field.prereleases") }}</span>
                             <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                         </label>
                     </div>
-                    <p class="group-footer">For a repo that only publishes pre-releases.</p>
+                    <p class="group-footer">{{ self.t("apps.add.prereleases_footer") }}</p>
                 </details>
             </div>
         </div>
 
-        <button type="submit" class="button-wide">Add App</button>
+        <button type="submit" class="button-wide">{{ self.t("apps.add.title") }}</button>
     </form>
 </main>
 </body>

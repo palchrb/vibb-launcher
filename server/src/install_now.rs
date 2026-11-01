@@ -3,13 +3,14 @@
 //! under Apps. A `device_commands` row of kind [COMMAND] carries the release tag the row showed;
 //! the phone downloads the newest release on any network, checks it exactly as every self-update
 //! and installs it at once - waiting only for a call or an emergency. What the row says and whether
-//! it offers the button is decided here, pure and typed; the template words it
-//! (`handlers::install_now`, `tracked_app_detail.html`).
+//! it offers the button is decided here, pure and typed, and worded in the reader's language
+//! (`apps.install.*`; `handlers::install_now`, `tracked_app_detail.html`).
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 use crate::app_downloads::AppDownloadEntry;
 use crate::display_time::Zone;
+use crate::i18n::{Lang, t, t_params};
 use crate::models::{CommandStatus, DeviceCommand, Unconfirmed};
 
 /// The command's kind in `device_commands`.
@@ -243,35 +244,42 @@ impl Offer {
         }
     }
 
-    /// The running version, the row's value.
-    pub fn value(&self) -> Option<&str> {
+    /// The running version, the row's value (an unreported one worded in `lang`).
+    pub fn value(&self, lang: Lang) -> Option<&str> {
         match self {
             Offer::Standing(Standing::UpToDate { running } | Standing::Behind { running, .. }) => {
-                Some(running.as_str())
+                Some(if running.is_empty() {
+                    t(lang, "apps.install.unknown_version")
+                } else {
+                    running.as_str()
+                })
             }
             _ => None,
         }
     }
 
-    /// The row's sub-line.
-    pub fn sub(&self) -> Option<String> {
+    /// The row's sub-line, in `lang`.
+    pub fn sub(&self, lang: Lang) -> Option<String> {
+        let version = |key: &str, waiting: &str| t_params(lang, key, &[("version", waiting)]);
         Some(match self {
-            Offer::Standing(Standing::NotReported) => "Hasn't reported yet".to_string(),
-            Offer::Standing(Standing::NoRelease) => "No release to install".to_string(),
+            Offer::Standing(Standing::NotReported) => {
+                t(lang, "apps.install.not_reported").to_string()
+            }
+            Offer::Standing(Standing::NoRelease) => t(lang, "apps.install.no_release").to_string(),
             Offer::Standing(Standing::UpToDate { .. }) => return None,
             Offer::Standing(Standing::Behind {
                 waiting,
                 downloaded: true,
                 ..
-            }) => format!("{waiting} is waiting"),
+            }) => version("apps.install.waiting", waiting),
             Offer::Standing(Standing::Behind { waiting, .. }) => {
-                format!("{waiting} not downloaded yet")
+                version("apps.install.not_downloaded", waiting)
             }
             Offer::Standing(Standing::TooOld { waiting }) => {
-                format!("{waiting} is waiting. Install Now works from this update on.")
+                version("apps.install.too_old", waiting)
             }
-            Offer::Asked { sent: false, .. } => "Install Now: waiting for the phone".to_string(),
-            Offer::Asked { sent: true, .. } => "Install Now: sent, not confirmed yet".to_string(),
+            Offer::Asked { sent: false, .. } => t(lang, "apps.install.asked").to_string(),
+            Offer::Asked { sent: true, .. } => t(lang, "apps.install.sent").to_string(),
             Offer::Working { words } => words.clone(),
         })
     }
@@ -299,7 +307,8 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
         return Standing::NoRelease;
     };
     let waiting = release_name(tag);
-    let running = report.app_version.unwrap_or("Unknown version").to_string();
+    // Empty when the phone didn't say ([Offer::value] words it).
+    let running = report.app_version.unwrap_or_default().to_string();
     // Ahead by the name alone: the same code as the running build (builds before
     // launcher-v0.36.0-rc.4 only, which read the tag by the old rule: [tag_code_as_read_by]).
     let mut same_code = false;
@@ -353,7 +362,7 @@ pub fn offer(
         && awaiting_report(command, report, now.naive_utc())
     {
         return Offer::Working {
-            words: "Installed - waiting for the phone's report".to_string(),
+            words: t(zone.lang(), "apps.install.awaiting_report").to_string(),
         };
     }
     if let Some(command) = newest
@@ -440,16 +449,22 @@ pub fn refusal(
 }
 
 /// What the phone does after its receipt (`received` server time): from its latest report, only
-/// when that report came after the receipt (both server times) - else "The phone got it (14:02)".
+/// when that report came after the receipt (both server times) - else "The phone got it (14:02)";
+/// in the zone's language.
 pub fn working_words(
     received: Option<DateTime<Utc>>,
     report: Option<&Report>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> String {
+    let lang = zone.lang();
     let got_it = || match received {
-        Some(at) => format!("The phone got it ({})", zone.when(at, now)),
-        None => "The phone got it".to_string(),
+        Some(at) => t_params(
+            lang,
+            "apps.install.got_it_at",
+            &[("when", &zone.when(at, now))],
+        ),
+        None => t(lang, "apps.install.got_it").to_string(),
     };
     let Some(report) = report else {
         return got_it();
@@ -462,26 +477,30 @@ pub fn working_words(
         return got_it();
     }
     match report.waiting_for {
-        Some(WAIT_DOWNLOAD) => download_words(report.download),
-        Some(WAIT_CALL) => "Waits for the call to end".to_string(),
-        Some(WAIT_EMERGENCY) => "Waits: an emergency call was recent".to_string(),
-        Some(WAIT_READY) => "Installing".to_string(),
+        Some(WAIT_DOWNLOAD) => download_words(lang, report.download),
+        Some(WAIT_CALL) => t(lang, "apps.install.wait_call").to_string(),
+        Some(WAIT_EMERGENCY) => t(lang, "apps.install.wait_emergency").to_string(),
+        Some(WAIT_READY) => t(lang, "apps.install.installing").to_string(),
         _ => got_it(),
     }
 }
 
 /// The launcher's download while Install Now waits for it.
-fn download_words(entry: Option<&AppDownloadEntry>) -> String {
+fn download_words(lang: Lang, entry: Option<&AppDownloadEntry>) -> String {
     let Some(entry) = entry else {
-        return "Downloading".to_string();
+        return t(lang, "apps.install.downloading").to_string();
     };
     match entry.state.as_str() {
-        "waiting_network" => "Waiting for a network".to_string(),
-        "waiting_space" => "Waiting: not enough space".to_string(),
-        "waiting_roaming" => "Waiting: the phone is roaming".to_string(),
+        "waiting_network" => t(lang, "apps.install.waiting_network").to_string(),
+        "waiting_space" => t(lang, "apps.install.waiting_space").to_string(),
+        "waiting_roaming" => t(lang, "apps.install.waiting_roaming").to_string(),
         _ => match crate::app_downloads::progress(entry) {
-            Some(progress) => format!("Downloading {progress}"),
-            None => "Downloading".to_string(),
+            Some(progress) => t_params(
+                lang,
+                "apps.install.downloading_progress",
+                &[("progress", &progress)],
+            ),
+            None => t(lang, "apps.install.downloading").to_string(),
         },
     }
 }
@@ -507,21 +526,23 @@ pub fn answer_fresh(command: &DeviceCommand, now: NaiveDateTime) -> bool {
     ended.is_some_and(|at| (now - at).num_hours() < ANSWER_SHOWN_HOURS)
 }
 
-/// The flash for `?install=<word>` (the POSTs' redirects): its text and whether it is good news.
-pub fn flash(word: &str) -> Option<(&'static str, bool)> {
-    Some(match word {
-        "sent" => ("Install Now sent.", true),
-        "cancelled" => ("Install Now cancelled.", true),
-        "too_late" => ("Too late to cancel: the phone has it.", false),
-        "up_to_date" => ("Already up to date.", true),
-        "too_old" => ("This phone's Vibb One is too old for Install Now.", false),
-        "no_release" => ("No release to install. Check Now first.", false),
-        "in_progress" => ("Install Now is already on its way.", false),
-        "not_reported" => ("This phone hasn't reported yet.", false),
-        "not_set_up" => ("That phone isn't set up.", false),
-        "unknown_phone" => ("That phone isn't here any more.", false),
+/// The flash for `?install=<word>` (the POSTs' redirects): its text in `lang` and whether it is
+/// good news.
+pub fn flash(lang: Lang, word: &str) -> Option<(&'static str, bool)> {
+    let (key, good) = match word {
+        "sent" => ("apps.install.flash.sent", true),
+        "cancelled" => ("apps.install.flash.cancelled", true),
+        "too_late" => ("apps.install.flash.too_late", false),
+        "up_to_date" => ("apps.install.flash.up_to_date", true),
+        "too_old" => ("apps.install.flash.too_old", false),
+        "no_release" => ("apps.install.flash.no_release", false),
+        "in_progress" => ("apps.install.flash.in_progress", false),
+        "not_reported" => ("apps.install.flash.not_reported", false),
+        "not_set_up" => ("apps.install.flash.not_set_up", false),
+        "unknown_phone" => ("apps.install.flash.unknown_phone", false),
         _ => return None,
-    })
+    };
+    Some((t(lang, key), good))
 }
 
 #[cfg(test)]
@@ -644,11 +665,11 @@ mod tests {
             ..report()
         };
         assert_eq!(
-            Offer::Standing(release(Some(TAG), Some(&pending))).sub(),
+            Offer::Standing(release(Some(TAG), Some(&pending))).sub(Lang::En),
             Some("1.4.0 is waiting".into())
         );
         assert_eq!(
-            Offer::Standing(release(Some(TAG), Some(&r))).sub(),
+            Offer::Standing(release(Some(TAG), Some(&r))).sub(Lang::En),
             Some("1.4.0 not downloaded yet".into())
         );
         let running = Report {
@@ -669,7 +690,7 @@ mod tests {
         let too_old = Offer::Standing(release(Some(TAG), Some(&old)));
         assert!(!too_old.install());
         assert_eq!(
-            too_old.sub(),
+            too_old.sub(Lang::En),
             Some("1.4.0 is waiting. Install Now works from this update on.".into())
         );
         // A manual upload's label never parses: behind unless the phone runs that name.
@@ -872,7 +893,7 @@ mod tests {
             }
         );
         assert_eq!(
-            Offer::Standing(release(Some(rc3), Some(&pre_fix))).sub(),
+            Offer::Standing(release(Some(rc3), Some(&pre_fix))).sub(Lang::En),
             Some("0.36.0-rc.3 is waiting. Install Now works from this update on.".into())
         );
         let now = utc("2026-10-19 12:10:00").naive_utc();
@@ -921,14 +942,14 @@ mod tests {
         assert_eq!(waiting.cancel_id(), Some(9));
         assert_eq!(waiting.state(), "waiting");
         assert_eq!(
-            waiting.sub(),
+            waiting.sub(Lang::En),
             Some("Install Now: waiting for the phone".into())
         );
         let sent = offer_for(&command("sent"));
         assert_eq!(sent.cancel_id(), None);
         assert!(!sent.install());
         assert_eq!(
-            sent.sub(),
+            sent.sub(Lang::En),
             Some("Install Now: sent, not confirmed yet".into())
         );
         assert_eq!(offer_for(&command("received")).state(), "working");
@@ -1007,7 +1028,7 @@ mod tests {
             "not_set_up",
             "unknown_phone",
         ] {
-            assert!(flash(word).is_some(), "{word}");
+            assert!(flash(Lang::En, word).is_some(), "{word}");
         }
     }
 

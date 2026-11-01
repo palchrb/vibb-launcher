@@ -376,7 +376,7 @@ pub(crate) async fn build_policy(
         });
 
     // Dagen (design 69 §4.1): a read error fails the policy, like the zones - the phone keeps its cache.
-    let calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
+    let mut calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. A launcher that
@@ -390,6 +390,9 @@ pub(crate) async fn build_policy(
     // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let capabilities = last_capabilities(&state.db, device_id).await?;
+    // The quiet row plus a ping (migration 0113): `ping` only to a launcher that knows it, `row` to an older one.
+    calendar.lock_reminders =
+        crate::calendar::served_lock_reminders(&calendar.lock_reminders, &capabilities);
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);

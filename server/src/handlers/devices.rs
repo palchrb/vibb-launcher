@@ -1104,10 +1104,7 @@ pub async fn save_app_display(
         if rows >= crate::app_display::MAX_ROWS_PER_DEVICE {
             return refuse(FieldError {
                 field: "label",
-                message: format!(
-                    "This phone already has {} names and icons - remove some first.",
-                    crate::app_display::MAX_ROWS_PER_DEVICE
-                ),
+                key: "apps.display.error.full",
             })
             .await;
         }

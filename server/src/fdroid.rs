@@ -38,6 +38,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::handlers::tracked_apps::{Failure, SyncProblem, TempDownload};
+use crate::i18n::{Lang, t, t_params};
 
 /// The repo the add form starts with: F-Droid's own.
 pub const DEFAULT_REPO: &str = "https://f-droid.org/repo";
@@ -138,16 +139,20 @@ fn short_key(key: &str) -> String {
 
 /// A repo address as typed: blank = [DEFAULT_REPO]; else an `https://` URL without a user,
 /// query or fragment, stored without its trailing slash (`https://f-droid.org/repo/` ->
-/// `https://f-droid.org/repo`). `Err` is the form's sentence.
-pub fn normalize_repo(input: &str) -> Result<String, String> {
+/// `https://f-droid.org/repo`). `Err` is the form's sentence, in `lang`.
+pub fn normalize_repo(lang: Lang, input: &str) -> Result<String, String> {
     let text = input.trim();
     if text.is_empty() {
         return Ok(DEFAULT_REPO.to_string());
     }
     let refused = || {
-        format!(
-            "The repo must be an https:// address (at most {MAX_REPO_CHARS} characters), e.g. \
-             {DEFAULT_REPO}. Nothing was saved."
+        t_params(
+            lang,
+            "apps.fdroid.repo_invalid",
+            &[
+                ("max", &MAX_REPO_CHARS.to_string()),
+                ("example", DEFAULT_REPO),
+            ],
         )
     };
     if text.chars().count() > MAX_REPO_CHARS {
@@ -174,12 +179,7 @@ pub fn normalize_repo(input: &str) -> Result<String, String> {
         return Err(refused());
     }
     if private_literal(&url) {
-        return Err(
-            "The repo can't be a private, loopback or link-local IP address - use the \
-                    repo's name (a LAN or tailnet name with a real certificate is fine). Nothing \
-                    was saved."
-                .to_string(),
-        );
+        return Err(t(lang, "apps.fdroid.repo_private").to_string());
     }
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
@@ -194,17 +194,14 @@ fn private_literal(url: &reqwest::Url) -> bool {
         .is_some_and(crate::music_net::is_private)
 }
 
-/// A package id as typed: an Android package name (`ws.xsoh.etar`). `Err` is the form's sentence.
-pub fn parse_package(input: &str) -> Result<String, String> {
+/// A package id as typed: an Android package name (`ws.xsoh.etar`). `Err` is the form's sentence,
+/// in `lang`.
+pub fn parse_package(lang: Lang, input: &str) -> Result<String, String> {
     let package = input.trim();
     if crate::app_display::valid_package_name(package) {
         Ok(package.to_string())
     } else {
-        Err(
-            "The package must be an Android package name, e.g. ws.xsoh.etar (on F-Droid it is \
-             the last part of the app's address). Nothing was saved."
-                .to_string(),
-        )
+        Err(t(lang, "apps.fdroid.package_invalid").to_string())
     }
 }
 
@@ -1030,20 +1027,20 @@ pub(crate) mod tests {
 
     #[test]
     fn a_repo_address_is_https_without_its_trailing_slash() {
-        assert_eq!(normalize_repo("").unwrap(), DEFAULT_REPO);
-        assert_eq!(normalize_repo("  ").unwrap(), DEFAULT_REPO);
+        assert_eq!(normalize_repo(Lang::En, "").unwrap(), DEFAULT_REPO);
+        assert_eq!(normalize_repo(Lang::En, "  ").unwrap(), DEFAULT_REPO);
         assert_eq!(
-            normalize_repo(" https://f-droid.org/repo/ ").unwrap(),
+            normalize_repo(Lang::En, " https://f-droid.org/repo/ ").unwrap(),
             "https://f-droid.org/repo"
         );
         assert_eq!(
-            normalize_repo("https://APT.izzysoft.de/fdroid/repo//").unwrap(),
+            normalize_repo(Lang::En, "https://APT.izzysoft.de/fdroid/repo//").unwrap(),
             "https://apt.izzysoft.de/fdroid/repo"
         );
         // S4 fix L1: a trailing dot is the same host - stored without it, and an older row with it
         // still gets the known key.
         assert_eq!(
-            normalize_repo("https://f-droid.org./repo").unwrap(),
+            normalize_repo(Lang::En, "https://f-droid.org./repo").unwrap(),
             "https://f-droid.org/repo"
         );
         assert_eq!(
@@ -1059,11 +1056,17 @@ pub(crate) mod tests {
             "https://f-droid.org/repo#top",
             "javascript:alert(1)",
         ] {
-            let error = normalize_repo(refused).unwrap_err();
+            let error = normalize_repo(Lang::En, refused).unwrap_err();
             assert!(error.contains("https://"), "{refused}: {error}");
             assert!(error.ends_with("Nothing was saved."), "{error}");
         }
-        assert!(normalize_repo(&format!("https://f-droid.org/{}", "a".repeat(200))).is_err());
+        assert!(
+            normalize_repo(
+                Lang::En,
+                &format!("https://f-droid.org/{}", "a".repeat(200))
+            )
+            .is_err()
+        );
         // Q-2: no private, loopback, link-local or tailnet IP literal; names stay allowed.
         for refused in [
             "https://127.0.0.1/repo",
@@ -1074,7 +1077,7 @@ pub(crate) mod tests {
             "https://10.0.0.2:8443/repo",
             "https://[fd00::1]/repo",
         ] {
-            let error = normalize_repo(refused).unwrap_err();
+            let error = normalize_repo(Lang::En, refused).unwrap_err();
             assert!(
                 error.contains("private, loopback or link-local"),
                 "{refused}: {error}"
@@ -1086,10 +1089,13 @@ pub(crate) mod tests {
             "https://repo.tail1234.ts.net/repo",
             "https://203.0.113.9/repo",
         ] {
-            assert!(normalize_repo(allowed).is_ok(), "{allowed}");
+            assert!(normalize_repo(Lang::En, allowed).is_ok(), "{allowed}");
             assert!(Repo::from_stored(allowed).is_some(), "{allowed}");
         }
-        assert_eq!(parse_package(" ws.xsoh.etar ").unwrap(), "ws.xsoh.etar");
+        assert_eq!(
+            parse_package(Lang::En, " ws.xsoh.etar ").unwrap(),
+            "ws.xsoh.etar"
+        );
         for refused in [
             "etar",
             "ws.xsoh.",
@@ -1098,7 +1104,7 @@ pub(crate) mod tests {
             "1ws.etar",
             "",
         ] {
-            assert!(parse_package(refused).is_err(), "{refused}");
+            assert!(parse_package(Lang::En, refused).is_err(), "{refused}");
         }
     }
 
