@@ -1,5 +1,5 @@
 //! The Devices list (design 31 step 2, §3.2): each phone's connection dot, its one status line
-//! (the user's pick C, 2026-11-01: turned off, offline with "last seen", the lock while a rule
+//! (the user's pick C, 2026-11-01: turned off, offline with "last heard", the lock while a rule
 //! locks it, low battery, else today's screen time and the battery) and the Attention count -
 //! which always equals the rows on the phone's own page.
 
@@ -63,6 +63,13 @@ async fn each_phone_shows_its_connection() {
     // Away: a fresh report, no stream.
     let (ella, ella_token) = app.enrolled_device("Ella").await;
     app.post_status(&ella_token, json!({})).await;
+    // Away 20 min: last seen then (nothing in memory), no stream.
+    let (frida, _) = app.enrolled_device("Frida").await;
+    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-20 minutes') WHERE id = ?")
+        .bind(frida)
+        .execute(&app.db)
+        .await
+        .unwrap();
     // Offline: last seen 3 hours ago (before a server restart: nothing in memory).
     let (emil, _) = app.enrolled_device("Emil").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-3 hours') WHERE id = ?")
@@ -91,22 +98,33 @@ async fn each_phone_shows_its_connection() {
     assert_eq!(line(&html, anna), "Online");
     assert!(anna_row.contains("<span class=\"state-online\">Online</span>"));
 
+    // Away under 10 min reads as online, its dot green (a sleeping phone drops its stream for a
+    // moment; 2026-11-01).
     let ella_row = row(&html, ella);
-    assert!(ella_row.contains("avatar-dot dot-away"));
-    assert_eq!(line(&html, ella), "Away");
+    assert!(ella_row.contains("avatar-dot dot-online"), "{ella_row}");
+    assert_eq!(line(&html, ella), "Online");
     assert!(!ella_row.contains("seen"), "{ella_row}");
+    // Away 10 min or more: the orange dot and "No contact" leading the line.
+    let frida_row = row(&html, frida);
+    assert!(frida_row.contains("avatar-dot dot-away"), "{frida_row}");
+    assert!(frida_row.contains("data-status=\"away\""), "{frida_row}");
+    assert_eq!(line(&html, frida), "No contact · last heard 20 min ago");
+    assert!(
+        frida_row.contains("<span class=\"state-away\" data-no-contact>No contact</span>"),
+        "{frida_row}"
+    );
 
-    // Offline: "last seen" with its clock time today (a weekday or a date further back), the
+    // Offline: "last heard" with its clock time today (a weekday or a date further back), the
     // exact time in the title.
     let emil_row = row(&html, emil);
     let seen = last_seen(&app, emil).await;
     assert_eq!(
         line(&html, emil),
-        format!("Offline · last seen {}", zone.since(seen, now))
+        format!("Offline · last heard {}", zone.since(seen, now))
     );
     assert!(
         emil_row.contains(&format!(
-            "<span class=\"state-offline\">Offline</span> · <span data-seen title=\"{}\">last seen {}</span>",
+            "<span class=\"state-offline\">Offline</span> · <span data-seen title=\"{}\">last heard {}</span>",
             zone.exact(seen),
             zone.since(seen, now)
         )),
@@ -122,11 +140,15 @@ async fn each_phone_shows_its_connection() {
     assert_eq!(
         line(&nb, emil),
         format!(
-            "Frakoblet · sist sett {}",
+            "Frakoblet · sist hørt {}",
             zone.in_lang(crate::i18n::Lang::Nb).since(seen, now)
         )
     );
     assert_eq!(line(&nb, anna), "På nett");
+    assert_eq!(
+        line(&nb, frida),
+        "Ingen kontakt · sist hørt for 20 min siden"
+    );
 
     let mia_row = row(&html, mia);
     assert_eq!(line(&html, mia), "Not set up");

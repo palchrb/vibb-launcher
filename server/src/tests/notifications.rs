@@ -263,7 +263,7 @@ async fn older_rows_keep_their_stored_english() {
     ] {
         assert!(nb.contains(stored), "{stored} on the nb page");
     }
-    assert!(!nb.contains("ble slått av") && !nb.contains("vist under Finn"));
+    assert!(!nb.contains("ble slått av") && !nb.contains("se kartet i Finn"));
     // The readers directly, in nb.
     let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::Nb).await;
     let now = chrono::Utc::now();

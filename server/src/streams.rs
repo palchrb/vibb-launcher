@@ -188,8 +188,9 @@ pub const ONLINE_WINDOW_MINUTES: i64 = 60;
 /// (`MIN_BACKSTOP_MS`) and margin. Older is Offline. Revisit with any launcher backstop change.
 pub const AWAY_WINDOW_MINUTES: i64 = 45;
 
-/// What the parent sees about a phone's link to this server (design 31 §3.10): the header's dot
-/// and word, the Devices list's status line.
+/// What the parent sees about a phone's link to this server (design 31 §3.10). The pages' dot and
+/// line read it through `phone_status::dot`: Away under `phone_status::NO_CONTACT_AFTER_MINUTES`
+/// reads as online, after it as "No contact" (2026-11-01).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
     /// Not enrolled.
@@ -266,7 +267,9 @@ pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> Connec
 }
 
 impl ConnectionState {
-    /// The word next to the dot.
+    /// The state's English name (the tests'; the pages say `phone_status`'s words and dot, and
+    /// About This Phone its `devices.status.*`).
+    #[cfg(test)]
     pub fn word(&self) -> &'static str {
         match self {
             ConnectionState::NotSetUp => "Not set up",
@@ -278,7 +281,8 @@ impl ConnectionState {
         }
     }
 
-    /// The colour: `online` (green), `away` (orange), else `offline` (grey).
+    /// The colour: `online` (green), `away` (orange), else `offline` (grey) - About This Phone's
+    /// Connection row; the avatars' dots are `phone_status::dot`.
     pub fn css(&self) -> &'static str {
         match self {
             ConnectionState::Online { .. } => "online",

@@ -5,19 +5,26 @@
 //! 1. not set up, access removed, not seen yet (the phone can't tell more);
 //! 2. **turned off** - design 38's `phone_off` later than every `phone_on` and status report
 //!    (`parent_events::offs_now`): "Turned off 21:14 · battery was 3 %";
-//! 3. **offline** (`streams::connection_state`): "Offline · last seen 13:05";
+//! 3. **offline** (`streams::connection_state`): "Offline · last heard 13:05";
 //! 4. **a rule locks now**: the lock's words · the battery;
 //! 5. **low battery** (the phone's own `low`, latched in `devices.battery_low_since`, while it
 //!    isn't charging): "Low battery, 9 %" · today's screen time;
-//! 6. otherwise today's screen time · the battery ("4 min today · 100 %, charging"), or the
-//!    connection's word when the phone said neither.
+//! 6. otherwise today's screen time · the battery ("4 min today · 100 %, charging"), or "Online"
+//!    when the phone said neither.
 //!
-//! No "seen 7 min ago" and no battery age while the phone is online or away - the avatar's dot says
-//! that; the last contact is said only as "last seen" once it is offline. The header's first line
-//! is the same lead ("4 min screen time today" for the last case), its second the zone the phone is
-//! in now ("Test since 22:19") · the battery (the screen time when the lead is the battery); a
-//! phone turned off, offline or not reachable has the first line alone. Every word comes from the
-//! catalogs (`devices.status.*`) in the reader's language, every time from [Zone::since].
+//! 4 to 6 get **"No contact · last heard 12 min ago"** before them while the phone has been away
+//! (no stream) for [NO_CONTACT_AFTER_MINUTES] or more (the user's pick of 2026-11-01, "a phone that
+//! is off or out of touch says so"); under that it reads as online - a sleeping phone drops its
+//! stream for a moment all the time, not worth a word. The avatar's [dot] says the same: green
+//! online or away under 10 min, orange with "No contact", grey turned off, offline or not reachable.
+//!
+//! No "seen 7 min ago" and no battery age while the phone is in touch - the dot says that. The
+//! header's first line is the same lead ("4 min screen time today" for the last case), its second
+//! the zone the phone is in now ("Test since 22:19") · the battery (the screen time when the lead is
+//! the battery); without contact the second line is the rest of the row's line, the zone left out
+//! (where it was then isn't where it is now); a phone turned off, offline or not reachable has the
+//! first line alone. Every word comes from the catalogs (`devices.status.*`) in the reader's
+//! language, every time from [Zone::since].
 
 use chrono::{DateTime, Utc};
 
@@ -26,6 +33,57 @@ use crate::i18n::{t, t_params};
 use crate::parent_events::OffSince;
 use crate::streams::ConnectionState;
 use crate::time_state::{LockBadge, ScreenTime};
+
+/// Away (no stream) this long or longer: "No contact · last heard 12 min ago" and the orange dot;
+/// under it the phone reads as online. Away lasts `streams::AWAY_WINDOW_MINUTES` (45); past that it
+/// is Offline.
+pub const NO_CONTACT_AFTER_MINUTES: i64 = 10;
+
+/// The avatar's dot, saying what the line leads with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dot {
+    /// Online, or away under [NO_CONTACT_AFTER_MINUTES].
+    Green,
+    /// Away [NO_CONTACT_AFTER_MINUTES] or longer: "No contact".
+    Orange,
+    /// Turned off, offline, or a phone that can't be reached (not set up, access removed, not
+    /// seen yet).
+    Grey,
+}
+
+impl Dot {
+    /// The class's suffix (`dot-online`, `dot-away`, `dot-offline`), and the line's `data-status`.
+    pub fn css(&self) -> &'static str {
+        match self {
+            Dot::Green => "online",
+            Dot::Orange => "away",
+            Dot::Grey => "offline",
+        }
+    }
+}
+
+/// The dot of a phone's connection, `off` while it is turned off ([Facts::off]).
+pub fn dot(connection: &ConnectionState, off: bool, now: DateTime<Utc>) -> Dot {
+    match connection {
+        _ if off => Dot::Grey,
+        ConnectionState::Online { .. } => Dot::Green,
+        ConnectionState::Away { .. } if no_contact(connection, now).is_some() => Dot::Orange,
+        ConnectionState::Away { .. } => Dot::Green,
+        _ => Dot::Grey,
+    }
+}
+
+/// Away [NO_CONTACT_AFTER_MINUTES] or longer: the last contact.
+pub fn no_contact(connection: &ConnectionState, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    match *connection {
+        ConnectionState::Away { last_contact }
+            if now - last_contact >= chrono::Duration::minutes(NO_CONTACT_AFTER_MINUTES) =>
+        {
+            Some(last_contact)
+        }
+        _ => None,
+    }
+}
 
 /// The last report's battery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,8 +149,8 @@ pub struct Part {
     pub tone: Tone,
     /// The exact time, for `title=`.
     pub title: Option<String>,
-    /// The part's `data-` attribute (`lock`, `battery`, `screen-time`, `power-off`, `seen`,
-    /// `zone-now`): what the tests find it by.
+    /// The part's `data-` attribute (`lock`, `battery`, `screen-time`, `power-off`, `no-contact`,
+    /// `seen`, `zone-now`): what the tests find it by.
     pub hook: Option<&'static str>,
     /// The battery icon's fill in percent, drawn before the text, with `label` for a screen reader.
     pub icon: Option<i64>,
@@ -171,23 +229,31 @@ fn lead<'a>(facts: &Facts<'a>) -> Lead<'a> {
 
 /// The Devices row's one line.
 pub fn row(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
-    match lead(facts) {
-        Lead::Plain => {
-            let line: Line = [screen(facts, zone, false), battery(facts, zone)]
-                .into_iter()
-                .flatten()
-                .collect();
-            if line.is_empty() {
-                vec![connection_word(facts.connection, zone)]
-            } else {
-                line
-            }
+    let lead = lead(facts);
+    let rest = rest(&lead, facts, zone, now, false);
+    match no_contact_line(&lead, facts, zone, now) {
+        Some(mut line) => {
+            line.extend(rest);
+            line
         }
+        None if rest.is_empty() => vec![online_word(zone)],
+        None => rest,
+    }
+}
+
+/// The row's line without "No contact": the lead's parts and what follows them (`summary`: the
+/// screen time named, as the header says it).
+fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>, summary: bool) -> Line {
+    match lead {
+        Lead::Plain => [screen(facts, zone, summary), battery(facts, zone)]
+            .into_iter()
+            .flatten()
+            .collect(),
         lead => {
-            let mut line = lead_line(&lead, facts, zone, now);
+            let mut line = lead_line(lead, facts, zone, now);
             match lead {
                 Lead::Lock(_) => line.extend(battery(facts, zone)),
-                Lead::Low(_) => line.extend(screen(facts, zone, false)),
+                Lead::Low(_) => line.extend(screen(facts, zone, summary)),
                 _ => {}
             }
             line
@@ -195,10 +261,45 @@ pub fn row(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
     }
 }
 
+/// "No contact · last heard 12 min ago" (nb "Ingen kontakt · sist hørt for 12 min siden"): away
+/// [NO_CONTACT_AFTER_MINUTES] or longer, before a lead that would otherwise read as in touch.
+fn no_contact_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Option<Line> {
+    if !matches!(lead, Lead::Lock(_) | Lead::Low(_) | Lead::Plain) {
+        return None;
+    }
+    let at = no_contact(facts.connection, now)?;
+    let lang = zone.lang();
+    let minutes = (now - at).num_minutes().to_string();
+    Some(vec![
+        Part::new(
+            t(lang, "devices.status.no_contact").to_string(),
+            Tone::Away,
+            Some("no-contact"),
+        ),
+        Part::new(
+            t_params(
+                lang,
+                "devices.status.last_heard_ago",
+                &[("minutes", &minutes)],
+            ),
+            Tone::Plain,
+            Some("seen"),
+        )
+        .titled(zone.exact(at)),
+    ])
+}
+
 /// The summary header's lines under the name: one for a phone that can't be reached, else the
-/// lead and then the zone · the battery (the screen time when the lead is the battery).
+/// lead and then the zone · the battery (the screen time when the lead is the battery); without
+/// contact "No contact · last heard 12 min ago" and then the rest of the row's line.
 pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
     let lead = lead(facts);
+    if let Some(first) = no_contact_line(&lead, facts, zone, now) {
+        return [first, rest(&lead, facts, zone, now, true)]
+            .into_iter()
+            .filter(|line| !line.is_empty())
+            .collect();
+    }
     let second: Line = match lead {
         Lead::Lock(_) | Lead::Plain => [zone_now(facts, zone, now), battery(facts, zone)]
             .into_iter()
@@ -211,9 +312,7 @@ pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
         _ => Vec::new(),
     };
     let first = match lead {
-        Lead::Plain => vec![
-            screen(facts, zone, true).unwrap_or_else(|| connection_word(facts.connection, zone)),
-        ],
+        Lead::Plain => vec![screen(facts, zone, true).unwrap_or_else(|| online_word(zone))],
         ref lead => lead_line(lead, facts, zone, now),
     };
     [first, second]
@@ -247,7 +346,7 @@ fn lead_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Lin
             Part::new(
                 t_params(
                     lang,
-                    "devices.status.last_seen",
+                    "devices.status.last_heard",
                     &[("at", &zone.since(*at, now))],
                 ),
                 Tone::Plain,
@@ -325,13 +424,13 @@ fn zone_now(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Option<Part> {
     })
 }
 
-/// "Online", "Away": a reachable phone that said neither its screen time nor its battery.
-fn connection_word(connection: &ConnectionState, zone: &Zone) -> Part {
-    let (key, tone) = match connection {
-        ConnectionState::Online { .. } => ("devices.status.online", Tone::Online),
-        _ => ("devices.status.away", Tone::Away),
-    };
-    Part::new(t(zone.lang(), key).to_string(), tone, None)
+/// "Online": a phone in touch (the green dot) that said neither its screen time nor its battery.
+fn online_word(zone: &Zone) -> Part {
+    Part::new(
+        t(zone.lang(), "devices.status.online").to_string(),
+        Tone::Online,
+        None,
+    )
 }
 
 /// A line's words as the page shows them, " · " between the parts (the tests').
@@ -504,10 +603,13 @@ mod tests {
         assert_eq!(
             both(&f2),
             [
-                pair("Offline · last seen 12:05", &["Offline · last seen 12:05"]),
                 pair(
-                    "Frakoblet · sist sett 12:05",
-                    &["Frakoblet · sist sett 12:05"]
+                    "Offline · last heard 12:05",
+                    &["Offline · last heard 12:05"]
+                ),
+                pair(
+                    "Frakoblet · sist hørt 12:05",
+                    &["Frakoblet · sist hørt 12:05"]
                 ),
             ]
         );
@@ -567,7 +669,8 @@ mod tests {
         assert_eq!(both(&facts(&away))[1].0, "100 %");
         let mut quiet = facts(&away);
         quiet.battery = None;
-        assert_eq!(both(&quiet)[1], pair("Borte", &["Borte"]));
+        // Away under 10 min reads as online, as its green dot says.
+        assert_eq!(both(&quiet)[1], pair("På nett", &["På nett"]));
 
         let budget = ScreenTime {
             used: 72,
@@ -647,5 +750,144 @@ mod tests {
         assert!(low[0].says_label(), "{:?}", low[0].text);
         let en = Zone::from_setting("Europe/Oslo");
         assert!(row(&f, &en, now())[0].says_label());
+    }
+
+    fn away(minutes: i64) -> ConnectionState {
+        ConnectionState::Away {
+            last_contact: now() - chrono::Duration::minutes(minutes),
+        }
+    }
+
+    /// The dot and the line agree (2026-11-01, "a phone that is off or out of touch says so"):
+    /// green in touch or away under 10 min, orange "No contact" from 10 min, grey turned off,
+    /// offline or not reachable.
+    #[test]
+    fn the_dot_says_what_the_line_leads_with() {
+        let gone = ConnectionState::Offline {
+            last_contact: utc("2026-11-01 11:05:00"),
+        };
+        for (connection, off, dot_is) in [
+            (online(), false, Dot::Green),
+            (away(0), false, Dot::Green),
+            (away(NO_CONTACT_AFTER_MINUTES - 1), false, Dot::Green),
+            (away(NO_CONTACT_AFTER_MINUTES), false, Dot::Orange),
+            (away(44), false, Dot::Orange),
+            (gone, false, Dot::Grey),
+            (ConnectionState::NotSetUp, false, Dot::Grey),
+            (ConnectionState::Disconnected, false, Dot::Grey),
+            (ConnectionState::NotSeenYet, false, Dot::Grey),
+            // Turned off: grey at once, whatever the connection still says.
+            (online(), true, Dot::Grey),
+            (away(0), true, Dot::Grey),
+            (away(20), true, Dot::Grey),
+        ] {
+            assert_eq!(dot(&connection, off, now()), dot_is, "{connection:?} {off}");
+        }
+        assert_eq!(
+            [Dot::Green, Dot::Orange, Dot::Grey].map(|d| d.css()),
+            ["online", "away", "offline"]
+        );
+        // Under 10 min the line is as in touch.
+        let nine = away(9);
+        assert_eq!(
+            both(&facts(&nine)),
+            [
+                pair("100 %", &["Online", "100 %"]),
+                pair("100 %", &["På nett", "100 %"])
+            ]
+        );
+        // From 10 min "No contact" leads, the rest of the row's line after it.
+        let ten = away(10);
+        assert_eq!(
+            both(&facts(&ten)),
+            [
+                pair(
+                    "No contact · last heard 10 min ago · 100 %",
+                    &["No contact · last heard 10 min ago", "100 %"]
+                ),
+                pair(
+                    "Ingen kontakt · sist hørt for 10 min siden · 100 %",
+                    &["Ingen kontakt · sist hørt for 10 min siden", "100 %"]
+                ),
+            ]
+        );
+        // The mockup's Anna: a rule locks; the header's second line is the row's rest, no zone.
+        let twenty = away(20);
+        let school = LockBadge {
+            name: "Skole".to_string(),
+            name_key: None,
+            until: Some("14:30".to_string()),
+            calls_off: false,
+            at_last_report: None,
+        };
+        let screen = ScreenTime {
+            used: 4,
+            budget: None,
+            day: None,
+        };
+        let mut f = facts(&twenty);
+        f.battery = Some(Battery {
+            level: 64,
+            charging: false,
+        });
+        f.lock = Some(&school);
+        f.screen = Some(&screen);
+        f.zone_now = Some(("Skolen", Some(utc("2026-11-01 07:00:00"))));
+        assert_eq!(
+            both(&f)[1],
+            pair(
+                "Ingen kontakt · sist hørt for 20 min siden · Skole til 14:30 · 64 %",
+                &[
+                    "Ingen kontakt · sist hørt for 20 min siden",
+                    "Skole til 14:30 · 64 %"
+                ]
+            )
+        );
+        f.lock = None;
+        assert_eq!(
+            both(&f)[0],
+            pair(
+                "No contact · last heard 20 min ago · 4 min today · 64 %",
+                &[
+                    "No contact · last heard 20 min ago",
+                    "4 min screen time today · 64 %"
+                ]
+            )
+        );
+        // Nothing else said: the lead alone, never "Online" after it.
+        let mut quiet = facts(&twenty);
+        quiet.battery = None;
+        assert_eq!(
+            both(&quiet)[0],
+            pair(
+                "No contact · last heard 20 min ago",
+                &["No contact · last heard 20 min ago"]
+            )
+        );
+        // Turned off wins over "No contact".
+        let off = OffSince {
+            at: utc("2026-11-01 11:35:00"),
+            level: Some("100".to_string()),
+        };
+        let mut f = facts(&twenty);
+        f.off = Some(&off);
+        assert_eq!(
+            both(&f)[1],
+            pair(
+                "Slått av 12:35 · batteriet var 100 %",
+                &["Slått av 12:35 · batteriet var 100 %"]
+            )
+        );
+        // The parts: "No contact" in the away colour, the last contact's exact time in the title.
+        let zone = Zone::from_setting("Europe/Oslo");
+        let line = row(&facts(&twenty), &zone, now());
+        assert_eq!(
+            (line[0].tone.css(), line[0].hook),
+            ("state-away", Some("no-contact"))
+        );
+        assert_eq!(
+            (line[1].hook, line[1].title.as_deref()),
+            (Some("seen"), Some("2026-11-01 12:40:00 CET"))
+        );
     }
 }

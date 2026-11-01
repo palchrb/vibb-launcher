@@ -1027,3 +1027,41 @@ async fn the_locations_page_pages_every_fix_once() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// 2026-11-01 (status-off): the list's dots and words are the Devices row's - away 20 min is orange
+/// "No contact" with "last heard", access removed says so - in the reader's language, the
+/// switcher's `aria-label` too.
+#[tokio::test]
+async fn the_list_says_no_contact_and_last_heard_in_the_readers_language() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (frida, _) = app.enrolled_device("Frida").await;
+    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-20 minutes') WHERE id = ?")
+        .bind(frida)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (otto, _) = app.enrolled_device("Otto").await;
+    sqlx::query("UPDATE devices SET token_hash = NULL WHERE id = ?")
+        .bind(otto)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = locate_page(&app, &cookie, "?lang=nb").await;
+    assert!(html.contains("avatar-dot dot-away"), "{html}");
+    assert!(
+        html.contains("<span class=\"state-away\">Ingen kontakt</span> · <span title="),
+        "{html}"
+    );
+    assert!(html.contains("\">sist hørt "), "{html}");
+    assert!(!html.contains(">seen "), "{html}");
+    assert!(
+        html.contains("Frakoblet</span> · tilgangen er fjernet"),
+        "{html}"
+    );
+    let html = locate_page(&app, &cookie, &format!("?device={frida}&lang=nb")).await;
+    assert!(
+        html.contains("aria-label=\"Frida, ingen kontakt\""),
+        "{html}"
+    );
+}
