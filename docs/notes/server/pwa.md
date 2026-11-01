@@ -306,8 +306,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   while 24 h or 12 h is chosen and the last report says `clock_format_applied` false. A failed wallpaper read is a
   500, never an empty grid (its Save would untick everything).
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
-  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - Default (the
-  list as everyone has it) / On / Off (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
+  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - "As for
+  everyone (On|Off)" (the list as everyone has it; "Default (On)" until 2026-11-01) / On / Off, the footer "As for
+  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
   older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
   problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
   on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back

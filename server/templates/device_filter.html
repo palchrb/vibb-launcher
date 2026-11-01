@@ -48,9 +48,9 @@
                 <label class="row">
                     <span class="row-label">{{ list.name }}{% if let Some(problem) = list.problem %}<span class="row-sub text-alarm">{{ problem }}</span>{% endif %}</span>
                     <select class="pick" name="setting" data-autosave>
-                        <option value="default"{% if list.setting == "default" %} selected{% endif %}>Default ({% if list.everyone_on %}On{% else %}Off{% endif %})</option>
-                        <option value="on"{% if list.setting == "on" %} selected{% endif %}>On</option>
-                        <option value="off"{% if list.setting == "off" %} selected{% endif %}>Off</option>
+                        <option value="default"{% if list.setting == "default" %} selected{% endif %}>{% if list.everyone_on %}{{ self.t("device.filter.as_everyone_on") }}{% else %}{{ self.t("device.filter.as_everyone_off") }}{% endif %}</option>
+                        <option value="on"{% if list.setting == "on" %} selected{% endif %}>{{ self.t("device.filter.on") }}</option>
+                        <option value="off"{% if list.setting == "off" %} selected{% endif %}>{{ self.t("device.filter.off") }}</option>
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
                 <noscript><button type="submit" class="row row-button">Save</button></noscript>
@@ -59,7 +59,7 @@
             <p class="row row-note">No lists yet.</p>
             {% endfor %}
         </div>
-        <p class="group-footer">Default is the setting in Settings › Web Filter.</p>
+        <p class="group-footer">{{ self.t("device.filter.lists_footer") }}</p>
     </section>
 
     {#- Remove is one tap: a domain can be added again (§5.6). -#}

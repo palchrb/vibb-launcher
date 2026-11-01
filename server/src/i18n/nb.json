@@ -12,6 +12,18 @@
   "devices.push_offer.blocked": "Varsler er blokkert for Vibb Phone. Tillat dem i innstillingene på denne telefonen.",
   "devices.push_offer.done": "Varsler er slått på for denne telefonen.",
 
+  "settings.web_filter.lists_title": "Lister for alle telefoner",
+  "settings.web_filter.scope.on_all": "På for alle telefoner",
+  "settings.web_filter.scope.on_except": "På for alle telefoner unntatt {names}",
+  "settings.web_filter.scope.off_all": "Av for alle telefoner",
+  "settings.web_filter.scope.off_but": "Av · på for {names}",
+  "settings.web_filter.lists_footer": "En telefons egen nettfilterside kan stille en liste annerledes for den telefonen. Chromes egen sikre DNS er slått av, og de mest kjente offentlige sikre DNS-serverne er blokkert. Firefox og Cromite kan fortsatt stilles inn manuelt på en annen sikker DNS-server.",
+  "device.filter.as_everyone_on": "Som for alle (på)",
+  "device.filter.as_everyone_off": "Som for alle (av)",
+  "device.filter.on": "På",
+  "device.filter.off": "Av",
+  "device.filter.lists_footer": "Som for alle følger bryteren under Innstillinger › Nettfilter.",
+
   "music.spotify.audiobook": "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker.",
   "music.spotify.audiobook_short": "det er en lydbok fra Spotify, og Spotify lar bare sine egne apper spille lydbøker",
 

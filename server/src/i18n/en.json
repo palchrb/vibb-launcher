@@ -12,6 +12,18 @@
   "devices.push_offer.blocked": "Notifications are blocked for Vibb Phone. Allow them in this phone's Settings.",
   "devices.push_offer.done": "Notifications are on for this phone.",
 
+  "settings.web_filter.lists_title": "Lists for every phone",
+  "settings.web_filter.scope.on_all": "On for every phone",
+  "settings.web_filter.scope.on_except": "On for every phone except {names}",
+  "settings.web_filter.scope.off_all": "Off for every phone",
+  "settings.web_filter.scope.off_but": "Off · on for {names}",
+  "settings.web_filter.lists_footer": "A phone's own Web Filter page can set a list otherwise for that phone. Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are blocked. Firefox and Cromite can still be set to another secure-DNS server by hand.",
+  "device.filter.as_everyone_on": "As for everyone (On)",
+  "device.filter.as_everyone_off": "As for everyone (Off)",
+  "device.filter.on": "On",
+  "device.filter.off": "Off",
+  "device.filter.lists_footer": "As for everyone follows the switch in Settings › Web Filter.",
+
   "music.spotify.audiobook": "This is a Spotify audiobook - Spotify lets only its own apps play them.",
   "music.spotify.audiobook_short": "it is a Spotify audiobook, and Spotify lets only its own apps play them",
 
