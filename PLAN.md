@@ -86,8 +86,9 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - Zone series numbers after the user's Jelly Star day
     - developer-verification registration (nothing in the repo)
 
+  - **Passkeys for parents, passkey-only accounts, a Face ID lock on opening** (the user, 2026-11-01: "La oss legge inn at man kan selv velge å legge inn en passkey inne på accounts og parents? Der kan man vel også det velge å kun bruke passkey for kontoen din og ikke tillate passord innlogging? Eller er det farlig? Og også da velge om man skal velge og kreve biometric og passkey etter x min for pwa?"; after the coordinator's assessment of passkeys / Face ID lock / OIDC - OIDC not asked for): add passkeys under Settings › Account (and see them per parent), optional "passkey only" (no password + TOTP sign-in) with a safe recovery, optional "lock with Face ID after N min" for the PWA. **APPROVED 2026-11-01; IN DESIGN** (design note 74 being written, then design QA, then a mockup to the user); server only (WebAuthn), M-L.
+
 ### Asked for, scope not settled yet
-- **Sign-in: passkeys, a Face ID lock on opening, maybe upstream OIDC** (the user, 2026-11-01: "Integrere oppsett for upstream oauth, eller gjøre det enkelt å bare sette opp en enkel måte at vi kan ha passkeys istedet? Det kunne også gitt en enkle måte å gi biometrisk pålogging når man åpner pwa ... Vet ikke om jeg vil ha noen av delene pt, bare tanker"): assessment sent - passkeys (WebAuthn, `webauthn-rs`, MPL-2.0) as an optional sign-in beside password + TOTP (kept as recovery), the same passkey for an optional "lock with Face ID after N min" when the PWA opens; generic OIDC later only if wanted. Not approved; ideas only.
 
 - **PWA i18n** (the user, 2026-10-24, on design 64's push wording: "burde gå for i18n så man enkelt kan endre og legge
   til flere på sikt ... mer som en generell long list ting"): the PWA is English-only; a translation layer (strings in
