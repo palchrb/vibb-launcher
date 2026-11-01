@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:">
+<response>
+<href>/1000000001/calendars/</href>
+<propstat>
+<prop>
+<resourcetype><collection/></resourcetype>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+<propstat>
+<prop>
+<displayname/>
+<supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"/>
+<getctag xmlns="http://calendarserver.org/ns/"/>
+</prop>
+<status>HTTP/1.1 404 Not Found</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/home/</href>
+<propstat>
+<prop>
+<resourcetype><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+<displayname>Hjem</displayname>
+<supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name="VEVENT"/></supported-calendar-component-set>
+<getctag xmlns="http://calendarserver.org/ns/">HwoQEgwAAFj0ctag01</getctag>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/fritid-AAAA-1111/</href>
+<propstat>
+<prop>
+<resourcetype><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+<displayname>Fotball &amp; korps</displayname>
+<supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name="VEVENT"/><comp name="VTODO"/></supported-calendar-component-set>
+<getctag xmlns="http://calendarserver.org/ns/">HwoQEgwAAFj0ctag02</getctag>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/tasks/</href>
+<propstat>
+<prop>
+<resourcetype><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+<displayname>Påminnelser</displayname>
+<supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name="VTODO"/></supported-calendar-component-set>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+<response>
+<href>/1000000001/calendars/inbox/</href>
+<propstat>
+<prop>
+<resourcetype><collection/><schedule-inbox xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+</prop>
+<status>HTTP/1.1 200 OK</status>
+</propstat>
+</response>
+</multistatus>

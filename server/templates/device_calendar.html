@@ -148,6 +148,77 @@
         </div>
     </section>
 
+    {#- Design 72 step 2: CalDAV accounts, the family's - every phone's page shows them, each phone ticks its own
+        calendars (each one then a row in the links above). Test lists the calendars and the hosts the password may go
+        to; the password is never rendered back. Every form returns to its account (#caldav-<id>) or to #caldav. -#}
+    <section id="caldav" aria-labelledby="caldav-title">
+        <h2 class="group-header" id="caldav-title">{{ self.t("calendar.caldav.title") }}</h2>
+        {% if let Some(key) = caldav_notice %}<p class="flash" role="status" data-flash="caldav-notice">{{ self.t(key) }}</p>{% endif %}
+        {% if let Some(why) = caldav_form.error %}<p class="flash flash-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}
+        {% for a in caldav %}
+        <div class="group" id="caldav-{{ a.id }}" data-caldav="{{ a.id }}">
+            <div class="row"><span class="row-label">{{ a.username }}<span class="row-sub">{{ a.host }}</span>{% for line in a.lines %}<span class="row-sub"{% if loop.first && a.failing %} data-caldav-failing{% endif %}>{{ line }}</span>{% endfor %}</span></div>
+            <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ a.id }}/calendars#caldav-{{ a.id }}">
+                {% for c in a.calendars %}
+                <input type="hidden" name="cal" value="{{ c.id }}">
+                <label class="row" data-caldav-calendar="{{ c.id }}">
+                    <span class="row-label">{{ c.name }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on_{{ c.id }}" value="on" aria-label="{{ self.t("calendar.caldav.on_phone") }}"{% if c.ticked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                {% endfor %}
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ a.id }}/test#caldav-{{ a.id }}">
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.caldav.new_password") }}</span>
+                    <input type="password" class="row-input" name="password" maxlength="500" autocomplete="new-password" autocapitalize="none" spellcheck="false">
+                </label>
+                <button type="submit" class="row row-button">{{ self.t("calendar.caldav.test_again") }}</button>
+            </form>
+            <details class="confirm cell">
+                <summary class="row row-danger">{{ self.t("calendar.caldav.remove") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ a.id }}/remove#caldav" class="confirm-body">
+                    <p>{{ self.t("calendar.caldav.remove_confirm") }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("calendar.caldav.remove") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+        </div>
+        {% endfor %}
+        <div class="group">
+            {% if links_off %}
+            <p class="row row-sub" data-caldav-form="off">{{ self.t("calendar.caldav.error.no_key") }}</p>
+            {% else if can_add_caldav %}
+            <form method="post" action="/devices/{{ device_id }}/calendar/caldav#caldav" data-caldav-form="add">
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.caldav.server") }}</span>
+                    <input type="text" class="row-input" name="server" value="{{ caldav_form.server }}" maxlength="500" placeholder="caldav.icloud.com" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if caldav_form.error.is_some() %} autofocus{% endif %}>
+                </label>
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.caldav.username") }}</span>
+                    <input type="text" class="row-input" name="username" value="{{ caldav_form.username }}" maxlength="200" autocomplete="username" autocapitalize="none" spellcheck="false">
+                </label>
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.caldav.password") }}</span>
+                    <input type="password" class="row-input" name="password" maxlength="500" autocomplete="new-password" autocapitalize="none" spellcheck="false" required>
+                </label>
+                <button type="submit" class="row row-button">{{ self.t("calendar.caldav.test") }}</button>
+            </form>
+            {% else %}
+            <p class="row row-sub" data-caldav-form="full">{{ self.t("calendar.caldav.error.too_many") }}</p>
+            {% endif %}
+        </div>
+        <div class="group-footer" data-footer="caldav">{{ self.t("calendar.caldav.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("calendar.caldav.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("calendar.caldav.info") }}</p>
+                    <p>{{ self.t("calendar.caldav.info_privacy") }}</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
     <section id="calendars" aria-labelledby="calendars-title">
         <h2 class="group-header" id="calendars-title">{{ self.t("calendar.calendars.title") }}</h2>
         {% match state %}

@@ -969,8 +969,8 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
         let panel = &panel[..panel.find("</details>").unwrap()];
         assert!(panel.contains(text), "{label}: {panel}");
     }
-    // Dagen, the lock, Calendars shown and (design 72) Calendar links.
-    assert_eq!(html.matches(r#"<details class="info">"#).count(), 4);
+    // Dagen, the lock, Calendars shown and (design 72) Calendar links and CalDAV accounts.
+    assert_eq!(html.matches(r#"<details class="info">"#).count(), 5);
     assert!(html.contains(r#"role="img" aria-label="Skole: Matte om 15 min, 08:30""#));
     for gone in [
         "Den rolige raden",
@@ -1104,6 +1104,18 @@ async fn every_calendar_route_needs_a_session() {
         (format!("{links}/name"), vec![("name", "Renamed")]),
         (format!("{links}/fetch"), vec![]),
         (format!("{links}/remove"), vec![]),
+        // Design 72 step 2: CalDAV.
+        (
+            format!("{page}/caldav"),
+            vec![
+                ("server", "dav.example.net"),
+                ("username", "u"),
+                ("password", "test-only"),
+            ],
+        ),
+        (format!("{page}/caldav/1/test"), vec![("password", "")]),
+        (format!("{page}/caldav/1/calendars"), vec![("cal", "x")]),
+        (format!("{page}/caldav/1/remove"), vec![]),
     ];
     for (path, fields) in posts {
         let res = app.request_form(Method::POST, &path, None, &fields).await;

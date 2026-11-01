@@ -7,6 +7,7 @@ mod app_permissions;
 mod attention;
 mod audit;
 mod boot_witness;
+mod caldav;
 mod calendar;
 mod calendar_feeds;
 mod config;
@@ -938,6 +939,23 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/calendar/links/{uid}/remove",
             post(handlers::calendar::remove_link),
+        )
+        // Design 72 step 2: CalDAV accounts (the family's) and each phone's ticked calendars.
+        .route(
+            "/devices/{id}/calendar/caldav",
+            post(handlers::calendar::test_caldav),
+        )
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/test",
+            post(handlers::calendar::test_caldav_again),
+        )
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/calendars",
+            post(handlers::calendar::save_caldav_calendars),
+        )
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/remove",
+            post(handlers::calendar::remove_caldav),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(

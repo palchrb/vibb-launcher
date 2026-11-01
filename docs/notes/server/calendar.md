@@ -142,7 +142,7 @@ the 400 and 500 bodies too (`calendar.error.*`). The Apps page's "On Home" switc
 
 The parent pastes a calendar's ICS link (https or webcal) on Device › Calendar; the server fetches and parses it, and
 the phone writes the events into a local read-only calendar of its own (`launcher/CLAUDE.md`, "Calendar links").
-ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server) is not built.
+ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server) is below, "CalDAV accounts".
 
 - **Model** (migration `0105_calendar_feeds.sql`, after S-i18n slice 1's `0104_admin_lang.sql`): `calendar_sources` - one row per
   normalized link (`calendar_feeds::normalize`: scheme and host lowercased, webcal(s) as https, the default port and
@@ -224,3 +224,74 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   broken "R omerriket" -, Outlook, Google, series, cancelled, empty, html, contract; the caps, a 70 KB line, Latin-1),
   `calendar_feeds::tests` (the contract, normalization, names), `tests::calendar_feeds` (the add and its refusals, the
   address rules, the page, the endpoint, the fetch cycle, a removal mid-fetch, Remove and a deleted phone, the caps).
+
+## CalDAV accounts (design 72 step 2, `src/caldav.rs`, branch `caldav-read`)
+
+Read-only. The parent signs in to a CalDAV account with an **app password** on Device › Calendar (`#caldav`, below
+the links); each calendar ticked on a phone's page becomes a `calendar_sources` row of kind `caldav` and reaches the
+phone exactly as a link (`calendar.feeds`, `GET /api/devices/calendar/feeds/{uid}`, the phone's `vibb-feed-<uid>`
+calendar): the launcher and the contract are unchanged. Scope: basic auth (iCloud, Fastmail, Nextcloud, Radicale);
+out: Google (OAuth only - its secret ICS address works as a link), digest, client certificates.
+
+- **Model** (`0110_caldav_accounts.sql`): `caldav_accounts` - **the family's**, shown on every phone's page, each phone
+  ticking its own calendars (one row per normalized server address and username; Test with the same pair again
+  replaces the password). The app password sealed with the music key (`caldav-v1:<fingerprint>:<id>`), never in a
+  log, page, policy, report or the settings log (`Login` and the account row have no `Debug`). `hosts` (JSON) - the
+  only hosts the password may go to; `calendars_json` - what the last passing Test listed (`[{id, href, name}]`, `id`
+  = 16 hex of the href, what the tick form posts - never an address in a form); `state` `ok` / `login_refused` /
+  `host_changed` / `untested` (a first Test that never passed: hidden, its password blanked); `test_error` (a code,
+  worded by `handlers::calendar::caldav_why`), `tested_at` (the 10 s gap), `lan`/`lan_http`. `calendar_sources` gains
+  `account_id` (cascade): a CalDAV source's `url_sealed` is the collection's address (sealed as a link is) and `etag`
+  its validator (`<getctag>|<sync-token>`), `last_modified` the last REPORT's time. No account goes at once (code QA
+  L3): the trigger `caldav_accounts_unused` stamps `unused_since` when its last calendar leaves the last phone
+  (`caldav_accounts_used` clears it), and `caldav::sweep` (each scheduler pass) deletes an account no phone has a
+  calendar of a day after both that and its last Test - one switch flipped by mistake never loses the login. A source's uid = 32 hex of SHA-256 over `vibb-caldav:` + server address NUL username NUL
+  collection address - the account's identity, not its row id, so an account removed and signed in again gives each
+  calendar its key (settings, rules) back, as a link does. Step 3's "the kid's own CalDAV calendar" flag would go on
+  the phone's `device_calendar_feeds` row (nothing built).
+- **Test** (`caldav::test_new` / `test_again`, `discover`): the server field takes an address (https unless written
+  http, no userinfo, no query) or an e-mail - its domain tried, `icloud.com`/`me.com`/`mac.com` →
+  `caldav.icloud.com`, `fastmail.com`/`.fm` → `caldav.fastmail.com` (`KNOWN_DOMAINS`); an empty username is the
+  e-mail. Plain http only to a name that resolves to the LAN or the tailnet (as a link). Discovery one hop at a time
+  (`follow: false`, at most 5 per request, each hop through `calendar_feeds::route`; never https → http, a LAN address
+  only on its own host and port): PROPFIND Depth 0 for `current-user-principal`, `calendar-home-set`, `resourcetype`
+  at `/.well-known/caldav` then `/` (or the path typed), `calendar-home-set` on the principal, Depth 1 on the home set
+  (`resourcetype` calendar, `supported-calendar-component-set` with VEVENT or none, `displayname` - else the decoded
+  last path segment). At Test **a host gets the password only once it asked for it** (a 401 without it; a mail
+  domain's web host that never asks never gets it); a 401/403 with it is `login_refused`, never retried. The hosts
+  that got it are the account's `hosts`, shown: "Passordet sendes bare til: …" - a calendar on a host that never
+  asked isn't offered. Every address the server names (principal, home set, calendars) is held as a redirect is
+  (code QA M1): a public account never reaches the LAN (an http href resolving there is `private_address`), a LAN
+  account only its server's host and port. A typed password is stored only when the Test passes (QA L5); a
+  refused stored password stops the account, a refused new one doesn't. At most once
+  per 10 s per account (`?notice=caldav_wait`; a new account's form re-renders with it). A pass re-seals the
+  calendars under today's key and makes every failing calendar of the account due at once. XML by `quick-xml`'s
+  `NsReader` (`caldav::multistatus`: any prefix, CDATA, the five entities and numeric ones; a DOCTYPE with an internal
+  subset is refused).
+- **The fetch** (`caldav::refresh_source`, from `calendar_feeds::refresh`; the same schedule, backoff, empty hold,
+  churn, caps, rev and nudge): no request while the account isn't `ok` or its password can't be opened (`key_lost`);
+  a calendar the last Test no longer listed is `not_listed` (that calendar alone, no request; QA M2); PROPFIND Depth 0
+  `getctag` + `sync-token` - the stored validator and a REPORT within 24 h → unchanged (QA L6: the window moves);
+  else one `REPORT calendar-query`
+  (`time-range` today −60 d .. +401 d, `calendar-data`), capped at `Kind::Calendar`'s 5 MB (`too_big` keeps the set),
+  every resource's VCALENDAR concatenated into one body for `ics::parse` (a resource that isn't one whole VCALENDAR
+  counted `bad`). Only to `hosts`: another host - a redirect - is `host_changed` before any request to it. **A
+  401/403 marks the account `login_refused`** (QA M5) and **another host `host_changed`**: no request for any of its
+  calendars until Test passes; every phone's row says so at once (`LinkRow.account_state`). A fetch that read an older
+  password never stops the account over a Test that saved a new one (`AND password_nonce = ?`, QA L4).
+- **The page**: each account (`data-caldav`): the username and server host, "Logget inn 14:05 · 3 kalendere" or the
+  stop ("Passordet ble avvist - …", "Serveren svarte fra en ny vert - …", "Serverens nøkkel er byttet - …"), a later
+  Test's failure ("Siste test: …"), the hosts line, the LAN warning; a switch per calendar for this phone (one form,
+  `cal` per listed calendar + `on_<id>`, auto-saving; a newly ticked calendar is fetched before the answer; at most 10
+  links and calendars a phone, `?notice=caldav_full`), "Test på nytt" with an optional new app password (the stored
+  one otherwise; none to use → `?notice=caldav_retype`), "Fjern konto…" (confirmed: off every phone, the password
+  deleted). The new-account form: server or e-mail, username, app password, Test (a refusal re-renders it as typed,
+  400, never the password; no music key → no form). A ticked calendar is a row in the links group too ("CalDAV ·
+  <username> · <host>", renamable, Hent nå, Fjern = untick) and "CalDAV" in "Calendars shown". Test routes are in
+  `settings_log::NOT_SAVES`; the ticks and Remove are saves (route and ids only).
+- Tests: `caldav::tests` (the server field, the multistatus reader, uids), `tests::caldav` (a fake CalDAV in the test
+  source - `CannedFetch::answer_method`/`redirect_method`/`basic`: iCloud's shape with a redirect chain and the
+  calendars on another host, Nextcloud's by path, the challenge order, the ticks and the phone's policy, an unchanged
+  and a changed ctag, a revoked password with no further request, Test's gap, another host, the refusals, removal).
+  `testdata/caldav/` holds answers written in iCloud's and Nextcloud's shape (fake ids), **not captures**: a real
+  server confirms them (design 72 §10's Radicale run, and an iCloud/Fastmail/Nextcloud account).
