@@ -101,6 +101,17 @@ come), the sub-line "A quiet row before the event - no sound, no vibration"; the
 `off`/`row` unchanged. The lock group's ⓘ draws the reminder row ("Skole: Matte om 15 min", 08:30) in one inline SVG
 on the night ground. `tests::calendar::the_help_is_behind_the_i_and_the_reminders_say_what_they_are`.
 
+The quiet row plus a ping (2026-11-01, branch `reminder-ping`; the user, 2026-10-27, PLAN "Lock-screen reminders: a
+third option"): the select's third value "Quiet row + sound" / "Stille rad + lyd" (`ping`), the sub-line "A quiet row
+before the event - silent, or with one notification sound as it comes up", the lock group's ⓘ says when the sound is
+left out (silent or vibrate, Do Not Disturb, a time rule or bedtime, a call; never a vibration). Stored as the row
+plus `device_policy.calendar_lock_ping` (migration `0113_calendar_lock_ping.sql`: 0103's CHECK on
+`calendar_lock_reminders` can't take a third value without rebuilding `device_policy`; after S4's 0111/0112);
+`calendar::switches` reads the pair back as `ping`. The policy's `lock_reminders` is `ping` only to a launcher whose
+last report claims `calendar_ping_v1` (`calendar::served_lock_reminders`, in `build_policy`): an older launcher reads
+anything but `row` as off, so it is sent `row`, and the page says "This phone's Vibb One can't play the sound yet - it
+shows the quiet row" (`data-ping-older`). `tests::calendar::the_ping_saves_and_reaches_only_a_launcher_that_knows_it`.
+
 Every route is behind the full session (`require_full_auth`; `tests::calendar::every_calendar_route_needs_a_session`:
 signed out, each GET and POST is the login redirect and writes nothing).
 

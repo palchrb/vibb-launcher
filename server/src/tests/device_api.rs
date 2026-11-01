@@ -481,6 +481,9 @@ async fn policy_json_keys_snapshot() {
     // reads exactly this shape (`PolicyResponseCompatTest`); a rule's and a calendar's keys in
     // `calendar::the_policy_carries_the_rules_and_the_calendars`. Design 72: `feeds`, the phone's calendar links
     // (`[]` without one; a link's keys in `calendar::a_link_reaches_the_policy_and_the_phone`, `calendar_feeds.json`).
+    // `lock_reminders` is `off`, `row` or (migration 0113) `ping` - the row plus one sound, only to a launcher
+    // claiming `calendar_ping_v1`, `row` to an older one, which reads anything but `row` as off
+    // (`calendar::the_ping_saves_and_reaches_only_a_launcher_that_knows_it`; the launcher's `CalendarPolicyTest`).
     assert_eq!(
         object["calendar"],
         serde_json::json!({

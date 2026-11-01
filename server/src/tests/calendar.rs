@@ -993,10 +993,11 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
         "{kid}"
     );
     // The master: Off by default, each calendar's reminder saying so.
-    let master = r#"<span class="row-label">Påminnelser på låseskjermen<span class="row-sub">En stille rad før hendelsen - ingen lyd, ingen vibrasjon</span></span>
+    let master = r#"<span class="row-label">Påminnelser på låseskjermen<span class="row-sub">En stille rad før hendelsen - uten lyd, eller med én varsellyd når den kommer</span></span>
                 <select class="pick" name="reminders" data-autosave>
                     <option value="off" selected>Av</option>
                     <option value="row">Stille rad</option>
+                    <option value="ping">Stille rad + lyd</option>
                 </select>"#;
     assert!(html.contains(master), "{html}");
     assert_eq!(html.matches("data-reminders-off").count(), 3);
@@ -1041,6 +1042,103 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
     assert!(en.contains(r#"<option value="row">Quiet row</option>"#));
     assert!(en.contains(">The kid&#39;s events<"), "{en}");
     assert!(!en.contains("The calm row"));
+}
+
+/// The lock group's select, saved as the PWA's autosave posts it, back to `#lock`.
+async fn save_reminders(app: &TestApp, page: &str, cookie: &str, value: &str) {
+    let answer = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/lock"),
+            Some(cookie),
+            &[("reminders", value)],
+        )
+        .await;
+    super::assert_redirect(&answer, page, Some("lock"));
+}
+
+/// The quiet row plus a ping (PLAN "Lock-screen reminders: a third option", migration 0113): the select's third value
+/// saves (stored as the row with `calendar_lock_ping`), reads back selected, and the policy says `ping` only to a
+/// launcher claiming `calendar_ping_v1` - an older one reads anything but `row` as off, so it is sent `row` and the
+/// page says it shows the quiet row. Back to the row clears the ping.
+#[tokio::test]
+async fn the_ping_saves_and_reaches_only_a_launcher_that_knows_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    save_reminders(&app, &page, &cookie, "ping").await;
+    let stored: (String, i64) = sqlx::query_as(
+        "SELECT calendar_lock_reminders, calendar_lock_ping FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, ("row".to_string(), 1));
+    // The report's launcher claims `calendar_v1` only: the row, and the page says so.
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("row")
+    );
+    let html = page_nb(&app, &page, &cookie).await;
+    assert!(
+        html.contains(r#"<option value="ping" selected>Stille rad + lyd</option>"#),
+        "{html}"
+    );
+    assert!(html.contains(
+        r#"<span class="row-sub" data-ping-older>Vibb One på telefonen kan ikke lyden ennå - den viser den stille raden</span>"#
+    ));
+    assert!(!html.contains("data-reminders-off"));
+    assert!(
+        html.contains("«Stille rad + lyd» spiller telefonens varsellyd én gang når raden kommer.")
+    );
+    // A launcher that knows the ping gets it; the note goes.
+    let mut report: Value = serde_json::from_str(CALENDAR_REPORT).unwrap();
+    report["capabilities"] = json!(["calendar_v1", crate::calendar::PING_CAPABILITY]);
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report),
+    )
+    .await;
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("ping")
+    );
+    assert!(
+        !page_nb(&app, &page, &cookie)
+            .await
+            .contains("data-ping-older")
+    );
+    let en = app.get_page(&page, &cookie).await.text();
+    assert!(en.contains(r#"<option value="ping" selected>Quiet row + sound</option>"#));
+    // Back to the quiet row: the ping goes with it; Off is off.
+    save_reminders(&app, &page, &cookie, "row").await;
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("row")
+    );
+    save_reminders(&app, &page, &cookie, "off").await;
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("off")
+    );
+    // Anything else is refused and changes nothing.
+    let odd = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/lock"),
+            Some(&cookie),
+            &[("reminders", "loud")],
+        )
+        .await;
+    assert_eq!(odd.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("off")
+    );
 }
 
 /// QA L5 (g): every Calendar route needs a signed-in parent - without the session each answers the sign-in redirect
