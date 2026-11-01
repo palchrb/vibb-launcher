@@ -415,4 +415,19 @@ class SpotifyRulesTest {
         assertEquals("not_premium", SpotifyOutcome.reported(o.encode()))
         for (none in listOf(null, "", "{", """{"outcome":"FAKE-ACCESS-1","at":1}""", """{"at":1}""")) assertEquals(none, "none", SpotifyOutcome.reported(none))
     }
+
+    @Test
+    fun `the web player's log - always in a debug build, in a release only while the parent's diagnostic log runs (2026-11-01)`() {
+        val now = 1_793_000_000_000L
+        val s = now / 1000
+        assertTrue("debug: always", me.vibb.music.logic.spotifyDiagLogOn(true, 0, now))
+        assertFalse("release, off", me.vibb.music.logic.spotifyDiagLogOn(false, 0, now))
+        assertTrue("release, 15 min left", me.vibb.music.logic.spotifyDiagLogOn(false, s + 15 * 60, now))
+        assertTrue("a phone clock 40 min behind the server's", me.vibb.music.logic.spotifyDiagLogOn(false, s + 55 * 60, now))
+        assertFalse("ended", me.vibb.music.logic.spotifyDiagLogOn(false, s, now))
+        assertFalse("ended a while ago", me.vibb.music.logic.spotifyDiagLogOn(false, s - 60, now))
+        assertFalse("junk far ahead never turns it on", me.vibb.music.logic.spotifyDiagLogOn(false, s + 2 * 3600, now))
+        assertFalse("negative", me.vibb.music.logic.spotifyDiagLogOn(false, -1, now))
+        assertEquals(60 * 60_000L, me.vibb.music.logic.SPOTIFY_DIAG_MAX_AHEAD_MS)
+    }
 }

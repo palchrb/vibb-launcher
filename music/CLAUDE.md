@@ -446,9 +446,19 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   appear only in `StorytelApi.kt` and `spotify/SpotifyApi.kt`; the Web API calls use the guarded public-only client.
 - **Spotify secrets** (26c §7.1): the access token, the SDK's device id and the page's state never reach a log, Room,
   `music_state`, the report or a `toString`. **No `Log.` in `spotify/`** at all: the host, the locks and the renderer
-  log through the function the service gives them, `spotifyLog` (`Log.d` under `BuildConfig.DEBUG` - the service's one
-  Spotify log line; a release logs nothing), with fixed words only (hosts, statuses, kinds; never a token, a uri list
-  or a state JSON), the SDK's error text only in a debug build. **The page's console is a log channel too**:
+  log through the function the service gives them, `spotifyLog` (`Log.d` - the service's one Spotify log line - under
+  `spotifyDiagLogOn`: always in a debug build, in a release only while the parent's **diagnostic log** runs, Device ›
+  Advanced's 15 minutes, 2026-11-01: the policy's `music.spotify_diag_until` -> the managed config's
+  `spotify_diag_until` (`bridge_contract.json`) -> `PlayerHub.spotifyDiagUntilS`, set by `MusicApp`'s config edge; an
+  end more than `SPOTIFY_DIAG_MAX_AHEAD_MS` ahead is junk), with fixed words only (hosts, statuses, kinds, item
+  indexes, whole seconds; never a token, an account or device id, a uri, a title or a state JSON), the SDK's error text
+  only in a debug build. The diagnostic lines (2026-11-01): a start (the page up or new, the device known) and why it
+  isn't a resume, the play call that went out, every state as `SpotifyTracker.judged` reads it (playing or paused at
+  N s; the current, next or a later item, not ours; a track from before the play call; how far from the sent place)
+  and the mode it leaves with its events (`eventWord`), the first-state wait, the gap watch and the idle close, the
+  page's calls by name (no argument; not `volume`), its load, `not_ready`, and the page's own `diag` lines (its
+  visibility, a 5 s tick more than 2 s late - Chromium throttling it; `SpotifyPage.diagLine` passes only those fixed
+  shapes). The page is never paused: no `onPause`/`pauseTimers` anywhere. **The page's console is a log channel too**:
   `onConsoleMessage` returns true always (a debug build notes the level and the source's host only). The token
   reaches the page only as a quoted `evaluateJavascript` argument. **The state recorder is debug-only**:
   `SpotifyRecording.recorder` is null in main and assigned only by `DebugSpotify.kt` while `config.json` says

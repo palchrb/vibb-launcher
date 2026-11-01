@@ -792,8 +792,15 @@ class GuardsTest {
                 !serviceBody("private suspend fun reportSpotifyWord() {").contains("Sync.nudge"),
         )
         assertTrue(service.contains("log = ::spotifyLog,"))
-        assertEquals("the service's one log line: the web player's, debug builds only (qa-26c-step5a-code L8)", 1, Regex("""\bLog\.""").findAll(service).count())
-        assertTrue(serviceBody("private fun spotifyLog(message: String) {").contains("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"))
+        assertEquals(
+            "the service's one log line: the web player's, debug builds and the parent's diagnostic log only (qa-26c-step5a-code L8, 2026-11-01)",
+            1,
+            Regex("""\bLog\.""").findAll(service).count(),
+        )
+        assertTrue(
+            serviceBody("private fun spotifyLog(message: String) {")
+                .contains("if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)"),
+        )
         assertEquals("spotify is assigned only where it is made", 1, Regex("""\bspotify = """).findAll(service).count())
         assertEquals(1, Regex("""\.also \{ spotify = it \}""").findAll(service).count())
         // the renderer and the Exo: every renderer comparison read by §5.10's rule

@@ -1361,6 +1361,19 @@ pub struct MusicPolicy {
     /// the account exist). The launcher exempts Spotify's hosts from its DNS filter while it is
     /// true; an older launcher ignores it.
     pub spotify: bool,
+    /// Device › Advanced's Spotify diagnostic log (2026-11-01): until when the music app writes its `VibbSpotify` log
+    /// lines, epoch seconds; `null` unless it is running ([spotify_diag_until]). The launcher hands it to the music app
+    /// as the managed config's `spotify_diag_until`; an older launcher ignores it.
+    pub spotify_diag_until: Option<i64>,
+}
+
+/// How long one press of Device › Advanced's "Spotify diagnostic log" runs.
+pub const SPOTIFY_DIAG_SECS: i64 = 15 * 60;
+
+/// The stored diagnostic log's end [stored] (epoch seconds) while it is still ahead of [now_s], else `None`: a run
+/// that ended leaves the policy as it was before the press.
+pub fn spotify_diag_until(stored: Option<i64>, now_s: i64) -> Option<i64> {
+    stored.filter(|&until| until > now_s)
 }
 
 pub async fn policy_music(
@@ -1394,6 +1407,10 @@ pub async fn policy_music(
         storage_limit_gb: storage_limit(policy.music_storage_limit_gb),
         storytel_generation,
         spotify: policy.music_spotify_account.is_some(),
+        spotify_diag_until: spotify_diag_until(
+            policy.music_spotify_diag_until,
+            chrono::Utc::now().timestamp(),
+        ),
     })
 }
 

@@ -35,7 +35,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening};
 use crate::streams::ConnectionState;
 
@@ -742,8 +742,29 @@ struct AdvancedTemplate {
     escape_warnings: Vec<Note>,
     escape_rows: Vec<Note>,
     access: crate::handlers::devices::AccessCard,
+    /// The Spotify diagnostic log ([SpotifyDiagCard]); `None` on a phone that doesn't play Spotify.
+    spotify_diag: Option<SpotifyDiagCard>,
 }
 crate::i18n::words!(AdvancedTemplate);
+
+/// Advanced's Spotify group (2026-11-01): [until] the local "hh:mm" the diagnostic log runs to, `None` = not running
+/// (the button shows).
+struct SpotifyDiagCard {
+    until: Option<String>,
+}
+
+/// The Spotify group for a phone that plays Spotify (bound to an account), from its stored end at [now].
+fn spotify_diag_card(
+    policy: &DevicePolicy,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<SpotifyDiagCard> {
+    policy.music_spotify_account?;
+    let until = crate::music::spotify_diag_until(policy.music_spotify_diag_until, now.timestamp())
+        .and_then(|s| DateTime::<Utc>::from_timestamp(s, 0))
+        .map(|t| zone.clock(t));
+    Some(SpotifyDiagCard { until })
+}
 
 /// GET `/devices/{id}/advanced`: Advanced.
 pub async fn view_advanced(
@@ -800,6 +821,7 @@ pub async fn view_advanced(
                 &zone,
                 now,
             ),
+            spotify_diag: spotify_diag_card(&policy, &zone, now),
             device,
         }
         .render()

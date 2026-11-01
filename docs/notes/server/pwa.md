@@ -177,7 +177,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   notifications (`kiosk-escapes`, one form, + `EscapeNote`s and what the filter removed), Connection
   (`regenerate-code`, the QR link, Disconnect Phone… behind a `<details>` confirm), Remove Phone… (`delete`,
   `<details>` confirm). App screens, Updates and Connection only for an enrolled phone. Warnings sit above their
-  group (`partials/note_warning.html`), states are rows (`partials/note_row.html`).
+  group (`partials/note_warning.html`), states are rows (`partials/note_row.html`). **Spotify** (2026-11-01, PLAN
+  "Spotify diagnostic log for 15 minutes"; only on an enrolled phone bound to a Spotify account, words through the
+  catalogs, `advanced.spotify_diag.*`): "Turn On Diagnostic Log for 15 Minutes" posts `/devices/{id}/spotify-diag`
+  (`music_spotify::start_diag`: `device_policy.music_spotify_diag_until` = now + `music::SPOTIFY_DIAG_SECS`, migration
+  0108, the phone nudged, back to `#spotify-diag`); while it runs the group shows "Diagnostic log · On until hh:mm"
+  instead, the button again once it ended. The policy serves it as `music.spotify_diag_until` only while it is ahead
+  (`music::spotify_diag_until`, else `null`); the launcher hands it to the music app as the managed config's
+  `spotify_diag_until`, which writes its `VibbSpotify` lines until then (`adb logcat -s VibbSpotify`). Not in the
+  security log (it changes nothing on the phone but what its own log says). Tests:
+  `tests::music_spotify::the_diagnostic_log_runs_fifteen_minutes`.
 - **Where the forms return** (§5.1): the three auto-saves → their groups, `/devices/{id}/advanced#restrictions`,
   `#app-screens`, `#updates` (the browser pass's fix round: without JS on the switch, with JS `scroll-restore.js`
   keeps the exact position; pinned by the redirect table); `revoke` → `?notice=…#connection` (the flash in the group),

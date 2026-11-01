@@ -43,8 +43,10 @@ import java.io.InputStream
  *   protected-media permission only, for Spotify's SDK origin or ours.
  * - The bridge object's methods run on a WebView thread: each validates and caps its input and posts
  *   to the main thread; a destroyed page's late calls are dropped (its generation).
- * - Logs: fixed words, host names and statuses through [log] (the service passes a debug-only logger),
- *   never a URL, a token, a state or the SDK's message in a release (§7.1).
+ * - Logs: fixed words, host names and statuses through [log] (the service's logger writes in a debug build, and in
+ *   a release only while the parent's diagnostic log runs), never a URL, a token, a state or the SDK's message in a
+ *   release (§7.1). The page is never paused: no `onPause`, `pauseTimers` or `resumeTimers` here (a headless view is
+ *   never resumed by an Activity either) - the page's own `diag` lines say whether Chromium throttled it (2026-11-01).
  */
 
 /** What the page tells the renderer (main thread). */
@@ -147,6 +149,8 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
 
     override fun call(name: String, vararg args: Any?) {
         val v = view ?: return
+        // the name only, never an argument (the token's call carries it); the fade's many volume steps stay out
+        if (name != "volume") log("spotify: to the page: $name")
         v.evaluateJavascript(SpotifyPage.call(name, *args), null)
     }
 
@@ -246,6 +250,7 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         override fun onPageFinished(view: WebView, url: String?) {
             if (gen != generation || connected == gen || view !== this@SpotifyWebHost.view) return
             connected = gen
+            log("spotify: the page is loaded - connecting the player")
             view.evaluateJavascript(SpotifyPage.call("connect", SpotifyPage.PLAYER_NAME), null)
         }
 

@@ -442,16 +442,20 @@ class SourceScanTest {
 
     /**
      * Design 26c step 5b (§7.1, qa-26c-step5a-code L8): the web player is made only by the service, with a log that is
-     * a debug build's only and writes the renderer's fixed words as they are; the outcome file is the store's alone
-     * and holds a word. (The tile's and the player's "Spotify" went in step 8: see the next test.)
+     * a debug build's only - or, since 2026-11-01, the parent's diagnostic log's while it runs (`spotifyDiagLogOn`) - and
+     * writes the renderer's fixed words as they are; the outcome file is the store's alone and holds a word. (The
+     * tile's and the player's "Spotify" went in step 8: see the next test.)
      */
     @Test
-    fun `5b - the web player's log is debug-only, it is made by the service alone, and the outcome file holds a word`() {
+    fun `5b - the web player's log is debug-only or the diagnostic log's, it is made by the service alone, and the outcome file holds a word`() {
         val made = sources("src/main/java").filter { code(it).contains("SpotifyRenderer.create(") }.map { it.name }
         assertEquals(listOf("PlaybackService.kt"), made)
         val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
         val logs = service.lines().filter { it.contains("Log.") }
-        assertEquals(listOf("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"), logs.map { it.trim() })
+        assertEquals(
+            listOf("if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)"),
+            logs.map { it.trim() },
+        )
         assertTrue(service.contains("log = ::spotifyLog,"))
         // the outcome's file: written by the store only, read by the report through the store's name
         val files = sources("src/main/java").filter { code(it).contains("spotify_state.json") }.map { it.name }
@@ -485,10 +489,11 @@ class SourceScanTest {
         }
         // qa-26c-step8-code L1: the notification, the lock screen and Home's card are built outside ui/ - the session's
         // metadata and setNowPlaying in playback/, the bridge's now-playing in bridge/, Nytt's notification in sync/.
-        // No literal there names Spotify (any case) but these two, which never reach a screen.
+        // No literal there names Spotify (any case) but these three, which never reach a screen.
         val allowed = setOf(
-            "PlaybackService.kt" to "\"VibbSpotify\"", // SPOTIFY_LOG_TAG, a debug build's log tag
+            "PlaybackService.kt" to "\"VibbSpotify\"", // SPOTIFY_LOG_TAG, the web player's log tag
             "PlaybackService.kt" to "\"playing on Spotify\"", // the resumption future's exception, Media3's only
+            "BridgeConfig.kt" to "\"spotify_diag_until\"", // the managed config's key of the diagnostic log (2026-11-01)
         )
         val literal = Regex("\"[^\"\n]*\"")
         for (dir in listOf("playback", "bridge", "sync")) {

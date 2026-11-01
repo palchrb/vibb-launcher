@@ -67,6 +67,9 @@ object RestrictionKeys {
 
     /** Design 30 §1.8: the parent's music storage limit in GB, 0 = none. */
     const val STORAGE_LIMIT_GB = "storage_limit_gb"
+
+    /** Device › Advanced's Spotify diagnostic log (2026-11-01): its end in epoch seconds, 0 = off. */
+    const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
 }
 
 /** The limit without a word from the launcher (an older one): 2 GB (design 30 §1.3, §1.8). */
@@ -96,6 +99,11 @@ data class BridgeConfig(
     val volumeCapPct: Int? = null,
     /** The parent's music storage limit in GB (design 30 §1.8), null = no limit. */
     val storageLimitGb: Int? = DEFAULT_STORAGE_LIMIT_GB,
+    /**
+     * The parent's Spotify diagnostic log (2026-11-01): until when the web player's `VibbSpotify` lines are written in a
+     * release build too, epoch seconds; 0 = off (`spotifyDiagLogOn`).
+     */
+    val spotifyDiagUntilS: Long = 0,
 ) {
     companion object {
         val UNMANAGED = BridgeConfig(false, null, "", false, false, null, 0)
@@ -115,6 +123,7 @@ fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
         storytelGeneration = (values[RestrictionKeys.STORYTEL_GENERATION] as? Int)?.toLong() ?: 0,
         volumeCapPct = (values[RestrictionKeys.VOLUME_CAP_PCT] as? Int)?.takeIf { it in 1..99 },
         storageLimitGb = storageLimit(values),
+        spotifyDiagUntilS = (values[RestrictionKeys.SPOTIFY_DIAG_UNTIL] as? Int)?.takeIf { it > 0 }?.toLong() ?: 0,
     )
 }
 

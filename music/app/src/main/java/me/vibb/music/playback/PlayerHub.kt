@@ -262,6 +262,13 @@ object PlayerHub {
      */
     @Volatile internal var capChanged: (() -> Unit)? = null
 
+    /**
+     * The parent's Spotify diagnostic log's end (the managed config's `spotify_diag_until`, epoch seconds; 0 = off),
+     * set by `MusicApp`'s config edge at start and at every restrictions broadcast; the service's `spotifyLog` reads it
+     * (`spotifyDiagLogOn`) - never an IPC per line.
+     */
+    @Volatile var spotifyDiagUntilS: Long = 0
+
     fun positionMs(): Long? = position?.invoke()
 
     /**

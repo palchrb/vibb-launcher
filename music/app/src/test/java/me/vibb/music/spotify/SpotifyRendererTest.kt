@@ -1742,6 +1742,41 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `the diagnostic log - the start, the play call, the watchdogs, each state as judged and the page's own lines, never a uri or a title (2026-11-01)`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        val json = """{"paused":false,"position":0,"duration":200000,"uri":"${uri(0)}","linked":null,"type":"track","name":"Fake track 0",""" +
+            """"artists":["Fake Artist"],"next":[],"prev":[],"context":null,"shuffle":false,"repeat":0}"""
+        page.emit(HostEvent.State(SdkState.parse(json)!!, json))
+        settle()
+        page.emit(HostEvent.Error("diag", "tick late by 4100 ms"))
+        page.emit(HostEvent.Error("diag", "page hidden"))
+        page.emit(HostEvent.Error("diag", "BQfaketoken spotify:track:x"))
+        settle()
+        for (line in listOf(
+            "spotify: a start from item 0 at 0 s (a new page, no device yet)",
+            "spotify: the play call went out (items 0 to 4 at 0 s)",
+            "spotify: waiting 10 s for our first state",
+            "spotify: a state - playing at 0 s, the current item, +0.0 s from the sent place (starting) -> ours: started 0",
+            "spotify: the 30 s gap watch is on",
+            "spotify: the page says tick late by 4100 ms",
+            "spotify: the page says page hidden",
+        )) {
+            assertTrue("$line in ${ports.log}", line in ports.log)
+        }
+        assertTrue(ports.log.any { it.startsWith("spotify: our first state, ") && it.endsWith(" ms after the play call") })
+        assertFalse("a diag line the page doesn't write is dropped", ports.log.any { it.contains("faketoken") })
+        assertTrue("no state, uri or title in the log", ports.log.none { it.contains("{") || it.contains("spotify:track") || it.contains("Fake") })
+        r.pause()
+        settle()
+        r.play()
+        settle()
+        assertTrue("a paused track of ours resumes through the page", "spotify: a resume through the page (no play call)" in ports.log)
+        r.release()
+    }
+
+    @Test
     fun `the debug recorder gets every posted state as received and our calls by name - never a log line`() = runBlocking {
         val r = renderer()
         r.load(mediaItems(5), 0, 0, playNow = true)

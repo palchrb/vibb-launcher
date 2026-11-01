@@ -192,12 +192,13 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// `migrations_73_to_101_in_order`). Design 69's Dagen 0103 (was `migrations_73_to_102_in_order`). Design 70's
 /// parent language 0104 (was `migrations_73_to_103_in_order`). Design 72's calendar links 0105 (was
 /// `migrations_73_to_104_in_order`). A colour per calendar 0106 (was `migrations_73_to_105_in_order`). Design 70
-/// slice 2's security-log params 0107 (was `migrations_73_to_106_in_order`).
+/// slice 2's security-log params 0107 (was `migrations_73_to_106_in_order`). The Spotify diagnostic log 0108 (was
+/// `migrations_73_to_107_in_order`).
 #[test]
-fn migrations_73_to_107_in_order() {
+fn migrations_73_to_108_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=107).contains(&m.version))
+        .filter(|m| (73..=108).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -237,11 +238,12 @@ fn migrations_73_to_107_in_order() {
             (104, "admin lang".to_string()),
             (105, "calendar feeds".to_string()),
             (106, "calendar colors".to_string()),
-            (107, "security params".to_string())
+            (107, "security params".to_string()),
+            (108, "spotify diag".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request), 0098 (the push's own words), 0099 (the app update notices), 0100 (the phone's own picture), 0101 (design 66's bedtime), 0102 (design 68's per-app permissions), 0103 (design 69's Dagen), 0104 (design 70's parent language), 0105 (design 72's calendar links), 0106 (a colour per calendar), 0107 (design 70 slice 2's security-log params), 0108 (the Spotify diagnostic log) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }
@@ -5288,4 +5290,112 @@ mod settings_group {
         let page = text(&app.get_page("/music/settings", &cookie).await);
         assert!(page.contains("<details class=\"cell disclosure\" id=\"storytel-phones\">"));
     }
+}
+
+/// The Spotify diagnostic log (Device › Advanced, 2026-11-01): the group only on a phone that plays Spotify; the
+/// press writes now + 15 minutes, serves it as the policy's `music.spotify_diag_until`, nudges the phone and lands
+/// back on the group (never the top of the page); the page says "On until hh:mm" (in the reader's language) while it
+/// runs and shows the button again once it ended, when the policy is back to `null`. An unknown phone is a 404.
+#[tokio::test]
+async fn the_diagnostic_log_runs_fifteen_minutes() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("Ella").await;
+    let advanced = format!("/devices/{device}/advanced");
+    let action = format!("action=\"/devices/{device}/spotify-diag#spotify-diag\"");
+    let page = app.get_page(&advanced, &cookie).await.text();
+    assert!(
+        !page.contains("id=\"spotify-diag\""),
+        "no Spotify, no group"
+    );
+
+    sqlx::query(
+        "INSERT INTO music_spotify_accounts (id, spotify_user, display_name, ciphertext, nonce, \
+         key_fingerprint, scopes, authorized_at) \
+         VALUES (1, 'fakekid', 'Ella', x'00', x'00', 'fake', 'streaming', '2026-10-13 10:00:00')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    bind(&app, device, 1).await;
+    let policy_until = || async {
+        app.request(Method::GET, "/api/devices/policy", Some(&token), None)
+            .await
+            .json()["music"]["spotify_diag_until"]
+            .clone()
+    };
+    let page = app.get_page(&advanced, &cookie).await.text();
+    assert!(page.contains("id=\"spotify-diag\""));
+    assert!(page.contains(&action), "the button");
+    assert!(page.contains("Turn On Diagnostic Log for 15 Minutes"));
+    assert!(!page.contains("data-row=\"spotify-diag\""));
+    assert!(policy_until().await.is_null());
+
+    let mut nudges = app.state.command_notify.subscribe();
+    let before = chrono::Utc::now().timestamp();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/spotify-diag"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    let after = chrono::Utc::now().timestamp();
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location(),
+        Some(format!("{advanced}#spotify-diag").as_str()),
+        "back to its group"
+    );
+    assert_eq!(nudges.try_recv().ok(), Some(device), "the phone is nudged");
+    let until = policy_until().await.as_i64().expect("served while it runs");
+    assert!(
+        (before + 900..=after + 900).contains(&until),
+        "now + 15 min: {until}"
+    );
+    let page = app.get_page(&advanced, &cookie).await.text();
+    assert!(!page.contains(&action), "no button while it runs");
+    assert!(page.contains("data-row=\"spotify-diag\""));
+    assert!(
+        page.contains("<span class=\"row-value\">On until "),
+        "{page}"
+    );
+    let nb = app
+        .get_page(&format!("{advanced}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(nb.contains("<span class=\"row-label\">Feilsøkingslogg</span>"));
+    assert!(nb.contains("<span class=\"row-value\">På til "));
+
+    // Ended: the policy says nothing any more and the button is back.
+    sqlx::query("UPDATE device_policy SET music_spotify_diag_until = ? WHERE device_id = ?")
+        .bind(chrono::Utc::now().timestamp() - 1)
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(policy_until().await.is_null());
+    let page = app.get_page(&advanced, &cookie).await.text();
+    assert!(page.contains(&action));
+    assert!(!page.contains("data-row=\"spotify-diag\""));
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/9999/spotify-diag",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn the_diagnostic_logs_end_is_served_only_ahead() {
+    assert_eq!(crate::music::spotify_diag_until(None, 100), None);
+    assert_eq!(crate::music::spotify_diag_until(Some(100), 100), None);
+    assert_eq!(crate::music::spotify_diag_until(Some(99), 100), None);
+    assert_eq!(crate::music::spotify_diag_until(Some(101), 100), Some(101));
+    assert_eq!(crate::music::SPOTIFY_DIAG_SECS, 15 * 60);
 }

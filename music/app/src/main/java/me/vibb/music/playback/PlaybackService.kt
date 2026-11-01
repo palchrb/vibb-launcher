@@ -119,6 +119,7 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.spotifyDiagLogOn
 import me.vibb.music.logic.spotifyInCall
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
@@ -1399,11 +1400,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * The web player's debug log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host
-     * and the locks - never a token, a uri list or a state - and nothing at all in a release build.
+     * The web player's log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host and the
+     * locks - never a token, an account or device id, a uri or a state. A debug build always writes it; a release only
+     * while the parent's diagnostic log runs (Device › Advanced, 2026-11-01: `spotifyDiagLogOn`, the managed config's
+     * `spotify_diag_until`), and otherwise nothing at all.
      */
     private fun spotifyLog(message: String) {
-        if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)
+        if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)
     }
 
     /**

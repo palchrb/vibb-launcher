@@ -91,8 +91,20 @@ object SpotifyPage {
     /** The page's entry points, host -> page (`evaluateJavascript`, every argument quoted by [call]). */
     val TO_PAGE = listOf("connect", "token", "pause", "resume", "seek", "next", "previous", "volume", "state", "disconnect")
 
-    /** `error(kind, message)`'s kinds; `csp` (a CSP violation, qa-26c-step4-code L6) goes to the debug log only. */
-    val ERROR_KINDS = listOf("initialization", "authentication", "account", "playback", "autoplay", "script", "csp")
+    /**
+     * `error(kind, message)`'s kinds; `csp` (a CSP violation, qa-26c-step4-code L6) goes to the debug log only; `diag`
+     * (2026-11-01) is the page's own diagnostic line - its visibility, a late 5 s tick - for the log ([diagLine]).
+     */
+    val ERROR_KINDS = listOf("initialization", "authentication", "account", "playback", "autoplay", "script", "csp", "diag")
+
+    /** The `diag` messages `player.js` writes: the page's visibility, a 5 s tick that came late (PlayerJsTest). */
+    private val DIAG = Regex("page (visible|hidden|prerender)|tick late by [0-9]{1,9} ms")
+
+    /**
+     * A `diag` message as the log line's tail, or null for anything our page doesn't write (the SDK runs in the same
+     * page and could call the bridge): exactly [DIAG]'s fixed words and a number - never a token, an id or a uri.
+     */
+    fun diagLine(message: String): String? = message.takeIf { DIAG.matches(it) }
 
     /** The player's name in the account's device list (Policy §VI: never "Spot..."). */
     const val PLAYER_NAME = "Vibb"

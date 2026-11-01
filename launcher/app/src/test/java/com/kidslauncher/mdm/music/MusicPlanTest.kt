@@ -502,9 +502,22 @@ class MusicPlanTest {
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "mobile_data" to true, "library_version" to "",
                 "storytel_generation" to 4, "volume_cap_pct" to 60, "stream_mobile_data" to true, "download_mobile_data" to true, "storage_limit_gb" to 5,
+                "spotify_diag_until" to 0,
             ),
             r,
         )
+    }
+
+    @Test
+    fun `the managed config carries the Spotify diagnostic log's end, 0 when off (2026-11-01)`() {
+        assertEquals(MusicRestrictions.SPOTIFY_DIAG_UNTIL, "spotify_diag_until")
+        assertEquals(1_793_000_000, restrictionsFor(MusicPolicy(null, true, true, null, 2, 0, 1_793_000_000L), "p", "", null)["spotify_diag_until"])
+        assertEquals(0, restrictionsFor(MusicPolicy(null, true, true, null, 2, 0), "p", "", null)["spotify_diag_until"])
+        // read leniently: junk is 0, never a refusal of the music object
+        assertEquals(1_793_000_000L, spotifyDiagUntil(JsonPrimitive(1_793_000_000)))
+        for (junk in listOf(null, JsonNull, JsonPrimitive("1793000000"), JsonPrimitive(-1), JsonPrimitive(0), JsonPrimitive(1.5), JsonPrimitive(true), JsonPrimitive(99_999_999_999L))) {
+            assertEquals("$junk", 0L, spotifyDiagUntil(junk))
+        }
     }
 
     @Test
