@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -10,7 +10,7 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <a class="nav-back" href="{{ back_href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back_label }}</a>
-    <h1 class="page-title">Apps</h1>
+    <h1 class="page-title">{{ self.t("nav.apps") }}</h1>
 
     {#- Where the forms return (§5.1): a switch and a Name and icon save to the app's row
         (#app-<package>) - a switch moves the row to the other group, and the fragment finds it
@@ -25,58 +25,58 @@
     {% endif %}
 
     <section id="allowed" aria-labelledby="allowed-title">
-        <h2 class="group-header" id="allowed-title">Allowed</h2>
+        <h2 class="group-header" id="allowed-title">{{ self.t("device.summary.blocked.allowed") }}</h2>
         <div class="group group-avatars group-small group-apps">
             {% for app in allowed %}
             {% include "partials/device_app_row.html" %}
             {% else %}
-            <p class="row row-note">Nothing yet.</p>
+            <p class="row row-note">{{ self.t("device.apps.nothing_yet") }}</p>
             {% endfor %}
         </div>
     </section>
 
     <section id="not-allowed" aria-labelledby="not-allowed-title">
-        <h2 class="group-header" id="not-allowed-title">Not allowed</h2>
+        <h2 class="group-header" id="not-allowed-title">{{ self.t("device.summary.blocked.not_allowed") }}</h2>
         <div class="group group-avatars group-small group-apps">
             {% if !reported %}
-            <p class="row row-note" data-row="not-reported">The phone hasn't reported its apps yet.</p>
+            <p class="row row-note" data-row="not-reported">{{ self.t("device.apps.not_reported") }}</p>
             {% endif %}
             {% for app in not_allowed %}
             {% include "partials/device_app_row.html" %}
             {% else %}
-            {% if reported %}<p class="row row-note">Nothing else on this phone.</p>{% endif %}
+            {% if reported %}<p class="row row-note">{{ self.t("device.apps.nothing_else") }}</p>{% endif %}
             {% endfor %}
         </div>
-        <div class="group-footer">Turning an app off hides it, and uninstalls it where possible.
+        <div class="group-footer">{{ self.t("device.apps.footer") }}
             <details class="info">
-                <summary aria-label="About allowing apps"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.apps.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Only an allowed app's keyboard or accessibility service can be turned on in the phone's settings. Your child can rename only the apps you haven't named.</p>
+                    <p>{{ self.t("device.apps.info") }}</p>
                 </div>
             </details>
         </div>
     </section>
 
     <section id="downloads" aria-labelledby="downloads-title">
-        <h2 class="group-header" id="downloads-title">Downloads</h2>
+        <h2 class="group-header" id="downloads-title">{{ self.t("device.apps.downloads") }}</h2>
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/app-updates#downloads" class="cell">
                 {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
                 <label class="row">
-                    <span class="row-label">Download apps on Wi-Fi only</span>
+                    <span class="row-label">{{ self.t("device.apps.wifi_only") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="app_updates_wifi_only" value="on"{% if wifi_only %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             {% if let Some(row) = network %}
             {% include "partials/info_row.html" %}
             {% endif %}
         </div>
-        <div class="group-footer">Turn it off when an app is needed now.
+        <div class="group-footer">{{ self.t("device.apps.downloads_footer") }}
             <details class="info">
-                <summary aria-label="About downloads"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.apps.downloads_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Vibb One's own updates wait up to 3 days for Wi-Fi, then take any network. Nothing downloads while roaming.</p>
+                    <p>{{ self.t("device.apps.downloads_info") }}</p>
                 </div>
             </details>
         </div>

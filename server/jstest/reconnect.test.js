@@ -617,22 +617,27 @@ test("L9: the chip's words are set when it shows, so a screen reader announces t
         return el;
     };
     const body = element("body");
-    const view = rc.domView({ document: { body, createElement: element } });
+    // The words come from the page (partials/js_words.html, design 70 §5.3).
+    const words = { getAttribute: (name) => ({ "data-w-connecting": "Kobler til …", "data-w-retry": "Prøv igjen" })[name] || null };
+    const getElementById = (id) => (id === "js-words" ? words : null);
+    const view = rc.domView({ document: { body, createElement: element, getElementById } });
     view.chip(false);
     const chip = made.find((el) => el.className === "net-chip");
-    const words = chip.children[0];
+    const text = chip.children[0];
     assert.strictEqual(chip.attrs.role, "status");
     assert.strictEqual(chip.hidden, true);
-    assert.strictEqual(words.textContent, "", "empty while hidden");
+    assert.strictEqual(text.textContent, "", "empty while hidden");
+    assert.strictEqual(chip.children[1].textContent, "Prøv igjen");
     view.chip(true);
     assert.strictEqual(chip.hidden, false);
-    assert.strictEqual(words.textContent, "Connecting\u2026");
+    assert.strictEqual(text.textContent, "Kobler til …");
     view.chip(false);
-    assert.strictEqual(words.textContent, "");
+    assert.strictEqual(text.textContent, "");
 });
 
-test("the strings and the script are ES5 (§5.7)", () => {
-    assert.deepStrictEqual(rc.TEXT, { connecting: "Connecting…", retry: "Try again" });
+test("the words come from the page, and the script is ES5 (§5.7)", () => {
+    assert.strictEqual(rc.w({ getAttribute: (name) => (name === "data-w-retry" ? "Prøv igjen" : null) }, "retry"), "Prøv igjen");
+    assert.strictEqual(rc.w(null, "connecting"), "connecting", "a missing word shows its name");
     const src = require("node:fs")
         .readFileSync(require.resolve("../static/reconnect.js"), "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")

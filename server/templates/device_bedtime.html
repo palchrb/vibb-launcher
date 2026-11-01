@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -13,53 +13,53 @@
     <form method="post" action="/devices/{{ device_id }}/bedtime#bedtime" id="bedtime">
         <div class="editor-bar" data-bar="bedtime">
             <div class="title-bar title-bar-split">
-                <a class="nav-back" href="/devices/{{ device_id }}/time"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Time</a>
-                <button type="submit" class="title-action" data-save="bedtime">{% if stored %}Save{% else %}Add{% endif %}</button>
+                <a class="nav-back" href="/devices/{{ device_id }}/time"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("device.page.time") }}</a>
+                <button type="submit" class="title-action" data-save="bedtime">{% if stored %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>
             </div>
-            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. {{ why }}</p>{% endif %}
-            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">Saved. The phone gets it within seconds when online.</p>{% endif %}
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>{% endif %}
+            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">{{ self.t("common.saved_online") }}</p>{% endif %}
         </div>
-        <h1 class="page-title">Bedtime</h1>
+        <h1 class="page-title">{{ self.t("device.bedtime.title") }}</h1>
 
         {% if let Some(parts) = corrupt %}
-        <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">Stored bedtime unreadable<div class="attention-sub">{{ parts }}, so they show empty here and are saved as you see them: set them again, then Save - or remove the bedtime.</div></div></div>
+        <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">{{ self.t("device.bedtime.corrupt") }}<div class="attention-sub">{{ self.tp("device.bedtime.corrupt_sub", [("parts", parts.as_str())]) }}</div></div></div>
         {% endif %}
-        <section id="nights" aria-label="Nights">
+        <section id="nights" aria-label="{{ self.t("device.bedtime.nights") }}">
             <div class="group">
                 {% for r in rule.rows %}
                 <div class="row day-row" data-nights="{{ r.index }}">
                     <span class="row-label">{{ r.label }}</span>
-                    <input type="time" class="row-time" name="n{{ r.index }}_start" value="{{ r.start }}" aria-label="{{ r.label }} from"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error" autofocus{% endif %}>
+                    <input type="time" class="row-time" name="n{{ r.index }}_start" value="{{ r.start }}" aria-label="{{ self.tp("device.bedtime.from", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error" autofocus{% endif %}>
                     <span class="day-dash" aria-hidden="true">&ndash;</span>
-                    <input type="time" class="row-time" name="n{{ r.index }}_end" value="{{ r.end }}" aria-label="{{ r.label }} until"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error"{% endif %}>
+                    <input type="time" class="row-time" name="n{{ r.index }}_end" value="{{ r.end }}" aria-label="{{ self.tp("device.bedtime.until", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error"{% endif %}>
                 </div>
                 {% if let Some(why) = r.error %}<p class="flash flash-error" id="n{{ r.index }}-error" data-flash="nights-{{ r.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}
             </div>
-            <p class="group-footer">From evening to morning, on the phone's clock. Fri-Sat are the nights before Saturday and Sunday. Leave a row empty for no bedtime on those nights.</p>
+            <p class="group-footer">{{ self.t("device.bedtime.nights_footer") }}</p>
         </section>
 
-        <section id="calls" aria-label="Calls">
+        <section id="calls" aria-label="{{ self.t("device.bedtime.calls_label") }}">
             <div class="group">
                 <label class="row">
-                    <span class="row-label">Calls with contacts</span>
+                    <span class="row-label">{{ self.t("device.bedtime.calls") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="calls_allowed" value="on"{% if rule.calls_allowed %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <p class="group-footer">The phone is locked during bedtime. Emergency calls always work.</p>
+            <p class="group-footer">{{ self.t("device.bedtime.calls_footer") }}</p>
         </section>
 
 {% include "partials/exceptions.html" %}
     </form>
 
     {% if stored %}
-    <section id="remove" aria-label="Remove bedtime">
+    <section id="remove" aria-label="{{ self.t("device.bedtime.remove_label") }}">
         <div class="group">
             <details class="confirm cell">
-                <summary class="row">Remove Bedtime&hellip;</summary>
+                <summary class="row">{{ self.t("device.bedtime.remove") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device_id }}/bedtime/remove" class="confirm-body">
-                    <p>Remove the bedtime? {{ device_name }}'s phone is no longer locked at night.</p>
-                    <button type="submit" class="button-destructive">Remove Bedtime</button>
+                    <p>{{ self.tp("device.bedtime.remove_confirm", [("name", device_name.as_str())]) }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("device.bedtime.remove") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>

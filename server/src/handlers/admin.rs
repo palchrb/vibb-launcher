@@ -4,6 +4,7 @@
 //! and its siblings write it). Design 31 step 14: each event a row with a label instead of its
 //! id ([event_label]), the time in the Phone Setup zone, the stored detail behind the row's ⓘ.
 
+use crate::i18n::Words;
 use askama::Template;
 use axum::Form;
 use axum::extract::{Query, State};

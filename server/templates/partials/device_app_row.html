@@ -6,7 +6,7 @@
     <div class="row">
         {% if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
         <span class="row-label">{{ app.row.label }}<span class="row-sub">{{ app.row.status_label }}</span></span>
-        <span class="row-value">Always on</span>
+        <span class="row-value">{{ self.t("device.apps.always_on") }}</span>
     </div>
     {% else %}
     <form method="post" action="/devices/{{ device.id }}/apps/toggle#{{ app.anchor }}">
@@ -18,10 +18,10 @@
         {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
         <label class="row">
             {% if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
-            <span class="row-label">{{ app.row.label }}<span class="row-sub{% if app.row.install_failed %} text-alarm{% endif %}" data-installing="{{ app.row.is_installing }}" data-failed="{{ app.row.install_failed }}">{{ app.row.status_label }}{% if app.row.show_no_release_hint %} · No release yet{% endif %}</span>{% if let Some(perms) = app.perms %}{% if !perms.line.is_empty() %}<span class="row-sub" data-perms-line>{{ perms.line }}</span>{% endif %}{% endif %}</span>
+            <span class="row-label">{{ app.row.label }}<span class="row-sub{% if app.row.install_failed %} text-alarm{% endif %}" data-installing="{{ app.row.is_installing }}" data-failed="{{ app.row.install_failed }}">{{ app.row.status_label }}{% if app.row.show_no_release_hint %} · {{ self.t("device.apps.no_release") }}{% endif %}</span>{% if let Some(perms) = app.perms %}{% if !perms.line.is_empty() %}<span class="row-sub" data-perms-line>{{ perms.line }}</span>{% endif %}{% endif %}</span>
             <input type="checkbox" role="switch" class="sw" name="selected"{% if app.row.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
         </label>
-        <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
     </form>
     {% if let Some(text) = app.refused %}
     <p class="flash flash-error" role="status" data-flash="{{ app.anchor }}">{{ text }}</p>

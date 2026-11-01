@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
+use crate::i18n::Words;
 use askama::Template;
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};

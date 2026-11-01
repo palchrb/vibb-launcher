@@ -53,8 +53,10 @@
     // static/scroll-restore.js's form record (its KEY and NAME_PREFIX).
     var SCROLL_KEY = "handy-scroll";
     var NAME_PREFIX = "handy-scroll:";
-    // The PWA is English (`<html lang="en">`), as every other string on its pages.
-    var TEXT = { connecting: "Connecting…", retry: "Try again" };
+    // The chip's words come from the page (`partials/js_words.html`, design 70 §5.3): a missing one shows its name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
 
     /**
      * The address a click on `link` navigates to, or null when this script leaves it alone: no
@@ -247,9 +249,11 @@
         var chip = null;
         var retry = null;
         var text = null;
+        var words = null;
         function ready() {
             if (chip) return true;
             if (!doc.body || !doc.createElement) return false;
+            words = doc.getElementById ? doc.getElementById("js-words") : null;
             bar = doc.createElement("div");
             bar.className = "net-progress";
             bar.setAttribute("aria-hidden", "true");
@@ -264,7 +268,7 @@
             retry = doc.createElement("button");
             retry.type = "button";
             retry.className = "net-retry";
-            retry.textContent = TEXT.retry;
+            retry.textContent = w(words, "retry");
             retry.hidden = true;
             chip.appendChild(text);
             chip.appendChild(retry);
@@ -279,7 +283,7 @@
             chip: function (on) {
                 if (!ready()) return;
                 chip.hidden = !on;
-                text.textContent = on ? TEXT.connecting : "";
+                text.textContent = on ? w(words, "connecting") : "";
                 if (!on) retry.hidden = true;
             },
             offer: function (onRetry) {
@@ -728,7 +732,7 @@
         OFFER_AFTER: OFFER_AFTER,
         STUCK_AFTER: STUCK_AFTER,
         AWAY_MS: AWAY_MS,
-        TEXT: TEXT
+        w: w
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

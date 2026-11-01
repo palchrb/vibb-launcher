@@ -517,7 +517,7 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     // The device page: one row, its value, and none of the forms.
     let row = &summary[summary.find("data-row=\"lock\"").expect("the row")..];
     let row = &row[..row.find("</a>").unwrap()];
-    assert!(row.contains("Lock Screen &amp; PINs"), "{row}");
+    assert!(row.contains("Lock Screen &#38; PINs"), "{row}");
     assert!(
         row.contains("<span class=\"row-value\">PIN off</span>"),
         "{row}"
@@ -541,7 +541,7 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     let html = res.text();
     assert_eq!(nav_current(&html), "devices");
     assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
-    assert!(html.contains("<h1 class=\"page-title\">Lock Screen &amp; PINs</h1>"));
+    assert!(html.contains("<h1 class=\"page-title\">Lock Screen &#38; PINs</h1>"));
     assert!(!html.contains("class=\"app-header\""));
     // The groups in the mockup's order.
     let at = |id: &str| html.find(&format!("<section id=\"{id}\"")).expect(id);
@@ -615,7 +615,7 @@ async fn removing_the_child_pin_confirms_with_details() {
     assert!(inside.contains("<summary class=\"row\">Remove Child PIN&hellip;</summary>"));
     assert!(inside.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
     let form = &html[hidden..hidden + html[hidden..].find("</form>").unwrap()];
-    assert!(form.contains("Remove Anna's Child PIN?"), "{form}");
+    assert!(form.contains("Remove Anna&#39;s Child PIN?"), "{form}");
     assert!(form.contains("class=\"button-destructive\">Remove Child PIN</button>"));
 }
 
@@ -1555,7 +1555,7 @@ async fn the_filter_routes_refuse_bad_input() {
             .find(&format!("data-flash=\"{group}\""))
             .expect("the refusal in its group");
         assert!(section[..flash].contains(&format!("action=\"/dns/domains/new#{group}\"")));
-        assert!(section[flash..].contains("isn't a domain name"));
+        assert!(section[flash..].contains("isn&#39;t a domain name"));
         assert_eq!(html.matches("data-flash=").count(), 1);
     }
     let html = app

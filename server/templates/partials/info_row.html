@@ -5,7 +5,7 @@
     <summary class="row">
         <span class="row-label">{{ row.label }}</span>
         <span class="row-value{% if !row.value_class.is_empty() %} {{ row.value_class }}{% endif %}"{% if let Some(exact) = row.title %} title="{{ exact }}"{% endif %}>{% if let Some((word, css)) = row.lead %}<span class="state-{{ css }}">{{ word }}</span>{% if !row.value.is_empty() %} {% endif %}{% endif %}{{ row.value }}</span>
-        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
     </summary>
     <div class="info-panel"><p>{{ detail }}</p></div>
 </details>

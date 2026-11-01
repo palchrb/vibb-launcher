@@ -4556,7 +4556,9 @@ pub(crate) async fn device_card(
         .and_then(notice_text);
     match &state_report {
         Some(report) => {
-            on_phone.extend(crate::handlers::device_pages::music_app_row("app", report));
+            on_phone.extend(crate::handlers::device_pages::music_app_row(
+                lang, "app", report,
+            ));
             let current = library.as_ref().map(|l| l.version.as_str());
             let library_state = match (&report.library_version, current) {
                 (Some(applied), Some(current)) if applied == current => Some("Up to date"),
@@ -4652,7 +4654,7 @@ pub(crate) async fn device_card(
 
     Ok(MusicCard {
         app,
-        app_refused: notice.and_then(crate::handlers::devices::toggle_refusal),
+        app_refused: notice.and_then(|code| crate::handlers::devices::toggle_refusal(lang, code)),
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,

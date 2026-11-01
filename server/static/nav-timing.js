@@ -139,6 +139,11 @@
         };
     }
 
+    // The row's words come from the page (`partials/js_words.html`, design 70 §5.3): a missing one shows its name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
+
     /** About's "Page timing" row, once the page has loaded: its state, and a link to the other one. */
     function toggle(doc, on) {
         function mark() {
@@ -146,7 +151,8 @@
             if (!row) return;
             row.setAttribute("href", "/updates?timing=" + (on ? "0" : "1") + "#timing");
             var state = row.querySelector("[data-timing-state]");
-            if (state) state.textContent = on ? "On" : "Off";
+            var words = doc.getElementById ? doc.getElementById("js-words") : null;
+            if (state) state.textContent = w(words, on ? "on" : "off");
         }
         if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", mark);
         else mark();

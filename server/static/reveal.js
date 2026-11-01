@@ -16,6 +16,11 @@
     var SHOWN = ".pin-digits, .pin-inline, .secret-once";
     var HIDE_MS = 5 * 60 * 1000;
 
+    // The button's words are its own `data-w-copied`/`data-w-select` (design 70 §5.3): a missing one shows its name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
+
     function forget(doc) {
         var shown = doc.querySelectorAll(SHOWN);
         for (var i = 0; i < shown.length; i++) shown[i].textContent = "";
@@ -73,7 +78,7 @@
                 button.hidden = false;
                 button.addEventListener("click", function () {
                     copySecret(win, function (copied) {
-                        button.textContent = copied ? "Copied" : "Select and copy it";
+                        button.textContent = w(button, copied ? "copied" : "select");
                     });
                 });
             })(buttons[i]);

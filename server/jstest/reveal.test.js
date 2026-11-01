@@ -14,6 +14,8 @@ function fakeWindow() {
     const copy = {
         hidden: true,
         textContent: "Copy",
+        // Its words come from the page (account.html's data-w-copied/-select, design 70 §5.3).
+        getAttribute: (name) => ({ "data-w-copied": "Kopiert", "data-w-select": "Merk og kopier" })[name] || null,
         addEventListener: (type, fn) => clicks.push(fn),
     };
     const replaced = [];
@@ -90,7 +92,7 @@ test("Copy writes the one-time password without spaces", async () => {
     click();
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepStrictEqual(written, ["Kp3x9mQaR7tuWv2yZ4bcDeFg"]);
-    assert.strictEqual(copy.textContent, "Copied");
+    assert.strictEqual(copy.textContent, "Kopiert");
 });
 
 test("Copy after the page was hidden copies nothing", () => {
@@ -102,7 +104,7 @@ test("Copy after the page was hidden copies nothing", () => {
     fire("visibilitychange");
     click();
     assert.deepStrictEqual(written, []);
-    assert.strictEqual(copy.textContent, "Select and copy it");
+    assert.strictEqual(copy.textContent, "Merk og kopier");
 });
 
 test("after 5 minutes the one-time password is gone for Copy too", () => {

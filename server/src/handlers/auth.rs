@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::net::SocketAddr;
 use tower_sessions::Session;
 
-use crate::i18n::{Lang, Words, t, t_count};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::AdminUser;
 use crate::security::{self, CurrentAdmin};
 use crate::{AppState, admin_auth};
@@ -854,7 +854,7 @@ pub(crate) async fn render_account(
         flash: answer.flash,
         password_field: answer.password_field,
         reset_error: answer.reset_error,
-        login_warning: login_warning_of(session).await,
+        login_warning: login_warning_of(session).await.map(|w| w.words(lang)),
         live_warning: live_warning(admin, &zone, now, lang),
         name_value: answer
             .name_typed
@@ -880,12 +880,21 @@ pub(crate) async fn render_account(
 }
 
 /// The banner after a sign-in that followed failed 2FA codes, until dismissed.
-pub async fn login_warning_of(session: &Session) -> Option<String> {
-    session
-        .get::<String>(admin_auth::LOGIN_WARNING_KEY)
+pub async fn login_warning_of(session: &Session) -> Option<admin_auth::LoginWarning> {
+    let value = session
+        .get_value(admin_auth::LOGIN_WARNING_KEY)
         .await
         .ok()
-        .flatten()
+        .flatten()?;
+    match value {
+        // A session from before slice 3a holds the old English sentence: shown as it is.
+        serde_json::Value::String(said) => Some(admin_auth::LoginWarning {
+            failures: 0,
+            ips: Vec::new(),
+            said: Some(said),
+        }),
+        value => serde_json::from_value(value).ok(),
+    }
 }
 
 /// The page; `?changed=password` (after a change, post/redirect/get - qa-31-s14-code M1) shows
@@ -1044,7 +1053,7 @@ pub async fn update_account_password(
     crate::push::forget_subscriptions(&state.db, admin.id).await;
     // The warning said to change the password: done.
     session
-        .remove::<String>(admin_auth::LOGIN_WARNING_KEY)
+        .remove_value(admin_auth::LOGIN_WARNING_KEY)
         .await
         .ok();
 
@@ -1210,7 +1219,7 @@ pub async fn dismiss_login_warning(
     Form(form): Form<DismissForm>,
 ) -> impl IntoResponse {
     session
-        .remove::<String>(admin_auth::LOGIN_WARNING_KEY)
+        .remove_value(admin_auth::LOGIN_WARNING_KEY)
         .await
         .ok();
     Redirect::to(if form.back == "/account" {
@@ -1235,42 +1244,41 @@ pub fn live_warning_row(
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<WarningRow> {
+    let lang = zone.lang();
     let n = admin.failed_login_attempts;
     if n <= 0 {
         return None;
     }
-    let mut sub = "Someone knows your password - change it".to_string();
+    let mut sub = t(lang, "devices.warning.live_sub").to_string();
     if let Some(until) = admin
         .locked_until
         .as_deref()
         .and_then(crate::display_time::parse_db_utc)
         .filter(|until| *until > now)
     {
-        let tomorrow = if zone.local(until).date_naive() == zone.today(now) {
-            ""
+        let key = if zone.local(until).date_naive() == zone.today(now) {
+            "devices.warning.locked_until"
         } else {
-            " tomorrow"
+            "devices.warning.locked_until_tomorrow"
         };
-        sub.push_str(&format!(
-            " · sign-ins locked until {}{tomorrow}",
-            zone.clock(until)
-        ));
+        sub.push_str(" · ");
+        sub.push_str(&t_params(lang, key, &[("at", &zone.clock(until))]));
     }
     Some(WarningRow {
-        title: format!(
-            "{n} wrong two-factor code{} since sign-in",
-            if n == 1 { "" } else { "s" }
-        ),
+        title: t_count(lang, "devices.warning.live", n, &[]),
         sub,
     })
 }
 
 /// The post-sign-in banner ([login_warning_of]) as a row; its counts and addresses stay on
 /// Account.
-pub fn login_warning_row(warning: Option<&str>) -> Option<WarningRow> {
+pub fn login_warning_row(
+    warning: Option<&admin_auth::LoginWarning>,
+    lang: Lang,
+) -> Option<WarningRow> {
     warning.map(|_| WarningRow {
-        title: "Wrong two-factor codes before this sign-in".to_string(),
-        sub: "Someone knew your password - change it".to_string(),
+        title: t(lang, "devices.warning.login").to_string(),
+        sub: t(lang, "devices.warning.login_sub").to_string(),
     })
 }
 

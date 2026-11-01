@@ -4,6 +4,7 @@
 //! The Settings tab itself (`/settings`) is `handlers::settings_hub`. Also [Flash], the result line
 //! the Settings pages show inside the group whose form saved (design 31 §3.0).
 
+use crate::i18n::Words;
 use askama::Template;
 use axum::Form;
 use axum::extract::{Query, State};

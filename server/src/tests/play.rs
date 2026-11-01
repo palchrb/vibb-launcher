@@ -342,6 +342,7 @@ async fn play_core_is_never_in_the_allowlist_ui() {
             }
             let status = crate::handlers::devices::toggle_app(
                 axum::extract::State(app.state.clone()),
+                crate::i18n::Lang::En,
                 axum::extract::Path(id),
                 axum::Form(form),
             )
@@ -387,6 +388,7 @@ async fn catalog_app_installed_from_play_is_refused() {
         form.insert("selected".to_string(), "on".to_string());
         crate::handlers::devices::toggle_app(
             axum::extract::State(app.state.clone()),
+            crate::i18n::Lang::En,
             axum::extract::Path(id),
             axum::Form(form),
         )

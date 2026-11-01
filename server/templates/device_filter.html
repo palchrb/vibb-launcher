@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,30 +8,30 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">Web Filter</h1>
+    <h1 class="page-title">{{ self.t("device.page.filter") }}</h1>
 
     {#- Every form returns to its group (#filter, #lists, #blocked, #allowed, #log): without JS the
         answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4); the switches
         and pickers save on change (autosave.js), with a <noscript> Save. -#}
-    <section id="filter" aria-label="Web filter">
+    <section id="filter" aria-label="{{ self.t("device.filter.label") }}">
         {#- `section=filter` writes only the filter switch (§5.6, H1), not the quick controls. -#}
         <form method="post" action="/devices/{{ device.id }}/policy#filter" class="group">
             <input type="hidden" name="section" value="filter">
             <label class="row">
-                <span class="row-label">Web filter</span>
+                <span class="row-label">{{ self.t("device.filter.label") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="vpn_filter_enabled" value="on"{% if filter_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer" data-note="filter">{% if spotify_on %}Blocks the lists and domains below, except Spotify's while this phone plays Spotify.{% else %}Blocks the lists and domains below on this phone.{% endif %}
+        <div class="group-footer" data-note="filter">{% if spotify_on %}{{ self.t("device.filter.footer_spotify") }}{% else %}{{ self.t("device.filter.footer") }}{% endif %}
             <details class="info">
-                <summary aria-label="About the web filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.filter.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>It works on any network, and your child can't turn it off. The lists for every phone are in <a href="/dns">Settings › Web Filter</a>.</p>
+                    <p>{{ self.t("device.filter.info.before") }} <a href="/dns">{{ self.t("device.filter.info.link") }}</a>{{ self.t("device.filter.info.after") }}</p>
                     {% if spotify_on %}
-                    <p data-note="spotify-hosts">Spotify's hosts are allowed on this phone while it plays Spotify, for every app on it (its <a href="/devices/{{ device.id }}/music#music-spotify">Music page</a>).</p>
+                    <p data-note="spotify-hosts">{{ self.t("device.filter.spotify_hosts.before") }} <a href="/devices/{{ device.id }}/music#music-spotify">{{ self.t("device.filter.spotify_hosts.link") }}</a>{{ self.t("device.filter.spotify_hosts.after") }}</p>
                     {% if !spotify_global.is_empty() %}
-                    <p data-note="spotify-global">Not applied on {{ device.name }} for that reason, from Settings › Web Filter: {{ spotify_global.join(", ") }}.</p>
+                    <p data-note="spotify-global">{{ self.tp("device.filter.spotify_global", [("name", device.name.as_str()), ("domains", spotify_global.join(", ").as_str())]) }}</p>
                     {% endif %}
                     {% endif %}
                 </div>
@@ -40,7 +40,7 @@
     </section>
 
     <section id="lists" aria-labelledby="lists-title">
-        <h2 class="group-header" id="lists-title">Blocklists</h2>
+        <h2 class="group-header" id="lists-title">{{ self.t("device.filter.lists") }}</h2>
         <div class="group">
             {% for list in lists %}
             <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ list.id }}/override#lists" class="cell" data-list="{{ list.id }}">
@@ -53,10 +53,10 @@
                         <option value="off"{% if list.setting == "off" %} selected{% endif %}>{{ self.t("device.filter.off") }}</option>
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             {% else %}
-            <p class="row row-note">No lists yet.</p>
+            <p class="row row-note">{{ self.t("device.filter.no_lists") }}</p>
             {% endfor %}
         </div>
         <p class="group-footer">{{ self.t("device.filter.lists_footer") }}</p>
@@ -64,16 +64,16 @@
 
     {#- Remove is one tap: a domain can be added again (§5.6). -#}
     <section id="blocked" aria-labelledby="blocked-title">
-        <h2 class="group-header" id="blocked-title">Blocked on this phone</h2>
+        <h2 class="group-header" id="blocked-title">{{ self.t("device.filter.blocked") }}</h2>
         <div class="group">
             {% for d in blocked %}
             <div class="row" data-domain="{{ d.id }}">
-                <span class="row-label">{{ d.domain }}{% if self.overridden(d.id) %}<span class="row-sub" data-spotify-override>Not applied while this phone plays Spotify</span>{% endif %}</span>
+                <span class="row-label">{{ d.domain }}{% if self.overridden(d.id) %}<span class="row-sub" data-spotify-override>{{ self.t("device.filter.spotify_override") }}</span>{% endif %}</span>
                 <form method="post" action="/dns/domains/{{ d.id }}/delete#blocked" class="row-end">
                     <input type="hidden" name="list_type" value="block">
                     <input type="hidden" name="back" value="filter">
                     <input type="hidden" name="device_id" value="{{ device.id }}">
-                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.filter.remove_label", [("domain", d.domain.as_str())]) }}">{{ self.t("device.filter.remove") }}</button>
                 </form>
             </div>
             {% endfor %}
@@ -82,16 +82,16 @@
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to block on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-                    <button type="submit" class="row-action">Block</button>
+                    <input type="text" class="row-input" name="domain" placeholder="{{ self.t("device.filter.domain_example") }}" aria-label="{{ self.t("device.filter.block_label") }}" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="{{ self.t("device.filter.domain_title") }}">
+                    <button type="submit" class="row-action">{{ self.t("device.filter.block") }}</button>
                 </div>
             </form>
-            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
         </div>
     </section>
 
     <section id="allowed" aria-labelledby="allowed-title">
-        <h2 class="group-header" id="allowed-title">Allowed on this phone</h2>
+        <h2 class="group-header" id="allowed-title">{{ self.t("device.filter.allowed") }}</h2>
         <div class="group">
             {% for d in allowed %}
             <div class="row" data-domain="{{ d.id }}">
@@ -100,7 +100,7 @@
                     <input type="hidden" name="list_type" value="allow">
                     <input type="hidden" name="back" value="filter">
                     <input type="hidden" name="device_id" value="{{ device.id }}">
-                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.filter.remove_label", [("domain", d.domain.as_str())]) }}">{{ self.t("device.filter.remove") }}</button>
                 </form>
             </div>
             {% endfor %}
@@ -109,26 +109,26 @@
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to allow on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-                    <button type="submit" class="row-action">Allow</button>
+                    <input type="text" class="row-input" name="domain" placeholder="{{ self.t("device.filter.domain_example") }}" aria-label="{{ self.t("device.filter.allow_label") }}" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="{{ self.t("device.filter.domain_title") }}">
+                    <button type="submit" class="row-action">{{ self.t("device.filter.allow") }}</button>
                 </div>
             </form>
-            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
-            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ host }} is a secure-DNS server and stays blocked.</p>{% endif %}
+            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
+            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ self.tp("device.filter.doh_allowed", [("host", host.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">Let through even when a list blocks it - not the secure-DNS servers built into Vibb One, which stay blocked.</p>
+        <p class="group-footer">{{ self.t("device.filter.allowed_footer") }}</p>
     </section>
 
     <section id="log" aria-labelledby="log-title">
-        <h2 class="group-header" id="log-title">Blocked Activity</h2>
+        <h2 class="group-header" id="log-title">{{ self.t("device.filter.log") }}</h2>
         <form method="post" action="/dns/log/{{ device.id }}#log" class="group">
             <label class="row">
-                <span class="row-label">Keep a log</span>
+                <span class="row-label">{{ self.t("device.filter.keep_log") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="dns_log_enabled" value="on"{% if log_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">Kept {{ retention_days }} days. Turning it off deletes this phone's log.</p>
+        <p class="group-footer">{{ self.tc("device.filter.log_footer", retention_days, []) }}</p>
         {% if log_on %}
         <div class="group" data-group="log-events">
             {% for e in events %}
@@ -137,7 +137,7 @@
                 <span class="row-value"{% if !e.exact.is_empty() %} title="{{ e.exact }}"{% endif %}>{{ e.when }}</span>
             </div>
             {% else %}
-            <p class="row row-note">Nothing blocked yet.</p>
+            <p class="row row-note">{{ self.t("device.filter.nothing_blocked") }}</p>
             {% endfor %}
         </div>
         {% endif %}

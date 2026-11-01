@@ -1,0 +1,3 @@
+{#- The every-page scripts' words (design 70 §5.3): `static/reconnect.js` and `static/nav-timing.js` read them from
+    here (`data-w-<name>`, set with textContent). Included by tab_bar.html and by the pages without a tab bar. -#}
+<div id="js-words" hidden data-w-connecting="{{ self.t("js.connecting") }}" data-w-retry="{{ self.t("js.retry") }}" data-w-on="{{ self.t("common.on") }}" data-w-off="{{ self.t("common.off") }}"></div>

@@ -6,69 +6,51 @@
 //! only shows what the report says. A special access is approved on the phone alone (Settings › App access, in a
 //! pause) - Android has no device-owner API for it.
 
+use crate::i18n::{t, t_params};
 use serde::Serialize;
 use sqlx::SqlitePool;
 
 /// At most this many rows a phone (the PWA's form is the only writer).
 pub const MAX_ROWS_PER_DEVICE: i64 = 200;
 
-/// Every word this round shows the parent, in one place (the coordinator's rule of 2026-10-26: no English scattered
-/// through templates).
-// i18n: moves to i18n.rs (design 69)
+/// Every word this round shows the parent, from the catalog (`apps.perms.*`, design 70 slice 3a), in one place.
 pub mod words {
-    /// The `<details>`' summary under an app's row.
-    pub const PERMISSIONS: &str = "Permissions";
-    pub const CAMERA: &str = "Camera";
-    pub const CAMERA_OFF: &str = "Camera off";
-    pub const CAMERA_WAITING: &str = "Camera off · waiting for the phone";
-    /// The pause lifts it (design 68 Q1): the phone reports the camera back while it lasts.
-    pub const CAMERA_PAUSED: &str = "Camera off · back on while restrictions are paused";
-    pub const APPROVED: &str = "approved";
-    pub const NOT_APPROVED: &str = "not approved";
-    pub const UNKNOWN: &str = "unknown";
-    pub const SAVE: &str = "Save";
-    /// Above the Allowed list while the phone's launcher can't do this yet.
-    pub const UPDATE_NOTE: &str = "Update Vibb One to manage apps' permissions";
-    /// A refused save, under the app's row (`?notice=perms`).
-    pub const REFUSED: &str = "This app's permissions can't be changed here.";
-    pub const FULL: &str =
-        "This phone already has 200 apps with their camera off - turn some back on first.";
-    /// The special accesses' names, by wire key (`AppAccess::special`'s order).
+    use crate::i18n::{Lang, t, t_params};
+
+    /// The special accesses' names, by wire key (`AppAccess::special`'s order): their catalog keys.
     pub const ACCESSES: [(&str, &str); 5] = [
-        ("manage_media", "Media management"),
-        ("exact_alarm", "Alarms & reminders"),
-        ("write_settings", "Modify system settings"),
+        ("manage_media", "apps.perms.access.manage_media"),
+        ("exact_alarm", "apps.perms.access.exact_alarm"),
+        ("write_settings", "apps.perms.access.write_settings"),
         // Android 16's name ("Usage access" on Android 14).
-        ("usage_access", "App usage data"),
-        ("full_screen", "Full-screen notifications"),
+        ("usage_access", "apps.perms.access.usage_access"),
+        ("full_screen", "apps.perms.access.full_screen"),
     ];
 
-    pub fn state(state: &str) -> &'static str {
-        match state {
-            "granted" => APPROVED,
-            "denied" => NOT_APPROVED,
-            _ => UNKNOWN,
-        }
+    pub fn state(lang: Lang, state: &str) -> &'static str {
+        t(
+            lang,
+            match state {
+                "granted" => "apps.perms.approved",
+                "denied" => "apps.perms.not_approved",
+                _ => "apps.perms.unknown",
+            },
+        )
     }
 
-    pub fn camera_help(app: &str) -> String {
-        format!(
-            "Off: {app} can't use the camera - a video call or a QR scan stops working. Turning it off closes \
-             {app} if it was allowed the camera."
-        )
+    pub fn camera_help(lang: Lang, app: &str) -> String {
+        t_params(lang, "apps.perms.camera_help", &[("app", app)])
     }
 
     /// The way to approve `access` (its wire `key`, its `name`) on the phone. Alarms & reminders add the app's first start
     /// in the pause: Etar asks for the battery exemption then, which can't open outside it, and crashes (E4's M2).
-    pub fn how_to_approve(app: &str, key: &str, access: &str) -> String {
-        let then = if key == "exact_alarm" {
-            format!(", then open {app} once while restrictions are paused")
+    pub fn how_to_approve(lang: Lang, app: &str, key: &str, access: &str) -> String {
+        let how = if key == "exact_alarm" {
+            "apps.perms.how_alarm"
         } else {
-            String::new()
+            "apps.perms.how"
         };
-        format!(
-            "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}{then}"
-        )
+        t_params(lang, how, &[("app", app), ("access", access)])
     }
 }
 
@@ -152,7 +134,7 @@ impl AppAccess {
         (access != AppAccess::default()).then_some(access)
     }
 
-    /// The special accesses the app declares, in [words::ACCESSES]' order: `(key, name, state)`.
+    /// The special accesses the app declares, in [words::ACCESSES]' order: `(key, name's catalog key, state)`.
     pub fn special(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         let states = [
             self.manage_media,
@@ -237,7 +219,9 @@ pub struct PermsView {
 impl PermsView {
     /// For an allowed app: `None` when the report says nothing about it (no `access`). [paused]: the phone's last
     /// report says restrictions are paused, which lifts the camera off.
+    #[allow(clippy::too_many_arguments)]
     pub fn of(
+        lang: crate::i18n::Lang,
         device_id: i64,
         package: &str,
         label: &str,
@@ -249,21 +233,30 @@ impl PermsView {
         let access = access?;
         let mut parts = Vec::new();
         match (camera_off, access.camera) {
-            (true, Some("admin_denied")) => parts.push(words::CAMERA_OFF.to_string()),
-            (true, Some(_)) if paused => parts.push(words::CAMERA_PAUSED.to_string()),
-            (true, Some(_)) => parts.push(words::CAMERA_WAITING.to_string()),
+            (true, Some("admin_denied")) => {
+                parts.push(t(lang, "apps.perms.camera_off").to_string())
+            }
+            (true, Some(_)) if paused => {
+                parts.push(t(lang, "apps.perms.camera_paused").to_string())
+            }
+            (true, Some(_)) => parts.push(t(lang, "apps.perms.camera_waiting").to_string()),
             _ => {}
         }
         let mut accesses = Vec::new();
         for (key, name, state) in access.special() {
-            let text = format!("{name}: {}", words::state(state));
+            let name = t(lang, name);
+            let text = t_params(
+                lang,
+                "apps.perms.access_state",
+                &[("access", name), ("state", words::state(lang, state))],
+            );
             let approved = state == "granted";
             if !approved {
                 parts.push(text.clone());
             }
             accesses.push((
                 text,
-                (!approved).then(|| words::how_to_approve(label, key, name)),
+                (!approved).then(|| words::how_to_approve(lang, label, key, name)),
             ));
         }
         let anchor = format!("perms-{package}");
@@ -275,11 +268,11 @@ impl PermsView {
             line: parts.join(" · "),
             camera: access
                 .camera
-                .map(|_| (!camera_off, words::camera_help(label))),
+                .map(|_| (!camera_off, words::camera_help(lang, label))),
             accesses,
-            title: words::PERMISSIONS,
-            camera_label: words::CAMERA,
-            save: words::SAVE,
+            title: t(lang, "apps.perms.title"),
+            camera_label: t(lang, "apps.perms.camera"),
+            save: t(lang, "common.save"),
         })
     }
 }
@@ -287,6 +280,7 @@ impl PermsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::Lang;
     use serde_json::json;
 
     #[test]
@@ -311,23 +305,43 @@ mod tests {
         assert_eq!(AppAccess::of(&json!("granted")), None);
         assert_eq!(
             access.special(),
-            [("manage_media", "Media management", "granted")]
+            [("manage_media", "apps.perms.access.manage_media", "granted")]
         );
     }
 
     #[test]
     fn the_line_and_the_details_say_what_the_report_says() {
         let access = AppAccess::of(&json!({"camera": "requested", "manage_media": "denied"}));
-        let view =
-            PermsView::of(1, "app.x", "Immich", access.as_ref(), true, false, false).unwrap();
+        let view = PermsView::of(
+            Lang::En,
+            1,
+            "app.x",
+            "Immich",
+            access.as_ref(),
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             view.line,
             "Camera off · waiting for the phone · Media management: not approved"
         );
-        let paused =
-            PermsView::of(1, "app.x", "Immich", access.as_ref(), true, true, false).unwrap();
+        let paused = PermsView::of(
+            Lang::En,
+            1,
+            "app.x",
+            "Immich",
+            access.as_ref(),
+            true,
+            true,
+            false,
+        )
+        .unwrap();
         assert!(
-            paused.line.starts_with(words::CAMERA_PAUSED),
+            paused
+                .line
+                .starts_with("Camera off · back on while restrictions are paused"),
             "{}",
             paused.line
         );
@@ -341,8 +355,17 @@ mod tests {
         );
         assert_eq!(view.action, "/devices/1/apps/permissions#perms-app.x");
         let denied = AppAccess::of(&json!({"camera": "admin_denied", "manage_media": "granted"}));
-        let view =
-            PermsView::of(1, "app.x", "Immich", denied.as_ref(), true, false, false).unwrap();
+        let view = PermsView::of(
+            Lang::En,
+            1,
+            "app.x",
+            "Immich",
+            denied.as_ref(),
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         // An approval stays out of the row's line and lives in the details.
         assert_eq!(view.line, "Camera off");
         assert_eq!(
@@ -351,13 +374,15 @@ mod tests {
         );
         // No camera key: no switch, and a stored row is inert.
         let none = AppAccess::of(&json!({"full_screen": "granted"}));
-        let view = PermsView::of(1, "app.x", "X", none.as_ref(), true, false, false).unwrap();
+        let view =
+            PermsView::of(Lang::En, 1, "app.x", "X", none.as_ref(), true, false, false).unwrap();
         assert!(view.camera.is_none());
         assert_eq!(view.line, "");
-        assert!(PermsView::of(1, "app.x", "X", None, true, false, false).is_none());
+        assert!(PermsView::of(Lang::En, 1, "app.x", "X", None, true, false, false).is_none());
         // E4's M2: an alarm access's way says to open the app once in the pause.
         let alarm = AppAccess::of(&json!({"exact_alarm": "denied"}));
         let view = PermsView::of(
+            Lang::En,
             1,
             "ws.xsoh.etar",
             "Etar",
