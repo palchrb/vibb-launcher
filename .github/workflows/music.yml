@@ -10,7 +10,8 @@ name: Music
 #   here too; their --selftests run here), Storytel's token answers (the server's and the launcher's
 #   copies, design 58 §8) or
 #   scripts/fake-audio.py (design 30's fake podcast host; its --selftest too) or scripts/music-splash.py and the
-#   launcher's splash_vibb_breathe.xml (the launch splash's drawables are drawn from it; its --selftest too) changed, and
+#   launcher's splash_vibb_breathe.xml (the launch splash's drawables are drawn from it; its --selftest too) or
+#   scripts/sonos-ws-probe.py (its capture scrubber; its --selftest too, security review S-L5) changed, and
 #   uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
 #   master/main: music-release-build builds the unsigned release APK (no secrets),
@@ -130,6 +131,10 @@ jobs:
       # rings and splash_wordmark.xml Nunito's outlines - both must still be byte for byte what
       # scripts/music-splash.py writes from them. Stdlib only.
       run: python3 -I ../scripts/music-splash.py --selftest
+    - name: Capture scrubber selftest
+      # security review 2026-10-21 S-L5: sonos-ws-probe.py --save's scrub on made-up values, its fail-closed pass,
+      # and that pass over the committed captures in music/app/src/test/resources/sonos/ws/. Stdlib only.
+      run: python3 -I ../scripts/sonos-ws-probe.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:

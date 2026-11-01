@@ -42,7 +42,13 @@ plain or percent-encoded; design 54) by the fake ids of `server/testdata/spotify
 tracks first, in its order; `9Fake<Kind>Z...` once those run out or without the repo next to the script), so the
 capture can be committed as it is - also double-encoded (`spotify%253a...`), as an `open.spotify.com/<kind>/<id>` link
 and in `spotify:user:<name>:...` (the name -> `fakeuser`). --rescrub IN OUT runs an earlier capture through today's
-rules (no speaker, no aiohttp needed); --selftest checks those rules on made-up values.
+rules (no speaker, no aiohttp needed); --selftest checks those rules on made-up values. Dict keys are scrubbed
+too, every IPv4 address (not only the private ranges; a `...Version` key's value is left alone), a bare 12-hex MAC,
+an http(s) URL's query values (`=FAKE`), and `author`/`narrator`/`displayName`/`description` as names. Then a pass
+fails closed (security review 2026-10-21 S-L5): a message that still holds a query value, an IPv4 outside
+10.0.0.0/24, a MAC or a RINCON_/Sonos_ id that isn't fake is not written, the key named (--rescrub exits non-zero);
+--selftest also runs that pass over the committed captures. The console lines still print real uids, names and the
+household as they arrive (no shape-only output behind --verbose): left so on purpose, the console is never committed.
 
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
@@ -88,15 +94,21 @@ def stamp() -> str:
 class Saver:
     """--save: the messages as a JSON array, their ids, addresses and names replaced by fake ones (consistently)."""
 
-    UID = re.compile(r"RINCON_[0-9A-Fa-f]{6,}")
-    HOUSEHOLD = re.compile(r"Sonos_[A-Za-z0-9._-]+")
-    IPV4 = re.compile(r"\b(?:10|172|192|169)\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b")
+    UID = re.compile(r"(?i)RINCON_[0-9A-F]{6,}")
+    HOUSEHOLD = re.compile(r"(?i)Sonos_[A-Za-z0-9._-]+")
+    # every IPv4 address, not only the private ranges: a public, CGNAT or tailnet address names the household too
+    IPV4 = re.compile(r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])")
+    # an http(s) URL's query (a signed stream URL's token, a share link's si=): every value replaced by FAKE
+    QUERY = re.compile(r"(?i)(https?://[^\s\"?#]+\?)([^\s\"#]*)")
     # an IPv6 literal: compressed (with "::") or full (eight groups); never a time like 0:24:13
     IPV6 = re.compile(r"(?i)(?<![\w:])(?:(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?"
                       r"|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4})(?![\w:])")
-    NAME_KEYS = {"name", "groupName", "roomName", "title", "artist", "album"}
+    NAME_KEYS = {"name", "groupName", "roomName", "title", "artist", "album", "author", "narrator", "displayName",
+                 "description"}
     # a MAC anywhere else (a serial number carries one), as a belt under the keys below
     MAC = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[-:]){5}[0-9a-f]{2}(?![0-9a-f])")
+    # ...and one without separators (12 hex digits on their own); a run with six zeros is one of the fakes
+    BARE_MAC = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
     # the hardware's and the household's own identifiers, each replaced consistently (an item id's "0" and "" stay:
     # they mean "none" to the speaker)
     ID_KEYS = {"serialNumber": "FAKE-SERIAL-{}", "deviceId": "FAKEDEVICE{:02d}", "locationId": "lc_FAKElocation{:02d}",
@@ -120,6 +132,7 @@ class Saver:
         self.images = {}
         self.spotify = {}  # (kind, real id) -> fake id
         self.pools = spotify_pools()
+        self.refused = 0  # messages the pass after the scrub refused (S-L5)
 
     def _spotify(self, m):
         kind, real = m.group(2).lower(), m.group(4)
@@ -154,18 +167,62 @@ class Saver:
     def _ip6(self, m):
         return self.ip6s.setdefault(m.group(0).lower(), f"fd00::{16 + len(self.ip6s):x}")
 
-    def _text(self, v: str) -> str:
+    @staticmethod
+    def versioned(key) -> bool:
+        """A key whose value is a software or hardware version (`hwVersion`: "1.13.1.7-2.2" is no address)."""
+        return isinstance(key, str) and key.lower().endswith("version")
+
+    def _text(self, v: str, key=None) -> str:
         v = self.SPOTIFY_USER.sub(lambda m: m.group(1) + "fakeuser", v)
         v = self.SPOTIFY.sub(self._spotify, v)
         v = self.UID.sub(self._uid, v)
         v = self.HOUSEHOLD.sub("Sonos_FAKEhousehold000000000000001", v)
         v = self.IPV6.sub(self._ip6, v)
-        v = self.IPV4.sub(self._ip, v)
+        if not self.versioned(key):
+            v = self.IPV4.sub(self._ip, v)
+        v = self.QUERY.sub(lambda m: m.group(1) + "&".join(
+            p.split("=", 1)[0] + ("=FAKE" if "=" in p else "") for p in m.group(2).split("&")), v)
+        v = self.BARE_MAC.sub(lambda m: m.group(0) if "000000" in m.group(0) else "0" * 12, v)
         return self.MAC.sub("00-00-00-00-00-00", v)
+
+    # Security review 2026-10-21 S-L5: the scrub above is a list of rules, so a pass after it refuses to write a message
+    # that still holds anything shaped like a secret or an identifier - fail closed, naming the key.
+    LEAKS = [
+        ("an http(s) URL with a query value that isn't FAKE",
+         lambda s: any(any(p.split("=", 1)[1:] not in ([], ["FAKE"]) for p in m.group(2).split("&"))
+                       for m in Saver.QUERY.finditer(s))),
+        ("a percent-encoded http(s) URL with a query (a signed URL inside another)",
+         lambda s: re.search(r"(?i)https?%3a%2f%2f[^\"\s]*%3f", s) is not None),
+        ("an IPv4 address outside 10.0.0.0/24", lambda s: any(not m.group(0).startswith("10.0.0.") for m in Saver.IPV4.finditer(s))),
+        ("a MAC (12 hex digits)", lambda s: any("000000" not in m.group(0) for m in Saver.BARE_MAC.finditer(s))),
+        ("a MAC", lambda s: any(m.group(0) != "00-00-00-00-00-00" for m in Saver.MAC.finditer(s))),
+        ("a RINCON_ uid that isn't fake", lambda s: re.search(r"(?i)RINCON_(?!0{12})", s) is not None),
+        ("a household that isn't fake", lambda s: re.search(r"(?i)Sonos_(?!FAKE)", s) is not None),
+    ]
+
+    @classmethod
+    def leak(cls, v, path="$", key=None):
+        """The first key path whose key or value still matches a LEAKS rule, with the rule; None when clean."""
+        if isinstance(v, dict):
+            for k, x in v.items():
+                found = cls.leak(k, f"{path}.{k} (the key)") or cls.leak(x, f"{path}.{k}", k)
+                if found:
+                    return found
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                found = cls.leak(x, f"{path}[{i}]", key)
+                if found:
+                    return found
+        elif isinstance(v, str):
+            for rule, hit in cls.LEAKS:
+                if hit(v) and not (rule.startswith("an IPv4") and cls.versioned(key)):
+                    return path, rule
+        return None
 
     def scrub(self, v, key=None):
         if isinstance(v, dict):
-            return {k: self.scrub(x, k) for k, x in v.items()}
+            # the keys too: a map keyed by uid or address
+            return {self._text(k): self.scrub(x, k) for k, x in v.items()}
         if isinstance(v, list):
             return [self.scrub(x, key) for x in v]
         if isinstance(v, str):
@@ -175,13 +232,21 @@ class Saver:
                 return self._id(key, v)
             if key in self.IMAGE_KEYS and v.startswith("http"):
                 return self.images.setdefault(v, f"https://images.example.invalid/{len(self.images) + 1}.jpg")
-            return self._text(v)
+            return self._text(v, key)
         return v
 
-    def save(self, header: dict, body: dict) -> None:
-        self.messages.append(json.dumps([self.scrub(header), self.scrub(body)], ensure_ascii=False))
+    def save(self, header: dict, body: dict) -> bool:
+        """The message scrubbed and written; False (and nothing written) when the pass after the scrub refuses it."""
+        message = [self.scrub(header), self.scrub(body)]
+        found = self.leak(message)
+        if found:
+            self.refused += 1
+            print(f"--save: a message refused, not written: {found[0]} still holds {found[1]} - extend the scrub")
+            return False
+        self.messages.append(json.dumps(message, ensure_ascii=False))
         with open(self.path, "w", encoding="utf-8") as out:  # whole each time: a Ctrl-C leaves a valid array
             out.write("[\n  " + ",\n  ".join(self.messages) + "\n]\n")
+        return True
 
 
 def spotify_pools() -> dict:
@@ -232,7 +297,7 @@ def selftest() -> None:
          "x-sonos-spotify:spotify%3atrack%3a1FakeTrackA00000000001?sid=9&flags=8232&sn=6"),
         (f"/getaa?s=1&u=x-sonos-spotify%3aspotify%253atrack%253a{track}%3fsid%3d9",
          "/getaa?s=1&u=x-sonos-spotify%3aspotify%253atrack%253a1FakeTrackA00000000001%3fsid%3d9"),
-        (f"https://open.spotify.com/playlist/{playlist}?si=abc", "https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=abc"),
+        (f"https://open.spotify.com/playlist/{playlist}?si=abc", "https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=FAKE"),
         (f"spotify:user:someparent:playlist:{playlist}", "spotify:user:fakeuser:playlist:0FakePlaylistKveld0001"),
         ("https://open.spotify.com/user/someparent", "https://open.spotify.com/user/fakeuser"),
         ("spotify:track:1FakeTrackC00000000003", "spotify:track:1FakeTrackC00000000003"),  # already fake: kept
@@ -240,7 +305,32 @@ def selftest() -> None:
     for raw, want in cases:
         got = sv.scrub(raw, "objectId")
         assert got == want, (raw, got, want)
-    print(f"{len(cases)} scrub forms OK")
+    # S-L5: the review's gaps, scrubbed (made-up values: a documentation address, a CGNAT one, a locally administered MAC)
+    gaps = {"streamUrl": "https://cdn.example.invalid/b.mp3?token=abc123&e=1", "author": "A Person", "narrator": "B Person",
+            "host": "203.0.113.7", "tailnet": "100.64.1.2", "serial": "02AB3C4D5E6F", "uidLower": "rincon_02ab3c4d5e6f01400",
+            "householdLower": "sonos_hh02AB3C", "RINCON_02AB3C4D5E6F01400": {"ip": "192.168.1.9"}}
+    out = sv.scrub(gaps)
+    assert Saver.leak(out) is None, (Saver.leak(out), out)
+    assert out["streamUrl"] == "https://cdn.example.invalid/b.mp3?token=FAKE&e=FAKE", out
+    assert out["author"].startswith("Navn ") and out["host"].startswith("10.0.0.") and "RINCON_02AB" not in json.dumps(out), out
+    # ...and the pass after the scrub refuses each shape the rules might miss, naming the key
+    for value, rule in (("https://x.example.invalid/a?sig=real", "query"), ("203.0.113.7", "IPv4"), ("02AB3C4D5E6F", "12 hex"),
+                        ("02:ab:3c:4d:5e:6f", "a MAC"), ("RINCON_02AB3C4D5E6F01400", "RINCON_"), ("Sonos_hh02AB3C", "household"),
+                        ("x-sonos-http:https%3a%2f%2fcdn.example.invalid%2fb.mp3%3ftoken%3dreal", "percent-encoded")):
+        found = Saver.leak({"k": [value]})
+        assert found and found[0] == "$.k[0]" and rule in found[1], (value, found)
+    assert Saver.leak({"RINCON_02AB3C4D5E6F01400": 1})[0].endswith("(the key)")
+    assert sv.scrub({"hwVersion": "1.13.1.7-2.2"}) == {"hwVersion": "1.13.1.7-2.2"}, "a version is no address"
+    # every committed capture passes the pass as it is (no false refusal of the fixtures' own fakes)
+    import glob
+    import os
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "music", "app", "src", "test", "resources", "sonos", "ws")
+    files = sorted(glob.glob(os.path.join(base, "*.json")))
+    for name in files:
+        with open(name, encoding="utf-8") as f:
+            found = Saver.leak(json.load(f))
+        assert found is None, (os.path.basename(name), found)
+    print(f"{len(cases)} scrub forms, {len(gaps)} gaps and the leak pass OK; {len(files)} committed captures clean")
 
 
 def rescrub(src: str, dst: str) -> None:
@@ -250,7 +340,9 @@ def rescrub(src: str, dst: str) -> None:
     saver = Saver(dst)
     for header, body in messages:
         saver.save(header, body)
-    print(f"{len(messages)} messages scrubbed into {dst}")
+    print(f"{len(messages) - saver.refused} messages scrubbed into {dst}")
+    if saver.refused:
+        sys.exit(f"{saver.refused} messages refused (above): {dst} lacks them - extend the scrub, then run this again")
 
 
 UDN_PREFIX = "urn:sonos:udn:"

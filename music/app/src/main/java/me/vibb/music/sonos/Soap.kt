@@ -5,9 +5,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
+import org.xml.sax.SAXException
 import java.io.IOException
 import java.io.StringReader
 import java.net.Proxy
@@ -79,13 +81,13 @@ const val SONOS_PORT = 1400
  * connection pool) needs a new provider value only, not a rebuilt Soap and everything holding it
  * (qa-26a-step1-code L2).
  */
-class Soap(private val client: () -> OkHttpClient) {
-    constructor(client: OkHttpClient) : this({ client })
+class Soap(private val deadlineMs: Long = CALL_DEADLINE_MS, private val client: () -> OkHttpClient) {
+    constructor(client: OkHttpClient) : this(client = { client })
 
     /**
      * One action: POST the envelope, return the response's child elements by local name. A fault
      * is [UpnpFault]; anything that isn't a SOAP answer is [SpeakerUnreachable]. [timeoutMs] caps the
-     * whole call (the topology refresh's per-ip budget); otherwise the client's 2 s/5 s apply.
+     * whole call (the topology refresh's per-ip budget); otherwise [deadlineMs] does, over the client's 2 s/5 s.
      */
     fun call(ip: String, port: Int, service: SonosService, action: String, args: List<Pair<String, String>>, timeoutMs: Long? = null): Map<String, String> {
         val request = Request.Builder()
@@ -108,11 +110,18 @@ class Soap(private val client: () -> OkHttpClient) {
     fun uidOf(ip: String, port: Int, timeoutMs: Long? = null): String =
         parseUdn(get(ip, port, "/xml/device_description.xml", timeoutMs)) ?: throw SpeakerUnreachable("no UDN at $ip")
 
+    /**
+     * One request, its reply read whole - at most [MAX_REPLY_BYTES], within a deadline for the whole call (security
+     * review 2026-10-21 S-L1): the read timeout restarts with every byte, so without one a device trickling a byte at a
+     * time would hold the room's actor and the transport lock for good, and an endless body would be an OOM.
+     */
     private fun execute(request: Request, timeoutMs: Long?): Pair<Int, String> {
         val call = client().newCall(request)
-        if (timeoutMs != null) call.timeout().timeout(timeoutMs.coerceAtLeast(1), TimeUnit.MILLISECONDS)
+        call.timeout().timeout((timeoutMs ?: deadlineMs).coerceAtLeast(1), TimeUnit.MILLISECONDS)
         return try {
-            call.execute().use { r -> r.code to (r.body?.string() ?: "") }
+            call.execute().use { r -> r.code to (r.body?.let(::readCapped) ?: "") }
+        } catch (e: SonosException) {
+            throw e
         } catch (e: IOException) {
             throw SpeakerUnreachable("${e.javaClass.simpleName}: ${e.message}", e)
         }
@@ -134,6 +143,24 @@ class Soap(private val client: () -> OkHttpClient) {
 
     companion object {
         private val XML = "text/xml; charset=\"utf-8\"".toMediaType()
+
+        /** The most a reply may hold (S-L1): a ZoneGroupState or a page of the queue is tens of KiB. */
+        const val MAX_REPLY_BYTES = 1L shl 20
+
+        /**
+         * A call's deadline when the caller gives no budget (S-L1): above what the client's connect 2 s + read 5 s let
+         * a slow but honest speaker take, so only a reply that trickles is cut.
+         */
+        const val CALL_DEADLINE_MS = 10_000L
+
+        /** [body] as text, refused as [SpeakerUnreachable] past [MAX_REPLY_BYTES] (never read further). */
+        fun readCapped(body: ResponseBody): String {
+            if (body.contentLength() > MAX_REPLY_BYTES) throw SpeakerUnreachable("reply over $MAX_REPLY_BYTES bytes")
+            val source = body.source()
+            if (source.request(MAX_REPLY_BYTES + 1)) throw SpeakerUnreachable("reply over $MAX_REPLY_BYTES bytes")
+            // a leading BOM dropped, as body.string() did (it is no XML: the parse would fail)
+            return source.buffer.readString(body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8).removePrefix("\uFEFF")
+        }
 
         /**
          * The one client (vibb's keep-alive session, sonosd.py:101-117): pooled connections,
@@ -199,12 +226,20 @@ class Soap(private val client: () -> OkHttpClient) {
     }
 }
 
-/** A namespace-aware DOM of [text]; no DTDs, no external entities. */
+/** A DOCTYPE or an entity declaration anywhere in a text (S-L1). */
+private val DTD = Regex("<!\\s*(DOCTYPE|ENTITY)", RegexOption.IGNORE_CASE)
+
+/**
+ * A namespace-aware DOM of [text]; no DTDs, no external entities. A text with a DOCTYPE or an entity declaration is
+ * refused before parsing (S-L1): Android's DocumentBuilderFactory throws on both features below, so on the phone only
+ * this check keeps a DTD out (no speaker sends one). A Browse's `Result` is checked again when it is parsed.
+ */
 fun parseXml(text: String): Document {
+    if (DTD.containsMatchIn(text)) throw SAXException("a DOCTYPE or ENTITY declaration")
     val f = DocumentBuilderFactory.newInstance()
     f.isNamespaceAware = true
     f.isExpandEntityReferences = false
-    // The JDK's parser takes these; Android's ignores DTDs anyway and throws on unknown features.
+    // The JDK's parser takes these (a belt under the check above); Android's throws on unknown features.
     runCatching { f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
     runCatching { f.setFeature("http://xml.org/sax/features/external-general-entities", false) }
     return f.newDocumentBuilder().parse(InputSource(StringReader(text)))
