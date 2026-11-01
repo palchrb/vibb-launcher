@@ -14,3 +14,15 @@ internal class KidListeners(private val commands: () -> Player.Commands) {
 
     fun unwrap(listener: Player.Listener): Player.Listener = wrappers.remove(listener) ?: listener
 }
+
+/**
+ * What a controller of another app may do with the player (security review 2026-10-21 S-L2): [base] without setting
+ * or changing the media items - the system UI, the lock screen, Bluetooth and the launcher's card use the transport
+ * only, and an app that could hand the session its own items would play any public URL in the kid's player. Reading
+ * what plays stays (the platform session publishes it anyway).
+ */
+fun foreignPlayerCommands(base: Player.Commands): Player.Commands =
+    base.buildUpon().removeAll(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).build()
+
+/** Only this app's own controllers may hand the session media items (S-L2). */
+fun mayChangeItems(controllerPackage: String, ownPackage: String): Boolean = controllerPackage == ownPackage

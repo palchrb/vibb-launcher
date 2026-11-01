@@ -55,6 +55,25 @@ class SourceScanTest {
     }
 
     @Test
+    fun `P-L3 nothing goes to a backup or a device-to-device transfer - every domain excluded in both rule files`() {
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        assertTrue(manifest.contains("android:allowBackup=\"false\""))
+        assertTrue(manifest.contains("android:dataExtractionRules=\"@xml/data_extraction_rules\""))
+        assertTrue(manifest.contains("android:fullBackupContent=\"@xml/backup_rules\""))
+        val domains = setOf("root", "file", "database", "sharedpref", "external", "device_root", "device_file", "device_database", "device_sharedpref")
+        fun excluded(path: String, section: String): Set<String> {
+            val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(moduleFile(path))
+            val parent = doc.getElementsByTagName(section).item(0) as org.w3c.dom.Element
+            assertEquals("$section includes nothing", 0, parent.getElementsByTagName("include").length)
+            val ex = parent.getElementsByTagName("exclude")
+            return (0 until ex.length).map { ex.item(it) as org.w3c.dom.Element }.filter { it.getAttribute("path") == "." }.map { it.getAttribute("domain") }.toSet()
+        }
+        assertEquals(domains, excluded("src/main/res/xml/data_extraction_rules.xml", "cloud-backup"))
+        assertEquals(domains, excluded("src/main/res/xml/data_extraction_rules.xml", "device-transfer"))
+        assertEquals(domains, excluded("src/main/res/xml/backup_rules.xml", "full-backup-content"))
+    }
+
+    @Test
     fun `nb translates every string with the same placeholders`() {
         val en = strings("src/main/res/values/strings.xml")
         val nb = strings("src/main/res/values-nb/strings.xml")

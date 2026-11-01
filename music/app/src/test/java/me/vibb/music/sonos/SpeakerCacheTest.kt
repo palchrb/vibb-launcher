@@ -163,7 +163,7 @@ class SpeakerCacheTest {
         cache.seed(listOf(Zone("RINCON_FAKE1401", "10.0.2.2", 1401, "Stua")))
         val text = file.readText()
         assertTrue(text, text.contains("\"seen_at\":42.0") && text.contains("\"port\":1401") && text.contains("\"fetched_at\":42.0"))
-        assertEquals(CachedPlayer("10.0.2.2", 1401, "Stua", 42.0), SpeakerCache(file).resolve("RINCON_FAKE1401"))
+        assertEquals(CachedPlayer("10.0.2.2", 1401, "Stua", 42.0, "RINCON_FAKE1401"), SpeakerCache(file).resolve("RINCON_FAKE1401"))
         assertNull(cache.resolve("RINCON_OTHER"))
         assertEquals("no temp files left behind", listOf("sonos.json"), tmp.root.list()!!.toList())
         // The topology carries the speaker's own port (the fake's), so a refresh keeps it.
@@ -250,5 +250,26 @@ class SpeakerCacheTest {
         assertEquals(setOf("RINCON_B"), rooms.view().busy)
         rooms.clearBusy()
         assertTrue(rooms.state.value.busy.isEmpty())
+    }
+
+    @Test
+    fun `P-L2 the report names the home's speakers - a friend's never once the parent scoped, none unseen for 30 days`() {
+        var now = 1_000_000.0
+        val cache = SpeakerCache(tmp.root.resolve("sonos.json")) { now }
+        fun house(vararg uids: String) = Household(uids.associateWith { Zone(it, "10.0.0.${it.length}", 1400, "name $it") }, emptyList())
+        cache.applyTopology(house("RINCON_H1", "RINCON_H2"))
+        now += 86_400.0
+        cache.applyTopology(house("RINCON_F1")) // a friend's house, a day later
+        now += 86_400.0
+        cache.applyTopology(house("RINCON_H2", "RINCON_H3")) // home again: a new speaker joins the home's key
+        val doc = cache.load()
+        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, listOf("RINCON_H1"), now).keys)
+        assertEquals("name RINCON_H1", SpeakerCache.reportable(doc, listOf("RINCON_H1"), now)["RINCON_H1"])
+        // no scope (every room, or none): what was seen in the last 30 days
+        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3", "RINCON_F1"), SpeakerCache.reportable(doc, null, now).keys)
+        val later = now + SpeakerCache.REPORT_MAX_AGE_S - 86_400.0 + 1
+        assertEquals("the friend's, older than 30 days, is gone", setOf("RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, emptyList(), later).keys)
+        // a scoped room is always named, however old
+        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, listOf("RINCON_H1"), later).keys)
     }
 }

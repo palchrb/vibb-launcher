@@ -159,6 +159,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   report's own plan, so the job's report says it too): their presence tells the PWA the app reads both switches
   (design 30 §1.3). The AIDL is
   byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
+- The session gives another app's controller (the launcher, the system UI, Bluetooth, any app) the transport only:
+  no `COMMAND_SET_MEDIA_ITEM`/`COMMAND_CHANGE_MEDIA_ITEMS`, and `onAddMediaItems`/`onSetMediaItems` refuse every
+  package but ours (security review S-L2, `foreignPlayerCommands`, `mayChangeItems`). Nothing goes to a backup or a
+  device transfer (`data_extraction_rules.xml`, `backup_rules.xml`: every domain excluded; P-L3).
 - The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
   every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its
   snapshot, `EXTRA_RESUME` (the RESUME command: the stored queue where it stopped, or play on) - honoured once, never

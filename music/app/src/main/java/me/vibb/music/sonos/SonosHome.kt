@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.BuildConfig
+import me.vibb.music.logic.logName
+import me.vibb.music.logic.releaseLogLine
 import okhttp3.OkHttpClient
 
 /*
@@ -139,9 +141,13 @@ class SonosHome(context: Context) {
     companion object {
         const val TAG = "VibbSonos"
 
+        /** Every Sonos line: as it is in a debug build, through [releaseLogLine] in a release one (P-L1). */
         fun log(message: String) {
-            Log.i(TAG, message)
+            Log.i(TAG, if (BuildConfig.DEBUG) message else releaseLogLine(message))
         }
+
+        /** A room's name or a title in a line (P-L1): only a debug build logs it. */
+        fun name(name: String?): String = logName(name, BuildConfig.DEBUG)
 
         /** The room hand-over's timing lines ([HandOverTiming]: step names, kinds, counts and positions only). */
         fun handOver(message: String) {

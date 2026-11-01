@@ -151,7 +151,11 @@ Moved from music/CLAUDE.md on 2026-11-01.
   room's "−"), and a follow onto an accepted room plays on there. Everything the app starts or adds itself still needs
   `groupAllowed` (a pick of another row, a "+": only rows the scope allows get one), a parent's new scope still makes
   the session leave over a room the app put there, and the cap still applies to such a joiner. The report's
-  `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts them, at most 32, never an ip) feeds the parent's card.
+  `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts them, at most 32, never an ip) feeds the parent's card:
+  only the home's players (security review P-L2, `SpeakerCache.reportable`) - each topology tags its players with one
+  household key; with a scope, the scoped rooms plus the players of their household seen in the last 30 days (a
+  friend's speakers never), without one every player seen in 30 days. In a release build the Sonos log names no uid
+  (a 16-bit tag), room, title, URL path or exception text (P-L1, `releaseLogLine`, `logName`, `logFailure`).
 - **Grouping in "Spill av på"** (design 53 §2.6-§2.9, round 53-b; the user's approved sketch, ours - vibb groups in the
   Sonos app only): the verbs are soco's over UPnP, never the speaker's WebSocket - join = `SetAVTransportURI
   x-rincon:<our coordinator>` with empty metadata on the joining room (a busy room's own stream stops: the kid asked),

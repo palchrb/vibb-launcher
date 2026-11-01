@@ -40,8 +40,13 @@ data class CachedPlayer(
     /** [SONOS_PORT] on a real speaker; the debug feed sets another for the emulator's fake. */
     val port: Int = SONOS_PORT,
     val name: String? = null,
-    /** Wall-clock seconds, as vibb's `time.time()` (display only, never a decision). */
+    /** Wall-clock seconds, as vibb's `time.time()`; the report's age rule only ([SpeakerCache.reportable]), never a play. */
     @SerialName("seen_at") val seenAt: Double? = null,
+    /**
+     * The household this player was last seen in (P-L2): the key every player of one topology shares - the one its
+     * players already had, else its smallest uid. Never reported; null in a cache from before it.
+     */
+    val household: String? = null,
 )
 
 @Serializable
@@ -90,8 +95,9 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
      */
     fun applyTopology(household: Household, scanned: Boolean = false): SpeakerDoc = update { doc ->
         val now = wallS()
+        val key = householdKey(doc, household.players.keys)
         doc.copy(
-            players = doc.players + household.players.mapValues { (_, p) -> CachedPlayer(p.ip, p.port, p.name, now) },
+            players = doc.players + household.players.mapValues { (_, p) -> CachedPlayer(p.ip, p.port, p.name, now, key) },
             groups = household.groups.map { CachedGroup(it.coordinator, it.members) },
             topologyAt = now,
             fetchedAt = if (scanned) now else doc.fetchedAt,
@@ -101,7 +107,8 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
     /** Players merged in without touching the groups (the debug feed's `sonos.json`). */
     fun seed(players: Collection<Zone>): SpeakerDoc = update { doc ->
         val now = wallS()
-        doc.copy(players = doc.players + players.associate { it.uid to CachedPlayer(it.ip, it.port, it.name, now) }, fetchedAt = now)
+        val key = householdKey(doc, players.map { it.uid })
+        doc.copy(players = doc.players + players.associate { it.uid to CachedPlayer(it.ip, it.port, it.name, now, key) }, fetchedAt = now)
     }
 
     private fun update(change: (SpeakerDoc) -> SpeakerDoc): SpeakerDoc = synchronized(lock) {
@@ -120,6 +127,33 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
     }
 
     companion object {
+        /** A player not seen for this long is no longer reported (P-L2); the server keeps a report's rooms 30 days. */
+        const val REPORT_MAX_AGE_S = 30 * 86_400.0
+
+        /** The household key for a topology of [uids]: the key most of them already have (ties: the smallest), else their smallest uid. */
+        internal fun householdKey(doc: SpeakerDoc, uids: Collection<String>): String? {
+            val known = uids.mapNotNull { doc.players[it]?.household }
+            if (known.isNotEmpty()) return known.groupingBy { it }.eachCount().entries.sortedWith(compareBy({ -it.value }, { it.key })).first().key
+            return uids.minOrNull()
+        }
+
+        /**
+         * The players the report names, uid -> name (security review 2026-10-21 P-L2: not every speaker the phone ever
+         * found, on any network). With a room scope from the parent ([scope] a non-empty list), the home is the
+         * household of its rooms: the scoped rooms and the players seen with them in the last [REPORT_MAX_AGE_S] - a
+         * friend's speakers never; with no scope (every room, or none allowed), or while no scoped room has a household
+         * yet (a cache from before the key), every player seen in that time. A scoped
+         * room is always named (the parent's sheet keeps it); a player never stamped is not.
+         */
+        fun reportable(doc: SpeakerDoc, scope: List<String>?, nowS: Double): Map<String, String?> {
+            val scoped = scope.orEmpty().toSet()
+            val home = scoped.mapNotNull { doc.players[it]?.household }.toSet()
+            return doc.players.filter { (uid, p) ->
+                val fresh = p.seenAt != null && nowS - p.seenAt <= REPORT_MAX_AGE_S
+                uid in scoped || (fresh && (home.isEmpty() || p.household in home))
+            }.mapValues { it.value.name }
+        }
+
         /**
          * The picker's rows: `players_payload` (players by name, multi-member groups only) and then
          * `_sonos_choices`: a group of two or more known rooms is ONE row, "Kjøkken + Stua",

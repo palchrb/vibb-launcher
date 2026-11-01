@@ -35,6 +35,24 @@ class KidPlayerTest {
     }
 
     @Test
+    fun `S-L2 another app's controller gets the transport but can't set or change the items`() {
+        val all = Player.Commands.Builder().addAllCommands().build()
+        val foreign = foreignPlayerCommands(all)
+        for (c in listOf(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS)) assertTrue(!foreign.contains(c))
+        for (c in listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_METADATA)) {
+            assertTrue(foreign.contains(c))
+        }
+        assertTrue(mayChangeItems("me.vibb.music", "me.vibb.music"))
+        assertTrue(!mayChangeItems("com.kidslauncher.mdm", "me.vibb.music"))
+        // both foreign branches of onConnect narrow the commands; both item callbacks refuse another app
+        val connect = service.substringAfter("override fun onConnect(").substringBefore("override fun onCustomCommand(")
+        assertEquals(2, connect.split(".setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS))").size - 1)
+        for (cb in listOf("override fun onAddMediaItems(", "override fun onSetMediaItems(")) {
+            assertTrue(cb, service.substringAfter(cb).substringBefore("override fun").contains("if (mayChangeItems(controller.packageName, packageName)) super."))
+        }
+    }
+
+    @Test
     fun `every queue hands its shuffle and repeat to the renderer, and the toggles are the app's commands`() {
         val loads = Regex("\\bactive = a\\n").findAll(service).count()
         assertEquals(3, loads)
