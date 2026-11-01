@@ -426,6 +426,23 @@ async fn an_unknown_time_zone_shows_utc_labelled() {
     );
 }
 
+/// The power events that say a phone is turned off don't read: no list, as on the summary -
+/// guessing "none is off" would show a turned-off phone as reachable (status-tidy QA).
+#[tokio::test]
+async fn the_list_fails_loudly_when_the_power_events_dont_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("ALTER TABLE parent_events RENAME TO parent_events_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for page in ["/devices".to_string(), format!("/devices/{id}")] {
+        let res = app.get_page(&page, &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{page}");
+    }
+}
+
 #[tokio::test]
 async fn no_phones_yet() {
     let app = TestApp::new().await;

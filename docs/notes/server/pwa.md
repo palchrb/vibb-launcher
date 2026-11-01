@@ -1324,8 +1324,10 @@ man er inne på en device". Branch `pwa-fixes-b`.
   charging: "Low battery, 9 %" · today's screen time; (6) else today's screen time · the battery ("4 min today ·
   100 %", "62 %, charging"), or the connection's word ("Online", "Away") when the phone said neither. No "seen N min
   ago" and no battery age while the phone is online or away: the last contact is said only as "last seen" once it
-  is offline. Away (no stream, contact within 45 min) reads as online - its orange dot says it; the summary's
-  "changes may be delayed" / "changes wait until it's back" went with the ages.
+  is offline. A phone turned off or offline shows that line alone - its lock, "calls off", screen time and battery
+  are not shown (the last report may be stale; Device › Time still has them). Away (no stream, contact within
+  45 min) reads as online - its orange dot says it. The summary's Away/Offline tails "changes may be delayed" /
+  "changes wait until it's back" were dropped on purpose with the ages (the user's pick, the minimal variant C).
 - **The header** (`phone_status::header`): line 1 the same lead, the screen time named ("4 min screen time today", nb
   "4 min skjermtid i dag"); line 2 the zone the phone is in now ("Test since 22:19", `devices::zone_now`) · the
   battery - the screen time instead when the lead is the battery; a phone turned off, offline or not reachable has
@@ -1339,15 +1341,18 @@ man er inne på en device". Branch `pwa-fixes-b`.
   until S-i18n slice 3a); `events.phone_off.off_since*` went (the line is `devices.status.off`/`off_battery`).
 - **Markup**: `partials/status_line.html`'s `parts` macro - the parts with " · " between them, each `<span>` with its
   tone class, its `data-` hook (`lock`, `battery`, `screen-time`, `power-off`, `seen`, `zone-now`) and `title`; the
-  battery part has a small CSS battery (`.bat`, filled to the level, `aria-hidden`) and a visually-hidden "Battery".
+  battery part has a small CSS battery (`.bat`, filled to the level, `aria-hidden`) and a visually-hidden "Battery",
+  left out when the words already say it (`Part::says_label`: "Low battery, 9 %" isn't read "Battery Low battery").
   The row's line is `span.device-line[data-line]`, the header's `p.summary-state[data-line]`; the bar
   (`devices::meter_of`) shows only while a line says the screen time. `tests::status_lines` reads the lines as a
-  reader sees them. Reads: the Devices list reads the power events once for every phone (`offs_now(db, None)`, a
-  failure logged and read as none off - the list reads leniently); the summary reads its own (`offs_now(db,
-  Some(id))`, a failure a 500 as before); everything else the pages already read.
+  reader sees them. Reads: the Devices list reads the power events once for every phone (`offs_now(db, None)`;
+  migration 0109's `idx_parent_events_device_kind` answers its per-phone subqueries), the summary its own
+  (`offs_now(db, Some(id))`); a failure is a 500 on both (logged) - read as "none is off" it would show a turned-off
+  phone as reachable; everything else the pages already read.
 - Tests: `phone_status::tests`, `display_time::tests::since_says_the_clock_today_and_the_weekday_within_the_week`,
   `src/tests/devices_list.rs`, `summary.rs`, `power.rs` (the row and the header "Turned off"), `notifications.rs`
-  (the low battery), `zones.rs`, `enrollment.rs`.
+  (the low battery, no doubled spoken name), `zones.rs`, `enrollment.rs`,
+  `devices_list::the_list_fails_loudly_when_the_power_events_dont_read`, `music_spotify::migrations_73_to_109_in_order`.
 
 ## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
 

@@ -111,6 +111,16 @@ impl Part {
         }
     }
 
+    /// The part's words already say its screen-reader name ("Low battery, 9 %", nb "Lavt batteri,
+    /// 9 %"): the template leaves the hidden name out.
+    pub fn says_label(&self) -> bool {
+        self.label.as_ref().is_some_and(|label| {
+            let (text, label) = (self.text.to_lowercase(), label.to_lowercase());
+            text.split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == label)
+        })
+    }
+
     fn titled(mut self, title: String) -> Part {
         self.title = Some(title);
         self
@@ -630,7 +640,12 @@ mod tests {
             (line[0].icon, line[0].label.as_deref(), line[0].hook),
             (Some(8), Some("Batteri"), Some("battery"))
         );
+        assert!(!line[0].says_label(), "\"3 %\" needs the spoken name");
         f.low_latched = true;
-        assert_eq!(row(&f, &zone, now())[0].tone.css(), "tone-orange");
+        let low = row(&f, &zone, now());
+        assert_eq!(low[0].tone.css(), "tone-orange");
+        assert!(low[0].says_label(), "{:?}", low[0].text);
+        let en = Zone::from_setting("Europe/Oslo");
+        assert!(row(&f, &en, now())[0].says_label());
     }
 }

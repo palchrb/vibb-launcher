@@ -407,6 +407,11 @@ async fn the_battery_latches_once() {
         summary.contains("<span class=\"tone-orange\" data-battery>Low battery, 14 %</span>"),
         "{summary}"
     );
+    // Its words say "battery": no hidden "Battery" before them for a screen reader.
+    assert!(
+        summary.contains("</b></span><span class=\"tone-orange\" data-battery>"),
+        "{summary}"
+    );
     // Plugged in (Android clears `low`), unplugged at 12 % (`low` again): still the one latch.
     app.post_status(&token, battery(13, true, false)).await;
     app.post_status(&token, battery(12, false, true)).await;

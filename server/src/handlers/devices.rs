@@ -77,15 +77,15 @@ pub async fn list_devices(
     session: tower_sessions::Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
+) -> Response {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
-    // Which phones are turned off (design 38 §3.4): one read for the whole list. The list reads
-    // leniently - a failed read is logged and says no phone is off.
+    // Which phones are turned off (design 38 §3.4): one read for the whole list. A failed read is
+    // no page, as on the summary: guessing "none is off" would show a turned-off phone as online.
     let offs: std::collections::HashMap<i64, crate::parent_events::OffSince> =
         match crate::parent_events::offs_now(&state.db, None).await {
             Ok(rows) => rows
@@ -94,7 +94,11 @@ pub async fn list_devices(
                 .collect(),
             Err(err) => {
                 tracing::error!(%err, "can't read the phones' power events");
-                Default::default()
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't read the phones - check the server log.",
+                )
+                    .into_response();
             }
         };
 
@@ -123,6 +127,7 @@ pub async fn list_devices(
         .render()
         .unwrap(),
     )
+    .into_response()
 }
 
 /// The first opening's card, with every account's active endpoints as This Device reads them (a browser subscribed for
