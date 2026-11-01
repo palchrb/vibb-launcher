@@ -158,7 +158,8 @@ class Soap(private val deadlineMs: Long = CALL_DEADLINE_MS, private val client: 
             if (body.contentLength() > MAX_REPLY_BYTES) throw SpeakerUnreachable("reply over $MAX_REPLY_BYTES bytes")
             val source = body.source()
             if (source.request(MAX_REPLY_BYTES + 1)) throw SpeakerUnreachable("reply over $MAX_REPLY_BYTES bytes")
-            return source.buffer.readString(body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
+            // a leading BOM dropped, as body.string() did (it is no XML: the parse would fail)
+            return source.buffer.readString(body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8).removePrefix("\uFEFF")
         }
 
         /**

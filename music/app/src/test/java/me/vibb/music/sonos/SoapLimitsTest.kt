@@ -28,6 +28,14 @@ class SoapLimitsTest {
     fun `a reply over 1 MiB is refused, one at the cap is read`() {
         assertEquals(Soap.MAX_REPLY_BYTES.toInt(), Soap.readCapped(body(Soap.MAX_REPLY_BYTES)).length)
         assertThrows(SpeakerUnreachable::class.java) { Soap.readCapped(body(Soap.MAX_REPLY_BYTES + 1)) }
+        // a leading UTF-8 BOM is dropped, as body.string() did
+        val bom = object : ResponseBody() {
+            private val buf = Buffer().write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())).writeUtf8("<x/>")
+            override fun contentType(): MediaType? = null
+            override fun contentLength(): Long = -1
+            override fun source(): BufferedSource = buf
+        }
+        assertEquals("<x/>", Soap.readCapped(bom))
     }
 
     @Test

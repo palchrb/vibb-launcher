@@ -45,6 +45,22 @@ class HttpsFirstTest {
     }
 
     @Test
+    fun `an HTML page over https is no answer - the listed URL plays, and the host stays plain`() {
+        val first = HttpsFirst { 0L }
+        val sent = mutableListOf<Boolean>()
+        val ep = Request.Builder().url("http://site.example.invalid/ep.mp3").build()
+        val send: (Request, Boolean) -> Response = { r, tls ->
+            sent += tls
+            answer(r, 200).newBuilder().header("Content-Type", if (tls) "TEXT/HTML; charset=utf-8" else "audio/mpeg").build()
+        }
+        assertEquals("http://site.example.invalid/ep.mp3", first.run(ep, { false }, send).request.url.toString())
+        first.run(ep, { false }, send)
+        assertEquals(listOf(true, false, false), sent)
+        // the player's own check is the same test
+        assertTrue(moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt").readText().contains(".setContentTypePredicate { type -> !htmlType(type) }"))
+    }
+
+    @Test
     fun `only the public entries' audio client carries it - not lan, not Storytel's`() {
         val cache = moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt").readText()
         assertTrue(cache.contains("private val enclosureClient: OkHttpClient by lazy { publicClient.newBuilder().addInterceptor(HttpsFirst()).build() }"))

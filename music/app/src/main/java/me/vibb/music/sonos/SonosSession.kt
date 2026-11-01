@@ -185,10 +185,14 @@ data class Fields(
     companion object {
         const val FRESH_SLACK_MS = 10_000L
 
-        /** A uri for a line: a Spotify queue track by its prefix only (design 54 §2.14), anything else [redactUri]'s. */
-        internal fun shown(u: String?): String? = when {
+        /**
+         * A uri for a line: a Spotify queue track by its prefix only (design 54 §2.14), anything else [redactUri]'s - in
+         * a release build every uri by its scheme only (P-L1: `x-sonos-http:…`, `x-sonosapi-hls-static:…` have no `://`
+         * for the log filter to cut, and their path names what plays).
+         */
+        internal fun shown(u: String?, debug: Boolean = BuildConfig.DEBUG): String? = when {
             u == null -> null
-            trackSpotifyUri(u) != null -> u.substringBefore(':') + ":…"
+            !debug || trackSpotifyUri(u) != null -> u.substringBefore(':') + ":…"
             else -> redactUri(u)
         }
     }

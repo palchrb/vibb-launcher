@@ -122,6 +122,8 @@ class SonosHome(context: Context) {
     fun write(choice: RendererChoice) {
         try {
             RendererChoice.write(SonosFiles.renderer(app), choice)
+            // the home's evidence for the report (P-L2): the room the phone plays on
+            choice.uid?.takeIf { choice.sonos }?.let { uid -> runCatching { cache.markPlayed(uid) } }
         } catch (e: java.io.IOException) {
             log("renderer.json not written (${e.javaClass.simpleName})")
         }

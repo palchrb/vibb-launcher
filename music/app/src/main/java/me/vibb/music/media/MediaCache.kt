@@ -141,7 +141,7 @@ object MediaCache {
         }
         val okhttp = OkHttpDataSource.Factory(client)
             .setUserAgent("VibbMusic/${BuildConfig.VERSION_NAME}")
-            .setContentTypePredicate { type -> !type.lowercase().startsWith("text/html") }
+            .setContentTypePredicate { type -> !htmlType(type) }
         val cache = get(context)
         return DataSource.Factory { LengthGuard(okhttp.createDataSource()) { key -> storedLength(cache, key) } }
     }

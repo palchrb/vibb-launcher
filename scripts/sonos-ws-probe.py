@@ -47,7 +47,8 @@ too, every IPv4 address (not only the private ranges; a `...Version` key's value
 an http(s) URL's query values (`=FAKE`), and `author`/`narrator`/`displayName`/`description` as names. Then a pass
 fails closed (security review 2026-10-21 S-L5): a message that still holds a query value, an IPv4 outside
 10.0.0.0/24, a MAC or a RINCON_/Sonos_ id that isn't fake is not written, the key named (--rescrub exits non-zero);
---selftest also runs that pass over the committed captures.
+--selftest also runs that pass over the committed captures. The console lines still print real uids, names and the
+household as they arrive (no shape-only output behind --verbose): left so on purpose, the console is never committed.
 
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
@@ -190,6 +191,8 @@ class Saver:
         ("an http(s) URL with a query value that isn't FAKE",
          lambda s: any(any(p.split("=", 1)[1:] not in ([], ["FAKE"]) for p in m.group(2).split("&"))
                        for m in Saver.QUERY.finditer(s))),
+        ("a percent-encoded http(s) URL with a query (a signed URL inside another)",
+         lambda s: re.search(r"(?i)https?%3a%2f%2f[^\"\s]*%3f", s) is not None),
         ("an IPv4 address outside 10.0.0.0/24", lambda s: any(not m.group(0).startswith("10.0.0.") for m in Saver.IPV4.finditer(s))),
         ("a MAC (12 hex digits)", lambda s: any("000000" not in m.group(0) for m in Saver.BARE_MAC.finditer(s))),
         ("a MAC", lambda s: any(m.group(0) != "00-00-00-00-00-00" for m in Saver.MAC.finditer(s))),
@@ -312,7 +315,8 @@ def selftest() -> None:
     assert out["author"].startswith("Navn ") and out["host"].startswith("10.0.0.") and "RINCON_02AB" not in json.dumps(out), out
     # ...and the pass after the scrub refuses each shape the rules might miss, naming the key
     for value, rule in (("https://x.example.invalid/a?sig=real", "query"), ("203.0.113.7", "IPv4"), ("02AB3C4D5E6F", "12 hex"),
-                        ("02:ab:3c:4d:5e:6f", "a MAC"), ("RINCON_02AB3C4D5E6F01400", "RINCON_"), ("Sonos_hh02AB3C", "household")):
+                        ("02:ab:3c:4d:5e:6f", "a MAC"), ("RINCON_02AB3C4D5E6F01400", "RINCON_"), ("Sonos_hh02AB3C", "household"),
+                        ("x-sonos-http:https%3a%2f%2fcdn.example.invalid%2fb.mp3%3ftoken%3dreal", "percent-encoded")):
         found = Saver.leak({"k": [value]})
         assert found and found[0] == "$.k[0]" and rule in found[1], (value, found)
     assert Saver.leak({"RINCON_02AB3C4D5E6F01400": 1})[0].endswith("(the key)")

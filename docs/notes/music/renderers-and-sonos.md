@@ -153,9 +153,11 @@ Moved from music/CLAUDE.md on 2026-11-01.
   the session leave over a room the app put there, and the cap still applies to such a joiner. The report's
   `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts them, at most 32, never an ip) feeds the parent's card:
   only the home's players (security review P-L2, `SpeakerCache.reportable`) - each topology tags its players with one
-  household key; with a scope, the scoped rooms plus the players of their household seen in the last 30 days (a
-  friend's speakers never), without one every player seen in 30 days. In a release build the Sonos log names no uid
-  (a 16-bit tag), room, title, URL path or exception text (P-L1, `releaseLogLine`, `logName`, `logFailure`).
+  household key, and only the home household is reported (a friend's speakers never), its rooms however old: the
+  home is the scoped rooms' household, else the household of the room the phone last played on (`sonos.json`'s
+  `played`, stamped where renderer.json records a room), else the one with the most players seen in 30 days. In a
+  release build the Sonos log names no uid (a 16-bit tag), room, title, URL path or exception text, and a speaker uri
+  only by its scheme (P-L1, `releaseLogLine`, `logName`, `logFailure`, `Fields.shown`).
 - **Grouping in "Spill av på"** (design 53 §2.6-§2.9, round 53-b; the user's approved sketch, ours - vibb groups in the
   Sonos app only): the verbs are soco's over UPnP, never the speaker's WebSocket - join = `SetAVTransportURI
   x-rincon:<our coordinator>` with empty metadata on the joining room (a busy room's own stream stops: the kid asked),

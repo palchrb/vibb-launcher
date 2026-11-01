@@ -8,10 +8,14 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+/** An HTML answer is never audio (21b §2.5 `bad_media`): the player's content-type check and [HttpsFirst]'s, one test. */
+fun htmlType(contentType: String): Boolean = contentType.lowercase().startsWith("text/html")
+
 /**
  * A public entry's `http://` audio is asked for over `https://` first (security review 2026-10-21 S-L4): on a hostile
  * network a cleartext episode can be swapped in flight, and the swapped bytes stay as the copy. Same host, port 443,
- * the system's CAs. Anything but an answer (no TLS, a bad certificate, a refused or slow connect, an HTTP error) falls
+ * the system's CAs. Anything but an audio answer (no TLS, a bad certificate, a refused or slow connect, an HTTP error,
+ * an HTML page) falls
  * back to the URL as listed, and the host is then asked over http for [PLAIN_FOR_MS] without trying again, so a host
  * without https costs one try per process and day, never a wait at every open. What the player keys, stores and
  * compares stays the listed URL (`sameSource`, the rows); only the request goes another way. Never for `lan` entries,
@@ -36,7 +40,10 @@ class HttpsFirst(private val nowMs: () -> Long = System::currentTimeMillis) : In
             if (canceled()) throw e
             null
         }
-        if (answer != null && (answer.isSuccessful || answer.code == 416)) return answer
+        // an HTML page (a homepage redirect, a default site) is no answer: the player's content-type check would fail
+        // the item for good, with no way back to the listed URL
+        val html = answer?.header("Content-Type")?.let(::htmlType) == true
+        if (answer != null && !html && (answer.isSuccessful || answer.code == 416)) return answer
         answer?.body?.close()
         plainUntil[host] = nowMs() + PLAIN_FOR_MS
         return send(request, false)

@@ -52,13 +52,15 @@ data class CachedPlayer(
 @Serializable
 data class CachedGroup(val coordinator: String, val members: List<String>)
 
-/** `sonos.json`: `{players: {uid: {ip, port, name, seen_at}}, groups: [...], fetched_at, topology_at}`. */
+/** `sonos.json`: `{players: {uid: {ip, port, name, seen_at, household}}, groups: [...], fetched_at, topology_at, played}`. */
 @Serializable
 data class SpeakerDoc(
     val players: Map<String, CachedPlayer> = emptyMap(),
     val groups: List<CachedGroup> = emptyList(),
     @SerialName("fetched_at") val fetchedAt: Double? = null,
     @SerialName("topology_at") val topologyAt: Double? = null,
+    /** The room the phone last played on (renderer.json's uid when it was a room; P-L2's evidence of the home). */
+    val played: String? = null,
 )
 
 /**
@@ -111,6 +113,11 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
         doc.copy(players = doc.players + players.associate { it.uid to CachedPlayer(it.ip, it.port, it.name, now, key) }, fetchedAt = now)
     }
 
+    /** The phone plays on room [uid] (P-L2): written only when it changes. */
+    fun markPlayed(uid: String) {
+        if (load().played != uid) update { it.copy(played = uid) }
+    }
+
     private fun update(change: (SpeakerDoc) -> SpeakerDoc): SpeakerDoc = synchronized(lock) {
         change(read()).also { writeAtomic(file, CACHE_JSON.encodeToString(SpeakerDoc.serializer(), it).toByteArray()) }
     }
@@ -123,11 +130,12 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
             groups = (root["groups"] as? JsonArray).orEmpty().mapNotNull { runCatching { CACHE_JSON.decodeFromJsonElement<CachedGroup>(it) }.getOrNull() },
             fetchedAt = runCatching { root["fetched_at"]?.let { CACHE_JSON.decodeFromJsonElement<Double?>(it) } }.getOrNull(),
             topologyAt = runCatching { root["topology_at"]?.let { CACHE_JSON.decodeFromJsonElement<Double?>(it) } }.getOrNull(),
+            played = runCatching { root["played"]?.let { CACHE_JSON.decodeFromJsonElement<String?>(it) } }.getOrNull(),
         )
     }
 
     companion object {
-        /** A player not seen for this long is no longer reported (P-L2); the server keeps a report's rooms 30 days. */
+        /** P-L2: the window the home is counted in when the phone never played on a room (and, before any household key, what is reported). */
         const val REPORT_MAX_AGE_S = 30 * 86_400.0
 
         /** The household key for a topology of [uids]: the key most of them already have (ties: the smallest), else their smallest uid. */
@@ -139,18 +147,25 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
 
         /**
          * The players the report names, uid -> name (security review 2026-10-21 P-L2: not every speaker the phone ever
-         * found, on any network). With a room scope from the parent ([scope] a non-empty list), the home is the
-         * household of its rooms: the scoped rooms and the players seen with them in the last [REPORT_MAX_AGE_S] - a
-         * friend's speakers never; with no scope (every room, or none allowed), or while no scoped room has a household
-         * yet (a cache from before the key), every player seen in that time. A scoped
-         * room is always named (the parent's sheet keeps it); a player never stamped is not.
+         * found, on any network): the home household's only, a friend's speakers never. The home is the household of
+         * the parent's scoped rooms ([scope] a non-empty list); without a scope (every room, or none allowed), or while no
+         * scoped room has a household yet, the phone's own evidence - the household of the room it last played on
+         * ([SpeakerDoc.played]), else the one with the most players seen in the last [REPORT_MAX_AGE_S]. The home's
+         * players are named however old (the parent's sheet keeps its rooms), a scoped room always; only when no player
+         * has a household at all (a cache from before the key) is it every player seen in that time.
          */
         fun reportable(doc: SpeakerDoc, scope: List<String>?, nowS: Double): Map<String, String?> {
             val scoped = scope.orEmpty().toSet()
-            val home = scoped.mapNotNull { doc.players[it]?.household }.toSet()
+            fun fresh(p: CachedPlayer) = p.seenAt != null && nowS - p.seenAt <= REPORT_MAX_AGE_S
+            val home = scoped.mapNotNull { doc.players[it]?.household }.toSet().ifEmpty {
+                setOfNotNull(
+                    doc.played?.let { doc.players[it]?.household }
+                        ?: doc.players.values.filter(::fresh).mapNotNull { it.household }.groupingBy { it }.eachCount().entries
+                            .sortedWith(compareBy({ -it.value }, { it.key })).firstOrNull()?.key,
+                )
+            }
             return doc.players.filter { (uid, p) ->
-                val fresh = p.seenAt != null && nowS - p.seenAt <= REPORT_MAX_AGE_S
-                uid in scoped || (fresh && (home.isEmpty() || p.household in home))
+                uid in scoped || if (home.isEmpty()) fresh(p) else p.household in home
             }.mapValues { it.value.name }
         }
 

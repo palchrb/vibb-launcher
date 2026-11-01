@@ -253,23 +253,34 @@ class SpeakerCacheTest {
     }
 
     @Test
-    fun `P-L2 the report names the home's speakers - a friend's never once the parent scoped, none unseen for 30 days`() {
+    fun `P-L2 the report names the home's speakers only - by the scope, else the room last played on, else the most seen`() {
         var now = 1_000_000.0
         val cache = SpeakerCache(tmp.root.resolve("sonos.json")) { now }
         fun house(vararg uids: String) = Household(uids.associateWith { Zone(it, "10.0.0.${it.length}", 1400, "name $it") }, emptyList())
+        val home = setOf("RINCON_H1", "RINCON_H2", "RINCON_H3")
         cache.applyTopology(house("RINCON_H1", "RINCON_H2"))
         now += 86_400.0
-        cache.applyTopology(house("RINCON_F1")) // a friend's house, a day later
+        cache.applyTopology(house("RINCON_H2", "RINCON_H3")) // a new speaker joins the home's key
+        assertEquals("no scope, never played on a room: the household with the most fresh players", home, SpeakerCache.reportable(cache.load(), null, now).keys)
         now += 86_400.0
-        cache.applyTopology(house("RINCON_H2", "RINCON_H3")) // home again: a new speaker joins the home's key
-        val doc = cache.load()
-        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, listOf("RINCON_H1"), now).keys)
-        assertEquals("name RINCON_H1", SpeakerCache.reportable(doc, listOf("RINCON_H1"), now)["RINCON_H1"])
-        // no scope (every room, or none): what was seen in the last 30 days
-        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3", "RINCON_F1"), SpeakerCache.reportable(doc, null, now).keys)
-        val later = now + SpeakerCache.REPORT_MAX_AGE_S - 86_400.0 + 1
-        assertEquals("the friend's, older than 30 days, is gone", setOf("RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, emptyList(), later).keys)
-        // a scoped room is always named, however old
-        assertEquals(setOf("RINCON_H1", "RINCON_H2", "RINCON_H3"), SpeakerCache.reportable(doc, listOf("RINCON_H1"), later).keys)
+        cache.applyTopology(house("RINCON_F1", "RINCON_F2", "RINCON_F3", "RINCON_F4")) // a friend's bigger house
+        assertEquals(setOf("RINCON_F1", "RINCON_F2", "RINCON_F3", "RINCON_F4"), SpeakerCache.reportable(cache.load(), null, now).keys)
+        cache.markPlayed("RINCON_H2") // the kid plays on a home room: that household is the home
+        assertEquals("RINCON_H2", cache.load().played)
+        assertEquals("a foreign household is never reported", home, SpeakerCache.reportable(cache.load(), null, now).keys)
+        assertEquals(home, SpeakerCache.reportable(cache.load(), emptyList(), now).keys)
+        // the parent's scope names the home, whatever the phone played on
+        cache.markPlayed("RINCON_F1")
+        assertEquals(home, SpeakerCache.reportable(cache.load(), listOf("RINCON_H1"), now).keys)
+        assertEquals("name RINCON_H1", SpeakerCache.reportable(cache.load(), listOf("RINCON_H1"), now)["RINCON_H1"])
+        // L4: the home's rooms are named however old - the parent's picker never goes empty
+        cache.markPlayed("RINCON_H3")
+        assertEquals(home, SpeakerCache.reportable(cache.load(), null, now + 10 * SpeakerCache.REPORT_MAX_AGE_S).keys)
+        // a cache from before the household key: what was seen in the last 30 days
+        val old = SpeakerDoc(mapOf("RINCON_A" to CachedPlayer("10.0.0.2", seenAt = now), "RINCON_B" to CachedPlayer("10.0.0.3", seenAt = now - SpeakerCache.REPORT_MAX_AGE_S - 1)))
+        assertEquals(setOf("RINCON_A"), SpeakerCache.reportable(old, null, now).keys)
+        // the evidence is stamped where renderer.json records a room
+        val write = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/sonos/SonosHome.kt").readText().substringAfter("fun write(choice: RendererChoice)").substringBefore("\n    }\n")
+        assertTrue(write.contains("choice.uid?.takeIf { choice.sonos }?.let { uid -> runCatching { cache.markPlayed(uid) } }"))
     }
 }

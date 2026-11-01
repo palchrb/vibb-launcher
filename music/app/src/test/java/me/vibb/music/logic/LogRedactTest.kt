@@ -1,6 +1,7 @@
 package me.vibb.music.logic
 
 import me.vibb.music.Fixtures.moduleFile
+import me.vibb.music.sonos.Fields
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,6 +24,12 @@ class LogRedactTest {
         assertEquals("Emmas rom", logName("Emmas rom", debug = true))
         val e = IllegalStateException("errorDescription 10.0.0.5:1400 RINCON_000E58A0B1C201400")
         assertEquals("IllegalStateException", logFailure(e, debug = false))
+        // a speaker uri without "://" (the line filter can't cut it): by its scheme only in a release build
+        for (u in listOf("x-sonos-http:cdn.example.invalid/ep-7.mp3?sid=1", "x-sonosapi-hls-static:ALkSOiH0?sid=2", "https://cdn.example.invalid/ep-7.mp3")) {
+            val shown = Fields.shown(u, debug = false)!!
+            assertEquals(u.substringBefore(':') + ":…", shown)
+        }
+        assertEquals("x-sonos-http:cdn.example.invalid/ep-7.mp3", Fields.shown("x-sonos-http:cdn.example.invalid/ep-7.mp3?sid=1", debug = true))
     }
 
     @Test
