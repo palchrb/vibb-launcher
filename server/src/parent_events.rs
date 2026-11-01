@@ -750,20 +750,87 @@ pub fn off_said(
     !restart && now - created_at >= OFF_HOLD
 }
 
-/// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
-/// since 21:14 · battery was 3 %", the battery from the off's parameters (design 70), or read from
-/// an older row's stored words. Nothing for a restart the phone announced or while the off's push
-/// is still held ([OFF_HOLD] from its arrival, `created_at`): a restart's start may still fold it
-/// (qa-38-code nit 1), and the page says no more than the pushes.
-pub fn off_since_line(
+/// A phone turned off and not on since (design 38 §3.4): when it shut down and the battery it had
+/// then. The Devices row and the summary's header lead with it (the user's pick C, 2026-11-01):
+/// "Turned off 21:14 · battery was 3 %".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OffSince {
+    pub at: DateTime<Utc>,
+    pub level: Option<String>,
+}
+
+impl OffSince {
+    /// "Turned off 21:14" (nb "Slått av 21:14"): [Zone::since]'s time, never a date for today.
+    pub fn lead(&self, zone: &Zone, now: DateTime<Utc>) -> String {
+        t_params(
+            zone.lang(),
+            "devices.status.off",
+            &[("at", &zone.since(self.at, now))],
+        )
+    }
+
+    /// "battery was 3 %" (nb "batteriet var 3 %"), when the off said its battery.
+    pub fn battery(&self, lang: Lang) -> Option<String> {
+        self.level
+            .as_ref()
+            .map(|level| t_params(lang, "devices.status.off_battery", &[("level", level)]))
+    }
+
+    /// The whole line, "Turned off 21:14 · battery was 3 %" (the tests').
+    #[cfg(test)]
+    pub fn text(&self, zone: &Zone, now: DateTime<Utc>) -> String {
+        match self.battery(zone.lang()) {
+            Some(battery) => format!("{} · {battery}", self.lead(zone, now)),
+            None => self.lead(zone, now),
+        }
+    }
+}
+
+/// The newest `phone_off` of each phone - of `device` alone, or of every phone - that is later than
+/// its newest `phone_on` and than every status report (design 38 §3.4; qa-38-code M1: a report
+/// after the shutdown proves the phone is on, whatever start never arrived - a re-enrollment, a boot
+/// count of -1, a dropped start), as `(device_id, happened_at, created_at, title, summary,
+/// params)`: one query for the whole Devices list. `happened_at` is RFC 3339 and `reported_at`
+/// SQLite's `datetime` text: compared through `datetime()`, never as raw strings. A minute's slack
+/// for the phone's clock and a report racing the shutdown (no start reports within a minute of its
+/// shutdown). [off_since] words it.
+pub async fn offs_now<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    device: Option<i64>,
+) -> Result<Vec<(i64, String, String, String, String, Option<String>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT o.device_id, o.happened_at, o.created_at, o.title, o.summary, o.params \
+         FROM parent_events o \
+         WHERE o.kind = 'phone_off' AND o.device_id IS NOT NULL \
+         AND (?1 IS NULL OR o.device_id = ?1) \
+         AND o.id = (SELECT n.id FROM parent_events n \
+                     WHERE n.device_id = o.device_id AND n.kind = 'phone_off' \
+                     ORDER BY n.happened_at DESC, n.id DESC LIMIT 1) \
+         AND o.happened_at > \
+             COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
+                       WHERE n.device_id = o.device_id AND n.kind = 'phone_on'), '') \
+         AND datetime(o.happened_at, '+60 seconds') >= COALESCE((SELECT MAX(s.reported_at) \
+                       FROM device_status s \
+                       WHERE s.device_id = o.device_id), '')",
+    )
+    .bind(device)
+    .fetch_all(db)
+    .await
+}
+
+/// The status lines' [OffSince] between a shutdown and the next start (design 38 §3.4), the battery
+/// from the off's parameters (design 70), or read from an older row's stored words. Nothing for a
+/// restart the phone announced or while the off's push is still held ([OFF_HOLD] from its arrival,
+/// `created_at`): a restart's start may still fold it (qa-38-code nit 1), and the page says no more
+/// than the pushes.
+pub fn off_since(
     happened_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
     title: &str,
     summary: &str,
     params: Option<&str>,
-    zone: &Zone,
     now: DateTime<Utc>,
-) -> Option<String> {
+) -> Option<OffSince> {
     if !off_said(title, params, created_at, now) {
         return None;
     }
@@ -775,15 +842,26 @@ pub fn off_since_line(
             (!digits.is_empty() && rest[digits.len()..].starts_with(" %")).then_some(digits)
         }),
     };
-    let at = zone.at(happened_at, now);
-    Some(match level {
-        Some(level) => t_params(
-            zone.lang(),
-            "events.phone_off.off_since_battery",
-            &[("at", &at), ("level", &level)],
-        ),
-        None => t_params(zone.lang(), "events.phone_off.off_since", &[("at", &at)]),
+    Some(OffSince {
+        at: happened_at,
+        level,
     })
+}
+
+/// [off_since] from a row of [offs_now].
+pub fn off_since_of(
+    row: &(i64, String, String, String, String, Option<String>),
+    now: DateTime<Utc>,
+) -> Option<OffSince> {
+    let (_, at, created, title, summary, params) = row;
+    off_since(
+        crate::display_time::parse_db_utc(at)?,
+        crate::display_time::parse_db_utc(created)?,
+        title,
+        summary,
+        params.as_deref(),
+        now,
+    )
 }
 
 /// An event to store: the words made, the key that makes it one row.
@@ -1009,27 +1087,6 @@ pub async fn battery_report(
     if let Err(err) = result.await {
         tracing::error!(device_id = phone.id, %err, "can't keep the battery's state");
     }
-}
-
-/// A report's battery as the Devices row and the device page show it, with the report's age as
-/// the other status lines have theirs: "Battery 14 %, charging · 3 min ago".
-pub fn battery_line(
-    level: Option<i64>,
-    charging: Option<bool>,
-    reported_at: &str,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Option<String> {
-    let level = level?;
-    let charging = if charging == Some(true) {
-        ", charging"
-    } else {
-        ""
-    };
-    let age = crate::display_time::parse_db_utc(reported_at)
-        .map(|at| format!(" · {}", zone.relative(at, now)))
-        .unwrap_or_default();
-    Some(format!("Battery {level} %{charging}{age}"))
 }
 
 /// "Event `e` (`parent_events`' alias) is unread for the admin bound as `?1`" (design 62 §5): no
@@ -2375,29 +2432,29 @@ mod tests {
         let arrived = phone.now - OFF_HOLD;
         let b = |level, charging| Some(battery(level, charging, false));
         let line = |event: &NewEvent, created: DateTime<Utc>, zone: &Zone| {
-            off_since_line(
+            off_since(
                 at,
                 created,
                 &event.title,
                 &event.summary,
                 event.params.as_deref(),
-                zone,
                 phone.now,
             )
+            .map(|off| off.text(zone, phone.now))
         };
         let flat = phone.phone_off(&off(b(3, false), None, None), at, false);
         assert_eq!(
             line(&flat, arrived, &phone.zone).as_deref(),
-            Some("Off since yesterday 21:14 · battery was 3 %")
+            Some("Turned off yesterday 21:14 · battery was 3 %")
         );
         assert_eq!(
             line(&flat, arrived, &phone.zone.in_lang(Lang::Nb)).as_deref(),
-            Some("Av siden i går 21:14 · batteriet var 3 %")
+            Some("Slått av i går 21:14 · batteriet var 3 %")
         );
         let no_battery = phone.phone_off(&off(None, None, None), at, true);
         assert_eq!(
             line(&no_battery, arrived, &phone.zone).as_deref(),
-            Some("Off since yesterday 21:14")
+            Some("Turned off yesterday 21:14")
         );
         // Not while the push is held (a restart's start may still fold it), not for a restart.
         let held = phone.now - OFF_HOLD + chrono::Duration::seconds(1);
@@ -2421,7 +2478,7 @@ mod tests {
                 &phone.zone
             )
             .as_deref(),
-            Some("Off since yesterday 21:14 · battery was 3 %")
+            Some("Turned off yesterday 21:14 · battery was 3 %")
         );
         assert_eq!(
             line(
@@ -2430,11 +2487,11 @@ mod tests {
                 &phone.zone
             )
             .as_deref(),
-            Some("Off since yesterday 21:14")
+            Some("Turned off yesterday 21:14")
         );
         assert_eq!(
             line(&older(off, "21:14 · battery x %"), arrived, &phone.zone).as_deref(),
-            Some("Off since yesterday 21:14")
+            Some("Turned off yesterday 21:14")
         );
         assert_eq!(
             line(
@@ -3466,20 +3523,7 @@ mod tests {
     }
 
     #[test]
-    fn the_battery_line_and_the_bell() {
-        let zone = Zone::from_setting("Europe/Oslo");
-        let now = utc("2026-10-18 12:30:00");
-        let line =
-            |level, charging| battery_line(level, charging, "2026-10-18 12:27:00", &zone, now);
-        assert_eq!(
-            line(Some(14), Some(true)).as_deref(),
-            Some("Battery 14 %, charging · 3 min ago")
-        );
-        assert_eq!(
-            line(Some(80), Some(false)).as_deref(),
-            Some("Battery 80 % · 3 min ago")
-        );
-        assert_eq!(line(None, Some(true)), None);
+    fn the_bell() {
         assert_eq!(Bell { unread: 3 }.pill(), "3");
         assert_eq!(Bell { unread: 100 }.pill(), "99+");
     }

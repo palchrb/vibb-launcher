@@ -802,9 +802,25 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
+    // The header's second line (the user's pick C, 2026-11-01): the zone and since when, the
+    // clock alone today.
+    let lines = super::status_lines(&summary);
     assert!(
-        summary.contains("data-zone-now>At Home since "),
+        lines.last().is_some_and(|l| l.starts_with("Home since ")),
+        "{lines:?}"
+    );
+    assert!(
+        summary.contains("<span data-zone-now title=\""),
         "{summary}"
+    );
+    let nb = app
+        .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
+        .await
+        .text();
+    let lines = super::status_lines(&nb);
+    assert!(
+        lines.last().is_some_and(|l| l.starts_with("Home siden ")),
+        "{lines:?}"
     );
     // Notify Me About has the switch once.
     let settings = app
@@ -973,7 +989,7 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
         app.get_page(&summary, &cookie)
             .await
             .text()
-            .contains("data-zone-now>At Home since")
+            .contains("data-zone-now title=")
     );
     sqlx::query(
         "UPDATE device_locations SET captured_at = strftime('%Y-%m-%dT%H:%M:%fZ', captured_at, '-2 hours')",

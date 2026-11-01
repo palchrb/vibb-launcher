@@ -590,6 +590,55 @@ pub fn tags<'a>(html: &'a str, name: &str) -> Vec<Tag<'a>> {
     found
 }
 
+/// The phone's status lines in `html` (`data-line`: the Devices row's one, the summary header's
+/// one or two; `phone_status`) as a reader sees them: the tags and the screen reader's battery
+/// name left out, the entities as Askama wrote them.
+pub fn status_lines(html: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut from = 0;
+    while let Some(at) = html[from..].find(" data-line>").map(|i| from + i) {
+        let element = &html[html[..at].rfind('<').unwrap() + 1..at];
+        let element = element.split(' ').next().unwrap();
+        let (open, close) = (format!("<{element}"), format!("</{element}>"));
+        let body = &html[at + " data-line>".len()..];
+        // The line's end: its own close tag, past the ones of the same name inside it.
+        let (mut depth, mut end) = (1, 0);
+        while depth > 0 {
+            let next_open = body[end..]
+                .match_indices(&open)
+                .map(|(i, _)| end + i)
+                .find(|&o| body[o + open.len()..].starts_with([' ', '>']));
+            let next_close = end + body[end..].find(&close).expect("the line's end");
+            match next_open {
+                Some(o) if o < next_close => {
+                    depth += 1;
+                    end = o + open.len();
+                }
+                _ => {
+                    depth -= 1;
+                    end = next_close + if depth > 0 { close.len() } else { 0 };
+                }
+            }
+        }
+        let mut text = String::new();
+        let mut rest = &body[..end];
+        while let Some(lt) = rest.find('<') {
+            text.push_str(&rest[..lt]);
+            let tag_end = lt + rest[lt..].find('>').unwrap() + 1;
+            rest = if rest[lt..tag_end].contains("visually-hidden") {
+                let after = &rest[tag_end..];
+                &after[after.find("</span>").unwrap() + "</span>".len()..]
+            } else {
+                &rest[tag_end..]
+            };
+        }
+        text.push_str(rest);
+        lines.push(text);
+        from = at + " data-line>".len() + end;
+    }
+    lines
+}
+
 /// The attributes up to the tag's `>` (quotes respected) and how many bytes that took.
 type Attrs<'a> = Vec<(&'a str, Option<&'a str>)>;
 

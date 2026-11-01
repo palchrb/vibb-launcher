@@ -54,6 +54,11 @@ pub struct Device {
     /// tile. The PWA's alone: never sent to the phone.
     #[sqlx(default)]
     pub avatar_hash: Option<String>,
+    /// The battery latch (design 35 §2.5, migration 0078): set when a report said `low`, cleared
+    /// when one ran on battery above Android's level. The status lines' "Low battery" while the
+    /// phone isn't charging (`phone_status`).
+    #[sqlx(default)]
+    pub battery_low_since: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Clone, Default)]

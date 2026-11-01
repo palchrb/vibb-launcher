@@ -1,5 +1,5 @@
 //! Design 38: `POST /api/devices/power` - the phone turned off and on, its words, the held
-//! `phone_off` push and a restart's drop, the switches, the device page's "Off since" line and the
+//! `phone_off` push and a restart's drop, the switches, the status lines' "Turned off" and the
 //! shared contract `testdata/power_report.json`.
 
 use axum::http::{Method, StatusCode};
@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 
 use super::web_push::{ENDPOINT, payload, subscribe};
-use super::{Section, TestApp, device_page};
+use super::{Section, TestApp, device_page, status_lines};
 
 /// The launcher's body (`PowerEventsTest` encodes exactly this; byte-identical in its test
 /// resources).
@@ -286,7 +286,7 @@ async fn the_shutdowns_last_position_is_on_locate() {
     assert!(inbox.contains("shown on Locate"), "{inbox}");
     // Locate: the newest fix is the shutdown's, the phone hasn't reported since.
     let path = format!("/devices/locate?device={id}");
-    // Q-5: as the device page's "Off since", nothing while the off's push is still held.
+    // Q-5: as the status lines' "Turned off", nothing while the off's push is still held.
     let page = app.get_page(&path, &cookie).await.text();
     assert!(!page.contains("data-fix-before-off"), "held");
     assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
@@ -671,7 +671,7 @@ async fn the_route_refuses_what_isnt_a_power_report() {
 
 /// Design 70 §4 (H2 of its review): a `phone_off` raised since slice 2 holds its reason and
 /// battery in its parameters, and the four readers of what used to be its English - the inbox
-/// (title and detail), the device page's "Off since", Locate's "Last position before the phone
+/// (title and detail), the status lines' "Turned off", Locate's "Last position before the phone
 /// went off" and the push - read right in both languages, before and after retention removed the
 /// position (the words outlive it). A restart says nothing in the two page lines; a battery-flat
 /// shutdown says it all.
@@ -743,7 +743,9 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 !pruned,
                 "pruned {pruned}: {nb}"
             );
-            // 2. The device page's "Off since": the battery-flat phone's alone.
+            // 2. The status lines' "Turned off" (the summary's header and the Devices row): the
+            // battery-flat phone's alone. Half an hour ago reads as `Zone::at` does - its clock
+            // today, "yesterday HH:MM" right after midnight - in `Zone::since`'s words too.
             let anna_page = app
                 .get_page(&device_page(anna, Section::Summary), cookie)
                 .await
@@ -753,10 +755,9 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 .get_page(&device_page(bea, Section::Summary), cookie)
                 .await
                 .text();
-            assert!(
-                bea_page.contains(&format!(
-                    "data-power-off>Off since {when} · battery was 1 %<"
-                )),
+            assert_eq!(
+                status_lines(&bea_page),
+                [format!("Turned off {when} · battery was 1 %")],
                 "{bea_page}"
             );
             let bea_nb = app
@@ -766,11 +767,21 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 )
                 .await
                 .text();
-            assert!(
-                bea_nb.contains(&format!(
-                    "data-power-off>Av siden {when_nb} · batteriet var 1 %<"
-                )),
+            assert_eq!(
+                status_lines(&bea_nb),
+                [format!("Slått av {when_nb} · batteriet var 1 %")],
                 "{bea_nb}"
+            );
+            let list = app.get_page("/devices?lang=nb", cookie).await.text();
+            let lines = status_lines(&list);
+            assert!(
+                lines.contains(&format!("Slått av {when_nb} · batteriet var 1 %")),
+                "{lines:?}"
+            );
+            assert_eq!(
+                lines.iter().filter(|l| l.starts_with("Slått av")).count(),
+                1,
+                "{lines:?}"
             );
             // 3. Locate's line: the battery-flat phone's (its shutdown fix stays the phone's last
             // known one through the prune; the event's copy of the position is what goes).
@@ -829,8 +840,8 @@ fn capitalized(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// §3.4: the summary's "Off since 21:14 · battery was 2 %" while the newest off is later than the
-/// newest on, gone with the next start.
+/// §3.4: the summary's and the Devices row's "Turned off 21:14 · battery was 2 %" while the newest
+/// off is later than the newest on, gone with the next start.
 #[tokio::test]
 async fn the_device_page_says_off_since_until_the_start() {
     let (app, id, token) = setup().await;
@@ -862,14 +873,24 @@ async fn the_device_page_says_off_since_until_the_start() {
         );
     assert!(
         html.contains(&format!(
-            "<span class=\"summary-screen\" data-power-off>Off since {when} · battery was 2 %</span>"
+            "<span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span> · <span>battery was 2 %</span>",
+            crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
+                .await
+                .exact(DateTime::from_timestamp_millis(ms(shutdown)).unwrap())
         )),
         "{html}"
     );
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert_eq!(
+        status_lines(&list),
+        [format!("Turned off {when} · battery was 2 %")]
+    );
     post(&app, &token, json!({ "on": on(Utc::now(), 42) })).await;
     assert!(!page().await.contains("data-power-off"));
+    let list = app.get_page("/devices", &cookie).await.text();
+    assert!(!list.contains("data-power-off"), "{list}");
 
-    // A known restart never says "Off since".
+    // A known restart never says "Turned off".
     let restarting = Utc::now() + Duration::seconds(5);
     post(
         &app,

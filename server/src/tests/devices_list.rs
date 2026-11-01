@@ -1,11 +1,12 @@
-//! The Devices list (design 31 step 2, §3.2): each phone's connection dot and word, "seen ...",
-//! the lock part while a rule locks it, today's screen time and the Attention count - which
-//! always equals the rows on the phone's own page.
+//! The Devices list (design 31 step 2, §3.2): each phone's connection dot, its one status line
+//! (the user's pick C, 2026-11-01: turned off, offline with "last seen", the lock while a rule
+//! locks it, low battery, else today's screen time and the battery) and the Attention count -
+//! which always equals the rows on the phone's own page.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
-use super::{TestApp, tags};
+use super::{TestApp, status_lines, tags};
 use crate::display_time::{Zone, parse_db_utc};
 
 /// One phone's row on the list: from its link to the link's end.
@@ -15,6 +16,13 @@ fn row(html: &str, id: i64) -> &str {
         .unwrap_or_else(|| panic!("no row for phone {id}: {html}"));
     let rest = &html[start..];
     &rest[..rest.find("</a>").unwrap()]
+}
+
+/// The row's one status line, as it reads.
+fn line(html: &str, id: i64) -> String {
+    let lines = status_lines(row(html, id));
+    assert_eq!(lines.len(), 1, "one line: {lines:?}");
+    lines.into_iter().next().unwrap()
 }
 
 /// The red badge's number; 0 without one.
@@ -75,33 +83,32 @@ async fn each_phone_shows_its_connection() {
     let html = app.get_page("/devices", &cookie).await.text();
     let now = chrono::Utc::now();
 
+    // Online and away: the dot says it; a phone that reported neither screen time nor battery
+    // has the connection's word, never "seen just now" (the user's pick C, 2026-11-01).
     let anna_row = row(&html, anna);
     assert!(anna_row.contains("data-status=\"online\""), "{anna_row}");
-    assert!(anna_row.contains("<span class=\"state-online\">Online</span> · "));
     assert!(anna_row.contains("avatar-dot dot-online"));
-    assert!(anna_row.contains("seen just now"), "{anna_row}");
+    assert_eq!(line(&html, anna), "Online");
+    assert!(anna_row.contains("<span class=\"state-online\">Online</span>"));
 
     let ella_row = row(&html, ella);
-    assert!(
-        ella_row.contains("<span class=\"state-away\">Away</span> · "),
-        "{ella_row}"
-    );
     assert!(ella_row.contains("avatar-dot dot-away"));
-    assert!(ella_row.contains("seen just now"));
-    // "Changes may be delayed" is the summary's, not the list's (H2).
-    assert!(!ella_row.contains("delayed"));
+    assert_eq!(line(&html, ella), "Away");
+    assert!(!ella_row.contains("seen"), "{ella_row}");
 
+    // Offline: "last seen" with its clock time today (a weekday or a date further back), the
+    // exact time in the title.
     let emil_row = row(&html, emil);
     let seen = last_seen(&app, emil).await;
-    assert!(
-        emil_row.contains("<span class=\"state-offline\">Offline</span> · "),
-        "{emil_row}"
+    assert_eq!(
+        line(&html, emil),
+        format!("Offline · last seen {}", zone.since(seen, now))
     );
     assert!(
         emil_row.contains(&format!(
-            "<span title=\"{}\">seen {}</span>",
+            "<span class=\"state-offline\">Offline</span> · <span data-seen title=\"{}\">last seen {}</span>",
             zone.exact(seen),
-            zone.relative(seen, now)
+            zone.since(seen, now)
         )),
         "{emil_row}"
     );
@@ -110,17 +117,23 @@ async fn each_phone_shows_its_connection() {
         emil_row.contains(" CEST\"") || emil_row.contains(" CET\""),
         "{emil_row}"
     );
+    // In Norwegian.
+    let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert_eq!(
+        line(&nb, emil),
+        format!(
+            "Frakoblet · sist sett {}",
+            zone.in_lang(crate::i18n::Lang::Nb).since(seen, now)
+        )
+    );
+    assert_eq!(line(&nb, anna), "På nett");
 
     let mia_row = row(&html, mia);
-    assert!(mia_row.contains(">Not set up</span>"), "{mia_row}");
+    assert_eq!(line(&html, mia), "Not set up");
     assert!(mia_row.contains("avatar avatar-grey"));
-    assert!(!mia_row.contains("seen"));
-    assert!(row(&html, nora).contains(">Not seen yet</span>"));
-    assert!(
-        row(&html, otto).contains(">Disconnected</span> · access removed"),
-        "{}",
-        row(&html, otto)
-    );
+    assert_eq!(line(&html, nora), "Not seen yet");
+    assert_eq!(line(&html, otto), "Disconnected · access removed");
+    assert_eq!(line(&nb, otto), "Tilgangen er fjernet");
 
     // The raw stamps and the old wording are gone.
     assert!(!html.contains("Last seen 20"));
@@ -183,10 +196,13 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     let anna_row = row(&html, anna);
     assert!(
         anna_row.contains(
-            "<span class=\"state-online\">Online</span> · <span class=\"lock-part\" data-lock>Skole until 00:00 tomorrow · calls off</span>"
+            "<span class=\"tone-orange\" data-lock>Skole until 00:00 tomorrow · calls off</span>"
         ),
         "{anna_row}"
     );
+    assert_eq!(line(&html, anna), "Skole until 00:00 tomorrow · calls off");
+    let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert_eq!(line(&nb, anna), "Skole til i morgen 00:00 · anrop av");
 
     // The same rule every day: the phone stays locked at midnight, so no end (M1).
     sqlx::query("UPDATE time_rules SET days_json = ? WHERE id = ?")
@@ -226,15 +242,10 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
     assert!(anna_row.contains("data-lock>Skole</span>"), "{anna_row}");
-    // Online with a lock: the lock replaces "seen just now" (the mockup's row).
-    assert!(!anna_row.contains("seen"));
-    assert!(
-        anna_row.contains("<i style=\"width: 46%\"></i>"),
-        "{anna_row}"
-    );
-    assert!(
-        anna_row.contains("<span class=\"row-sub\" data-screen-time>42 of 90 min today</span>")
-    );
+    // Online with a lock: the lock, no "seen just now"; the screen time isn't on the line, so
+    // neither is its bar.
+    assert_eq!(line(&html, anna), "Skole");
+    assert!(!anna_row.contains("meter"), "{anna_row}");
 
     // A report from yesterday: no end, no bar, "at last report".
     app.post_status(
@@ -251,11 +262,31 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     assert!(!anna_row.contains("data-screen-time"));
     assert!(!anna_row.contains("meter"));
 
-    // No rule locking: no lock part.
-    app.post_status(&token, json!({"capabilities": ["time_rules_v1"]}))
-        .await;
+    // No rule locking: no lock part; today's screen time with its bar and the battery.
+    app.post_status(
+        &token,
+        json!({
+            "capabilities": ["time_rules_v1"],
+            "battery": { "level": 100, "charging": false, "low": false },
+            "time_state": { "day": today.format("%Y-%m-%d").to_string(), "used_minutes": 42,
+                            "budget_minutes": 90, "lock_reason": "NONE" }
+        }),
+    )
+    .await;
     let html = app.get_page("/devices", &cookie).await.text();
-    assert!(!row(&html, anna).contains("data-lock"));
+    let anna_row = row(&html, anna);
+    assert!(!anna_row.contains("data-lock"));
+    assert_eq!(line(&html, anna), "42 min of 1 h 30 min today · 100 %");
+    assert!(
+        anna_row.contains("<i style=\"width: 46%\"></i>"),
+        "{anna_row}"
+    );
+    assert!(
+        anna_row.contains("<span class=\"bat\" aria-hidden=\"true\"><b style=\"width: 100%\"></b></span><span class=\"visually-hidden\">Battery </span><span data-battery>100 %</span>"),
+        "{anna_row}"
+    );
+    let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert_eq!(line(&nb, anna), "42 min av 1 t 30 min i dag · 100 %");
 }
 
 #[tokio::test]
@@ -395,6 +426,23 @@ async fn an_unknown_time_zone_shows_utc_labelled() {
     );
 }
 
+/// The power events that say a phone is turned off don't read: no list, as on the summary -
+/// guessing "none is off" would show a turned-off phone as reachable (status-tidy QA).
+#[tokio::test]
+async fn the_list_fails_loudly_when_the_power_events_dont_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("ALTER TABLE parent_events RENAME TO parent_events_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for page in ["/devices".to_string(), format!("/devices/{id}")] {
+        let res = app.get_page(&page, &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{page}");
+    }
+}
+
 #[tokio::test]
 async fn no_phones_yet() {
     let app = TestApp::new().await;
@@ -445,11 +493,8 @@ async fn locks_shown(app: &TestApp, cookie: &str, id: i64) -> [String; 3] {
         .await
         .text();
     [
-        lock_of(row(&list, id), "<span class=\"lock-part\" data-lock>"),
-        lock_of(
-            &summary,
-            "<span class=\"badge badge-lock summary-lock\" data-lock>",
-        ),
+        lock_of(row(&list, id), "<span class=\"tone-orange\" data-lock>"),
+        lock_of(&summary, "<span class=\"tone-orange\" data-lock>"),
         lock_of(&time, "<span class=\"badge badge-lock\">"),
     ]
 }

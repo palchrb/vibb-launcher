@@ -41,6 +41,7 @@ mod parent_events;
 mod parent_pin;
 mod parents;
 mod phone;
+mod phone_status;
 mod photos;
 mod play;
 mod push;
