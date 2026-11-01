@@ -87,6 +87,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - Zone series numbers after the user's Jelly Star day
     - developer-verification registration (nothing in the repo)
 
+  - **Device › Time becomes "Tidsregler", tidied** (the user, 2026-11-01: "heter Time Rules bare time? Burde hete Time rules? ... recent med ulike events? Den kan vi bare kutte ut ... istedet for bare 1 bryter for å bruke everyones rules burde man kanskje heller konkret vise en on off bryter for alle universale rules og kunne velge per regel? Kan egentlig ta bort mulighet til å pause rules og gi extra time her, for det er bare duplicat! ... sette opp alle alternativer her litt smidigere og proff"): the title (and the summary's row) "Tidsregler"/"Time Rules"; Recent, Extra time and Pause a Rule leave the page (they are on the summary's Quick actions and in the phone's log); the Own rules switch becomes a switch per rule for everyone on this phone (a model change, server only - the phone still gets the effective set; today's Own rules phones keep their behaviour by migration), own rules and the daily limit below. **IN DESIGN 2026-11-01 - mockup sent**, waiting on the user; server only, M.
+
 ### Asked for, scope not settled yet
 
 - **PWA i18n** (the user, 2026-10-24, on design 64's push wording: "burde gå for i18n så man enkelt kan endre og legge
