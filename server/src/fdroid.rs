@@ -96,10 +96,9 @@ pub enum RepoKey {
 impl RepoKey {
     /// [RepoKey::Known] for a host of [KNOWN_REPO_KEYS], else `None` (the stored pin decides).
     pub fn known(repo_url: &str) -> Option<RepoKey> {
-        let host = reqwest::Url::parse(repo_url)
-            .ok()?
-            .host_str()?
-            .to_ascii_lowercase();
+        // A fully qualified name's trailing dot (`f-droid.org.`) is the same host (S4 fix L1).
+        let url = reqwest::Url::parse(repo_url).ok()?;
+        let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
         KNOWN_REPO_KEYS
             .iter()
             .find(|(known, _)| *known == host)
@@ -154,7 +153,17 @@ pub fn normalize_repo(input: &str) -> Result<String, String> {
     if text.chars().count() > MAX_REPO_CHARS {
         return Err(refused());
     }
-    let url = reqwest::Url::parse(text).map_err(|_| refused())?;
+    let mut url = reqwest::Url::parse(text).map_err(|_| refused())?;
+    // `f-droid.org.` is f-droid.org: stored without the dot, so the API, the label and the known
+    // key see the same host (S4 fix L1).
+    if let Some(host) = url
+        .host_str()
+        .filter(|h| h.ends_with('.'))
+        .map(|h| h.trim_end_matches('.').to_string())
+        && !host.is_empty()
+    {
+        url.set_host(Some(&host)).map_err(|_| refused())?;
+    }
     let plain = url.scheme() == "https"
         && url.host_str().is_some_and(|host| !host.is_empty())
         && url.username().is_empty()
@@ -392,10 +401,15 @@ pub(crate) struct EntryIndex {
     pub name: String,
     pub sha256: String,
     pub size: u64,
+    /// entry.json's `timestamp` (ms; 0 when it has none): a signed entry.json older than the last
+    /// one accepted is refused (round S4's fix round M1, [index_file]).
+    pub timestamp: i64,
 }
 
 #[derive(Deserialize)]
 struct Entry {
+    #[serde(default)]
+    timestamp: i64,
     index: EntryFile,
 }
 
@@ -445,6 +459,7 @@ pub(crate) fn parse_entry(body: &[u8]) -> Result<EntryIndex, Failure> {
         name,
         sha256,
         size: entry.index.size,
+        timestamp: entry.timestamp,
     })
 }
 
@@ -465,14 +480,18 @@ fn cache_key(repo_url: &str) -> String {
 /// downloaded or replaced); the index only when no cached copy has entry.json's SHA-256 (then
 /// downloaded and checked; [repo_package] removes the repo's older copies after its read). An
 /// index that didn't match entry.json [MISMATCHES_TO_REFUSE] times in a row is downloaded again
-/// only when `forced`.
+/// only when `forced`. A signed entry.json whose `timestamp` is below `not_before` (the newest this
+/// server accepted for the repo, `fdroid_repo_state`; 0 = none) is refused as a rollback - an old,
+/// genuinely signed entry.jar replayed to freeze or roll the repo back (S4 fix round M1).
+/// `Ok` is the path, the signer and entry.json's timestamp.
 pub async fn index_file(
     client: &reqwest::Client,
     repo: &Repo,
     cache_dir: &Path,
     key: &RepoKey,
+    not_before: i64,
     forced: bool,
-) -> Result<(PathBuf, String), Failure> {
+) -> Result<(PathBuf, String, i64), Failure> {
     let entry_url = format!("{}/entry.jar", repo.url);
     let (status, body) = get_small(client, &entry_url).await?;
     if status == reqwest::StatusCode::NOT_FOUND {
@@ -498,12 +517,25 @@ pub async fn index_file(
     })?;
     key.check(&signed.signer_sha256)?;
     let entry = parse_entry(&signed.entry_json)?;
+    if entry.timestamp < not_before {
+        return Err(Failure::new(
+            SyncProblem::RepoRollback,
+            format!(
+                "refused: the repo's signed entry.json is from {} (timestamp {}), older than the \
+                 {} (timestamp {not_before}) this server already took - a replayed older index; \
+                 the last good one and the cached release stay",
+                entry_time(entry.timestamp),
+                entry.timestamp,
+                entry_time(not_before)
+            ),
+        ));
+    }
     let path = cache_path(cache_dir, &repo.url, &entry.sha256);
     if tokio::fs::metadata(&path)
         .await
         .is_ok_and(|meta| meta.is_file() && meta.len() == entry.size)
     {
-        return Ok((path, signed.signer_sha256));
+        return Ok((path, signed.signer_sha256, entry.timestamp));
     }
     let mismatch_key = (repo.url.clone(), entry.sha256.clone());
     if !forced && index_mismatches(&mismatch_key, None) >= MISMATCHES_TO_REFUSE {
@@ -536,7 +568,7 @@ pub async fn index_file(
     match downloaded {
         Ok(()) => {
             index_mismatches(&mismatch_key, Some(false));
-            Ok((path, signed.signer_sha256))
+            Ok((path, signed.signer_sha256, entry.timestamp))
         }
         Err(err) => {
             if err.problem == SyncProblem::ChecksumMismatch {
@@ -578,25 +610,28 @@ fn index_mismatches(key: &(String, String), change: Option<bool>) -> u32 {
 /// The package's versions in the repo's current index ([index_file], then [read_package]); then
 /// the repo's older cached copies are removed - after the read, so this sync's copy can't go
 /// under it. A copy another sync of the same repo removed between its resolve and its read
-/// (qa-fdroid-source-code Q-8) is resolved once more, held to the first resolve's key.
-/// With [RepoKey::FirstUse] the second value is the key to pin (the caller stores it,
-/// `tracked_apps::pin_repo_key`); else `None`.
+/// (qa-fdroid-source-code Q-8) is resolved once more, held to the first resolve's key and
+/// timestamp. The caller stores [RepoRead::new_key] and [RepoRead::timestamp]
+/// (`tracked_apps::pin_repo_key`, `tracked_apps::note_repo_timestamp`).
 pub async fn repo_package(
     client: &reqwest::Client,
     repo: &Repo,
     cache_dir: &Path,
     package: &str,
     key: &RepoKey,
+    not_before: i64,
     forced: bool,
-) -> Result<(Vec<IndexVersion>, Option<String>), Failure> {
-    let (mut path, signer) = index_file(client, repo, cache_dir, key, forced).await?;
+) -> Result<RepoRead, Failure> {
+    let (mut path, signer, mut timestamp) =
+        index_file(client, repo, cache_dir, key, not_before, forced).await?;
     let mut read = read_package(path.clone(), package).await?;
     if read.is_none() {
         let held = match key {
             RepoKey::FirstUse => RepoKey::Pinned(signer.clone()),
             other => other.clone(),
         };
-        path = index_file(client, repo, cache_dir, &held, forced).await?.0;
+        (path, _, timestamp) =
+            index_file(client, repo, cache_dir, &held, timestamp, forced).await?;
         read = read_package(path.clone(), package).await?;
     }
     let versions = read.ok_or_else(|| {
@@ -606,7 +641,28 @@ pub async fn repo_package(
         )
     })?;
     remove_older_copies(cache_dir, &repo.url, &path).await;
-    Ok((versions, (*key == RepoKey::FirstUse).then_some(signer)))
+    Ok(RepoRead {
+        versions,
+        new_key: (*key == RepoKey::FirstUse).then_some(signer),
+        timestamp,
+    })
+}
+
+/// What [repo_package] read.
+#[derive(Debug)]
+pub struct RepoRead {
+    pub versions: Vec<IndexVersion>,
+    /// With [RepoKey::FirstUse]: the key to pin; else `None`.
+    pub new_key: Option<String>,
+    /// The accepted entry.json's `timestamp`: the repo's new `not_before`.
+    pub timestamp: i64,
+}
+
+/// An entry.json timestamp (ms) as a UTC time for a refusal's detail.
+fn entry_time(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|at| at.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "an unreadable time".to_string())
 }
 
 /// Streams the index to `path` through a temp file, renamed into place only when it has exactly
@@ -727,9 +783,11 @@ pub struct IndexVersion {
     pub size: u64,
     /// In a release channel (a beta): never picked by the index path.
     pub beta: bool,
-    /// The APK's signing certificates as the index lists them (`manifest.signer.sha256`, lower-case hex; empty when
-    /// it lists none): checked against the APK's at the first pin (`tracked_apps::check_fdroid_package`, Q32).
-    pub signers: Vec<String>,
+    /// The APK's signing certificates as the index lists them (`manifest.signer.sha256`, lower-case hex): `None`
+    /// when it lists none; `Some` of the readable ones otherwise - empty when none of the listed values is a
+    /// SHA-256, which is refused, not skipped (S4 fix L3). Checked against the APK's at the first pin
+    /// (`tracked_apps::check_fdroid_package`, Q32).
+    pub signers: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -865,8 +923,8 @@ pub(crate) fn package_versions(
                 signers: version
                     .manifest
                     .signer
-                    .map(|signer| signer.sha256.iter().filter_map(|s| sha256_hex(s)).collect())
-                    .unwrap_or_default(),
+                    .filter(|signer| !signer.sha256.is_empty())
+                    .map(|signer| signer.sha256.iter().filter_map(|s| sha256_hex(s)).collect()),
             })
         })
         .collect();
@@ -981,6 +1039,16 @@ pub(crate) mod tests {
         assert_eq!(
             normalize_repo("https://APT.izzysoft.de/fdroid/repo//").unwrap(),
             "https://apt.izzysoft.de/fdroid/repo"
+        );
+        // S4 fix L1: a trailing dot is the same host - stored without it, and an older row with it
+        // still gets the known key.
+        assert_eq!(
+            normalize_repo("https://f-droid.org./repo").unwrap(),
+            "https://f-droid.org/repo"
+        );
+        assert_eq!(
+            RepoKey::known("https://F-Droid.org./repo"),
+            Some(RepoKey::Known(KNOWN_REPO_KEYS[0].1))
         );
         for refused in [
             "http://f-droid.org/repo",
@@ -1117,6 +1185,7 @@ pub(crate) mod tests {
                 name: "index-v2.json".to_string(),
                 sha256: sha.clone(),
                 size: 67_000_000,
+                timestamp: 1,
             }
         );
         for (name, sha256, size) in [
@@ -1186,6 +1255,8 @@ pub(crate) mod tests {
         pub entry: std::sync::Mutex<String>,
         /// Served as entry.jar instead of the signed entry.json.
         pub jar: std::sync::Mutex<Option<Vec<u8>>>,
+        /// The `timestamp` the next [FakeRepo::publish] puts in entry.json (0 by default).
+        pub timestamp: std::sync::Mutex<i64>,
         pub index: std::sync::Mutex<Vec<u8>>,
         /// Package -> the API's answer; a package without one is a 404.
         pub api: std::sync::Mutex<HashMap<String, String>>,
@@ -1206,9 +1277,10 @@ pub(crate) mod tests {
 
         /// Serves `index` with an entry.json naming `sha256` and `size`, whatever the index is.
         pub fn publish_as(&self, index: &[u8], sha256: &str, size: u64) {
+            let timestamp = *self.timestamp.lock().unwrap();
             *self.index.lock().unwrap() = index.to_vec();
             *self.entry.lock().unwrap() = format!(
-                r#"{{"timestamp":1,"version":20002,"index":{{"name":"/index-v2.json","sha256":"{sha256}","size":{size},"numPackages":1}},"diffs":{{}}}}"#
+                r#"{{"timestamp":{timestamp},"version":20002,"index":{{"name":"/index-v2.json","sha256":"{sha256}","size":{size},"numPackages":1}},"diffs":{{}}}}"#
             );
         }
 
@@ -1299,9 +1371,9 @@ pub(crate) mod tests {
         cache: &Path,
         forced: bool,
     ) -> Result<PathBuf, Failure> {
-        index_file(client, repo, cache, &RepoKey::FirstUse, forced)
+        index_file(client, repo, cache, &RepoKey::FirstUse, 0, forced)
             .await
-            .map(|(path, _)| path)
+            .map(|(path, _, _)| path)
     }
 
     /// The pins (round S4): f-droid.org's and IzzyOnDroid's hosts take their known keys, any other
@@ -1347,7 +1419,7 @@ pub(crate) mod tests {
         let repo = Repo::from_stored(&url).unwrap();
         let client = client().unwrap();
         let pinned = RepoKey::Pinned(FAKE_REPO_KEY.sha256());
-        let (good, signer) = index_file(&client, &repo, &cache, &pinned, false)
+        let (good, signer, _) = index_file(&client, &repo, &cache, &pinned, 0, false)
             .await
             .unwrap();
         assert_eq!(signer, FAKE_REPO_KEY.sha256());
@@ -1360,7 +1432,7 @@ pub(crate) mod tests {
             &other,
             true,
         ));
-        let err = index_file(&client, &repo, &cache, &pinned, true)
+        let err = index_file(&client, &repo, &cache, &pinned, 0, true)
             .await
             .unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoKey, "{}", err.detail);
@@ -1391,7 +1463,7 @@ pub(crate) mod tests {
             fake.entry.lock().unwrap().as_bytes(),
         )]);
         *fake.jar.lock().unwrap() = Some(unsigned);
-        let err = index_file(&client, &repo, &cache, &pinned, true)
+        let err = index_file(&client, &repo, &cache, &pinned, 0, true)
             .await
             .unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoSignature, "{}", err.detail);
@@ -1407,10 +1479,73 @@ pub(crate) mod tests {
         );
         // Signed again: the new index is used.
         *fake.jar.lock().unwrap() = Some(jar);
-        let (newest, _) = index_file(&client, &repo, &cache, &pinned, false)
+        let (newest, _, _) = index_file(&client, &repo, &cache, &pinned, 0, false)
             .await
             .unwrap();
         assert_ne!(newest, good);
+    }
+
+    /// S4 fix round M1: a genuinely signed entry.json older than the newest one taken is refused
+    /// as a rollback - nothing downloaded, the cached index stays; the same timestamp again and a
+    /// newer one are taken, and the repo's read carries the timestamp to store.
+    #[tokio::test]
+    async fn an_older_signed_entry_is_refused() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (url, fake) = fake_repo("localhost").await;
+        let index = |code: i64| {
+            index_json(&[(
+                "a.b",
+                vec![(
+                    format!("{code:02x}").repeat(32),
+                    code,
+                    "1",
+                    format!("a.b_{code}.apk"),
+                    false,
+                )],
+            )])
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join(CACHE_DIR);
+        let repo = Repo::from_stored(&url).unwrap();
+        let client = client().unwrap();
+        let key = RepoKey::Pinned(FAKE_REPO_KEY.sha256());
+        *fake.timestamp.lock().unwrap() = 1_760_000_000_000;
+        fake.publish(&index(2));
+        let read = repo_package(&client, &repo, &cache, "a.b", &key, 0, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            (read.versions[0].code, read.timestamp),
+            (2, 1_760_000_000_000)
+        );
+        let taken = cached_files(&cache);
+
+        // The repo's older entry.jar, its signature good: refused, never downloaded.
+        *fake.timestamp.lock().unwrap() = 1_750_000_000_000;
+        fake.publish(&index(1));
+        let err = repo_package(&client, &repo, &cache, "a.b", &key, read.timestamp, true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::RepoRollback, "{}", err.detail);
+        assert!(err.detail.contains("2025-06-15"), "{}", err.detail);
+        assert_eq!(FakeRepo::count(&fake.index_gets), 1, "not downloaded");
+        assert_eq!(cached_files(&cache), taken, "the last good index stays");
+
+        // The same timestamp is the same entry: taken; a newer one too.
+        *fake.timestamp.lock().unwrap() = 1_760_000_000_000;
+        fake.publish(&index(2));
+        repo_package(&client, &repo, &cache, "a.b", &key, read.timestamp, false)
+            .await
+            .unwrap();
+        *fake.timestamp.lock().unwrap() = 1_770_000_000_000;
+        fake.publish(&index(3));
+        let newer = repo_package(&client, &repo, &cache, "a.b", &key, read.timestamp, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            (newer.versions[0].code, newer.timestamp),
+            (3, 1_770_000_000_000)
+        );
     }
 
     /// The index is downloaded only when entry.json names another SHA-256, checked against it
@@ -1461,12 +1596,11 @@ pub(crate) mod tests {
         assert_ne!(second, first);
         assert_eq!(FakeRepo::count(&fake.index_gets), 2, "re-downloaded");
         assert_eq!(cached_files(&cache), names(&[&first, &second]));
-        let (versions, pin) =
-            repo_package(&client, &repo, &cache, "a.b", &RepoKey::FirstUse, false)
-                .await
-                .unwrap();
-        assert_eq!(versions[0].code, 2);
-        assert_eq!(pin, Some(FAKE_REPO_KEY.sha256()), "the key to pin");
+        let read = repo_package(&client, &repo, &cache, "a.b", &RepoKey::FirstUse, 0, false)
+            .await
+            .unwrap();
+        assert_eq!(read.versions[0].code, 2);
+        assert_eq!(read.new_key, Some(FAKE_REPO_KEY.sha256()), "the key to pin");
         assert_eq!(cached_files(&cache), names(&[&second]));
         assert_eq!(FakeRepo::count(&fake.index_gets), 2, "the cached copy read");
         // A copy removed between the resolve and the read is resolved again (the race, Q-8).

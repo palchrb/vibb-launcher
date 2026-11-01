@@ -56,10 +56,11 @@ struct ReleaseAsset {
     /// GitHub lists without one, or with another algorithm.
     #[serde(default, rename = "digest", deserialize_with = "github_digest")]
     sha256: Option<String>,
-    /// An F-Droid APK's signing certificates as the repo's index lists them (empty for GitHub, or
-    /// an index that lists none): the first pin must be one of them (Q32, [check_fdroid_package]).
+    /// An F-Droid APK's signing certificates as the repo's index lists them (`None` for GitHub, or
+    /// an index that lists none; `Some(empty)` when none listed is readable): the first pin must be
+    /// one of them (Q32, [check_fdroid_package]).
     #[serde(skip)]
-    index_signers: Vec<String>,
+    index_signers: Option<Vec<String>>,
 }
 
 /// GitHub's asset `digest`, `sha256:<64 hex>`, as the hex; anything else (null, absent, another
@@ -972,6 +973,11 @@ pub enum SyncProblem {
     RepoKey,
     /// At the first pin, the APK is signed by a key the repo's index doesn't list for it (Q32).
     IndexSigner,
+    /// The repo's signed entry.json is older than the newest one taken (S4 fix round M1).
+    RepoRollback,
+    /// The repo offers a lower versionCode than the cached release; the hourly sync keeps the
+    /// cached one, "Check Now" takes it (S4 fix round M1).
+    OlderVersion,
 }
 
 impl SyncProblem {
@@ -1008,6 +1014,8 @@ impl SyncProblem {
             SyncProblem::RepoSignature => Some("apps.sync.repo_signature"),
             SyncProblem::RepoKey => Some("apps.sync.repo_key"),
             SyncProblem::IndexSigner => Some("apps.sync.index_signer"),
+            SyncProblem::RepoRollback => Some("apps.sync.repo_rollback"),
+            SyncProblem::OlderVersion => Some("apps.sync.older_version"),
             _ => None,
         }
     }
@@ -1221,20 +1229,44 @@ async fn sync_fdroid(state: &AppState, app: &TrackedApp, forced: bool) -> Result
         return Ok(());
     }
     let key = repo_key(state, &repo.url).await?;
-    let (versions, first_key) = fdroid::repo_package(
+    let not_before = repo_timestamp(state, &repo.url).await?;
+    let read = fdroid::repo_package(
         &client,
         &repo,
         &state.tracked_apps_dir.join(fdroid::CACHE_DIR),
         package,
         &key,
+        not_before,
         forced,
     )
     .await?;
-    if let Some(signer) = first_key {
-        pin_repo_key(state, &repo.url, &signer).await?;
+    if let Some(signer) = &read.new_key {
+        pin_repo_key(state, &repo.url, signer).await?;
     }
-    let version = fdroid::pick(&versions, package, from_api.as_ref().map(|(code, _)| *code))?;
+    note_repo_timestamp(state, &repo.url, read.timestamp).await?;
+    let version = fdroid::pick(
+        &read.versions,
+        package,
+        from_api.as_ref().map(|(code, _)| *code),
+    )?;
     touch_checked(state, app.id).await;
+    // S4 fix round M1, the second guard: the hourly sync never moves the cached release back to a
+    // lower versionCode (a replayed index, the unsigned API's word, a repo that dropped its newest
+    // build); "Check Now" and "Forget" (`forced`) do.
+    if !forced
+        && app.latest_release_tag.is_some()
+        && let Some(cached) = app.latest_release_asset_id
+        && version.code < cached
+    {
+        return Err(Failure::new(
+            SyncProblem::OlderVersion,
+            format!(
+                "refused: the repo now offers version {} ({}), below the cached {cached} - the \
+                 cached release stays; \"Check Now\" takes the older one",
+                version.code, version.name
+            ),
+        ));
+    }
     // The API's name when there is one, so the check above matches next time.
     let name = match &from_api {
         Some((_, name)) if !name.trim().is_empty() => name.as_str(),
@@ -1276,21 +1308,32 @@ async fn repo_key(state: &AppState, repo_url: &str) -> Result<crate::fdroid::Rep
 }
 
 /// Pins `signer` as `repo`'s key at its first good fetch. Two first syncs at once: the first insert
-/// wins and the other is held to it (another key is [SyncProblem::RepoKey]).
+/// wins and the other is held to it (another key is [SyncProblem::RepoKey]). Only while an F-Droid
+/// app still has the repo (S4 fix L2: a sync still running mustn't put back a pin that
+/// [remove_unused_fdroid_indexes] has just removed); otherwise the sync ends as `Removed`.
 async fn pin_repo_key(state: &AppState, repo_url: &str, signer: &str) -> Result<(), Failure> {
     let server = |e: sqlx::Error| Failure::new(SyncProblem::Server, e.to_string());
-    sqlx::query("INSERT OR IGNORE INTO fdroid_repo_keys (repo, signer_sha256) VALUES (?, ?)")
-        .bind(repo_url)
-        .bind(signer)
-        .execute(&state.db)
-        .await
-        .map_err(server)?;
-    let pinned: String =
+    sqlx::query(
+        "INSERT OR IGNORE INTO fdroid_repo_keys (repo, signer_sha256) SELECT ?1, ?2 \
+         WHERE EXISTS (SELECT 1 FROM tracked_apps WHERE source_type = 'fdroid' AND fdroid_repo = ?1)",
+    )
+    .bind(repo_url)
+    .bind(signer)
+    .execute(&state.db)
+    .await
+    .map_err(server)?;
+    let pinned: Option<String> =
         sqlx::query_scalar("SELECT signer_sha256 FROM fdroid_repo_keys WHERE repo = ?")
             .bind(repo_url)
-            .fetch_one(&state.db)
+            .fetch_optional(&state.db)
             .await
             .map_err(server)?;
+    let Some(pinned) = pinned else {
+        return Err(Failure::new(
+            SyncProblem::Removed,
+            "the repo's last app was removed during the sync - its key isn't pinned",
+        ));
+    };
     crate::fdroid::RepoKey::Pinned(pinned).check(signer)?;
     tracing::info!(
         repo = repo_url,
@@ -1298,6 +1341,39 @@ async fn pin_repo_key(state: &AppState, repo_url: &str, signer: &str) -> Result<
         "F-Droid repo key pinned at its first fetch"
     );
     Ok(())
+}
+
+/// The newest entry.json `timestamp` this server took for `repo` (`fdroid_repo_state`, every repo,
+/// known hosts too; 0 = none yet): an older signed entry.json is a rollback (S4 fix round M1). A
+/// database error fails the sync.
+async fn repo_timestamp(state: &AppState, repo_url: &str) -> Result<i64, Failure> {
+    sqlx::query_scalar::<_, i64>("SELECT entry_timestamp FROM fdroid_repo_state WHERE repo = ?")
+        .bind(repo_url)
+        .fetch_optional(&state.db)
+        .await
+        .map(Option::unwrap_or_default)
+        .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))
+}
+
+/// Raises `repo`'s stored entry.json timestamp to `timestamp` (never lowers it), while an F-Droid
+/// app still has the repo (the L2 rule, as [pin_repo_key]).
+async fn note_repo_timestamp(
+    state: &AppState,
+    repo_url: &str,
+    timestamp: i64,
+) -> Result<(), Failure> {
+    sqlx::query(
+        "INSERT INTO fdroid_repo_state (repo, entry_timestamp) SELECT ?1, ?2 \
+         WHERE EXISTS (SELECT 1 FROM tracked_apps WHERE source_type = 'fdroid' AND fdroid_repo = ?1) \
+         ON CONFLICT(repo) DO UPDATE SET \
+         entry_timestamp = MAX(entry_timestamp, excluded.entry_timestamp)",
+    )
+    .bind(repo_url)
+    .bind(timestamp)
+    .execute(&state.db)
+    .await
+    .map(|_| ())
+    .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))
 }
 
 /// A release tag as part of a file name: anything but letters, digits, `.`, `_` and `-` becomes
@@ -1317,12 +1393,13 @@ fn file_safe(tag: &str) -> String {
 /// An F-Droid app's APK must be the repo's package: anything else is refused before it is pinned
 /// or stored (a GitHub or manual app is checked by its pins alone). At the first pin (no signer
 /// pinned yet) its signer must also be one the repo's index lists for it, when the index lists
-/// any (Q32): no defence against a tampered index, which could change both, but a mixed-up mirror
-/// or a wrong file is caught before its key becomes the app's.
+/// any (Q32; listed but none readable is refused too, S4 fix L3): no defence against a tampered
+/// index, which could change both, but a mixed-up mirror or a wrong file is caught before its key
+/// becomes the app's.
 fn check_fdroid_package(
     app: &TrackedApp,
     identity: &crate::apk::ApkIdentity,
-    index_signers: &[String],
+    index_signers: Option<&[String]>,
 ) -> Result<(), Failure> {
     let Some(expected) = app
         .fdroid_package
@@ -1332,18 +1409,27 @@ fn check_fdroid_package(
         return Ok(());
     };
     if app.signer_sha256.is_none()
-        && !index_signers.is_empty()
-        && let Some(signer) = identity.signer_sha256.as_deref()
-        && !index_signers.iter().any(|listed| listed == signer)
+        && let Some(listed) = index_signers
     {
-        return Err(Failure::new(
-            SyncProblem::IndexSigner,
-            format!(
-                "refused: the repo's APK is signed by key {signer}, but the repo's index lists {} \
-                 for it - not pinned or stored",
-                index_signers.join(", ")
-            ),
-        ));
+        if listed.is_empty() {
+            return Err(Failure::new(
+                SyncProblem::IndexSigner,
+                "refused: the repo's index lists signing keys for the APK, but none is a SHA-256 \
+                 - not pinned or stored",
+            ));
+        }
+        if let Some(signer) = identity.signer_sha256.as_deref()
+            && !listed.iter().any(|key| key == signer)
+        {
+            return Err(Failure::new(
+                SyncProblem::IndexSigner,
+                format!(
+                    "refused: the repo's APK is signed by key {signer}, but the repo's index lists \
+                     {} for it - not pinned or stored",
+                    listed.join(", ")
+                ),
+            ));
+        }
     }
     match identity.package.as_deref() {
         Some(package) if package == expected => Ok(()),
@@ -1449,7 +1535,7 @@ async fn sync_release(
         .map_err(|e| Failure::new(Unreadable, e))
     {
         Ok(identity) => {
-            match check_fdroid_package(app, &identity, &asset.index_signers)
+            match check_fdroid_package(app, &identity, asset.index_signers.as_deref())
                 .and_then(|()| check_pins(app, &identity))
             {
                 Ok(()) => check_new_package(state, app, &identity)
@@ -3206,16 +3292,19 @@ pub async fn remove_unused_fdroid_indexes(state: &AppState) {
             return;
         }
     };
-    // A repo no app uses any more forgets its key too (round S4): adding an app of it again pins
-    // the key of that first fetch - the way to take a repo's real key change.
-    if let Err(err) = sqlx::query(
-        "DELETE FROM fdroid_repo_keys WHERE repo NOT IN (SELECT fdroid_repo FROM tracked_apps \
-         WHERE source_type = 'fdroid' AND fdroid_repo IS NOT NULL)",
-    )
-    .execute(&state.db)
-    .await
-    {
-        tracing::warn!(%err, "can't remove the unused F-Droid repo keys");
+    // A repo no app uses any more forgets its key and its newest entry.json too (round S4 and its
+    // fix round): adding an app of it again pins the key of that first fetch - the way to take a
+    // repo's real key change.
+    for table in ["fdroid_repo_keys", "fdroid_repo_state"] {
+        if let Err(err) = sqlx::query(&format!(
+            "DELETE FROM {table} WHERE repo NOT IN (SELECT fdroid_repo FROM tracked_apps \
+             WHERE source_type = 'fdroid' AND fdroid_repo IS NOT NULL)"
+        ))
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(%err, table, "can't remove the unused F-Droid repo rows");
+        }
     }
     crate::fdroid::remove_unused_indexes(
         &state.tracked_apps_dir.join(crate::fdroid::CACHE_DIR),
@@ -3644,7 +3733,7 @@ mod tests {
                     browser_download_url: format!("https://example.org/{name}"),
                     size: 0,
                     sha256: None,
-                    index_signers: Vec::new(),
+                    index_signers: None,
                 })
                 .collect(),
         }
@@ -4041,7 +4130,7 @@ mod tests {
             browser_download_url: "http://127.0.0.1:9/big.apk".to_string(),
             size: MAX_ASSET_BYTES + 1,
             sha256: None,
-            index_signers: Vec::new(),
+            index_signers: None,
         };
         let err = download_asset(&asset, target.to_str().unwrap(), false)
             .await
@@ -4122,6 +4211,8 @@ mod tests {
             RepoSignature,
             RepoKey,
             IndexSigner,
+            RepoRollback,
+            OlderVersion,
         ];
         let titles: std::collections::HashSet<&str> = all.iter().map(|p| p.title()).collect();
         assert_eq!(titles.len(), all.len());
@@ -4130,7 +4221,13 @@ mod tests {
             assert!(!title.ends_with('.'), "{title}");
         }
         // Round S4's are in the parent's language already.
-        for problem in [RepoSignature, RepoKey, IndexSigner] {
+        for problem in [
+            RepoSignature,
+            RepoKey,
+            IndexSigner,
+            RepoRollback,
+            OlderVersion,
+        ] {
             let nb = problem.title_in(crate::i18n::Lang::Nb);
             assert_ne!(nb, problem.title(), "{nb}");
             assert_eq!(problem.title_in(crate::i18n::Lang::En), problem.title());
@@ -4267,7 +4364,7 @@ mod tests {
             browser_download_url: url,
             size,
             sha256: None,
-            index_signers: Vec::new(),
+            index_signers: None,
         };
 
         let first = sync_release(&app.state, &row().await, "v2", &asset, false).await;
@@ -4332,7 +4429,7 @@ mod tests {
                 .unwrap()
                 .len(),
             sha256: None,
-            index_signers: Vec::new(),
+            index_signers: None,
         };
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO tracked_apps (name, package_name, github_repo) \
@@ -4458,7 +4555,7 @@ mod tests {
             browser_download_url: format!("{base}/key1.apk"),
             size: apk.len() as u64,
             sha256: digest,
-            index_signers: Vec::new(),
+            index_signers: None,
         };
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO tracked_apps (name, package_name, github_repo) \
@@ -4984,6 +5081,7 @@ mod tests {
     /// an F-Droid repo dropping its newest build here, through a real sync - and raises nothing.
     #[tokio::test]
     async fn an_older_release_stored_over_a_newer_one_is_no_notice() {
+        use crate::fdroid::tests::FakeRepo;
         let app = crate::tests::TestApp::new().await;
         let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
         let (apk, sha) = fixture_apk();
@@ -4998,11 +5096,28 @@ mod tests {
         .execute(&app.db)
         .await
         .unwrap();
-        sync_one_app(&app.state, id, false).await.unwrap();
+        // S4 fix round M1: the hourly sync keeps the cached release; Check Now takes the older one.
+        let err = sync_one_app(&app.state, id, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::OlderVersion, "{}", err.detail);
+        assert_eq!(
+            err.problem.title_in(crate::i18n::Lang::Nb),
+            "Repoet tilbyr en eldre versjon"
+        );
+        let row = row_of(&app, id).await;
+        assert_eq!(
+            (
+                row.latest_release_tag.as_deref(),
+                row.latest_release_asset_id
+            ),
+            (Some("v1.0.58"), Some(58)),
+            "a lower versionCode doesn't replace the cached release"
+        );
+        assert_eq!(FakeRepo::count(&fake.file_gets), 0, "nothing downloaded");
+        sync_one_app(&app.state, id, true).await.unwrap();
         assert_eq!(
             row_of(&app, id).await.latest_release_tag.as_deref(),
             Some("v1.0.57"),
-            "the older release is stored"
+            "the older release is stored by Check Now"
         );
         let notices: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM parent_events WHERE kind = 'app_update_available'",
@@ -5251,12 +5366,49 @@ mod tests {
             "the repo's key, first use"
         );
 
-        // The index lists the APK's signer: stored and pinned.
+        // S4 fix L3: signers listed, none of them a SHA-256 - refused too, not skipped.
+        list_signer("not-a-key");
+        let err = sync_one_app(&app.state, id, true).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::IndexSigner, "{}", err.detail);
+        assert!(err.detail.contains("none is a SHA-256"), "{}", err.detail);
+
+        // The index lists the APK's signer: stored and pinned; the entry's timestamp kept (M1).
+        *fake.timestamp.lock().unwrap() = 1_760_000_000_000;
         list_signer(&signer.to_uppercase());
         sync_one_app(&app.state, id, true).await.unwrap();
         let row = row_of(&app, id).await;
         assert_eq!(row.signer_sha256.as_deref(), Some(signer.as_str()));
         let stored = row.latest_release_file_path.clone().unwrap();
+        let taken = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT entry_timestamp FROM fdroid_repo_state WHERE repo = ?",
+            )
+            .bind(&repo)
+            .fetch_optional(&app.db)
+            .await
+            .unwrap()
+        };
+        assert_eq!(taken().await, Some(1_760_000_000_000));
+
+        // M1: the repo's older entry.jar, genuinely signed, replayed: refused, the release stays.
+        sqlx::query("UPDATE tracked_apps SET latest_release_asset_id = 56 WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        *fake.timestamp.lock().unwrap() = 1_750_000_000_000;
+        list_signer(&signer);
+        let err = sync_one_app(&app.state, id, true).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::RepoRollback, "{}", err.detail);
+        assert_eq!(
+            err.problem.title_in(crate::i18n::Lang::Nb),
+            "Repoet sendte en eldre indeks"
+        );
+        assert_eq!(
+            row_of(&app, id).await.latest_release_file_path.as_deref(),
+            Some(stored.as_str())
+        );
+        assert_eq!(taken().await, Some(1_760_000_000_000), "never lowered");
 
         // entry.jar by another key now: refused, the release and the pin stay.
         let other = crate::jar_signature::tests::TestKey::new("Vibb mirror (throwaway)");
@@ -5291,6 +5443,17 @@ mod tests {
             .unwrap();
         remove_unused_fdroid_indexes(&app.state).await;
         assert_eq!(pinned_key().await, None);
+        assert_eq!(taken().await, None);
+        // L2: a sync still running after that can't put the pin or the timestamp back.
+        assert_eq!(
+            pin_repo_key(&app.state, &repo, &FAKE_REPO_KEY.sha256())
+                .await
+                .unwrap_err()
+                .problem,
+            SyncProblem::Removed
+        );
+        note_repo_timestamp(&app.state, &repo, 1).await.unwrap();
+        assert_eq!((pinned_key().await, taken().await), (None, None));
     }
 
     /// Q-7 (M28): a versionName with a slash and a space is a plain file name in the app's own

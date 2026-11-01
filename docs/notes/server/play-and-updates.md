@@ -310,20 +310,37 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`IndexVersion::signers`) is carried to the download (`ReleaseAsset::index_signers`); while the app has no signer
   pinned, an APK whose v2/v3 signer isn't one of them is refused (`IndexSigner` "Key differs from the repo's
   listing", remembered like a wrong key) before anything is pinned. An index that lists none, or an APK without a
-  v2/v3 signer, isn't compared (the phone refuses an app without both pins anyway). No defence against a tampered
+  v2/v3 signer, isn't compared (the phone refuses an app without both pins anyway); an index that lists signers of
+  which none is a 64-hex SHA-256 is refused as `IndexSigner` too (fix round L3). No defence against a tampered
   index (it could change both - that's what the signature above is for), but a mixed-up mirror or wrong file is
   caught before its key becomes the app's. f-droid.org's API shortcut is unchanged: a version that is cached already
   ends the check before entry.jar.
+  **Rollback and freeze** (fix round M1, migration `0112_fdroid_repo_state.sql`): a signature alone lets an old,
+  genuinely signed entry.jar be replayed with its old index. So every repo - f-droid.org and IzzyOnDroid too - keeps
+  the newest entry.json `timestamp` this server took (`fdroid_repo_state`, raised never lowered,
+  `tracked_apps::note_repo_timestamp`), and a signed entry.json below it is refused before its index is used
+  (`RepoRollback` "The repo sent an older index" / "Repoet sendte en eldre indeks"; the same timestamp again is the
+  same entry and is taken): the last good index and the cached release stay. Second guard, for the unsigned
+  f-droid.org API's word and a repo that drops its newest build: the hourly sync never moves the cached release to a
+  lower versionCode (`OlderVersion` "The repo offers an older version" / "Repoet tilbyr en eldre versjon", nothing
+  downloaded); "Check Now" (and Forget, `forced`) takes the older one. A freeze (the same old entry.jar served for
+  ever) shows only as no new version - entry.json's `timestamp` isn't held to the clock, since a quiet repo is
+  legitimate. Fix round L1: a trailing dot (`https://f-droid.org./repo`) is the same host - `normalize_repo` stores it
+  without the dot and `RepoKey::known` ignores it. L2: the pin and the timestamp are written only while an F-Droid
+  app still has the repo (`INSERT ... WHERE EXISTS`), so a sync still running can't put back what
+  `remove_unused_fdroid_indexes` just removed (the pin's write ends that sync as `Removed`).
   **Trust statement** since then: entry.json is the repo key's, the index's SHA-256 entry.json's, the APK's the
   index's - the repo's TLS certificate is no longer the only anchor; the per-app signing-key pin (security review M10) still
   refuses a release signed with another key than the first one's. Tests: `jar_signature::tests` (the real jars pass
   with their pins, a test key's with and without signed attributes; a changed entry.json byte refused at each layer -
   manifest, .SF, signature or attributes' digest; a block signed by another key; a stripped, unsigned or SHA-1-only
-  jar), `fdroid::tests::a_repo_signed_by_another_key_is_refused`,
-  `tracked_apps::tests::an_fdroid_repo_key_is_pinned_and_the_index_signer_checked`. The ABI filter (Q33) is not in
-  this round: it still waits for its first app (above). **Live check on the VM**: an F-Droid app from f-droid.org and
-  one from IzzyOnDroid sync; the log has no `RepoSignature`/`RepoKey`; `fdroid_repo_keys` stays empty for those two
-  (known hosts); a self-hosted repo gets its row at the first sync.
+  jar), `fdroid::tests::a_repo_signed_by_another_key_is_refused`, `fdroid::tests::an_older_signed_entry_is_refused`,
+  `tracked_apps::tests::an_fdroid_repo_key_is_pinned_and_the_index_signer_checked` (with L2, L3 and the rollback
+  through a sync), `an_older_release_stored_over_a_newer_one_is_no_notice` (the versionCode guard). The ABI filter
+  (Q33) is not in this round: it still waits for its first app (above). **Live check on the VM**: an F-Droid app from
+  f-droid.org and one from IzzyOnDroid sync; the log has no `RepoSignature`/`RepoKey`/`RepoRollback`;
+  `fdroid_repo_keys` stays empty for those two (known hosts) while `fdroid_repo_state` gets a row for each; a
+  self-hosted repo gets its key row at the first sync.
 - **One source per app**: F-Droid signs with its own key, so an app installed from GitHub or Play can't switch to
   F-Droid (or back) without a reinstall. Add App says so under the F-Droid fields, the app's page under its Source
   row ("F-Droid · ws.xsoh.etar", linked to `https://f-droid.org/packages/<id>/`; another repo shows its host, unlinked,
