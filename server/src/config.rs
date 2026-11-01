@@ -81,6 +81,11 @@ pub struct ForkConfig {
     /// `https://api.github.com`, a closed local port in tests so Software Updates renders
     /// without the network.
     pub github_api: String,
+    /// `PWA_DEFAULT_LANG` (`en` or `nb`; unset = the browser's `Accept-Language`, else English): the language
+    /// of a request with neither `?lang=` nor an account language - the sign-in pages, and the language stored
+    /// on an account's first signed-in request (`i18n::Lang::of_request`, `security::store_first_lang`). The
+    /// per-account switch in Settings › Account wins.
+    pub pwa_default_lang: Option<crate::i18n::Lang>,
 }
 
 pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 240;
@@ -157,6 +162,10 @@ impl ForkConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_SSE_KEEPALIVE_SECS),
             github_api: "https://api.github.com".to_string(),
+            pwa_default_lang: read("PWA_DEFAULT_LANG", |v| {
+                crate::i18n::Lang::from_code(&v.to_ascii_lowercase()).is_some()
+            })
+            .and_then(|v| crate::i18n::Lang::from_code(&v.to_ascii_lowercase())),
         }
     }
 
@@ -419,6 +428,7 @@ mod tests {
             ("PHONE_SERVER_URL", "ftp://vibb.example"),
             ("PHONE_SERVER_URL", "http://vibb.example.org"),
             ("PHONE_SERVER_URL", "http://100.128.0.1"),
+            ("PWA_DEFAULT_LANG", "de"),
             ("LAUNCHER_SIGNATURE_CHECKSUM", "too-short"),
             // 44 characters: a padded base64 value, not the unpadded form Android expects.
             (
@@ -436,6 +446,17 @@ mod tests {
             let config = ForkConfig::from_vars(&vars(&[(key, value)]));
             assert_eq!(config, defaults, "{key}={value:?} should be ignored");
         }
+    }
+
+    #[test]
+    fn the_pwa_default_language_is_en_or_nb() {
+        let of = |value: &str| {
+            ForkConfig::from_vars(&vars(&[("PWA_DEFAULT_LANG", value)])).pwa_default_lang
+        };
+        assert_eq!(of("en"), Some(crate::i18n::Lang::En));
+        assert_eq!(of(" NB "), Some(crate::i18n::Lang::Nb));
+        assert_eq!(of(""), None);
+        assert_eq!(of("de"), None);
     }
 
     #[test]

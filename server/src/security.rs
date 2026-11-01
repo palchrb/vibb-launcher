@@ -1187,7 +1187,13 @@ pub async fn require_full_auth(
         Ok(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
         Ok(mut admin) => {
             if admin.lang.is_none() {
-                admin.lang = store_first_lang(&state.db, admin.id, request.headers()).await;
+                admin.lang = store_first_lang(
+                    &state.db,
+                    admin.id,
+                    request.headers(),
+                    state.config.pwa_default_lang,
+                )
+                .await;
             }
             // Past here `CurrentAdmin.lang` is always a language this server has: a value it can't read (a
             // rollback from a build with another language; kept in the row) or a failed store reads as the
@@ -1199,7 +1205,7 @@ pub async fn require_full_auth(
                 .is_none()
             {
                 admin.lang = Some(
-                    crate::i18n::Lang::of_headers(request.headers())
+                    crate::i18n::Lang::fallback(request.headers(), state.config.pwa_default_lang)
                         .code()
                         .to_string(),
                 );
@@ -1215,14 +1221,15 @@ pub async fn require_full_auth(
 }
 
 /// An account's language before the parent chose one (design 70 §3, D2): the first signed-in request's
-/// `Accept-Language` (never `?lang=`, which is that request's alone), written once - a later request, or one
+/// language - `PWA_DEFAULT_LANG` when set, else `Accept-Language` (never `?lang=`, which is that request's alone) - written once - a later request, or one
 /// racing it, finds the column set. Today's sessions and push subscriptions are covered at their next page.
 async fn store_first_lang(
     db: &sqlx::SqlitePool,
     id: i64,
     headers: &axum::http::HeaderMap,
+    default: Option<crate::i18n::Lang>,
 ) -> Option<String> {
-    let code = crate::i18n::Lang::of_headers(headers).code();
+    let code = crate::i18n::Lang::fallback(headers, default).code();
     match sqlx::query("UPDATE admin_users SET lang = ? WHERE id = ? AND lang IS NULL")
         .bind(code)
         .bind(id)

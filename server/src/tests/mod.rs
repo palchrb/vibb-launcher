@@ -156,10 +156,16 @@ impl TestApp {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        Self::with_net(crate::net::NetConfig::from_vars(&vars)).await
+        let mut config = ForkConfig::for_tests();
+        config.pwa_default_lang = ForkConfig::from_vars(&vars).pwa_default_lang;
+        Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config).await
     }
 
     pub async fn with_net(net: crate::net::NetConfig) -> Self {
+        Self::with_net_config(net, ForkConfig::for_tests()).await
+    }
+
+    async fn with_net_config(net: crate::net::NetConfig, config: ForkConfig) -> Self {
         // As `main` does before anything opens a connection: handlers that build a reqwest
         // client (the DNS upstream switch refreshes the blocklists) need the process-wide rustls
         // provider. The FCM tests used to install it as a side effect (design 19).
@@ -185,7 +191,7 @@ impl TestApp {
             session_cookie: crate::security::session_cookie_name(true),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
-            config: std::sync::Arc::new(ForkConfig::for_tests()),
+            config: std::sync::Arc::new(config),
             data_dir: std::sync::Arc::new(dir.path().join("data")),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),

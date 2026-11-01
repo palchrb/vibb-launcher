@@ -1967,6 +1967,75 @@ async fn language_is_each_parents() {
     );
 }
 
+/// `PWA_DEFAULT_LANG=en` (2026-11-01): ahead of a Norwegian `Accept-Language` on the sign-in page and in the one-time
+/// store of an account's first language; an account's own choice and `?lang=` still win; an invalid value is unset.
+#[tokio::test]
+async fn the_env_default_language_comes_before_the_browsers() {
+    let app = TestApp::with_env(&[("PWA_DEFAULT_LANG", "en")]).await;
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    sqlx::query("UPDATE admin_users SET lang = NULL WHERE username = 'parent'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE admin_users SET lang = 'nb' WHERE username = 'pappa'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let nb = Some("nb-NO,nb;q=0.9");
+    // Before any account (the sign-in pages' language; the login template's own words aren't moved yet, so the
+    // CSRF refusal, which asks `Lang::of_request` with no account, shows it): English; `?lang=nb` still wins.
+    let refused = |uri: &'static str| {
+        let app = &app;
+        async move {
+            let request = axum::http::Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::ACCEPT_LANGUAGE, "nb-NO,nb;q=0.9")
+                .header("sec-fetch-site", "cross-site")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(axum::body::Body::from("username=x&password=y"))
+                .unwrap();
+            app.send(request).await.text()
+        }
+    };
+    assert_eq!(
+        refused("/login").await,
+        "Refused: this form was sent from another site."
+    );
+    assert_eq!(
+        refused("/login?lang=nb").await,
+        "Avvist: dette skjemaet ble sendt fra et annet nettsted."
+    );
+    // The first signed-in request stores the env default, not the browser's.
+    let page = get_in(&app, "/account", &mamma, nb).await.text();
+    assert!(page.contains(r#"<html lang="en">"#));
+    assert_eq!(account(&app, "parent").await.lang.as_deref(), Some("en"));
+    // An account set to Norwegian keeps it, whatever the default.
+    let page = get_in(&app, "/account", &pappa, Some("en")).await.text();
+    assert!(page.contains(r#"<html lang="nb">"#));
+    assert_eq!(account(&app, "pappa").await.lang.as_deref(), Some("nb"));
+
+    // An invalid value is unset: the browser's language decides again.
+    let app = TestApp::with_env(&[("PWA_DEFAULT_LANG", "de")]).await;
+    let mamma = app.admin_cookie().await;
+    sqlx::query("UPDATE admin_users SET lang = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/login")
+        .header(header::ACCEPT_LANGUAGE, "nb")
+        .header("sec-fetch-site", "cross-site")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from("username=x&password=y"))
+        .unwrap();
+    assert!(app.send(request).await.text().starts_with("Avvist"));
+    get_in(&app, "/account", &mamma, nb).await;
+    assert_eq!(account(&app, "parent").await.lang.as_deref(), Some("nb"));
+}
+
 /// A language save held past a Reset (another session's epoch bump) writes nothing and signs out
 /// (qa-s-i18n-1-code L4), as the Name's.
 #[tokio::test]

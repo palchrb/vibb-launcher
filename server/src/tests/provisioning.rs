@@ -83,6 +83,7 @@ fn provision_payload_uses_configured_values() {
         launcher_signature_checksum: Some("B".repeat(43)),
         phone_server_url: None,
         sse_keepalive_secs: 120,
+        pwa_default_lang: None,
         github_api: "https://api.github.com".to_string(),
     };
     let payload = provisioning::provisioning_payload(
