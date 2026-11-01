@@ -127,7 +127,7 @@ class MusicMediaPlanTest {
     @Test
     fun `a playing music app is paused before it is suspended, nothing else is`() {
         assertTrue(pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = false))
-        assertTrue(pauseBeforeSuspend("me.vibb.music.debug", shouldBeSuspended = true, currentlySuspended = false))
+        assertTrue(pauseBeforeSuspend("me.vibb.music.debug", shouldBeSuspended = true, currentlySuspended = false, debugBuild = true))
         assertFalse("already suspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = true))
         assertFalse("unsuspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = false, currentlySuspended = true))
         assertFalse("another app", pauseBeforeSuspend("org.other", shouldBeSuspended = true, currentlySuspended = false))
