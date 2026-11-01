@@ -1863,11 +1863,14 @@ async fn language_is_each_parents() {
     assert!(!once.contains(r#"lang="nb" selected"#));
     assert_eq!(stored("pappa").await.as_deref(), Some("en"));
     // A page not moved yet keeps lang="en" over its English words (qa-s-i18n-1-code L1).
-    let unmoved = get_in(&app, "/apps?lang=nb", &pappa, None).await.text();
+    let unmoved = get_in(&app, "/music?lang=nb", &pappa, None).await.text();
     assert!(unmoved.contains(r#"<html lang="en">"#));
     // Devices is moved (slice 3a): Norwegian words under lang="nb".
     let moved = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
     assert!(moved.contains(r#"<html lang="nb">"#) && moved.contains("Legg til telefon"));
+    // Apps is moved (slice 3b).
+    let apps = get_in(&app, "/apps?lang=nb", &pappa, None).await.text();
+    assert!(apps.contains(r#"<html lang="nb">"#) && apps.contains("Katalog"));
     // An unknown `?lang=` is ignored.
     let ignored = get_in(&app, "/account?lang=zz", &pappa, None).await.text();
     assert!(ignored.contains(r#"<html lang="en">"#));

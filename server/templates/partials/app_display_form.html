@@ -1,6 +1,6 @@
 {# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
-    <summary class="row"><span class="row-label">Name and icon<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+    <summary class="row"><span class="row-label">{{ self.t("apps.display.title") }}<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
     <form method="post" action="{{ form.action }}" class="app-display-form">
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
@@ -10,38 +10,38 @@
             <span class="app-tile" data-preview-tile style="background: {{ form.preview_tile }}">
                 {% if let Some(glyph) = form.glyph() %}
                 <img data-preview-glyph alt="" src="/static/app-icons/{{ glyph }}.svg">
-                <span class="app-tile-own" data-preview-own hidden>{{ form.preview_text() }}</span>
+                <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}" hidden>{{ self.t(form.preview_text()) }}</span>
                 {% else %}
                 <img data-preview-glyph alt="" hidden>
-                <span class="app-tile-own" data-preview-own>{{ form.preview_text() }}</span>
+                <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}">{{ self.t(form.preview_text()) }}</span>
                 {% endif %}
             </span>
             <span data-preview-label>{{ form.preview_label() }}</span>
         </div>
         {% if let Some(default) = form.catalog_default %}
-        <p class="hint">Catalog default: {{ default }}.</p>
+        <p class="hint">{{ self.tp("apps.display.catalog_default", [("default", default.as_str())]) }}</p>
         {% endif %}
         {% if let Some(error) = form.error %}
         <div class="error">{{ error }}</div>
         {% endif %}
-        <label for="{{ form.anchor }}-label">Name on the phone (at most 20 characters; empty = the app's own)</label>
+        <label for="{{ form.anchor }}-label">{{ self.t("apps.display.label_field") }}</label>
         <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
         <fieldset class="glyph-grid">
-            <legend>Icon</legend>
-            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">Vibb style</span></label>
-            <label class="glyph-choice"><input type="radio" name="icon" value="own"{% if form.own_checked() %} checked{% endif %}><span class="choice-text">The app's own logo</span></label>
+            <legend>{{ self.t("apps.display.icon") }}</legend>
+            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">{{ self.t("apps.display.vibb_style") }}</span></label>
+            <label class="glyph-choice"><input type="radio" name="icon" value="own"{% if form.own_checked() %} checked{% endif %}><span class="choice-text">{{ self.t("apps.display.own_logo") }}</span></label>
             {% for choice in form.icons %}
             <label class="glyph-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.checked %} checked{% endif %}><span class="app-tile app-tile-small"><img src="/static/app-icons/{{ choice.key }}.svg" alt="{{ choice.label }}"></span></label>
             {% endfor %}
         </fieldset>
         <fieldset class="color-grid" data-colors>
-            <legend>Colour behind the icon</legend>
-            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="{{ crate::app_display::AUTO_PREVIEW }}"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">The app's tone</span></label>
+            <legend>{{ self.t("apps.display.colour") }}</legend>
+            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="{{ crate::app_display::AUTO_PREVIEW }}"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">{{ self.t("apps.display.color.auto") }}</span></label>
             {% for choice in form.colors %}
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.label }}</label>
             {% endfor %}
         </fieldset>
-        <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo). The app's own logo: its real icon in its own colours. The colour applies to a chosen icon.{% if form.can_reset() %} {{ form.reset_hint() }}{% endif %} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
+        <p class="hint">{{ self.t("apps.display.hint") }}{% if form.can_reset() %} {{ self.t(form.reset_hint()) }}{% endif %} {{ self.t("apps.display.hint_where") }}</p>
         {% if let Some(on_home) = form.on_home %}{% if let Some((label, sub)) = form.on_home_words %}
         <input type="hidden" name="on_home_shown" value="1">
         <label class="row">
@@ -49,9 +49,9 @@
             <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
         </label>
         {% endif %}{% endif %}
-        <button type="submit" name="action" value="save">Save</button>
+        <button type="submit" name="action" value="save">{{ self.t("common.save") }}</button>
         {% if form.can_reset() %}
-        <button type="submit" name="action" value="reset" class="button-secondary">Reset</button>
+        <button type="submit" name="action" value="reset" class="button-secondary">{{ self.t("apps.display.reset") }}</button>
         {% endif %}
     </form>
 </details>

@@ -25,7 +25,7 @@ use tokio::io::AsyncWriteExt;
 use crate::AppState;
 use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
 use crate::handlers::device_pages::AppsFrom;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -105,16 +105,44 @@ const MAX_PATTERN_CHARS: usize = 256;
 /// The compiled size limit of a `^` filter (the regex crate's default is 10 MiB).
 const MAX_REGEX_BYTES: usize = 1 << 20;
 
+/// Why a file name filter is refused ([AssetFilter::parse]).
+#[derive(Debug, PartialEq, Eq)]
+enum FilterRefusal {
+    /// Over [MAX_PATTERN_CHARS].
+    TooLong,
+    /// A `^` pattern over [MAX_REGEX_BYTES] compiled.
+    TooComplex,
+    /// A `^` pattern that doesn't compile: the regex crate's reason (its words, not ours).
+    NotRegex(String),
+}
+
+impl FilterRefusal {
+    /// Completes "the file name filter is ...", in `lang`.
+    fn words(&self, lang: Lang) -> String {
+        let not_regex =
+            |detail: &str| t_params(lang, "apps.filter.not_regex", &[("detail", detail)]);
+        match self {
+            FilterRefusal::TooLong => t_params(
+                lang,
+                "apps.filter.too_long",
+                &[("max", &MAX_PATTERN_CHARS.to_string())],
+            ),
+            FilterRefusal::TooComplex => not_regex(t(lang, "apps.filter.too_complex")),
+            FilterRefusal::NotRegex(detail) => not_regex(detail),
+        }
+    }
+}
+
 impl AssetFilter {
-    /// `Err(reason)` completes "the file name filter is ...": over [MAX_PATTERN_CHARS], or a
-    /// `^` pattern that doesn't compile within [MAX_REGEX_BYTES].
-    fn parse(pattern: Option<&str>) -> Result<Self, String> {
+    /// `Err(reason)` ([FilterRefusal::words] completes "the file name filter is ..."): over
+    /// [MAX_PATTERN_CHARS], or a `^` pattern that doesn't compile within [MAX_REGEX_BYTES].
+    fn parse(pattern: Option<&str>) -> Result<Self, FilterRefusal> {
         let pattern = match pattern {
             None | Some("") => return Ok(Self::FirstApk),
             Some(p) => p,
         };
         if pattern.chars().count() > MAX_PATTERN_CHARS {
-            return Err(format!("longer than {MAX_PATTERN_CHARS} characters"));
+            return Err(FilterRefusal::TooLong);
         }
         if !pattern.starts_with('^') {
             return Ok(Self::Contains(pattern.to_string()));
@@ -123,21 +151,17 @@ impl AssetFilter {
             .size_limit(MAX_REGEX_BYTES)
             .build()
             .map(Self::Regex)
-            .map_err(|e| {
-                let detail = match e {
-                    regex::Error::CompiledTooBig(_) => "too complex".to_string(),
-                    // The message spans several lines (the pattern, a caret under the spot,
-                    // "error: ..."); the last one is the reason.
-                    e => {
-                        let text = e.to_string();
-                        let reason = text.lines().last().unwrap_or_default().trim();
-                        reason.strip_prefix("error: ").unwrap_or(reason).to_string()
-                    }
-                };
-                format!(
-                    "not a valid regular expression ({detail}) - a filter starting with ^ is read \
-                     as one"
-                )
+            .map_err(|e| match e {
+                regex::Error::CompiledTooBig(_) => FilterRefusal::TooComplex,
+                // The message spans several lines (the pattern, a caret under the spot,
+                // "error: ..."); the last one is the reason.
+                e => {
+                    let text = e.to_string();
+                    let reason = text.lines().last().unwrap_or_default().trim();
+                    FilterRefusal::NotRegex(
+                        reason.strip_prefix("error: ").unwrap_or(reason).to_string(),
+                    )
+                }
             })
     }
 
@@ -152,12 +176,16 @@ impl AssetFilter {
     }
 }
 
-/// The add and edit forms' check (see [AssetFilter::parse]). The message says nothing was saved,
-/// since both forms refuse the whole save.
-fn validate_asset_pattern(pattern: Option<&str>) -> Result<(), String> {
-    AssetFilter::parse(pattern)
-        .map(|_| ())
-        .map_err(|reason| format!("The file name filter is {reason}. Nothing was saved."))
+/// The add and edit forms' check (see [AssetFilter::parse]), in `lang`. The message says nothing
+/// was saved, since both forms refuse the whole save.
+fn validate_asset_pattern(lang: Lang, pattern: Option<&str>) -> Result<(), String> {
+    AssetFilter::parse(pattern).map(|_| ()).map_err(|reason| {
+        t_params(
+            lang,
+            "apps.filter.refused",
+            &[("reason", &reason.words(lang))],
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -227,11 +255,11 @@ fn github_problem(status: reqwest::StatusCode) -> SyncProblem {
     }
 }
 
-/// An invalid stored file name filter as a sync failure.
-fn filter_failure(reason: String) -> Failure {
+/// An invalid stored file name filter as a sync failure (its detail as the log has it).
+fn filter_failure(reason: FilterRefusal) -> Failure {
     Failure::new(
         SyncProblem::Filter,
-        format!("the file name filter is {reason}"),
+        format!("the file name filter is {}", reason.words(Lang::En)),
     )
 }
 
@@ -267,8 +295,8 @@ fn release_allowed(tag: &str, tag_prefix: Option<&str>) -> bool {
 const MAX_TAG_PREFIX_CHARS: usize = 32;
 
 /// A release tag prefix as typed: blank = none; else letters, digits, `.`, `_` and `-`, starting
-/// with a letter or digit (e.g. `launcher-v`). `Err` completes the form's sentence.
-fn parse_tag_prefix(input: &str) -> Result<Option<String>, String> {
+/// with a letter or digit (e.g. `launcher-v`). `Err` is the form's sentence, in `lang`.
+fn parse_tag_prefix(lang: Lang, input: &str) -> Result<Option<String>, String> {
     let prefix = input.trim();
     if prefix.is_empty() {
         return Ok(None);
@@ -284,9 +312,10 @@ fn parse_tag_prefix(input: &str) -> Result<Option<String>, String> {
     if valid {
         Ok(Some(prefix.to_string()))
     } else {
-        Err(format!(
-            "The tag prefix may only hold letters, digits, '.', '_' and '-' (at most \
-             {MAX_TAG_PREFIX_CHARS}), e.g. launcher-v. Nothing was saved."
+        Err(t_params(
+            lang,
+            "apps.tag_prefix.refused",
+            &[("max", &MAX_TAG_PREFIX_CHARS.to_string())],
         ))
     }
 }
@@ -981,51 +1010,37 @@ pub enum SyncProblem {
 }
 
 impl SyncProblem {
-    /// The short title (at most 6 words, §4.2) the app's page shows.
-    pub fn title(self) -> &'static str {
-        match self {
-            SyncProblem::Filter => "File name filter is invalid",
-            SyncProblem::GithubUnreachable => "Couldn't reach GitHub",
-            SyncProblem::RepoNotFound => "Repo not found on GitHub",
-            SyncProblem::GithubError => "GitHub returned an error",
-            SyncProblem::NoRelease => "No matching release found",
-            SyncProblem::Download => "Download failed",
-            SyncProblem::TooBig => "Release file is over 1 GB",
-            SyncProblem::Unreadable => "Couldn't read the APK",
-            SyncProblem::OtherApp => "Release is a different app",
-            SyncProblem::OtherKey => "Signed with a different key",
-            SyncProblem::CantCheck => "Release can't be checked",
-            SyncProblem::Taken => "Package belongs to another app",
-            SyncProblem::Server => "Something went wrong",
-            SyncProblem::Removed => "The app was removed",
-            SyncProblem::FdroidUnknown => "F-Droid doesn't know this package",
-            SyncProblem::NotInRepo => "The repo doesn't have this package",
-            SyncProblem::RepoUnreachable => "The repo didn't answer",
-            SyncProblem::RepoError => "The repo's answer can't be used",
-            SyncProblem::ChecksumMismatch => "Download didn't match the repo's checksum",
-            other => crate::i18n::t(crate::i18n::Lang::En, other.key().unwrap_or_default()),
-        }
-    }
-
-    /// The catalog key of a title already in the parent's language (round S4's; the others move
-    /// with the Apps tab's slice, S-i18n 3b).
-    fn key(self) -> Option<&'static str> {
-        match self {
-            SyncProblem::RepoSignature => Some("apps.sync.repo_signature"),
-            SyncProblem::RepoKey => Some("apps.sync.repo_key"),
-            SyncProblem::IndexSigner => Some("apps.sync.index_signer"),
-            SyncProblem::RepoRollback => Some("apps.sync.repo_rollback"),
-            SyncProblem::OlderVersion => Some("apps.sync.older_version"),
-            _ => None,
-        }
-    }
-
-    /// The title in `lang` where the catalog has it, else [SyncProblem::title].
-    pub fn title_in(self, lang: crate::i18n::Lang) -> &'static str {
-        match self.key() {
-            Some(key) => crate::i18n::t(lang, key),
-            None => self.title(),
-        }
+    /// The short title (at most 6 words, §4.2) the app's page shows, in `lang`.
+    pub fn title(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                SyncProblem::Filter => "apps.sync.filter",
+                SyncProblem::GithubUnreachable => "apps.sync.github_unreachable",
+                SyncProblem::RepoNotFound => "apps.sync.repo_not_found",
+                SyncProblem::GithubError => "apps.sync.github_error",
+                SyncProblem::NoRelease => "apps.sync.no_release",
+                SyncProblem::Download => "apps.sync.download",
+                SyncProblem::TooBig => "apps.sync.too_big",
+                SyncProblem::Unreadable => "apps.sync.unreadable",
+                SyncProblem::OtherApp => "apps.sync.other_app",
+                SyncProblem::OtherKey => "apps.sync.other_key",
+                SyncProblem::CantCheck => "apps.sync.cant_check",
+                SyncProblem::Taken => "apps.sync.taken",
+                SyncProblem::Server => "apps.sync.server",
+                SyncProblem::Removed => "apps.sync.removed",
+                SyncProblem::FdroidUnknown => "apps.sync.fdroid_unknown",
+                SyncProblem::NotInRepo => "apps.sync.not_in_repo",
+                SyncProblem::RepoUnreachable => "apps.sync.repo_unreachable",
+                SyncProblem::RepoError => "apps.sync.repo_error",
+                SyncProblem::ChecksumMismatch => "apps.sync.checksum_mismatch",
+                SyncProblem::RepoSignature => "apps.sync.repo_signature",
+                SyncProblem::RepoKey => "apps.sync.repo_key",
+                SyncProblem::IndexSigner => "apps.sync.index_signer",
+                SyncProblem::RepoRollback => "apps.sync.repo_rollback",
+                SyncProblem::OlderVersion => "apps.sync.older_version",
+            },
+        )
     }
 }
 
@@ -1048,7 +1063,7 @@ impl Failure {
 
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.problem.title(), self.detail)
+        write!(f, "{}: {}", self.problem.title(Lang::En), self.detail)
     }
 }
 
@@ -1986,12 +2001,11 @@ fn version_of(tag: &str, prefix: Option<&str>) -> String {
         .to_string()
 }
 
-/// "1 phone", "2 phones", "no phones".
-fn phones_text(count: i64) -> String {
+/// "1 phone", "2 phones", "no phones", in `lang`.
+fn phones_text(lang: Lang, count: i64) -> String {
     match count {
-        0 => "no phones".to_string(),
-        1 => "1 phone".to_string(),
-        n => format!("{n} phones"),
+        0 => t(lang, "apps.list.no_phones").to_string(),
+        n => t_count(lang, "apps.list.phones", n, &[]),
     }
 }
 
@@ -2023,8 +2037,14 @@ fn app_tile(app: &TrackedApp, label: &str) -> AppTile {
 }
 
 /// The catalog row of `app`, which `phones` phones have ticked; the launcher is on every one of
-/// the `set_up` phones.
-fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64, set_up: i64) -> CatalogRow {
+/// the `set_up` phones. In `lang`.
+fn catalog_row(
+    state: &AppState,
+    app: &TrackedApp,
+    phones: i64,
+    set_up: i64,
+    lang: Lang,
+) -> CatalogRow {
     let label = app
         .display_label
         .clone()
@@ -2032,21 +2052,21 @@ fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64, set_up: i64) -> 
         .unwrap_or_else(|| app.name.clone());
     let mut sub = Vec::new();
     if app.is_launcher {
-        sub.push("Launcher".to_string());
+        sub.push(t(lang, "apps.list.launcher").to_string());
     } else if label != app.name {
         sub.push(app.name.clone());
     }
     sub.push(match (app.is_launcher, set_up) {
-        (true, 0) => phones_text(0),
-        (true, _) => "all phones".to_string(),
-        (false, _) => phones_text(phones),
+        (true, 0) => phones_text(lang, 0),
+        (true, _) => t(lang, "apps.list.all_phones").to_string(),
+        (false, _) => phones_text(lang, phones),
     });
     let badge = if !app.enabled {
-        Some(("Off", "badge"))
+        Some((t(lang, "common.off"), "badge"))
     } else if state.app_syncs.status(app.id).last_error.is_some() {
-        Some(("Update failed", "badge badge-red"))
+        Some((t(lang, "apps.list.update_failed"), "badge badge-red"))
     } else if app.latest_release_tag.is_none() {
-        Some(("No release yet", "badge"))
+        Some((t(lang, "device.apps.no_release"), "badge"))
     } else {
         None
     };
@@ -2157,11 +2177,11 @@ pub async fn list_apps(
     let mut phones = Vec::with_capacity(devices.len());
     for device in &devices {
         let value = if device.enrolled_at.is_none() {
-            "Not set up".to_string()
+            t(lang, "devices.status.not_set_up").to_string()
         } else {
             match allowed_count(&state, device.id, &tracked).await {
-                Some(count) => format!("{count} allowed"),
-                None => "List unreadable".to_string(),
+                Some(count) => t_count(lang, "apps.list.allowed", count as i64, &[]),
+                None => t(lang, "apps.list.unreadable").to_string(),
             }
         };
         phones.push(PhoneRow::new(
@@ -2187,6 +2207,7 @@ pub async fn list_apps(
                 app,
                 counts.get(&app.id).copied().unwrap_or(0),
                 set_up,
+                lang,
             )
         })
         .collect();
@@ -2197,7 +2218,7 @@ pub async fn list_apps(
     Html(
         AppsListTemplate {
             lang,
-            title: "Apps".to_string(),
+            title: t(lang, "nav.apps").to_string(),
             phones,
             apps,
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
@@ -2247,7 +2268,7 @@ pub async fn new_tracked_app_form(lang: Lang) -> impl IntoResponse {
     Html(
         TrackedAppAddTemplate {
             lang,
-            title: "Add App".to_string(),
+            title: t(lang, "apps.add.title").to_string(),
             error: None,
             name: String::new(),
             package_name: String::new(),
@@ -2269,29 +2290,28 @@ pub async fn new_tracked_app_form(lang: Lang) -> impl IntoResponse {
 /// the reason and the field it belongs to. The launcher's and the music app's packages stay
 /// GitHub's (their release workflows sign them; F-Droid would sign with its own key), a system
 /// package is never a catalog app, and a package another catalog app (not `this` one) already is
-/// is refused - the phones would get two rows for one app.
+/// is refused - the phones would get two rows for one app. The reasons are in `lang`.
 async fn parse_fdroid_source(
     state: &AppState,
+    lang: Lang,
     repo: &str,
     package: &str,
     this: Option<i64>,
 ) -> Result<(String, String), (String, &'static str)> {
-    let repo = crate::fdroid::normalize_repo(repo).map_err(|e| (e, "fdroid_repo"))?;
-    let package = crate::fdroid::parse_package(package).map_err(|e| (e, "fdroid_package"))?;
-    let refused = |text: String| Err((format!("{text} Nothing was saved."), "fdroid_package"));
+    let repo = crate::fdroid::normalize_repo(lang, repo).map_err(|e| (e, "fdroid_repo"))?;
+    let package = crate::fdroid::parse_package(lang, package).map_err(|e| (e, "fdroid_package"))?;
+    let refused = |text: String| Err((text, "fdroid_package"));
     if crate::handlers::device_api::installed_by_launcher(state, Some(&package)) {
-        return refused(
-            "Vibb One updates itself from its own GitHub releases, never from F-Droid.".into(),
-        );
+        return refused(t(lang, "apps.fdroid.launcher").to_string());
     }
     if crate::music::MUSIC_PACKAGES.contains(&package.as_str()) {
-        return refused(
-            "Vibb music comes from this project's GitHub releases, never from F-Droid.".into(),
-        );
+        return refused(t(lang, "apps.fdroid.music").to_string());
     }
     if never_a_catalog_package(&package) {
-        return refused(format!(
-            "{package} belongs to the system - a catalog app can't be it."
+        return refused(t_params(
+            lang,
+            "apps.fdroid.system",
+            &[("package", &package)],
         ));
     }
     let taken: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
@@ -2304,11 +2324,15 @@ async fn parse_fdroid_source(
     .await;
     match taken {
         Ok(None) => Ok((repo, package)),
-        Ok(Some(name)) => refused(format!("{name} in the catalog is already {package}.")),
+        Ok(Some(name)) => refused(t_params(
+            lang,
+            "apps.fdroid.taken",
+            &[("name", &name), ("package", &package)],
+        )),
         Err(err) => {
             tracing::error!(%err, "can't check the catalog's packages");
             Err((
-                "Couldn't check the catalog. Nothing was saved.".to_string(),
+                t(lang, "apps.fdroid.check_failed").to_string(),
                 "fdroid_package",
             ))
         }
@@ -2359,6 +2383,7 @@ pub async fn create_tracked_app(
         Some(
             parse_fdroid_source(
                 &state,
+                lang,
                 &field("fdroid_repo"),
                 &field("fdroid_package"),
                 None,
@@ -2382,7 +2407,7 @@ pub async fn create_tracked_app(
     };
     let include_prereleases = source_type == "github" && fields.contains_key("include_prereleases");
     let tag_prefix = if source_type == "github" {
-        parse_tag_prefix(&field("release_tag_prefix"))
+        parse_tag_prefix(lang, &field("release_tag_prefix"))
     } else {
         Ok(None)
     };
@@ -2390,7 +2415,7 @@ pub async fn create_tracked_app(
     // A refused save shows the form again with everything as entered (400, nothing written).
     // It posts back to its own path, so static/scroll-restore.js keeps the scroll position.
     let refused = match (
-        validate_asset_pattern(asset_pattern.as_deref()),
+        validate_asset_pattern(lang, asset_pattern.as_deref()),
         &tag_prefix,
         &fdroid,
     ) {
@@ -2402,7 +2427,7 @@ pub async fn create_tracked_app(
     if let Some((error, error_field)) = refused {
         let page = TrackedAppAddTemplate {
             lang,
-            title: "Add App".to_string(),
+            title: t(lang, "apps.add.title").to_string(),
             error: Some(error),
             name: field("name"),
             package_name: field("package_name"),
@@ -2481,7 +2506,7 @@ struct TrackedAppDetailTemplate {
     install_flash: Option<(&'static str, bool)>,
     /// A launcher row is waiting for its phone: `static/install-now.js` polls.
     install_polling: bool,
-    /// Source & Signing's value: "GitHub", "F-Droid" (or another repo's host), "Uploaded".
+    /// Source & Signing's value: "GitHub", "F-Droid" (or another repo's host), "Uploaded" (worded).
     source_label: String,
     /// An F-Droid app's source row: "F-Droid · ws.xsoh.etar", the package's page on f-droid.org,
     /// and the one-source line under it.
@@ -2543,10 +2568,11 @@ impl Flash {
     }
 }
 
-impl From<Failure> for Flash {
-    fn from(failure: Failure) -> Self {
+impl Flash {
+    /// A refused upload or package: the problem's title in `lang`, the raw error behind ⓘ.
+    fn failed(failure: Failure, lang: Lang) -> Self {
         Flash {
-            title: failure.problem.title().to_string(),
+            title: failure.problem.title(lang).to_string(),
             detail: Some(failure.detail),
             ok: false,
         }
@@ -2563,10 +2589,13 @@ enum Note {
 }
 
 /// The success notes the redirects name (`?notice=`), in their groups.
-fn note_of(notice: Option<&str>) -> Option<Note> {
+fn note_of(notice: Option<&str>, lang: Lang) -> Option<Note> {
     match notice? {
-        "uploaded" => Some(Note::Upload(Flash::done("New version uploaded"))),
-        "package_confirmed" => Some(Note::Package(Flash::done("Package confirmed"))),
+        "uploaded" => Some(Note::Upload(Flash::done(t(lang, "apps.app.uploaded")))),
+        "package_confirmed" => Some(Note::Package(Flash::done(t(
+            lang,
+            "apps.app.package_confirmed",
+        )))),
         _ => None,
     }
 }
@@ -2596,7 +2625,7 @@ pub async fn view_tracked_app(
     Path(id): Path<i64>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let note = note_of(query.get("notice").map(String::as_str));
+    let note = note_of(query.get("notice").map(String::as_str), lang);
     // Install Now's answer (design 37): `?install=<word>&phone=<id>`.
     let install = query.get("install").map(|word| {
         (
@@ -2650,11 +2679,11 @@ async fn render_detail_full(
         .await
     {
         Ok(app) => app,
-        Err(err) => return page_read_failed(id, err),
+        Err(err) => return page_read_failed(id, err, lang),
     };
 
     let Some(app) = app else {
-        return (StatusCode::NOT_FOUND, "App not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found");
     };
 
     let details = details.unwrap_or_else(|| DetailsForm {
@@ -2669,18 +2698,16 @@ async fn render_detail_full(
     });
     let fdroid_repo = app.fdroid_repo.as_deref().unwrap_or_default();
     let fdroid_package = app.fdroid_package.as_deref().unwrap_or_default();
-    let source_label = source_label(&app);
+    let source_label = source_label(&app, lang);
     let is_fdroid = app.source_type == "fdroid";
     let fdroid_source = is_fdroid.then(|| format!("{source_label} · {fdroid_package}"));
     let fdroid_page = is_fdroid
         .then(|| crate::fdroid::package_page(fdroid_repo, fdroid_package))
         .flatten();
     let fdroid_note = if fdroid_page.is_some() || source_label == "F-Droid" {
-        "One source per app: F-Droid signs it with its own key, so it can't switch to GitHub or \
-         Play without a reinstall."
+        t(lang, "apps.app.fdroid_note")
     } else {
-        "One source per app: switching it to GitHub or Play needs a reinstall when the repo's \
-         signing key isn't the developer's."
+        t(lang, "apps.app.other_repo_note")
     };
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
@@ -2696,6 +2723,7 @@ async fn render_detail_full(
         color: app.display_color.clone(),
     };
     let mut form = crate::app_display::AppDisplayForm::new(
+        lang,
         format!("/apps/tracked/{id}/display#display"),
         "display".to_string(),
         String::new(),
@@ -2721,7 +2749,7 @@ async fn render_detail_full(
     };
     let devices = match devices {
         Ok(devices) => devices,
-        Err(err) => return page_read_failed(id, err),
+        Err(err) => return page_read_failed(id, err, lang),
     };
     let row_package =
         (!app.is_launcher && !app.package_name.is_empty()).then_some(app.package_name.as_str());
@@ -2748,7 +2776,7 @@ async fn render_detail_full(
                     install_polling |= install_row.state != "idle";
                     row.install = Some(install_row);
                 }
-                Err(err) => return page_read_failed(id, err),
+                Err(err) => return page_read_failed(id, err, lang),
             }
         }
         phones.push(row);
@@ -2757,7 +2785,7 @@ async fn render_detail_full(
         && let Some((word, phone)) = install
         && !phone.is_some_and(|p| devices.iter().any(|d| d.id == p))
     {
-        install_flash = crate::install_now::flash(word);
+        install_flash = crate::install_now::flash(lang, word);
     }
     let (upload_note, package_note) = match refused {
         Some(Note::Upload(flash)) => (Some(flash), None),
@@ -2785,7 +2813,7 @@ async fn render_detail_full(
                 .as_deref()
                 .and_then(|at| When::of(&zone, at, now)),
             sync_failure: sync.last_error.map(|failed| FailureView {
-                title: failed.failure.problem.title_in(lang),
+                title: failed.failure.problem.title(lang),
                 detail: failed.failure.detail,
                 when: When::of(&zone, &failed.at, now),
             }),
@@ -2818,23 +2846,19 @@ async fn render_detail_full(
 }
 
 /// What the app's page calls its source: "GitHub", "F-Droid" (another repo: its host),
-/// "Uploaded".
-fn source_label(app: &TrackedApp) -> String {
+/// "Uploaded" (in `lang`).
+fn source_label(app: &TrackedApp, lang: Lang) -> String {
     match app.source_type.as_str() {
-        "github" => "GitHub".to_string(),
+        "github" => t(lang, "apps.source.github").to_string(),
         "fdroid" => crate::fdroid::repo_label(app.fdroid_repo.as_deref().unwrap_or_default()),
-        _ => "Uploaded".to_string(),
+        _ => t(lang, "apps.app.source_uploaded").to_string(),
     }
 }
 
 /// The app's page can't be read: a 500, never a page with a made-up part.
-fn page_read_failed(id: i64, err: sqlx::Error) -> Response {
+fn page_read_failed(id: i64, err: sqlx::Error, lang: Lang) -> Response {
     tracing::error!(app_id = id, %err, "can't read the app's page");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read this app - check the server log.",
-    )
-        .into_response()
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_app")
 }
 
 /// How long "Check now" waits for its sync before answering: a quick check shows its result at
@@ -2845,7 +2869,7 @@ const CHECK_NOW_WAIT: Duration = Duration::from_secs(10);
 
 /// Starts a sync of the app (unless one runs - then the page says so) and redirects back to the
 /// app's page, which shows a failure or that it is still running.
-pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn check_now(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -2853,7 +2877,7 @@ pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Re
         .ok()
         .flatten();
     if exists.is_none() {
-        return (StatusCode::NOT_FOUND, "App not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found");
     }
 
     // In its own task: a large download still finishes, and is cached, after this answers.
@@ -2884,7 +2908,7 @@ pub async fn upload_tracked_app_release(
         .flatten();
 
     let Some(app) = app else {
-        return (StatusCode::NOT_FOUND, "App not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found");
     };
     // An F-Droid app takes only the repo's APKs, each checked against the repo's index: an
     // upload would be a file nothing checked.
@@ -2893,12 +2917,8 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash {
-                title: "F-Droid apps come from the repo".to_string(),
-                detail: Some(
-                    "Each release comes from the F-Droid repo and is checked against its \
-                     checksum - nothing was uploaded."
-                        .to_string(),
-                ),
+                title: t(lang, "apps.app.fdroid_upload").to_string(),
+                detail: Some(t(lang, "apps.app.fdroid_upload_detail").to_string()),
                 ok: false,
             })),
             lang,
@@ -2935,7 +2955,10 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Note::Upload(Flash::title("Add a version and a file"))),
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_missing",
+            )))),
             lang,
         )
         .await;
@@ -2945,7 +2968,10 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Note::Upload(Flash::title("Add a version and a file"))),
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_missing",
+            )))),
             lang,
         )
         .await;
@@ -2956,7 +2982,10 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_failed",
+            )))),
             lang,
         )
         .await;
@@ -2969,7 +2998,10 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_failed",
+            )))),
             lang,
         )
         .await;
@@ -2983,12 +3015,24 @@ pub async fn upload_tracked_app_release(
         Ok(identity) => identity,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
-            return render_detail(&state, id, Some(Note::Upload(err.into())), lang).await;
+            return render_detail(
+                &state,
+                id,
+                Some(Note::Upload(Flash::failed(err, lang))),
+                lang,
+            )
+            .await;
         }
     };
     if let Err(err) = check_new_package(&state, &app, &identity).await {
         tokio::fs::remove_file(&file_path).await.ok();
-        return render_detail(&state, id, Some(Note::Upload(err.into())), lang).await;
+        return render_detail(
+            &state,
+            id,
+            Some(Note::Upload(Flash::failed(err, lang))),
+            lang,
+        )
+        .await;
     }
 
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
@@ -3012,7 +3056,10 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title(t(
+                lang,
+                "apps.app.upload_failed",
+            )))),
             lang,
         )
         .await;
@@ -3070,7 +3117,9 @@ pub async fn save_display(
     .execute(&state.db)
     .await;
     match result {
-        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "App not found").into_response(),
+        Ok(r) if r.rows_affected() == 0 => {
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found")
+        }
         Ok(_) => {
             // Every phone may have the app: nudge them all (a sync is cheap).
             let devices: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices")
@@ -3084,11 +3133,7 @@ pub async fn save_display(
         }
         Err(err) => {
             tracing::error!(app_id = id, %err, "couldn't save the app's name and icon");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -3126,29 +3171,27 @@ pub async fn update_tracked_app(
         .filter(|source| **source != app.source_type)
         .map(|_| {
             if app.latest_release_tag.is_some() {
-                format!(
-                    "This app's releases come from {}: its source can't change, since the phones \
-                     would have to reinstall it (another source signs it with another key). \
-                     Nothing was saved.",
-                    source_label(&app)
+                t_params(
+                    lang,
+                    "apps.app.source_fixed",
+                    &[("source", &source_label(&app, lang))],
                 )
             } else {
-                "An app's source is chosen when it is added: remove the app and add it again \
-                 with the other source. Nothing was saved."
-                    .to_string()
+                t(lang, "apps.app.source_chosen").to_string()
             }
         });
     let fdroid = if app.source_type == "fdroid" && source_refused.is_none() {
         Some(
             parse_fdroid_source(
                 &state,
+                lang,
                 &field("fdroid_repo"),
                 &field("fdroid_package"),
                 Some(app.id),
             )
             .await
             .and_then(|(repo, package)| {
-                pinned_fdroid_change(&app, &repo, &package).map(|()| (repo, package))
+                pinned_fdroid_change(&app, lang, &repo, &package).map(|()| (repo, package))
             }),
         )
     } else {
@@ -3161,7 +3204,7 @@ pub async fn update_tracked_app(
         (
             repo,
             (!pattern.is_empty()).then_some(pattern),
-            parse_tag_prefix(&field("release_tag_prefix")),
+            parse_tag_prefix(lang, &field("release_tag_prefix")),
         )
     } else {
         (
@@ -3175,7 +3218,7 @@ pub async fn update_tracked_app(
     // the reason in the Details card, that field focused (and so scrolled into view).
     let refused = match (
         source_refused,
-        validate_asset_pattern(asset_pattern.as_deref()),
+        validate_asset_pattern(lang, asset_pattern.as_deref()),
         &tag_prefix,
         &fdroid,
     ) {
@@ -3239,35 +3282,35 @@ pub async fn update_tracked_app(
 /// Once an F-Droid app is pinned, its package and repo stay (qa-fdroid-source-code Q-5): another
 /// package is another app (the next sync would refuse it as `OtherApp`), and another repo may
 /// sign it with another key (`OtherKey`) - a change the phones could only take with a reinstall,
-/// so it is refused at the form with the source change's words. Before the first release both
-/// stay editable.
+/// so it is refused at the form with the source change's words (in `lang`). Before the first
+/// release both stay editable.
 fn pinned_fdroid_change(
     app: &TrackedApp,
+    lang: Lang,
     repo: &str,
     package: &str,
 ) -> Result<(), (String, &'static str)> {
     let release = if app.latest_release_tag.is_some() {
-        "its release"
+        t(lang, "apps.app.pinned_release")
     } else {
-        "its first release"
+        t(lang, "apps.app.pinned_first_release")
     };
     if !app.package_name.is_empty() && package != app.package_name {
         return Err((
-            format!(
-                "This app is {} - pinned from {release}: another package is another app. Remove \
-                 this one and add the other. Nothing was saved.",
-                app.package_name
+            t_params(
+                lang,
+                "apps.app.pinned_package",
+                &[("package", &app.package_name), ("release", release)],
             ),
             "fdroid_package",
         ));
     }
     if app.signer_sha256.is_some() && app.fdroid_repo.as_deref() != Some(repo) {
         return Err((
-            format!(
-                "This app's signing key is pinned from {release} from {}: another repo may sign \
-                 it with another key, and the phones would have to reinstall it. Remove the app \
-                 and add it again with the other repo. Nothing was saved.",
-                source_label(app)
+            t_params(
+                lang,
+                "apps.app.pinned_repo",
+                &[("release", release), ("source", &source_label(app, lang))],
             ),
             "fdroid_repo",
         ));
@@ -3560,11 +3603,11 @@ pub async fn confirm_package(
                 &state,
                 id,
                 Some(Note::Package(Flash {
-                    title: "Vibb One didn't install that app".to_string(),
-                    detail: Some(format!(
-                        "{} isn't an app Vibb One installed on a phone that has this app. Nothing \
-                         was changed.",
-                        form.package
+                    title: t(lang, "apps.app.not_installed").to_string(),
+                    detail: Some(t_params(
+                        lang,
+                        "apps.app.not_installed_detail",
+                        &[("package", &form.package)],
                     )),
                     ok: false,
                 })),
@@ -3585,9 +3628,10 @@ pub async fn confirm_package(
         return render_detail(
             &state,
             id,
-            Some(Note::Package(Flash::title(
-                "Couldn't save. Nothing was changed.",
-            ))),
+            Some(Note::Package(Flash::title(t(
+                lang,
+                "apps.app.confirm_failed",
+            )))),
             lang,
         )
         .await;
@@ -3745,7 +3789,7 @@ mod tests {
         include_prereleases: bool,
         pattern: Option<&str>,
     ) -> Result<(String, String), String> {
-        let filter = AssetFilter::parse(pattern)?;
+        let filter = AssetFilter::parse(pattern).map_err(|r| r.words(Lang::En))?;
         newest_matching_release(releases, include_prereleases, &filter, None)
             .map(|(r, a)| (r.tag_name, a.name))
     }
@@ -3849,14 +3893,14 @@ mod tests {
 
     #[test]
     fn release_tag_prefixes_are_checked() {
-        assert_eq!(parse_tag_prefix("  "), Ok(None));
+        assert_eq!(parse_tag_prefix(Lang::En, "  "), Ok(None));
         assert_eq!(
-            parse_tag_prefix(" launcher-v "),
+            parse_tag_prefix(Lang::En, " launcher-v "),
             Ok(Some("launcher-v".to_string()))
         );
-        assert!(parse_tag_prefix("-v").is_err());
-        assert!(parse_tag_prefix("a b").is_err());
-        assert!(parse_tag_prefix(&"a".repeat(33)).is_err());
+        assert!(parse_tag_prefix(Lang::En, "-v").is_err());
+        assert!(parse_tag_prefix(Lang::En, "a b").is_err());
+        assert!(parse_tag_prefix(Lang::En, &"a".repeat(33)).is_err());
     }
 
     #[test]
@@ -3917,26 +3961,32 @@ mod tests {
     fn an_invalid_regular_expression_is_refused() {
         let reason = AssetFilter::parse(Some(r"^(\d+\.apk")).err().unwrap();
         assert_eq!(
-            reason,
+            reason.words(Lang::En),
             "not a valid regular expression (unclosed group) - a filter starting with ^ is read \
              as one"
         );
-        let message = validate_asset_pattern(Some("^[")).unwrap_err();
+        let message = validate_asset_pattern(Lang::En, Some("^[")).unwrap_err();
         assert!(message.starts_with("The file name filter is not a valid regular expression"));
         assert!(message.ends_with("Nothing was saved."), "{message}");
         // Over the compiled size limit (qa-catalog #5): refused, not compiled with 10 MiB.
         let huge = AssetFilter::parse(Some(r"^(\w{1,100}){1,100}"))
             .err()
-            .unwrap();
+            .unwrap()
+            .words(Lang::En);
         assert!(huge.contains("(too complex)"), "{huge}");
+        // The form's sentence in the reader's language.
+        assert_eq!(
+            validate_asset_pattern(Lang::Nb, Some(&"a".repeat(MAX_PATTERN_CHARS + 1))).unwrap_err(),
+            "Filnavnfilteret er lengre enn 256 tegn. Ingenting ble lagret."
+        );
         // Over 256 characters: refused whatever kind of filter it is.
         let long = "a".repeat(MAX_PATTERN_CHARS + 1);
         assert_eq!(
-            validate_asset_pattern(Some(&long)).unwrap_err(),
+            validate_asset_pattern(Lang::En, Some(&long)).unwrap_err(),
             "The file name filter is longer than 256 characters. Nothing was saved."
         );
-        assert!(validate_asset_pattern(Some(&format!("^{}", &long[1..]))).is_err());
-        assert!(validate_asset_pattern(Some(&long[1..])).is_ok());
+        assert!(validate_asset_pattern(Lang::En, Some(&format!("^{}", &long[1..]))).is_err());
+        assert!(validate_asset_pattern(Lang::En, Some(&long[1..])).is_ok());
         for ok in [
             None,
             Some(""),
@@ -3944,7 +3994,7 @@ mod tests {
             Some("[x"),
             Some(r"^\d+\.apk$"),
         ] {
-            assert!(validate_asset_pattern(ok).is_ok(), "{ok:?}");
+            assert!(validate_asset_pattern(Lang::En, ok).is_ok(), "{ok:?}");
         }
     }
 
@@ -4141,7 +4191,11 @@ mod tests {
             "big.apk is 1000 MB, over the 1 GB limit - not downloaded"
         );
         // The title names the limit the check uses.
-        assert!(SyncProblem::TooBig.title().contains(&size_limit_text()));
+        assert!(
+            SyncProblem::TooBig
+                .title(Lang::En)
+                .contains(&size_limit_text())
+        );
         assert!(files_in(dir.path()).is_empty());
     }
 
@@ -4179,9 +4233,9 @@ mod tests {
         assert_eq!(version_of("launcher-v", Some("launcher-v")), "launcher-v");
         assert_eq!(version_of("v2.1.0-v8a", None), "2.1.0-v8a");
         assert_eq!(version_of("app-v1.0-v2", None), "1.0-v2");
-        assert_eq!(capitalised(&phones_text(0)), "No phones");
-        assert_eq!(phones_text(1), "1 phone");
-        assert_eq!(phones_text(2), "2 phones");
+        assert_eq!(capitalised(&phones_text(Lang::En, 0)), "No phones");
+        assert_eq!(phones_text(Lang::En, 1), "1 phone");
+        assert_eq!(phones_text(Lang::En, 2), "2 phones");
     }
 
     /// Every sync problem has its own short title (§4.2: a warning title is at most 6 words).
@@ -4214,11 +4268,14 @@ mod tests {
             RepoRollback,
             OlderVersion,
         ];
-        let titles: std::collections::HashSet<&str> = all.iter().map(|p| p.title()).collect();
-        assert_eq!(titles.len(), all.len());
-        for title in titles {
-            assert!(title.split_whitespace().count() <= 6, "{title}");
-            assert!(!title.ends_with('.'), "{title}");
+        for lang in [Lang::En, Lang::Nb] {
+            let titles: std::collections::HashSet<&str> =
+                all.iter().map(|p| p.title(lang)).collect();
+            assert_eq!(titles.len(), all.len());
+            for title in titles {
+                assert!(title.split_whitespace().count() <= 6, "{title}");
+                assert!(!title.ends_with('.'), "{title}");
+            }
         }
         // Round S4's are in the parent's language already.
         for problem in [
@@ -4228,9 +4285,8 @@ mod tests {
             RepoRollback,
             OlderVersion,
         ] {
-            let nb = problem.title_in(crate::i18n::Lang::Nb);
-            assert_ne!(nb, problem.title(), "{nb}");
-            assert_eq!(problem.title_in(crate::i18n::Lang::En), problem.title());
+            let nb = problem.title(Lang::Nb);
+            assert_ne!(nb, problem.title(Lang::En), "{nb}");
         }
         let failure = Failure::new(RepoNotFound, "GitHub API returned 404 Not Found");
         assert_eq!(
@@ -5100,7 +5156,7 @@ mod tests {
         let err = sync_one_app(&app.state, id, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::OlderVersion, "{}", err.detail);
         assert_eq!(
-            err.problem.title_in(crate::i18n::Lang::Nb),
+            err.problem.title(crate::i18n::Lang::Nb),
             "Repoet tilbyr en eldre versjon"
         );
         let row = row_of(&app, id).await;
@@ -5246,7 +5302,7 @@ mod tests {
         };
         assert_eq!(err.problem, SyncProblem::ChecksumMismatch);
         assert_eq!(
-            err.problem.title(),
+            err.problem.title(Lang::En),
             "Download didn't match the repo's checksum"
         );
         assert!(err.detail.contains(&wrong), "{}", err.detail);
@@ -5286,17 +5342,23 @@ mod tests {
         let unknown = fdroid_row(&app, &api_repo, "org.nobody.app").await;
         let err = sync_one_app(&app.state, unknown, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::FdroidUnknown);
-        assert_eq!(err.problem.title(), "F-Droid doesn't know this package");
+        assert_eq!(
+            err.problem.title(Lang::En),
+            "F-Droid doesn't know this package"
+        );
         // Another repo isn't "F-Droid" (Q-9).
         let unknown = fdroid_row(&app, &index_repo, "org.nobody.app").await;
         let err = sync_one_app(&app.state, unknown, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::NotInRepo);
-        assert_eq!(err.problem.title(), "The repo doesn't have this package");
+        assert_eq!(
+            err.problem.title(Lang::En),
+            "The repo doesn't have this package"
+        );
 
         let gone = fdroid_row(&app, "http://127.0.0.1:9/repo", "me.vibb.testfixture").await;
         let err = sync_one_app(&app.state, gone, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoUnreachable);
-        assert_eq!(err.problem.title(), "The repo didn't answer");
+        assert_eq!(err.problem.title(Lang::En), "The repo didn't answer");
 
         // The repo lists the fixture under another package id: refused before it is pinned.
         serve_fixture(&index_fake, "org.other.app", &sha, &apk);
@@ -5401,7 +5463,7 @@ mod tests {
         let err = sync_one_app(&app.state, id, true).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoRollback, "{}", err.detail);
         assert_eq!(
-            err.problem.title_in(crate::i18n::Lang::Nb),
+            err.problem.title(crate::i18n::Lang::Nb),
             "Repoet sendte en eldre indeks"
         );
         assert_eq!(
@@ -5426,7 +5488,7 @@ mod tests {
         let err = sync_one_app(&app.state, id, true).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoKey, "{}", err.detail);
         assert_eq!(
-            err.problem.title_in(crate::i18n::Lang::Nb),
+            err.problem.title(crate::i18n::Lang::Nb),
             "Repoets signeringsnøkkel er endret"
         );
         assert_eq!(
