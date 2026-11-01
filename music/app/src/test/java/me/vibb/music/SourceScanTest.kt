@@ -639,6 +639,44 @@ class SourceScanTest {
     }
 
     /**
+     * The media session's artwork (2026-11-01, PLAN "The media session's artwork is a `file://` path"): SystemUI reads
+     * the session's artwork URI with its own identity and can't open our private cache, so the session gets a
+     * `content://` URI of the non-exported FileProvider, which serves only cache/art/ and is read-granted to SystemUI;
+     * every `setArtworkUri` takes [artUri]'s URI, and that is always [sessionArtUri]'s. The launcher's snapshot still
+     * reads the small copy's file ([artFile]).
+     */
+    @Test
+    fun `the session's artwork is a content URI SystemUI is granted - never a file path`() {
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        val provider = manifest.substringAfter("<provider").substringBefore("</provider>")
+        assertTrue(provider.contains("android:name=\"androidx.core.content.FileProvider\""))
+        assertTrue(provider.contains("android:authorities=\"\${applicationId}.art\""))
+        assertTrue("never exported", provider.contains("android:exported=\"false\""))
+        assertTrue("read by a grant", provider.contains("android:grantUriPermissions=\"true\""))
+        assertTrue(provider.contains("android:resource=\"@xml/art_paths\""))
+        assertEquals("one provider in the main manifest", 1, Regex("<provider").findAll(manifest).count())
+        val paths = moduleFile("src/main/res/xml/art_paths.xml").readText().replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+        val entries = Regex("<([a-z-]+-path) name=\"([a-z]+)\" path=\"([^\"]*)\"").findAll(paths).map { it.groupValues.drop(1) }.toList()
+        assertEquals("only the small copies: Store.smallArtDir", listOf(listOf("cache-path", "art", "art/")), entries)
+        assertTrue(code(moduleFile("src/main/java/me/vibb/music/data/Store.kt")).contains("val smallArtDir = File(app.cacheDir, \"art\")"))
+        assertEquals("me.vibb.music.art", me.vibb.music.logic.sessionArtAuthority("me.vibb.music"))
+        assertEquals(listOf("com.android.systemui"), me.vibb.music.logic.SESSION_ART_READERS)
+        val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
+        assertEquals(
+            "every artwork the session gets is artUri's",
+            listOf("artUri(a, item)?.let { meta.setArtworkUri(it) }", "renderer.replaceItem(index, old.buildUpon().setMediaMetadata(old.mediaMetadata.buildUpon().setArtworkUri(uri).build()).build())"),
+            service.lines().filter { it.contains("setArtworkUri(") }.map { it.trim() },
+        )
+        assertTrue(service.contains("val uri = artUri(a, item)"))
+        assertTrue(service.contains("private fun artUri(a: Active, item: PlayItem): Uri? = artFile(a, item)?.takeIf { it.isFile }?.let(::sessionArtUri)"))
+        val grant = service.substringAfter("private fun sessionArtUri(file: File): Uri? {").substringBefore("\n    }\n")
+        assertTrue(grant.contains("FileProvider.getUriForFile(this, sessionArtAuthority(packageName), file)"))
+        assertTrue(grant.contains("grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)"))
+        assertFalse("read only", grant.contains("WRITE"))
+        assertFalse("no picture bytes on the queue's metadata", service.contains("setArtworkData("))
+    }
+
+    /**
      * qa-30-s3b-code H2: an app targeting API 28+ refuses every cleartext request without a config of its own -
      * Sonos SOAP (http://<ip>:1400), http enclosures, `lan` feeds and the emulator's fakes. Cleartext is allowed
      * for every host (a speaker's LAN address can't be named in advance); the app's own address rules decide

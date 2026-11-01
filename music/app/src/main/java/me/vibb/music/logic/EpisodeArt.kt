@@ -233,6 +233,18 @@ fun artOrCover(item: PlayItem, entry: Entry, has: (String) -> Boolean): String? 
 fun smallArtMissing(hashes: List<String?>, hasCopy: (String) -> Boolean): List<String> =
     hashes.filterNotNull().distinct().filterNot(hasCopy)
 
+/**
+ * The media session's picture provider (2026-11-01, PLAN "The media session's artwork is a `file://` path"): the
+ * platform session hands the artwork URI to SystemUI, which can't read a `file://` path in our private cache, so the
+ * small copies go out as `content://<applicationId>.art/art/<hash>.jpg` (the manifest's non-exported FileProvider,
+ * `res/xml/art_paths.xml`) with a read grant to [SESSION_ART_READERS]. Media3's own notification loads the same URI in
+ * this process.
+ */
+fun sessionArtAuthority(applicationId: String): String = "$applicationId.art"
+
+/** Who reads the session's artwork URI with its own identity: SystemUI's lock-screen and Quick Settings media controls. */
+val SESSION_ART_READERS = listOf("com.android.systemui")
+
 /** The queue with item [key]'s own picture now [art] (a listing applied while it played, QA L7). */
 fun withItemArt(items: List<PlayItem>, key: String, art: String?): List<PlayItem> =
     items.map { if (it.key == key && it.artHash != art) it.copy(artHash = art) else it }

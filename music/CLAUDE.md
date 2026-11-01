@@ -681,7 +681,13 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
   `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
   in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
-  room only the session player's item, no SOAP).
+  room only the session player's item, no SOAP). **The session's artwork is a `content://` URI** (2026-11-01: SystemUI
+  read the old `file://` path with its own identity and failed with ENOENT at every state change): `artUri` is the
+  small copy (`cache/art/<hash>.jpg`, checked to exist at every build and item change) through the manifest's
+  non-exported FileProvider (`${applicationId}.art`, `res/xml/art_paths.xml`: `cache/art/` only), read-granted once per
+  picture and process to `SESSION_ART_READERS` (`com.android.systemui`); Media3's notification reads the same URI in
+  this process. Not `artworkData`: the bytes would ride on every queue item's metadata through the session's Binder.
+  `setNowPlaying` still reads the file (`artFile`). `SourceScanTest` pins it.
 - **The episode list's pictures and the kid's order flip** (design 39; **the user's decisions, not vibb's**: vibb's
   list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
   `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
