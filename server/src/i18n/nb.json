@@ -69,7 +69,7 @@
   "calendar.lock.footer": "Alle i nærheten av telefonen kan se låseskjermen.",
   "calendar.lock.info_label": "Om låseskjermen",
   "calendar.lock.info": "En tittel kan nevne et sted. Tittelreglene nedenfor gjelder også her.",
-  "calendar.lock.info_sound": "«Stille rad + lyd» spiller telefonens varsellyd én gang når raden kommer. Ingen lyd når telefonen står på lydløs, vibrering eller «Ikke forstyrr», under en tidsregel eller leggetid, eller i en samtale. Aldri vibrasjon.",
+  "calendar.lock.info_sound": "«Stille rad + lyd» spiller telefonens varsellyd én gang når raden kommer. Ingen lyd når telefonen står på lydløs, vibrering eller «Ikke forstyrr», under en tidsregel eller leggetid, i en samtale, eller mens telefonen er i bruk. Aldri vibrasjon.",
   "calendar.lock.example_caption": "Slik ser en påminnelse ut:",
   "calendar.lock.example": "Skole: Matte om 15 min",
   "calendar.lock.example_time": "08:30",

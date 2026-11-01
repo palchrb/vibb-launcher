@@ -69,7 +69,7 @@
   "calendar.lock.footer": "Anyone near the phone can see the lock screen.",
   "calendar.lock.info_label": "About the lock screen",
   "calendar.lock.info": "A title can name a place. The title rules below apply here too.",
-  "calendar.lock.info_sound": "\"Quiet row + sound\" plays the phone's notification sound once as the row comes up. No sound while the phone is on silent, vibrate or Do Not Disturb, during a time rule or bedtime, or in a call. Never a vibration.",
+  "calendar.lock.info_sound": "\"Quiet row + sound\" plays the phone's notification sound once as the row comes up. No sound while the phone is on silent, vibrate or Do Not Disturb, during a time rule or bedtime, in a call, or while the phone is in use. Never a vibration.",
   "calendar.lock.example_caption": "This is what a reminder looks like:",
   "calendar.lock.example": "School: Maths in 15 min",
   "calendar.lock.example_time": "08:30",

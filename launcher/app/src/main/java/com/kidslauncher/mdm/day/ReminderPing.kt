@@ -18,9 +18,16 @@ data class PingQuiet(
     val inCall: Boolean,
     /** A time rule is in force - bedtime is one (`TimeLock.rules`, lifts and the override counted). */
     val ruleOn: Boolean,
+    /** The row can be seen where it lives: the screen is off (`!PowerManager.isInteractive`, the sound makes the kid
+     * look) or the lock's glance is up. While the phone is in use the sound would point at nothing (the coordinator's
+     * call, QA M2). */
+    val rowVisible: Boolean,
 ) {
-    val allowsSound: Boolean get() = ringerNormal && interruptionsAll && !inCall && !ruleOn
+    val allowsSound: Boolean get() = ringerNormal && interruptionsAll && !inCall && !ruleOn && rowVisible
 }
+
+/** A check this long after the row came up is late (a boot, a sync, the switch turned on mid-window): no sound. */
+const val PING_LATE_MS = 90_000L
 
 enum class PingSound {
     /** Nothing to do: no reminder up, the ping not chosen, or this reminder had its moment already. */
@@ -39,15 +46,42 @@ data class PingDecision(val sound: PingSound, val key: String? = null)
 fun pingKey(up: GlanceReminder): String = "${up.eventId}@${up.beginMs}"
 
 /**
- * The ping for the reminder [up] now (`reminderNow`'s): only with `lock_reminders: "ping"`, once per reminder
- * ([pinged] holds the keys that had their moment), and a sound only when [quiet] allows it - otherwise the moment
- * passes without one.
+ * When the row of [up] (`reminderNow`'s at [now]) came up: its reminder's start, or later the start of the last event
+ * before it in the day's order whose own row hid it (two at once show the soonest); `null` = not today's.
  */
-fun reminderPing(up: GlanceReminder?, policy: CalendarPolicy, quiet: PingQuiet, pinged: Set<String>): PingDecision {
+fun reminderUpSince(today: TodayCalendar, policy: CalendarPolicy, up: GlanceReminder, now: Long): Long? {
+    val rows = today.view.timed
+    val at = rows.indexOfFirst { it.eventId == up.eventId && it.begin == up.beginMs }
+    if (at < 0) return null
+    val row = rows[at]
+    val start = reminderStart(row, policy.setting(row.calendarKey).remind, today.ownMinutes[row.eventId]) ?: return null
+    var since = start
+    for (before in rows.subList(0, at)) {
+        if (!startsToday(before) || before.begin <= since || before.begin > now) continue
+        if (reminderStart(before, policy.setting(before.calendarKey).remind, today.ownMinutes[before.eventId]) == null) continue
+        since = before.begin
+    }
+    return since
+}
+
+/**
+ * The ping for the reminder [up] now (`reminderNow`'s at [now], up since [upSince] - [reminderUpSince]): only with
+ * `lock_reminders: "ping"`, once per reminder ([pinged] holds the keys that had their moment), and a sound only when
+ * [quiet] allows it and the check isn't late ([PING_LATE_MS]) - otherwise the moment passes without one.
+ */
+fun reminderPing(
+    up: GlanceReminder?,
+    upSince: Long?,
+    now: Long,
+    policy: CalendarPolicy,
+    quiet: PingQuiet,
+    pinged: Set<String>,
+): PingDecision {
     if (up == null || !policy.lockPing || !remindersOn(policy)) return PingDecision(PingSound.NONE)
     val key = pingKey(up)
     if (key in pinged) return PingDecision(PingSound.NONE)
-    return PingDecision(if (quiet.allowsSound) PingSound.PLAY else PingSound.QUIET, key)
+    val onTime = upSince != null && now - upSince <= PING_LATE_MS
+    return PingDecision(if (onTime && quiet.allowsSound) PingSound.PLAY else PingSound.QUIET, key)
 }
 
 /**

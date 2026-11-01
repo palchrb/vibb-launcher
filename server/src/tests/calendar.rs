@@ -1093,6 +1093,7 @@ async fn the_ping_saves_and_reaches_only_a_launcher_that_knows_it() {
     assert!(
         html.contains("«Stille rad + lyd» spiller telefonens varsellyd én gang når raden kommer.")
     );
+    assert!(html.contains("i en samtale, eller mens telefonen er i bruk. Aldri vibrasjon."));
     // A launcher that knows the ping gets it; the note goes.
     let mut report: Value = serde_json::from_str(CALENDAR_REPORT).unwrap();
     report["capabilities"] = json!(["calendar_v1", crate::calendar::PING_CAPABILITY]);

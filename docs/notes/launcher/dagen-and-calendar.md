@@ -84,9 +84,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **The quiet row plus a ping** (2026-11-01, branch `reminder-ping`): `lock_reminders: "ping"` = the row
   (`lockReminders`) plus `lockPing`; any other value but `row` stays off (the server sends `ping` only to a launcher
   claiming `calendar_ping_v1`, `row` to an older one). Pure `day/ReminderPing.kt` (`reminderPing`: PLAY only with ping,
-  ringer NORMAL, no Do Not Disturb, no call - `AudioManager.getMode()` - and no time rule in force, bedtime included;
-  else QUIET, the moment passes; once per reminder, key `eventId@begin`, kept a day - `keptPings`; `nextPingCheck`: a
-  reminder's start, or the up row's start when the next may surface; `ReminderPingTest`). `calendar/ReminderPinger`:
+  ringer NORMAL, no Do Not Disturb, no call - `AudioManager.getMode()` -, no time rule in force, bedtime included, the
+  row visible - the screen off or the lock's glance up, `GlanceCalendar.showing` (QA M2) - and on time: within
+  `PING_LATE_MS` (90 s) of the row coming up, `reminderUpSince` (its reminder's start, or the start of the sooner event
+  that hid it; QA M1: a boot, a sync, the switch turned on mid-window); else QUIET, the moment passes; once per
+  reminder, key `eventId@begin`, kept a day - `keptPings`; `nextPingCheck`: a reminder's start, or the up row's start
+  when the next may surface; `ReminderPingTest`). No usable policy (before the first unlock) leaves the alarm as it is
+  (QA L1). `calendar/ReminderPinger`:
   unlike the row it needs an alarm (the sound matters with the screen off) - an exact alarm (`USE_EXACT_ALARM`) to the
   non-exported `ReminderPingReceiver` at the next check, else the next local midnight while ping is chosen, re-armed on
   every `CalendarStore` change (provider, policy, process start); the sound is `RingtoneManager`'s default

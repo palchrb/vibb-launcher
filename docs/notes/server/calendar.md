@@ -104,7 +104,7 @@ on the night ground. `tests::calendar::the_help_is_behind_the_i_and_the_reminder
 The quiet row plus a ping (2026-11-01, branch `reminder-ping`; the user, 2026-10-27, PLAN "Lock-screen reminders: a
 third option"): the select's third value "Quiet row + sound" / "Stille rad + lyd" (`ping`), the sub-line "A quiet row
 before the event - silent, or with one notification sound as it comes up", the lock group's ⓘ says when the sound is
-left out (silent or vibrate, Do Not Disturb, a time rule or bedtime, a call; never a vibration). Stored as the row
+left out (silent or vibrate, Do Not Disturb, a time rule or bedtime, a call, the phone in use; never a vibration). Stored as the row
 plus `device_policy.calendar_lock_ping` (migration `0113_calendar_lock_ping.sql`: 0103's CHECK on
 `calendar_lock_reminders` can't take a third value without rebuilding `device_policy`; after S4's 0111/0112);
 `calendar::switches` reads the pair back as `ping`. The policy's `lock_reminders` is `ping` only to a launcher whose

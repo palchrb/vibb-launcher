@@ -39,7 +39,7 @@ class ReminderPingTest {
         emptyMap(),
     )
 
-    private val loud = PingQuiet(ringerNormal = true, interruptionsAll = true, inCall = false, ruleOn = false)
+    private val loud = PingQuiet(ringerNormal = true, interruptionsAll = true, inCall = false, ruleOn = false, rowVisible = true)
 
     @Test
     fun `ping is the row plus the sound, an unknown value is off, and the capability is claimed`() {
@@ -55,26 +55,51 @@ class ReminderPingTest {
     @Test
     fun `the sound only with ping, on a phone that may make it, once per reminder`() {
         val ping = policy("ping")
-        val up = reminderNow(today(ping), ping, at(17, 15))!!
-        assertEquals(PingDecision(PingSound.PLAY, "10@${at(17, 30)}"), reminderPing(up, ping, loud, emptySet()))
+        val now = at(17, 15)
+        val up = reminderNow(today(ping), ping, now)!!
+        assertEquals(now, reminderUpSince(today(ping), ping, up, now))
+        fun decide(r: GlanceReminder?, p: CalendarPolicy = ping, quiet: PingQuiet = loud, pinged: Set<String> = emptySet(), at: Long = now) =
+            reminderPing(r, now, at, p, quiet, pinged)
+        assertEquals(PingDecision(PingSound.PLAY, "10@${at(17, 30)}"), decide(up))
         // The quiet row alone, or no reminder up: nothing.
         val row = policy("row")
-        assertEquals(PingDecision(PingSound.NONE), reminderPing(reminderNow(today(row), row, at(17, 15)), row, loud, emptySet()))
-        assertEquals(PingDecision(PingSound.NONE), reminderPing(null, ping, loud, emptySet()))
-        // Silent or vibrate, Do Not Disturb, a call, a time rule (bedtime is one): the moment passes without a sound.
+        assertEquals(PingDecision(PingSound.NONE), decide(reminderNow(today(row), row, now), p = row))
+        assertEquals(PingDecision(PingSound.NONE), decide(null))
+        // Silent or vibrate, Do Not Disturb, a call, a time rule (bedtime is one), the phone in use (the screen on and
+        // no glance - QA M2): the moment passes without a sound.
         for (quiet in listOf(
             loud.copy(ringerNormal = false),
             loud.copy(interruptionsAll = false),
             loud.copy(inCall = true),
             loud.copy(ruleOn = true),
+            loud.copy(rowVisible = false),
         )) {
-            assertEquals(quiet.toString(), PingDecision(PingSound.QUIET, pingKey(up)), reminderPing(up, ping, quiet, emptySet()))
+            assertEquals(quiet.toString(), PingDecision(PingSound.QUIET, pingKey(up)), decide(up, quiet = quiet))
         }
+        // Late (QA M1: a boot, a sync, the switch turned on mid-window): within 90 s it plays, after it the moment has
+        // passed - consumed without a sound; an up time not known is late too.
+        assertEquals(PingSound.PLAY, decide(up, at = now + PING_LATE_MS).sound)
+        assertEquals(PingDecision(PingSound.QUIET, pingKey(up)), decide(up, at = now + PING_LATE_MS + 1))
+        assertEquals(PingDecision(PingSound.QUIET, pingKey(up)), reminderPing(up, null, now, ping, loud, emptySet()))
         // Once: a re-render, a screen-on or the next check with the same reminder up gives nothing, also when the
         // phone was quiet at its moment and isn't now.
-        assertEquals(PingDecision(PingSound.NONE), reminderPing(up, ping, loud, setOf(pingKey(up))))
+        assertEquals(PingDecision(PingSound.NONE), decide(up, pinged = setOf(pingKey(up))))
         // The event moved: a new reminder.
-        assertEquals(PingSound.PLAY, reminderPing(up.copy(beginMs = at(17, 45)), ping, loud, setOf(pingKey(up))).sound)
+        assertEquals(PingSound.PLAY, decide(up.copy(beginMs = at(17, 45)), pinged = setOf(pingKey(up))).sound)
+    }
+
+    @Test
+    fun `a row hidden behind a sooner one comes up at that one's start`() {
+        val ping = policy("ping")
+        // Cup's reminder starts 17:25 behind Training's row; Training starts 17:30 and Cup's row comes up then.
+        val cup = reminderNow(today(ping), ping, at(17, 30) + 1_000)!!
+        assertEquals(11L, cup.eventId)
+        assertEquals(at(17, 30), reminderUpSince(today(ping), ping, cup, at(17, 30) + 1_000))
+        assertEquals(PingSound.PLAY, reminderPing(cup, at(17, 30), at(17, 30) + 1_000, ping, loud, emptySet()).sound)
+        // Training's own row came up at its reminder's start.
+        val training = reminderNow(today(ping), ping, at(17, 26))!!
+        assertEquals(10L, training.eventId)
+        assertEquals(at(17, 15), reminderUpSince(today(ping), ping, training, at(17, 26)))
     }
 
     @Test

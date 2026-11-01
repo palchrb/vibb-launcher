@@ -12,6 +12,7 @@ import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import com.kidslauncher.mdm.day.GlanceReminder
 import com.kidslauncher.mdm.day.PingQuiet
@@ -20,6 +21,7 @@ import com.kidslauncher.mdm.day.keptPings
 import com.kidslauncher.mdm.day.nextPingCheck
 import com.kidslauncher.mdm.day.reminderNow
 import com.kidslauncher.mdm.day.reminderPing
+import com.kidslauncher.mdm.day.reminderUpSince
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import java.time.LocalDate
@@ -43,8 +45,9 @@ private const val SOUND_RELEASE_MS = 10_000L
  * ([nextPingCheck]; else the next local midnight while the ping is chosen), re-armed at every check - the alarm's, and
  * every calendar change (the provider, the policy; `CalendarStore`'s listeners, which also run at process start). No
  * notification, nothing in the shade, never a vibration: `RingtoneManager`'s default notification sound with
- * `USAGE_NOTIFICATION`, only on ringer mode NORMAL, without Do Not Disturb, outside a call and while no time rule
- * (bedtime included) is in force. Each reminder (event + start) has its moment once ([KEY_PINGED], kept a day).
+ * `USAGE_NOTIFICATION`, only on ringer mode NORMAL, without Do Not Disturb, outside a call, while no time rule
+ * (bedtime included) is in force, with the screen off or the lock's glance up, and within `PING_LATE_MS` of the row
+ * coming up. Each reminder (event + start) has its moment once ([KEY_PINGED], kept a day).
  */
 object ReminderPinger {
     private val main = Handler(Looper.getMainLooper())
@@ -65,6 +68,7 @@ object ReminderPinger {
         val app = context.applicationContext
         CalendarStore.executeOnWorker {
             var up: GlanceReminder? = null
+            var upSince: Long? = null
             var next: Long? = null
             val policy = CalendarStore.policy()
             try {
@@ -72,6 +76,7 @@ object ReminderPinger {
                     val now = System.currentTimeMillis()
                     CalendarStore.todayBlocking(app, LocalDate.now())?.let { today ->
                         up = reminderNow(today, policy, now)
+                        upSince = up?.let { reminderUpSince(today, policy, it, now) }
                         next = nextPingCheck(today, policy, now)
                     }
                 }
@@ -83,12 +88,15 @@ object ReminderPinger {
                 try {
                     val now = System.currentTimeMillis()
                     val pinged = readPinged(app)
-                    val decision = if (pinged == null) null else reminderPing(up, policy, quietNow(app), pinged)
+                    val decision = if (pinged == null) null else reminderPing(up, upSince, now, policy, quietNow(app), pinged)
                     if (decision?.key != null && writePinged(app, keptPings(pinged!! + decision.key, now))) {
                         if (decision.sound == PingSound.PLAY && play(app)) hold = SOUND_HOLD_MS
                         Log.i(LOG_TAG, "Reminder up: ${decision.sound}")
                     }
-                    arm(app, if (policy.lockPing) next ?: nextMidnight(now) else null)
+                    // QA L1: no usable policy (before the first unlock, a cache being replaced) says nothing about the
+                    // ping - the alarm stays as it is; CalendarStore.init's notify (after the unlock) and every accepted
+                    // policy check again.
+                    if (policy.usable) arm(app, if (policy.lockPing) next ?: nextMidnight(now) else null)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Reminder ping check failed: ${e.javaClass.simpleName}")
                 }
@@ -112,6 +120,9 @@ object ReminderPinger {
             interruptionsAll = notifications?.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_ALL,
             inCall = audio == null || audio.mode != AudioManager.MODE_NORMAL,
             ruleOn = ruleOn,
+            // QA M2: the screen off (the sound makes the kid look) or the lock's glance up; not while the phone is in use.
+            rowVisible = context.getSystemService(PowerManager::class.java)?.isInteractive == false ||
+                com.kidslauncher.mdm.lock.GlanceCalendar.showing,
         )
     }
 
@@ -155,8 +166,10 @@ object ReminderPinger {
         null
     }
 
+    /** Main thread: `apply()` (QA L2) - the in-memory set is current at once, so a second check never pings again. */
     private fun writePinged(context: Context, keys: Set<String>): Boolean = try {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putStringSet(KEY_PINGED, keys).commit()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putStringSet(KEY_PINGED, keys).apply()
+        true
     } catch (e: Exception) {
         false
     }
