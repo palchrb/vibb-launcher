@@ -793,7 +793,10 @@ class SonosSessionTest {
         s.classify(speaker(minted))
         val line = logs.single { it.startsWith("not-ours?") }
         assertFalse(line, line.contains("FAKE-SIG") || line.contains("tok=") || line.contains("consumableId"))
-        assertEquals("not-ours? speaker=https://cdn.example.invalid/mp3/222/abook.mp3 vs set=https://cdn.example/signed/ep12.mp3", line)
+        // a release build prints the scheme only (P-L1)
+        val want = if (me.vibb.music.BuildConfig.DEBUG) "not-ours? speaker=https://cdn.example.invalid/mp3/222/abook.mp3 vs set=https://cdn.example/signed/ep12.mp3"
+        else "not-ours? speaker=https:… vs set=https:…"
+        assertEquals(want, line)
     }
 
     @Test

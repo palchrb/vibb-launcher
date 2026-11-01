@@ -289,6 +289,11 @@
   "apps.on_home": "På Hjem",
   "apps.on_home_sub": "Av: appen er fortsatt tillatt og kjører, men barnet ser den ikke på Hjem eller i applisten, unntatt i en pause - for en synkapp som ICSx5 eller DAVx5.",
   "apps.not_on_home": "ikke på Hjem",
+  "apps.sync.repo_signature": "Repoets signatur stemmer ikke",
+  "apps.sync.repo_key": "Repoets signeringsnøkkel er endret",
+  "apps.sync.index_signer": "Nøkkelen er ikke den repoet oppgir",
+  "apps.sync.repo_rollback": "Repoet sendte en eldre indeks",
+  "apps.sync.older_version": "Repoet tilbyr en eldre versjon",
 
   "error.csrf": "Avvist: dette skjemaet ble sendt fra et annet nettsted.",
 
@@ -1581,6 +1586,9 @@
   "apps.fdroid.system": "{package} tilhører systemet - en katalogapp kan ikke være den. Ingenting ble lagret.",
   "apps.fdroid.taken": "{name} i katalogen er allerede {package}. Ingenting ble lagret.",
   "apps.fdroid.check_failed": "Kunne ikke sjekke katalogen. Ingenting ble lagret.",
+  "apps.fdroid.repo_invalid": "Repoet må være en https://-adresse (høyst {max} tegn), f.eks. {example}. Ingenting ble lagret.",
+  "apps.fdroid.repo_private": "Repoet kan ikke være en privat, loopback- eller link-lokal IP-adresse - bruk repoets navn (et navn på LAN-et eller tailnettet med et ekte sertifikat går fint). Ingenting ble lagret.",
+  "apps.fdroid.package_invalid": "Pakken må være et Android-pakkenavn, f.eks. ws.xsoh.etar (på F-Droid er det siste del av appens adresse). Ingenting ble lagret.",
   "apps.app.version": "Versjon",
   "apps.app.last_upload": "Siste opplasting",
   "apps.app.last_checked": "Sist sjekket",

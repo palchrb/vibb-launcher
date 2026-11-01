@@ -1417,8 +1417,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `preview_text` are keys the template words. Install Now's rows, flashes and `install-now.json`'s sub-lines come
   from `install_now` in the reader's language (`Offer::sub(lang)`, `value(lang)`, `flash(lang, word)`, the working
   words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4:
-  a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `fdroid::normalize_repo`/`parse_package`'s refusals,
-  `app_downloads::progress`; for 3c Install Now's answer row (`locate::CommandRow`).
+  a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `app_downloads::progress`
+  (`fdroid::normalize_repo`/`parse_package` take `lang` since the merge with round S4); for 3c Install Now's answer row (`locate::CommandRow`).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

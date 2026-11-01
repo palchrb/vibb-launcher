@@ -1,6 +1,7 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.CancellationException
+import me.vibb.music.BuildConfig
 import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.SonosAnchor
 import me.vibb.music.logic.SonosMeasure
@@ -9,6 +10,8 @@ import me.vibb.music.logic.durationByConsumableId
 import me.vibb.music.logic.groupMean
 import me.vibb.music.logic.groupMove
 import me.vibb.music.logic.groupStep
+import me.vibb.music.logic.logFailure
+import me.vibb.music.logic.logName
 import me.vibb.music.logic.sonosAnchor
 import me.vibb.music.logic.sonosMintCode
 import me.vibb.music.model.Entry
@@ -763,7 +766,7 @@ class SonosController(
         baselinePending = true
         host.groupsChanged()
         accept(live)
-        host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${items[idx].title}")
+        host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${logName(items[idx].title, BuildConfig.DEBUG)}")
         host.changed()
     }
 
@@ -1256,7 +1259,7 @@ class SonosController(
             host.log("sonos: seek refused - playing from the top, bookmark held at ${startS.toInt()}s")
         }
         host.played(item.key, res.uri)
-        host.log("sonos: playing [${idx + 1}/${items.size}] ${item.title}")
+        host.log("sonos: playing [${idx + 1}/${items.size}] ${logName(item.title, BuildConfig.DEBUG)}")
     }
 
     /**
@@ -1267,7 +1270,7 @@ class SonosController(
      * coalescer is a brick.
      */
     private fun failed(why: PlayWhy, e: Throwable) {
-        host.log("sonos: play failed (${e.javaClass.simpleName}: ${e.message}) [$why]")
+        host.log("sonos: play failed (${logFailure(e, BuildConfig.DEBUG)}) [$why]")
         pending = null
         optTr = null
         // the connecting line ends with it: an earlier play's answer never keeps it for a TRANSITIONING snapshot (Q-2)
@@ -1304,7 +1307,7 @@ class SonosController(
         try {
             pollTick(tick, fields)
         } catch (e: Exception) {
-            host.log("sonos poll tick failed: $e")
+            host.log("sonos poll tick failed: ${logFailure(e, BuildConfig.DEBUG)}")
         }
         host.changed()
     }
@@ -1718,7 +1721,7 @@ class SonosController(
                 host.groupsChanged()
                 playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, mv.uri) }
                 host.followed(mv.uid, mv.name, playing?.itemKey, mv.uri)
-                host.log("sonos: stream moved to ${mv.name} (${mv.uid}) - following")
+                host.log("sonos: stream moved to ${logName(mv.name, BuildConfig.DEBUG)} (${mv.uid}) - following")
             }
             r.onFailure { host.log("sonos: adopt failed (${it.javaClass.simpleName}) - retried next tick") }
             host.changed()

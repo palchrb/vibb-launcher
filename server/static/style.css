@@ -489,17 +489,10 @@ input[type="radio"] {
     color: var(--tab-on);
 }
 
-/* Each tab carries its outline icon and its filled one; the chosen tab (and the one just tapped,
-   .is-pending) shows the filled one in the bright peach. */
-.tab-icon-on,
-.tab[aria-current="page"] .tab-icon-off,
-.tab.is-pending .tab-icon-off {
-    display: none;
-}
-
-.tab[aria-current="page"] .tab-icon-on,
-.tab.is-pending .tab-icon-on {
-    display: block;
+/* One outline icon per tab, the same shape in both states (the user, 2026-11-01: "outline og form er identisk
+   når de skifter farge"); the chosen tab (and the one just tapped, .is-pending) only turns it the bright peach. */
+.tab[aria-current="page"] .tab-icon,
+.tab.is-pending .tab-icon {
     color: var(--tab-on-icon);
 }
 

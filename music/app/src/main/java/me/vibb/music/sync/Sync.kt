@@ -323,8 +323,8 @@ object Sync {
             errors,
             states,
             storytel,
-            // the rooms the speaker cache knows, for the parent's room scope (design 26a §5.5)
-            reportedRooms(SpeakerCache(SonosFiles.cache(context)).load().players.mapValues { it.value.name }),
+            // the home's rooms the speaker cache knows, for the parent's room scope (design 26a §5.5; P-L2)
+            reportedRooms(SpeakerCache.reportable(SpeakerCache(SonosFiles.cache(context)).load(), snap.library?.sonosRooms, System.currentTimeMillis() / 1000.0)),
             // the phone's last Spotify outcome, from the file the renderer's word is kept in (design 26c §4.4, QA L8)
             spotify = SpotifyOutcome.reported(runCatching { store.spotifyStateFile.readText() }.getOrNull()),
         )

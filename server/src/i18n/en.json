@@ -289,6 +289,11 @@
   "apps.on_home": "On Home",
   "apps.on_home_sub": "Off: the app stays allowed and runs, but the kid doesn't see it on Home or in the app list, except during a pause - for a sync app such as ICSx5 or DAVx5.",
   "apps.not_on_home": "not on Home",
+  "apps.sync.repo_signature": "The repo's signature doesn't check out",
+  "apps.sync.repo_key": "The repo's signing key changed",
+  "apps.sync.index_signer": "Key differs from the repo's listing",
+  "apps.sync.repo_rollback": "The repo sent an older index",
+  "apps.sync.older_version": "The repo offers an older version",
 
   "error.csrf": "Refused: this form was sent from another site.",
 
@@ -1581,6 +1586,9 @@
   "apps.fdroid.system": "{package} belongs to the system - a catalog app can't be it. Nothing was saved.",
   "apps.fdroid.taken": "{name} in the catalog is already {package}. Nothing was saved.",
   "apps.fdroid.check_failed": "Couldn't check the catalog. Nothing was saved.",
+  "apps.fdroid.repo_invalid": "The repo must be an https:// address (at most {max} characters), e.g. {example}. Nothing was saved.",
+  "apps.fdroid.repo_private": "The repo can't be a private, loopback or link-local IP address - use the repo's name (a LAN or tailnet name with a real certificate is fine). Nothing was saved.",
+  "apps.fdroid.package_invalid": "The package must be an Android package name, e.g. ws.xsoh.etar (on F-Droid it is the last part of the app's address). Nothing was saved.",
   "apps.app.version": "Version",
   "apps.app.last_upload": "Last upload",
   "apps.app.last_checked": "Last checked",

@@ -618,9 +618,14 @@ class PlaybackService : MediaSessionService() {
             if (controller.packageName in LAUNCHER_PACKAGES && Bridge.sameSigner(this@PlaybackService, controller.packageName)) {
                 // the launcher's call rule only (design 26a §6.7, qa-26a-step3b-code H1)
                 val calls = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.LAUNCHER.forEach { add(it) } }.build()
-                return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(calls).build()
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(calls)
+                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)).build()
             }
-            if (controller.packageName != packageName) return MediaSession.ConnectionResult.AcceptedResultBuilder(session).build()
+            // S-L2: another app (the system UI, Bluetooth, a game) gets the transport, never the queue's items
+            if (controller.packageName != packageName) {
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailablePlayerCommands(foreignPlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)).build()
+            }
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.ALL.forEach { add(it) } }.build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()
         }
@@ -698,6 +703,28 @@ class PlaybackService : MediaSessionService() {
             }.invokeOnCompletion { if (moves) waitingMoves(-1) }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
+
+        /**
+         * Media items from a controller (S-L2): refused for every app but ours, whatever commands it holds - a legacy
+         * controller's playFromUri lands here too. The app's own screens never send any (they play by custom command).
+         */
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+        ): ListenableFuture<MutableList<MediaItem>> =
+            if (mayChangeItems(controller.packageName, packageName)) super.onAddMediaItems(mediaSession, controller, mediaItems)
+            else Futures.immediateFailedFuture(UnsupportedOperationException("media items from another app"))
+
+        override fun onSetMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+            if (mayChangeItems(controller.packageName, packageName)) super.onSetMediaItems(mediaSession, controller, mediaItems, startIndex, startPositionMs)
+            else Futures.immediateFailedFuture(UnsupportedOperationException("media items from another app"))
 
         /** A play button with nothing loaded (Bluetooth after a restart): the stored queue, at its place. */
         override fun onPlaybackResumption(
@@ -2639,10 +2666,10 @@ class PlaybackService : MediaSessionService() {
             if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()
             sonos.release()
             if (verdict == RoomVerdict.NO_ANSWER) {
-                SonosHome.log("sonos: no answer from ${choice.name ?: uid} - the phone renders, the room stays recorded and is looked at again")
+                SonosHome.log("sonos: no answer from ${choice.name?.let(SonosHome::name) ?: uid} - the phone renders, the room stays recorded and is looked at again")
                 return
             }
-            SonosHome.log("sonos: no live session of ours on ${choice.name ?: uid} ($verdict) - the phone renders, nothing starts")
+            SonosHome.log("sonos: no live session of ours on ${choice.name?.let(SonosHome::name) ?: uid} ($verdict) - the phone renders, nothing starts")
             withContext(writer) { home.write(RendererChoice.local(home.choice())) }
             return
         }
