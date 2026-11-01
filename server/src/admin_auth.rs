@@ -388,13 +388,18 @@ pub struct LoginWarning {
     pub failures: i64,
     /// The addresses the codes came from, newest first (at most 5).
     pub ips: Vec<String>,
+    /// A session from before slice 3a kept the sentence itself (English): shown as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
 }
 
 impl LoginWarning {
     /// Account's sentence: "3 wrong two-factor codes were entered before this sign-in (from
     /// 203.0.113.7). Whoever entered them knew your password - change it now."
     pub fn words(&self, lang: crate::i18n::Lang) -> String {
-        if self.ips.is_empty() {
+        if let Some(said) = &self.said {
+            said.clone()
+        } else if self.ips.is_empty() {
             crate::i18n::t_count(lang, "account.warning.login", self.failures, &[])
         } else {
             crate::i18n::t_count(
@@ -426,7 +431,11 @@ pub async fn login_warning(
     .fetch_all(db)
     .await
     .unwrap_or_default();
-    Some(LoginWarning { failures, ips })
+    Some(LoginWarning {
+        failures,
+        ips,
+        said: None,
+    })
 }
 
 /// The forced first password change's write (design 62 §2, qa-62-design Q62-2): the new hash and
@@ -805,6 +814,40 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The banner is worded by the page; a session from before keeps its English sentence (qa-s-i18n-3a L3).
+    #[test]
+    fn the_login_warning_reads_in_the_language_or_as_it_was_said() {
+        let warning = LoginWarning {
+            failures: 3,
+            ips: vec!["203.0.113.7".to_string()],
+            said: None,
+        };
+        assert_eq!(
+            warning.words(crate::i18n::Lang::En),
+            "3 wrong two-factor codes were entered before this sign-in (from 203.0.113.7). Whoever \
+             entered them knew your password - change it now."
+        );
+        assert!(
+            warning
+                .words(crate::i18n::Lang::Nb)
+                .starts_with("3 feil tofaktorkoder")
+        );
+        let stored = serde_json::to_value(&warning).unwrap();
+        assert_eq!(
+            stored,
+            serde_json::json!({"failures": 3, "ips": ["203.0.113.7"]})
+        );
+        let old = LoginWarning {
+            failures: 0,
+            ips: Vec::new(),
+            said: Some("1 wrong two-factor code was entered.".to_string()),
+        };
+        assert_eq!(
+            old.words(crate::i18n::Lang::Nb),
+            "1 wrong two-factor code was entered."
+        );
+    }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();

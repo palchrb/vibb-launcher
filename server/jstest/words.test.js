@@ -1,7 +1,7 @@
 // The moved scripts have no words of their own (design 70 §5.3): a script's words come from the page
-// (`data-w-*`, `partials/js_words.html`), set with textContent. Outside comments, a string that starts upper- then
-// lower-case, or has a letter and a space, fails unless it is on that file's list of non-words (diagnostics, class
-// names). Each slice-3 PR adds its scripts. Run: node --test jstest/words.test.js
+// (`data-w-*`, `partials/js_words.html`), set with textContent. Outside comments, a string (quoted or a template
+// literal) that starts upper- then lower-case, or has a letter and a space, fails unless it is on that file's list of
+// non-words (diagnostics, class names). Each slice-3 PR adds its scripts. Run: node --test jstest/words.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
@@ -39,7 +39,7 @@ function literals(src) {
             if (i < 0) break;
         } else if (c === "/" && src[i + 1] === "*") {
             i = src.indexOf("*/", i + 2) + 2;
-        } else if (c === '"' || c === "'") {
+        } else if (c === '"' || c === "'" || c === "`") {
             let j = i + 1;
             let text = "";
             while (j < src.length && src[j] !== c) {
@@ -79,6 +79,6 @@ for (const [file, nonWords] of Object.entries(MOVED)) {
 }
 
 test("the scan finds a word and skips comments", () => {
-    const found = literals('// "Not this"\nvar a = "Copied"; /* "nor this" */ var b = \'two words\'; var c = "data-w-on";');
-    assert.deepStrictEqual(found.filter(looksLikeWords), ["Copied", "two words"]);
+    const found = literals('// "Not this"\nvar a = "Copied"; /* "nor this" */ var b = \'two words\'; var c = "data-w-on"; var d = `Try ${n} again`;');
+    assert.deepStrictEqual(found.filter(looksLikeWords), ["Copied", "two words", "Try ${n} again"]);
 });

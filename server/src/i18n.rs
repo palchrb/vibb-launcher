@@ -622,10 +622,32 @@ mod tests {
             .into_owned()
     }
 
+    /// The string literals inside `{{ }}` and `{% %}` that read as words - starting upper- then lower-case, or with
+    /// a letter and a space (as `jstest/words.test.js` reads a script). A key, a param's name, a tab's or a field's
+    /// name is none of these.
+    fn code_words(template: &str) -> Vec<String> {
+        let template = regex::Regex::new(r"(?s)\{#.*?#\}")
+            .unwrap()
+            .replace_all(template, " ");
+        let code = regex::Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap();
+        let literal = regex::Regex::new(r#""((?:[^"\\]|\\.)*)""#).unwrap();
+        let words = regex::Regex::new(r"^[A-Z][a-z]|\p{L}.* |.* .*\p{L}").unwrap();
+        code.find_iter(&template)
+            .flat_map(|block| {
+                literal
+                    .captures_iter(block.as_str())
+                    .map(|caps| caps[1].to_string())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|text| words.is_match(text))
+            .collect()
+    }
+
     /// A moved template has no word of its own (design 70 §5.2), and no word of the catalog's gets `|safe`.
     #[test]
     fn moved_templates_have_no_literal_words() {
         let mut found = Vec::new();
+        let bound = regex::Regex::new(r"\{%-?\s*(?:let|set)\s+(\w+)\s*=\s*self\.t[pc]?\(").unwrap();
         for name in MOVED {
             let template = std::fs::read_to_string(format!("templates/{name}"))
                 .unwrap_or_else(|err| panic!("templates/{name}: {err}"));
@@ -635,11 +657,21 @@ mod tests {
                     found.push(format!("{name}: {line}"));
                 }
             }
+            for words in code_words(&template) {
+                found.push(format!("{name}: a word in code: {words}"));
+            }
             for line in template.lines() {
                 if line.contains("|safe")
                     && ["t(", "tp(", "tc("].iter().any(|call| line.contains(call))
                 {
                     found.push(format!("{name}: |safe on a word: {}", line.trim()));
+                }
+            }
+            // A word bound to a name (`{% let x = self.t(…) %}`) gets no `|safe` either.
+            let unspaced = template.replace(' ', "");
+            for caps in bound.captures_iter(&template) {
+                if unspaced.contains(&format!("{{{}|safe", &caps[1])) {
+                    found.push(format!("{name}: |safe on the word {}", &caps[1]));
                 }
             }
         }
@@ -654,6 +686,41 @@ mod tests {
             literal_words(sample).split_whitespace().collect::<Vec<_>>(),
             ["Hi", "Go"]
         );
+        assert_eq!(
+            code_words(
+                r#"{{ self.tp("a.b", [("name", n)]) }}{% if tab == "devices" %}{{ "Two words" }}{% let y = "Hello" %}{{ x.join(", ") }}{# "Not this" #}"#
+            ),
+            ["Two words", "Hello"]
+        );
+    }
+
+    /// Every key in the catalogs is used (its plural stem for a counted one), but the closed sets worded by a key
+    /// built at runtime, each with its own test: `security.event.<id>`, `events.<kind>.*`, `time.*`.
+    #[test]
+    fn every_key_is_used() {
+        let mut quoted = std::collections::HashSet::new();
+        for dir in ["templates", "templates/partials", "src", "src/handlers"] {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() || path.extension().is_some_and(|e| e == "json") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                quoted.extend(text.split('"').map(str::to_string));
+            }
+        }
+        let unused: Vec<&String> = EN
+            .keys()
+            .filter(|key| !["security", "events", "time"].contains(&key.split('.').next().unwrap()))
+            .filter(|key| {
+                let stem = key
+                    .strip_suffix(".one")
+                    .or_else(|| key.strip_suffix(".other"))
+                    .unwrap_or(key);
+                !quoted.contains(key.as_str()) && !quoted.contains(stem)
+            })
+            .collect();
+        assert!(unused.is_empty(), "keys no code uses: {unused:?}");
     }
 
     #[test]

@@ -1348,11 +1348,7 @@ pub async fn upload_photo(
         let _files = photos::lock_files().await;
         if let Err(err) = photos::store(&state.photo_dir, &processed).await {
             tracing::error!(%err, "couldn't store a contact photo");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save the photo - nothing was changed. Check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_photo");
         }
         commit_photo(&state, contact_id, Some(&processed.hash)).await
     };
