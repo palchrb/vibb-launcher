@@ -91,7 +91,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - Zone series numbers after the user's Jelly Star day
     - developer-verification registration (nothing in the repo)
 
-  - **Device › Calendar: a tidier look for the calendar links (and the CalDAV accounts), one with "Calendars shown"** (the user, 2026-11-01, an iPhone screenshot of Kalenderlenker: "gui for å legge til kalender lenker i pwa er litt rotete og lite proft sammenlignet med resten ... burde være litt enhetlig utseende her"): **IN DESIGN 2026-11-01 - mockups sent**, waiting on the user's pick; server only (template + CSS + i18n), S-M.
+  - **Device › Calendar: a tidier look for the calendar links (and the CalDAV accounts), one with "Calendars shown"** (the user, 2026-11-01, an iPhone screenshot of Kalenderlenker: "gui for å legge til kalender lenker i pwa er litt rotete og lite proft sammenlignet med resten ... burde være litt enhetlig utseende her"): **variant B (one "Hentes av serveren" group, a page per source, an add page with the Add App source choice) redrawn with the PWA's own parts and approved 2026-11-01** (the user: "Jeg er fornøyd med kalender mockup nå"); **IN BUILD 2026-11-01 on `calendar-sources-ui`**; server only (template + CSS + i18n), S-M.
 
 ### Asked for, scope not settled yet
 
