@@ -317,14 +317,17 @@ async fn otp_shown(
 
 /// The account a Reset or Remove names, while it isn't removed.
 async fn target_of(state: &AppState, id: i64) -> Result<Option<AdminUser>, Box<Response>> {
-    sqlx::query_as("SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|err| {
-            tracing::error!(%err, "couldn't read the parent account");
-            Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())
-        })
+    sqlx::query_as(concat!(
+        crate::admin_select!(),
+        " WHERE id = ? AND removed_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| {
+        tracing::error!(%err, "couldn't read the parent account");
+        Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    })
 }
 
 /// The Reset form: your password.

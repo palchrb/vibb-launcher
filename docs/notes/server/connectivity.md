@@ -17,7 +17,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   right skipping trusted entries (all trusted: the left-most); an entry that isn't an address stops the walk and
   makes the client unknown (`Client::ip` is `None`, keyed `unknown via <peer>` by `Client::key`) - never the peer,
   which is the proxy (QA 22 H1); IPv4-mapped peers are canonical.
-  `limit_key`: IPv4 address or IPv6 /64. Login uses it (the old `security::client_ip` took the left-most XFF entry
+  `limit_key`: IPv4 address or IPv6 /56 (a /64 until design 74 step 2: a home line has at least a /56, so fresh /64s
+  of it were fresh keys - qa-passkeys-1 A-R1); `crowd_key` (IPv4 /24, IPv6 /48) only orders the sign-in challenge
+  pool's room. Login uses it (the old `security::client_ip` took the left-most XFF entry
   from anyone - §0 #1).
 - **Admin gate** (`src/gate.rs`, outermost layer of the admin router): passes loopback and tailnet
   (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; an unknown client and any forward
@@ -63,7 +65,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Admin auth** (S4, `src/admin_auth.rs`, migration `0053_admin_auth.sql`; no step-up, user decision U2): argon2
   (verify and change) runs in `spawn_blocking` behind `AppState.passwords` (`PasswordGate`: 1 running, 4 queued, else
   429), an unknown username verifies a dummy hash. Wrong passwords never lock the account (only the per-IP ban, now
-  keyed by `net::limit_key`; unban is `POST /security/unban` with an `ip` field since a key can be a /64). TOTP:
+  keyed by `net::limit_key`; unban is `POST /security/unban` with an `ip` field since a key can be a /56). TOTP:
   `check_totp` accepts a step within +-1 that is later than `admin_users.totp_last_step` (stored in the same UPDATE;
   setup too); `take_totp_attempt` (one conditional `UPDATE ... RETURNING`, taken *before* the code is checked, so parallel
   requests can't slip past it - QA 22 H2; locked = no code checked): 5 attempts lock 15 min, each further lock doubles
@@ -135,7 +137,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `src/tests/admin_auth.rs` (the lock and its doubling, the banner, no password lock, a code works once,
   pending expiry, the epoch on password change/2FA reset/sign out everywhere, `reset-2fa`, 20 parallel logins while
   an SSE keepalive keeps its 1 s beat, CSRF, headers and cache rules, the cookie, the write-only key, pruning, IPv6
-  bans by /64), `admin_auth::tests`. `TestApp::next_totp_code` picks a step not used yet; `admin_cookie` uses it.
+  bans by /56), `admin_auth::tests`. `TestApp::next_totp_code` picks a step not used yet; `admin_cookie` uses it.
   `src/tests/enrollment.rs` (QR once, no plaintext stored, a race of 8 gives one token, expiry, typed
   failures without a live typed code count for nothing, the pause with QR codes still enrolling after 200 junk QR
   codes, the shared failure bucket, New code once and replacing, revoke, the setup QR's kind), `enrollment::tests`.
@@ -155,7 +157,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `password_hash = '!removed'`, no 2FA). **Ready** = not removed, own password set, 2FA on (`AdminUser::ready`).
   Since design 74 step 1 that is **the one readiness predicate**: `AdminUser::ready` (also no `invite_expires_at`) and
   its SQL twin `ready_sql!()` (`models.rs`), used by the actor condition (`parents::actor_ok!`, `passkeys::add`/
-  `remove`), Remove's "another ready parent", the passkey sign-in and `/api/session`; step 2 adds its passkey-only arm.
+  `remove`), Remove's "another ready parent", the passkey sign-in and `/api/session`; step 2 added its passkey-only
+  arm: "(2FA on and not passkey-only) or (passkey-only and at least one passkey)". `AdminUser::passkey_count` is no
+  column: every query that reads an `AdminUser` starts with `admin_select!()`, which counts it.
 - **Usernames** `security::valid_username` (`[a-z0-9._-]{1,32}`): Add lowercases and trims; `ADMIN_USERNAME` is only
   trimmed (sign-in is an exact match) and refused at the first start when invalid (`bootstrap_username`); existing
   installs are untouched. Add refuses a name whose `lower(username)` is taken, removed ones included. **Display
@@ -290,3 +294,52 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   conditional get where available). The sign-in page itself stays English until slice 3e, so its passkey words follow
   the request's language meanwhile.
 
+## Passkey only (design 74 step 2, `docs/design/74-passkeys.md` §2, §6.1, §6.4)
+
+- **Storage** (migration `0118_passkey_only.sql`; 0117 is the CalDAV write-back's, built at the same time):
+  `admin_users.passkey_only`. While it is 1 the account has `password_hash = '!passkey'` (no argon2 string matches it),
+  no TOTP, and at least one passkey (D2.3).
+- **The switch** (`POST /account/passkey-only`, `handlers::passkeys::passkey_only_on`, Account's `#passkey-only`): only a
+  passkey confirms it (a `reauth` challenge bound to the route; a password or an empty assertion is refused, a bad one
+  counts in `reauth_wrong`), then `passkeys::switch_on`'s one `UPDATE` - the password and the TOTP (and its lock) go,
+  `session_epoch + 1` with this session keeping it, every push subscription goes - for this session's epoch, an account
+  not removed and ready, **with at least one passkey counted in the statement**. `passkey_only_on`, PRG
+  `/account?done=passkey_only_on#passkey-only`. The confirm says what it does and the way back; with one passkey "We
+  recommend two passkeys…" (+ "…, or else the server's command line is the way back" with no other ready parent,
+  `passkeys::another_ready_parent`, read for the words only); with no passkey the row is disabled ("Add a passkey
+  first."), with none for this host it says so. On, the row is a link to the switch-off page.
+- **While on**: `/auth/setup-2fa`, `/auth/change-password` (GET and POST), `/account/password` and `/account/reset-2fa`
+  answer `/account#passkey-only` and write nothing (their `UPDATE`s also carry `passkey_only = 0`);
+  `require_full_auth` never sends the account to the TOTP setup; Account's Password and Two-Factor groups are one
+  ("Password and code: Off", "Turn the Password On Again…", the shell's line); every re-auth field takes only the
+  passkey (`partials/reauth_passkey.html`: no "or", the password field and the form's own submit hidden, the reason
+  where the passkey can't be used here). `/login` with a passkey-only name verifies `PasswordGate`'s dummy hash
+  (`handlers::auth::login_hash`, the unknown name's path) and says the usual refusal; its `login_failed` row says
+  "Passkey only: no password" (written in the same `INSERT`, before argon2). The Parents rows add "· Passkey Only".
+- **The last passkey** stays: `passkeys::remove`'s `DELETE` refuses a passkey-only account's last one in its own
+  condition (`Removed::Last`, "Turn the password on first…", 400 under the row); the row's confirm has no form then,
+  and the footer says so. Going down to one with no other ready parent, the confirm says the shell is the way back.
+- **The ways back** (D2.4): another parent's Reset… (`parents::reset_parent`), a soft Remove and `reset-2fa`/
+  `reset-sign-in` set `passkey_only = 0` in their statement (and delete the passkeys, step 1). None needs the password.
+- **The switch-off page** `GET`/`POST /account/password-sign-in` (`templates/password_sign_in.html`, only while on, else
+  `/account#password`): a new password twice and a TOTP QR (its secret in the session until the write, so a reload
+  shows the same one) with its code, confirmed by a passkey. The fields are checked first (the code read only,
+  `admin_auth::totp_step`), the passkey last (a typo doesn't spend its challenge), the hash behind the gate, then
+  `passkeys::switch_off`'s one `UPDATE` (password, TOTP secret, on, the code's step as `totp_last_step`) - the account
+  is never in between. The passkeys stay; no session ends. `passkey_only_off`, PRG `/account?done=password_on#password`.
+- **The sign-in page without passwords** (§6.4, `handlers::auth::LoginView`): when at least one parent is passkey-only,
+  every parent not removed is, and no one-time password is pending (an expired one isn't), `/login` shows only a
+  filled "Sign In with Passkey" (`[data-passkey-only]`: no username, no password, no "or", no autofill get, nothing on
+  its own); a browser without passkeys reads "This browser can't use passkeys. Open the page in Safari or Chrome."; a
+  refused passkey's line doesn't mention a password. `POST /login` still answers the usual refusal.
+- **From step 1's revision checks**: the ban and the sign-in pool's per-client cap count by the IPv6 /56
+  (`net::limit_key`); a full sign-in pool drops the oldest challenge of the crowd holding the most (`net::crowd_key`,
+  IPv4 /24, IPv6 /48), so a flood from one range evicts its own and a parent's one challenge stays unless 500
+  neighbourhoods ask at once (qa-passkeys-1 A-R1). A session's live sign-in challenge is handed out again only while
+  younger than 4 minutes (`passkeys::LIVE_REUSE`), and `passkey.js` restarts the autofill's get with fresh options at
+  4.5 minutes (a timer, `visibilitychange`, `pageshow`; B-RN2). A new options call deletes the session's previous
+  `passkey_started` row when it is past that age (its ceremony is over); a younger one whose challenge was evicted keeps
+  counting, so churning sessions still costs one each (B-RN1). `passkey.js` counts only a 401 or a redirect that lands
+  on `/login` as signed out - `csrf_guard`'s 403 page is an error shown where the parent is (B-RN3).
+- Tests: `src/tests/passkey_only.rs`, `passkeys::tests` (the crowd, the reuse window), `net::tests`,
+  `jstest/passkey.test.js`.

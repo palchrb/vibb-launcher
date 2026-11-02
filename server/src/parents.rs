@@ -125,7 +125,7 @@ pub async fn remove_parent(
     let done = sqlx::query(concat!(
         "UPDATE admin_users SET removed_at = datetime('now'), password_hash = '!removed', \
          totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, reauth_wrong = 0, \
-         invite_expires_at = NULL, session_epoch = session_epoch + 1 \
+         invite_expires_at = NULL, passkey_only = 0, session_epoch = session_epoch + 1 \
          WHERE id = ?1 AND removed_at IS NULL \
            AND EXISTS (SELECT 1 FROM admin_users WHERE id != ?1 AND ",
         crate::ready_sql!(),
@@ -205,7 +205,7 @@ pub async fn reset_parent(
         "UPDATE admin_users SET password_hash = ?1, must_change_password = 1, totp_secret = NULL, \
          totp_enabled = 0, totp_last_step = NULL, failed_login_attempts = 0, locked_until = NULL, \
          lock_count = 0, reauth_wrong = 0, invite_expires_at = datetime('now', '+72 hours'), \
-         session_epoch = session_epoch + 1 \
+         passkey_only = 0, session_epoch = session_epoch + 1 \
          WHERE id = ?2 AND id != ?3 AND removed_at IS NULL AND ",
         actor_ok!("3", "4"),
         " RETURNING invite_expires_at, username, display_name"
@@ -270,10 +270,12 @@ pub async fn rows(
     lang: crate::i18n::Lang,
 ) -> Result<Vec<ParentRow>, sqlx::Error> {
     use crate::i18n::{t, t_params};
-    let accounts: Vec<AdminUser> =
-        sqlx::query_as("SELECT * FROM admin_users WHERE removed_at IS NULL ORDER BY id")
-            .fetch_all(db)
-            .await?;
+    let accounts: Vec<AdminUser> = sqlx::query_as(concat!(
+        crate::admin_select!(),
+        " WHERE removed_at IS NULL ORDER BY id"
+    ))
+    .fetch_all(db)
+    .await?;
     let passkeys = crate::passkeys::counts(db).await?;
     let mut rows = Vec::with_capacity(accounts.len());
     for account in accounts {
@@ -343,7 +345,8 @@ pub async fn rows(
                 None => t(lang, "account.parents.waiting_sign_in").to_string(),
             }
         };
-        // "· 2 passkeys" on a ready row with any (design 74 §6.3; nothing for 0).
+        // "· 2 passkeys" on a ready row with any, "· Passkey Only" after it when on (design 74 §6.3; nothing
+        // for 0).
         let count = passkeys.get(&account.id).copied().unwrap_or(0);
         let mut state = state;
         if count > 0 && account.ready() {
@@ -354,6 +357,10 @@ pub async fn rows(
                 count,
                 &[],
             ));
+            if account.passkey_only {
+                state.push_str(" · ");
+                state.push_str(t(lang, "account.parents.passkey_only"));
+            }
         }
         rows.push(ParentRow {
             id: account.id,

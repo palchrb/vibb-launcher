@@ -14,6 +14,9 @@
 // - Account's "Add Passkey…" (`[data-passkey-add]`, D1.2): the name and the re-auth to
 //   `POST /account/passkeys/options`, `navigator.credentials.create` with the answer, the credential into the form's
 //   `credential` and the form sent - the server's 303 lands on the new row.
+// - Step 2: the passkey-only sign-in page (`[data-passkey-only]`, §6.4) has only the button - no autofill, nothing
+//   on its own; the autofill's get starts again with fresh options once they are 4.5 minutes old; and only a 401 or
+//   a redirect that lands on /login counts as signed out (an HTML error page is an error, qa-passkeys-1 B-RN3).
 // A cancelled prompt (`NotAllowedError`, `AbortError`) is the browser's and sends nothing (D1.5). The words come from
 // the page (`data-w-*`, design 70 §5.3). ES5 with promises, no framework. Tests: node --test jstest/passkey.test.js
 (function (root) {
@@ -115,10 +118,18 @@
         return parts.join("&");
     }
 
-    // An answer that isn't the server's JSON: the session ended and the request was sent to the sign-in page.
-    function signedOut(res) {
-        var type = res.headers && res.headers.get ? res.headers.get("content-type") || "" : "";
-        return !!res.redirected || type.indexOf("text/html") === 0;
+    // The session ended: a 401 (the server's `{signed_out: true}`), or a request the session check sent to the
+    // sign-in page (a followed redirect that landed on /login). Nothing else is - not `csrf_guard`'s 403 page, nor any
+    // other HTML: that is an error to show where the parent is (step 2, qa-passkeys-1 B-RN3).
+    function signedOut(win, res) {
+        if (res.status === 401) return true;
+        if (!res.redirected || !res.url) return false;
+        try {
+            var path = new win.URL(res.url).pathname;
+            return path === "/login";
+        } catch (e) {
+            return false;
+        }
     }
 
     // POSTs `fields` and answers {ok, status, json, signedOut}.
@@ -129,7 +140,7 @@
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: encode(fields),
         }).then(function (res) {
-            if (signedOut(res)) return { ok: false, status: res.status, json: {}, signedOut: true };
+            if (signedOut(win, res)) return { ok: false, status: res.status, json: {}, signedOut: true };
             return res.json().then(
                 function (json) { return { ok: res.ok, status: res.status, json: json, signedOut: !!json.signed_out }; },
                 function () { return { ok: false, status: res.status, json: {}, signedOut: false }; }
@@ -178,22 +189,33 @@
 
     // ---- Sign-in (D1.4) -------------------------------------------------------------------------------------
 
+    // A challenge lives 5 minutes on the server, which hands a session's live one out again for 4 (passkeys::
+    // LIVE_REUSE). The autofill's get is started again with a fresh one once its options are this old, so a parent
+    // who comes back to an open page doesn't pick a passkey for a challenge that died under it (step 2,
+    // qa-passkeys-1 B-RN2).
+    var CONDITIONAL_REFRESH_MS = 270000;
+
     function installLogin(win, form) {
         var button = form.querySelector("[data-passkey-login]");
         var error = win.document.querySelector("[data-passkey-error]");
         var options = null;
         var fetchedAt = 0;
         var conditional = null;
+        var conditionalAt = 0;
+        var refreshTimer = null;
         var creds = win.navigator.credentials;
+        // The passkey-only page (§6.4) has no username field for the autofill: only the button, never on its own.
+        var autofill = !form.hasAttribute("data-passkey-only");
+        var now = function () { return win.Date ? win.Date.now() : Date.now(); };
 
         // One challenge serves the conditional get and the button's (it is spent only by a sign-in) for a minute, so
         // a prompt opened from it has its 5 minutes (the server hands the same session's live one back anyway).
         function fetchOptions() {
-            if (options && Date.now() - fetchedAt < 60000) return win.Promise.resolve(options);
+            if (options && now() - fetchedAt < 60000) return win.Promise.resolve(options);
             return post(win, "/auth/passkey/options", {}).then(function (answer) {
                 if (!answer.ok) throw { name: "refused", message: answer.json.error || "" };
                 options = answer.json;
-                fetchedAt = Date.now();
+                fetchedAt = now();
                 return options;
             });
         }
@@ -212,18 +234,43 @@
         // says why already (a banned address's line, qa-passkeys-1 B-N5), and the button says the rest.
         function startConditional() {
             var pkc = win.PublicKeyCredential;
+            if (!autofill) return;
             if (!pkc || typeof pkc.isConditionalMediationAvailable !== "function" || !win.AbortController) return;
             pkc.isConditionalMediationAvailable().then(function (available) {
                 if (!available) return;
                 var controller = new win.AbortController();
                 conditional = controller;
                 fetchOptions().then(function (json) {
+                    if (conditional !== controller) return null;
+                    conditionalAt = fetchedAt;
+                    if (win.setTimeout) {
+                        if (refreshTimer && win.clearTimeout) win.clearTimeout(refreshTimer);
+                        refreshTimer = win.setTimeout(refreshConditional, CONDITIONAL_REFRESH_MS);
+                    }
                     return creds.get({ mediation: "conditional", publicKey: requestOptions(json), signal: controller.signal });
                 }).then(function (cred) {
                     if (cred) signIn(cred);
                 }, function () {});
             }, function () {});
         }
+
+        // The autofill's get from options that are getting old: aborted and asked again with fresh ones (a timer, or
+        // the page shown again - a phone's background tab has its timers held).
+        function refreshConditional() {
+            refreshTimer = null;
+            if (!conditional || now() - conditionalAt < CONDITIONAL_REFRESH_MS) return;
+            conditional.abort();
+            conditional = null;
+            options = null;
+            startConditional();
+        }
+
+        if (autofill && win.document.addEventListener) {
+            win.document.addEventListener("visibilitychange", function () {
+                if (win.document.visibilityState !== "hidden") refreshConditional();
+            });
+        }
+        if (autofill && win.addEventListener) win.addEventListener("pageshow", refreshConditional);
 
         if (button) {
             button.addEventListener("click", function () {

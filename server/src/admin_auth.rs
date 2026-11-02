@@ -388,20 +388,7 @@ pub async fn check_totp(
     code: &str,
     now_secs: u64,
 ) -> Result<Totp, sqlx::Error> {
-    let code = code.trim();
-    let totp = crate::security::totp_for_secret(secret, username);
-    let now_step = (now_secs / STEP_SECS) as i64;
-    let mut matched = None;
-    for step in (now_step - SKEW)..=(now_step + SKEW) {
-        if step < 0 {
-            continue;
-        }
-        let expected = totp.generate(step as u64 * STEP_SECS);
-        if constant_time_eq(expected.as_bytes(), code.as_bytes()) {
-            matched = Some(step);
-        }
-    }
-    let Some(step) = matched else {
+    let Some(step) = totp_step(secret, username, code, now_secs) else {
         return Ok(Totp::Refused);
     };
     let stored = sqlx::query(
@@ -418,6 +405,25 @@ pub async fn check_totp(
     } else {
         Totp::Refused
     })
+}
+
+/// The 30-second step `code` (trimmed) matches for `secret` within [SKEW] of `now_secs`, read only: [check_totp]
+/// stores it, and the switch-off page (design 74 D2.5) stores it in its one `UPDATE` with the new secret.
+pub fn totp_step(secret: &str, username: &str, code: &str, now_secs: u64) -> Option<i64> {
+    let code = code.trim();
+    let totp = crate::security::totp_for_secret(secret, username);
+    let now_step = (now_secs / STEP_SECS) as i64;
+    let mut matched = None;
+    for step in (now_step - SKEW)..=(now_step + SKEW) {
+        if step < 0 {
+            continue;
+        }
+        let expected = totp.generate(step as u64 * STEP_SECS);
+        if constant_time_eq(expected.as_bytes(), code.as_bytes()) {
+            matched = Some(step);
+        }
+    }
+    matched
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -587,7 +593,7 @@ pub async fn change_first_password(
          invite_expires_at = CASE WHEN totp_enabled = 1 THEN NULL ELSE invite_expires_at END, \
          session_epoch = session_epoch + 1 \
          WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND password_hash = ? \
-         RETURNING session_epoch",
+           AND passkey_only = 0 RETURNING session_epoch",
     )
     .bind(new_hash)
     .bind(admin_id)
@@ -636,7 +642,8 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 /// It also clears a one-time password's expiry, and restores a removed account (logged
 /// `parent_restored`): the shell is the way back for a parent the other one removed. The account's
 /// passkeys are deleted in the same transaction (design 74 D1.3b: no way back leaves a lost
-/// phone's passkey working). `reset-sign-in <user>` is the same command (D2.4).
+/// phone's passkey working), and "Kun passkey" goes with them (D2.4: the way back for the last parent, never
+/// needing the password). `reset-sign-in <user>` is the same command (D2.4).
 /// Returns a line for the terminal.
 pub async fn reset_2fa(
     db: &sqlx::SqlitePool,
@@ -663,7 +670,7 @@ pub async fn reset_2fa(
             "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
              failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
              password_hash = ?, must_change_password = 1, invite_expires_at = NULL, \
-             removed_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?",
+             removed_at = NULL, passkey_only = 0, session_epoch = session_epoch + 1 WHERE id = ?",
         )
         .bind(&hash)
         .bind(id)

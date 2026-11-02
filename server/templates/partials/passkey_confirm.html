@@ -1,0 +1,14 @@
+{#- Design 74 step 2: a form only a passkey confirms ("Kun passkey"'s switch, the switch-off page): the outline
+    "Confirm with passkey" (static/passkey.js: the form's other required fields first, then a re-auth challenge bound
+    to the form's route, the assertion into `assertion`, and the form sent). `confirm_label` names the button. Where
+    the passkey can't be used here the reason shows instead. -#}
+{%- if passkey_reauth %}
+<div class="reauth-passkey" data-passkey-ui hidden>
+    <button type="button" class="button-outline" data-passkey-reauth data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t(confirm_label) }}</button>
+    <p class="field-error" data-passkey-error role="alert" hidden></p>
+</div>
+<p class="field-hint" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"></p>
+<input type="hidden" name="assertion" value="">
+{%- else %}
+<p class="field-hint">{{ self.t("passkeys.reauth.none_here") }}</p>
+{%- endif %}

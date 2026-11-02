@@ -949,6 +949,8 @@ struct LockTemplate {
     /// The parent has a passkey for this host: Show Child PIN offers "Confirm with passkey"
     /// (design 74 D1.6).
     passkey_reauth: bool,
+    /// The parent is passkey-only (design 74 D2.2): Show Child PIN takes only the passkey.
+    passkey_only: bool,
 }
 crate::i18n::words!(LockTemplate);
 
@@ -1056,7 +1058,15 @@ pub async fn view_lock(
 ) -> Response {
     let notice = query.get("notice").map(String::as_str);
     let passkey = crate::passkeys::has_here(&state.db, admin.id, &ceremony).await;
-    render_lock(&state, id, notice, None, passkey, lang).await
+    render_lock(
+        &state,
+        id,
+        notice,
+        None,
+        (passkey, admin.passkey_only),
+        lang,
+    )
+    .await
 }
 
 /// POST `/devices/{id}/lock`, `action=reveal_kid_pin` (design 59 §2.2, qa-59-design Q59-11): the
@@ -1138,7 +1148,15 @@ pub async fn lock_action(
         }
     };
     let passkey = crate::passkeys::has_here(&state.db, admin.id, &ceremony).await;
-    render_lock(&state, id, None, Some(reveal), passkey, lang).await
+    render_lock(
+        &state,
+        id,
+        None,
+        Some(reveal),
+        (passkey, admin.passkey_only),
+        lang,
+    )
+    .await
 }
 
 /// What the last report says about the lock ([crate::kid_lock::PhoneLock]).
@@ -1195,7 +1213,7 @@ async fn render_lock(
     id: i64,
     notice: Option<&str>,
     reveal: Option<Reveal>,
-    passkey_reauth: bool,
+    (passkey_reauth, passkey_only): (bool, bool),
     lang: Lang,
 ) -> Response {
     let device = match load_device(state, id).await {
@@ -1302,6 +1320,7 @@ async fn render_lock(
 
     let page = LockTemplate {
         passkey_reauth,
+        passkey_only,
         lang,
         title: format!("{} · {}", t(lang, "device.page.lock"), device.name),
         child_warnings,

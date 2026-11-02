@@ -273,7 +273,7 @@ function addPage(answers, create) {
         fetch: (url, init) => {
             fetched.push([url, init]);
             const a = answers[url];
-            return Promise.resolve({ ok: a.ok !== false, status: 200, redirected: !!a.redirected, headers: { get: () => (a.html ? "text/html" : "application/json") }, json: () => (a.html ? Promise.reject(new Error("html")) : Promise.resolve(a)) });
+            return Promise.resolve({ ok: a.ok !== false, status: a.status || 200, redirected: !!a.redirected, url: a.url, headers: { get: () => (a.html ? "text/html" : "application/json") }, json: () => (a.html ? Promise.reject(new Error("html")) : Promise.resolve(a)) });
         },
     }, { "[data-passkey-add]": [form] });
     return { win, form, fields, errors, fetched, submitted: () => submitted };
@@ -318,7 +318,7 @@ test("a device that has a passkey already says so; a signed-out session goes to 
     await flush();
     assert.strictEqual(page.errors.password.textContent, "exists");
     assert.strictEqual(page.submitted(), 0);
-    const out = addPage({ "/account/passkeys/options": { html: true, redirected: true } }, () => Promise.resolve(REGISTRATION));
+    const out = addPage({ "/account/passkeys/options": { html: true, redirected: true, url: "https://handy.example.com/login" } }, () => Promise.resolve(REGISTRATION));
     passkey.install(out.win);
     out.form.listeners.submit({ preventDefault: () => {} });
     await flush();
@@ -362,4 +362,119 @@ test("the button aborts the autofill's get and asks with the same challenge", as
     assert.strictEqual(fetched.filter((f) => f[0] === "/auth/passkey/options").length, 1);
     assert.strictEqual(fetched[0][1].method, "POST");
     assert.strictEqual(submitted, 1);
+});
+
+test("only a 401 or a redirect to /login is signed out - csrf_guard's 403 page is an error (qa-passkeys-1 B-RN3)", async () => {
+    // A 403 HTML page (a proxy that rewrites Host): the error under the field, no trip to the sign-in page.
+    const forbidden = addPage({ "/account/passkeys/options": { html: true, ok: false, status: 403 } }, () => Promise.resolve(REGISTRATION));
+    passkey.install(forbidden.win);
+    forbidden.form.listeners.submit({ preventDefault: () => {} });
+    await flush();
+    await flush();
+    await flush();
+    assert.ok(!forbidden.fetched.some((f) => f[0] === "assign"), "not sent to /login");
+    assert.strictEqual(forbidden.errors.password.textContent, "failed");
+    // A redirect that ends elsewhere (an HTML page, not /login) isn't signed out either.
+    const elsewhere = addPage({ "/account/passkeys/options": { html: true, ok: false, redirected: true, url: "https://handy.example.com/devices" } }, () => Promise.resolve(REGISTRATION));
+    passkey.install(elsewhere.win);
+    elsewhere.form.listeners.submit({ preventDefault: () => {} });
+    await flush();
+    await flush();
+    assert.ok(!elsewhere.fetched.some((f) => f[0] === "assign"));
+    // The server's 401 `{signed_out: true}` is.
+    const out = addPage({ "/account/passkeys/options": { ok: false, status: 401, signed_out: true } }, () => Promise.resolve(REGISTRATION));
+    passkey.install(out.win);
+    out.form.listeners.submit({ preventDefault: () => {} });
+    await flush();
+    await flush();
+    assert.deepStrictEqual(out.fetched[out.fetched.length - 1], ["assign", "/login"]);
+});
+
+/** The sign-in page with a conditional get, a clock and timers the test moves. */
+function conditionalPage(attrs) {
+    const field = { value: "" };
+    const button = element();
+    const form = element(Object.assign({ "data-w-failed": "failed" }, attrs || {}));
+    form.querySelector = (s) => (s === "[data-passkey-login]" ? button : s === "input[name=\"assertion\"]" ? field : null);
+    form.submit = () => {};
+    let challenge = 0;
+    const answers = {};
+    const { win, fetched } = browser({ "#passkey-sign-in": [form] }, ASSERTION, answers);
+    // Each options call is a fresh challenge (1, 2, ...).
+    win.fetch = (url, init) => {
+        fetched.push([url, init]);
+        challenge++;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ challenge: passkey.b64url(bytes(challenge)), allowCredentials: [] }) });
+    };
+    let clock = 1000000;
+    const timers = [];
+    win.Date = { now: () => clock };
+    win.setTimeout = (fn, ms) => { timers.push({ fn, at: clock + ms }); return timers.length; };
+    win.clearTimeout = () => {};
+    const docListeners = {};
+    win.document.addEventListener = (type, fn) => { docListeners[type] = fn; };
+    win.document.visibilityState = "visible";
+    win.addEventListener = () => {};
+    win.PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(true);
+    const aborted = [];
+    win.AbortController = function () {
+        const signal = { aborted: false };
+        this.signal = signal;
+        this.abort = () => { signal.aborted = true; aborted.push(true); };
+    };
+    const gets = [];
+    win.navigator.credentials.get = (o) => {
+        gets.push(o);
+        return o.mediation === "conditional" ? new Promise(() => {}) : Promise.resolve(ASSERTION);
+    };
+    return {
+        win, button, fetched, gets, aborted, docListeners,
+        advance: (ms) => { clock += ms; },
+        fire: () => { for (const t of timers.splice(0)) if (t.at <= clock) t.fn(); },
+    };
+}
+
+test("the autofill's get starts again with fresh options once they are 4.5 minutes old (qa-passkeys-1 B-RN2)", async () => {
+    const page = conditionalPage();
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 1);
+    assert.deepStrictEqual(new Uint8Array(page.gets[0].publicKey.challenge), new Uint8Array([1]));
+    // Back after four minutes: still fresh enough, nothing happens.
+    page.advance(240000);
+    page.docListeners.visibilitychange();
+    await flush();
+    assert.strictEqual(page.gets.length, 1);
+    // Back after 4.5: the old get is aborted and a new one asks with a new challenge.
+    page.advance(30000);
+    page.docListeners.visibilitychange();
+    await flush();
+    await flush();
+    await flush();
+    assert.deepStrictEqual(page.aborted, [true]);
+    assert.strictEqual(page.gets.length, 2);
+    assert.deepStrictEqual(new Uint8Array(page.gets[1].publicKey.challenge), new Uint8Array([2]));
+    // The timer does the same on a page that stays on screen.
+    page.advance(270000);
+    page.fire();
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 3);
+    assert.deepStrictEqual(new Uint8Array(page.gets[2].publicKey.challenge), new Uint8Array([3]));
+});
+
+test("the passkey-only sign-in page starts nothing on its own; its button signs in (§6.4)", async () => {
+    const page = conditionalPage({ "data-passkey-only": "" });
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 0, "no autofill get");
+    assert.strictEqual(page.fetched.length, 0, "no options before the tap");
+    page.button.listeners.click();
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 1);
+    assert.strictEqual(page.gets[0].mediation, undefined);
 });

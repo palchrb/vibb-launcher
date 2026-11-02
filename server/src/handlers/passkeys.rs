@@ -15,7 +15,11 @@
 //!   browser's answer, PRG `/account?done=passkey_added#passkey-<id>`, `passkey_added` logged,
 //!   pushed to every parent and put in their inbox.
 //! - `POST /account/passkeys/{id}/remove` (the re-auth): the row goes and the session epoch moves
-//!   keeping this session (D1.3), PRG `/account?done=passkey_removed#passkeys`.
+//!   keeping this session (D1.3), PRG `/account?done=passkey_removed#passkeys`; never a passkey-only
+//!   account's last one (D2.3).
+//! - Step 2, "Kun passkey": `POST /account/passkey-only` (a passkey confirms it; the switch's one
+//!   `UPDATE`, D2.1/D2.2), and its switch-off page `GET`/`POST /account/password-sign-in` (the
+//!   passkey, a new password and the TOTP, one `UPDATE`, D2.5).
 //!
 //! The JSON answers are `no-store`. A JSON refusal is `{"error": words, "field": "name" |
 //! "password"}`, or `{"signed_out": true}` after the third wrong re-auth.
@@ -30,7 +34,7 @@ use tower_sessions::Session;
 use crate::AppState;
 use crate::admin_auth::{self, Proof, Reauth};
 use crate::handlers::auth::{AccountAnswer, render_account};
-use crate::i18n::{Lang, t};
+use crate::i18n::{Lang, Words, t};
 use crate::passkeys::{self, Bound, Ceremony, Kind, Taken};
 use crate::security::{self, CurrentAdmin};
 use crate::webauthn::{Refused, Registration};
@@ -105,6 +109,20 @@ pub async fn login_options(
             passkeys::request_options(&challenge, &rp_id, &[]),
         );
     }
+    // The session's own row from a challenge that aged out (step 2, qa-passkeys-1 B-RN1): its ceremony is over, so
+    // it stops counting - the page counts once however long it stays open. A row younger than that (its challenge
+    // was evicted by this client's other sessions or the pool's crowd) stays: churning sessions costs one each.
+    if !fresh && let Ok(Some(previous)) = session.get::<i64>(passkeys::PRE_SIGN_IN_KEY).await {
+        sqlx::query(
+            "DELETE FROM security_events WHERE id = ? AND event_type = 'passkey_started' \
+             AND created_at <= datetime('now', ?)",
+        )
+        .bind(previous)
+        .bind(format!("-{} seconds", passkeys::LIVE_REUSE.as_secs()))
+        .execute(&state.db)
+        .await
+        .ok();
+    }
     // Counted before anything is issued.
     let attempt: Option<i64> = sqlx::query_scalar(
         "INSERT INTO security_events (event_type, ip_address) VALUES ('passkey_started', ?) \
@@ -141,10 +159,11 @@ pub async fn login_options(
         route: passkeys::SIGN_IN_ROUTE.to_string(),
     };
     // The sign-in pool makes room for it (its oldest go): never refused.
-    let Some(challenge) = state
-        .passkeys
-        .challenges
-        .issue(bound, &ip, Taken::default())
+    let Some(challenge) =
+        state
+            .passkeys
+            .challenges
+            .issue(bound, passkeys::Asker::of(&ceremony), Taken::default())
     else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -169,6 +188,7 @@ pub async fn login(
     Form(form): Form<SignInForm>,
 ) -> Response {
     let ip = ceremony.client_key.clone();
+    let view = crate::handlers::auth::LoginView::load(&state.db, ceremony.rp_id.is_some()).await;
     // The options' count ends here whatever comes: a refusal counts on its own (B-M3).
     passkeys::end_sign_in_attempt(&state.db, &session).await;
     security::check_and_ban_ip_if_needed(&state.db, &ip).await;
@@ -178,7 +198,7 @@ pub async fn login(
             crate::handlers::auth::render_login(
                 Some(t(lang, "passkeys.sign_in.banned").to_string()),
                 lang,
-                ceremony.rp_id.is_some(),
+                view,
             ),
         )
             .into_response();
@@ -204,9 +224,9 @@ pub async fn login(
             .await;
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             return crate::handlers::auth::render_login(
-                Some(t(lang, "passkeys.sign_in.failed").to_string()),
+                Some(t(lang, view.passkey_failed()).to_string()),
                 lang,
-                ceremony.rp_id.is_some(),
+                view,
             )
             .into_response();
         }
@@ -318,7 +338,7 @@ pub async fn reauth_options(
         state
             .passkeys
             .challenges
-            .issue(bound, &ceremony.client_key, Taken::default())
+            .issue(bound, passkeys::Asker::of(&ceremony), Taken::default())
     else {
         return json_refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -469,10 +489,11 @@ pub async fn add_options(
         route: passkeys::REGISTER_ROUTE.to_string(),
     };
     let taken = Taken { label: Some(name) };
-    let Some(challenge) = state
-        .passkeys
-        .challenges
-        .issue(bound, &ceremony.client_key, taken)
+    let Some(challenge) =
+        state
+            .passkeys
+            .challenges
+            .issue(bound, passkeys::Asker::of(&ceremony), taken)
     else {
         return json_refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -689,6 +710,23 @@ pub async fn remove(
         Ok(passkeys::Removed::Gone) => {
             crate::settings_log::refused(Redirect::to("/account?done=passkey_gone#passkeys"))
         }
+        // D2.3: a passkey-only account keeps at least one.
+        Ok(passkeys::Removed::Last) => {
+            let answer = AccountAnswer {
+                field_error: Some((remove_field(id), t(lang, "passkeys.only.last").to_string())),
+                ..AccountAnswer::default()
+            };
+            render_account(
+                &state,
+                &session,
+                &admin,
+                &ceremony,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await
+        }
         Ok(passkeys::Removed::SignedOut) => {
             session.flush().await.ok();
             admin_auth::signed_out_response()
@@ -699,6 +737,352 @@ pub async fn remove(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "passkeys.remove.failed",
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Kun passkey" (step 2)
+
+#[derive(Deserialize)]
+pub struct PasskeyOnlyForm {
+    #[serde(default)]
+    assertion: String,
+}
+
+/// The field "Kun passkey"'s confirm shows a refusal under, for [AccountAnswer::field_error].
+const PASSKEY_ONLY_FIELD: &str = "passkey-only";
+
+/// `POST /account/passkey-only` (D2.1, D2.2): a passkey that works here confirms it (a `reauth` challenge bound to
+/// this route; a bad one counts in `reauth_wrong`), then [passkeys::switch_on]'s one `UPDATE` - its guards, at least
+/// one passkey included, counted in the statement. This session keeps the new epoch; every other session and every
+/// device's notifications end. PRG `/account?done=passkey_only_on#passkey-only`.
+pub async fn passkey_only_on(
+    State(state): State<AppState>,
+    lang: Lang,
+    session: Session,
+    ceremony: Ceremony,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<PasskeyOnlyForm>,
+) -> Response {
+    if admin.passkey_only {
+        return Redirect::to("/account#passkey-only").into_response();
+    }
+    let refuse = |why: String| AccountAnswer {
+        field_error: Some((PASSKEY_ONLY_FIELD.to_string(), why)),
+        ..AccountAnswer::default()
+    };
+    // Only a passkey proves one works on this host (D2.1): the password is no proof here.
+    if form.assertion.trim().is_empty() {
+        let answer = refuse(t(lang, "passkeys.only.needs_passkey").to_string());
+        return render_account(
+            &state,
+            &session,
+            &admin,
+            &ceremony,
+            StatusCode::BAD_REQUEST,
+            answer,
+            lang,
+        )
+        .await;
+    }
+    let proof = Proof::Passkey {
+        assertion: &form.assertion,
+        ceremony: &ceremony,
+    };
+    match admin_auth::reauth(&state, &session, &admin, proof).await {
+        Reauth::Right => {}
+        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::SignedOut => return admin_auth::signed_out_response(),
+        Reauth::Wrong { left } => {
+            let words = wrong_words(lang, &proof, left, "", "");
+            return render_account(
+                &state,
+                &session,
+                &admin,
+                &ceremony,
+                StatusCode::BAD_REQUEST,
+                refuse(words),
+                lang,
+            )
+            .await;
+        }
+    }
+    match passkeys::switch_on(&state.db, &admin).await {
+        Ok(passkeys::SwitchedOn::Done(epoch)) => {
+            session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
+            // The password that is gone may be known: whatever it opened ends, its notifications too (as a
+            // password change, security review M1).
+            crate::push::forget_subscriptions(&state.db, admin.id).await;
+            security::record_security_event(
+                &state.db,
+                "passkey_only_on",
+                Some(&admin.username),
+                None,
+                Some(security::Detail::words(
+                    "security.detail.other_sessions_signed_out",
+                    &[],
+                )),
+            )
+            .await;
+            Redirect::to("/account?done=passkey_only_on#passkey-only").into_response()
+        }
+        Ok(passkeys::SwitchedOn::Already) => Redirect::to("/account#passkey-only").into_response(),
+        Ok(passkeys::SwitchedOn::NoPasskey) => {
+            let answer = refuse(t(lang, "passkeys.only.add_first").to_string());
+            render_account(
+                &state,
+                &session,
+                &admin,
+                &ceremony,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await
+        }
+        Ok(passkeys::SwitchedOn::SignedOut) => {
+            session.flush().await.ok();
+            admin_auth::signed_out_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't turn passkey only on");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "passkeys.only.failed",
+            )
+        }
+    }
+}
+
+/// The switch-off page's TOTP secret until its POST stores it (D2.5): in this session, so a reload shows the same
+/// QR and nothing is written to the account before the one `UPDATE`.
+const PASSWORD_ON_SECRET_KEY: &str = "password_on_totp";
+
+#[derive(askama::Template)]
+#[template(path = "password_sign_in.html")]
+struct PasswordOnTemplate {
+    lang: Lang,
+    title: String,
+    username: String,
+    qr_base64: String,
+    secret_base32: String,
+    /// A passkey for this host (the confirm), else the reason.
+    passkey_reauth: bool,
+    /// The field a refusal names ("new_password", "confirm_password", "code", "passkey") and why.
+    field_error: Option<(&'static str, String)>,
+}
+crate::i18n::words!(PasswordOnTemplate);
+
+impl PasswordOnTemplate {
+    fn error_for(&self, field: &str) -> Option<&str> {
+        self.field_error
+            .as_ref()
+            .filter(|(f, _)| *f == field)
+            .map(|(_, why)| why.as_str())
+    }
+
+    /// The key in blocks of 4, as the 2FA setup shows it.
+    fn secret_blocks(&self) -> String {
+        let chars: Vec<char> = self.secret_base32.chars().collect();
+        chars
+            .chunks(4)
+            .map(|block| block.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// The page, with this session's secret (made on the first view).
+async fn render_password_on(
+    state: &AppState,
+    session: &Session,
+    admin: &crate::models::AdminUser,
+    ceremony: &Ceremony,
+    status: StatusCode,
+    field_error: Option<(&'static str, String)>,
+    lang: Lang,
+) -> Response {
+    let secret = match session.get::<String>(PASSWORD_ON_SECRET_KEY).await {
+        Ok(Some(secret)) => secret,
+        _ => {
+            let secret = security::generate_totp_secret_base32();
+            if let Err(err) = session.insert(PASSWORD_ON_SECRET_KEY, &secret).await {
+                tracing::error!(%err, "couldn't keep the new two-factor secret");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            secret
+        }
+    };
+    let Ok(qr_base64) = security::totp_for_secret(&secret, &admin.username).get_qr_base64() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let page = PasswordOnTemplate {
+        lang,
+        title: t(lang, "password_on.title").to_string(),
+        username: admin.username.clone(),
+        qr_base64,
+        secret_base32: secret,
+        passkey_reauth: passkeys::has_here(&state.db, admin.id, ceremony).await,
+        field_error,
+    };
+    match askama::Template::render(&page) {
+        Ok(html) => (status, axum::response::Html(html)).into_response(),
+        Err(err) => {
+            tracing::error!(%err, "couldn't render the switch-off page");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// `GET /account/password-sign-in` (D2.5): only while "Kun passkey" is on.
+pub async fn password_sign_in_form(
+    State(state): State<AppState>,
+    lang: Lang,
+    session: Session,
+    ceremony: Ceremony,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    if !admin.passkey_only {
+        return Redirect::to("/account#password").into_response();
+    }
+    render_password_on(
+        &state,
+        &session,
+        &admin,
+        &ceremony,
+        StatusCode::OK,
+        None,
+        lang,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub struct PasswordOnForm {
+    #[serde(default)]
+    new_password: String,
+    #[serde(default)]
+    confirm_password: String,
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    assertion: String,
+}
+
+/// `POST /account/password-sign-in` (D2.5): the fields first (the password twice, the TOTP code against this
+/// session's secret - read only), then the passkey (it is spent last, so a typo doesn't cost a prompt), the new
+/// hash behind the gate, and [passkeys::switch_off]'s one `UPDATE`. The passkeys stay, no session ends.
+/// PRG `/account?done=password_on#password`, `passkey_only_off`.
+pub async fn password_sign_in(
+    State(state): State<AppState>,
+    lang: Lang,
+    session: Session,
+    ceremony: Ceremony,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<PasswordOnForm>,
+) -> Response {
+    if !admin.passkey_only {
+        return Redirect::to("/account#password").into_response();
+    }
+    let refuse = |field: &'static str, why: String| {
+        render_password_on(
+            &state,
+            &session,
+            &admin,
+            &ceremony,
+            StatusCode::BAD_REQUEST,
+            Some((field, why)),
+            lang,
+        )
+    };
+    if form.new_password.len() < security::MIN_PASSWORD_LEN {
+        return refuse(
+            "new_password",
+            t(lang, "account.password.too_short").to_string(),
+        )
+        .await;
+    }
+    if form.new_password != form.confirm_password {
+        return refuse(
+            "confirm_password",
+            t(lang, "account.password.mismatch").to_string(),
+        )
+        .await;
+    }
+    let secret = session
+        .get::<String>(PASSWORD_ON_SECRET_KEY)
+        .await
+        .ok()
+        .flatten();
+    let step = secret.as_deref().and_then(|secret| {
+        admin_auth::totp_step(secret, &admin.username, &form.code, admin_auth::now_secs())
+    });
+    let (Some(secret), Some(step)) = (secret, step) else {
+        return refuse("code", t(lang, "password_on.code_wrong").to_string()).await;
+    };
+    if form.assertion.trim().is_empty() {
+        return refuse(
+            "passkey",
+            t(lang, "passkeys.only.needs_passkey").to_string(),
+        )
+        .await;
+    }
+    let proof = Proof::Passkey {
+        assertion: &form.assertion,
+        ceremony: &ceremony,
+    };
+    match admin_auth::reauth(&state, &session, &admin, proof).await {
+        Reauth::Right => {}
+        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::SignedOut => return admin_auth::signed_out_response(),
+        Reauth::Wrong { left } => {
+            return refuse("passkey", wrong_words(lang, &proof, left, "", "")).await;
+        }
+    }
+    let hash = match state.passwords.hash(&form.new_password).await {
+        Ok(hash) => hash,
+        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    };
+    match passkeys::switch_off(&state.db, &admin, &hash, &secret, step).await {
+        Ok(Some(_)) => {
+            session.remove::<String>(PASSWORD_ON_SECRET_KEY).await.ok();
+            security::record_security_event(
+                &state.db,
+                "passkey_only_off",
+                Some(&admin.username),
+                None,
+                None,
+            )
+            .await;
+            Redirect::to("/account?done=password_on#password").into_response()
+        }
+        // Nothing written: switched off already in another tab (this session is still the account's), or signed out.
+        Ok(None) => {
+            let still: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM admin_users WHERE id = ? AND session_epoch = ? \
+                 AND removed_at IS NULL)",
+            )
+            .bind(admin.id)
+            .bind(admin.session_epoch)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
+            if still {
+                Redirect::to("/account#password").into_response()
+            } else {
+                session.flush().await.ok();
+                admin_auth::signed_out_response()
+            }
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't turn the password on again");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "password_on.failed",
             )
         }
     }

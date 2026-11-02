@@ -221,7 +221,7 @@ pub struct UnbanForm {
     ip: String,
 }
 
-/// A form field, not a path segment: a ban's key may be an IPv6 /64 ("2001:db8:1:2::/64"). Back
+/// A form field, not a path segment: a ban's key may be an IPv6 /56 ("2001:db8:1:200::/56"). Back
 /// to Blocked Addresses (`#banned`), with the address in the flash only when a ban was lifted; a
 /// DB error is a 500.
 pub async fn unban_ip(State(state): State<AppState>, Form(form): Form<UnbanForm>) -> Response {

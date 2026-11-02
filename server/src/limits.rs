@@ -5,7 +5,7 @@
 //!   [GENERAL_IN_FLIGHT] for the rest (the SSE stream is bounded by its own cap instead), while `policy`, `status`,
 //!   `command-result` and `command-receipt` are always admitted (the bucket still applies), so a ring, a lock or a
 //!   wipe's receipt never waits behind downloads.
-//! - **A client IP** (`net::limit_key`: IPv4 address, IPv6 /64), counted only for failed requests -
+//! - **A client IP** (`net::limit_key`: IPv4 address, IPv6 /56), counted only for failed requests -
 //!   a bad or missing token, a typed-shaped enrollment code that didn't match: [IP_FAILURES] in
 //!   [IP_WINDOW] get 429 for [IP_BLOCK]. **A valid token never touches this bucket**, so a
 //!   carrier-CGNAT neighbour, or every client looking like the Docker gateway, can't lock a phone

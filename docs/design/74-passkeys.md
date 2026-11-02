@@ -417,7 +417,15 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
    **Reset…, Remove and `reset-2fa`/`reset-sign-in` deleting the passkeys**; the one readiness predicate.
 2. **Kun passkey + recovery** (S-M): its migration, the switch and its guards, the predicate's passkey-only arm, the
    setup-2fa/change-password refusals, the dummy hash, Reset and `reset-2fa` clearing the flag, the switch-off page,
-   DEPLOY.md's recovery line.
+   DEPLOY.md's recovery line. *As built (branch `passkeys-2`, migration 0118 - 0117 is the CalDAV write-back's):*
+   the switch's and the switch-off page's assertions are `reauth` challenges bound to their routes
+   (`/account/passkey-only`, `/account/password-sign-in`) - no own `switch` kind; switching on also ends every push
+   subscription (as a password change); switching off ends no session (it adds factors, takes none away) and stores
+   the page's code step as `totp_last_step`; Account/2FA's `/account/password` and `/account/reset-2fa` refuse too.
+   Before it, from step 1's revision checks: the ban and the per-client cap count by the IPv6 /56, a full sign-in
+   pool drops from the /48 (IPv4 /24) holding the most, a live sign-in challenge is reused only for 4 minutes and the
+   autofill's get restarts at 4.5, a pre-session's aged-out `passkey_started` row is deleted at its next call (an
+   evicted young one keeps counting), and `passkey.js` reads only a 401 or a redirect to /login as signed out.
 3. **The lock** (M): the session keys and the cookie, `Why::Locked` in `admin_or_why` with `lock::EXEMPT`, `/api/used`,
    `/lock`, `static/app-lock.js`, the scripted reloads asking `handyLock.due()`, `reconnect.js`'s 423, the veil.
 

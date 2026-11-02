@@ -1621,6 +1621,17 @@ pub fn build_admin_router(
             "/account/passkeys/{id}/remove",
             post(handlers::passkeys::remove),
         )
+        // Design 74 step 2: "Kun passkey" on (a passkey confirms it), and its switch-off page (the passkey, a new
+        // password and the TOTP in one write).
+        .route(
+            "/account/passkey-only",
+            post(handlers::passkeys::passkey_only_on),
+        )
+        .route(
+            "/account/password-sign-in",
+            get(handlers::passkeys::password_sign_in_form)
+                .post(handlers::passkeys::password_sign_in),
+        )
         // A tapped notification's `?push=<delivery>` (server round 5 §1). Added before
         // `require_full_auth` so it runs inside it (a later layer runs earlier) and sees
         // `CurrentAdmin`.
