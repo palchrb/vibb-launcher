@@ -444,8 +444,31 @@ class EnforcementPlanTest {
         // Not allowlisted: suspended and hidden as usual, lock or not.
         val notAllowed = plan(listOf("org.example.music"), locked = true, alarm = clock)
         assertTrue(clock in notAllowed.suspend && clock in notAllowed.hide)
-        // Never pinned.
-        assertFalse(clock in plan(listOf(clock), locked = true, alarm = clock).kioskPackages.orEmpty())
+    }
+
+    /** Bug 2026-11-02: a school rule with the kiosk on - the clock rang, but its ringing screen (a task of its own) was
+     * refused by lock task, so Stop never came up. Allowed, it is pinned during the rule; not allowed, never. */
+    @Test
+    fun `an allowed alarm app is pinned during the rule, a not allowed one never`() {
+        val clock = "org.example.game"
+        for (noCalls in listOf(false, true)) {
+            for (calls in listOf(CallPolicyState.Unmanaged, callsOn)) {
+                val case = "noCalls $noCalls, $calls"
+                val pinned = plan(listOf(clock, "org.example.music"), locked = true, alarm = clock, noCalls = noCalls, calls = calls)
+                assertTrue(case, clock in pinned.kioskPackages.orEmpty())
+                assertFalse(case, clock in pinned.suspend)
+                // The other allowed apps stay off the list and suspended.
+                assertFalse(case, "org.example.music" in pinned.kioskPackages.orEmpty())
+                assertTrue(case, "org.example.music" in pinned.suspend)
+                val notAllowed = plan(listOf("org.example.music"), locked = true, alarm = clock, noCalls = noCalls, calls = calls)
+                assertFalse(case, clock in notAllowed.kioskPackages.orEmpty())
+            }
+        }
+        // An allowed app that isn't an alarm app isn't pinned by it; the kiosk off pins nothing (`pinLockHelpers` there).
+        assertFalse("org.example.music" in plan(listOf(clock, "org.example.music"), locked = true, alarm = clock).kioskPackages.orEmpty())
+        assertNull(plan(listOf(clock), kioskDesired = false, locked = true, alarm = clock).kioskPackages)
+        // Unlocked it is pinned as any allowed app.
+        assertTrue(clock in plan(listOf(clock), alarm = clock).kioskPackages.orEmpty())
     }
 
     @Test
