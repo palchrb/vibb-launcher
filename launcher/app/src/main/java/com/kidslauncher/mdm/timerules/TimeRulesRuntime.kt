@@ -258,6 +258,8 @@ object TimeRulesRuntime {
             // Design r13 §1.4 (R13-5): one snapshot per re-check, for the lock reason and the listeners.
             val snap = snapshot(context, currentPolicyDecision().policy)
             val changedTo = reevaluateLockReasonFromCache(context, snap)
+            // A silent rule's Do Not Disturb follows the same lock (server 0121), at every boundary and screen-on.
+            ZenRuleRuntime.follow(context, snap.lock, snap.clocks.elapsedMs)
             if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
                 // Design 32 step 2 (M5): not while the keyguard cover is locked (the screen-on's start
                 // under the lock) - it would un-occlude it; at once without the cover.

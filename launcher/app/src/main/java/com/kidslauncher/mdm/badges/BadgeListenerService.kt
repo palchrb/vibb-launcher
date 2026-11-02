@@ -21,6 +21,9 @@ import com.kidslauncher.mdm.calls.ElementPost
  * kept in memory only ([GlanceStore]) - gets every post with its ranking, every removal, ranking
  * update, connect and disconnect; this class itself still reads none of it. Since design 42
  * [ClockReader] reads the title and text of the pinned clock app's ongoing notification (its timer).
+ * Since bug 2026-11-02 [AlarmNoticeReader] reads whether a notification is a ringing alarm (category, ongoing, a
+ * full-screen intent - never its text, extras or actions) for the alarm's yield over the PIN lock, and keeps a
+ * ringing one's full-screen intent for the lock to bring the ringing screen back.
  * Since round L5 [ElementDmReader] also names the contact of a missed Element X call (the same facts plus the
  * category), kept by the notification's key in [ElementMissedCallStore]'s memory for the contact card and badges.
  * Here: never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
@@ -34,6 +37,7 @@ class BadgeListenerService : NotificationListenerService() {
         NotificationRuleRuntime.attach(this)
         ElementMissedCallStore.attach(elementSweep)
         ClockReader.attach { keys -> activeOrNull(keys) }
+        AlarmNoticeReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
     }
@@ -46,6 +50,7 @@ class BadgeListenerService : NotificationListenerService() {
         VoipCallReader.disconnected(this)
         GlanceReader.disconnected()
         ClockReader.disconnected()
+        AlarmNoticeReader.disconnected()
     }
 
     override fun onDestroy() {
@@ -53,6 +58,7 @@ class BadgeListenerService : NotificationListenerService() {
         ElementMissedCallStore.detach(elementSweep)
         // The clock reader's lookup holds this instance: a destroy without the disconnect drops it too.
         ClockReader.disconnected()
+        AlarmNoticeReader.disconnected()
         super.onDestroy()
     }
 
@@ -63,6 +69,7 @@ class BadgeListenerService : NotificationListenerService() {
             ElementMissedCallStore.posted(elementPost(it))
             VoipCallReader.posted(this, it)
             ClockReader.posted(it)
+            AlarmNoticeReader.posted(it)
             applyRule(it, null)
         }
         recount()
@@ -87,6 +94,7 @@ class BadgeListenerService : NotificationListenerService() {
             ElementMissedCallStore.removed(it.key)
             VoipCallReader.removed(this, it)
             ClockReader.removed(it)
+            AlarmNoticeReader.removed(it)
             GlanceReader.removed(it)
             // Our missed-call notification left the shade (snoozed, cancelled by the system): the
             // glance page shows what it shows (design 25 QA Low 9).
@@ -110,6 +118,7 @@ class BadgeListenerService : NotificationListenerService() {
         ElementMissedCallStore.swept(active.map { elementPost(it) })
         VoipCallReader.connected(this, active)
         ClockReader.connected(active)
+        AlarmNoticeReader.connected(active)
         if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
         recount()
     }

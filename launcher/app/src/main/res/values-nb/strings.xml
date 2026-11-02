@@ -107,6 +107,9 @@
     <string name="kid_settings_sound">Lyd på telefonen</string>
     <string name="kid_settings_sound_on">Lyd</string>
     <string name="kid_settings_sound_vibrate">Lydløs (vibrerer)</string>
+    <!-- Our own Do Not Disturb rule while a silent time rule runs (server 0121): its name and when it runs, in Android's Do Not Disturb settings. -->
+    <string name="rule_silence_name">Stille tidsregel</string>
+    <string name="rule_silence_trigger">Mens en tidsregel er på</string>
     <string name="kid_settings_sound_dnd">Ikke forstyrr er på.</string>
     <string name="kid_settings_sound_fully_silent">Telefonen er helt lydløs nå, uten vibrering.</string>
     <string name="kid_settings_sound_volume_keys">Lyden kan ikke endres her akkurat nå. Volumknappene virker.</string>

@@ -594,6 +594,8 @@ object PinLockRuntime {
         CoroutineScope(Dispatchers.IO).launch {
             systemClocks = ClockApp.systemClocks(app)
             ClockApp.refresh(app)
+            // Revision R3: a ring already up at the start was read before the clock set was known.
+            handler.post { com.kidslauncher.mdm.badges.AlarmNoticeReader.clocksKnown() }
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
             sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
@@ -971,6 +973,8 @@ object PinLockRuntime {
                     AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
                     if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()
+                    // Gap closed 2026-11-02 (code QA L6): the resumed lock looks for a still-ringing alarm's screen now.
+                    screenOnListeners.toList().forEach { listener -> runCatching { listener() } }
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
@@ -1315,10 +1319,62 @@ object PinLockRuntime {
         return SystemClock.elapsedRealtime() < emergencyFlowUntilElapsed && !(emergencyCallSeen && !telecom)
     }
 
-    /** The system clock app's alarm is probably ringing ([alarmLikelyRinging]). */
+    /** A clock app's alarm is probably ringing ([alarmRingingNow]): its ringing notification is up (bug 2026-11-02,
+     * a2 - the yield lasts while it rings, bounded by [ALARM_NOTICE_MAX_MS]), or the window after its time. */
     private fun alarmNow(context: Context): Boolean {
         rememberAlarm(context)
-        return alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis())
+        return alarmRingingNow(
+            com.kidslauncher.mdm.badges.AlarmNoticeReader.ringing(clockPackages()), rememberedAlarmMs, System.currentTimeMillis(),
+            alarmsSilenced = com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms(),
+        )
+    }
+
+    /** The key of the alarm screen last re-sent, until [alarmScreenCheck] looked (code QA L2). Main thread. */
+    private var alarmScreenSentKey: String? = null
+
+    /** Told at every screen-on (the lock re-arms its alarm-screen check there instead of polling in the dark, code QA
+     * L6). Main thread. */
+    private val screenOnListeners = mutableListOf<() -> Unit>()
+
+    fun addScreenOnListener(listener: () -> Unit) { if (listener !in screenOnListeners) screenOnListeners += listener }
+    fun removeScreenOnListener(listener: () -> Unit) { screenOnListeners -= listener }
+
+    /**
+     * Gap closed 2026-11-02: the resumed lock, settled [ALARM_SCREEN_SETTLE_MS], brings a still-ringing alarm's screen
+     * back over itself ([alarmScreenStep], [com.kidslauncher.mdm.badges.AlarmNoticeReader.screenKey]) - the kid pressed
+     * power while it rang and the screen-off's lock-up covered it. Sent from [context], the visible lock; one of our own
+     * starts for the face's loss rule. The screen that comes up is yielded to ([AlarmNotices.resent]); Stop or Snooze
+     * brings the lock back. [typing]: the keypad holds digits. Returns the step taken - [AlarmScreenStep.SEND] only
+     * when it went (the caller then runs [alarmScreenCheck] after [ALARM_SCREEN_CHECK_MS]). Main thread.
+     */
+    fun sendAlarmScreen(context: Context, typing: Boolean): AlarmScreenStep {
+        val app = context.applicationContext
+        val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
+        val telecom = telecomInCall(app)
+        val clocks = clockPackages()
+        val key = reader.screenKey(clocks)
+        val step = alarmScreenStep(
+            key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),
+            typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),
+            alarmsSilenced = com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms(),
+        )
+        if (step != AlarmScreenStep.SEND || key == null) return step
+        noteOwnStart("the ringing alarm's screen")
+        val sent = reader.sendScreen(context, key, clocks)
+        Log.i(LOG_TAG, if (sent) "The ringing alarm's screen sent again" else "The ringing alarm's screen couldn't be sent")
+        alarmScreenSentKey = key.takeIf { sent }
+        return if (sent) AlarmScreenStep.SEND else AlarmScreenStep.NONE
+    }
+
+    /** [ALARM_SCREEN_CHECK_MS] after a re-send (code QA L2, as 17b's check): the lock still in front means nothing came
+     * up - that ring's yield closes again ([com.kidslauncher.mdm.badges.AlarmNoticeReader.sendCameToNothing]). The
+     * lock's pause drops the check (it left the front: the screen came). Main thread. */
+    fun alarmScreenCheck() {
+        val key = alarmScreenSentKey ?: return
+        alarmScreenSentKey = null
+        if (!lockResumed) return
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.sendCameToNothing(key)
+        Log.i(LOG_TAG, "The ringing alarm's screen didn't come up: its yield closes")
     }
 
     // ---- the notice wake (launcher round 7 §3) ------------------------------------------------
@@ -1671,8 +1727,12 @@ object PinLockRuntime {
         KeyguardCover.onLockResumed(context, interactiveNow)
         skipBootMark("the lock is up")
         refrontAttempt = 0
-        // Back in front after the alarm: its exemption ends now (qa-10-code #4).
+        // Back in front after the alarm: its exemption ends now (qa-10-code #4) - the ringing notifications' too (a2).
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.lockResumed(yielding)
+        // Revision R2: a re-send whose screen came and went with no "alarm" yield - that ring's yield closes.
+        alarmSendSpentAtResume(alarmScreenSentKey, yielding)?.let { com.kidslauncher.mdm.badges.AlarmNoticeReader.sendCameToNothing(it) }
+        alarmScreenSentKey = null
         yielding = null
         sosFlowUntilElapsed = 0L
         sosMarkUnlogged = false

@@ -67,6 +67,8 @@ object ClockApp {
             if (now != verified) Log.i(LOG_TAG, "Clock app $PACKAGE verified: $now")
             verified = now
             if (!now) Handler(Looper.getMainLooper()).post { ClockReader.unverified() }
+            // Revision R3: newly verified - a Fossify ring already up gets its screen kept.
+            if (now) Handler(Looper.getMainLooper()).post { com.kidslauncher.mdm.badges.AlarmNoticeReader.clocksKnown() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Clock app check failed: ${e.javaClass.simpleName}")
         }
