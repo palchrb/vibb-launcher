@@ -2709,3 +2709,21 @@ a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
 .confirm-body p.passkey-warn { padding: 10px 12px; border-radius: 10px; background: var(--field-bg); color: var(--label); }
 .password-on-confirm { margin-top: 20px; }
 .password-on-lede { margin: -4px 4px 8px; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
+/* ---- Design 74 step 3: the app lock (static/app-lock.js, lock.html, account.html's #app-lock) ---- */
+/* A page of a lock-on session that is due, or hidden (the app switcher's picture): nothing on it shows - the body's own
+   ground stays. The lock is the server's; this only keeps the page from flashing up first (D3.3). */
+html.locked body > *,
+html.veiled body > * { visibility: hidden !important; }
+/* The lock screen (§6.5): the Vibb mark, the large title, the sub, one wide filled Unlock, Sign Out as plain text at the
+   bottom; centred in one narrow column. */
+.lock-card { display: flex; flex-direction: column; align-items: center; max-width: 320px; margin: 0 auto; text-align: center; }
+.lock-mark { display: block; width: 64px; height: 64px; border-radius: 16px; margin: 0 0 12px; }
+.lock-title { margin: 0 0 6px; font-family: var(--font-display); font-size: 1.9rem; font-weight: 800; line-height: 1.15; }
+.lock-sub { margin: 0 0 22px; font-size: 1rem; color: var(--label-2); }
+.lock-form { width: 100%; }
+.lock-error { margin: 0 0 14px; font-size: 0.9375rem; line-height: 1.4; color: var(--red-text); }
+.lock-note { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
+.lock-out { margin-top: 32px; }
+.button-plain,
+.button-plain:hover { padding: 10px 16px; border: 0; background: transparent; color: var(--tint); font-size: 1rem; }
+.lock-field-error { margin: 4px 16px 10px; }

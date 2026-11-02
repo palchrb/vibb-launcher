@@ -34,6 +34,8 @@ struct LoginTemplate {
     passkeys_here: bool,
     /// No account can sign in with a password (design 74 §6.4): only "Sign in with passkey".
     passwords_off: bool,
+    /// Where a passkey sign-in goes on to (design 74 step 3: a local path, `lock::local_next`; empty: Devices).
+    next: String,
 }
 crate::i18n::words!(LoginTemplate);
 
@@ -75,15 +77,24 @@ impl LoginView {
     }
 }
 
+#[derive(Deserialize)]
+pub struct LoginQuery {
+    #[serde(default)]
+    next: String,
+}
+
+/// `GET /login`; `?next=` (a local path, the lock screen's Sign Out leaves one) is where a passkey sign-in goes on to.
 pub async fn login_form(
     State(state): State<AppState>,
     lang: Lang,
     ceremony: crate::passkeys::Ceremony,
+    axum::extract::Query(query): axum::extract::Query<LoginQuery>,
 ) -> impl IntoResponse {
-    render_login(
+    render_login_next(
         None,
         lang,
         LoginView::load(&state.db, ceremony.rp_id.is_some()).await,
+        crate::lock::local_next(&query.next).as_deref(),
     )
 }
 
@@ -94,6 +105,16 @@ pub struct LoginForm {
 }
 
 pub(crate) fn render_login(error: Option<String>, lang: Lang, view: LoginView) -> Html<String> {
+    render_login_next(error, lang, view, None)
+}
+
+/// [render_login] with where a passkey sign-in goes on to (a local path, already checked).
+pub(crate) fn render_login_next(
+    error: Option<String>,
+    lang: Lang,
+    view: LoginView,
+    next: Option<&str>,
+) -> Html<String> {
     Html(
         LoginTemplate {
             lang,
@@ -101,6 +122,7 @@ pub(crate) fn render_login(error: Option<String>, lang: Lang, view: LoginView) -
             error,
             passkeys_here: view.passkeys_here,
             passwords_off: view.passwords_off,
+            next: next.unwrap_or_default().to_string(),
         }
         .render()
         .unwrap(),
@@ -296,6 +318,8 @@ pub async fn login(
             .insert(admin_auth::EPOCH_KEY, admin.session_epoch)
             .await
             .ok();
+        // A new sign-in starts unlocked (design 74 D3.1, qa-passkeys-3 server L1); this account has no passkey yet.
+        crate::lock::set(&session, 0).await.ok();
         Redirect::to("/").into_response()
     }
 }
@@ -490,6 +514,8 @@ pub async fn verify_2fa(
             .await
             .ok();
     }
+    // Design 74 D3.1: this browser's app lock comes back with the new sign-in, when it can be opened here.
+    crate::lock::carry(&state, &session, &headers, admin.id, &ceremony).await;
     Redirect::to("/").into_response()
 }
 
@@ -518,7 +544,25 @@ pub async fn logout(
         tracing::error!(%err, "couldn't delete this browser's notification subscription");
     }
     session.flush().await.ok();
-    security::sign_in_redirect(security::SignInWhy::SignOut)
+    // The lock screen's Sign Out (design 74 §6.5) keeps where the parent was going: a passkey sign-in goes on there.
+    let next = form_urlencoded::parse(&body)
+        .find(|(name, _)| name == "next")
+        .and_then(|(_, value)| crate::lock::local_next(&value));
+    let mut response = security::sign_in_redirect(security::SignInWhy::SignOut);
+    if let Some(next) = next {
+        let to = format!(
+            "/login?{}",
+            form_urlencoded::Serializer::new(String::new())
+                .append_pair("next", &next)
+                .finish()
+        );
+        if let Ok(value) = axum::http::HeaderValue::from_str(&to) {
+            response
+                .headers_mut()
+                .insert(axum::http::header::LOCATION, value);
+        }
+    }
+    response
 }
 
 #[derive(Template)]
@@ -900,8 +944,38 @@ struct AccountTemplate {
     /// The addresses (RP IDs) this parent has passkeys for: the switch says signing in works only there (D4.3,
     /// qa-passkeys-2 L2 - sessions don't keep their host, so the passkeys are the signal).
     passkey_rp_ids: String,
+    /// Design 74 §6.1, D3.1: this browser's app lock (the session's minutes, 0 = off) and its choices.
+    lock_minutes: u32,
+    lock_choices: Vec<LockChoice>,
+    /// The time the switch turns the lock on at (D3.1: 5 min first).
+    lock_first: u32,
 }
 crate::i18n::words!(AccountTemplate);
+
+/// An option of Account's "Lock with Face ID" (design 74 D3.1): its minutes and its words.
+struct LockChoice {
+    minutes: u32,
+    label: &'static str,
+    selected: bool,
+}
+
+/// The lock's choices with `current` selected: Off and every time (D3.1).
+fn lock_choices(current: u32) -> Vec<LockChoice> {
+    std::iter::once(0)
+        .chain(crate::lock::CHOICES)
+        .map(|minutes| LockChoice {
+            minutes,
+            label: match minutes {
+                0 => "lock.choice.off",
+                1 => "lock.choice.1",
+                5 => "lock.choice.5",
+                15 => "lock.choice.15",
+                _ => "lock.choice.60",
+            },
+            selected: minutes == current,
+        })
+        .collect()
+}
 
 /// An option of Account's Language select (design 70 §3), its label a key worded in its own language.
 struct LanguageChoice {
@@ -1008,9 +1082,13 @@ pub(crate) async fn render_account(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let lock_minutes = crate::lock::Held::of(session).await.minutes;
     let page = AccountTemplate {
         lang,
         title: t(lang, "account.title").to_string(),
+        lock_minutes,
+        lock_choices: lock_choices(lock_minutes),
+        lock_first: crate::lock::FIRST_CHOICE,
         admin_id: admin.id,
         username: admin.username.clone(),
         totp_enabled: admin.totp_enabled,
@@ -1111,6 +1189,8 @@ pub async fn account_page(
             "password",
             t(lang, "account.password.on_again"),
         )),
+        // Design 74 §6.1: the app lock's time, in its group.
+        (_, _, Some("lock")) => Some(Flash::done("app-lock", t(lang, "lock.saved"))),
         _ => None,
     };
     let answer = AccountAnswer {

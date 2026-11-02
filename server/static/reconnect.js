@@ -27,6 +27,9 @@
 //   while the session was valid), asks `GET /api/session` (204 / 401) at load, when shown again and
 //   back from the back-forward cache and, signed in, goes back to the page that was wanted
 //   (`loginReturn`; never off this origin); a ping redirected to the login asks it too.
+// - the app lock (design 74 D3.3-D3.4): before the return reload, a restart or the reload in place another script asks
+//   for, `window.handyLock.due()` (static/app-lock.js) is asked, and a due lock goes to /lock instead; a ping or the
+//   sign-in page's session check answered 423 (the server's lock) goes there too.
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
 // WebView 80, iOS Safari 14). Run its tests: node --test jstest/reconnect.test.js
 (function (root) {
@@ -146,6 +149,42 @@
         return appPath(referrer, here) || "/";
     }
 
+    /** This page's path, query and #fragment (the lock's `next`). */
+    function herePath(win) {
+        var l = win.location;
+        return (l.pathname || "/") + (l.search || "") + (l.hash || "");
+    }
+
+    /** Whether app-lock.js says the lock is due (design 74 D3.3). */
+    function lockDue(win) {
+        var lock = win.handyLock;
+        return !!(lock && typeof lock.due === "function" && lock.due());
+    }
+
+    /**
+     * The lock screen, to go on to `next` afterwards (design 74 D3.4): app-lock.js's way when it is on the page (it
+     * hides the page first), else the address itself.
+     */
+    function toLock(win, next) {
+        var lock = win.handyLock;
+        if (lock && typeof lock.lock === "function") {
+            lock.lock(next);
+            return;
+        }
+        win.location.replace("/lock" + (next ? "?next=" + encodeURIComponent(next) : ""));
+    }
+
+    /** `href`'s path, query and #fragment on this origin, else null. */
+    function pathOf(href, here) {
+        try {
+            var to = new URL(href, here);
+            if (to.origin !== new URL(here).origin) return null;
+            return to.pathname + to.search + to.hash;
+        } catch (e) {
+            return null;
+        }
+    }
+
     /** `GET /api/session`: `done(status)`, `done(0)` for no answer in time. */
     function askSession(win, done) {
         var finished = false;
@@ -203,11 +242,12 @@
         var finished = false;
         var ctrl = null;
         var timer = null;
-        function finish(answered) {
+        // `status`: the answer's (423 is the app lock's, design 74 D3.4), 0 for none.
+        function finish(answered, status) {
             if (finished) return;
             finished = true;
             if (timer !== null) win.clearTimeout(timer);
-            done(answered);
+            done(answered, status || 0);
         }
         if (typeof win.fetch !== "function") {
             finish(true);
@@ -229,11 +269,11 @@
             win.fetch(PING_URL + "?t=" + now(), options).then(function (res) {
                 if (!finished && landedOnLogin(res)) {
                     askSession(win, function (status) {
-                        finish(status > 0 && status < 500);
+                        finish(status > 0 && status < 500, status);
                     });
                     return;
                 }
-                finish(!!res && res.status < 500);
+                finish(!!res && res.status < 500, res ? res.status : 0);
             }, function () {
                 finish(false);
             });
@@ -509,6 +549,11 @@
             signInAsking = true;
             askSession(win, function (status) {
                 signInAsking = false;
+                // The session lives but the app is locked (design 74 D3.4): the lock, then the page wanted.
+                if (status === 423 && !saving) {
+                    toLock(win, target);
+                    return;
+                }
                 if (status !== 204 || saving) return;
                 var at = String(now());
                 try {
@@ -533,6 +578,12 @@
          * belt to the `data-post-answer` rule (QA M1) - and loses a `notice=` already shown.
          */
         function go(w) {
+            // A due lock (design 74 D3.3): the lock screen instead of the page, which the server would refuse.
+            if (lockDue(win)) {
+                end();
+                toLock(win, w.href === null ? herePath(win) : pathOf(w.href, win.location.href));
+                return;
+            }
             w.restarted = now();
             w.failed = false;
             if (w.href === null) {
@@ -549,9 +600,16 @@
         function check(w) {
             if (wait !== w || w.asking) return;
             w.asking = true;
-            ping(win, now, function (answered) {
+            ping(win, now, function (answered, status) {
                 w.asking = false;
                 if (wait !== w) return;
+                // The server's lock answered (design 74 D3.4): to the lock, then where the wait was going.
+                if (status === 423) {
+                    var next = w.href === null ? herePath(win) : pathOf(w.href, win.location.href);
+                    end();
+                    toLock(win, next);
+                    return;
+                }
                 if (!answered) {
                     w.failed = true;
                     return;
@@ -663,6 +721,12 @@
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
             hiddenAt = null;
+            // Back after the lock's time (design 74 D3.3): the lock, before any return reload.
+            if (lockDue(win)) {
+                end();
+                toLock(win, herePath(win));
+                return;
+            }
             checkSignIn();
             if (wait) {
                 if (!wait.timers.length) arm(wait);
@@ -706,6 +770,11 @@
             },
             reload: function () {
                 if (!this.mayReload()) return false;
+                // A due lock: the lock screen instead (design 74 D3.3).
+                if (lockDue(win)) {
+                    toLock(win, herePath(win));
+                    return true;
+                }
                 go(start("load", null, null));
                 return true;
             }
@@ -724,6 +793,8 @@
         appPath: appPath,
         loginReturn: loginReturn,
         domView: domView,
+        toLock: toLock,
+        pathOf: pathOf,
         WANTED_MS: WANTED_MS,
         BOUNCE_MS: BOUNCE_MS,
         CHIP_AFTER: CHIP_AFTER,

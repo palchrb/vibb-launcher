@@ -6,7 +6,9 @@
 // reloads once a save has started or while a <details> is open, it polls only while the page is
 // visible, and it gives up after 30 minutes of polling (a reload starts it again). The server loads
 // it only while a row waits. Without JS a reload shows the same. `?install=` (a POST's answer) is
-// dropped from the address once shown. Run its tests: node --test jstest/install-now.test.js
+// dropped from the address once shown. Once the app lock is due (design 74 D3.3, `window.handyLock.due()`)
+// it neither polls nor reloads, and a poll answered 423 (the server's lock) goes to the lock too.
+// Run its tests: node --test jstest/install-now.test.js
 (function (root) {
     "use strict";
 
@@ -57,12 +59,35 @@
             if (!doc.hidden) schedule();
         });
 
+        // The app lock is due, or the server's lock answered: to the lock, nothing more here.
+        function lockNow() {
+            var lock = win.handyLock;
+            leaving = true;
+            if (lock && typeof lock.lock === "function") lock.lock();
+            else win.location.replace("/lock?next=" + encodeURIComponent(win.location.pathname + (win.location.search || "")));
+        }
+
+        function lockDue() {
+            var lock = win.handyLock;
+            return !!(lock && typeof lock.due === "function" && lock.due());
+        }
+
         function tick() {
             timer = null;
             if (leaving || doc.hidden) return;
+            if (lockDue()) {
+                lockNow();
+                return;
+            }
             polls += 1;
             return win.fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
-                .then(function (response) { return response.ok ? response.json() : null; })
+                .then(function (response) {
+                    if (response.status === 423) {
+                        lockNow();
+                        return null;
+                    }
+                    return response.ok ? response.json() : null;
+                })
                 .then(apply)
                 .catch(function () {})
                 .then(schedule);
@@ -79,6 +104,10 @@
                 if (sub && sub.textContent !== phone.sub) sub.textContent = phone.sub;
             });
             if (changed && !leaving && !doc.querySelector("details[open]")) {
+                if (lockDue()) {
+                    lockNow();
+                    return;
+                }
                 keepPlace();
                 leaving = true;
                 win.location.reload();

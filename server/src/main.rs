@@ -30,6 +30,7 @@ mod kid_lock;
 mod kid_pin;
 mod kiosk_escapes;
 mod limits;
+mod lock;
 mod lock_glance;
 mod models;
 mod music;
@@ -792,6 +793,9 @@ pub fn build_device_router(state: AppState) -> Router {
 /// The body limit of the forms reachable without a session (`/login`, `/auth/verify-2fa`,
 /// `/auth/passkey`).
 const SIGNED_OUT_FORM_LIMIT: usize = 4096;
+/// The unlock's form (design 74 D3.5): the largest assertion `/auth/passkey`'s 4 KiB takes, and a `next` of up to 512
+/// bytes, urlencoded (qa-passkeys-3 server N2).
+const LOCK_FORM_LIMIT: usize = 6 * 1024;
 /// A new passkey's form: the browser's credential as JSON (design 74 D1.2).
 const PASSKEY_FORM_LIMIT: usize = 8192;
 
@@ -1627,6 +1631,8 @@ pub fn build_admin_router(
             "/account/passkey-only",
             post(handlers::passkeys::passkey_only_on),
         )
+        // Design 74 D3.1: the app lock's time for this browser, behind a passkey that works here.
+        .route("/account/lock", post(handlers::lock::set))
         .route(
             "/account/password-sign-in",
             get(handlers::passkeys::password_sign_in_form)
@@ -1642,6 +1648,25 @@ pub fn build_admin_router(
         // A save (a POST answered with a 303 back to its page) in the security log, coalesced per
         // parent and page (Q29); inside require_full_auth too, for its `CurrentAdmin`.
         .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
+        .layer(from_fn_with_state(
+            state.clone(),
+            security::require_full_auth,
+        ));
+
+    // The app lock (design 74 §3): the lock screen, its challenge and the unlock - signed in, and exempt from the
+    // lock by `lock::EXEMPT` (the router walk in `tests::app_lock` keeps every other route locked) - and the input
+    // beacon. Not inside admin_routes' layers: none is a settings save or carries a push marker.
+    let lock_routes = Router::new()
+        .route(
+            lock::LOCK_ROUTE,
+            get(handlers::lock::page)
+                .post(handlers::lock::unlock)
+                .layer(DefaultBodyLimit::max(LOCK_FORM_LIMIT)),
+        )
+        .route(lock::OPTIONS_ROUTE, post(handlers::lock::options))
+        // D3.3: the page's input beacon (static/app-lock.js, at most once a minute) - a use of the app, so the lock's
+        // check moves the session's last use on the way in. Not exempt: locked, it is 423 like any other.
+        .route(lock::BEACON_ROUTE, post(handlers::lock::used))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,
@@ -1696,6 +1721,7 @@ pub fn build_admin_router(
     let mut app = Router::new()
         .merge(public_routes)
         .merge(onboarding_routes)
+        .merge(lock_routes)
         .merge(admin_routes);
     if state.net.deploy_kind == net::DeployKind::Systemd {
         app = app.merge(host_routes);

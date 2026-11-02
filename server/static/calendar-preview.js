@@ -39,7 +39,9 @@
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: body(form),
             }).then(function (res) {
-                return res.ok ? res.text() : null;
+                // Only the preview's own answer: a redirect (the app lock's 303 to /lock, design 74 D3.4) is never
+                // swapped into the page.
+                return res.ok && !res.redirected ? res.text() : null;
             }).then(function (html) {
                 if (html !== null && mine === asked) target.innerHTML = html;
             }, function () {});

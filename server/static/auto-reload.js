@@ -10,7 +10,9 @@
 //   panel): what was typed or opened would be lost.
 // A refusal's `?notice=` (and its `app=`) is dropped from the address once shown, so a reload
 // doesn't show it again (N4); anything else in the address stays (`from=`, Device › Apps opened
-// from the Apps tab). Run its tests: node --test jstest/auto-reload.test.js
+// from the Apps tab). Once the app lock is due (design 74 D3.3, `window.handyLock.due()` from
+// static/app-lock.js) it never reloads: it goes to the lock instead.
+// Run its tests: node --test jstest/auto-reload.test.js
 (function (root) {
     "use strict";
 
@@ -55,6 +57,12 @@
 
         function tick() {
             if (leaving) return;
+            var lock = win.handyLock;
+            if (lock && typeof lock.due === "function" && lock.due()) {
+                leaving = true;
+                lock.lock();
+                return;
+            }
             if (doc.querySelector("details[open]")) {
                 win.setTimeout(tick, DELAY);
                 return;

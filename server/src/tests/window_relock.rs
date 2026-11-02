@@ -968,7 +968,7 @@ async fn answer_newest(app: &TestApp, token: &str, id: i64, success: bool) {
 /// not reported yet - and never 2 minutes after the press; with nothing pending it loads nothing.
 #[tokio::test]
 async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
-    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=4\" defer></script>";
+    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=5\" defer></script>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;

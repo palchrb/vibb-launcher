@@ -133,6 +133,8 @@ pub enum Kind {
     Register,
     Login,
     Reauth,
+    /// The app lock's "Unlock" (design 74 D3.5): bound to `/lock`.
+    Unlock,
 }
 
 /// Everything a challenge is bound to (D1.7).
@@ -465,6 +467,8 @@ pub fn reauth_route(route: &str) -> bool {
             | ["account", "password-sign-in"]
             | ["account", "parents"]
             | ["account", "passkeys", "options"]
+            // Design 74 D3.2: the app lock's time, set behind a passkey that works here.
+            | ["account", "lock"]
     ) || matches!(parts.as_slice(), ["account", "parents", n, "reset" | "remove"] if number(n))
         || matches!(parts.as_slice(), ["account", "passkeys", n, "remove"] if number(n))
         || matches!(parts.as_slice(), ["devices", n, "lock"] if number(n))
@@ -953,12 +957,37 @@ pub async fn reauth(
     admin: &AdminUser,
     json: &str,
 ) -> Result<PasskeyRow, Refused> {
+    signed_in_assertion(state, session, ceremony, admin, json, Kind::Reauth).await
+}
+
+/// The app lock's unlock (design 74 D3.5): [reauth]'s checks for an `unlock` challenge of this session at `/lock` -
+/// the signed-in parent's own credential only (another parent's passkey doesn't open your session).
+pub async fn unlock(
+    state: &AppState,
+    session: &tower_sessions::Session,
+    ceremony: &Ceremony,
+    admin: &AdminUser,
+    json: &str,
+) -> Result<PasskeyRow, Refused> {
+    signed_in_assertion(state, session, ceremony, admin, json, Kind::Unlock).await
+}
+
+/// A signed-in parent's assertion for a `kind` challenge bound to this session, account, epoch, RP ID and the
+/// request's route.
+async fn signed_in_assertion(
+    state: &AppState,
+    session: &tower_sessions::Session,
+    ceremony: &Ceremony,
+    admin: &AdminUser,
+    json: &str,
+    kind: Kind,
+) -> Result<PasskeyRow, Refused> {
     let assertion = Assertion::parse(json)?;
     let (Some(session), Some(rp_id)) = (session_id(session), ceremony.rp_id.clone()) else {
         return Err(Refused::Challenge);
     };
     let bound = Bound {
-        kind: Kind::Reauth,
+        kind,
         session,
         admin: Some((admin.id, admin.session_epoch)),
         rp_id: rp_id.clone(),
