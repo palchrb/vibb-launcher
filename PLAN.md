@@ -30,7 +30,7 @@ findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-11-02)
 
-**Next release (3) - the user, 2026-11-02: "jeg kan vente til emulatortest er ferdig"**: one release after the emulator session (R2, CalDAV write-back, the alarm fix, Kalender in rules, missed Element X calls, Stille): `server-v0.63.0` + `launcher-v0.38.0-rc.3` (+ music if changed); not before. **Release 2 PUBLISHED 2026-11-02**: `server-v0.62.0`, `launcher-v0.38.0-rc.2` and `music-v0.6.0-rc.1`, all on 63cb6bbf (the launcher's build re-run after a proxy.golang.org stream error, then signed). Next tags: `launcher-v0.38.0-rc.3`, `music-v0.6.0-rc.2`; the Done list below ships in the next server release.
+**Emulator session E7 RUNNING 2026-11-02** (integration branch `e7-integration` = main + android-r2 + caldav-write + rule-silence (with alarm-dismiss); `jelly36`; R2, the alarm fix, Stille, Kalender in rules, CalDAV §6z). **Next release (3) - the user, 2026-11-02: "jeg kan vente til emulatortest er ferdig"**: one release after the emulator session (R2, CalDAV write-back, the alarm fix, Kalender in rules, missed Element X calls, Stille): `server-v0.63.0` + `launcher-v0.38.0-rc.3` (+ music if changed); not before. **Release 2 PUBLISHED 2026-11-02**: `server-v0.62.0`, `launcher-v0.38.0-rc.2` and `music-v0.6.0-rc.1`, all on 63cb6bbf (the launcher's build re-run after a proxy.golang.org stream error, then signed). Next tags: `launcher-v0.38.0-rc.3`, `music-v0.6.0-rc.2`; the Done list below ships in the next server release.
 
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
