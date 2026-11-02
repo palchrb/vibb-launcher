@@ -13,7 +13,7 @@ import kotlinx.serialization.Transient
  * - the callback window after an emergency call opens only for a call the platform confirms as an
  *   emergency number and that connected, or that the launcher itself placed through Telecom (H1) -
  *   never from the static list; an incoming SIM call Telecom marks as its own emergency callback
- *   always passes ([emergencyCallbackAllowed]);
+ *   always passes ([emergencyCallbackPass]); a placing alone opens only [PROVISIONAL_WINDOW_MS];
  * - emergency numbers are always allowed outgoing, in or out of the phone book.
  */
 
@@ -171,12 +171,14 @@ data class LoggedCall(val number: String?, val startMs: Long, val durationSec: L
  * that the platform confirms as an emergency number AND that connected (QA blocker 2): an
  * outgoing call-log entry with a duration, or [recordedUntilMs] - the window our InCallService
  * recorded when it saw such a call become active, or the launcher recorded when it placed one
- * through Telecom itself (H1: Telecom may show an emergency call in the system dialer, so our
- * in-call service never sees it, and leaves it out of the call log) - already checked against
+ * itself (H1: Telecom may show an emergency call in the system dialer, so our in-call service never
+ * sees it, and leaves it out of the call log; a placing alone is [PROVISIONAL_WINDOW_MS], the hour
+ * only on evidence that it connected) - already checked against
  * elapsed time and the boot count (CallSystem, `timedWindowActive`), so changing the clock or
  * rebooting can't reopen it. Call-log dates are wall-clock times; the clock is locked
  * (`DISALLOW_CONFIG_DATE_TIME`, auto time) whenever calls are managed. Dialling `08`/`000` never
- * opens it, nor does 112 that another app dialled without the call connecting.
+ * opens it, nor does 112 that another app dialled without the call connecting (Telecom's own mark
+ * on the callback aside, [emergencyCallbackPass]).
  */
 fun callbackWindowUntil(
     nowMs: Long,
@@ -193,40 +195,73 @@ fun callbackWindowUntil(
 }
 
 /**
- * Our record of a platform-confirmed emergency call that is connected now (design 35 step 3) or that
- * the launcher has just placed (H1): the callback window runs [CALLBACK_WINDOW_MS] from **this**
- * record ([nowWallMs], [nowElapsedMs], [bootCount]) - every connected state our in-call service sees
- * writes one, the hang-up's last, so a 50-minute call still leaves an hour after the hang-up (a call
- * only the system dialer showed keeps the hour from its placing) -, while [connectedAtMs], the
- * call's own instant, is only the status report's ([reportedEmergencyAt]).
+ * How long the callback window lasts on a placing alone (H1 QA): the launcher placed an emergency call
+ * (or Telecom marked a callback for one placed elsewhere) but nothing shows it connected - hung up
+ * while dialling, no signal. Twice Telecom's own callback window (5 min by AOSP default, seen on the
+ * emulator). Evidence that it connected - our in-call service seeing it active, the call log's
+ * duration, the phone's call state off-hook for [PLACED_CONNECT_EVIDENCE_MS] ([PlacedCallEvidence]) -
+ * gives the full [CALLBACK_WINDOW_MS].
  */
-fun emergencyRecord(nowWallMs: Long, nowElapsedMs: Long, bootCount: Int, connectedAtMs: Long): Pair<WindowStart, Long> =
-    WindowStart(untilWallMs = nowWallMs + CALLBACK_WINDOW_MS, elapsedStartMs = nowElapsedMs, bootCount = bootCount) to
-        connectedAtMs
+const val PROVISIONAL_WINDOW_MS = 10 * 60 * 1000L
+
+/** Our stored emergency-call record (DE prefs `call_boot_state`): the window, its length, the call's
+ * instant for the status report, and whether that instant is the launcher's own placing of it. */
+data class EmergencyRecord(val window: WindowStart, val windowMs: Long, val atMs: Long, val placed: Boolean)
 
 /**
- * Whether an incoming call that the rules would block passes as the emergency services calling back
- * (E7's H1). First Telecom's own mark, [ecbm] (`Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE`):
- * Telecom keeps the last outgoing emergency call itself - whichever app placed it, the system dialer
- * included, and logged or not - and marks an incoming call on that account within its own callback
- * window. It counts only on a SIM subscription's account ([simAccount]: no other app can register
- * one, so no third-party connection service can claim the mark). Else our window ([windowOpen],
- * [callbackWindowUntil]). Both lazy: the account lookup and the call log are only read when needed.
+ * Our record of a platform-confirmed emergency call (design 35 step 3; H1): the callback window runs
+ * [windowMs] from **this** record ([nowWallMs], [nowElapsedMs], [bootCount]) - every connected state
+ * our in-call service sees writes one, the hang-up's last, so a 50-minute call still leaves an hour
+ * after the hang-up; a placing alone writes [PROVISIONAL_WINDOW_MS] -, while [atMs], the call's own
+ * instant, is only the status report's ([reportedEmergencyAt]).
  */
-fun emergencyCallbackAllowed(ecbm: Boolean, simAccount: () -> Boolean, windowOpen: () -> Boolean): Boolean =
-    (ecbm && simAccount()) || windowOpen()
+fun emergencyRecord(
+    nowWallMs: Long,
+    nowElapsedMs: Long,
+    bootCount: Int,
+    atMs: Long,
+    windowMs: Long = CALLBACK_WINDOW_MS,
+    placed: Boolean = false,
+): EmergencyRecord =
+    EmergencyRecord(WindowStart(untilWallMs = nowWallMs + windowMs, elapsedStartMs = nowElapsedMs, bootCount = bootCount), windowMs, atMs, placed)
 
-/** How long before Telecom creates a call our own record of placing it may be ([emergencyCallInstant]). */
-const val PLACED_BEFORE_CREATED_MS = 30_000L
+/** How long before Telecom creates a call the launcher's record of placing it may be ([placingOf]): the
+ * placing is read just before `TelecomManager.placeCall`, which creates the call. */
+const val PLACED_BEFORE_CREATED_MS = 5_000L
 
 /**
- * The status report's instant for an emergency call our in-call service sees connected ([atMs], at
- * Telecom's [createdAtMs]): the instant already stored ([storedAtMs]) when it belongs to the same call -
- * the launcher's own record of placing it (H1, taken just before Telecom created it) or an earlier
- * state of this call -, else [atMs]. One instant per call, so the server announces it once.
+ * Whether the stored record ([storedPlaced], [storedAtMs]) is the launcher's own placing of the call
+ * Telecom created at [createdAtMs] - then our in-call service's records of that call keep the placing's
+ * instant (one instant per call, so the server announces it once), and a disconnect without a connect
+ * drops it back to [PROVISIONAL_WINDOW_MS]. Only a placing counts, never another call's record.
  */
-fun emergencyCallInstant(storedAtMs: Long, createdAtMs: Long, atMs: Long): Long =
-    if (createdAtMs > 0 && storedAtMs in (createdAtMs - PLACED_BEFORE_CREATED_MS)..atMs) storedAtMs else atMs
+fun placingOf(storedPlaced: Boolean, storedAtMs: Long, createdAtMs: Long): Boolean =
+    storedPlaced && createdAtMs > 0 && storedAtMs in (createdAtMs - PLACED_BEFORE_CREATED_MS)..createdAtMs
+
+/** Why an incoming call that the rules would block passes as the emergency services calling back. */
+enum class CallbackPass { TELECOM_MARK, WINDOW }
+
+/**
+ * [CallbackPass] for an incoming call that the rules would block, `null` = none (E7's H1). First
+ * Telecom's own mark, [ecbm] (`Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE`): Telecom keeps the last
+ * outgoing emergency call itself - whichever app placed it, the system dialer included, and logged or
+ * not - and marks an incoming call on that account within its own callback window (seen on the
+ * emulator, E7; whether a Norwegian SIM's calls carry it is a device check). It counts only on a SIM
+ * subscription's account ([simAccount]: no other app can register one, so no third-party connection
+ * service can claim the mark). Else our window ([windowOpen], [callbackWindowUntil]). Both lazy: the
+ * account lookup and the call log are only read when needed.
+ */
+fun emergencyCallbackPass(ecbm: Boolean, simAccount: () -> Boolean, windowOpen: () -> Boolean): CallbackPass? = when {
+    ecbm && simAccount() -> CallbackPass.TELECOM_MARK
+    windowOpen() -> CallbackPass.WINDOW
+    else -> null
+}
+
+/** A call let through on Telecom's mark records the emergency call (placed outside the launcher:
+ * Android's keyguard, Emergency SOS) so the parent hears of it - unless one is already known from the
+ * last hour ([lastKnownEmergencyMs]: our record or the call log), which would be announced twice. */
+fun telecomMarkRecords(lastKnownEmergencyMs: Long?, nowMs: Long): Boolean =
+    lastKnownEmergencyMs == null || nowMs - lastKnownEmergencyMs >= CALLBACK_WINDOW_MS
 
 /** The status report's instant of the recorded emergency call: the stored connect instant (one
  * value per call, so the server announces the call once), else - a record an older build wrote -

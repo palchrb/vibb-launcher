@@ -45,9 +45,10 @@ class KidCallScreeningService : CallScreeningService() {
 }
 
 /** [decideIncoming] for a Telecom call; an unexpected error blocks unless calls are unmanaged. The
- * emergency callback passes by Telecom's own mark or our window ([emergencyCallbackAllowed]) - in
- * Telecom's emergency callback mode it skips this screening service, so [KidInCallService]'s re-check
- * is where that call is let through (E7's H1). */
+ * emergency callback passes by Telecom's own mark or our window ([emergencyCallbackPass]); a pass on the
+ * mark records the emergency call placed elsewhere ([CallSystem.telecomMarkSeen]). Telecom skipped this
+ * screening service for such a call on the emulator (E7: `Skipping call filtering ... ecm=true`), so
+ * [KidInCallService]'s re-check is where it is let through - a device check whether a real SIM does too. */
 fun incomingVerdict(context: Context, details: Call.Details): Verdict {
     val state = CallPolicyStore.effectiveState()
     return try {
@@ -57,7 +58,7 @@ fun incomingVerdict(context: Context, details: Call.Details): Verdict {
             verificationFailed = details.callerNumberVerificationStatus == Connection.VERIFICATION_STATUS_FAILED,
             state = state,
         ) {
-            emergencyCallbackAllowed(
+            val pass = emergencyCallbackPass(
                 ecbm = details.hasProperty(Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE),
                 simAccount = {
                     CallSystem.simAccount(context, details.accountHandle)
@@ -65,6 +66,8 @@ fun incomingVerdict(context: Context, details: Call.Details): Verdict {
                 },
                 windowOpen = { CallSystem.callbackWindowUntil(context) != null },
             )
+            if (pass == CallbackPass.TELECOM_MARK) CallSystem.telecomMarkSeen(context)
+            pass != null
         }
     } catch (e: Exception) {
         Log.e(LOG_TAG, "Incoming call check failed", e)

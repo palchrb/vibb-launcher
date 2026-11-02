@@ -42,3 +42,14 @@ internal class EmergencyConnects(
         calls.remove(call)
     }
 }
+
+/** What our in-call service's view of an outgoing emergency call means for the record (H1 QA). */
+internal enum class EmergencySighting { CONNECTED, ENDED_UNCONNECTED }
+
+/** [EmergencySighting] for a state change: active, or ended after connecting ([connectTimeMs] > 0), is
+ * CONNECTED; ended without ever connecting is ENDED_UNCONNECTED; anything else (dialling, held) `null`. */
+internal fun emergencySighting(active: Boolean, disconnected: Boolean, connectTimeMs: Long): EmergencySighting? = when {
+    active || (disconnected && connectTimeMs > 0) -> EmergencySighting.CONNECTED
+    disconnected -> EmergencySighting.ENDED_UNCONNECTED
+    else -> null
+}

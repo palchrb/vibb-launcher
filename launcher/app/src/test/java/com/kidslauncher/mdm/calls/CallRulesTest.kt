@@ -154,10 +154,9 @@ class CallRulesTest {
 
     @Test
     fun `Telecom's emergency callback mark lets a stranger through a no-calls rule, on a SIM account only`() {
-        fun allowed(ecbm: Boolean, sim: Boolean, window: Boolean) = emergencyCallbackAllowed(ecbm, { sim }, { window })
         for (state in listOf(managed, disabled, failClosed, withTimeRule(managed, callsBlocked = true))) {
             fun verdict(ecbm: Boolean, sim: Boolean, window: Boolean = false) =
-                decideIncoming("+4799887766", true, false, state) { allowed(ecbm, sim, window) }
+                decideIncoming("+4799887766", true, false, state) { emergencyCallbackPass(ecbm, { sim }, { window }) != null }
             assertEquals(Verdict.ALLOW, verdict(ecbm = true, sim = true))
             // A third-party connection service claiming the mark, or no mark: the rules (and our window) decide.
             assertEquals(Verdict.BLOCK, verdict(ecbm = true, sim = false))
@@ -167,15 +166,24 @@ class CallRulesTest {
     }
 
     @Test
-    fun `the account and the call log are only read when needed`() {
+    fun `the pass says why, and the account and the call log are only read when needed`() {
         val read = mutableListOf<String>()
         val sim = { read += "sim"; true }
-        val window = { read += "window"; false }
-        assertTrue(emergencyCallbackAllowed(ecbm = true, simAccount = sim, windowOpen = window))
+        val window = { read += "window"; true }
+        assertEquals(CallbackPass.TELECOM_MARK, emergencyCallbackPass(ecbm = true, simAccount = sim, windowOpen = window))
         assertEquals(listOf("sim"), read)
         read.clear()
-        assertFalse(emergencyCallbackAllowed(ecbm = false, simAccount = sim, windowOpen = window))
+        assertEquals(CallbackPass.WINDOW, emergencyCallbackPass(ecbm = false, simAccount = sim, windowOpen = window))
         assertEquals(listOf("window"), read)
+        assertNull(emergencyCallbackPass(ecbm = true, simAccount = { false }, windowOpen = { false }))
+    }
+
+    @Test
+    fun `a pass on Telecom's mark records the emergency call unless one is known from the last hour`() {
+        assertTrue("placed outside the launcher, unknown", telecomMarkRecords(null, now))
+        assertTrue("the last one is older", telecomMarkRecords(now - CALLBACK_WINDOW_MS, now))
+        assertFalse("ours or the call log's: announced already", telecomMarkRecords(now - 5 * minute, now))
+        assertFalse("a clock set back", telecomMarkRecords(now + minute, now))
     }
 
     // Callback window (QA blocker 2)
