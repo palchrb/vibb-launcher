@@ -1474,8 +1474,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   pins, a source change), the sync titles (`SyncProblem::title(lang)`; the log keeps English through `Display`) and
   error bodies (`i18n::error`). `app_display` is worded by the form: `AppDisplayForm::new(lang, …)` words the summary
   (`DisplayValues::describe(lang)`), the icons' names (`apps.display.icon.<key>`, `every_icon_is_worded`: a new icon
-  needs its key) and the colours (`color_label` gives a key), and a refusal (`FieldError.key`); `reset_hint` and
-  `preview_text` are keys the template words. Install Now's rows, flashes and `install-now.json`'s sub-lines come
+  needs its key) and the colours (`color_label` gives a key), and a refusal (`FieldError.key`); `preview_text` is a key the template words. Install Now's rows, flashes and `install-now.json`'s sub-lines come
   from `install_now` in the reader's language (`Offer::sub(lang)`, `value(lang)`, `flash(lang, word)`, the working
   words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4:
   a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `app_downloads::progress`

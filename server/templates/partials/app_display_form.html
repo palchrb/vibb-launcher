@@ -41,7 +41,6 @@
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.label }}</label>
             {% endfor %}
         </fieldset>
-        <p class="hint">{{ self.t("apps.display.hint") }}{% if form.can_reset() %} {{ self.t(form.reset_hint()) }}{% endif %} {{ self.t("apps.display.hint_where") }}</p>
         {% if let Some(on_home) = form.on_home %}{% if let Some((label, sub)) = form.on_home_words %}
         <input type="hidden" name="on_home_shown" value="1">
         <label class="row">
