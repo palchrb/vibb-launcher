@@ -128,9 +128,11 @@ fun unlockMarkFresh(markedAtMs: Long, nowMs: Long): Boolean = markedAtMs > 0 && 
 
 /**
  * PLAN "one usable thing opens straight after the PIN" (2026-11-02): the row the time-rule screen opens by itself as it
- * comes up after an unlock - its only row (an app, Kalender, or the phone book while calls are managed and allowed),
- * when the unlock marked it ([marked]: fresh, the phone still unlocked) and the lock handed it no glance row
- * ([handedOver], which opens instead). Otherwise none: the card stays. Emergency call is no row and never counts.
+ * comes up after an unlock - its only row, when that is an app or Kalender, the unlock marked it ([marked]: fresh, the
+ * phone still unlocked) and the lock handed it no glance row ([handedOver], which opens instead). Otherwise none: the
+ * card stays. The phone book never opens by itself (the coordinator's decision on QA N5: a bedtime with calls and
+ * nothing else would land every night unlock in it) but counts as a row, so it and one app keep the card; Emergency
+ * call is no row and never counts.
  */
 fun unlockOpenRow(marked: Boolean, handedOver: Boolean, rows: List<LockRow>): LockRow? =
-    if (marked && !handedOver && rows.size == 1) rows.single() else null
+    if (marked && !handedOver) rows.singleOrNull()?.takeIf { it !is LockRow.PhoneBook } else null

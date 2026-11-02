@@ -881,7 +881,7 @@
   "device.exceptions.footer_everyone": "Only apps allowed on at least one phone are listed. A phone that doesn't allow an app keeps it locked.",
   "device.exceptions.none_allowed": "No allowed apps to choose from. Allow one under Apps first.",
   "device.exceptions.calendar": "Vibb calendar",
-  "device.exceptions.calendar_sub": "Kalender on the phone, new events included",
+  "device.exceptions.calendar_sub": "Calendar on the phone, including new events",
   "device.exceptions.not_allowed": "Not allowed on the phone",
   "device.exceptions.not_allowed_any": "Not allowed on any phone",
   "device.exceptions.not_installed": "Not on the phone",

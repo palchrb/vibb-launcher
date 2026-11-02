@@ -147,8 +147,8 @@ class TimeLockModelTest {
         val phoneBook = LockRow.PhoneBook("Telefonbok")
         assertEquals(music, unlockOpenRow(marked = true, handedOver = false, rows = listOf(music)))
         assertEquals(calendar, unlockOpenRow(true, false, listOf(calendar)))
-        assertEquals("the phone book counts as one", phoneBook, unlockOpenRow(true, false, listOf(phoneBook)))
-        assertNull("two things: the card stays", unlockOpenRow(true, false, listOf(phoneBook, music)))
+        assertNull("the phone book never opens by itself (QA N5)", unlockOpenRow(true, false, listOf(phoneBook)))
+        assertNull("the phone book still counts: two things, the card stays", unlockOpenRow(true, false, listOf(phoneBook, music)))
         assertNull(unlockOpenRow(true, false, listOf(calendar, music)))
         assertNull("nothing usable", unlockOpenRow(true, false, emptyList()))
         assertNull("no unlock (Back, Home, a redirect)", unlockOpenRow(false, false, listOf(music)))
@@ -174,7 +174,17 @@ class TimeLockModelTest {
         assertTrue(activity.contains("view.root.setOnClickListener { open(row) }"))
         assertEquals("taken in onResume alone", 1, Regex("""(?<!fun )takeUnlockMark\(\)""").findAll(activity).count())
         // Kalender's row only when the lock leaves it usable and it is on for the phone.
-        assertTrue(activity.contains("lock?.calendarUsable == true && CalendarStore.dagenOn()"))
+        // Code QA L2: Home's own condition for its Kalender tile.
+        assertTrue(activity.contains("lock?.calendarUsable == true && CalendarStore.tileShown()"))
+        assertTrue(body(activity, "override fun onStart()").contains("CalendarStore.addListener(calendarListener)"))
+        assertTrue(body(activity, "override fun onStop()").contains("CalendarStore.removeListener(calendarListener)"))
+        // Code QA L1: a stale glance hand-over doesn't keep the one thing shut.
+        val opener = code("java/com/kidslauncher/mdm/lock/GlanceOpener.kt")
+        assertTrue(body(opener, "fun handOverPending()").contains("glanceHandOverFresh(handedOverAt, SystemClock.elapsedRealtime())"))
+        assertTrue(body(opener, "fun openHandedOver(").contains("glanceHandOverFresh(handedOverAt, SystemClock.elapsedRealtime())"))
+        assertTrue(com.kidslauncher.mdm.lock.glanceHandOverFresh(1_000, 1_000 + com.kidslauncher.mdm.lock.GLANCE_HAND_OVER_MS))
+        assertFalse(com.kidslauncher.mdm.lock.glanceHandOverFresh(1_000, 1_001 + com.kidslauncher.mdm.lock.GLANCE_HAND_OVER_MS))
+        assertFalse(com.kidslauncher.mdm.lock.glanceHandOverFresh(5_000, 4_000))
         assertTrue(activity.contains("is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))"))
     }
 

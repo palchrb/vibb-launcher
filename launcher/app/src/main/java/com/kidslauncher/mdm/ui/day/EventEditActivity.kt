@@ -61,6 +61,10 @@ class EventEditActivity : UIObjectActivity() {
         binding.eventEditFrom.setOnClickListener { pickStart() }
         binding.eventEditLength.setOnClickListener { pickLength() }
         binding.eventEditSave.setOnClickListener { save() }
+        // Code QA M1: under a rule that allows Kalender this form is in reach - its fields start nothing (no selection,
+        // share, "process text" or smart-action menu).
+        com.kidslauncher.mdm.ui.NoTextActions.apply(binding.eventEditWhat)
+        com.kidslauncher.mdm.ui.NoTextActions.apply(binding.eventEditWhere)
         render()
         val id = eventId
         if (id != null && savedInstanceState == null) loadOwn(id)

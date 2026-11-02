@@ -631,6 +631,9 @@ fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target:
     else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
 
+/** A glance hand-over made at [handedOverAt] (elapsed realtime) still counts at [now] (`GLANCE_HAND_OVER_MS`). */
+fun glanceHandOverFresh(handedOverAt: Long, now: Long): Boolean = now - handedOverAt in 0..GLANCE_HAND_OVER_MS
+
 /** Where the open after the code runs from. */
 enum class GlanceOpenFrom {
     /** The lock's unlock path ([PinLockActivity]'s leave step). */

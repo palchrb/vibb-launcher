@@ -67,5 +67,22 @@ class DayTaskTest {
             assertTrue(name, onResume.contains("lockWatch.start()"))
             assertTrue(name, code.substringAfter("override fun onPause()").substringBefore("\n    }\n").contains("lockWatch.stop()"))
         }
+        // Code QA M1: "Ny avtale"'s two fields start nothing (no selection, share, "process text" or smart-action menu),
+        // like the re-enrol code field - always, not only under a rule.
+        val layout = file("res/layout/activity_event_edit.xml").readText()
+        assertEquals(2, Regex("""<EditText\b""").findAll(layout).count())
+        val edit = file("java/com/kidslauncher/mdm/ui/day/EventEditActivity.kt").readText()
+        for (field in listOf("eventEditWhat", "eventEditWhere")) {
+            assertTrue(field, edit.contains("com.kidslauncher.mdm.ui.NoTextActions.apply(binding.$field)"))
+        }
+        assertTrue(file("java/com/kidslauncher/mdm/ui/ReEnrolDialog.kt").readText().contains("NoTextActions.apply(field)"))
+        val helper = file("java/com/kidslauncher/mdm/ui/NoTextActions.kt").readText()
+        for (part in listOf(
+            "field.customSelectionActionModeCallback = none", "field.customInsertionActionModeCallback = none",
+            "field.isLongClickable = false", "field.setTextClassifier(TextClassifier.NO_OP)",
+            "override fun onCreateActionMode(mode: ActionMode, menu: Menu) = false",
+        )) {
+            assertTrue(part, helper.contains(part))
+        }
     }
 }

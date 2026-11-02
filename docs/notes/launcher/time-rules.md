@@ -14,14 +14,19 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   an error = the time-rule screen), and watch the lock while in front (`LockWatch`, the prefs' `lock_reason`/`lock_key`):
   a rule without Kalender beginning sends them to the time-rule screen. The glance's reminder row (`glanceUsableUnderLock`,
   `GlanceTarget.Day`) reads it, and the time-rule screen has a **Kalender** row (Home's tile glyph and colour,
-  `day_title`) after the phone book while `calendarUsable` and `CalendarStore.dagenOn()` (`timeLockRows(.., calendarLabel)`,
+  `day_title`) after the phone book while `calendarUsable` and `CalendarStore.tileShown()` - Home's own condition for its
+  tile, re-rendered on the store's changes (code QA L2) - (`timeLockRows(.., calendarLabel)`,
   `LockRow.Calendar`, opens `DayActivity.intent`; Back comes back). `lockEnd` treats it as a usable app (its time counts
   against the budget, Q-6). **After an unlock** (`PinLockRuntime.afterUnlock`, own mode and every Android-mode unlock)
   the time-rule screen is marked (`LockActivity.markUnlock`, elapsed realtime) as it starts; its next `onResume` takes the
   mark once (`takeUnlockMark`, fresh within `UNLOCK_OPEN_MS` = 10 s and the PIN lock not LOCKED) and, unless the glance
-  handed it a row (`GlanceOpener.handOverPending()`, read before `openHandedOver`), opens the card's only row as its tap
-  would (`unlockOpenRow`: exactly one of the phone book - counts as one while calls are managed and allowed -, Kalender
-  or an openable app; Emergency call never counts). Back returns to the time-rule screen; Back/Home/other resumes don't
+  handed it a fresh row (`GlanceOpener.handOverPending()`, read before `openHandedOver`, by its freshness rule
+  `glanceHandOverFresh` - code QA L1), opens the card's only row as its tap would (`unlockOpenRow`: only Kalender or an
+  openable app; the phone book never opens by itself - the coordinator's decision on QA N5, a bedtime with calls would
+  land every night unlock in it - but counts as a row, so the phone book and one app keep the card; Emergency call never
+  counts). "Ny avtale"'s two fields have no selection, share, "process text" or smart-action menu and no text
+  classifier (`ui/NoTextActions`, shared with the re-enrol code field; code QA M1), always - under a rule they would
+  have opened the dialer or a browser. Back returns to the time-rule screen; Back/Home/other resumes don't
   open it again. Reminder ping stays silent under every rule, Recents unchanged. `TimeRulesTest`, `TimeLockModelTest`,
   `LockGlanceTest`, `DayTaskTest`, `PolicyResponseCompatTest`.
 - **School and calls**: the call services and phone book use `CallPolicyStore.effectiveState()` (`withTimeRule`: managed rules act as calls-off - emergency numbers and the callback window only). `TimeRulesStore` holds the enforced time policy in memory (refreshed with `CallPolicyStore`), mirrors only the no-calls windows to DE (`boot_call_blocks`, `v:1`; missing/unreadable = blocked before the first unlock, lifts/override unknown then); after unlock `TimeRulesRuntime.callsBlockedNow` (lifts + override aware) answers. Unmanaged calls: only outgoing is restricted.

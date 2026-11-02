@@ -138,8 +138,13 @@ class LockActivity : UIObjectActivity() {
         }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
+        // The Kalender row follows Home's tile (the calendars read, the policy's switches).
+        CalendarStore.addListener(calendarListener)
         render()
     }
+
+    /** The calendars or Dagen's policy changed: the Kalender row may come or go. */
+    private val calendarListener: () -> Unit = { if (!isFinishing) render() }
 
     /** A redirect brought this instance back ([start]'s SINGLE_TOP, E6's L5): already resumed, onStart doesn't run, so
      * a moved end or budget is drawn here. */
@@ -176,6 +181,7 @@ class LockActivity : UIObjectActivity() {
             // Never registered.
         }
         WallpaperStore.removeListener(wallpaperListener)
+        CalendarStore.removeListener(calendarListener)
         icons.cancel()
         super.onStop()
     }
@@ -238,8 +244,9 @@ class LockActivity : UIObjectActivity() {
             this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind)), labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty())),
             end, sentences.joinToString(" ").takeIf { it.isNotEmpty() },
         )
-        // Kalender (PLAN 2026-11-02): when every rule in force allows it and it is on for the phone (Dagen's own gate).
-        val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.dagenOn() }
+        // Kalender (PLAN 2026-11-02): when every rule in force allows it and Home shows its tile (code QA L2: a phone
+        // with no calendar set up gets no row, nor an empty Kalender after every unlock).
+        val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
         renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty()), calendar))
     }
 

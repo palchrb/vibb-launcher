@@ -2,10 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import android.app.Dialog
 import android.content.Context
-import android.view.ActionMode
 import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -75,7 +72,9 @@ object ReEnrolDialog {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_re_enrol, null)
         val field = view.findViewById<EditText>(R.id.re_enrol_code)
         val error = view.findViewById<TextView>(R.id.re_enrol_error)
-        noTextActions(field)
+        // No selection, paste, share or "process text" menu (revision check N4): nothing it offers can start an
+        // activity over the lock.
+        NoTextActions.apply(field)
         val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom)
             .setTitle(R.string.re_enrol_title)
             .setView(view)
@@ -117,20 +116,6 @@ object ReEnrolDialog {
                 }
             }
         }
-    }
-
-    /** No selection, paste, share or "process text" menu on the field (revision check N4): nothing it offers can
-     * start an activity over the lock. */
-    private fun noTextActions(field: EditText) {
-        val none = object : ActionMode.Callback {
-            override fun onCreateActionMode(mode: ActionMode, menu: Menu) = false
-            override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
-            override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
-            override fun onDestroyActionMode(mode: ActionMode) = Unit
-        }
-        field.customSelectionActionModeCallback = none
-        field.customInsertionActionModeCallback = none
-        field.isLongClickable = false
     }
 
     private fun hideIme(field: View) {
