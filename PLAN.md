@@ -88,6 +88,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 
 ### Asked for, scope not settled yet
 
+- **On-device screening of photos for nudity** (the user, 2026-11-02: "finnes det noe on device ... trygg screening av skadelig innhold på bilder som tas? ... primært på nakenhet ... usikker om det passer min privacy profil"): a question, not asked to build. Answered with the options (Google's SafetyCore/Sensitive Content Warnings in Google Messages; an on-device open model in Vibb One watching new photos, never uploading - a local nudge to the kid vs a flag to the parent; accuracy, false positives, the legal hazard of ever moving such an image). Waits for the user.
+
 - **PWA i18n** (the user, 2026-10-24, on design 64's push wording: "burde gå for i18n så man enkelt kan endre og legge
   til flere på sikt ... mer som en generell long list ting"): the PWA is English-only; a translation layer (strings in
   one table per language, the parent's language on the account, Norwegian first) would also need every event text to
