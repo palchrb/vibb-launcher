@@ -1409,7 +1409,7 @@ async fn a_403_is_read_by_its_body() {
     k.work().await;
     assert!(
         k.writes().is_empty(),
-        "stopped until a Test passes or a new pick"
+        "stopped until a Test, a new pick, the next set or the next fetch"
     );
 
     // 507 → full; Nextcloud's 400 and a 409 → that event refused.
@@ -1437,6 +1437,43 @@ async fn a_403_is_read_by_its_body() {
         .await
         .unwrap();
     assert_eq!(state, "login_refused");
+}
+
+#[tokio::test]
+async fn a_stopped_calendar_is_tried_again_at_the_next_set_and_fetch() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.dav.switches(|s| s.writes_answer = Some(403));
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.work().await;
+    assert!(k.page().await.contains("data-kid-status=\"write_refused\""));
+    // The calendar's fetch tries once: still refused, stopped again.
+    k.clear_writes();
+    k.fetch().await;
+    assert_eq!(k.writes().len(), 1);
+    assert!(k.page().await.contains("data-kid-status=\"write_refused\""));
+    // The rights back: the next fetch writes it and the line goes (E7 L5).
+    k.dav.switches(|s| s.writes_answer = None);
+    k.fetch().await;
+    assert_eq!(k.state_of(1).await.as_deref(), Some("ok"));
+    assert!(!k.page().await.contains("data-kid-status=\"write_refused\""));
+    // A full calendar: the phone's next set tries again.
+    k.dav.switches(|s| s.writes_answer = Some(507));
+    let ny = event(2, "Ny", "20261104T091500Z", "20261104T094500Z");
+    k.post_ok(&k.set(vec![kino.clone(), ny.clone()])).await;
+    k.work().await;
+    assert!(k.page().await.contains("data-kid-status=\"full\""));
+    k.dav.switches(|s| s.writes_answer = None);
+    k.post_ok(&k.set(vec![
+        kino,
+        ny,
+        event(3, "Tur", "20261105T091500Z", "20261105T094500Z"),
+    ]))
+    .await;
+    k.work().await;
+    assert_eq!(k.state_of(2).await.as_deref(), Some("ok"));
+    assert_eq!(k.state_of(3).await.as_deref(), Some("ok"));
+    assert!(!k.page().await.contains("data-kid-status=\"full\""));
 }
 
 #[tokio::test]
@@ -1514,11 +1551,18 @@ async fn pending_lasts_until_the_fetch_after_and_the_nudge_waits_for_it() {
         "20261103T180000Z",
     )]);
     assert_eq!(k.post_ok(&set).await["pending"], 1);
+    assert!(k.page().await.contains("data-kid-status=\"pending\""));
     k.work().await;
     assert_eq!(
         k.policy().await["pending"],
         1,
         "written, not yet in a stored fetch (R-L2)"
+    );
+    let page = k.page().await;
+    assert!(
+        page.contains("data-kid-status=\"written\"")
+            && !page.contains("data-kid-status=\"pending\""),
+        "the page never says a written event waits (E7 L6)"
     );
     while nudges.try_recv().is_ok() {}
     k.fetch().await;
