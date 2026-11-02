@@ -173,19 +173,25 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   uid; the body in the server's key order), `kidAnswer`, `backOps` (by the live row with the UID: update, insert with
   the UID when the kid deleted it, delete, or ignore - a row `ownedByVibb` refuses is never touched; all-day at UTC
   midnights in `UTC`), the posted union and `skipSet` (D3.2), `skipChange` for `CAL_SYNC6`. `KidEvent.kt`:
-  `kidEventInput(.., titleShown, placeShown)` and `kidEventUpdateColumns` - a change writes the title or place only
-  when the kid changed that field (R-L5), `ALL_DAY` 0 and the zone always (QA L6).
+  `kidEventInput(.., titleShown, placeShown, timesShown)` and `kidEventUpdateColumns` - a change writes the title, the
+  place or the times only when the kid changed that field (R-L5; the times since code QA M1, so a parent's all-day day,
+  odd length or later move survives a kid's title fix); changed times go in whole with `ALL_DAY` 0 and the zone (QA
+  L6). `shouldPost` (D1.2, plus a set that differs from the last posted one or whose cut moved), `nextApplied`,
+  `afterBackDeletes` (an applied hand-back delete leaves the skip set at once).
 - **Glue** (`calendar/KidCaldavSync.syncIfNeeded`, in `MdmSyncWorker` right before `CalendarFeeds.refreshIfNeeded`, never
   throws): a full read of "Min kalender" only (`CalendarStore.kidEventsBlocking`); posts
   (`MdmApi.kidEvents`, `POST /api/devices/calendar/kid-events`) when the set differs from `accepted`, `back` > 0 or
   hand-backs wait to be acknowledged; a 429 asks for one more sync after `Retry-After`; the answer's hand-backs through
   `CalendarStore.applyKidBackBlocking` (each re-checked: live, in "Min kalender", this phone's), their ids kept in
-  prefs (`kid_caldav`, at most 300) and sent as `applied` (cleared on a 200; a refused write isn't acknowledged). The
-  form's save and the event page's delete ask for a sync while marked (`KidCaldavSync.requestSoon`).
+  prefs (`kid_caldav`, at most 300) and sent as `applied` (cleared on a 200; a refused write isn't acknowledged; one more
+  sync 11 s later carries them). The form's save and the event page's delete ask for a sync while marked
+  (`KidCaldavSync.requestSoon`).
 - **The skip set** (`CalendarFeeds`, always, marked or not): the live UIDs of "Min kalender" and every UID posted since
   the server last showed that set accepted with `pending` 0 are dropped from every feed document before `feedPlan`; a
-  feed calendar keeps the UIDs it skipped in `CAL_SYNC6` (a JSON array, at most 300) - one that joins loses its rows
-  locally with no GET, one that leaves makes `feedFetch` fetch the set again without `If-None-Match` (QA N3). Events
+  feed calendar keeps the UIDs it actually skipped in `CAL_SYNC6` (`feedSkipped`: those in its set, a JSON array, at
+  most 300) - one that joins loses its rows locally with no GET (remembered once the delete went), one that leaves
+  makes `feedFetch` fetch the set again without `If-None-Match` (QA N3). An unreadable "Min kalender" keeps each
+  calendar's stored uids as its skip set (`kidLiveUidsBlocking`: `null` vs no calendar). Events
   this phone once wrote through DAVx5 (its tag, not in "Min kalender") show from the feed, read-only.
 - Tests: `KidCaldavTest` (the shared `calendar_kid_events.json`: `provider` to exactly `snapshot` and `cut_variant`,
   `canonical`, the policy and the answers, `back_provider`, the ids, both copies), `FeedPlanTest` (the skip set,

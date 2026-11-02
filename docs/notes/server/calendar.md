@@ -367,13 +367,13 @@ come back to the phone, acknowledged; the calendar wins a clash. What was writte
 ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way back), the requests in `caldav.rs`
 (`DavRequest`, `WriteLogin`), the resource writer and reader in `ics.rs` (`write_event`, `read_kid_resource`).
 
-- **Model** (migration `0117_calendar_kid_writes.sql`; 0116 is passkeys step 1 on its own branch - renumber at merge if
-  needed): `device_calendar_feeds.kid_writes` (one per phone, `idx_device_calendar_feeds_kid`; only a `caldav` source,
+- **Model** (migration `0120_calendar_kid_writes.sql`; 0117 on its branch, renumbered past `calendar-in-rules`' 0119 before any release ran it): `device_calendar_feeds.kid_writes` (one per phone, `idx_device_calendar_feeds_kid`; only a `caldav` source,
   checked in `save_dagen`), `device_kid_events` (the last set - its text, replaced at each POST -, `accepted`, the
   `from`/`cut`/`cut_from`/`cut_uids`/`ended` it came with, the last 400's code, the phone's stop, the two holds),
   `kid_caldav_events` (per uid: `href`, `etag`, `sent_hash`/`remote_hash`/`attempted_hash` - up to three unconfirmed
-  versions -, `start_at`/`end_at` from every remote read, `state` pending/deleting/ok/refused/released/past/gone,
-  backoff, `fetch_wait`, the waiting hand-back `back_id`/`back_json`/`back_after`), `kid_caldav_tags` (a phone tag
+  versions -, `start_at`/`end_at` from every remote read, `state` pending/deleting/ok/kept/refused/released/past/gone
+  - `kept`: missing from a cut or clock-frozen set, neither written nor deleted nor pending -, backoff, `fetch_wait`,
+  the waiting hand-back `back_id`/`back_json`/`back_after`, `restore_wanted`), `kid_caldav_tags` (a phone tag
   and the device that first posted it). Both event tables hang off `(device_id, source_id)` of `device_calendar_feeds`
   ON DELETE CASCADE: unticking, removing the account, deleting the phone take them; another pick deletes them in the
   same transaction (`calendar_kid_events::unmark`); the same pick again (an autosave) keeps everything.
@@ -388,32 +388,45 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   in `ended`, ends after max(`from`, now), lies before `cut_from` and outside `cut_uids` when cut (`cut_uids` null:
   nothing), the phone's clock within a day; else an ended one becomes `past` (never deleted, dropped 60 days after its
   end). The kid's mass delete (5 or more and more than half of the written ones) waits 24 h by time - once held every
-  delete waits out the day - with "Legg dem tilbake på telefonen" (`POST /devices/{id}/calendar/dagen/restore`,
-  `restore_held`: each read from the calendar and handed back; back to `#dagen`); `accepted` stays the old rev while
-  held.
-- **The job** (`work`, under the account's `write_claimed_at`; `run` woken by a POST, else each minute; and every
-  marked calendar's scheduled fetch first, `before_fetch`): no request while the account isn't `ok` or its password
+  delete waits out the day; a hold that ran out while a delete is stuck starts again for a new, larger mass delete
+  (`held_deletes`) - with "Legg dem tilbake på telefonen" (`POST /devices/{id}/calendar/dagen/restore`,
+  `restore_held`: the held rows marked `restore_wanted`, back to `#dagen` at once; the job reads each from the calendar
+  under the claim, the backoff and the budget and hands it back, a 404 drops it, a failure waits for the next pass -
+  a marked row is never deleted; "N avtaler legges tilbake på telefonen" meanwhile). `accepted` stays the old rev
+  while held, and while a delete is frozen by the phone's clock (the phone keeps the uid skipped).
+- **The job** (`work`, under the account's claim - a token in `write_claim`, kept alive at every step and released
+  only by its own job; `run` woken by a POST, else each minute; and every marked calendar's scheduled fetch first,
+  `before_fetch`): no request while the account isn't `ok` or its password
   can't be opened, nor for a calendar the last Test no longer lists or says can't be written; one request at a time
-  through `music_fetch`, 60 writes a minute per account, a 429/503 backs the account off (`Retry-After`, else
-  `music_sweep::backoff`). Create `PUT … If-None-Match: *`, update `PUT … If-Match`, delete `DELETE … If-Match` - never a
+  through `music_fetch`, 60 writes a minute per account, a 429/503 backs the account off (`Retry-After` in seconds or as
+  an HTTP date, else `music_sweep::backoff`; a write that goes through ends a passed backoff), a row that keeps asking
+  for another try (an ETag that never matches) backs off after two. A write's `fetch_wait` is the instant it was
+  written. Create `PUT … If-None-Match: *`, update `PUT … If-Match`, delete `DELETE … If-Match` - never a
   write without a condition, never one that follows a redirect (`DavRequest`: a write's 3xx is its answer). **Never a
   PUT over content not read**: a 412, a create's 404 or `no-uid-conflict` (adopted only at a direct child of the
   collection on a confirmed host) GETs the resource and compares by content - the phone's version or one of our
   unconfirmed attempts is ours (its ETag learned), the base unchanged lets the phone's version go over the read ETag, a
   series or ATTENDEE/ORGANIZER releases it (a tombstone until absent from the sets 60 days), anything else is handed
-  back (the calendar wins). A create whose GET is 404 too is a `status` error (RN3). A 403 by its body: another CalDAV
+  back (the calendar wins). A create whose GET is 404 too is a `status` error (RN3); an update's or delete's 404 is the
+  parent's delete only once the collection still answers (a PROPFIND Depth 0), else the event backs off. A refused
+  delete backs off, it is never `refused`. An update whose ETag couldn't be read back keeps the old one, so the next
+  write is never a create over a parent's delete. A 403 by its body: another CalDAV
   precondition refuses that event, `need-privileges` or none stops this phone's writes (`write_refused`) - never the
   account's `login_refused`, which only a 401 is. 409/400/415 refuse the event, 507 is `full`, no strong ETag `no_etag`
   (the stops clear when the account's Test passes, `account_tested`). A PUT's ETag from its answer, else a GET with the
   body compared (QA M1).
 - **The way back** (`after_fetch`, from `calendar_feeds::refresh` after a stored set of a marked calendar): the writes
-  made before the fetch began stop counting as `pending` (R-L2; a write since the last stored fetch makes the next fetch
-  read the REPORT whatever the ctag; an empty answer held by design 72's QA M1 stores nothing and so leaves `pending`);
+  made before the REPORT was sent stop counting as `pending`, and a row written after it isn't judged by this fetch
+  (R-L2, code QA H3; a write since the last stored fetch makes the next fetch read the REPORT whatever the ctag; an
+  empty answer held by design 72's QA M1 stores nothing and so leaves `pending` - "1 venter på å bli skrevet" until the
+  empty answer is taken, when the kid deleted the calendar's last event);
   each REPORT resource is matched to its uid by the VEVENT's UID (never the href); another ETag with the same content
-  hash only stores the ETag, another hash is the parent's edit (handed back, the stored times updated); a uid missing
+  hash only stores the ETag, another hash is the parent's edit (handed back, the stored times updated; a hand-back that
+  may have been delivered is never cleared, only replaced by the calendar's version - a parent's undo, an event restored
+  after a delete go back as an upsert; of two resources with the kid's UID, the one at our href); a uid missing
   from a REPORT that covers its dates is confirmed by its own GET (404 = the parent's delete, a 200 a move past the
   window, handed back). The calendar's mass delete is held 24 h too (`back_after`; a resource back in the REPORT
-  before then cancels its delete). A parent's change to an event more than about 13 months ahead reaches the phone
+  before then cancels its never-sent delete, and the hold's start goes with its last held row). A parent's change to an event more than about 13 months ahead reaches the phone
   late: the REPORT spans −60 .. +401 days, so it is seen at the kid's next change of it (a 412) or once it comes within
   the window.
 - **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark or
@@ -424,7 +437,8 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   "Skrevet 15:12 · 12 avtaler", waiting, hand-backs waiting, cut, too big; orange: the stops, the account's stop with a
   link to its page, the clock, refused events, a refused set naming the old phone for a pinned tag, the two holds),
   the account page's "Barnets avtaler skrives hit", the untick's notice (`?notice=kid_caldav_ended&cal=<id>` on the
-  account page) and the removal's (`#sources`, without the calendar's name: the account is gone), Kalender's ⓘ
+  account page) and the removal's (`#sources`, without the calendar's name: the account is gone), "Kalenderen finnes ikke lenger hos {server} -
+  test kontoen" for a calendar the last Test no longer lists, Kalender's ⓘ
   (`calendar.kid_caldav.info`, `info_tag`), the footers' "- med mindre barnets avtaler skrives til en CalDAV-kalender".
   `PROPFIND_LIST` asks for `current-user-privilege-set`; `calendars_json` rows carry `writable`
   (`caldav::writable_of`; `null` until the account's next Test).
