@@ -12,13 +12,17 @@ package com.kidslauncher.mdm.lock
  * leaves through Home. With the kiosk off the lock-task is the lock's own (step 10): it starts and
  * stops it itself; since design 32 the kid lands on Home there too (decision 2: Home lies under the
  * lock as defence in depth), unless a call is live - Home must never cover a call (QA L2).
+ * Design 59b R2 (decided 2026-11-02): as Android's face with its secure keyguard locked and the kiosk off, the glance
+ * takes no lock task at all - Android's locked keyguard is the gate, and a helper the kid unlocks into on SystemUI's
+ * face or pad (DeskClock) stays: stopping a root lock task clears every locked task, the helper's included.
  */
 
 /** How often the lock may ask Home to root lock task; in between it waits for the fallback. */
 const val HOME_ROOT_RETRY_MS = 3_000L
 
 enum class LockTaskEntry {
-    /** Running already, or not permitted (then the lock is a re-front only). */
+    /** Running already, or not permitted (then the lock is a re-front only); kiosk off: a VoIP call, or Android's face
+     * with Android locked (design 59b R2). */
     NONE,
 
     /** Start Home (typed HOME): its resume roots lock task and shows the lock again. */
@@ -27,7 +31,8 @@ enum class LockTaskEntry {
     /** Home was asked less than [HOME_ROOT_RETRY_MS] ago: wait for the [LOCK_FALLBACK_MS] fallback. */
     WAIT_FOR_HOME,
 
-    /** The lock starts lock task itself: the kiosk is off, or Home didn't (fallback). */
+    /** The lock starts lock task itself: the kiosk is off (own mode, or the face with Android not locked), Home didn't
+     * (fallback), or the face with Android locked and the kiosk on. */
     START_SELF,
 }
 
@@ -46,12 +51,18 @@ fun lockTaskEntry(
     sinceHomeAskedMs: Long?,
     fallbackDue: Boolean,
     voipCall: Boolean = false,
-    /** Design 59d step A (qa-59b-code B-1): as Android's face with its secure keyguard locked - a Home start lands
-     * behind the keyguard (and un-occludes it), so the glance roots lock task itself; the leave re-roots through Home
-     * (`lockLeave`'s kiosk root, `startedLockTask`). */
+    /** As Android's face with its secure keyguard locked (`AndroidLock.refrontHeld`). Kiosk on - design 59d step A
+     * (qa-59b-code B-1): a Home start lands behind the keyguard (and un-occludes it), so the glance roots lock task
+     * itself; the leave re-roots through Home (`lockLeave`'s kiosk root, `startedLockTask`). Kiosk off - design 59b R2
+     * (the user, 2026-11-02): no lock task of the glance's own. Android's locked keyguard keeps every start that isn't
+     * showWhenLocked behind it and refuses Recents (P59-1), the shade stays off through `setStatusBarDisabled`
+     * (`lockTaskWhileLocked`), the power menu is the keyguard's; and a helper the kid unlocks into on SystemUI's face or
+     * pad stays - the leave stops nothing (`lockLeave`: nothing running), where stopping the glance's root lock task
+     * cleared the helper's task with it (AOSP `clearLockedTasks`, the rc.2 run's R2). A lock task the glance started
+     * before Android locked (a resume in the lock's delay) stays until the leave, as before. */
     androidLocked: Boolean = false,
 ): LockTaskEntry = when {
-    running || !permitted || (voipCall && !kioskOn) -> LockTaskEntry.NONE
+    running || !permitted || (!kioskOn && (voipCall || androidLocked)) -> LockTaskEntry.NONE
     !kioskOn || fallbackDue || androidLocked -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
     else -> LockTaskEntry.START_HOME
