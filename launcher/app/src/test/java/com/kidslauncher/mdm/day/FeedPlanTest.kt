@@ -100,6 +100,30 @@ class FeedPlanTest {
         assertNull(feedFetch(true, "r2", "r2", FEED_MAPPING, z, z))
         assertEquals(FeedFetch(null), feedFetch(true, "r2", "r2", "0", "", z))
         assertEquals(FeedFetch(null), feedFetch(true, "r2", "r2", FEED_MAPPING, "Europe/London", z))
+        // Design 72b D3.2: a kid's event left the skip set - the set again, without If-None-Match (QA N3).
+        assertEquals(FeedFetch(null), feedFetch(true, "r2", "r2", FEED_MAPPING, "", z, skipLeft = true))
+        assertEquals(FeedFetch(null), feedFetch(true, "r1", "r2", FEED_MAPPING, "", z, skipLeft = true))
+    }
+
+    @Test
+    fun `the kid's own events are skipped from a feed, DAVx5-era ones shown (72b)`() {
+        val oslo = java.time.ZoneId.of("Europe/Oslo")
+        fun event(uid: String) = FeedEvent(uid = uid, rev = "r-$uid", summary = "x", start = "20261103T160000", end = "20261103T170000", tz = "Europe/Oslo")
+        val mine = "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d01"
+        val deleted = "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+        val davx5Era = "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+        val doc = listOf(event(mine), event(deleted), event(davx5Era), event("parent-1"), event("$mine#20261110T160000"))
+        // Live in "Min kalender": skipped. Just deleted but still in the feed: the posted union skips it. An event this
+        // phone once wrote through DAVx5 (its tag, not in "Min kalender") is shown.
+        val skip = skipSet(listOf(mine), setOf(deleted))
+        val shown = doc.filter { it.uid.substringBefore('#') !in skip }.mapNotNull { seriesRows(it, oslo) }.map { it.uid }
+        assertEquals(listOf(davx5Era, "parent-1"), shown)
+        // A newly skipped uid is deleted locally with no GET; a released one (left the set) fetched again.
+        assertEquals(SkipChange(joined = setOf(deleted, mine), left = emptySet()), skipChange(setOf(), skip))
+        assertEquals(SkipChange(joined = emptySet(), left = setOf(deleted)), skipChange(skip, setOf(mine)))
+        val stored = listOf(StoredRow(1, mine, null, "r", null), StoredRow(2, "parent-1", null, "r", null))
+        val plan = feedPlan(doc.filter { it.uid !in skip }.mapNotNull { seriesRows(it, oslo) }.filter { it.uid != "$mine#20261110T160000" }, stored, "Europe/Oslo", true)
+        assertTrue(1L in plan.deletes)
     }
 
     @Test

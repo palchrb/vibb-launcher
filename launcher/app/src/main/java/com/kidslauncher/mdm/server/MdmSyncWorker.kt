@@ -166,6 +166,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
         // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
         // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
+        // Design 72b: the kid's own events handed over for the marked CalDAV calendar first (never throws), so the
+        // feeds' skip set has what was just posted.
+        com.kidslauncher.mdm.calendar.KidCaldavSync.syncIfNeeded(context, api, freshPolicy.calendar)
         com.kidslauncher.mdm.calendar.CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)
         // Design 59 §1: `set_kid_pin`'s Child PIN goes no further than its command - the policy
         // applied and held in memory from here on has none, like the cached one.

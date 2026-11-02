@@ -536,16 +536,20 @@ object CalendarStore {
         )
     }
 
-    /** The kid's change of their own event (off the main thread); `false` when it isn't theirs (any more). */
+    /** The kid's change of their own event (off the main thread); `false` when it isn't theirs (any more). The title
+     * and the place go in only when the kid changed them (design 72b R-L5: a parent's longer title, handed back, is
+     * kept as it is), `ALL_DAY` 0 and the zone always (QA L6: a handed-back all-day event becomes a timed one). */
     fun updateKidEventBlocking(context: Context, eventId: Long, input: com.kidslauncher.mdm.day.KidEventInput): Boolean {
         if (!canWrite(context) || !kidMayEditBlocking(context, eventId)) return false
         return try {
             val values = ContentValues().apply {
-                put(Events.TITLE, input.title)
-                put(Events.EVENT_LOCATION, input.place)
-                put(Events.DTSTART, input.beginMs)
-                put(Events.DTEND, input.endMs)
-                put(Events.EVENT_TIMEZONE, ZoneId.systemDefault().id)
+                for ((key, value) in com.kidslauncher.mdm.day.kidEventUpdateColumns(input, ZoneId.systemDefault().id)) {
+                    when (value) {
+                        is String -> put(key, value)
+                        is Long -> put(key, value)
+                        is Int -> put(key, value)
+                    }
+                }
             }
             (context.contentResolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), values, null, null) == 1)
                 .also { invalidate() }
@@ -565,6 +569,124 @@ object CalendarStore {
             Log.w(LOG_TAG, "Couldn't delete the kid's event: ${e.javaClass.simpleName}")
             false
         }
+    }
+
+    // ---- the kid's events written to a CalDAV calendar (design 72b, [KidCaldavSync]; on the worker) ---------------
+
+    /** "Min kalender"'s rows (DELETED ones included - the pure code leaves them out), `null` unless it is a full read:
+     * the provider readable and the calendar there (D1.3) - an unreadable provider or a missing calendar sends
+     * nothing. */
+    internal fun kidEventsBlocking(context: Context): List<com.kidslauncher.mdm.day.KidRow>? {
+        if (!canRead(context)) return null
+        val current = readCalendars(context)
+        if (!current.readable) return null
+        val calendar = current.calendars.firstOrNull { it.vibbLocal } ?: return null
+        return try {
+            val out = ArrayList<com.kidslauncher.mdm.day.KidRow>()
+            context.contentResolver.query(
+                Events.CONTENT_URI,
+                arrayOf(
+                    Events._ID, Events.UID_2445, Events.TITLE, Events.EVENT_LOCATION, Events.DESCRIPTION, Events.DTSTART,
+                    Events.DTEND, Events.DURATION, Events.ALL_DAY, Events.EVENT_TIMEZONE, Events.RRULE, Events.RDATE,
+                    Events.DELETED, Events.CUSTOM_APP_PACKAGE,
+                ),
+                "${Events.CALENDAR_ID} = ?",
+                arrayOf(calendar.id.toString()),
+                null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    out += com.kidslauncher.mdm.day.KidRow(
+                        id = c.getLong(0),
+                        uid = c.getString(1),
+                        title = c.getString(2),
+                        location = c.getString(3),
+                        description = c.getString(4),
+                        dtstart = c.getLong(5),
+                        dtend = if (c.isNull(6)) null else c.getLong(6),
+                        duration = c.getString(7),
+                        allDay = c.getInt(8) == 1,
+                        tz = c.getString(9),
+                        rrule = c.getString(10),
+                        rdate = c.getString(11),
+                        deleted = c.getInt(12) == 1,
+                        customApp = c.getString(13),
+                    )
+                }
+            } ?: return null
+            out
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read the kid's events: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    /** The hand-backs written into "Min kalender" (D2.3), each re-checked against the row as it is now - live, in
+     * "Min kalender", this phone's ([com.kidslauncher.mdm.day.ownedByVibb]). Returns the ids to acknowledge: those
+     * written and those deliberately left; a write the provider refused is not acknowledged (the server sends it
+     * again). */
+    internal fun applyKidBackBlocking(context: Context, ops: List<com.kidslauncher.mdm.day.KidBackOp>): List<String> {
+        if (ops.isEmpty() || !canWrite(context)) return emptyList()
+        val rows = kidEventsBlocking(context) ?: return emptyList()
+        val calendar = readCalendars(context).calendars.firstOrNull { it.vibbLocal } ?: return emptyList()
+        val tag = phoneTag(context)
+        val ours = { id: Long ->
+            rows.firstOrNull { it.id == id && !it.deleted }
+                ?.takeIf { com.kidslauncher.mdm.day.ownedByVibb(it.uid, it.customApp, context.packageName, tag) }
+        }
+        val acked = ArrayList<String>()
+        var wrote = false
+        for (op in ops) {
+            try {
+                when (op) {
+                    is com.kidslauncher.mdm.day.KidBackOp.Ignore -> acked += op.backId
+                    is com.kidslauncher.mdm.day.KidBackOp.Update -> {
+                        if (ours(op.eventId) == null) continue
+                        val n = context.contentResolver.update(
+                            ContentUris.withAppendedId(Events.CONTENT_URI, op.eventId), kidValues(op.values), null, null,
+                        )
+                        if (n == 1) {
+                            acked += op.backId
+                            wrote = true
+                        }
+                    }
+                    is com.kidslauncher.mdm.day.KidBackOp.Delete -> {
+                        if (ours(op.eventId) == null) continue
+                        if (context.contentResolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, op.eventId), null, null) == 1) {
+                            acked += op.backId
+                            wrote = true
+                        }
+                    }
+                    is com.kidslauncher.mdm.day.KidBackOp.Insert -> {
+                        // Inserted only while no live row holds the uid.
+                        if (rows.any { !it.deleted && it.uid == op.uid }) continue
+                        val values = kidValues(op.values).apply {
+                            put(Events.CALENDAR_ID, calendar.id)
+                            put(Events.UID_2445, op.uid)
+                            put(Events.CUSTOM_APP_PACKAGE, context.packageName)
+                            put(Events.HAS_ALARM, 0)
+                        }
+                        if (context.contentResolver.insert(Events.CONTENT_URI, values) != null) {
+                            acked += op.backId
+                            wrote = true
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "The provider refused a hand-back: ${e.javaClass.simpleName}")
+            }
+        }
+        if (wrote) invalidate()
+        return acked
+    }
+
+    private fun kidValues(v: com.kidslauncher.mdm.day.KidProviderValues) = ContentValues().apply {
+        put(Events.TITLE, v.title)
+        put(Events.EVENT_LOCATION, v.location)
+        put(Events.DESCRIPTION, v.description)
+        put(Events.DTSTART, v.dtstart)
+        put(Events.DTEND, v.dtend)
+        put(Events.ALL_DAY, if (v.allDay) 1 else 0)
+        put(Events.EVENT_TIMEZONE, v.tz)
     }
 
     @Volatile
@@ -613,6 +735,8 @@ object CalendarStore {
         val refused: Int,
         val unknownZone: Int,
         val floatingZone: String?,
+        /** The kid's events skipped from this calendar's set (design 72b D3.2, `CAL_SYNC6`). */
+        val skipped: Set<String> = emptySet(),
     ) {
         override fun toString() = "FeedCalendar($id)"
     }
@@ -632,7 +756,7 @@ object CalendarStore {
                 Calendars.CONTENT_URI,
                 arrayOf(
                     Calendars._ID, Calendars.NAME, Calendars.CALENDAR_DISPLAY_NAME, Calendars.CAL_SYNC1,
-                    Calendars.CAL_SYNC2, Calendars.CAL_SYNC3, Calendars.CAL_SYNC4, Calendars.CAL_SYNC5,
+                    Calendars.CAL_SYNC2, Calendars.CAL_SYNC3, Calendars.CAL_SYNC4, Calendars.CAL_SYNC5, Calendars.CAL_SYNC6,
                 ),
                 "${Calendars.ACCOUNT_TYPE} = ? AND ${Calendars.ACCOUNT_NAME} = ?",
                 arrayOf(CalendarContract.ACCOUNT_TYPE_LOCAL, FEED_ACCOUNT),
@@ -649,6 +773,7 @@ object CalendarStore {
                         refused = c.getString(5)?.toIntOrNull() ?: 0,
                         unknownZone = c.getString(6)?.toIntOrNull() ?: 0,
                         floatingZone = c.getString(7),
+                        skipped = com.kidslauncher.mdm.day.skippedOf(c.getString(8)),
                     )
                 }
             }
@@ -718,6 +843,21 @@ object CalendarStore {
             put(Calendars.CAL_SYNC4, unknownZone.toString())
             put(Calendars.CAL_SYNC5, floatingZone)
         })
+
+    /** The rows of [uids] (a master by `_SYNC_ID`, its overrides by `ORIGINAL_SYNC_ID`, a lone override `uid#…`) deleted
+     * from a link calendar (design 72b D3.2: a kid's own event never shows twice). `true` when any went. */
+    internal fun deleteFeedUidsBlocking(context: Context, calendarId: Long, uids: Set<String>): Boolean {
+        val rows = feedRowsBlocking(context, calendarId) ?: return false
+        val doomed = rows.filter { r ->
+            (r.syncId?.substringBefore('#') in uids) || (r.originalSyncId in uids)
+        }.map { it.id }
+        if (doomed.isEmpty()) return false
+        return deleteFeedRowsBlocking(context, doomed) == BatchResult.OK
+    }
+
+    /** The kid's events this link calendar skips now (design 72b D3.2, `CAL_SYNC6`). */
+    internal fun markFeedSkippedBlocking(context: Context, id: Long, skipped: List<String>) =
+        updateFeedCalendar(context, id, ContentValues().apply { put(Calendars.CAL_SYNC6, com.kidslauncher.mdm.day.skippedText(skipped)) })
 
     /** A link calendar's rows; `null` when the provider can't be read. */
     internal fun feedRowsBlocking(context: Context, calendarId: Long): List<StoredRow>? = try {

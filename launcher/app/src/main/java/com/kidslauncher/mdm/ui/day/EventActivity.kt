@@ -117,7 +117,10 @@ class EventActivity : UIObjectActivity() {
             .setMessage(getString(R.string.event_delete_confirm, title))
             .setPositiveButton(R.string.event_delete) { _, _ ->
                 val app = applicationContext
-                CalendarStore.run({ Deleted(CalendarStore.deleteKidEventBlocking(app, eventId)) }) { if (it.ok && !isDestroyed) finish() }
+                CalendarStore.run({ Deleted(CalendarStore.deleteKidEventBlocking(app, eventId)) }) {
+                    if (it.ok) com.kidslauncher.mdm.calendar.KidCaldavSync.requestSoon(app)
+                    if (it.ok && !isDestroyed) finish()
+                }
             }
             .setNegativeButton(R.string.event_cancel, null)
             .show()

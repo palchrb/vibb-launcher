@@ -140,8 +140,18 @@ data class FeedFetch(val ifNoneMatch: String?)
  * written by another mapping, or a floating series of it was written in another zone ([floatingZone] = `CAL_SYNC5`,
  * the zone it wrote floating series in, empty when none).
  */
-fun feedFetch(exists: Boolean, appliedRev: String?, policyRev: String, mapping: String?, floatingZone: String?, phoneZone: String): FeedFetch? {
-    if (!exists || mapping != FEED_MAPPING || (!floatingZone.isNullOrEmpty() && floatingZone != phoneZone)) return FeedFetch(null)
+fun feedFetch(
+    exists: Boolean,
+    appliedRev: String?,
+    policyRev: String,
+    mapping: String?,
+    floatingZone: String?,
+    phoneZone: String,
+    skipLeft: Boolean = false,
+): FeedFetch? {
+    // Design 72b D3.2: a kid's event left the skip set (released, deleted by a hand-back, its delete done) - the set
+    // again, without If-None-Match (a 304 would keep it hidden, QA N3).
+    if (!exists || mapping != FEED_MAPPING || (!floatingZone.isNullOrEmpty() && floatingZone != phoneZone) || skipLeft) return FeedFetch(null)
     if (appliedRev != policyRev) return FeedFetch(appliedRev?.let { "\"$it\"" })
     return null
 }

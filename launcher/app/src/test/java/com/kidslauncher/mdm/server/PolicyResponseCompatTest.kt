@@ -607,14 +607,33 @@ class PolicyResponseCompatTest {
     fun `calendar never fails the policy and is carried as is (69)`() {
         fun withCalendar(calendar: String) = serverResponse.replaceFirst("{", "{\"calendar\": $calendar,")
         // Design 72: `feeds`, `[]` without a link - a fully readable array (a link's keys in `calendar_feeds.json`).
+        // Design 72b: `kid_caldav`, `null` unless a CalDAV calendar is marked for the kid's events (its object's keys in
+        // `calendar_kid_events.json`, `KidCaldavTest`).
         val today = withCalendar(
-            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": [], "feeds": []}""",
+            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": [], "feeds": [], "kid_caldav": null}""",
         )
         val policy = (decodeFresh(today) as FreshDecode.Ok).policy
         assertEquals(
             com.kidslauncher.mdm.day.CalendarPolicy(usable = true, onHome = true, kidAdds = true, feedsComplete = true),
             com.kidslauncher.mdm.day.calendarPolicy(policy.calendar),
         )
+        val marked = (
+            decodeFresh(
+                withCalendar(
+                    """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": [], "feeds": [],
+                       "kid_caldav": {"id": "94137b2f28ea70dd756c7a81e56aa9c3", "accepted": "28a80423e7f7cc98", "back": 3, "pending": 0}}""",
+                ),
+            ) as FreshDecode.Ok
+            ).policy
+        assertEquals(
+            com.kidslauncher.mdm.day.KidCaldavPolicy("94137b2f28ea70dd756c7a81e56aa9c3", "28a80423e7f7cc98", 3, 0),
+            com.kidslauncher.mdm.day.calendarPolicy(marked.calendar).kidCaldav,
+        )
+        assertEquals(CachedPolicy.Ok(marked), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), marked)))
+        for (odd in listOf("""{"kid_caldav": 5}""", """{"kid_caldav": {"id": 1}}""")) {
+            assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)
+            assertNull(odd, com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).kidCaldav)
+        }
         for (odd in listOf("""{"feeds": 5}""", """{"feeds": [5, {"id": 1}]}""")) {
             assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)
             assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
