@@ -490,6 +490,8 @@ async fn policy_json_keys_snapshot() {
     // `lock_reminders` is `off`, `row` or (migration 0113) `ping` - the row plus one sound, only to a launcher
     // claiming `calendar_ping_v1`, `row` to an older one, which reads anything but `row` as off
     // (`calendar::the_ping_saves_and_reaches_only_a_launcher_that_knows_it`; the launcher's `CalendarPolicyTest`).
+    // Design 72b: `kid_caldav`, the CalDAV calendar the kid's events are written to - `null` unless one is marked and
+    // the launcher claims `calendar_kid_caldav_v1` (its object's keys in `calendar_kid_events.json`'s `policy`).
     assert_eq!(
         object["calendar"],
         serde_json::json!({
@@ -499,7 +501,8 @@ async fn policy_json_keys_snapshot() {
             "lock_reminders": "off",
             "calendars": [],
             "rules": [],
-            "feeds": []
+            "feeds": [],
+            "kid_caldav": null
         })
     );
 

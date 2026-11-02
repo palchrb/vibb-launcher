@@ -89,7 +89,14 @@ pub struct CannedFetch {
     gate: Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
     in_flight: std::sync::atomic::AtomicUsize,
     pub most_in_flight: std::sync::atomic::AtomicUsize,
+    /// A stateful server answering before every canned answer (design 72b's fake CalDAV,
+    /// [CannedFetch::serve]); `None` from it falls through to the canned answers.
+    server: Mutex<Option<Server>>,
 }
+
+/// [CannedFetch::serve]'s server.
+pub type Server =
+    std::sync::Arc<dyn Fn(&Recorded) -> Option<crate::music_net::SourceResponse> + Send + Sync>;
 
 impl CannedFetch {
     pub fn answer(&self, url: &str, status: u16, body: impl Into<Vec<u8>>) {
@@ -163,6 +170,12 @@ impl CannedFetch {
             .lock()
             .unwrap()
             .insert(host.to_string(), format!("Basic {pair}"));
+    }
+
+    /// A stateful server (design 72b's fake CalDAV) answers every request it knows, after the
+    /// basic-auth check and before the canned answers.
+    pub fn serve(&self, server: Server) {
+        *self.server.lock().unwrap() = Some(server);
     }
 
     pub fn canned(&self, url: &str, answer: Canned) {
@@ -312,6 +325,13 @@ impl crate::music_net::Source for CannedFetch {
                         status: 401,
                         ..Default::default()
                     });
+                }
+            }
+            let server = self.server.lock().unwrap().clone();
+            if let Some(server) = server {
+                let seen = self.requests.lock().unwrap().last().cloned();
+                if let Some(answer) = seen.as_ref().and_then(|r| server(r)) {
+                    return Ok(answer);
                 }
             }
             let by_method = self

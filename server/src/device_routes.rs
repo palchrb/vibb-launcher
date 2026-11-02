@@ -126,6 +126,14 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             "/api/devices/calendar/feeds/{uid}",
             get(handlers::calendar::device_feed),
         )
+        // Design 72b: the kid's own coming events, for the marked CalDAV calendar; the answer carries the parent's
+        // edits back. Its sizes are checked in the handler (a 413 is said on the page).
+        .route(
+            "/api/devices/calendar/kid-events",
+            post(crate::calendar_kid_events::post).layer(DefaultBodyLimit::max(
+                crate::calendar_kid_events::BODY_LIMIT + 1,
+            )),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,

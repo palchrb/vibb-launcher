@@ -1197,6 +1197,271 @@ pub fn parse(
     })
 }
 
+// ---- the kid's own events (design 72b) ---------------------------------------------------------
+
+/// A time of a kid event's resource as the calendar wrote it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KidWhen {
+    Date(NaiveDate),
+    Utc(NaiveDateTime),
+    Zoned(NaiveDateTime, Tz),
+    /// No zone, or a TZID no rule knows: resolved in the zone the phone last sent for it (D2.7).
+    Floating(NaiveDateTime),
+}
+
+/// One kid event's resource as the calendar holds it (design 72b D2.4, D2.7): the master VEVENT's text fields
+/// unescaped and nothing else changed (the canonical form is `calendar_kid_events`'), its times, its SEQUENCE, and
+/// what makes it the parent's - a series (RRULE, RDATE, an override, a second VEVENT) or invitations (ATTENDEE,
+/// ORGANIZER). No `Debug`: it holds the event's text.
+pub struct KidResource {
+    pub uid: String,
+    pub summary: String,
+    pub location: String,
+    pub description: String,
+    pub start: KidWhen,
+    pub end: Option<KidWhen>,
+    pub duration: Option<TimeDelta>,
+    pub sequence: i64,
+    pub recurring: bool,
+    pub invites: bool,
+}
+
+fn kid_when(value: &str, prop: &Prop, vtimezones: &HashMap<String, String>) -> Option<KidWhen> {
+    Some(match parse_when(value, prop, vtimezones)? {
+        When::Date(d) => KidWhen::Date(d),
+        When::Utc(t) => KidWhen::Utc(t),
+        When::Local(t, Some(tz), _) => KidWhen::Zoned(t, tz),
+        When::Local(t, None, _) => KidWhen::Floating(t),
+    })
+}
+
+/// A resource's body read as one kid event: `None` when it isn't a VCALENDAR with a VEVENT that has a UID and a
+/// DTSTART that read.
+pub fn read_kid_resource(body: &[u8]) -> Option<KidResource> {
+    let text = text_of(body, None);
+    let mut lines = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l));
+    let first = lines.by_ref().find(|l| !l.trim().is_empty())?;
+    if !first.trim().eq_ignore_ascii_case("BEGIN:VCALENDAR") {
+        return None;
+    }
+    let mut stack: Vec<String> = vec!["VCALENDAR".to_string()];
+    let mut vtimezones: HashMap<String, String> = HashMap::new();
+    let (mut tz_id, mut tz_location): (Option<String>, Option<String>) = (None, None);
+    let mut vevents = 0usize;
+    let mut master: Option<RawEvent> = None;
+    let mut current: Option<RawEvent> = None;
+    let (mut recurring, mut invites) = (false, false);
+    for line in lines {
+        let Some((key, prop)) = content_line(cut_line(line)) else {
+            continue;
+        };
+        match key.as_str() {
+            "BEGIN" => {
+                let component = prop.value.trim().to_ascii_uppercase();
+                if stack.len() == 1 && component == "VEVENT" {
+                    vevents += 1;
+                    current = Some(RawEvent::default());
+                }
+                if stack.len() == 1 && component == "VTIMEZONE" {
+                    (tz_id, tz_location) = (None, None);
+                }
+                if stack.len() >= 8 {
+                    return None;
+                }
+                stack.push(component);
+            }
+            "END" => {
+                let Some(component) = stack.pop() else {
+                    continue;
+                };
+                match (stack.len(), component.as_str()) {
+                    (1, "VEVENT") => {
+                        if let Some(event) = current.take() {
+                            if event.recurrence_id.is_some() || master.is_some() {
+                                recurring = true;
+                            }
+                            if event.recurrence_id.is_none() && master.is_none() {
+                                master = Some(event);
+                            }
+                        }
+                    }
+                    (1, "VTIMEZONE") => {
+                        if let (Some(id), Some(location)) = (tz_id.take(), tz_location.take()) {
+                            vtimezones.insert(id, location);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => match (stack.len(), stack.last().map(String::as_str)) {
+                (2, Some("VTIMEZONE")) => match key.as_str() {
+                    "TZID" => tz_id = Some(prop.value.trim().to_string()),
+                    "X-LIC-LOCATION" => tz_location = Some(prop.value.trim().to_string()),
+                    _ => {}
+                },
+                (2, Some("VEVENT")) => {
+                    // Invitations at the event's own level - an e-mail alarm's ATTENDEE invites nobody.
+                    if key == "ATTENDEE" || key == "ORGANIZER" {
+                        invites = true;
+                    }
+                    if key == "RRULE" || key == "RDATE" {
+                        recurring = true;
+                    }
+                    if let Some(event) = current.as_mut() {
+                        event.read(&key, prop);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    if vevents > 1 {
+        recurring = true;
+    }
+    let raw = master?;
+    let uid = raw
+        .uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())?
+        .to_string();
+    let start = raw
+        .dtstart
+        .as_ref()
+        .and_then(|p| kid_when(&p.value, p, &vtimezones))?;
+    let end = raw
+        .dtend
+        .as_ref()
+        .and_then(|p| kid_when(&p.value, p, &vtimezones));
+    Some(KidResource {
+        uid,
+        summary: unescape(raw.summary.as_deref().unwrap_or("")),
+        location: unescape(raw.location.as_deref().unwrap_or("")),
+        description: unescape(raw.description.as_deref().unwrap_or("")),
+        start,
+        end,
+        duration: raw.duration.as_deref().and_then(parse_duration),
+        sequence: raw.sequence,
+        recurring,
+        invites,
+    })
+}
+
+/// The UID of a resource's first VEVENT, unfolded (to match a REPORT's resource to a kid event, D4.6 - never by its
+/// href).
+pub fn resource_uid(body: &str) -> Option<String> {
+    let text = String::from_utf8_lossy(&unfold(body.as_bytes())).into_owned();
+    let mut depth = 0usize;
+    let mut in_event = false;
+    for line in text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)) {
+        let Some((key, prop)) = content_line(cut_line(line)) else {
+            continue;
+        };
+        match key.as_str() {
+            "BEGIN" => {
+                depth += 1;
+                if depth == 2 && prop.value.trim().eq_ignore_ascii_case("VEVENT") {
+                    in_event = true;
+                }
+            }
+            "END" => {
+                if depth == 2 {
+                    in_event = false;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            "UID" if in_event && depth == 2 => {
+                let uid = prop.value.trim();
+                return (!uid.is_empty()).then(|| uid.to_string());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// One kid event as the server writes it (design 72b D4.3). Its text fields are canonical already (no control
+/// character but LF and TAB). No `Debug`: it holds the event's text.
+pub struct KidWrite<'a> {
+    pub uid: &'a str,
+    pub summary: &'a str,
+    pub location: &'a str,
+    pub description: &'a str,
+    /// `20261103T140000Z`, or `20261103` all-day (with an exclusive end).
+    pub start: &'a str,
+    pub end: &'a str,
+    pub all_day: bool,
+    pub sequence: i64,
+    /// `20261102T120000Z`: DTSTAMP and LAST-MODIFIED.
+    pub stamp: &'a str,
+    /// The first PUT's time (CREATED).
+    pub created: &'a str,
+}
+
+/// TEXT escaped (RFC 5545 §3.3.11): `\` `;` `,` and the newline.
+fn escape_text(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// One content line folded at 75 octets, never inside a UTF-8 sequence, CRLF-ended.
+fn push_folded(out: &mut String, line: &str) {
+    let mut start = 0;
+    let mut limit = 75;
+    while line.len() - start > limit {
+        let mut end = start + limit;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&line[start..end]);
+        out.push_str("\r\n ");
+        start = end;
+        limit = 74;
+    }
+    out.push_str(&line[start..]);
+    out.push_str("\r\n");
+}
+
+/// The resource's body (D4.3): a VCALENDAR with one VEVENT - UID, DTSTAMP, CREATED, LAST-MODIFIED, SEQUENCE,
+/// SUMMARY, LOCATION and DESCRIPTION when not empty, DTSTART/DTEND in UTC (all-day `VALUE=DATE`). No VTIMEZONE, no
+/// VALARM, no ORGANIZER or ATTENDEE.
+pub fn write_event(event: &KidWrite<'_>) -> String {
+    let mut out = String::new();
+    let date = if event.all_day { ";VALUE=DATE" } else { "" };
+    let lines = [
+        Some("BEGIN:VCALENDAR".to_string()),
+        Some("VERSION:2.0".to_string()),
+        Some("PRODID:-//Vibb//Vibb One//EN".to_string()),
+        Some("BEGIN:VEVENT".to_string()),
+        Some(format!("UID:{}", event.uid)),
+        Some(format!("DTSTAMP:{}", event.stamp)),
+        Some(format!("CREATED:{}", event.created)),
+        Some(format!("LAST-MODIFIED:{}", event.stamp)),
+        Some(format!("SEQUENCE:{}", event.sequence)),
+        Some(format!("SUMMARY:{}", escape_text(event.summary))),
+        (!event.location.is_empty()).then(|| format!("LOCATION:{}", escape_text(event.location))),
+        (!event.description.is_empty())
+            .then(|| format!("DESCRIPTION:{}", escape_text(event.description))),
+        Some(format!("DTSTART{date}:{}", event.start)),
+        Some(format!("DTEND{date}:{}", event.end)),
+        Some("END:VEVENT".to_string()),
+        Some("END:VCALENDAR".to_string()),
+    ];
+    for line in lines.into_iter().flatten() {
+        push_folded(&mut out, &line);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

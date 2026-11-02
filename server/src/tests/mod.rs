@@ -27,6 +27,7 @@ mod docker;
 mod edge;
 mod emergency_menu;
 mod enrollment;
+pub(crate) mod fake_dav;
 mod fdroid;
 mod hardening;
 mod install_now;
@@ -37,7 +38,7 @@ mod listeners;
 mod locate_page;
 mod locations;
 mod lock_glance;
-mod music;
+pub(crate) mod music;
 mod music_art;
 pub(crate) mod music_spotify;
 mod music_storytel;
@@ -236,6 +237,7 @@ impl TestApp {
                 None,
                 pushes.clone(),
             )),
+            kid_writes: Default::default(),
         };
 
         TestApp {

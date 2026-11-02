@@ -444,6 +444,9 @@ pub struct CalendarPolicy {
     pub rules: Vec<Rule>,
     /// The phone's calendar links (design 72 §3, `calendar_feeds`): `[{id, name, rev}]`, `[]` when none.
     pub feeds: Vec<crate::calendar_feeds::PolicyFeed>,
+    /// The CalDAV calendar the kid's events are written to (design 72b D1.6): `{id, accepted, back, pending}`, always
+    /// sent - `null` when none is marked or the launcher lacks `calendar_kid_events::CAPABILITY`.
+    pub kid_caldav: Option<crate::calendar_kid_events::KidCaldavPolicy>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
@@ -558,6 +561,7 @@ pub async fn policy_calendar(
         calendars: calendars(db, device_id).await?,
         rules: rules(db, device_id).await?,
         feeds: crate::calendar_feeds::policy_feeds(db, device_id).await?,
+        kid_caldav: None,
     })
 }
 
