@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm.server
 
-import android.app.AlarmManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -10,7 +9,6 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.UserManager
-import android.provider.AlarmClock
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.telecom.TelecomManager
@@ -172,19 +170,26 @@ private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
     null
 }
 
+/** The last [alarmAppPackages] logged. */
+@Volatile
+private var loggedAlarmApps: Set<String>? = null
+
 /**
- * The alarm/clock app the schedule lock spares, so an alarm set inside bedtime still rings (QA step 4 #2): the one
- * holding the next alarm, else the resolver of `AlarmClock.ACTION_SHOW_ALARMS` - but since security review S-L3 only
- * when it is a lock clock app (`lockClockPackages`: the system clock app, or Fossify Clock with its pinned signer),
- * plus every system clock app ([sparedAlarmApps], code QA L2). Any allowlisted app may call `setAlarmClock`; it is
- * not spared for it. Empty if there's none.
+ * The alarm/clock apps the schedule lock spares, so an alarm set inside bedtime still rings (QA step 4 #2), and pins
+ * while allowed (bug 2026-11-02): the lock's clock apps - every system clock app and Fossify Clock with its pinned
+ * signer ([sparedAlarmApps]; since security review S-L3 never the next alarm's creator as such: any allowlisted app may
+ * call `setAlarmClock`, it is not spared for it). Empty if there's none.
  */
 internal fun alarmAppPackages(context: Context): Set<String> = try {
-    val pm = context.packageManager
-    val next = context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent?.creatorPackage
-    val resolved = pm.resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)
-        ?.activityInfo?.packageName?.takeIf { it != "android" }
-    sparedAlarmApps(next, resolved, com.kidslauncher.mdm.lock.ClockApp.systemClocks(context), com.kidslauncher.mdm.lock.ClockApp.installed(context))
+    sparedAlarmApps(com.kidslauncher.mdm.lock.ClockApp.systemClocks(context), com.kidslauncher.mdm.lock.ClockApp.installed(context))
+        .also { apps ->
+            // Code QA L5: the set (every system SHOW_ALARMS handler) is usable during a rule once allowed - logged when
+            // it changes, so a device shows what an OEM puts in it (package names of system apps only).
+            if (apps != loggedAlarmApps) {
+                loggedAlarmApps = apps
+                Log.i(LOG_TAG, "Alarm apps (spared by a rule, pinned while allowed): ${apps.sorted()}")
+            }
+        }
 } catch (e: Exception) {
     Log.w(LOG_TAG, "Couldn't look up the alarm app", e)
     emptySet()
@@ -363,8 +368,11 @@ object AppEnforcer {
         // A time rule or the used-up budget: suspend everything but our own package, the system
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
         // the lock screen uses. A rule without calls (school) also turns managed calls off.
+        val lockDecidedAt = android.os.SystemClock.elapsedRealtime()
         val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive)
         val scheduleLocked = lock.locked
+        // A silent rule's Do Not Disturb (server 0121) from the same lock: off under the override, the pause and a lift.
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.follow(context, lock, lockDecidedAt)
         val timePolicy = KidModeEnforcer.timePolicyOf(policy)
 
         // The update fence (step 11): the one release rule runs on every pass, and while the fence

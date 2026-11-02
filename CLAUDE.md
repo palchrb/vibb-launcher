@@ -152,6 +152,17 @@ The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a 
 `emergency::tests` and the launcher's `EmergencyMenuTest` check their constants (`emergency::ALWAYS`/`BY_COUNTRY`,
 `Emergency.ALWAYS`/`BY_COUNTRY`) against it, run every vector and compare the copies. The policy's
 `call_policy.emergency_menu` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+The kid's own events written to the marked CalDAV calendar (design 72b §8) are `server/testdata/calendar_kid_events.json`,
+byte-identical in `launcher/app/src/test/resources/`: `provider` ("Min kalender"'s rows) and the exact POST body
+`snapshot` (and `cut_variant` past the limits), `canonical` (D2.7's form and hash, row by row), `policy` /
+`policy_waiting` (a `calendar.kid_caldav`), `answers` (every answer of `POST /api/devices/calendar/kid-events`) and
+`back_provider` (the provider values each hand-back writes). The server's `calendar_kid_events::tests::the_contract`
+posts `snapshot` against the stateful fake CalDAV (`tests::fake_dav`), checks each PUT's body against
+`server/testdata/calendar_kid_events/<uid>.ics` (server-only) and produces `answers` and `back_provider`
+(`CALENDAR_KID_EVENTS_CONTRACT_WRITE=1` rewrites them); the launcher's `KidCaldavTest` encodes `provider` to exactly
+`snapshot`, hashes `canonical`, maps each hand-back to exactly `back_provider`; both recompute the hand-back ids and
+compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json_keys_snapshot` and the launcher's
+`PolicyResponseCompatTest`.
 
 ## CI and releases
 
@@ -160,7 +171,7 @@ The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a 
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the three `calendar_*.json` and `emergency_numbers.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json` and `emergency_numbers.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -169,7 +180,7 @@ The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a 
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the three `calendar_*.json` and `emergency_numbers.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json` and `emergency_numbers.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

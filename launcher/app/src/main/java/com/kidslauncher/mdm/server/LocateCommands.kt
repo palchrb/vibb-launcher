@@ -401,6 +401,8 @@ object LocateCommands {
             ringTimeoutRunnable?.let { ringHandler.removeCallbacks(it) }
             ringTimeoutRunnable = null
             stopRingPlayback()
+            // A silent time rule's Do Not Disturb silences alarms (server 0121): lifted for the ring, back after it.
+            com.kidslauncher.mdm.timerules.ZenRuleRuntime.holdForRing(context, true)
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             val current = RING_RAISED_STREAMS.associateWith { audioManager.getStreamVolume(it) }
@@ -439,6 +441,8 @@ object LocateCommands {
             ringHandler.postDelayed(timeout, RING_DURATION_MS)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to ring device", e)
+            // Code QA M1: a ring that never started puts everything back - the volumes and the silent rule's hold.
+            stopRingAndRestore(context)
         }
     }
 
@@ -463,6 +467,7 @@ object LocateCommands {
             }
         }
         restoredStreams.clear()
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.holdForRing(context, false)
 
         cancelStopRingNotification(context)
     }

@@ -10,6 +10,7 @@ mod boot_witness;
 mod caldav;
 mod calendar;
 mod calendar_feeds;
+mod calendar_kid_events;
 mod config;
 mod crashes;
 mod device_routes;
@@ -174,6 +175,9 @@ pub struct AppState {
     /// Web Push to the parents' devices (design 35 §4): the VAPID key (`None` = push is off),
     /// the transport (scripted in the tests) and the sender's wake-up (`push::Push`).
     pub push: std::sync::Arc<push::Push>,
+    /// The kid's events written to a CalDAV calendar (design 72b): the write job's wake-up and the tests' clock
+    /// (`calendar_kid_events::KidWrites`).
+    pub kid_writes: std::sync::Arc<calendar_kid_events::KidWrites>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -504,6 +508,7 @@ async fn main() {
             )
             .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
         ),
+        kid_writes: Default::default(),
     };
     state
         .tokens
@@ -550,6 +555,8 @@ async fn main() {
     tokio::task::spawn(music_sweep::run(state.clone()));
     // Calendar links (design 72): each linked calendar fetched every hour, its first pass 30 s from now.
     tokio::task::spawn(calendar_feeds::run(state.clone()));
+    // Design 72b: the kid's events written to the marked CalDAV calendars - woken by a phone's set, else every minute.
+    tokio::task::spawn(calendar_kid_events::run(state.clone()));
     // Design 24: parent PINs stored before the easy-PIN check get it once.
     tokio::task::spawn(parent_pin::run_easy_sweep(
         state.db.clone(),
@@ -933,6 +940,11 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/calendar/dagen",
             post(handlers::calendar::save_dagen),
+        )
+        // Design 72b D2.6: the kid's held deletes handed back to the phone ("Put them back on the phone").
+        .route(
+            "/devices/{id}/calendar/dagen/restore",
+            post(handlers::calendar::restore_kid_events),
         )
         .route(
             "/devices/{id}/calendar/lock",

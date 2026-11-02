@@ -136,6 +136,17 @@ class TimeLockModelTest {
         assertEquals(listOf("Telefonbok", "Kalender", "Bøker", "meldinger", "Musikk"), withCalendar.map { it.label })
         assertEquals(LockRow.Calendar("Kalender"), withCalendar[1])
         assertEquals(listOf<LockRow>(LockRow.Calendar("Kalender")), timeLockRows(true, false, "Telefonbok", emptyList(), "Kalender"))
+        // E7's M1: a ringing alarm's row first, whatever else the rule leaves - also under a no-calls rule with nothing.
+        val ringing = timeLockRows(true, true, "Telefonbok", apps, calendarLabel = "Kalender", alarmLabel = "Slå av alarmen")
+        assertEquals(LockRow.Alarm("Slå av alarmen"), ringing.first())
+        assertEquals(withCalendar, ringing.drop(1))
+        assertEquals(listOf<LockRow>(LockRow.Alarm("Slå av alarmen")), timeLockRows(true, false, "Telefonbok", emptyList(), alarmLabel = "Slå av alarmen"))
+        // After an unlock the alarm row never opens by itself - the screen's own settled send does, once (E7 code QA 4).
+        assertNull(unlockOpenRow(true, false, listOf(LockRow.Alarm("Slå av alarmen"))))
+        // E7 code QA 1: without the notification listener the lock's clock apps are offered as rows too.
+        val clocks = setOf("com.google.android.deskclock")
+        assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = true))
+        assertEquals(setOf("org.signal", "com.google.android.deskclock"), lockRowPackages(setOf("org.signal"), clocks, listening = false))
     }
 
     /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's
@@ -338,7 +349,7 @@ class TimeLockModelTest {
         assertTrue("startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))" in activity)
         // The rows come from the lock's own decision, filtered as before (launchable, not suspended).
         assertTrue("timeLockRows(callsManaged, lock?.callsAllowed != false," in activity)
-        assertTrue("openableApps(lock?.usableApps.orEmpty())" in activity)
+        assertTrue("openableApps(rowPackages(lock?.usableApps.orEmpty()))" in activity)
         assertTrue("CameraLock.suspendedForLists(pkg, pm.isPackageSuspended(pkg))" in activity)
         // Back stays off.
         assertTrue("override fun handleOnBackPressed() {}" in activity)

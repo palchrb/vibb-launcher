@@ -94,11 +94,15 @@ sealed interface LockRow {
     /** Kalender, our own day view ("Kalender"; PLAN 2026-11-02). */
     data class Calendar(override val label: String) : LockRow
 
+    /** E7's M1: an allowed clock's alarm rings - its ringing screen, with Stop and Snooze. */
+    data class Alarm(override val label: String) : LockRow
+
     data class App(val packageName: String, override val label: String) : LockRow
 }
 
 /**
- * The card's rows: the phone book first while calls are managed and the lock allows them (as
+ * The card's rows: a ringing alarm's row first while one rings ([alarmLabel], null = none; E7's M1 - whatever the
+ * rule, the kid can always reach its Stop), the phone book while calls are managed and the lock allows them (as
  * before P6, when it was its own button), then Kalender when every rule allows it and it is on for
  * the phone ([calendarLabel], null = no row; PLAN 2026-11-02), then every usable [apps] entry sorted
  * by its name (QA #6 of design 14) - the music app among them under a budget lock. Every app is a
@@ -110,8 +114,10 @@ fun timeLockRows(
     phoneBookLabel: String,
     apps: List<LockApp>,
     calendarLabel: String? = null,
+    alarmLabel: String? = null,
 ): List<LockRow> {
     val rows = mutableListOf<LockRow>()
+    if (alarmLabel != null) rows += LockRow.Alarm(alarmLabel)
     if (callsManaged && callsAllowed) rows += LockRow.PhoneBook(phoneBookLabel)
     if (calendarLabel != null) rows += LockRow.Calendar(calendarLabel)
     apps.sortedWith(compareBy({ it.label.lowercase() }, { it.packageName }))
@@ -128,11 +134,22 @@ fun unlockMarkFresh(markedAtMs: Long, nowMs: Long): Boolean = markedAtMs > 0 && 
 
 /**
  * PLAN "one usable thing opens straight after the PIN" (2026-11-02): the row the time-rule screen opens by itself as it
- * comes up after an unlock - its only row, when that is an app or Kalender, the unlock marked it ([marked]: fresh, the
+ * comes up after an unlock - its only row, when that is an app or Kalender (never the alarm row: the screen's own settled
+ * send brings the ringing screen up, with its waits - E7 code QA 4), the unlock marked it ([marked]: fresh, the
  * phone still unlocked) and the lock handed it no glance row ([handedOver], which opens instead). Otherwise none: the
  * card stays. The phone book never opens by itself (the coordinator's decision on QA N5: a bedtime with calls and
  * nothing else would land every night unlock in it) but counts as a row, so it and one app keep the card; Emergency
  * call is no row and never counts.
  */
 fun unlockOpenRow(marked: Boolean, handedOver: Boolean, rows: List<LockRow>): LockRow? =
-    if (marked && !handedOver) rows.singleOrNull()?.takeIf { it !is LockRow.PhoneBook } else null
+    if (marked && !handedOver) rows.singleOrNull()?.takeIf { it !is LockRow.PhoneBook && it !is LockRow.Alarm } else null
+
+/**
+ * E7 code QA 1: the packages the card offers as app rows - the rule's usable apps, and while the notification listener
+ * isn't connected ([listening]: no access, or not yet rebound after an update or a restart) the lock's clock apps too
+ * ([clockPackages]): without the listener no ringing alarm is seen, so its screen is neither sent nor offered, and the
+ * clock app itself is the kid's way to it. No loophole: the screen's openable-apps filter keeps only a launchable clock
+ * that isn't suspended - one the rule spares as an allowed alarm app.
+ */
+fun lockRowPackages(usable: Set<String>, clockPackages: Set<String>, listening: Boolean): Set<String> =
+    if (listening) usable else usable + clockPackages

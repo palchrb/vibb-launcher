@@ -121,6 +121,12 @@ interface MdmApi {
      * link - see `calendar/CalendarFeeds`. */
     @GET("api/devices/calendar/feeds/{id}")
     suspend fun calendarFeed(@Path("id") id: String, @Header("If-None-Match") ifNoneMatch: String?): Response<ResponseBody>
+
+    /** The kid's coming events for the marked CalDAV calendar (design 72b D1.7): the body as `day/KidCaldav.kt`'s
+     * [com.kidslauncher.mdm.day.KidSnapshot.body] writes it; the raw answer (`{accepted, pending, back}`, a 409, 429,
+     * 413 or 400) - see `calendar/KidCaldavSync`. */
+    @POST("api/devices/calendar/kid-events")
+    suspend fun kidEvents(@Body body: okhttp3.RequestBody): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

@@ -36,6 +36,9 @@ data class TimeRule(
     /** Kalender (our own day view, "Vibb-kalender" in the PWA) stays usable while the rule runs (PLAN 2026-11-02,
      * server migration 0119). Missing - an older server - is false: Kalender stays closed under the rule, as before. */
     val calendarAllowed: Boolean = false,
+    /** The phone is silent while the rule runs (the user, 2026-11-02; server migration 0121, "Stille" in the PWA):
+     * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing - an older server - is false. */
+    val silent: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
 )
 

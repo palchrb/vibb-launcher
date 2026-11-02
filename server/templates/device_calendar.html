@@ -26,11 +26,20 @@
                 <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row row-stacked">
-                <span class="row-label">{{ self.t("calendar.kid.label") }}</span>
+                <span class="row-label">{{ self.t("calendar.kid.label") }}{% if kid_caldav_older %}<span class="row-sub" data-kid-caldav-older>{{ self.t("calendar.kid_caldav.older") }}</span>{% endif %}</span>
                 <select class="pick" name="kid" data-autosave>
-                    {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}
+                    {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}{% if k.disabled %} disabled{% endif %}>{{ k.label }}</option>{% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
+            {#- Design 72b D5.2: while a CalDAV calendar is the pick, one line per state - counts only, never a title;
+                orange when the parent may act. A held mass delete has "Put them back on the phone" (a POST, back to
+                #dagen). -#}
+            {% if !kid_status.is_empty() %}
+            <div class="row" data-kid-caldav-status>
+                <span class="row-label">{% for line in kid_status %}<span class="row-sub{% if line.warn %} tone-orange{% endif %}" data-kid-status="{{ line.data }}">{% if let Some(href) = line.link %}<a href="{{ href }}">{{ line.text }}</a>{% else %}{{ line.text }}{% endif %}</span>{% endfor %}</span>
+            </div>
+            {% endif %}
+            {% if kid_restore %}<button type="submit" class="row row-button" formaction="/devices/{{ device_id }}/calendar/dagen/restore#dagen" data-kid-restore>{{ self.t("calendar.kid_caldav.restore") }}</button>{% endif %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
         <div class="group-footer" data-footer="dagen">{{ self.t("calendar.dagen.footer") }}
@@ -38,6 +47,8 @@
                 <summary aria-label="{{ self.t("calendar.dagen.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("calendar.dagen.info") }}</p>
+                    <p data-info="kid-caldav">{{ self.kid_info() }}</p>
+                    <p>{{ self.t("calendar.kid_caldav.info_tag") }}</p>
                 </div>
             </details>
         </div>
@@ -91,6 +102,7 @@
         The links themselves are sealed on the server and never shown again - only their host. -#}
     <section id="sources" aria-labelledby="sources-title">
         <h2 class="group-header" id="sources-title">{{ self.t("calendar.sources.title") }}</h2>
+        {% if let Some(key) = sources_notice %}<p class="flash" role="status" data-flash="kid-caldav-ended">{{ self.t(key) }}</p>{% endif %}
         {#- E6's L3: the server made a new music key at its start (the file was gone), so the links sealed with the old one
             can't be fetched; each such row says it too. Pasting the same link again re-seals it onto its calendar. -#}
         {% if links_key_new %}

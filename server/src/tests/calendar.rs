@@ -157,7 +157,8 @@ async fn the_policy_carries_the_rules_and_the_calendars() {
                 {"id": 7, "calendar": "9f3a61c2d84be705", "field": "title", "match": "starts",
                  "pattern": "Gruppe 2- skoleåret 2026/2027:", "action": "prefix", "text": "Skole:"}
             ],
-            "feeds": []
+            "feeds": [],
+            "kid_caldav": null
         })
     );
     // At most one calendar a phone is the kid's.
@@ -326,7 +327,8 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
                 {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true, "color": null}
             ],
             "rules": [],
-            "feeds": []
+            "feeds": [],
+            "kid_caldav": null
         })
     );
     // Off for the kid (the family calendar, no longer the kid's, gets the next free colour and so stays a row); a
@@ -1161,6 +1163,8 @@ async fn every_calendar_route_needs_a_session() {
     let links = format!("{page}/links/{uid}");
     let posts: Vec<(String, Vec<(&str, &str)>)> = vec![
         (format!("{page}/dagen"), vec![("kid", "off")]),
+        // Design 72b: "Put them back on the phone".
+        (format!("{page}/dagen/restore"), vec![]),
         (
             format!("{page}/lock"),
             vec![("glance_next", "on"), ("reminders", "row")],

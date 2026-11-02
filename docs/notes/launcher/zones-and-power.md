@@ -21,7 +21,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   first unlock) the edge is lost and the next report carries the sticky state.
 - **After an emergency call connects** (`calls/EmergencyConnects.kt`, one per `KidInCallService`): every connected
   state of a platform-confirmed emergency call (active, active again after hold, disconnected after connecting) goes
-  through `connected(call, connectTimeMillis, now) { CallPrefs.recordEmergencyConnected(this, it) }`, which commits
+  through `connected(call, connectTimeMillis, now) { CallPrefs.recordEmergencyConnected(this, it, creationTimeMillis) }`, which commits
   the record with **one instant per call** (the call's `connectTimeMillis`, else its `creationTimeMillis` - both
   Telecom's, stable across a restart of our process mid-call -, else the first sighting; kept per `Call` object,
   identity map, dropped in `onCallRemoved`) and then asks for **one** sync per call
@@ -34,7 +34,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   its window's start. Before the stable instant the report moved from the connect to the disconnect time, which the
   server announces as a second emergency call. **Never before the first unlock** (`CallPolicyStore.userUnlocked`
   false: the anchor isn't direct-boot-aware): no request, the call isn't marked, so its next connected state after
-  the unlock asks; else the anchor's start sync after the unlock carries the call from the DE record.
+  the unlock asks; else the anchor's start sync after the unlock carries the call from the DE record. **An emergency
+  call the launcher placed** (`CallSystem.emergencyPlaced`, E7's H1) is recorded (provisional window) and synced the
+  same way the moment Telecom takes it - its instant the placing, taken just before Telecom creates the call; when our
+  in-call service sees that call connect too, `placingOf` keeps the placing's instant (only a record flagged as a
+  placing, created no more than 5 s after it), so the server still hears of one call. A callback Telecom marks for an
+  emergency call placed elsewhere is recorded and synced too (`telecomMarkSeen`), unless one is known from the last
+  hour. The window rules: `docs/notes/launcher/calls.md`, "Incoming".
 - Tests: `BatteryReportTest` (`of`: rounding, clamp, the charging rule, every null case; the report with and without
   `battery`; the receiver's registration, actions and catches by source), `SyncScheduleTest` (`battery_v1`),
   `EmergencyConnectsTest` (one sync and one instant per call over its states, the creation-time fallback, a second

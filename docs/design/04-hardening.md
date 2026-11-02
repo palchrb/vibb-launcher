@@ -148,7 +148,9 @@ Fix round after `qa-step4-code.md` (S `f035f8e`, `068af82`; L `597dd06`, `c3267f
   dialer with 112 typed in), whatever the call state.
 - #2 the lock suspends allowed apps without hiding them (`EnforcementPlan.hide` = only apps not allowed at all); the
   default alarm app (next alarm's creator, else the `SHOW_ALARMS` resolver) isn't suspended by the lock, isn't pinned,
-  and still follows the allowlist.
+  and still follows the allowlist. (Changed 2026-11-02, bug "an alarm during school mode can't be dismissed": the allowed alarm
+  apps - every system clock and a verified Fossify Clock - are pinned during the lock in kiosk, else lock task refused
+  the clock's ringing screen; launcher `docs/notes/launcher/hardening.md`.)
 - #3 enabled/default input methods are in `neverRestrict` (never suspended or hidden).
 - #4 device-page warning for a managed phone without a PIN; #5/#6 runbook above, safe-mode text corrected (spec, card,
   CLAUDE.md, code comments; the comment in migration `0023` is left as is - editing it would change its checksum).

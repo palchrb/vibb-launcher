@@ -393,6 +393,15 @@ pub(crate) async fn build_policy(
     // The quiet row plus a ping (migration 0113): `ping` only to a launcher that knows it, `row` to an older one.
     calendar.lock_reminders =
         crate::calendar::served_lock_reminders(&calendar.lock_reminders, &capabilities);
+    // Design 72b D1.6: the marked CalDAV calendar only to a launcher that hands its kid's events over.
+    if capabilities
+        .iter()
+        .any(|c| c == crate::calendar_kid_events::CAPABILITY)
+    {
+        calendar.kid_caldav =
+            crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now())
+                .await?;
+    }
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);

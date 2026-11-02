@@ -16,19 +16,70 @@ const val KID_EVENT_DEFAULT_MINUTES = 60
 const val KID_EVENT_TITLE_MAX = 100
 const val KID_EVENT_PLACE_MAX = 100
 
-/** A form that can be saved: the cleaned title and place, the start and end as instants. */
-data class KidEventInput(val title: String, val place: String, val beginMs: Long, val endMs: Long) {
+/** A form that can be saved: the cleaned title and place, the start and end as instants. A change of an event writes
+ * the title or the place only when the kid changed that field ([titleChanged], [placeChanged]; design 72b R-L5). */
+data class KidEventInput(
+    val title: String,
+    val place: String,
+    val beginMs: Long,
+    val endMs: Long,
+    val titleChanged: Boolean = true,
+    val placeChanged: Boolean = true,
+    /** The kid changed the day, the start or the length (launcher QA M1): only then are the times written. */
+    val timesChanged: Boolean = true,
+) {
     override fun toString() = "KidEventInput"
 }
 
 /** The form checked: a title (cleaned, at most [KID_EVENT_TITLE_MAX]), a length of [KID_EVENT_MINUTES]; `null` =
  * nothing to save yet (no title). The start is the local time on the day (a DST gap moves it forward, as `ZonedDateTime`
  * does). */
-fun kidEventInput(title: String, place: String, day: LocalDate, start: LocalTime, minutes: Int, zone: ZoneId): KidEventInput? {
+fun kidEventInput(
+    title: String,
+    place: String,
+    day: LocalDate,
+    start: LocalTime,
+    minutes: Int,
+    zone: ZoneId,
+    titleShown: String? = null,
+    placeShown: String? = null,
+    timesShown: KidEventTimes? = null,
+): KidEventInput? {
     val t = TitleRules.clean(title, KID_EVENT_TITLE_MAX)
     if (t.isEmpty() || minutes !in KID_EVENT_MINUTES) return null
     val begin = day.atTime(start).atZone(zone).toInstant().toEpochMilli()
-    return KidEventInput(t, TitleRules.clean(place, KID_EVENT_PLACE_MAX), begin, begin + minutes * 60_000L)
+    // A move of the day or the start keeps the event's own length (a parent's 2 h 20 min) unless the kid chose another
+    // (revision RN1).
+    val length = timesShown?.durationMs?.takeIf { minutes == timesShown.minutes && it > 0 } ?: (minutes * 60_000L)
+    return KidEventInput(
+        t,
+        TitleRules.clean(place, KID_EVENT_PLACE_MAX),
+        begin,
+        begin + length,
+        titleChanged = titleShown == null || title != titleShown,
+        placeChanged = placeShown == null || place != placeShown,
+        timesChanged = timesShown == null || !timesShown.sameAs(day, start, minutes),
+    )
+}
+
+/** The form's day, start and length as it showed them after loading an event. */
+data class KidEventTimes(val day: LocalDate, val start: LocalTime, val minutes: Int, val durationMs: Long? = null) {
+    fun sameAs(day: LocalDate, start: LocalTime, minutes: Int) = this.day == day && this.start == start && this.minutes == minutes
+}
+
+/** The columns a change of the kid's event writes (design 72b): each field only when the kid changed it - a title or
+ * place left alone keeps exactly what the row has, a parent's longer title included (R-L5), and times left alone keep
+ * a parent's all-day day, odd length or later move (launcher QA M1). Changed times are written whole: the start, the
+ * end, `ALL_DAY` 0 and the zone (QA L6: a handed-back all-day event retimed in the form is a timed one). */
+fun kidEventUpdateColumns(input: KidEventInput, zone: String): Map<String, Any> = buildMap {
+    if (input.titleChanged) put(FeedColumns.TITLE, input.title)
+    if (input.placeChanged) put(FeedColumns.LOCATION, input.place)
+    if (input.timesChanged) {
+        put(FeedColumns.DTSTART, input.beginMs)
+        put(FeedColumns.DTEND, input.endMs)
+        put(FeedColumns.ALL_DAY, 0)
+        put(FeedColumns.TIMEZONE, zone)
+    }
 }
 
 /** The kid's calendar among [calendars]: the parent's pick when the phone has it and may write to it (access at least

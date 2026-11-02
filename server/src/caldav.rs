@@ -133,7 +133,7 @@ pub fn calendar_id(href: &str) -> String {
     hex::encode(Sha256::digest(href.as_bytes()))[..16].to_string()
 }
 
-fn aad(fingerprint: &str, account_id: i64) -> Vec<u8> {
+pub(crate) fn aad(fingerprint: &str, account_id: i64) -> Vec<u8> {
     format!("caldav-v1:{fingerprint}:{account_id}").into_bytes()
 }
 
@@ -147,6 +147,8 @@ pub struct Prop {
     pub hrefs: Vec<String>,
     pub children: Vec<(String, String)>,
     pub comps: Vec<String>,
+    /// Every element inside it, at any depth (design 72b D4.7: `current-user-privilege-set`'s privileges).
+    pub names: Vec<(String, String)>,
 }
 
 /// Properties by (namespace, local name).
@@ -212,6 +214,7 @@ pub fn multistatus(body: &[u8]) -> Option<Vec<DavResponse>> {
                     if depth == *at + 1 {
                         p.children.push((ns.clone(), local.clone()));
                     }
+                    p.names.push((ns.clone(), local.clone()));
                     if dav && local == "href" {
                         href = Some(String::new());
                     }
@@ -318,7 +321,7 @@ const PROPFIND_HOME: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-home-set/></d:prop></d:propfind>"#;
 
 const PROPFIND_LIST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/><cs:getctag/></d:prop></d:propfind>"#;
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/><cs:getctag/><d:current-user-privilege-set/></d:prop></d:propfind>"#;
 
 const PROPFIND_CTAG: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/><d:sync-token/></d:prop></d:propfind>"#;
@@ -406,10 +409,7 @@ impl Dav<'_> {
         )
     }
 
-    /// One WebDAV request, its redirects followed here one hop at a time (at most [MAX_HOPS], the same method and
-    /// body): each hop judged as a link is, never https → http, a LAN address only on its own host and port, and,
-    /// after Test, only to a confirmed host (`host_changed` before the request). A 401/403 with the password is
-    /// `login_refused` and never retried. Returns the address that answered and the answer.
+    /// One WebDAV read ([Dav::ask_with] with Depth and an XML body).
     async fn ask(
         &mut self,
         method: &'static str,
@@ -417,6 +417,29 @@ impl Dav<'_> {
         depth: &'static str,
         body: &str,
     ) -> Result<(reqwest::Url, SourceResponse), FeedError> {
+        let request = DavRequest {
+            method,
+            depth: Some(depth),
+            content_type: Some("application/xml; charset=utf-8"),
+            condition: None,
+            body: body.as_bytes(),
+        };
+        self.ask_with(&request, url).await
+    }
+
+    /// One WebDAV request, a read's redirects followed here one hop at a time (at most [MAX_HOPS], the same method
+    /// and body): each hop judged as a link is, never https → http, a LAN address only on its own host and port, and,
+    /// after Test, only to a confirmed host (`host_changed` before the request). A read's 401/403 with the password
+    /// is `login_refused` and never retried. A write or a resource's `GET` (design 72b D4.3) follows no redirect - the
+    /// 3xx is its answer - and only its 401 is `login_refused`: its 403 is the caller's to read by the body (D4.4).
+    /// Returns the address that answered and the answer.
+    async fn ask_with(
+        &mut self,
+        req: &DavRequest<'_>,
+        url: &reqwest::Url,
+    ) -> Result<(reqwest::Url, SourceResponse), FeedError> {
+        let method = req.method;
+        let read = req.read();
         let mut current = url.clone();
         let mut hops = 0;
         loop {
@@ -457,29 +480,45 @@ impl Dav<'_> {
             request.method =
                 reqwest::Method::from_bytes(method.as_bytes()).expect("a WebDAV method");
             request.follow = false;
-            request.headers = vec![
-                (
+            request.headers = Vec::new();
+            if let Some(depth) = req.depth {
+                request.headers.push((
                     reqwest::header::HeaderName::from_static("depth"),
                     depth.to_string(),
-                ),
-                (
-                    reqwest::header::CONTENT_TYPE,
-                    "application/xml; charset=utf-8".to_string(),
-                ),
-            ];
+                ));
+            }
+            if let Some(content_type) = req.content_type {
+                request
+                    .headers
+                    .push((reqwest::header::CONTENT_TYPE, content_type.to_string()));
+            }
+            if let Some((name, value)) = &req.condition {
+                request.headers.push((name.clone(), value.clone()));
+            }
             if with_password {
                 request
                     .headers
                     .push((reqwest::header::AUTHORIZATION, self.authorization()));
             }
-            request.body = Some(body.as_bytes().to_vec());
+            if !req.body.is_empty() || (method != "GET" && method != "DELETE") {
+                request.body = Some(req.body.to_vec());
+            }
             let answer = self
                 .source
                 .get(request)
                 .await
                 .map_err(calendar_feeds::fetch_error)?;
-            if matches!(answer.status, 401 | 403) && with_password {
+            let refused = if read {
+                matches!(answer.status, 401 | 403)
+            } else {
+                answer.status == 401
+            };
+            if refused && with_password {
                 return Err(FeedError::code("login_refused"));
+            }
+            if !read {
+                // A write never follows a redirect (QA L1): the 3xx is the answer, a `status` error for its event.
+                return Ok((current, answer));
             }
             if answer.status == 401
                 && let Hosts::Learn(asked) = &mut self.hosts
@@ -519,6 +558,23 @@ impl Dav<'_> {
     }
 }
 
+/// One request's shape (design 72b D4.3): the method, an optional Depth and content type, and a write's condition
+/// (`If-Match` / `If-None-Match`). No `Debug`: a write's body is the kid's event.
+pub(crate) struct DavRequest<'b> {
+    pub method: &'static str,
+    pub depth: Option<&'static str>,
+    pub content_type: Option<&'static str>,
+    pub condition: Option<(reqwest::header::HeaderName, String)>,
+    pub body: &'b [u8],
+}
+
+impl DavRequest<'_> {
+    /// PROPFIND and REPORT: a redirect followed, a 403 the account's refusal (as before design 72b).
+    fn read(&self) -> bool {
+        matches!(self.method, "PROPFIND" | "REPORT")
+    }
+}
+
 /// A non-207 answer as an error: 404/405/410 → `missing` (the caller's code), else `status`.
 fn not_multistatus(status: u16, missing: &'static str) -> FeedError {
     match status {
@@ -540,6 +596,18 @@ pub struct Found {
     /// The collection's address, absolute.
     pub href: String,
     pub name: String,
+    /// Whether the account may add events to it (design 72b D4.7, `current-user-privilege-set`): `null` when the
+    /// server didn't say (such a calendar is offered; the first PUT's 403 answers it) - and for a Test before 72b.
+    #[serde(default)]
+    pub writable: Option<bool>,
+}
+
+/// D4.7: `true` with `bind` and `write-content`, or `write`, or `all` (a new resource needs `bind` on the collection,
+/// RFC 3744); `false` without; `None` when the server sent no privilege set.
+pub fn writable_of(response: &DavResponse) -> Option<bool> {
+    let set = response.prop(DAV, "current-user-privilege-set")?;
+    let has = |name: &str| set.names.iter().any(|(n, l)| n == DAV && l == name);
+    Some(has("write") || has("all") || (has("bind") && has("write-content")))
 }
 
 /// What a passing Test found.
@@ -680,6 +748,7 @@ pub async fn discover(
             id: calendar_id(href.as_str()),
             href: href.to_string(),
             name,
+            writable: writable_of(r),
         });
         if calendars.len() >= MAX_CALENDARS {
             break;
@@ -769,11 +838,21 @@ async fn fetch_with(
     let resources = multistatus(&answer.body).ok_or(FeedError::code("not_caldav"))?;
     let mut body = String::new();
     let mut skipped = 0i64;
+    let mut kept = Vec::new();
     for r in &resources {
         let Some(data) = r.prop(CALDAV, "calendar-data") else {
             continue;
         };
         let data = data.text.trim().trim_start_matches('\u{feff}').trim();
+        // Each resource as it came, for design 72b's per-resource read of the kid's events (D4.6).
+        kept.push(DavResource {
+            href: r.href.clone(),
+            etag: r
+                .prop(DAV, "getetag")
+                .map(|p| p.text.trim().to_string())
+                .filter(|e| !e.is_empty()),
+            data: data.to_string(),
+        });
         let upper = |s: &str| s.to_ascii_uppercase();
         let whole = upper(data.get(..15).unwrap_or("")) == "BEGIN:VCALENDAR"
             && data.len() >= 13
@@ -805,7 +884,23 @@ async fn fetch_with(
         parsed,
         etag: tag,
         last_modified: Some(stamp(now)),
+        resources: kept,
     })
+}
+
+/// One resource of a calendar's `REPORT` (design 72b D4.6): its `getetag` and its `calendar-data` - matched to a
+/// kid event by its UID, never by its href (QA N5). No `Debug`: the data is the calendar's events.
+pub struct DavResource {
+    /// As the server wrote it: only to choose between two resources with the same UID, never stored.
+    pub href: String,
+    pub etag: Option<String>,
+    pub data: String,
+}
+
+impl std::fmt::Debug for DavResource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DavResource { .. }")
+    }
 }
 
 // ---- the stored account ------------------------------------------------------------------------
@@ -918,6 +1013,106 @@ pub async fn refresh_source(
             .await?;
     }
     Ok(result)
+}
+
+// ---- the kid's writes (design 72b) -------------------------------------------------------------
+
+/// The account as the kid's writes need it (D4.2, D4.5: the same hosts, the same LAN pin). No `Debug`: it holds the
+/// password.
+pub(crate) struct WriteLogin {
+    pub id: i64,
+    server_url: String,
+    username: String,
+    password: String,
+    hosts: Vec<String>,
+    lan: bool,
+    nonce: Vec<u8>,
+    /// What the last passing Test listed: a calendar it no longer lists takes no write (D4.7).
+    pub calendars: Vec<Found>,
+}
+
+/// The account's login for writes, or why there is none: `login_refused` / `host_changed` (stopped until Test
+/// passes), `key_lost` (its password can't be opened), `gone`. No request is made without one (D4.2).
+pub(crate) async fn write_login(
+    state: &AppState,
+    id: i64,
+) -> Result<Result<WriteLogin, &'static str>, sqlx::Error> {
+    let Some(row) = account(state, id).await? else {
+        return Ok(Err("gone"));
+    };
+    match row.state.as_str() {
+        "ok" => {}
+        "host_changed" => return Ok(Err("host_changed")),
+        _ => return Ok(Err("login_refused")),
+    }
+    let Some(password) = open_password(state, id, &row) else {
+        return Ok(Err("key_lost"));
+    };
+    Ok(Ok(WriteLogin {
+        id,
+        hosts: serde_json::from_str(&row.hosts).unwrap_or_default(),
+        calendars: serde_json::from_str(&row.calendars_json).unwrap_or_default(),
+        server_url: row.server_url,
+        username: row.username,
+        password,
+        lan: row.lan,
+        nonce: row.password_nonce,
+    }))
+}
+
+impl WriteLogin {
+    /// One request with the account's password, only to its confirmed hosts ([Dav::ask_with]: a write follows no
+    /// redirect, its 403 is the caller's).
+    pub(crate) async fn send(
+        &self,
+        source: &dyn Source,
+        url: &str,
+        request: &DavRequest<'_>,
+    ) -> Result<SourceResponse, FeedError> {
+        let parsed = reqwest::Url::parse(url).map_err(|_| FeedError::code("network"))?;
+        let mut dav = Dav {
+            source,
+            login: Login {
+                username: &self.username,
+                password: &self.password,
+            },
+            lan: self.lan,
+            hosts: Hosts::Fixed(&self.hosts),
+            origin: origin_of(&self.server_url, self.lan),
+            went_public: false,
+        };
+        dav.ask_with(request, &parsed)
+            .await
+            .map(|(_, answer)| answer)
+    }
+
+    /// Whether `url` is on a host the password may go to (D4.5: an adopted href elsewhere is `host_changed`).
+    pub(crate) fn confirmed_host(&self, url: &reqwest::Url) -> bool {
+        self.hosts.contains(&host_of(url))
+    }
+
+    /// A refused password (a 401) or another host stops the account, as a fetch's does (QA M5) - only while its
+    /// password is the one this login read (code QA L4).
+    pub(crate) async fn stop(
+        &self,
+        state: &AppState,
+        code: &'static str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE caldav_accounts SET state = ? WHERE id = ? AND state = 'ok' AND password_nonce = ?",
+        )
+        .bind(code)
+        .bind(self.id)
+        .bind(&self.nonce)
+        .execute(&state.db)
+        .await?;
+        tracing::warn!(
+            account_id = self.id,
+            code,
+            "a CalDAV account stopped by a write until it is tested again"
+        );
+        Ok(())
+    }
 }
 
 // ---- Test --------------------------------------------------------------------------------------
@@ -1195,6 +1390,8 @@ async fn run_test(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    // Design 72b: a pass answers the writes' stops (`write_refused`, `full`, `no_etag`) and the account's backoff.
+    crate::calendar_kid_events::account_tested(&state.db, id).await?;
     tracing::info!(
         account_id = id,
         calendars = discovery.calendars.len(),

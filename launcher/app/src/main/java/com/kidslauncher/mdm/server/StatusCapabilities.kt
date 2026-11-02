@@ -40,9 +40,17 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.day.CALENDAR_FEEDS_CAPABILITY,
     // The quiet row plus a ping: the policy's `lock_reminders: "ping"` (the server sends `row` without this).
     com.kidslauncher.mdm.day.CALENDAR_PING_CAPABILITY,
+    // Design 72b: the kid's own events handed over for the marked CalDAV calendar (`calendar.kid_caldav`), the
+    // parent's edits applied back.
+    com.kidslauncher.mdm.day.CALENDAR_KID_CALDAV_CAPABILITY,
     // Design 68: the policy's `app_permissions` (camera off per app) and `installed_apps[].access` in every report.
     APP_PERMISSIONS_CAPABILITY,
+    // Server 0121: the policy's `time_policy.rules[].silent` - a silent rule turns on our own Do Not Disturb rule.
+    RULE_SILENCE_CAPABILITY,
 )
+
+/** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */
+const val RULE_SILENCE_CAPABILITY = "rule_silence_v1"
 
 /** Design 68's capability: the server's `app_permissions::CAPABILITY`. */
 const val APP_PERMISSIONS_CAPABILITY = "app_permissions_v1"

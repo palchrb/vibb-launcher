@@ -2312,6 +2312,76 @@ key is replaced by a new one at start (the form says nothing; the old links' URL
 and a removed link's row doesn't grey - it reads "· Phone" until the phone's next report and then goes, with the
 settings kept (the re-add got Sun back). The 390 px page wasn't rendered this session.
 
+## 6z. CalDAV write-back: the kid's own events in the parent's calendar (design 72b)
+
+Branch `caldav-write`; `jelly36`, `wm density 240`. Logcat: `KidCaldav`, `CalendarFeeds`, `CalendarStore`; the server's
+log (`calendar_kid_events`, never a title). No DAVx5. **Radicale on the host** (as design 72 §10), plain http. The
+server, not the phone, talks to Radicale, so its address is **the host's own LAN address** (`hostname -I`; the server
+judges it LAN and allows plain http with the warning) - not `10.0.2.2`, which is only the emulator's name for the host
+(E6, E7 L4). Radicale reads its rights file only at start, and the server's discovery needs `R` on the root
+(`collection:` empty) - without it the PROPFIND gets 403 and the PWA says "Passordet ble avvist". `rights` writes the
+file with the calendars named as its arguments read-only, `radicale` (re)starts it:
+
+```
+python3 -m venv ~/radicale && ~/radicale/bin/pip install radicale
+mkdir -p ~/radicale/data && printf 'forelder:test-only-not-a-real-password\n' > ~/radicale/users
+cat > ~/radicale/config <<EOF
+[server]
+hosts = 0.0.0.0:5232
+[auth]
+type = htpasswd
+htpasswd_filename = $HOME/radicale/users
+htpasswd_encryption = plain
+[rights]
+type = from_file
+file = $HOME/radicale/rights
+[storage]
+filesystem_folder = $HOME/radicale/data
+[logging]
+level = debug
+request_header_on_debug = True
+EOF
+rights() {  # the read-only calendars as arguments (none: all writable)
+  local IFS='|'
+  { printf '[root]\nuser: .+\ncollection:\npermissions: R\n'
+    [ $# -gt 0 ] && printf '[ro]\nuser: forelder\ncollection: forelder/(%s)(/.*)?\npermissions: r\n' "$*"
+    printf '[owner]\nuser: forelder\ncollection: forelder(/.*)?\npermissions: RrWw\n'; } > ~/radicale/rights
+}
+radicale() { pkill -f 'radicale --config'; sleep 1; ~/radicale/bin/radicale --config ~/radicale/config \
+  > ~/radicale/radicale.log 2>&1 & }
+rights; radicale                    # both calendars are made while everything is writable ...
+D=http://localhost:5232/forelder; A='forelder:test-only-not-a-real-password'
+curl -u "$A" -X MKCALENDAR $D/familie/ ; curl -u "$A" -X MKCALENDAR $D/skrivebeskyttet/
+rights skrivebeskyttet; radicale    # ... then "skrivebeskyttet" turns read-only
+```
+
+The server runs on the host (`dev-rebuild.sh`); Device › Calendar › Legg til kalender… › CalDAV-konto: server
+`http://<the host's LAN address>:5232/`, username `forelder`, the password above. Tick "familie" and "skrivebeskyttet" on
+the phone's account page. Before the pick, the kid has "Lekser" (today, ended), "Kino" (tomorrow) and "Tur" (next week)
+in "Min kalender" (Kalender's "+"). Listing Radicale: `curl -s -u "$A" $D/familie/ -X PROPFIND -H 'Depth: 1'`, a
+resource `curl -s -u "$A" $D/familie/<uid>.ics`.
+
+| Step | Expected |
+|---|---|
+| Open the select in Barnets avtaler | "familie · <host> (skrives av serveren)" is offered; "skrivebeskyttet" is not (Test read it as read-only). |
+| Pick "familie" | Only the kid's coming events appear in Radicale (`curl`); not "Lekser". The status line "Skrevet hh:mm · 2 avtaler" after the next fetch, and no "venter på å bli skrevet" beside it once they are written (E7 L6). |
+| The kid adds "Kino 2" in Kalender | It is in Radicale within a sync (the save asks for one) and shows once on the phone (not twice: the feed skips it). |
+| Edit "Kino" by `curl -X PUT` (new DTSTART) | The phone shows the new time after the next fetch and sync; the status line meanwhile "1 endring fra kalenderen venter på telefonen". |
+| Make "Tur" recurring by `curl` (add `RRULE:FREQ=WEEKLY`) | It leaves "Min kalender" and shows read-only from the feed (in the calendar's colour); the kid can't change it. |
+| Delete "Kino 2" by `curl -X DELETE` | It is gone on the phone. |
+| The kid deletes "Kino" | It is gone in Radicale, and no ghost appears on the phone between the delete and the next fetch. |
+| Offline: two added, one deleted, back online | Radicale matches the phone after the next sync. Airplane mode leaves the emulator's path to the host open (E7): stop the server instead. |
+| An event far ahead (2028) | It is written. |
+| `rights familie skrivebeskyttet; radicale` (no Test), then the kid adds an event | Orange "Kalenderen tar ikke imot avtaler - velg en annen" and "1 venter på å bli skrevet"; the account stays signed in (no "Passordet ble avvist"). |
+| `rights skrivebeskyttet; radicale`, then "Hent nå" on the calendar (or the kid's next change) | The event is in Radicale and the orange line is gone at that fetch (E7 L5); without either it goes at the calendar's hourly fetch. |
+| Untick the marked calendar on the account page | The notice "Barnets avtaler skrives ikke lenger til familie - …", the select falls back to "Min kalender (på telefonen)"; what was written stays in Radicale. |
+
+Also look at: every PUT/DELETE in Radicale's log carries `If-None-Match`/`If-Match`; no event title in the server's or
+the phone's log. **A real account** (the user's iCloud preferred, else Fastmail or Nextcloud), each a [verify] of the
+note: the UTC body is accepted and shows at the right local time in the account's own app; a PUT answers with an ETag
+(or the GET after it finds our body); Test fills `writable` from `current-user-privilege-set`; iCloud's rewrite of the
+body after a PUT (`X-APPLE-*`, its own DTSTAMP) is not read as a parent's edit (no hand-back after the first fetch).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

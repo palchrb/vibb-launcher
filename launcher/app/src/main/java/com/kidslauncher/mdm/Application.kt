@@ -371,6 +371,9 @@ class Application : android.app.Application() {
         // (alarms don't survive a reboot or a process kill by an update).
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.init(this)
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
+        // A silent rule's Do Not Disturb (server 0121): put back if the kid switches it off; the re-check below puts it
+        // where the rules say - off when none wants it, so a process that died mid-rule never leaves the phone silent.
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.init(this)
         // A reboot ends every parent-PIN window: it locks again now (design 24b). A restart within
         // the same boot (a crash, LMK, an update) is a window whose time ran out: Home comes to the
         // front then (QA Low 6) - a real boot brings Home itself.

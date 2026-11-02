@@ -15,8 +15,9 @@
     <string name="anchor_time_used_up">Skjermtiden er brukt opp i dag</string>
     <string name="anchor_ask_more_time">Be om mer tid</string>
     <string name="anchor_asked_at">Spurt kl. %1$s</string>
-    <string name="lock_calls_emergency_only">Bare nødanrop fungerer nå.</string>
+    <string name="lock_calls_emergency_only">Du kan bare ringe nødnumre nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
+    <string name="lock_alarm_stop">Slå av alarmen</string>
     <string name="lock_budget_allowance">Du har brukt dagens %1$s.</string>
     <string name="lock_budget_none">Ingen skjermtid i dag.</string>
     <string name="duration_unit_hours">t</string>
@@ -107,6 +108,9 @@
     <string name="kid_settings_sound">Lyd på telefonen</string>
     <string name="kid_settings_sound_on">Lyd</string>
     <string name="kid_settings_sound_vibrate">Lydløs (vibrerer)</string>
+    <!-- Our own Do Not Disturb rule while a silent time rule runs (server 0121): its name and when it runs, in Android's Do Not Disturb settings. -->
+    <string name="rule_silence_name">Stille tidsregel</string>
+    <string name="rule_silence_trigger">Mens en tidsregel er på</string>
     <string name="kid_settings_sound_dnd">Ikke forstyrr er på.</string>
     <string name="kid_settings_sound_fully_silent">Telefonen er helt lydløs nå, uten vibrering.</string>
     <string name="kid_settings_sound_volume_keys">Lyden kan ikke endres her akkurat nå. Volumknappene virker.</string>

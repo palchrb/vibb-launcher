@@ -144,7 +144,7 @@ pub(crate) fn budget_summary(budget: &[Option<i64>]) -> String {
         .join(" · ")
 }
 
-/// One rule as a navigation row: "Skole" over "Mon-Fri 08:15-14:30 · calls off".
+/// One rule as a navigation row: "Skole" over "Mon-Fri 08:15-14:30 · calls off · silent".
 pub(crate) struct RuleRow {
     pub id: i64,
     pub name: String,
@@ -161,20 +161,25 @@ pub(crate) struct RuleRow {
 
 /// The rules as rows. The summary is of the stored days, as the editor shows them ("00:00-23:59"),
 /// not the served ones (`end: 0`, qa-66-code M1); `to_policy` only says whether the row reads.
-fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
+/// A silent rule (0121) ends with "· silent" ("· stille").
+fn rule_rows(lang: Lang, rows: &[TimeRuleRow]) -> Vec<RuleRow> {
     rows.iter()
         .map(
             |row| match (row.to_policy(), time_rules::parse_days(&row.days_json)) {
                 (Ok(_), Ok(days)) => RuleRow {
                     id: row.id,
                     summary: format!(
-                        "{} · {}",
+                        "{} · {}{}",
                         days_summary(&days),
-                        if row.calls_allowed {
-                            "calls on"
-                        } else {
-                            "calls off"
-                        }
+                        t(
+                            lang,
+                            if row.calls_allowed {
+                                "settings.time_rules.calls_on"
+                            } else {
+                                "settings.time_rules.calls_off"
+                            }
+                        ),
+                        silent_tag(lang, row.silent)
                     ),
                     name: row.name.clone(),
                     corrupt: false,
@@ -194,6 +199,15 @@ fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
             },
         )
         .collect()
+}
+
+/// " · silent" after a silent rule's or bedtime's summary (0121), "" otherwise.
+pub(crate) fn silent_tag(lang: Lang, silent: bool) -> String {
+    if silent {
+        format!(" · {}", t(lang, "settings.time_rules.silent_tag"))
+    } else {
+        String::new()
+    }
 }
 
 /// The flash in a rules list after a delete or a save of a gone rule (`?notice=`), as `(text,
@@ -396,7 +410,7 @@ pub async fn show_schedules(
         SchedulesTemplate {
             lang,
             title: "Time Rules".to_string(),
-            rules: rule_rows(&rules)
+            rules: rule_rows(lang, &rules)
                 .into_iter()
                 .map(|mut row| {
                     let names: Vec<&str> = off
@@ -748,6 +762,8 @@ struct RuleForm {
     name: String,
     kind: String,
     calls_allowed: bool,
+    /// The "Silent" switch (0121).
+    silent: bool,
     days: Vec<DayInput>,
     /// For `partials/exceptions.html`: the Vibb calendar row and the apps.
     exceptions: Exceptions,
@@ -1009,6 +1025,7 @@ pub async fn show_rule(
         },
         name: row.name,
         calls_allowed: row.calls_allowed,
+        silent: row.silent,
         days: day_inputs(&days),
         exceptions: available.exceptions(&exempt, row.calendar_allowed),
         name_error: None,
@@ -1041,6 +1058,8 @@ pub async fn new_rule(
         name: String::new(),
         kind: "school".to_string(),
         calls_allowed: false,
+        // School is silent by definition (the user, 2026-11-02); the kind select presets it.
+        silent: true,
         days: day_inputs(&[]),
         exceptions: available.exceptions(&[], false),
         name_error: None,
@@ -1058,6 +1077,8 @@ pub(crate) struct RuleInput {
     pub exempt_apps: Vec<String>,
     /// The Vibb calendar row (`calendar_allowed`, absent = off).
     pub calendar_allowed: bool,
+    /// The "Silent" switch (`silent`, absent = off).
+    pub silent: bool,
     pub days: Vec<Option<DayWindow>>,
 }
 
@@ -1150,6 +1171,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
     Ok(RuleInput {
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
+        silent: fields.iter().any(|(k, _)| k == "silent"),
         name,
         kind,
         exempt_apps,
@@ -1183,6 +1205,7 @@ fn rule_entered(
             "custom".to_string()
         },
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
+        silent: fields.iter().any(|(k, _)| k == "silent"),
         days: (0..7)
             .map(|i| DayInput {
                 index: i,
@@ -1294,7 +1317,7 @@ pub async fn create_rule(
     let device = scope.id();
     let result = sqlx::query_scalar::<_, i64>(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         calendar_allowed, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, \
+         calendar_allowed, silent, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, \
          (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM time_rules WHERE device_id IS ?)) \
          RETURNING id",
     )
@@ -1304,6 +1327,7 @@ pub async fn create_rule(
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
     .bind(input.calendar_allowed)
+    .bind(input.silent)
     .bind(serde_json::to_string(&input.days).expect("windows serialize"))
     .bind(device)
     .fetch_one(&state.db)
@@ -1375,13 +1399,15 @@ pub async fn update_rule(
     };
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
-         calendar_allowed = ?, days_json = ? WHERE id = ? AND device_id IS ? AND bedtime = 0",
+         calendar_allowed = ?, silent = ?, days_json = ? WHERE id = ? AND device_id IS ? \
+         AND bedtime = 0",
     )
     .bind(&input.name)
     .bind(&input.kind)
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
     .bind(input.calendar_allowed)
+    .bind(input.silent)
     .bind(serde_json::to_string(&input.days).expect("windows serialize"))
     .bind(rule_id)
     .bind(scope.id())
@@ -1764,7 +1790,7 @@ async fn render_device_time(
         Err(err) => return read_failed_in(lang, err, "the phone's rule switches"),
     };
     let switched = |rows: &[TimeRuleRow]| -> Vec<RuleRow> {
-        rule_rows(rows)
+        rule_rows(lang, rows)
             .into_iter()
             .map(|mut row| {
                 row.off = off.contains(&row.id);

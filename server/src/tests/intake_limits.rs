@@ -509,3 +509,19 @@ async fn the_security_log_pages_back_past_a_flood() {
         "the oldest page has no older link"
     );
 }
+
+/// Design 72b §8: the kid's set keeps every key of the contract's `snapshot` (and its cut variant) through the
+/// server's whole-set reading.
+#[test]
+fn the_kid_events_set_keeps_every_snapshot_key() {
+    let contract: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string("testdata/calendar_kid_events.json").unwrap(),
+    )
+    .unwrap();
+    for snapshot in [&contract["snapshot"], &contract["cut_variant"]["snapshot"]] {
+        assert_eq!(
+            crate::calendar_kid_events::set_as_read(snapshot).as_ref(),
+            Some(snapshot)
+        );
+    }
+}

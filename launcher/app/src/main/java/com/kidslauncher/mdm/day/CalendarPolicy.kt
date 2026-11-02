@@ -68,6 +68,9 @@ data class CalendarPolicy(
     /** `feeds` is an array every element of which read: only then may a link's calendar the policy doesn't name be
      * deleted (QA L9) - an older server, a bad element, a cached policy delete nothing. */
     val feedsComplete: Boolean = false,
+    /** The CalDAV calendar the server writes the kid's events to (design 72b D1.6), `null` = none: the kid still writes
+     * only in "Min kalender". */
+    val kidCaldav: KidCaldavPolicy? = null,
 ) {
     fun setting(key: String): CalendarSetting = calendars[key] ?: CalendarSetting()
 
@@ -141,6 +144,7 @@ fun calendarPolicy(element: JsonElement?): CalendarPolicy {
         rulesSkipped = skipped,
         feeds = feeds,
         feedsComplete = feedRows != null && feeds.size == feedRows.size,
+        kidCaldav = kidCaldavPolicy(obj),
     )
 }
 

@@ -56,6 +56,10 @@ pub struct PolicyTimeRule {
     /// Kalender (the launcher's own day view, "Vibb-kalender" in the PWA) stays usable while the
     /// rule runs (migration 0119); a launcher without it keeps Kalender closed under every rule.
     pub calendar_allowed: bool,
+    /// The phone is silent while the rule runs (migration 0121, "Silent" in the PWA): its own Do Not
+    /// Disturb rule - nothing sounds, calls the rule allows still ring, a bedtime lets alarms ring. A
+    /// launcher without it ignores the key; a missing key is not silent.
+    pub silent: bool,
     pub days: Vec<Option<DayWindow>>,
 }
 
@@ -102,6 +106,8 @@ pub struct TimeRuleRow {
     pub bedtime: bool,
     /// Kalender usable during the rule (0119, "Vibb-kalender" under Exceptions).
     pub calendar_allowed: bool,
+    /// The phone silent during the rule (0121, the "Silent" switch).
+    pub silent: bool,
 }
 
 impl TimeRuleRow {
@@ -124,6 +130,7 @@ impl TimeRuleRow {
             exempt_apps: parse_exempt_apps(&self.exempt_apps_json)
                 .map_err(|e| format!("rule {}: {e}", self.id))?,
             calendar_allowed: self.calendar_allowed,
+            silent: self.silent,
             days: served_days(
                 &parse_days(&self.days_json).map_err(|e| format!("rule {}: {e}", self.id))?,
             ),
@@ -436,7 +443,7 @@ async fn insert_converted(
         let days = serde_json::to_string(&rule.days).expect("windows always serialize");
         sqlx::query(
             "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-             days_json, sort_order) VALUES (?, ?, ?, ?, '[]', ?, ?)",
+             days_json, sort_order, silent) VALUES (?, ?, ?, ?, '[]', ?, ?, ?)",
         )
         .bind(device_id)
         .bind(&rule.name)
@@ -444,6 +451,8 @@ async fn insert_converted(
         .bind(rule.calls_allowed)
         .bind(&days)
         .bind(order as i64)
+        // A converted bedtime is silent, as every bedtime was made at migration 0121.
+        .bind(rule.kind == "bedtime")
         .execute(&mut *tx)
         .await?;
     }
@@ -664,7 +673,8 @@ async fn split_rule(
         .await?;
     let morning_id: i64 = sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         calendar_allowed, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+         calendar_allowed, silent, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         RETURNING id",
     )
     .bind(row.device_id)
     .bind(morning_name(&row.name))
@@ -672,6 +682,7 @@ async fn split_rule(
     .bind(row.calls_allowed)
     .bind(&row.exempt_apps_json)
     .bind(row.calendar_allowed)
+    .bind(row.silent)
     .bind(serde_json::to_string(&morning).expect("windows serialize"))
     .bind(row.sort_order)
     .fetch_one(&mut *conn)
@@ -741,7 +752,7 @@ async fn convert_phone(db: &SqlitePool, device_id: i64) -> Result<(), sqlx::Erro
     {
         let (row, _) = rules.remove(i);
         sqlx::query(
-            "UPDATE time_rules SET bedtime = 1, kind = 'bedtime', name = ? WHERE id = ? \
+            "UPDATE time_rules SET bedtime = 1, kind = 'bedtime', name = ?, silent = 1 WHERE id = ? \
              AND NOT EXISTS (SELECT 1 FROM time_rules WHERE device_id = ? AND bedtime = 1)",
         )
         .bind(BEDTIME_NAME)
@@ -819,8 +830,8 @@ async fn copy_as_bedtime(
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         calendar_allowed, days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, \
-         exempt_apps_json, calendar_allowed, days_json, 1 FROM time_rules WHERE id = ? \
+         calendar_allowed, silent, days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, \
+         exempt_apps_json, calendar_allowed, 1, days_json, 1 FROM time_rules WHERE id = ? \
          AND NOT EXISTS (SELECT 1 FROM time_rules WHERE device_id = ? AND bedtime = 1) \
          RETURNING id",
     )

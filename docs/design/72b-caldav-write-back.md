@@ -522,7 +522,8 @@ error, not an adopt (RN3).
   normalisation (D4.9) and on a confirmed host, and then only through the GET-first rule above. Otherwise `refused`.
 - Any other `C:` precondition (`valid-calendar-data`, `max-date-time`, `max-resource-size`, …) → that event `refused`.
 - `D:need-privileges`, or no body → **`write_refused`** for this calendar. Every write of the phone stops until the
-  parent picks again or Test passes. **It is never the account's `login_refused`**: today's `ask` reads 403 that way,
+  parent picks again or Test passes; the phone's next set and the calendar's next fetch try once more, so a calendar
+  that takes events again clears the line there (E7 L5; a 507's `full` likewise). **It is never the account's `login_refused`**: today's `ask` reads 403 that way,
   and writes must not.
 
 **401** → the account's `login_refused`, as today.

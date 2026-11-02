@@ -209,7 +209,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   every root height/padding change and skips the frame that moved it), **the rule card** (`view_lock_rule_card.xml`,
   `<include>`d by both layouts, bound by `lock/RuleCardView` for both: the glyph disc, the rule's name, "Til 14:34" only
   with a certain end, and here line 3 - the budget and calls sentences, `lock_rule_card_note`, gone on the glance;
-  TalkBack one node "Skole, til 14:34. Bare nødanrop fungerer nå.", `lock_rule_card_spoken_note`), the rows' card 14 dp
+  TalkBack one node "Skole, til 14:34. Du kan bare ringe nødnumre nå." - since E7's L7 about calls only, so it
+  doesn't read as "nothing else works" above a Kalender or app row -, `lock_rule_card_spoken_note`), the rows' card 14 dp
   under it (the glance's `ROWS_TOP_DP`), and "Nødsamtale" as the glance's bottom-row button (`pin_lock_emergency`,
   8 dp under the content, no flashlight). **The ground** is the lock's (`lockGround`, the parent's lock picture or
   Home's wallpaper under its scrim, once `WallpaperStore.state.lockReady`; the night until then). Behaviour unchanged:

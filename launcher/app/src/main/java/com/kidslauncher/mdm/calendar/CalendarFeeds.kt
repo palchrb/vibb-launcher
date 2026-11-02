@@ -13,6 +13,13 @@ import com.kidslauncher.mdm.day.feedFetch
 import com.kidslauncher.mdm.day.feedPlan
 import com.kidslauncher.mdm.day.runPass
 import com.kidslauncher.mdm.day.seriesRows
+import com.kidslauncher.mdm.day.feedSkipped
+import com.kidslauncher.mdm.day.skipChange
+import com.kidslauncher.mdm.day.skipFeedEvents
+import com.kidslauncher.mdm.day.skipHash
+import com.kidslauncher.mdm.day.skipPassDue
+import com.kidslauncher.mdm.day.skipKept
+import com.kidslauncher.mdm.day.skipSet
 import com.kidslauncher.mdm.server.MdmApi
 import com.kidslauncher.mdm.server.dto.CalendarFeedReportRow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -26,7 +33,8 @@ import java.time.ZoneId
  * pass) and [CalendarStore]'s feed writes (the provider's only writer); a link gone from a fully readable
  * `calendar.feeds` takes its calendar with it. The calendar's sync columns: `CAL_SYNC1` the set's rev written last,
  * `CAL_SYNC2` [FEED_MAPPING], `CAL_SYNC3` the series refused at the last pass, `CAL_SYNC4` the series whose zone this
- * phone doesn't know, `CAL_SYNC5` the zone floating series were written in. Provider work runs on the store's worker;
+ * phone doesn't know, `CAL_SYNC5` the zone floating series were written in, `CAL_SYNC6` the kid's events it skipped and
+ * `CAL_SYNC7` the skip set's fingerprint at its last pass (design 72b). Provider work runs on the store's worker;
  * nothing read here is logged beyond counts, indexes and exception classes.
  */
 object CalendarFeeds {
@@ -45,9 +53,17 @@ object CalendarFeeds {
             if (!policy.usable || !CalendarStore.canWrite(app)) return
             val zone = ZoneId.systemDefault()
             val calendars = onWorker { gone(app, policy, CalendarStore.feedCalendarsBlocking(app)) } ?: return
+            if (policy.feeds.isEmpty()) return
+            // Design 72b D3.2: the kid's own events - "Min kalender"'s live rows and the uids posted but not yet shown
+            // taken - are never shown again from a feed (always, marked or not). An unreadable "Min kalender" keeps
+            // each calendar's own skipped uids (launcher QA L1).
+            val live = onWorker { CalendarStore.kidLiveUidsBlocking(app) }
+            val union = KidCaldavSync.postedUnion(app)
             var changed = false
             for (feed in policy.feeds) {
-                changed = refreshOne(app, api, feed, calendars[feed.id], zone) || changed
+                val existing = calendars[feed.id]
+                val skip = skipSet(live ?: existing?.skipped.orEmpty(), union)
+                changed = refreshOne(app, api, feed, existing, zone, skip) || changed
             }
             if (changed) CalendarStore.invalidate()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -68,10 +84,32 @@ object CalendarFeeds {
 
     /** One link: its calendar made or renamed, then its set fetched and applied when [feedFetch] says so. `true` when
      * anything was written. */
-    private suspend fun refreshOne(context: Context, api: MdmApi, feed: FeedRef, existing: CalendarStore.FeedCalendar?, zone: ZoneId): Boolean {
-        val need = feedFetch(existing != null, existing?.appliedRev, feed.rev, existing?.mapping, existing?.floatingZone, zone.id)
+    private suspend fun refreshOne(
+        context: Context,
+        api: MdmApi,
+        feed: FeedRef,
+        existing: CalendarStore.FeedCalendar?,
+        zone: ZoneId,
+        skip: Set<String>,
+    ): Boolean {
+        val change = skipChange(existing?.skipped.orEmpty(), skip)
+        val need = feedFetch(
+            existing != null, existing?.appliedRev, feed.rev, existing?.mapping, existing?.floatingZone, zone.id,
+            skipLeft = change.left.isNotEmpty(),
+        )
         val calendarId = onWorker { CalendarStore.ensureFeedCalendarBlocking(context, feed, existing) } ?: return false
-        val renamed = existing == null || existing.displayName != feed.name
+        var renamed = existing == null || existing.displayName != feed.name
+        if (existing != null && skipPassDue(change, existing.skipHash, skip)) {
+            // A uid that joined the skip set loses its rows here at once, with no GET (D3.2): only those this calendar
+            // had are remembered (launcher QA L2), and only once the delete went (N4); the uids that left stay
+            // remembered until a pass applied the set again. The rows are read only when the skip set moved since this
+            // calendar's last pass (revision R-L1).
+            val hit = onWorker { CalendarStore.deleteFeedUidsBlocking(context, calendarId, change.joined) }
+            if (hit != null) {
+                onWorker { CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(existing.skipped + hit), skipHash(skip)) }
+                renamed = renamed || hit.isNotEmpty()
+            }
+        }
         need ?: return renamed
         val answer = try {
             api.calendarFeed(feed.id, need.ifNoneMatch)
@@ -90,7 +128,7 @@ object CalendarFeeds {
             Log.w(LOG_TAG, "A calendar link's set doesn't read")
             return renamed
         }
-        val series = doc.events.mapNotNull { seriesRows(it, zone) }
+        val series = skipFeedEvents(doc.events, skip).mapNotNull { seriesRows(it, zone) }
         val unknown = series.count { it.unknownZone }
         val floating = if (series.any { it.floating }) zone.id else ""
         onWorker {
@@ -109,6 +147,7 @@ object CalendarFeeds {
                 return@onWorker
             }
             CalendarStore.markFeedAppliedBlocking(context, calendarId, doc.rev, result.refused, unknown, floating)
+            CalendarStore.markFeedSkippedBlocking(context, calendarId, feedSkipped(doc.events, skip), skipHash(skip))
             Log.i(LOG_TAG, "Applied a calendar link: ${plan.deletes.size} rows deleted, ${plan.inserts.size} series written")
         }
         return true

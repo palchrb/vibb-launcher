@@ -6,7 +6,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 - **No Android screen lock any more** (own mode; with `kid_lock.keyguard` "android" Android's PIN is the gate instead - design 59 below): `PinLockRuntime.configure` (from `apply()`) switches the keyguard off (`setKeyguardDisabled(true)`, screen lock "None") only when managed, the policy has `kid_lock` and the phone has **no** Android credential; with one our lock stays off (`lock_state.inactive = android_credential`, no double lock) until it is removed (runbook: 04 doc step 4, `docs/testing/emulator.md` §6c; `onPasswordChanged` with `<watch-login/>` re-checks at once). Without a credential CE unlocks by itself at boot, so the BFU state is gone; `LOCK_TASK_FEATURE_KEYGUARD` stays forced and all direct-boot code stays (unmigrated phones, boot window). `PinLockActivity` is **not** direct-boot-aware.
 - **Pure parts** (`lock/`): `PinLockState.kt` (`step`: DISABLED/LOCKED/UNLOCKED; process start = LOCKED and shown with the screen on; every screen-off locks; calls ending while LOCKED or with the screen off show the lock; `lockActivation`), `PinBackoff.kt` (4 free tries, then 30 s/1/2/5/15 min, since security review S-L6 doubling on to 1 h a try - `PIN_BACKOFF_CAP_MS`, the user's choice 2026-11-01, and a try whose count is not committed is refused; a wait only ever extends - new boot = full wait from now, either clock keeps it going; the failure is committed **before** PBKDF2 and undone on success; a new hash resets), `RefrontPolicy.kt` (re-front 0.5 s → 2 s → every 5 s, never giving up; exempt: our call, `TelecomManager.isInCall`, 2 min after "Emergency call", the system clock app's alarm; crash guard 3 recorded crashes / 2 min, re-armed by a sync after 10 min). Tests `PinLockStateTest`, `PinBackoffTest` (also pins `timedWindowActive`'s opposite polarity), `RefrontPolicyTest`, `PinLockTaskTest`, `PinHashTest` (vector shared with the server), `PinLockManifestTest`.
-- **Always in lock task while LOCKED** (QA 10 #1): `lockTaskWhileLocked` - kiosk on: the kiosk list is never touched (removing a package clears its task) except that the recents provider leaves it while LOCKED (16d, qa-16d-code #1), features minus NOTIFICATIONS/HOME/OVERVIEW; kiosk off: our package + `pinLockHelpers` (emergency dialer, Telecom, system dialer, system clock app) with KEYGUARD|GLOBAL_ACTIONS|SYSTEM_INFO, and `PinLockActivity` starts/stops lock task itself (only when `isLockTaskPermitted`). Plus `setStatusBarDisabled(true)` (backstop) and `DISALLOW_CREATE_WINDOWS` while locked. **`lock/LockTaskChrome` is now the only place that sets lock-task packages/features, the status bar and `DISALLOW_CREATE_WINDOWS`** - `apply()` hands it the plan (`applyPlan`), the runtime calls `refresh` on LOCKED changes; never set them anywhere else. `HomeActivity` never `stopLockTask`s while LOCKED. Stopping a root lock task clears the other locked tasks (AOSP `clearLockedTask`), so after an unlock with the kiosk off the time-rule screen is started again (`afterUnlock`).
+- **Always in lock task while LOCKED** (QA 10 #1): `lockTaskWhileLocked` - kiosk on: the kiosk list is never touched (removing a package clears its task) except that the recents provider leaves it while LOCKED (16d, qa-16d-code #1), features minus NOTIFICATIONS/HOME/OVERVIEW; kiosk off: our package + `pinLockHelpers` (emergency dialer, Telecom, system dialer, system clock app) with KEYGUARD|GLOBAL_ACTIONS|SYSTEM_INFO, and `PinLockActivity` starts/stops lock task itself (only when `isLockTaskPermitted`; not during a VoIP call, and not as Android's face with Android locked - design 59b R2 below). Plus `setStatusBarDisabled(true)` (backstop) and `DISALLOW_CREATE_WINDOWS` while locked. **`lock/LockTaskChrome` is now the only place that sets lock-task packages/features, the status bar and `DISALLOW_CREATE_WINDOWS`** - `apply()` hands it the plan (`applyPlan`), the runtime calls `refresh` on LOCKED changes; never set them anywhere else. `HomeActivity` never `stopLockTask`s while LOCKED. Stopping a root lock task clears the other locked tasks (AOSP `clearLockedTask`), so after an unlock with the kiosk off the time-rule screen is started again (`afterUnlock`).
 - **Lock background** (design 25, 25f): `PinLockActivity` draws `WallpaperStore.state.lock` (pure `lockWallpaper`: the parent's `launcher_ui.lock_wallpaper` when allowed and usable, else Home's `current` - photos included) under a black scrim (`lockScrim*`: every ink in `LOCK_INKS` - white, the dim date, "Foreldrekode" at 75 %, the red emergency link - >= 4.5:1, at least `MIN_IMAGE_SCRIM` for photos, cap 0.8) on the keypad root and the glance root (`GlancePanel.ground`), once `lockReady`, again on every store change between onStart and onStop. The window stays opaque (no `windowShowWallpaper`); the layout roots keep `kid_ground` until the store is ready. Since design 32 the stand-in before the first frame (window background, splash, bars, task description) is black, not `kid_ground`.
 - **Lock fix round 25b** (design 25, "Lock fix round 25b"): while LOCKED without a live call the cameras are off by policy (`setCameraDisabled`, `<disable-camera />`, `CameraLock`'s `cameraPolicyDisabled(locked, callActive)`, `PinLockRuntime.callForCamera`; never unlocked, 25c) so the power double-press starts nothing (a suspended camera crashed SystemUI); a pause re-fronts too (Recents only pauses), pause and stop after 200 ms; no open transition for the lock; the screen-off's non-lock work waits 400 ms (`SCREEN_OFF_WORK_DELAY_MS`); the first lock resume after a screen-off heal doesn't heal; Emergency SOS (`HelperKind.EMERGENCY_SOS`, `emergencySosPackage`) is pinned, never restricted or listed, and the re-front yields "sos" for a stop within 3 s of a screen-on (`sosGestureLikely`, never with our own screen in front) - for at most 15 s, ended by the lock in front or any other yield (`sosMarkKept`), and while it runs lock task is narrowed to our package, the helpers and the SOS app (`sosNarrowedPackages`, `LockTaskChrome.sosYield`; 25c, qa-25b-25f H1). The SOS package is cached (`PinLockRuntime.sosPackage`).
 - **Lock flash (design 32, `docs/design/32-lock-flash.md`, step 1)**: `ACTION_SCREEN_OFF` comes after the display is off, and an activity without turn-screen-on can't draw while dark, so the lock is drawn only **after** the screen-on - until its first frame WM shows the task under it (its snapshot) and the lock's stand-in. Never give the lock turn-screen-on, a cover overlay or an accessibility service (§7). Step 1: every screen-off's start goes through `PinLockRuntime.lockUp(start)`, planned by pure `lockUpStarts(showLock, lockOnTop, callLive, interactive)` (`lock/LockUpPlan.kt`, `LockUpPlanTest`): HOME_THEN_LOCK while dark with no live call (ours, Telecom's, VoIP) - except as Android's face, where it is LOCK whatever `kg` read (design 59d step C, `lockUpStarts(.., face)`; the read still feeds `sawLocked`), and the ScreenOn backstop as the face skips a glance known to be on top (`ScreenOn.faceOnTop`, its skip keeps the mark in `screenOnUnshown`) - Home first with `HomeFront.bring(..., animate = false)` (`NO_ANIMATION`, still typed HOME), then the lock; LOCK with the screen on again (a late `SCREEN_OFF`) or a live call; NONE when the lock is the top task already (`lockOnTop`, best effort, pure `lockOnTopAfter`: set by the lock-up, kept by the sleep's pause/stop and the same lock-up's ScreenOn backstop, cleared by an interactive pause/stop, destroy, the unlock, every other start - inside `show` itself - and a screen-on that finds the lock not resumed and starts nothing, `screenOnUnshown`: a system-dialer or VoIP call came over the sleep-stopped lock; `show` answers `true` only for a start that didn't throw). Log `Lock-up at screen-off: NONE|LOCK|HOME_THEN_LOCK (call=, interactive=)`. A dark lock-up marks `darkLockUp` (cleared at the next interactive resume of the lock or Home, and by every other `HomeFront.bring` - only the lock-up's is unanimated; one from another thread is posted to the main thread, so it can't land between the lock-up's mark and starts): Home's resume then only shows the night ground (pure `homeDarkResume`; no lock task - the lock's task is focused by then, the lock's own `START_HOME` roots it), its `onStart` work waits for an interactive start or resume (`startWork`). Home's `singleTask` start clears the time-rule screen (`LockActivity`, in Home's task) at a dark lock-up; it comes back at the unlock (`afterUnlock`) or Home's next interactive resume. The stand-in is black: `PinLockTheme`'s window background, splash and bars, and a black `TaskDescription` on the lock and Home; Home has `setRecentsScreenshotEnabled(false)`. Unlocking lands on Home in every mode, kiosk off too, but never over a live call (`lockLeave(..., callLive)`; the glance send check counts Home below then, `GlanceOpener.open(..., homeBelow)`) - as Android's face with the kiosk on too since design 59d step H (`lockLeave(.., androidFace)`, `callLive` = `PinLockRuntime.callLiveNow`), except as the kiosk's lock-task root, which re-roots through Home (own mode's kiosk-on leave is unchanged). (§5's H2 toggle, `LockUpDebug`, was deleted in round 0b.) A double press that cancels the screen-off fade starts the lock as a visible launch (the user's mash log): its black splash and Shell's close animation of the app the kid was in remain without the cover - a residual (§12, qa-32-s2-code M1): handy is the home process, so `windowDisablePreview` is skipped for every lock start, and no public `ActivityOptions` overrides a task change; don't add either back as a "fix". The ScreenOn backstop's start onto a lock already resumed pauses it for the new intent; that pause keeps `lockOnTop` (`newIntentPauseKept`, restored in `onNewIntent`). Step 2 (§15): the system keyguard as a bare Swipe cover across the sleep - never on since its debug switch (`KeyguardCoverDebug`, its receiver and the dismissal knobs) was deleted in round 0b: `KeyguardCover.switchOn` is `false`, and the COVER mode's code below goes with design 59 phase D. `lock/KeyguardCover` is the **only** writer of `setKeyguardDisabled`, the keyguard features and `setMaximumTimeToLock` (pure `lock/KeyguardCoverPlan.kt`: `keyguardMode`, `writeKeyguard` - features, read back, T = the screen timeout, read back, then `false`; any failure is today's disabled keyguard with the lock active - the cover clears exactly its own feature bits, prefs `keyguard_cover`); `ScreenTimeout`'s writes go through `followTimeout` (T in the safe order). Under the cover: the lock-up starts the lock alone, the lock dismisses the keyguard after its first frame (state check each second while the cover is on, fallback at 2 failures, re-armed at a lock resume with the screen on after the next dark screen-off; held off in a new process until its first such resume after an apply), the lock-up starts the lock alone only while the keyguard is locked at that screen-off (`kg=`), the VoIP call screen and the time-rule screen wait for the unlock (`whenUnlocked`, re-checked when they run; our showWhenLocked call screen doesn't wait), DISABLED in a VoIP call, off at `ACTION_SHUTDOWN` and at a crash-guard trip. The device policy outlives the process: prefs `keyguard_cover` `cover_written` (committed before `setKeyguardDisabled(false)`, cleared after a `true` that worked) makes a new process write DISABLED at once (`atProcessStart`; it also dismisses the Swipe screen a reboot without `ACTION_SHUTDOWN` left up - Home can't, it sleeps behind the keyguard) and lets `disableNow` act in a new process; no rewrite before the first apply. `setMaximumTimeToLock` turns "Stay awake" off (android mode too, emulator.md §6k). Not device-tested: §11's step 1 and step 2 checks (step 2's no longer can be).
@@ -89,7 +89,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     the glance, and never cleared by the leave.
     `AndroidLock: screen-on` logs the keyguard at every screen-on.
   - *The code QA's fix round* (`qa-59b-code.md`; 59d steps A and D): as the face with Android locked the glance roots
-    lock task itself (`lockTaskEntry(.., androidLocked)`), and Home after a policy edge (`HomeFront.bringAfterUnlock`:
+    lock task itself (`lockTaskEntry(.., androidLocked)`; with the kiosk on - kiosk off it takes none since R2, below), and Home after a policy edge (`HomeFront.bringAfterUnlock`:
     the relock, install mode's end, the update, a role change) and the time-rule screen (`LockActivity.start`) wait for
     the unlock in `KeyguardCover.afterAndroidUnlock`'s queue, run when our lock leaves LOCKED (`runAfterUnlock`) - **a
     new Home or non-showWhenLocked start of ours goes through it**. The face re-fronts only on a fresh pause or stop
@@ -99,9 +99,52 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   - *The rc.2 run's fix round* (`docs/testing/2026-10-22-rc2-run.md`): as the face a pause of the glance in the SOS
     window, not ours, is the probable-SOS mark (`sosMarkAtPause`; R1 - own mode keeps its pause re-front for Recents;
     since 59d N1 that mark is set silently and `SOS_MARK_LINE` is logged by the pause's check only while the mark still
-    holds, `sosPauseMarkLogDue`),
+    holds; since E7's L2 a stop's mark too, and only by a check that yields to it, `sosMarkLogDue` - an alarm's screen
+    coming up just after a screen-on is logged as its "alarm" yield alone),
     and a queued start sent at once drops its queued copy (`KeyguardCover.dropWaiting`; R4: one time-rule screen).
-    R2 (an unlock into a lock-task helper, kiosk off) waits for a decision; R3 is a label only.
+    R3 is a label only.
+  - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
+    (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
+    (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's
+    own ...`). The rc.2 run's R2: a helper started over the glance (DeskClock - a ringing alarm, the run's own start)
+    joined the glance's lock task, and the face's leave after SystemUI's pad stopped it from the root, which clears every
+    locked task (`clearLockedTasks`, `clear-task-all`) - the kid landed on Home, not in the app. Now nothing runs, so the
+    leave stops nothing (`lockLeave` reads `lockTaskRunning()`) and the glance is no lock-task root (it can finish; no
+    `rootLeave`, which is kiosk-on only). What still holds the glance: Android's locked keyguard (a start that isn't
+    showWhenLocked lands behind it and un-occludes it -> the face's loss rule; Recents refused, P59-1), Back held by
+    the glance, the status bar's `setStatusBarDisabled` and `DISALLOW_CREATE_WINDOWS` (`lockTaskWhileLocked` still
+    sets them and the kiosk-off package list while LOCKED), the power menu the keyguard's. What lock task gave and no
+    longer does there: Home/Recents disabled in SystemUI (a home gesture or key now reaches the keyguard - the pad, or
+    SystemUI's face and the loss rule's re-front with §8.16's gesture ask), and the refusal (101) of other apps'
+    starts - a showWhenLocked screen of an allowed app (its full-screen intent: an alarm, a call) can now come over
+    the glance, never past Android's PIN. Unchanged: the kiosk on (the glance roots it, 59d A), own mode, the
+    fallback, the face with Android not locked (START_SELF). **A lock task already running** in that state is stopped
+    at the entry check (`LockTaskEntry.STOP_OWN`, log `AndroidLock: lock task: the glance's own stopped ...`; code QA
+    M1): the face starts one whenever Android reads open at an entry check - the RESUME/UNLOCK_TAP wait before a
+    RELOCK: a process start with the screen on (a crash, a self-update's restart), a remote lock (`lockNow` posts the
+    show before `DPM.lockNow`), a late or missed `USER_PRESENT` - or one is left from a kiosk on -> off flip; with the
+    kiosk off any running lock task is the lock's own (`lockLeave`'s kiosk-off row). Never during a VoIP call (its
+    PiP). Only when this lock instance started it (`glanceRoot` = `startedLockTask`, reset when nothing runs): E7b's
+    M-B1 - own mode's kiosk rooted by Home, then Android's lock and the kiosk off in one change - showed that
+    `stopLockTask` from a task that isn't the root takes that task out **and clears it** (AOSP `clearLockedTask` ->
+    `performClearTaskForReuse`): the glance was finished, Home's locked resume showed a new one, which joined the lock
+    task and stopped again - 142-266 resumes a minute with Android's keyguard un-occluded and no way to the pad. Another
+    root (Home's) now stays until the leave (the kiosk-off row, then Home's unlocked `reconcileKioskMode`); unknown
+    (an earlier instance or process rooted it) counts as another root - at worst R2's helper case at that leave. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
+    check at once (`chromeEntryRecheckDue` on `EntryPolicy(kioskOn, face)`): `LockTaskChrome.applyPlan` tells the chrome
+    listeners after its writes (`PinLockRuntime.chromePassLanded`; `AppEnforcer` sets the face just before it), so the
+    kiosk turned on under the face's glance roots its lock task from the glance (59d A) whether Home is in front or not
+    - E7's M2: only the runtime's own passes told the lock, it waited for the next screen cycle, and Home's
+    `reconcileKioskMode` from the background got "Invalid task, not in foreground" (still logged, harmless) -; the kiosk
+    turned off with Android locked stops the glance's own (STOP_OWN); the face switched off roots the own mode's.
+    **The status-bar heal** (16d) flips lock-task features, which SystemUI never hears without lock task, and a lock
+    task that starts later sends them itself: so without one no flip runs (`statusBarHealKind` -> NONE; E7 L3), except
+    that LOCKED the screen-off heal, still dark, writes `setStatusBarDisabled` off and on (DISABLE_TOGGLE,
+    `LockTaskChrome.healStatusBarDisable`; L1) - never lit, since the shade is unblocked between the two writes; a
+    failed "on" write is retried and then rewritten by a normal pass. The system-Home heal (59d §8.9 (a)) and its "a home gesture got through" line need a
+    lock task running (`systemHomeHealDue(.., lockTaskRunning)`, L3); §8.16's gesture ask is unchanged. Pinned in
+    `LockTaskRootTest` (the R2 and STOP_OWN rows, every other input against the old rule, the policy recheck) and
+    `StatusBarHealTest`.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read
@@ -229,7 +272,63 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   by package and pinned signer (`lock/ClockApp`, `verified` refreshed off the main thread at start and on its package
   changes). `PinLockRuntime.clockPackages()` (the system clock - a system `ACTION_SHOW_ALARMS` handler - + Fossify while
   verified) opens the alarm exemption (`rememberAlarm` takes the set) and, with the kiosk off, `pinLockHelpers(clockApp)`
-  lets its alarm screen up. The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  lets its alarm screen up (with the kiosk on, the plan pins the allowed alarm apps during a rule too - bug 2026-11-02,
+  hardening.md). **The alarm's yield** (bug 2026-11-02, a2): `alarmNow` = `alarmRingingNow` - a clock app's ringing
+  notification (`badges/AlarmNoticeReader`, pure `AlarmNotices`/`AlarmPost`/`ringingAlarmShape` in `RefrontPolicy.kt`:
+  category alarm with a full-screen intent - a snoozed/upcoming/missed one has none; not "ongoing", code QA H1: Fossify
+  rings from `startForeground` without `setOngoing`; key, package, `when` and those facts only) holds it while posted,
+  at most `ALARM_NOTICE_MAX_MS` (15 min, code QA L3: the yield steps aside for any front task while it lasts) from
+  first seen (a re-send never extends it - E7 code QA 2: the PIN-free yield stays bounded; a ring past it is reached
+  through the PIN, below); else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
+  shape, a denied `USE_FULL_SCREEN_INTENT` - API 34+ strips the intent then). The lock back in front after an "alarm"
+  yield spends the ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key,
+  and a post with a new `when` is a new ring (code QA L1: Fossify rings every alarm under one key), so it yields again.
+  AOSP's and Google's ended timer has the same shape and yields too; Fossify's ended timer (`CATEGORY_EVENT`, no
+  full-screen intent) doesn't - it is the glance tile's Stopp. **The ringing screen brought back** (gap closed
+  2026-11-02: the kid presses power while it rings, the screen-off's lock-up covers the ringing screen):
+  `PinLockActivity.onResume`, and every screen-on while it is resumed (`PinLockRuntime.addScreenOnListener` - no
+  polling in the dark, code QA L6), posts `alarmScreenSend` after `ALARM_SCREEN_SETTLE_MS` (1.5 s; `onPause` drops it -
+  the platform's own launch of the full-screen intent, an unlock). `PinLockRuntime.sendAlarmScreen` - pure
+  `alarmScreenStep` (LOCKED, screen on, no phone call or emergency flow; held for `LATER` while the keypad has digits,
+  code QA N4, or the keyguard cover's keyguard must go first, `KeyguardCover.mustWait` as 17b, N3) and
+  `AlarmNotices.screenKey` (a clock app's with its screen kept - any such ring, not only the newest of all -, inside
+  the yield's 15 min for the PIN lock (`inYield`: its send opens the yield), under `ALARM_SCREEN_MAX_SENDS` = 5
+  re-sends per ring **per screen-on** - E7's M1: `AlarmNoticeReader.screenOn` at every screen-on starts the count
+  afresh, so a power press always brings it back and only a lock and a clock screen bouncing within one screen-on
+  stop; the newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
+  Stop's removal makes it nothing; no listener answer, nothing) - sends that notification's full-screen intent (the
+  reader keeps only that PendingIntent, only of the lock's clock apps, never extras, text or actions; sent only when it
+  is an activity intent a clock app created, code QA N1/N2) from the visible lock with `VisibleSender.options()`, as one
+  of our own starts (`noteOwnStart`). A sent one opens the yield again (`resent`), so the screen that comes up is
+  yielded to and Stop/Snooze brings the lock back; if the lock is still in front `ALARM_SCREEN_CHECK_MS` (1.5 s) later,
+  nothing came up and that ring's yield closes again (`alarmScreenCheck` -> `spent`, code QA L2, as 17b's
+  `VOIP_FSI_CHECK_MS`). The lock's own dialogs hold it (no retry until the next resume or screen-on). Both modes (own
+  and Android's face). **After an unlock** (E7's M1: the time-rule screen didn't bring it back, the shade shut by the
+  kiosk, Recents empty - it rang until the clock gave up): `LockActivity`'s resume posts the same send after
+  `ALARM_SCREEN_SETTLE_MS` (`sendAlarmScreen(.., timeRuleScreen = true)`: in charge while not LOCKED, the same count,
+  no time bound, no yield and so no check; a pause drops it; a ring the time-rule screen - any instance, Home starts a
+  new one - already sent this screen-on, or the kid opened from its row, isn't sent from there again
+  (`AlarmNotices.timeRuleSent`, cleared at the screen-on and with the ring; code QA 3, E7b's L1: the kid back from the
+  ringing screen by Stop, Back or Home lands on the card, and a clock slow to drop its notification never gets its stale
+  screen again), and while an allowed clock's alarm rings unsilenced (`PinLockRuntime.alarmToStop`:
+  `AlarmNoticeReader.openable`, not `silencesAlarms`) the card's first row is "Slå av alarmen" (`LockRow.Alarm`, the
+  alarm glyph), whose tap sends the ringing screen uncapped (`openRingingAlarm`, `screenKey(.., capped = false)` after
+  the listener's lookup - a tap can't loop). The row never opens by itself after an unlock (`unlockOpenRow`, code QA
+  4: the settled send does it, once, with its waits). The reader tells its listeners when the kept ringing screens
+  change or the listener connects or goes, and `ZenRuleRuntime` when `silencesAlarms` flips, so the row comes and goes
+  live. **Without the notification listener** (no access - no device-owner API grants it - or not yet rebound after an
+  update or a restart; code QA 1) nothing sees a ring: the card offers the lock's clock apps as app rows
+  (`lockRowPackages`, through the openable-apps filter: only a launchable clock that isn't suspended, i.e. one the rule
+  spares as an allowed alarm app) - the clock app itself is the way to its alarm. The yield stays the PIN lock's alone. **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
+  Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both; and (revision R1) `when=`
+  stays the same across two dumps of one ring on the Google/OEM clock (an update with a new `when` would read as a new
+  ring: fresh bound, re-send count reset). Revision R2: a resume with a re-send outstanding and no "alarm" yield in
+  between (the screen came up and closed at once) spends that ring (`alarmSendSpentAtResume`). Revision R3: a ring
+  already up at the process start was read before the clock set was known - once `systemClocks` is resolved, and when
+  Fossify becomes verified, `AlarmNoticeReader.clocksKnown` asks the listener again for the clock apps' ringing keys
+  without a kept intent (`screensMissing`). A silent time rule's Do Not Disturb that silences alarms (server 0121,
+  `ZenRuleRuntime.silencesAlarms`) makes none of this run: `alarmRingingNow` is false and `alarmScreenStep` NONE
+  while it holds, read live (`docs/notes/launcher/time-rules.md`, "A rule's Silent"). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
   always shown while there is one, r11). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
   stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
   (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally

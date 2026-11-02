@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.calls
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -42,17 +43,114 @@ class EmergencyConnectsTest {
     fun `the callback window runs from the last record, the report's instant from the call`() {
         val connect = 1_000_000L
         val hangUp = connect + 50 * 60_000L // a 50-minute call
-        val (atConnect, first) = emergencyRecord(connect, 10, 4, connectedAtMs = connect)
-        val (atHangUp, last) = emergencyRecord(hangUp, 3_000_010, 4, connectedAtMs = connect)
-        assertEquals(connect + CALLBACK_WINDOW_MS, atConnect.untilWallMs)
-        assertEquals(hangUp + CALLBACK_WINDOW_MS, atHangUp.untilWallMs) // an hour after the hang-up
-        assertEquals(3_000_010L, atHangUp.elapsedStartMs)
-        assertEquals(4, atHangUp.bootCount)
+        val first = emergencyRecord(connect, 10, 4, atMs = connect)
+        val last = emergencyRecord(hangUp, 3_000_010, 4, atMs = connect)
+        assertEquals(connect + CALLBACK_WINDOW_MS, first.window.untilWallMs)
+        assertEquals(hangUp + CALLBACK_WINDOW_MS, last.window.untilWallMs) // an hour after the hang-up
+        assertEquals(3_000_010L, last.window.elapsedStartMs)
+        assertEquals(4, last.window.bootCount)
         // One value per call in the report, whichever record is stored.
-        assertEquals(connect, reportedEmergencyAt(first, atConnect.untilWallMs))
-        assertEquals(connect, reportedEmergencyAt(last, atHangUp.untilWallMs))
+        assertEquals(connect, reportedEmergencyAt(first.atMs, first.window.untilWallMs))
+        assertEquals(connect, reportedEmergencyAt(last.atMs, last.window.untilWallMs))
         // A record an older build wrote (no instant): its window's start, as before.
-        assertEquals(hangUp, reportedEmergencyAt(0, atHangUp.untilWallMs))
+        assertEquals(hangUp, reportedEmergencyAt(0, last.window.untilWallMs))
+    }
+
+    /** H1 QA: a placing alone is provisional, the hour comes only with evidence that the call connected. */
+    @Test
+    fun `a placing opens the provisional window, a connect the hour`() {
+        val now = 1_000_000L
+        val placed = emergencyRecord(now, 10, 4, atMs = now, windowMs = PROVISIONAL_WINDOW_MS, placed = true)
+        fun open(record: EmergencyRecord, afterMs: Long) =
+            com.kidslauncher.mdm.server.timedWindowActive(record.window, now + afterMs, 10 + afterMs, 4, record.windowMs)
+        assertTrue(open(placed, 9 * 60_000L))
+        assertFalse("hung up while dialling: no hour for any caller", open(placed, 11 * 60_000L))
+        val connected = emergencyRecord(now, 10, 4, atMs = now)
+        assertTrue(open(connected, 59 * 60_000L))
+        assertFalse(open(connected, 61 * 60_000L))
+    }
+
+    /** The in-call service's records of a call the launcher placed keep the placing's instant (the server
+     * announces one call); only a placing's, never another call's (code QA L4). */
+    @Test
+    fun `only the launcher's placing of the same call keeps its instant`() {
+        val placed = 1_000_000L
+        val created = placed + 40 // Telecom creates the call during placeCall
+        assertTrue(placingOf(storedPlaced = true, storedAtMs = placed, createdAtMs = created))
+        assertTrue("a slow device", placingOf(true, placed, placed + PLACED_BEFORE_CREATED_MS))
+        // Another emergency call seconds after a recorded one that wasn't a placing (our in-call record, a callback).
+        assertFalse(placingOf(storedPlaced = false, storedAtMs = placed, createdAtMs = created))
+        // A placing long before this call, or after it (a clock set back), or no creation time: another call.
+        assertFalse(placingOf(true, placed, placed + PLACED_BEFORE_CREATED_MS + 1))
+        assertFalse(placingOf(true, created + 1, created))
+        assertFalse(placingOf(true, placed, 0))
+    }
+
+    /** H1 QA revision: a later placing or Telecom-mark record never shortens an open window. */
+    @Test
+    fun `a redial that never connects keeps the hour of the call that did`() {
+        val connect = 1_000_000L
+        val hour = emergencyRecord(connect, 10, 4, atMs = connect) // connected and dropped
+        val redial = connect + 2 * 60_000L
+        val placing = emergencyRecord(redial, 10 + 2 * 60_000L, 4, atMs = redial, windowMs = PROVISIONAL_WINDOW_MS, placed = true)
+        val kept = keepLaterWindow(hour, storedOpen = true, next = placing)
+        assertEquals(hour.window, kept.window)
+        assertEquals(CALLBACK_WINDOW_MS, kept.windowMs)
+        // The status report's instant and placingOf's flag are the redial's.
+        assertEquals(redial, kept.atMs)
+        assertTrue(kept.placed)
+        val at20 = 20 * 60_000L
+        assertTrue(com.kidslauncher.mdm.server.timedWindowActive(kept.window, connect + at20, 10 + at20, 4, kept.windowMs))
+        // A closed window, or a later end, gives way to the new record.
+        assertEquals(placing, keepLaterWindow(hour, storedOpen = false, next = placing))
+        val later = emergencyRecord(connect + 30 * 60_000L, 10 + 30 * 60_000L, 4, atMs = connect)
+        assertEquals(later, keepLaterWindow(hour, storedOpen = true, next = later))
+        assertEquals(placing, keepLaterWindow(null, storedOpen = false, next = placing))
+    }
+
+    @Test
+    fun `the launcher records an emergency call it placed, provisional and watched`() {
+        val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val system = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
+        val place = system.substringAfter("fun placeCall(").substringBefore("\n    }\n")
+        val placedAt = place.indexOf("val placedAtMs = System.currentTimeMillis()")
+        val telecom = place.indexOf(".placeCall(Uri.fromParts(")
+        val busy = place.indexOf("val watch = !callBeforePlacing(context)")
+        val record = place.indexOf("if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs, watch)")
+        assertTrue(placedAt in 0 until telecom && busy in 0 until telecom && telecom < record)
+        val placed = system.substringAfter("fun emergencyPlaced(").substringBefore("\n    }\n")
+        assertTrue("CallPrefs.recordEmergencyPlaced(context, placedAtMs)" in placed)
+        assertTrue("if (watch) PlacedCallWatch.start(context, placedAtMs)" in placed && "emergencySync(context)" in placed)
+        assertTrue("keepLaterWindow(" in system.substringAfter("private fun store(").substringBefore("\n    }\n"))
+        // It never throws into placeCall: a false return would open the emergency dialer over the call.
+        assertTrue(placed.substringAfter("{\n").trimStart().startsWith("try {") && "catch (e: Exception)" in placed)
+        val prefs = system.substringAfter("object CallPrefs")
+        assertTrue("store(context, placedAtMs, PROVISIONAL_WINDOW_MS, placed = true)" in prefs.substringAfter("fun recordEmergencyPlaced("))
+        assertTrue("CALLBACK_WINDOW_MS" in prefs.substringAfter("fun recordEmergencyConnected(").substringBefore("\n    }\n"))
+        assertTrue("PROVISIONAL_WINDOW_MS" in prefs.substringAfter("fun recordEmergencyCallback(").substringBefore("\n"))
+        assertTrue("storedWindowMs(context)" in prefs.substringAfter("fun recordedWindowUntil(").substringBefore("\n    }\n"))
+        assertTrue("getLong(EMERGENCY_WINDOW_MS, CALLBACK_WINDOW_MS)" in prefs.substringAfter("fun storedWindowMs("))
+        // The emergency dialer fallback (Telecom refused) is a placing too.
+        val fallback = sources.walkTopDown().first { it.name == "EmergencyCall.kt" }.readText().substringAfter("fun callEmergency(")
+        assertTrue("CallSystem.emergencyPlaced(activity, openedAtMs, watch)" in fallback)
+        assertTrue(fallback.indexOf("val watch = !CallSystem.callBeforePlacing(activity)") < fallback.indexOf("EmergencyDialer.open("))
+    }
+
+    @Test
+    fun `both incoming checks take Telecom's emergency callback mark on a SIM account, and record it`() {
+        val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val verdict = sources.walkTopDown().first { it.name == "KidCallScreeningService.kt" }.readText()
+            .substringAfter("fun incomingVerdict(")
+        assertTrue("ecbm = details.hasProperty(Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE)" in verdict)
+        assertTrue("CallSystem.simAccount(context, details.accountHandle)" in verdict)
+        assertTrue("windowOpen = { CallSystem.callbackWindowUntil(context) != null }" in verdict)
+        assertTrue("if (pass == CallbackPass.TELECOM_MARK) CallSystem.telecomMarkSeen(context)" in verdict)
+        val system = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
+        val seen = system.substringAfter("fun telecomMarkSeen(").substringBefore("\n    }\n")
+        assertTrue("telecomMarkRecords(lastEmergencyCallMs(context, now), now)" in seen)
+        assertTrue("CallPrefs.recordEmergencyCallback(context, now)" in seen && "emergencySync(context)" in seen)
+        val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
+        assertTrue("incomingVerdict(this, call.details) == Verdict.BLOCK" in service)
     }
 
     @Test
@@ -87,11 +185,14 @@ class EmergencyConnectsTest {
         val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
         val record = service.substringAfter("private fun recordEmergency(").substringBefore("\n    }\n")
         val prefs = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
-            .substringAfter("fun recordEmergencyConnected(").substringBefore("\n    }\n")
+            .substringAfter("private fun store(").substringBefore("\n    }\n")
         assertTrue("emergencyRecord(" in prefs && "System.currentTimeMillis()" in prefs)
         assertTrue("reportedEmergencyAt(" in sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText())
         assertTrue("emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis" in record)
-        assertTrue("CallPrefs.recordEmergencyConnected(this, it)" in record)
+        assertTrue("CallPrefs.recordEmergencyConnected(this, it, details.creationTimeMillis)" in record)
+        // An emergency call we see ourselves ends the call-state watch at once: only its own connect promotes it.
+        val added = service.substringAfter("override fun onCallAdded(").substringBefore("\n    }\n")
+        assertTrue(added.indexOf("PlacedCallWatch.stop()") in 0 until added.indexOf("recordEmergency(call, call.details.state)"))
         assertTrue("emergencyConnects.removed(call)" in service.substringAfter("override fun onCallRemoved("))
         assertTrue("unlocked = { CallPolicyStore.userUnlocked(this) }" in service)
         // Called directly and caught: a post could be dropped by onDestroy, a throw would reach the

@@ -12,13 +12,17 @@ package com.kidslauncher.mdm.lock
  * leaves through Home. With the kiosk off the lock-task is the lock's own (step 10): it starts and
  * stops it itself; since design 32 the kid lands on Home there too (decision 2: Home lies under the
  * lock as defence in depth), unless a call is live - Home must never cover a call (QA L2).
+ * Design 59b R2 (decided 2026-11-02): as Android's face with its secure keyguard locked and the kiosk off, the glance
+ * takes no lock task at all - Android's locked keyguard is the gate, and a helper the kid unlocks into on SystemUI's
+ * face or pad (DeskClock) stays: stopping a root lock task clears every locked task, the helper's included.
  */
 
 /** How often the lock may ask Home to root lock task; in between it waits for the fallback. */
 const val HOME_ROOT_RETRY_MS = 3_000L
 
 enum class LockTaskEntry {
-    /** Running already, or not permitted (then the lock is a re-front only). */
+    /** Running already, or not permitted (then the lock is a re-front only); kiosk off: a VoIP call, or Android's face
+     * with Android locked (design 59b R2). */
     NONE,
 
     /** Start Home (typed HOME): its resume roots lock task and shows the lock again. */
@@ -27,8 +31,18 @@ enum class LockTaskEntry {
     /** Home was asked less than [HOME_ROOT_RETRY_MS] ago: wait for the [LOCK_FALLBACK_MS] fallback. */
     WAIT_FOR_HOME,
 
-    /** The lock starts lock task itself: the kiosk is off, or Home didn't (fallback). */
+    /** The lock starts lock task itself: the kiosk is off (own mode, or the face with Android not locked), Home didn't
+     * (fallback), or the face with Android locked and the kiosk on. */
     START_SELF,
+
+    /** Design 59b R2 (code QA M1): kiosk off, as the face with Android locked, a lock task the glance roots runs -
+     * started while Android read open (a resume in a RELOCK's wait: a process start with the screen on, a remote lock's
+     * show before its `lockNow`, a late `USER_PRESENT`) or left from the face's kiosk (59d A). The glance stops it now,
+     * not at the leave, where it would clear a helper's task. Only as the root (E7b M-B1): `stopLockTask` from a task
+     * that isn't the root takes that task out and clears it (AOSP `clearLockedTask` -> `performClearTaskForReuse`) - the
+     * glance is finished, Home's locked resume shows it again in a new task, which joins the lock task and stops again:
+     * a loop with Android's keyguard un-occluded. Another root (Home's, own mode's kiosk) stays until the leave. */
+    STOP_OWN,
 }
 
 /**
@@ -46,16 +60,44 @@ fun lockTaskEntry(
     sinceHomeAskedMs: Long?,
     fallbackDue: Boolean,
     voipCall: Boolean = false,
-    /** Design 59d step A (qa-59b-code B-1): as Android's face with its secure keyguard locked - a Home start lands
-     * behind the keyguard (and un-occludes it), so the glance roots lock task itself; the leave re-roots through Home
-     * (`lockLeave`'s kiosk root, `startedLockTask`). */
+    /** As Android's face with its secure keyguard locked (`AndroidLock.refrontHeld`). Kiosk on - design 59d step A
+     * (qa-59b-code B-1): a Home start lands behind the keyguard (and un-occludes it), so the glance roots lock task
+     * itself; the leave re-roots through Home (`lockLeave`'s kiosk root, `startedLockTask`). Kiosk off - design 59b R2
+     * (the user, 2026-11-02): no lock task of the glance's own. Android's locked keyguard keeps every start that isn't
+     * showWhenLocked behind it and refuses Recents (P59-1), the shade stays off through `setStatusBarDisabled`
+     * (`lockTaskWhileLocked`), the power menu is the keyguard's; and a helper the kid unlocks into on SystemUI's face or
+     * pad stays - the leave stops nothing (`lockLeave`: nothing running), where stopping the glance's root lock task
+     * cleared the helper's task with it (AOSP `clearLockedTasks`, the rc.2 run's R2). A lock task the glance started
+     * while Android read open (the face's RESUME/UNLOCK_TAP wait before a RELOCK: a process start with the screen on, a
+     * remote lock, a late `USER_PRESENT`; or one left from a kiosk on -> off flip) is stopped at the next entry check
+     * with Android locked ([LockTaskEntry.STOP_OWN]) - never during a VoIP call (its PiP, design 17 QA #10). */
     androidLocked: Boolean = false,
+    /** This lock instance started the running lock task (`startedLockTask`): its task is the root. Unknown (Home rooted
+     * it, an earlier instance or process did) counts as not - a STOP_OWN from a task that isn't the root clears the
+     * glance's own task (E7b M-B1), so the decision must hold across every resume that follows. */
+    glanceRoot: Boolean = false,
 ): LockTaskEntry = when {
-    running || !permitted || (voipCall && !kioskOn) -> LockTaskEntry.NONE
+    running && glanceRoot && !kioskOn && androidLocked && !voipCall -> LockTaskEntry.STOP_OWN
+    running || !permitted || (!kioskOn && (voipCall || androidLocked)) -> LockTaskEntry.NONE
     !kioskOn || fallbackDue || androidLocked -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
     else -> LockTaskEntry.START_HOME
 }
+
+/** What a policy sets of [lockTaskEntry]'s inputs: the kiosk (`LockTaskChrome.kioskOn`) and Android's lock as the face
+ * (`AndroidLock.faceOn`). */
+data class EntryPolicy(val kioskOn: Boolean, val face: Boolean)
+
+/**
+ * Whether a chrome pass that just landed (the runtime's, or a policy's `LockTaskChrome.applyPlan`) re-runs the resumed
+ * lock's entry check: the pass pinned our package for a lock that found it not pinned ([waitingForPin], 16c), or the
+ * policy changed what the check reads since the lock last saw it ([seen], `null` = not seen yet). E7's M2 (59b R2): the
+ * kiosk turned on under the face's glance without lock task took one only at the next screen cycle; now the glance
+ * roots it at once (59d A), stops its own when the kiosk goes off with Android locked ([LockTaskEntry.STOP_OWN]), and
+ * follows the face going on or off the same way - from the lock itself, whether Home is in front or not.
+ */
+fun chromeEntryRecheckDue(waitingForPin: Boolean, seen: EntryPolicy?, now: EntryPolicy): Boolean =
+    waitingForPin || (seen != null && seen != now)
 
 /** What the lock does when it leaves (unlocked, or switched off). */
 data class LockLeave(

@@ -8,7 +8,9 @@ const { install } = require("../static/rule-kind.js");
 function page() {
     const listeners = [];
     const calls = { checked: true };
-    const form = { querySelector: (sel) => (sel === "[name=calls_allowed]" ? calls : null) };
+    const silent = { checked: false };
+    const fields = { "[name=calls_allowed]": calls, "[name=silent]": silent };
+    const form = { querySelector: (sel) => fields[sel] || null };
     const select = (marked) => ({
         form,
         value: "rule",
@@ -17,24 +19,32 @@ function page() {
     const doc = { addEventListener: (type, fn) => type === "change" && listeners.push(fn) };
     install(doc);
     const change = (target) => listeners.forEach((fn) => fn({ target }));
-    return { calls, select, change };
+    return { calls, silent, select, change };
 }
 
-test("school turns the calls switch off, another kind on again", () => {
-    const { calls, select, change } = page();
+test("school turns the calls switch off and Silent on, another kind the other way again", () => {
+    const { calls, silent, select, change } = page();
     const kind = select(true);
     kind.value = "school";
     change(kind);
     assert.strictEqual(calls.checked, false);
+    assert.strictEqual(silent.checked, true);
     kind.value = "rule";
     change(kind);
     assert.strictEqual(calls.checked, true);
+    assert.strictEqual(silent.checked, false);
+    // A bedtime-kind day rule kept from before design 66 is silent too (0121), calls on.
+    kind.value = "bedtime";
+    change(kind);
+    assert.strictEqual(calls.checked, true);
+    assert.strictEqual(silent.checked, true);
 });
 
-test("another control's change leaves the switch alone", () => {
-    const { calls, select, change } = page();
+test("another control's change leaves the switches alone", () => {
+    const { calls, silent, select, change } = page();
     const other = select(false);
     other.value = "school";
     change(other);
     assert.strictEqual(calls.checked, true);
+    assert.strictEqual(silent.checked, false);
 });

@@ -118,6 +118,9 @@ object LockTaskChrome {
             }
             applyNow(context)
         }
+        // E7 M2: a resumed lock re-runs its entry check when this policy turned the kiosk or Android's face on or off
+        // (AppEnforcer set the face just before) - not only at the next resume.
+        PinLockRuntime.chromePassLanded()
     }
 
     /** Resolves the kiosk-off lock helpers ahead of the first screen-off (background thread). */
@@ -179,6 +182,39 @@ object LockTaskChrome {
      */
     fun healStatusBar(context: Context, trigger: HealTrigger): Boolean = synchronized(this) {
         if (plan == null) applyFallback(context, trigger) else applyNow(context, trigger)
+    }
+
+    /**
+     * Design 59b R2 (code QA L1, [statusBarHealKind]'s DISABLE_TOGGLE): `setStatusBarDisabled` written off and on
+     * again, at once, so SystemUI is sent DPM's disable flags anew - only while the plan wants the status bar off
+     * (LOCKED). The "on" write is tried twice; if both fail the latch is cleared and a normal pass runs, which writes it
+     * again (the shade must never stay open). Returns whether both writes went through. Background thread, screen off.
+     */
+    fun healStatusBarDisable(context: Context): Boolean = synchronized(this) {
+        val dpm = dpm(context) ?: return false
+        if (!PinLockRuntime.chromeLocked) return false
+        val admin = admin(context)
+        val off = try {
+            dpm.setStatusBarDisabled(admin, false)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Status bar disable heal: the off write failed", e)
+            false
+        }
+        if (!off) return false
+        statusBar.invalidate()
+        repeat(2) {
+            try {
+                if (dpm.setStatusBarDisabled(admin, true)) {
+                    statusBar.written(true)
+                    Log.i(LOG_TAG, "Status bar disable heal (screen off, no lock task): written off and on")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Status bar disable heal: the on write failed", e)
+            }
+        }
+        if (plan == null) applyFallback(context) else applyNow(context)
+        false
     }
 
     /** The heal's second write: a normal pass, unless one has written the features since. */

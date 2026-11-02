@@ -73,9 +73,12 @@ const val SYSTEM_HOME_HEAL_MIN_GAP_MS = 5_000L
  * Home start that isn't ours ([broughtByUs]: `HomeFront.EXTRA_BROUGHT`) while our lock is [locked] and the screen is
  * [interactive] is the desync's proof: heal now - at most every [SYSTEM_HOME_HEAL_MIN_GAP_MS] ([lastHealElapsedMs]) -
  * so the next swipe is refused again. The first swipe's flash stays (an app can't see SystemUI's flags before it).
+ * Only with a lock task running ([lockTaskRunning], code QA L3 of design 59b R2): without one there are no lock-task
+ * flags to heal - the face's glance with the kiosk off runs none, and the home gesture reaching the keyguard is
+ * Android's own path there (§8.16's gesture ask still runs; it is decided apart from this).
  */
-fun systemHomeHealDue(locked: Boolean, interactive: Boolean, broughtByUs: Boolean, lastHealElapsedMs: Long?, nowElapsedMs: Long): Boolean =
-    locked && interactive && !broughtByUs &&
+fun systemHomeHealDue(locked: Boolean, interactive: Boolean, broughtByUs: Boolean, lastHealElapsedMs: Long?, nowElapsedMs: Long, lockTaskRunning: Boolean): Boolean =
+    locked && interactive && !broughtByUs && lockTaskRunning &&
         (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until SYSTEM_HOME_HEAL_MIN_GAP_MS)
 
 /** Design 59d §8.16: a notice or a screen-on this recent makes a system Home start no gesture of the kid's (no ask; a
@@ -153,6 +156,35 @@ fun gestureAskTaken(markedElapsedMs: Long?, markedScreenOffs: Int, screenOffs: I
 fun lockResumedHealDue(lastHealElapsedMs: Long?, nowElapsedMs: Long, healedSinceScreenOff: Boolean = false): Boolean =
     !healedSinceScreenOff &&
         (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS)
+
+/** What a status-bar heal writes ([statusBarHealKind]). */
+enum class StatusBarHeal {
+    /** Design 16d: the lock-task features with SYSTEM_INFO flipped for a moment, then written back. */
+    FLIP,
+
+    /** Design 59b R2 (code QA L1): `setStatusBarDisabled` written off and on (`LockTaskChrome.healStatusBarDisable`). */
+    DISABLE_TOGGLE,
+
+    /** Nothing: no lock task runs, so the flip reaches nothing (E7 L3). */
+    NONE,
+}
+
+/**
+ * Which heal a [trigger] runs. With a lock task running ([lockTaskRunning]; unreadable counts as running): the flip,
+ * whose features SystemUI is sent through LockTaskController. Without one SystemUI hears no lock-task features at all
+ * (the face's glance with the kiosk off and Android locked, a kiosk-off VoIP call, a lock not yet pinned, unlocked with
+ * the kiosk off) - and a lock task that starts later sends them itself - so the flip is dead work (E7 L3) and nothing
+ * runs; except that LOCKED the status bar's only block is then `setStatusBarDisabled`, so a SystemUI or Quickstep
+ * restart that lost DPM's disable (the shade and Quick Settings over the locked keyguard) is healed by writing it off
+ * and on again ([StatusBarHeal.DISABLE_TOGGLE], code QA L1 of 59b R2: the net flags change twice and SystemUI is sent
+ * both). That only at the screen-off heal ([HealTrigger.SCREEN_OFF], read [interactive] false right before the writes):
+ * between the two writes the shade isn't blocked at all, which must never be with the screen on.
+ */
+fun statusBarHealKind(trigger: HealTrigger, locked: Boolean, lockTaskRunning: Boolean, interactive: Boolean): StatusBarHeal = when {
+    lockTaskRunning -> StatusBarHeal.FLIP
+    trigger == HealTrigger.SCREEN_OFF && locked && !interactive -> StatusBarHeal.DISABLE_TOGGLE
+    else -> StatusBarHeal.NONE
+}
 
 /**
  * The lock-task features of a heal's first write: [setting]'s with SYSTEM_INFO flipped. `null` when

@@ -81,10 +81,12 @@ class SecurityLowsTest {
     @Test
     fun `S-L3 - an allowlisted app's alarm isn't spared at bedtime, every system clock is`() {
         val system = setOf("com.android.deskclock", "com.oem.clock")
-        assertEquals(system, sparedAlarmApps("com.example.game", "com.example.game", system, clockAppVerified = false))
-        assertEquals(system + "org.fossify.clock", sparedAlarmApps("org.fossify.clock", null, system, clockAppVerified = true))
-        assertEquals(system, sparedAlarmApps("org.fossify.clock", null, system, clockAppVerified = false))
-        assertEquals(emptySet<String>(), sparedAlarmApps("com.example.game", null, emptySet(), clockAppVerified = false))
+        // No input names the next alarm's creator: an allowlisted app's setAlarmClock can't add it.
+        assertEquals(system, sparedAlarmApps(system, clockAppVerified = false))
+        // Bug 2026-11-02: a verified Fossify Clock always - also with a system clock's alarm next in line.
+        assertEquals(system + "org.fossify.clock", sparedAlarmApps(system, clockAppVerified = true))
+        assertEquals(setOf("org.fossify.clock"), sparedAlarmApps(emptySet(), clockAppVerified = true))
+        assertEquals(emptySet<String>(), sparedAlarmApps(emptySet(), clockAppVerified = false))
     }
 
     @Test

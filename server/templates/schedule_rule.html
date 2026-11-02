@@ -37,7 +37,7 @@
                 {% if let Some(why) = rule.name_error %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
                 <label class="row">
                     <span class="row-label">Type</span>
-                    {#- The kind pre-sets the calls switch (school: off; static/rule-kind.js); the switch can still be changed. -#}
+                    {#- The kind pre-sets the calls switch (school: off) and Silent (school: on; static/rule-kind.js); the switches can still be changed. -#}
                     <select class="pick" name="kind" data-presets-calls>
                         {% for (value, label) in kinds %}
                         <option value="{{ value }}"{% if rule.kind == *value %} selected{% endif %}>{{ label }}</option>
@@ -47,6 +47,12 @@
                 <label class="row">
                     <span class="row-label">Calls with contacts</span>
                     <input type="checkbox" role="switch" class="sw" name="calls_allowed" value="on"{% if rule.calls_allowed %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+                {#- 0121: the phone's own Do Not Disturb while the rule runs; the Type presets it (school, bedtime: on). A
+                    bedtime-kind day rule kept from before design 66 is a bedtime on the phone (alarms ring): its words. -#}
+                <label class="row" data-row="silent">
+                    <span class="row-label">{{ self.t("time_rules.silent") }}<span class="row-sub">{% if rule.kind == "bedtime" %}{{ self.t("device.bedtime.silent_sub") }}{% else %}{{ self.t("time_rules.silent_sub") }}{% endif %}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="silent" value="on"{% if rule.silent %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
             <p class="group-footer">The phone is locked while the rule runs. Emergency calls always work.</p>
@@ -87,6 +93,6 @@
     </section>
     {% endif %}
 </main>
-<script src="/static/rule-kind.js?v=1" defer></script>
+<script src="/static/rule-kind.js?v=3" defer></script>
 </body>
 </html>
