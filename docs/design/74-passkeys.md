@@ -352,6 +352,12 @@ The password change (`#password`) and Reset Two-Factor Login (`#reset-2fa`) also
 (`autocomplete="username webauthn"`), Passord, **Logg inn** (filled); a thin "eller" divider; **Logg inn med passkey**
 (outline, a key glyph) - shown by `passkey.js` whenever the browser supports passkeys (D4.3). A passkey
 sign-in goes straight in (no 2FA page).
+**When no account can sign in with a password** (every parent not removed is passkey-only, and no invite or Reset with
+a one-time password is pending - step 2; the user approved the mockup, 2026-11-02): the page drops Brukernavn, Passord
+and the divider and shows one filled **Logg inn med passkey**; a browser without passkeys sees "Denne nettleseren kan
+ikke bruke passkeys. Åpne siden i Safari eller Chrome." instead. **No auto-start**: iOS needs a tap for WebAuthn, and a
+cancelled automatic prompt would leave a blank page. The page then tells a visitor that passwords are off on this
+server - accepted (it only says guessing passwords is pointless). `POST /login` still answers the usual refusal.
 
 **6.5 The lock screen** (`/lock`, `auth-page`, no tab bar, `no-store`, `<title>Vibb</title>`): the Vibb mark; large
 title "Låst"; sub "Lås opp for å fortsette."; **Lås opp** (filled, wide); after a failed or cancelled try the red line
