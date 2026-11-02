@@ -1195,11 +1195,11 @@ async fn post_inner(
     }
     // The acknowledgements first (D2.3, R-M2): only the uid's current hand-back id clears it.
     acknowledge(&mut tx, device_id, &set.applied).await?;
-    sqlx::query(
+    sqlx::query(&format!(
         "UPDATE device_kid_events SET rev = ?, events_json = ?, from_at = ?, cut = ?, cut_from = ?, cut_uids = ?, \
          ended = ?, received_at = ?, rejected = NULL, rejected_at = NULL, \
-         error = CASE WHEN error = 'too_big' THEN NULL ELSE error END WHERE device_id = ?",
-    )
+         error = CASE WHEN error IN ('too_big', {RETRIED_STOPS}) THEN NULL ELSE error END WHERE device_id = ?"
+    ))
     .bind(&set.rev)
     .bind(serde_json::to_string(&set.events).expect("events serialize"))
     .bind(stamp(set.from))
@@ -2825,6 +2825,12 @@ async fn work_claimed(
     Ok(wrote)
 }
 
+/// The stops a write's own answer sets (a 403 `write_refused`, a 507 `full`), tried once more by the phone's next set
+/// and by the marked calendar's next fetch: a calendar that takes events again clears its line there (E7 L5), and one
+/// that still refuses answers the same and stops again. `no_etag` waits for a Test - a retry would write without a
+/// safe condition.
+const RETRIED_STOPS: &str = "'write_refused', 'full'";
+
 async fn stop_device(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -2865,8 +2871,9 @@ pub async fn account_tested(db: &sqlx::SqlitePool, account_id: i64) -> Result<()
     Ok(())
 }
 
-/// The marked calendar's scheduled fetch runs its waiting writes first (D4.2). Returns whether a write still waits for
-/// a fetch to store it - the fetch then reads the calendar whatever its ctag says.
+/// The marked calendar's scheduled fetch runs its waiting writes first (D4.2), a write's stop tried again
+/// ([RETRIED_STOPS]). Returns whether a write still waits for a fetch to store it - the fetch then reads the calendar
+/// whatever its ctag says.
 pub async fn before_fetch(
     state: &AppState,
     source_id: i64,
@@ -2882,6 +2889,12 @@ pub async fn before_fetch(
     if writers == 0 {
         return Ok(false);
     }
+    sqlx::query(&format!(
+        "UPDATE device_kid_events SET error = NULL, error_at = NULL WHERE source_id = ? AND error IN ({RETRIED_STOPS})"
+    ))
+    .bind(source_id)
+    .execute(&state.db)
+    .await?;
     work(state, account_id, now).await?;
     let waiting: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM kid_caldav_events WHERE source_id = ? AND fetch_wait IS NOT NULL",
@@ -3248,6 +3261,8 @@ pub struct KidStatus {
     pub received: bool,
     pub written_at: Option<String>,
     pub events: i64,
+    /// The writes still to make - not the policy's `pending`, which also counts a write until the fetch after it
+    /// (R-L2): the page never says a written event waits (E7 L6).
     pub pending: i64,
     pub back: i64,
     pub cut: i64,
@@ -3331,7 +3346,10 @@ pub async fn status(
         received: extra.2.is_some() || set.rev.is_some(),
         written_at: extra.0,
         events: set.events.len() as i64,
-        pending: pending_count(db, device_id).await?,
+        pending: rows
+            .values()
+            .filter(|r| r.back_id.is_none() && matches!(r.state.as_str(), "pending" | "deleting"))
+            .count() as i64,
         back: back_count(db, device_id, now).await?,
         cut: set.cut,
         refused,

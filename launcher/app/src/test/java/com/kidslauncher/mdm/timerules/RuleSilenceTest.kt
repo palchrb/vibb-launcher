@@ -114,6 +114,15 @@ class RuleSilenceTest {
         assertTrue(zenRuleNeedsReplacing(false))
         assertTrue(zenRuleNeedsReplacing(null))
         assertFalse(zenRuleNeedsReplacing(true))
+        // L-R1: of duplicate rules an enabled one is kept (first), the rest go; ties by id, so every apply agrees.
+        assertEquals(listOf("b", "a", "c"), zenRulesKeptFirst(mapOf("a" to false, "b" to true, "c" to false)))
+        assertEquals(listOf("a", "b"), zenRulesKeptFirst(mapOf("b" to true, "a" to true)))
+        assertEquals(listOf("a", "b"), zenRulesKeptFirst(mapOf("b" to false, "a" to false)))
+        // E7 code QA 5: our own switch-off's "deactivated" echo is no kid's switch-off; a later one is.
+        assertTrue(ownOffEcho(ownOffAtMs = 1_000L, nowMs = 1_000L + OWN_OFF_ECHO_MS - 1))
+        assertFalse(ownOffEcho(1_000L, 1_000L + OWN_OFF_ECHO_MS))
+        assertFalse("no own switch-off of that rule", ownOffEcho(null, 1_000L))
+        assertFalse("a clock before it", ownOffEcho(1_000L, 999L))
         // Code QA L3: an older lock decision never overrides a newer one.
         assertTrue(lockIsNewer(decidedAtMs = 10, lastDecidedAtMs = 10))
         assertTrue(lockIsNewer(11, 10))
@@ -156,5 +165,16 @@ class RuleSilenceTest {
         val runtime = source("ZenRuleRuntime.kt")
         assertFalse(runtime.contains("setInterruptionFilter"))
         assertFalse(runtime.contains("ringerMode"))
+        // L-R1: the rules are listed kept-first, so the apply's drop(1) and the re-assert's firstOrNull agree on it.
+        assertTrue(runtime.contains("zenRulesKeptFirst(found.mapValues { it.value.isEnabled })"))
+        // L-R2: a switch-on clears a deactivation heard before, right after the condition went true.
+        val on = runtime.substringAfter("private fun switchOn(").substringBefore("if (!zenRuleNeedsReplacing")
+        assertTrue(on.indexOf("deactivatedId = null") > on.indexOf("condition(context, uri, on = true)"))
+        // Every own switch-off goes through switchOff, which stamps it for the echo.
+        assertEquals(1, Regex("on = false\\)\\)").findAll(runtime).count())
+        assertTrue(runtime.substringAfter("private fun switchOff(").substringBefore("\n    }\n").contains("ownOff = id to android.os.SystemClock.elapsedRealtime()"))
+        assertTrue(runtime.contains("if (!ownOffEcho(ownOff?.takeIf { it.first == id }?.second, android.os.SystemClock.elapsedRealtime())) deactivatedId = id"))
+        // A flip of silencesAlarms tells the listeners (the time-rule screen's alarm row).
+        assertTrue(runtime.contains("if (silencesAlarms() != before) main.post { listeners.forEach { listener -> runCatching { listener() } } }"))
     }
 }

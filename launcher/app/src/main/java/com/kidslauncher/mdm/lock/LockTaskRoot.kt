@@ -77,14 +77,20 @@ fun lockTaskEntry(
     else -> LockTaskEntry.START_HOME
 }
 
+/** What a policy sets of [lockTaskEntry]'s inputs: the kiosk (`LockTaskChrome.kioskOn`) and Android's lock as the face
+ * (`AndroidLock.faceOn`). */
+data class EntryPolicy(val kioskOn: Boolean, val face: Boolean)
+
 /**
- * Code QA L2 (59b R2): whether a chrome pass that just landed re-runs the lock's entry check - the pass pinned our
- * package for a lock that found it not pinned ([waitingForPin], 16c), or the kiosk went on ([kioskWas] off, [kioskNow]
- * on; `null` = not seen yet) under a glance that runs no lock task ([running] false: the R2 state, or a VoIP call) - the
- * kiosk's lock wants one now (59d A).
+ * Whether a chrome pass that just landed (the runtime's, or a policy's `LockTaskChrome.applyPlan`) re-runs the resumed
+ * lock's entry check: the pass pinned our package for a lock that found it not pinned ([waitingForPin], 16c), or the
+ * policy changed what the check reads since the lock last saw it ([seen], `null` = not seen yet). E7's M2 (59b R2): the
+ * kiosk turned on under the face's glance without lock task took one only at the next screen cycle; now the glance
+ * roots it at once (59d A), stops its own when the kiosk goes off with Android locked ([LockTaskEntry.STOP_OWN]), and
+ * follows the face going on or off the same way - from the lock itself, whether Home is in front or not.
  */
-fun chromeEntryRecheckDue(waitingForPin: Boolean, kioskWas: Boolean?, kioskNow: Boolean, running: Boolean): Boolean =
-    waitingForPin || (kioskWas == false && kioskNow && !running)
+fun chromeEntryRecheckDue(waitingForPin: Boolean, seen: EntryPolicy?, now: EntryPolicy): Boolean =
+    waitingForPin || (seen != null && seen != now)
 
 /** What the lock does when it leaves (unlocked, or switched off). */
 data class LockLeave(

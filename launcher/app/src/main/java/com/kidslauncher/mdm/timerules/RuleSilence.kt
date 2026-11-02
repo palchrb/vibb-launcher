@@ -86,6 +86,20 @@ fun zenStep(target: RuleSilence, applied: RuleSilence?, force: Boolean, ours: Ze
     else -> ZenStep.ON
 }
 
+/** The revision check's L-R1: of several rules of ours (a lost add's retry; [enabled] by id) the one kept - listed
+ * first, the rest removed - is an enabled one: keeping a disabled copy would throw away the copy Android still runs and
+ * replace the kept one under a fresh condition id. Ties by id, so every apply keeps the same one. */
+fun zenRulesKeptFirst(enabled: Map<String, Boolean>): List<String> =
+    enabled.entries.sortedWith(compareBy({ !it.value }, { it.key })).map { it.key }
+
+/** E7 code QA 5: a status broadcast saying our rule was deactivated this soon after our own switch-off of it
+ * ([ownOffAtMs], elapsed realtime; `null` = none of that rule) is that write's echo, not the kid's - read as the kid's
+ * it would land after the switch-on's clear (L-R2) and keep the rule "off" until its next "activated". */
+fun ownOffEcho(ownOffAtMs: Long?, nowMs: Long): Boolean = ownOffAtMs != null && nowMs - ownOffAtMs in 0 until OWN_OFF_ECHO_MS
+
+/** How long after our own switch-off its deactivated broadcast counts as its echo (the broadcast is queued behind it). */
+const val OWN_OFF_ECHO_MS = 2_000L
+
 /** Code QA M2: read back after switching on - a rule still disabled (Android 15+ keeps a user's disable and ignores the
  * app's re-enable) or gone ([enabledAfter] `null`) is replaced by a new one under a fresh condition id. */
 fun zenRuleNeedsReplacing(enabledAfter: Boolean?): Boolean = enabledAfter != true

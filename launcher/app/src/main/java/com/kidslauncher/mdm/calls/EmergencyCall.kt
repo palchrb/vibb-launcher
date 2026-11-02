@@ -86,12 +86,18 @@ object EmergencyCall {
         }
     }
 
-    /** A real emergency number: Telecom, else the platform's emergency dialer. */
+    /** A real emergency number: Telecom, else the platform's emergency dialer - which only places
+     * emergency calls, so opening it counts as a placing (its provisional window and call-state watch,
+     * [CallSystem.emergencyPlaced]; placeCall records its own). */
     fun callEmergency(activity: Activity, number: String = NUMBER) {
         grantCallPhone(activity)
         if (CallSystem.placeCall(activity, number)) return
+        val openedAtMs = System.currentTimeMillis()
+        val watch = !CallSystem.callBeforePlacing(activity)
         if (!EmergencyDialer.open(activity, number)) {
             Log.w("EmergencyCall", "Neither Telecom nor the emergency dialer took the emergency call")
+        } else if (Emergency.platformConfirms(number, CallSystem.platformEmergency(activity))) {
+            CallSystem.emergencyPlaced(activity, openedAtMs, watch)
         }
     }
 }

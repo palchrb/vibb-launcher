@@ -413,13 +413,15 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   write is never a create over a parent's delete. A 403 by its body: another CalDAV
   precondition refuses that event, `need-privileges` or none stops this phone's writes (`write_refused`) - never the
   account's `login_refused`, which only a 401 is. 409/400/415 refuse the event, 507 is `full`, no strong ETag `no_etag`
-  (the stops clear when the account's Test passes, `account_tested`). A PUT's ETag from its answer, else a GET with the
+  (the stops clear when the account's Test passes, `account_tested`; `write_refused` and `full` are also tried again by
+  the phone's next set and the calendar's next fetch, `RETRIED_STOPS`, E7 L5). A PUT's ETag from its answer, else a GET with the
   body compared (QA M1).
 - **The way back** (`after_fetch`, from `calendar_feeds::refresh` after a stored set of a marked calendar): the writes
   made before the REPORT was sent stop counting as `pending`, and a row written after it isn't judged by this fetch
   (R-L2, code QA H3; a write since the last stored fetch makes the next fetch read the REPORT whatever the ctag; an
-  empty answer held by design 72's QA M1 stores nothing and so leaves `pending` - "1 venter på å bli skrevet" until the
-  empty answer is taken, when the kid deleted the calendar's last event);
+  empty answer held by design 72's QA M1 stores nothing and so leaves the policy's `pending` until the empty answer is
+  taken, when the kid deleted the calendar's last event); the page's "n venter på å bli skrevet" counts only the writes
+  still to make, never one written and not yet fetched (E7 L6);
   each REPORT resource is matched to its uid by the VEVENT's UID (never the href); another ETag with the same content
   hash only stores the ETag, another hash is the parent's edit (handed back, the stored times updated; a hand-back that
   may have been delivered is never cleared, only replaced by the calendar's version - a parent's undo, an event restored
@@ -431,7 +433,7 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   the window.
 - **`pending` stays at 1 after the kid deletes the calendar's last event** (known, safe): the REPORT then comes back
   empty, design 72's empty-answer hold stores nothing, and the delete keeps counting until the third empty answer or
-  24 h later - the status line says "1 venter på å bli skrevet" meanwhile, and the phone keeps the uid skipped.
+  24 h later - the phone keeps the uid skipped meanwhile (the page's status line doesn't count it).
 - **The rows the write path reads or writes are stamped** with the answer's instant (`fetch_wait`: a write, a 412's or
   404's hand-back, a release), so a REPORT sent before it never judges them; the hold's count is each plan's own,
   never a running maximum.

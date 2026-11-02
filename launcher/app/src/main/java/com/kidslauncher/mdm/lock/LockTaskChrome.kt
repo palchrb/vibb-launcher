@@ -118,6 +118,9 @@ object LockTaskChrome {
             }
             applyNow(context)
         }
+        // E7 M2: a resumed lock re-runs its entry check when this policy turned the kiosk or Android's face on or off
+        // (AppEnforcer set the face just before) - not only at the next resume.
+        PinLockRuntime.chromePassLanded()
     }
 
     /** Resolves the kiosk-off lock helpers ahead of the first screen-off (background thread). */
@@ -182,10 +185,10 @@ object LockTaskChrome {
     }
 
     /**
-     * Design 59b R2 (code QA L1, [statusBarDisableHealDue]): `setStatusBarDisabled` written off and on again, at once,
-     * so SystemUI is sent DPM's disable flags anew - only while the plan wants the status bar off (LOCKED). The "on"
-     * write is tried twice; if both fail the latch is cleared and a normal pass runs, which writes it again (the
-     * shade must never stay open). Returns whether both writes went through. Background thread, screen off.
+     * Design 59b R2 (code QA L1, [statusBarHealKind]'s DISABLE_TOGGLE): `setStatusBarDisabled` written off and on
+     * again, at once, so SystemUI is sent DPM's disable flags anew - only while the plan wants the status bar off
+     * (LOCKED). The "on" write is tried twice; if both fail the latch is cleared and a normal pass runs, which writes it
+     * again (the shade must never stay open). Returns whether both writes went through. Background thread, screen off.
      */
     fun healStatusBarDisable(context: Context): Boolean = synchronized(this) {
         val dpm = dpm(context) ?: return false

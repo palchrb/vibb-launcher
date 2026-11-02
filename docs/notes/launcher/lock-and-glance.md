@@ -99,7 +99,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   - *The rc.2 run's fix round* (`docs/testing/2026-10-22-rc2-run.md`): as the face a pause of the glance in the SOS
     window, not ours, is the probable-SOS mark (`sosMarkAtPause`; R1 - own mode keeps its pause re-front for Recents;
     since 59d N1 that mark is set silently and `SOS_MARK_LINE` is logged by the pause's check only while the mark still
-    holds, `sosPauseMarkLogDue`),
+    holds; since E7's L2 a stop's mark too, and only by a check that yields to it, `sosMarkLogDue` - an alarm's screen
+    coming up just after a screen-on is logged as its "alarm" yield alone),
     and a queued start sent at once drops its queued copy (`KeyguardCover.dropWaiting`; R4: one time-rule screen).
     R3 is a label only.
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
@@ -124,14 +125,20 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     show before `DPM.lockNow`), a late or missed `USER_PRESENT` - or one is left from a kiosk on -> off flip; with the
     kiosk off any running lock task is the lock's own (`lockLeave`'s kiosk-off row). Never during a VoIP call (its
     PiP). After a kiosk flip Home may be the root: the glance's stop then only takes its own task out, and Home's ends
-    at the leave as before. A kiosk off -> on edge under a resumed LOCKED glance without lock task re-runs the entry
-    check (`chromeEntryRecheckDue`, L2), so the kiosk's lock gets its lock task at once. **The status-bar heal** (16d)
-    flips lock-task features, which SystemUI never hears without lock task: there the screen-off heal, still dark,
-    writes `setStatusBarDisabled` off and on instead (`statusBarDisableHealDue`, `LockTaskChrome.healStatusBarDisable`;
-    L1) - never lit, since the shade is unblocked between the two writes; a failed "on" write is retried and then
-    rewritten by a normal pass. The system-Home heal (59d §8.9 (a)) and its "a home gesture got through" line need a
+    at the leave as before. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
+    check at once (`chromeEntryRecheckDue` on `EntryPolicy(kioskOn, face)`): `LockTaskChrome.applyPlan` tells the chrome
+    listeners after its writes (`PinLockRuntime.chromePassLanded`; `AppEnforcer` sets the face just before it), so the
+    kiosk turned on under the face's glance roots its lock task from the glance (59d A) whether Home is in front or not
+    - E7's M2: only the runtime's own passes told the lock, it waited for the next screen cycle, and Home's
+    `reconcileKioskMode` from the background got "Invalid task, not in foreground" (still logged, harmless) -; the kiosk
+    turned off with Android locked stops the glance's own (STOP_OWN); the face switched off roots the own mode's.
+    **The status-bar heal** (16d) flips lock-task features, which SystemUI never hears without lock task, and a lock
+    task that starts later sends them itself: so without one no flip runs (`statusBarHealKind` -> NONE; E7 L3), except
+    that LOCKED the screen-off heal, still dark, writes `setStatusBarDisabled` off and on (DISABLE_TOGGLE,
+    `LockTaskChrome.healStatusBarDisable`; L1) - never lit, since the shade is unblocked between the two writes; a
+    failed "on" write is retried and then rewritten by a normal pass. The system-Home heal (59d §8.9 (a)) and its "a home gesture got through" line need a
     lock task running (`systemHomeHealDue(.., lockTaskRunning)`, L3); §8.16's gesture ask is unchanged. Pinned in
-    `LockTaskRootTest` (the R2 and STOP_OWN rows, every other input against the old rule, the chrome recheck) and
+    `LockTaskRootTest` (the R2 and STOP_OWN rows, every other input against the old rule, the policy recheck) and
     `StatusBarHealTest`.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
@@ -266,7 +273,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   category alarm with a full-screen intent - a snoozed/upcoming/missed one has none; not "ongoing", code QA H1: Fossify
   rings from `startForeground` without `setOngoing`; key, package, `when` and those facts only) holds it while posted,
   at most `ALARM_NOTICE_MAX_MS` (15 min, code QA L3: the yield steps aside for any front task while it lasts) from
-  first seen; else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
+  first seen (a re-send never extends it - E7 code QA 2: the PIN-free yield stays bounded; a ring past it is reached
+  through the PIN, below); else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
   shape, a denied `USE_FULL_SCREEN_INTENT` - API 34+ strips the intent then). The lock back in front after an "alarm"
   yield spends the ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key,
   and a post with a new `when` is a new ring (code QA L1: Fossify rings every alarm under one key), so it yields again.
@@ -278,8 +286,11 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   the platform's own launch of the full-screen intent, an unlock). `PinLockRuntime.sendAlarmScreen` - pure
   `alarmScreenStep` (LOCKED, screen on, no phone call or emergency flow; held for `LATER` while the keypad has digits,
   code QA N4, or the keyguard cover's keyguard must go first, `KeyguardCover.mustWait` as 17b, N3) and
-  `AlarmNotices.screenKey` (a clock app's, under 15 min, under `ALARM_SCREEN_MAX_SENDS` = 5 re-sends per ring, the
-  newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
+  `AlarmNotices.screenKey` (a clock app's with its screen kept - any such ring, not only the newest of all -, inside
+  the yield's 15 min for the PIN lock (`inYield`: its send opens the yield), under `ALARM_SCREEN_MAX_SENDS` = 5
+  re-sends per ring **per screen-on** - E7's M1: `AlarmNoticeReader.screenOn` at every screen-on starts the count
+  afresh, so a power press always brings it back and only a lock and a clock screen bouncing within one screen-on
+  stop; the newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
   Stop's removal makes it nothing; no listener answer, nothing) - sends that notification's full-screen intent (the
   reader keeps only that PendingIntent, only of the lock's clock apps, never extras, text or actions; sent only when it
   is an activity intent a clock app created, code QA N1/N2) from the visible lock with `VisibleSender.options()`, as one
@@ -287,7 +298,21 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   yielded to and Stop/Snooze brings the lock back; if the lock is still in front `ALARM_SCREEN_CHECK_MS` (1.5 s) later,
   nothing came up and that ring's yield closes again (`alarmScreenCheck` -> `spent`, code QA L2, as 17b's
   `VOIP_FSI_CHECK_MS`). The lock's own dialogs hold it (no retry until the next resume or screen-on). Both modes (own
-  and Android's face). **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
+  and Android's face). **After an unlock** (E7's M1: the time-rule screen didn't bring it back, the shade shut by the
+  kiosk, Recents empty - it rang until the clock gave up): `LockActivity`'s resume posts the same send after
+  `ALARM_SCREEN_SETTLE_MS` (`sendAlarmScreen(.., timeRuleScreen = true)`: in charge while not LOCKED, the same count,
+  no time bound, no yield and so no check; a pause drops it; the resume right after a send from this screen - the kid
+  back from the ringing screen - sends nothing, code QA 3: a clock slow to drop its notification would get its stale
+  screen again), and while an allowed clock's alarm rings unsilenced (`PinLockRuntime.alarmToStop`:
+  `AlarmNoticeReader.openable`, not `silencesAlarms`) the card's first row is "Slå av alarmen" (`LockRow.Alarm`, the
+  alarm glyph), whose tap sends the ringing screen uncapped (`openRingingAlarm`, `screenKey(.., capped = false)` after
+  the listener's lookup - a tap can't loop). The row never opens by itself after an unlock (`unlockOpenRow`, code QA
+  4: the settled send does it, once, with its waits). The reader tells its listeners when the kept ringing screens
+  change or the listener connects or goes, and `ZenRuleRuntime` when `silencesAlarms` flips, so the row comes and goes
+  live. **Without the notification listener** (no access - no device-owner API grants it - or not yet rebound after an
+  update or a restart; code QA 1) nothing sees a ring: the card offers the lock's clock apps as app rows
+  (`lockRowPackages`, through the openable-apps filter: only a launchable clock that isn't suspended, i.e. one the rule
+  spares as an allowed alarm app) - the clock app itself is the way to its alarm. The yield stays the PIN lock's alone. **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
   Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both; and (revision R1) `when=`
   stays the same across two dumps of one ring on the Google/OEM clock (an update with a new `when` would read as a new
   ring: fresh bound, re-send count reset). Revision R2: a resume with a re-send outstanding and no "alarm" yield in

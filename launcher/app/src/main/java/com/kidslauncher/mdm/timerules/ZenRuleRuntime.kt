@@ -66,6 +66,17 @@ object ZenRuleRuntime {
     @Volatile
     private var deactivatedId: String? = null
 
+    /** E7 code QA 5: our own last switch-off of a rule - its id and elapsed realtime ([ownOffEcho]). */
+    @Volatile
+    private var ownOff: Pair<String, Long>? = null
+
+    /** Told on the main thread when [silencesAlarms] flips (the time-rule screen's alarm row). */
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    fun addListener(listener: () -> Unit) { listeners.addIfAbsent(listener) }
+
+    fun removeListener(listener: () -> Unit) { listeners.remove(listener) }
+
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -106,7 +117,8 @@ object ZenRuleRuntime {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
         val id = intent.getStringExtra(NotificationManager.EXTRA_AUTOMATIC_ZEN_RULE_ID) ?: return
         when (intent.getIntExtra(NotificationManager.EXTRA_AUTOMATIC_ZEN_RULE_STATUS, 0)) {
-            NotificationManager.AUTOMATIC_RULE_STATUS_DEACTIVATED -> deactivatedId = id
+            NotificationManager.AUTOMATIC_RULE_STATUS_DEACTIVATED ->
+                if (!ownOffEcho(ownOff?.takeIf { it.first == id }?.second, android.os.SystemClock.elapsedRealtime())) deactivatedId = id
             NotificationManager.AUTOMATIC_RULE_STATUS_ACTIVATED -> if (deactivatedId == id) deactivatedId = null
         }
     }
@@ -148,16 +160,28 @@ object ZenRuleRuntime {
         false
     }
 
-    /** Our rules (Android returns only the caller's), by id. */
-    private fun ours(nm: NotificationManager, context: Context): List<Pair<String, AutomaticZenRule>> =
-        nm.automaticZenRules.orEmpty().filterValues { rule ->
+    /** Our rules (Android returns only the caller's), the one to keep first ([zenRulesKeptFirst]). */
+    private fun ours(nm: NotificationManager, context: Context): List<Pair<String, AutomaticZenRule>> {
+        val found = nm.automaticZenRules.orEmpty().filterValues { rule ->
             val id = rule.conditionId
             id != null && id.scheme == Condition.SCHEME && id.authority == context.packageName &&
                 id.pathSegments.firstOrNull() == SILENCE_PATH
-        }.toList().sortedBy { it.first }
+        }
+        return zenRulesKeptFirst(found.mapValues { it.value.isEnabled }).map { id -> id to found.getValue(id) }
+    }
 
+    /** [applyStep], telling the listeners when [silencesAlarms] flipped. */
     @Synchronized
     private fun apply(context: Context, force: Boolean) {
+        val before = silencesAlarms()
+        try {
+            applyStep(context, force)
+        } finally {
+            if (silencesAlarms() != before) main.post { listeners.forEach { listener -> runCatching { listener() } } }
+        }
+    }
+
+    private fun applyStep(context: Context, force: Boolean) {
         val target = silenceInForce(wanted, ringHeld)
         if (!force && target == applied) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -168,7 +192,7 @@ object ZenRuleRuntime {
         }
         try {
             val existing = ours(nm, context)
-            // A second copy (a lost add's retry) goes; the first one stays.
+            // A second copy (a lost add's retry) goes; the first one - an enabled one if any (L-R1) - stays.
             existing.drop(1).forEach { (id, _) -> runCatching { nm.removeAutomaticZenRule(id) } }
             val entry = existing.firstOrNull()
             val step = zenStep(target, applied, force, entry?.let { ZenRuleSeen(it.second.isEnabled) })
@@ -177,7 +201,7 @@ object ZenRuleRuntime {
                 ZenStep.RECORD -> {}
                 ZenStep.OFF -> {
                     val (id, rule) = entry!!
-                    nm.setAutomaticZenRuleState(id, condition(context, rule.conditionId, on = false))
+                    switchOff(nm, context, id, rule.conditionId)
                     Log.i(LOG_TAG, "Silence off")
                 }
                 ZenStep.ADD -> {
@@ -213,8 +237,10 @@ object ZenRuleRuntime {
      * disable - goes, and a new one under a fresh condition id takes its place (Android restores a deleted rule's user
      * changes when the same condition id comes back). */
     private fun switchOn(nm: NotificationManager, context: Context, id: String, uri: Uri, target: RuleSilence, offFirst: Boolean) {
-        if (offFirst) nm.setAutomaticZenRuleState(id, condition(context, uri, on = false))
+        if (offFirst) switchOff(nm, context, id, uri)
         nm.setAutomaticZenRuleState(id, condition(context, uri, on = true))
+        // L-R2: switched on - a deactivation heard before no longer says it is off (its "activated" may never come).
+        deactivatedId = null
         if (!zenRuleNeedsReplacing(nm.getAutomaticZenRule(id)?.isEnabled)) {
             Log.i(LOG_TAG, "Silence on: alarms=${target.alarms} media=${target.media}")
             return
@@ -227,6 +253,12 @@ object ZenRuleRuntime {
         if (zenRuleNeedsReplacing(nm.getAutomaticZenRule(newId)?.isEnabled)) {
             throw IllegalStateException("the new silent rule is disabled too")
         }
+    }
+
+    /** Our own switch-off, noted so its status echo isn't read as the kid's ([ownOffEcho]). */
+    private fun switchOff(nm: NotificationManager, context: Context, id: String, uri: Uri) {
+        ownOff = id to android.os.SystemClock.elapsedRealtime()
+        nm.setAutomaticZenRuleState(id, condition(context, uri, on = false))
     }
 
     /** Adds the rule: `TYPE_MANAGED` on Android 15+, plain if this Android refuses that type. */

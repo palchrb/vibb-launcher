@@ -256,7 +256,9 @@ const val ALARM_CATEGORY = "alarm"
 /** Bug 2026-11-02 (a2): the longest one ring holds the alarm's yield, from when it was first seen ringing - a
  * notification stuck in the shade never holds the lock open past it. 15 min (code QA L3: the yield steps aside for any
  * front task while it lasts, so it is kept short): Google's and AOSP's "Silence after" is 10 min by default and most
- * clocks stop by then; an alarm set to ring longer has the fixed window and the PIN after it. */
+ * clocks stop by then. The PIN lock's re-sends keep to it too (they open the yield; [AlarmNotices.screenKey]'s
+ * `yieldAtMs`); an alarm set to ring longer is reached through the PIN after it - the time-rule screen sends its screen
+ * and shows its row with no time bound (E7's M1, its code QA 2: the PIN-free yield stays bounded). */
 const val ALARM_NOTICE_MAX_MS = 15 * 60_000L
 
 /**
@@ -282,8 +284,8 @@ data class AlarmNotice(val packageName: String, val sinceMs: Long, val whenMs: L
  * [ALARM_RING_MS] after the alarm's time ([alarmLikelyRinging], kept as the fallback - no listener access, a clock
  * whose notification isn't [ringingAlarmShape]). [ringing]: the ringing-shaped notifications by key; [consumed]: the
  * keys whose yield ended - the lock came back in front after yielding to the alarm ([afterResume], as
- * [alarmAfterResume]), or a re-send brought nothing up ([spent]); [sends]: the ringing screen's re-sends per key
- * ([screenKey], [resent]). A key leaves all three when its notification is removed or posted again not ringing (a
+ * [alarmAfterResume]), or a re-send brought nothing up ([spent]); [sends]: the ringing screen's re-sends per key since
+ * the last screen-on ([screenKey], [resent], [screenOn]). A key leaves all three when its notification is removed or posted again not ringing (a
  * snooze), and starts afresh when posted with a new `when` (a new ring), so an alarm ringing again yields again. Pure;
  * the listener's glue is `badges/AlarmNoticeReader`.
  */
@@ -321,17 +323,22 @@ data class AlarmNotices(
     fun reconciled(active: Set<String>): AlarmNotices = (ringing.keys - active).fold(this) { notices, key -> notices.removed(key) }
 
     /**
-     * Gap closed 2026-11-02: the ringing alarm whose screen the resumed lock sends again ([alarmScreenStep]) - of one of
-     * [clockPackages], younger than [ALARM_NOTICE_MAX_MS], fewer than [ALARM_SCREEN_MAX_SENDS] re-sends; spent or not
-     * (the lock just came back over it - Stop's resume is told apart by the notification being gone after the settle,
-     * [reconciled]). The newest when there are several.
+     * Gap closed 2026-11-02: the ringing alarm whose screen the resumed lock (or the time-rule screen) sends again
+     * ([alarmScreenStep]) - of one of [clockPackages], with its screen [kept] (E7 code QA 5: any such ring, not only the
+     * newest of all), with [capped] fewer than [ALARM_SCREEN_MAX_SENDS] re-sends since the last screen-on, and for the
+     * PIN lock ([yieldAtMs], now) inside the yield's bound ([ALARM_NOTICE_MAX_MS]: its send opens the yield); spent or
+     * not (the lock just came back over it - Stop's resume is told apart by the notification being gone after the
+     * settle, [reconciled]). The time-rule screen has no time bound, and the kid's own tap on its alarm row no cap. The
+     * newest when there are several.
      */
-    fun screenKey(clockPackages: Set<String>, nowMs: Long): String? = ringing.entries
-        .filter { (key, notice) ->
-            notice.packageName in clockPackages && nowMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS &&
-                (sends[key] ?: 0) < ALARM_SCREEN_MAX_SENDS
-        }
-        .maxByOrNull { it.value.sinceMs }?.key
+    fun screenKey(clockPackages: Set<String>, kept: Set<String> = ringing.keys, capped: Boolean = true, yieldAtMs: Long? = null): String? =
+        ringing.entries
+            .filter { (key, notice) ->
+                notice.packageName in clockPackages && key in kept &&
+                    (!capped || (sends[key] ?: 0) < ALARM_SCREEN_MAX_SENDS) &&
+                    (yieldAtMs == null || yieldAtMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS)
+            }
+            .maxByOrNull { it.value.sinceMs }?.key
 
     /** One re-send of [key]'s screen: counted; when it went ([sent]) the yield is open again for it, so the re-front
      * check steps aside for the screen that comes up ([spent] closes it if none did). */
@@ -339,6 +346,10 @@ data class AlarmNotices(
         consumed = if (sent) consumed - key else consumed,
         sends = sends + (key to (sends[key] ?: 0) + 1),
     )
+
+    /** E7's M1: a screen-on - the kid's own power press (or the alarm's wake) - starts the re-send count afresh, so the
+     * cap only stops a lock and a clock screen bouncing within one screen-on, never a power press bringing it back. */
+    fun screenOn(): AlarmNotices = if (sends.isEmpty()) this else copy(sends = emptyMap())
 
     /** Code QA L2: a re-send went out but the lock is still in front [ALARM_SCREEN_CHECK_MS] later (refused, or the
      * screen closed at once) - [key]'s yield closes again rather than stay open while the notification lasts. */
@@ -358,8 +369,8 @@ data class AlarmNotices(
     }
 }
 
-/** Gap closed 2026-11-02: at most this many re-sends of one ringing alarm's screen - a clock screen that closes at
- * once while its notification stays can't loop the lock and the clock. */
+/** Gap closed 2026-11-02: at most this many re-sends of one ringing alarm's screen per screen-on ([AlarmNotices.screenOn])
+ * - a clock screen that closes at once while its notification stays can't loop the lock and the clock. */
 const val ALARM_SCREEN_MAX_SENDS = 5
 
 /** How long the lock is resumed (or the screen on) before it sends a ringing alarm's screen again: the platform's own
@@ -377,9 +388,10 @@ const val ALARM_SCREEN_CHECK_MS = 1_500L
  * [AlarmNotices.afterResume] spends every ring anyway. */
 fun alarmSendSpentAtResume(sentKey: String?, yieldedTo: String?): String? = sentKey?.takeIf { yieldedTo != "alarm" }
 
-/** What the resumed, settled lock does about a ringing alarm's screen ([alarmScreenStep]). */
+/** What the resumed, settled lock (or time-rule screen) does about a ringing alarm's screen ([alarmScreenStep]). */
 enum class AlarmScreenStep {
-    /** Nothing: no ringing alarm to bring back, not LOCKED, or a phone call or the emergency flow is in front. */
+    /** Nothing: no ringing alarm to bring back, the asking screen isn't the one in charge, or a phone call or the
+     * emergency flow is in front. */
     NONE,
 
     /** The screen is off (the lock may be resumed in the dark): no polling - the screen-on looks again (code QA L6). */
@@ -396,13 +408,15 @@ enum class AlarmScreenStep {
 /**
  * Gap closed 2026-11-02 (the power button pressed while the alarm rings: the screen-off's lock-up covered the ringing
  * screen, nothing brought it back): the resumed, settled lock sends a still-ringing alarm's full-screen intent again
- * ([key], [AlarmNotices.screenKey]) - only LOCKED, with the screen on, never over a phone call (ours or Telecom's,
- * emergency included) or the emergency flow, and not while the kid types the PIN ([typing]) or the cover's keyguard
- * must be dismissed first ([coverWaits]); the lock's own dialogs hold it (the activity's check).
+ * ([key], [AlarmNotices.screenKey]) - only from the screen in charge ([inCharge]: the PIN lock while LOCKED, and since
+ * E7's M1 the time-rule screen while not - after a PIN unlock the kid lands there with the alarm still ringing), with
+ * the screen on, never over a phone call (ours or Telecom's, emergency included) or the emergency flow, and not while
+ * the kid types the PIN ([typing]) or the cover's keyguard must be dismissed first ([coverWaits]); the lock's own
+ * dialogs hold it (the activity's check).
  */
 fun alarmScreenStep(
     key: String?,
-    locked: Boolean,
+    inCharge: Boolean,
     interactive: Boolean,
     otherScreen: Boolean,
     typing: Boolean = false,
@@ -411,7 +425,7 @@ fun alarmScreenStep(
      * the silenced alarm's screen is never brought up. */
     alarmsSilenced: Boolean = false,
 ): AlarmScreenStep = when {
-    key == null || !locked || otherScreen || alarmsSilenced -> AlarmScreenStep.NONE
+    key == null || !inCharge || otherScreen || alarmsSilenced -> AlarmScreenStep.NONE
     !interactive -> AlarmScreenStep.SCREEN_ON
     typing || coverWaits -> AlarmScreenStep.LATER
     else -> AlarmScreenStep.SEND
@@ -533,11 +547,12 @@ const val SOS_MARK_LINE = "The lock left the front just after a screen-on: proba
 /**
  * Design 59d N1 (the rc.2 re-check's N1): the face's wake often has a 2-5 ms pause/resume pair (the backstop's new-intent
  * delivery, mostly gone with step C), and [sosMarkAtPause] marked it at the pause - the resume cleared the mark, but the
- * line was in the log at most wakes. A pause's mark ([unlogged]) is logged only by the pause's own check
- * ([SOS_PAUSE_GRACE_MS]), and only when that check still finds it ([markHeld]: no resume came in between). A stop's mark
- * logs at once, as before.
+ * line was in the log at most wakes. E7's L2: a stop's mark logged at once too, so every alarm screen that came up just
+ * after a screen-on was logged as a probable SOS before its "alarm" yield. Every mark ([unlogged]) is logged only by a
+ * re-front check that yields to it ([action], [sosMarkKept]) - a resume in between, or a call, the emergency flow, an
+ * alarm or a VoIP call yielded to first, logs nothing.
  */
-fun sosPauseMarkLogDue(unlogged: Boolean, markHeld: Boolean): Boolean = unlogged && markHeld
+fun sosMarkLogDue(unlogged: Boolean, action: RefrontAction): Boolean = unlogged && sosMarkKept(action)
 
 /** A probable SOS is left alone until [untilMs] - never while one of our own screens is in front. */
 fun sosFlowNow(untilMs: Long, nowMs: Long, ownScreenInFront: Boolean): Boolean = nowMs < untilMs && !ownScreenInFront

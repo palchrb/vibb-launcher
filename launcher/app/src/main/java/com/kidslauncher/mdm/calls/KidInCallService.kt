@@ -18,10 +18,11 @@ internal const val EMERGENCY_SYNC_REASON = "emergency_call"
 
 /**
  * Our in-call UI service: Telecom binds it while we hold the dialer role (manifest:
- * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI) - for emergency calls too (AOSP
+ * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI). Not always for emergency calls: AOSP
  * `InCallController.bindToServices` wraps the default dialer's connection in
- * `EmergencyInCallServiceConnection`); the preloaded system dialer is only the fallback when our
- * UI can't be bound, which is why it is never suspended or hidden.
+ * `EmergencyInCallServiceConnection`, which may hand an emergency call to the preloaded system
+ * dialer instead (Android 16 did, E7's H1) - so the system dialer is never suspended or hidden, and
+ * the callback window doesn't depend on this service seeing the call.
  *
  * We don't declare IN_CALL_SERVICE_RINGING: Telecom plays the ringtone and handles ringer mode and
  * DND.
@@ -100,26 +101,32 @@ class KidInCallService : InCallService() {
         }
         OngoingCalls.add(call)
         call.registerCallback(callback)
+        // An emergency call the launcher placed that we see ourselves is judged by its own states: the
+        // call-state watch ends, so a call that never connects stays provisional (H1 QA).
+        if (call.details.callDirection == Call.Details.DIRECTION_OUTGOING &&
+            Emergency.platformConfirms(PhoneNumbers.numberFromHandle(call.details.handle?.toString()), CallSystem.platformEmergency(this))
+        ) {
+            PlacedCallWatch.stop()
+        }
         recordEmergency(call, call.details.state)
         showUi(call)
     }
 
     /**
      * Opens the callback window (CallSystem.callbackWindowUntil) for an emergency call that
-     * connected, as our in-call service sees it (Telecom binds us for emergency calls too); when
-     * the system dialer showed it instead, the call log opens the window. Only the platform's
-     * answer counts.
+     * connected, as our in-call service sees it - extended at every connected state, so it runs from
+     * the hang-up. When the system dialer showed it instead, the launcher's placing
+     * (CallSystem.emergencyPlaced), the call log or Telecom's own mark on the callback opens the window.
+     * Only the platform's answer counts.
      */
     private fun recordEmergency(call: Call, state: Int) {
-        if (call.details.callDirection != Call.Details.DIRECTION_OUTGOING) return
-        val connected = state == Call.STATE_ACTIVE ||
-            (state == Call.STATE_DISCONNECTED && call.details.connectTimeMillis > 0)
+        val details = call.details
+        if (details.callDirection != Call.Details.DIRECTION_OUTGOING) return
+        val connected = state == Call.STATE_ACTIVE || (state == Call.STATE_DISCONNECTED && details.connectTimeMillis > 0)
         if (!connected) return
-        val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
-        if (Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) {
-            val details = call.details
+        if (Emergency.platformConfirms(PhoneNumbers.numberFromHandle(details.handle?.toString()), CallSystem.platformEmergency(this))) {
             emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis, System.currentTimeMillis()) {
-                CallPrefs.recordEmergencyConnected(this, it)
+                CallPrefs.recordEmergencyConnected(this, it, details.creationTimeMillis)
             }
         }
     }

@@ -101,22 +101,22 @@ class PinLockActivity : AppCompatActivity() {
     /** The last [ensureLockTask] found our package not pinned (kiosk off, the chrome not yet set). */
     private var waitingForPin = false
 
-    /** [LockTaskChrome.kioskOn] at the last [ensureLockTask] or chrome pass (`null` = not seen yet). */
-    private var kioskSeen: Boolean? = null
+    /** The policy's [EntryPolicy] at the last [ensureLockTask] or chrome pass (`null` = not seen yet). */
+    private var policySeen: EntryPolicy? = null
 
-    /** A chrome pass landed (it runs off the main thread since 16c): with the kiosk off it pins our
-     * package for the lock - enter lock task now if the resume found it not permitted; and a kiosk off -> on edge under
-     * a glance without lock task (59b R2's state) enters the kiosk's now (code QA L2, [chromeEntryRecheckDue]). */
+    /** A chrome pass landed (off the main thread since 16c; a policy's too): with the kiosk off it pins our package for
+     * the lock - enter lock task now if the resume found it not permitted; and a policy that changed the kiosk or the
+     * face re-runs the entry check now, not at the next resume (E7 M2, [chromeEntryRecheckDue]). */
     private val chromeListener: () -> Unit = {
-        val kiosk = LockTaskChrome.kioskOn
-        val was = kioskSeen
-        kioskSeen = kiosk
-        if (resumed && PinLockRuntime.mode == LockMode.LOCKED &&
-            chromeEntryRecheckDue(waitingForPin, was, kiosk, running = was == false && kiosk && lockTaskRunning())
-        ) {
+        val now = entryPolicy()
+        val seen = policySeen
+        policySeen = now
+        if (resumed && PinLockRuntime.mode == LockMode.LOCKED && chromeEntryRecheckDue(waitingForPin, seen, now)) {
             ensureLockTask(fallbackDue = false)
         }
     }
+
+    private fun entryPolicy() = EntryPolicy(LockTaskChrome.kioskOn, AndroidLock.faceOn)
 
     private lateinit var voipRing: ViewVoipRingBinding
     /** The package the ring screen was filled for. */
@@ -890,7 +890,7 @@ class PinLockActivity : AppCompatActivity() {
         voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
         waitingForPin = !running && !permitted
         val androidLocked = AndroidLock.refrontHeld(this)
-        kioskSeen = LockTaskChrome.kioskOn
+        policySeen = entryPolicy()
         when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask, androidLocked = androidLocked)) {
             LockTaskEntry.NONE -> when {
                 !running && !permitted -> Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")

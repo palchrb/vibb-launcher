@@ -157,18 +157,34 @@ fun lockResumedHealDue(lastHealElapsedMs: Long?, nowElapsedMs: Long, healedSince
     !healedSinceScreenOff &&
         (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS)
 
+/** What a status-bar heal writes ([statusBarHealKind]). */
+enum class StatusBarHeal {
+    /** Design 16d: the lock-task features with SYSTEM_INFO flipped for a moment, then written back. */
+    FLIP,
+
+    /** Design 59b R2 (code QA L1): `setStatusBarDisabled` written off and on (`LockTaskChrome.healStatusBarDisable`). */
+    DISABLE_TOGGLE,
+
+    /** Nothing: no lock task runs, so the flip reaches nothing (E7 L3). */
+    NONE,
+}
+
 /**
- * Design 59b R2 (code QA L1): LOCKED with no lock task running (the face's glance with the kiosk off and Android locked,
- * a kiosk-off VoIP call, a lock not yet pinned) the status bar's only block is `setStatusBarDisabled` - the SYSTEM_INFO
- * flip changes nothing SystemUI hears then (LockTaskController sends no flags outside lock task). So a SystemUI or
- * Quickstep restart that lost DPM's disable (the shade and Quick Settings over the locked keyguard) is healed by writing
- * it off and on again (`LockTaskChrome.healStatusBarDisable`): the net flags change twice and SystemUI is sent both.
- * Only the screen-off heal ([HealTrigger.SCREEN_OFF], read [interactive] false right before the writes): between the
- * two writes the shade isn't blocked at all, which must never be with the screen on - the process-start, first
- * screen-on, lock-resumed and system-Home heals keep only the flip (a no-op here).
+ * Which heal a [trigger] runs. With a lock task running ([lockTaskRunning]; unreadable counts as running): the flip,
+ * whose features SystemUI is sent through LockTaskController. Without one SystemUI hears no lock-task features at all
+ * (the face's glance with the kiosk off and Android locked, a kiosk-off VoIP call, a lock not yet pinned, unlocked with
+ * the kiosk off) - and a lock task that starts later sends them itself - so the flip is dead work (E7 L3) and nothing
+ * runs; except that LOCKED the status bar's only block is then `setStatusBarDisabled`, so a SystemUI or Quickstep
+ * restart that lost DPM's disable (the shade and Quick Settings over the locked keyguard) is healed by writing it off
+ * and on again ([StatusBarHeal.DISABLE_TOGGLE], code QA L1 of 59b R2: the net flags change twice and SystemUI is sent
+ * both). That only at the screen-off heal ([HealTrigger.SCREEN_OFF], read [interactive] false right before the writes):
+ * between the two writes the shade isn't blocked at all, which must never be with the screen on.
  */
-fun statusBarDisableHealDue(trigger: HealTrigger, locked: Boolean, lockTaskRunning: Boolean, interactive: Boolean): Boolean =
-    trigger == HealTrigger.SCREEN_OFF && locked && !lockTaskRunning && !interactive
+fun statusBarHealKind(trigger: HealTrigger, locked: Boolean, lockTaskRunning: Boolean, interactive: Boolean): StatusBarHeal = when {
+    lockTaskRunning -> StatusBarHeal.FLIP
+    trigger == HealTrigger.SCREEN_OFF && locked && !interactive -> StatusBarHeal.DISABLE_TOGGLE
+    else -> StatusBarHeal.NONE
+}
 
 /**
  * The lock-task features of a heal's first write: [setting]'s with SYSTEM_INFO flipped. `null` when

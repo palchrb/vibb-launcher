@@ -5,7 +5,7 @@
      name or the kind's label, line 2 "Til 14:30" only with a certain end (gone without one). Information
      only: never clickable, one TalkBack stop (the panel sets the description), no keyboard focus. The
      compact tile's ground, 82 dp with its margin in LockGlanceLayoutTest's model; it doesn't count toward
-     the compact player (D4). Line 3, what still works ("Bare nødanrop fungerer nå."), is the time-rule screen's
+     the compact player (D4). Line 3, what still works ("Du kan bare ringe nødnumre nå."), is the time-rule screen's
      alone: gone on the glance, so its height there is unchanged. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/lock_rule_card"

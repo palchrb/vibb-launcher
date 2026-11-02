@@ -66,6 +66,30 @@ class LockActivity : UIObjectActivity() {
     /** The lock's ground changed (the parent's lock picture or Home's wallpaper). */
     private val wallpaperListener: () -> Unit = { applyGround() }
 
+    /** E7's M1: an allowed clock's alarm began or stopped ringing, the notification listener came or went, or a silent
+     * rule began or stopped silencing alarms - the alarm row (or the clock row) comes or goes. */
+    private val alarmListener: () -> Unit = { if (!isFinishing) render() }
+
+    /** E7 code QA 3: a ringing screen was sent from here - the next resume is the kid coming back from it (Stop,
+     * Snooze, Back), so it sends nothing (a clock slow to drop its notification would get its stale screen again);
+     * the alarm row stays for a ring still going. Main thread. */
+    private var alarmScreenSent = false
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** E7's M1: after a PIN unlock the alarm may still ring - once settled ([ALARM_SCREEN_SETTLE_MS]) the resumed screen
+     * hands the front to its ringing screen, as the PIN lock does ([PinLockRuntime.sendAlarmScreen]); a pause drops it. */
+    private val alarmScreenSend: Runnable = object : Runnable {
+        override fun run() {
+            if (isFinishing) return
+            when (PinLockRuntime.sendAlarmScreen(this@LockActivity, typing = false, timeRuleScreen = true)) {
+                com.kidslauncher.mdm.lock.AlarmScreenStep.LATER -> handler.postDelayed(this, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
+                com.kidslauncher.mdm.lock.AlarmScreenStep.SEND -> alarmScreenSent = true
+                else -> {}
+            }
+        }
+    }
+
     private val sharedPreferencesListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, prefKey ->
             val keys = LauncherPreferences.mdm().keys()
@@ -140,6 +164,8 @@ class LockActivity : UIObjectActivity() {
         reevaluateLockReasonFromCache(this)
         // The Kalender row follows Home's tile (the calendars read, the policy's switches).
         CalendarStore.addListener(calendarListener)
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         render()
     }
 
@@ -161,6 +187,8 @@ class LockActivity : UIObjectActivity() {
      * [unlockOpenRow]) - Back returns here, and no later resume (Back, Home) opens it again. */
     override fun onResume() {
         super.onResume()
+        handler.removeCallbacks(alarmScreenSend)
+        if (alarmScreenSent) alarmScreenSent = false else handler.postDelayed(alarmScreenSend, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
         val handedOver = com.kidslauncher.mdm.lock.GlanceOpener.handOverPending()
         com.kidslauncher.mdm.lock.GlanceOpener.openHandedOver(this)
         val marked = takeUnlockMark() && PinLockRuntime.mode != com.kidslauncher.mdm.lock.LockMode.LOCKED
@@ -168,6 +196,11 @@ class LockActivity : UIObjectActivity() {
         val only = unlockOpenRow(marked, handedOver, shownRows) ?: return
         Log.i("LockActivity", "One thing usable: opened after the unlock (${only.javaClass.simpleName})")
         open(only)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(alarmScreenSend)
+        super.onPause()
     }
 
     override fun onStop() {
@@ -182,6 +215,8 @@ class LockActivity : UIObjectActivity() {
         }
         WallpaperStore.removeListener(wallpaperListener)
         CalendarStore.removeListener(calendarListener)
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
         icons.cancel()
         super.onStop()
     }
@@ -247,7 +282,11 @@ class LockActivity : UIObjectActivity() {
         // Kalender (PLAN 2026-11-02): when every rule in force allows it and Home shows its tile (code QA L2: a phone
         // with no calendar set up gets no row, nor an empty Kalender after every unlock).
         val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
-        renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty()), calendar))
+        // E7's M1: a ringing alarm's row first, whatever the rule.
+        val alarm = getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }
+        renderRows(
+            timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm),
+        )
     }
 
     /** The rows of the last [renderRows], for the open after an unlock. */
@@ -262,6 +301,8 @@ class LockActivity : UIObjectActivity() {
             is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this))
             // Its own task (`DayActivity.intent`); Back from it comes back here.
             is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))
+            // The clock's own ringing screen (Stop, Snooze); Stop brings this screen back.
+            is LockRow.Alarm -> if (PinLockRuntime.openRingingAlarm(this)) alarmScreenSent = true
             is LockRow.App -> {
                 val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return
                 try {
@@ -272,6 +313,11 @@ class LockActivity : UIObjectActivity() {
             }
         }
     }
+
+    /** E7 code QA 1: the rule's usable apps, and the lock's clock apps while the notification listener isn't connected
+     * ([lockRowPackages]). */
+    private fun rowPackages(usable: Set<String>): Set<String> =
+        lockRowPackages(usable, PinLockRuntime.clockPackages(), com.kidslauncher.mdm.badges.AlarmNoticeReader.listening())
 
     /** The usable apps that can actually be opened (installed, launchable, not suspended - the
      * allowlist still decides, through AppEnforcer's suspension), with the parent's names (design 14). */
@@ -306,6 +352,7 @@ class LockActivity : UIObjectActivity() {
                 is LockRow.PhoneBook -> glyphIcon(view.lockRowIcon, R.color.kid_phone_book, R.drawable.ic_kid_phone_book)
                 // Home's Kalender tile: the calendar glyph on its colour.
                 is LockRow.Calendar -> glyphIcon(view.lockRowIcon, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month)
+                is LockRow.Alarm -> glyphIcon(view.lockRowIcon, R.color.kid_lock_alarm_row, R.drawable.app_glyph_alarm)
                 is LockRow.App -> {
                     rowIcons[row.packageName] = view.lockRowIcon
                     showAppIcon(view.lockRowIcon, icons.cached(row.packageName))
