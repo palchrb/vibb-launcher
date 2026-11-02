@@ -39,12 +39,14 @@ class PhoneBookActivity : UIObjectActivity() {
 
     private lateinit var binding: ActivityPhoneBookBinding
     private lateinit var adapter: PhoneBookAdapter
-    private var missed: Map<String, MissedSummary> = emptyMap()
+    private var missed: Map<String, ContactMissed> = emptyMap()
     /** The contact whose sheet the missed-call notification asked for, opened once the missed
      * calls are loaded. */
     private var pendingSheet: String? = null
     private val photoListener: () -> Unit = { render() }
     private val wallpaperListener: () -> Unit = { render() }
+    /** Round L5: a missed Element X call came or went. */
+    private val elementMissedListener: () -> Unit = { loadMissedCalls() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,6 +77,7 @@ class PhoneBookActivity : UIObjectActivity() {
         super.onStart()
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
+        ElementMissedCallStore.addListener(elementMissedListener)
     }
 
     override fun onResume() {
@@ -90,6 +93,7 @@ class PhoneBookActivity : UIObjectActivity() {
     override fun onStop() {
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
+        ElementMissedCallStore.removeListener(elementMissedListener)
         super.onStop()
     }
 
@@ -137,7 +141,7 @@ class PhoneBookActivity : UIObjectActivity() {
     private fun loadMissedCalls() {
         val state = CallPolicyStore.effectiveState()
         CoroutineScope(Dispatchers.Main).launch {
-            val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@PhoneBookActivity, state) }
+            val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@PhoneBookActivity, state) }
             if (!isDestroyed) {
                 missed = result
                 render()

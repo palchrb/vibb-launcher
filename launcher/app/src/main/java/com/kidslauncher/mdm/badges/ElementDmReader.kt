@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.calls.ElementDmFacts
 import com.kidslauncher.mdm.calls.ElementRoomStore
 import com.kidslauncher.mdm.calls.MessagePackages
 import com.kidslauncher.mdm.calls.elementGlanceContact
+import com.kidslauncher.mdm.calls.elementMissedCallContact
 import com.kidslauncher.mdm.calls.learnElementRoom
 
 /**
@@ -26,6 +27,9 @@ import com.kidslauncher.mdm.calls.learnElementRoom
  * learned rooms, and a group's newest `sender_person` key - read here all along, for every Element X notification, groups
  * included - is now also matched in memory against the phone book's Element MXIDs. Only our own contact's id goes on, to
  * the glance's memory ([GlanceStore]); nothing new is read, and nothing is stored, logged or sent.
+ *
+ * Since round L5 (2026-11-02) one more field, the notification's category, for missed Element X calls
+ * ([missedCallContact]): the contact's MXID goes on to [com.kidslauncher.mdm.calls.ElementMissedCallStore]'s memory.
  */
 object ElementDmReader {
 
@@ -51,6 +55,23 @@ object ElementDmReader {
         if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
         return try {
             elementGlanceContact(facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Round L5: the phone-book contact (its Element MXID) a missed Element X call stands for
+     * ([elementMissedCallContact]: `missed_call`, a DM, by its learned room or its newest sender's key) - the same
+     * facts as [learn] and the category. Called after [learn], so a room this very post teaches is known; null for
+     * any other package or user, or on any exception.
+     */
+    fun missedCallContact(context: Context, sbn: StatusBarNotification): String? {
+        if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
+        return try {
+            // Most posts are plain messages: no facts parsed, no learned rooms read for them.
+            if (!glanceMissedCall(sbn.notification.category)) return null
+            elementMissedCallContact(sbn.notification.category, facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
         } catch (e: Exception) {
             null
         }

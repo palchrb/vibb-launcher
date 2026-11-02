@@ -16,7 +16,7 @@ import com.kidslauncher.mdm.ui.home.PressFeedback
 
 /** One phone-book tile: a contact, or the "Emergency call" tile when no rules can be read. */
 sealed interface PhoneBookTile {
-    data class Contact(val contact: RuleContact, val emergency: Boolean, val missed: MissedSummary?) : PhoneBookTile
+    data class Contact(val contact: RuleContact, val emergency: Boolean, val missed: ContactMissed?) : PhoneBookTile
     data object Emergency : PhoneBookTile
 }
 
