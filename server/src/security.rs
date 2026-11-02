@@ -14,7 +14,7 @@ use crate::models::AdminUser;
 
 pub const MIN_PASSWORD_LEN: usize = 12;
 
-/// Failed attempts from one client (`net::limit_key`: an IPv4 address or an IPv6 /64, across any
+/// Failed attempts from one client (`net::limit_key`: an IPv4 address or an IPv6 /56, across any
 /// account) within the window below before it is banned from reaching the login page at all.
 /// The account lock is the TOTP step's alone (`admin_auth`).
 pub const MAX_FAILED_PER_IP: i64 = 15;
@@ -964,10 +964,11 @@ pub(crate) async fn load_active_admin(
         .await
         .map_err(|_| SignInWhy::StoreError)?
         .ok_or(SignInWhy::Epoch)?;
-    let admin = sqlx::query_as::<_, AdminUser>(
-        "SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL \
-         AND (invite_expires_at IS NULL OR invite_expires_at > datetime('now'))",
-    )
+    let admin = sqlx::query_as::<_, AdminUser>(concat!(
+        crate::admin_select!(),
+        " WHERE id = ? AND removed_at IS NULL \
+         AND (invite_expires_at IS NULL OR invite_expires_at > datetime('now'))"
+    ))
     .bind(admin_id)
     .fetch_optional(&state.db)
     .await
@@ -1201,9 +1202,13 @@ pub async fn require_full_auth(
         Ok(admin) if admin.must_change_password => {
             Redirect::to("/auth/change-password").into_response()
         }
-        Ok(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
+        // A passkey-only account has no TOTP by design (D2.2): never sent to set one up.
+        Ok(admin) if !admin.totp_enabled && !admin.passkey_only => {
+            Redirect::to("/auth/setup-2fa").into_response()
+        }
         // Design 74 D2.2's one predicate: anything else that isn't ready (a one-time password's state on an account
-        // that looks onboarded - no statement leaves one) is no session.
+        // that looks onboarded, a passkey-only account without a passkey - no statement leaves either) is no
+        // session.
         Ok(admin) if !admin.ready() => {
             session.flush().await.ok();
             sign_in_redirect(SignInWhy::AccountGone)

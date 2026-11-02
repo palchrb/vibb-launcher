@@ -210,7 +210,7 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
     .unwrap();
     sqlx::query(
         "INSERT INTO banned_ips (ip_address, banned_until, reason) \
-         VALUES ('2001:db8:1:2::/64', datetime('now', '+1 hours'), 'probe')",
+         VALUES ('2001:db8:1:200::/56', datetime('now', '+1 hours'), 'probe')",
     )
     .execute(&app.db)
     .await
@@ -363,7 +363,10 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
         vec![(
             "/security/unban#banned".to_string(),
             vec![],
-            to("/security?unbanned=2001%3Adb8%3A1%3A2%3A%3A%2F64", "banned"),
+            to(
+                "/security?unbanned=2001%3Adb8%3A1%3A200%3A%3A%2F56",
+                "banned",
+            ),
         )],
     )
     .await;

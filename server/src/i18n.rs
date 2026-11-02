@@ -438,6 +438,8 @@ mod tests {
                 invited_by: None,
                 invite_expires_at: None,
                 lang: lang.map(str::to_string),
+                passkey_only: false,
+                passkey_count: 0,
             })
         };
         let mut nb = HeaderMap::new();

@@ -32,11 +32,59 @@ struct LoginTemplate {
     /// "Sign in with passkey" whenever the browser supports them (D4.3), never depending on which
     /// hosts have any.
     passkeys_here: bool,
+    /// No account can sign in with a password (design 74 §6.4): only "Sign in with passkey".
+    passwords_off: bool,
 }
 crate::i18n::words!(LoginTemplate);
 
-pub async fn login_form(lang: Lang, ceremony: crate::passkeys::Ceremony) -> impl IntoResponse {
-    render_login(None, lang, ceremony.rp_id.is_some())
+/// What the sign-in page offers (design 74 D4.3, §6.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LoginView {
+    /// This host can have passkeys (an RP ID, D4.1).
+    pub passkeys_here: bool,
+    /// Every parent not removed is passkey-only (at least one is) and no one-time password is pending (an expired
+    /// one isn't): the
+    /// page drops the username and password and shows one filled "Sign in with passkey" (§6.4). `POST /login`
+    /// still answers as before.
+    pub passwords_off: bool,
+}
+
+impl LoginView {
+    pub(crate) async fn load(db: &sqlx::SqlitePool, passkeys_here: bool) -> LoginView {
+        let passwords_off = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM admin_users WHERE removed_at IS NULL AND passkey_only = 1) \
+             AND NOT EXISTS (SELECT 1 FROM admin_users WHERE removed_at IS NULL AND passkey_only = 0 \
+               AND NOT (invite_expires_at IS NOT NULL AND invite_expires_at <= datetime('now')))",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap_or(false);
+        LoginView {
+            passkeys_here,
+            passwords_off,
+        }
+    }
+
+    /// A refused passkey sign-in's line: "...or sign in with your password" only where there is one.
+    pub(crate) fn passkey_failed(&self) -> &'static str {
+        if self.passwords_off {
+            "passkeys.browser_failed"
+        } else {
+            "passkeys.sign_in.failed"
+        }
+    }
+}
+
+pub async fn login_form(
+    State(state): State<AppState>,
+    lang: Lang,
+    ceremony: crate::passkeys::Ceremony,
+) -> impl IntoResponse {
+    render_login(
+        None,
+        lang,
+        LoginView::load(&state.db, ceremony.rp_id.is_some()).await,
+    )
 }
 
 #[derive(Deserialize)]
@@ -45,17 +93,26 @@ pub struct LoginForm {
     password: String,
 }
 
-pub(crate) fn render_login(error: Option<String>, lang: Lang, passkeys_here: bool) -> Html<String> {
+pub(crate) fn render_login(error: Option<String>, lang: Lang, view: LoginView) -> Html<String> {
     Html(
         LoginTemplate {
             lang,
             title: "Sign In".to_string(),
             error,
-            passkeys_here,
+            passkeys_here: view.passkeys_here,
+            passwords_off: view.passwords_off,
         }
         .render()
         .unwrap(),
     )
+}
+
+/// The hash `/login` verifies a typed password against: `None` - `PasswordGate`'s dummy hash, an unknown name's
+/// path and time - for no account and for a passkey-only one, which has no password (design 74 D2.2).
+pub(crate) fn login_hash(admin: Option<&AdminUser>) -> Option<&str> {
+    admin
+        .filter(|a| !a.passkey_only)
+        .map(|a| a.password_hash.as_str())
 }
 
 fn locked_message(minutes: i64) -> String {
@@ -85,7 +142,9 @@ pub async fn login(
     Form(form): Form<LoginForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
-    let here = ceremony.rp_id.is_some();
+    // Read only when a page is rendered: a sign-in that goes on needs no extra query (qa-passkeys-2 N2).
+    let rp_here = ceremony.rp_id.is_some();
+    let here = || LoginView::load(&state.db, rp_here);
     // The sign-in page's passkey options call stops counting: this attempt counts on its own
     // (design 74, qa-passkeys-1 B-M3).
     crate::passkeys::end_sign_in_attempt(&state.db, &session).await;
@@ -96,29 +155,40 @@ pub async fn login(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_login(Some(BANNED_MESSAGE.to_string()), lang, here),
+            render_login(Some(BANNED_MESSAGE.to_string()), lang, here().await),
         )
             .into_response();
     }
 
-    // A removed account reads as an unknown name: the dummy hash, the same message (design 62 §8).
-    let admin = sqlx::query_as::<_, AdminUser>(
-        "SELECT * FROM admin_users WHERE username = ? AND removed_at IS NULL",
-    )
+    // A removed account reads as an unknown name: the dummy hash, the same message (design 62 §8). So does a
+    // passkey-only one (design 74 D2.2): no hint which accounts are, only the log says it.
+    let admin = sqlx::query_as::<_, AdminUser>(concat!(
+        crate::admin_select!(),
+        " WHERE username = ? AND removed_at IS NULL"
+    ))
     .bind(&form.username)
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten();
 
+    let passkey_only = admin.as_ref().is_some_and(|a| a.passkey_only);
     // The attempt is recorded before argon2 runs and taken back only when the password is right:
-    // a client that hangs up mid-verify still counts toward the ban (QA 22 M1).
+    // a client that hangs up mid-verify still counts toward the ban (QA 22 M1). A passkey-only name's says so,
+    // in this same INSERT (no extra write after argon2 to time).
+    let (detail, params) = if passkey_only {
+        security::Detail::words("security.detail.login.passkey_only", &[]).columns()
+    } else {
+        (None, None)
+    };
     let attempt: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO security_events (event_type, username, ip_address) \
-         VALUES ('login_failed', ?, ?) RETURNING id",
+        "INSERT INTO security_events (event_type, username, ip_address, detail, params) \
+         VALUES ('login_failed', ?, ?, ?, ?) RETURNING id",
     )
     .bind(crate::audit::clip(&form.username, MAX_LOGGED_USERNAME))
     .bind(&ip)
+    .bind(detail)
+    .bind(params)
     .fetch_one(&state.db)
     .await
     .ok();
@@ -134,10 +204,7 @@ pub async fn login(
 
     let valid = match state
         .passwords
-        .verify(
-            &form.password,
-            admin.as_ref().map(|a| a.password_hash.as_str()),
-        )
+        .verify(&form.password, login_hash(admin.as_ref()))
         .await
     {
         Ok(valid) => valid,
@@ -147,17 +214,19 @@ pub async fn login(
         }
     };
 
-    let Some(admin) = admin.filter(|_| valid) else {
+    let Some(admin) = admin.filter(|a| valid && !a.passkey_only) else {
         security::check_and_ban_ip_if_needed(&state.db, &ip).await;
         return render_login(
             Some("Incorrect username or password.".to_string()),
             lang,
-            here,
+            here().await,
         )
         .into_response();
     };
 
     take_back().await;
+    // A right password: the pre-session's passkey rows go too (qa-passkeys-2 limiter L4).
+    crate::passkeys::sign_in_done(&state.db, &session).await;
     // Only someone who knows the password learns that it ran out (design 62 §4.1).
     if admin_auth::invite_expired(&state.db, admin.id).await {
         security::record_security_event(
@@ -171,7 +240,7 @@ pub async fn login(
             )),
         )
         .await;
-        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here).into_response();
+        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here().await).into_response();
     }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
@@ -182,7 +251,7 @@ pub async fn login(
             Some(security::Detail::words("security.detail.login_locked", &[])),
         )
         .await;
-        return render_login(Some(locked_message(minutes)), lang, here).into_response();
+        return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
     }
 
     // A new id or no sign-in (qa-passkeys-1 A-N3: never the id the browser came with).
@@ -296,7 +365,9 @@ pub async fn verify_2fa(
     Form(form): Form<Verify2faForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
-    let here = ceremony.rp_id.is_some();
+    // Read only when a page is rendered: a sign-in that goes on needs no extra query (qa-passkeys-2 N2).
+    let rp_here = ceremony.rp_id.is_some();
+    let here = || LoginView::load(&state.db, rp_here);
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -308,12 +379,13 @@ pub async fn verify_2fa(
 
     let Some(admin_id) = pending_admin(&session).await else {
         session.flush().await.ok();
-        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here).into_response();
+        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here().await).into_response();
     };
 
-    let admin = sqlx::query_as::<_, AdminUser>(
-        "SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL",
-    )
+    let admin = sqlx::query_as::<_, AdminUser>(concat!(
+        crate::admin_select!(),
+        " WHERE id = ? AND removed_at IS NULL"
+    ))
     .bind(admin_id)
     .fetch_optional(&state.db)
     .await
@@ -339,7 +411,7 @@ pub async fn verify_2fa(
                 .await
                 .unwrap_or(1);
             session.flush().await.ok();
-            return render_login(Some(locked_message(minutes)), lang, here).into_response();
+            return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't count the 2FA attempt");
@@ -372,7 +444,8 @@ pub async fn verify_2fa(
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
                 session.flush().await.ok();
-                return render_login(Some(locked_message(minutes)), lang, here).into_response();
+                return render_login(Some(locked_message(minutes)), lang, here().await)
+                    .into_response();
             }
             return render_verify(Some("That code didn't match. Try again.".to_string()), lang)
                 .into_response();
@@ -457,10 +530,19 @@ struct ChangePasswordTemplate {
 }
 crate::i18n::words!(ChangePasswordTemplate);
 
+/// Where a password or TOTP form sends a passkey-only account (design 74 D2.2): only the switch-off page
+/// (`/account/password-sign-in`, D2.5) brings them back, so neither creeps in beside it.
+pub(crate) fn passkey_only_refusal() -> axum::response::Response {
+    Redirect::to("/account#passkey-only").into_response()
+}
+
 pub async fn change_password_form(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     lang: Lang,
 ) -> impl IntoResponse {
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     if !admin.must_change_password {
         return Redirect::to("/").into_response();
     }
@@ -490,6 +572,9 @@ pub async fn change_password(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ChangePasswordForm>,
 ) -> impl IntoResponse {
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     let render_error = |msg: &str| -> axum::response::Response {
         Html(
             ChangePasswordTemplate {
@@ -634,6 +719,9 @@ pub async fn setup_2fa_form(
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> axum::response::Response {
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     if admin.totp_enabled {
         return Redirect::to("/").into_response();
     }
@@ -645,7 +733,8 @@ pub async fn setup_2fa_form(
 
     let stored: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = COALESCE(totp_secret, ?) \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING totp_secret",
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
+         RETURNING totp_secret",
     )
     .bind(security::generate_totp_secret_base32())
     .bind(admin.id)
@@ -696,6 +785,9 @@ pub async fn setup_2fa_verify(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Setup2faForm>,
 ) -> axum::response::Response {
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     if admin.must_change_password {
         return Redirect::to("/auth/change-password").into_response();
     }
@@ -736,7 +828,7 @@ pub async fn setup_2fa_verify(
     let enabled = sqlx::query(
         "UPDATE admin_users SET totp_enabled = 1, \
          invite_expires_at = CASE WHEN must_change_password = 0 THEN NULL ELSE invite_expires_at END \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL",
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0",
     )
     .bind(admin.id)
     .bind(admin.session_epoch)
@@ -799,6 +891,15 @@ struct AccountTemplate {
     /// The add form's Name: prefilled from the browser (D1.1), or what a refused add sent.
     passkey_name: String,
     passkey_add_open: bool,
+    /// "Kun passkey" is on (design 74 D2.2): the Password and Two-Factor groups are one row, the re-auth fields
+    /// take only a passkey.
+    passkey_only: bool,
+    /// No other ready parent could Reset you: the switch's and the removal's warnings end with the shell (D2.1,
+    /// D2.3).
+    passkey_only_alone: bool,
+    /// The addresses (RP IDs) this parent has passkeys for: the switch says signing in works only there (D4.3,
+    /// qa-passkeys-2 L2 - sessions don't keep their host, so the passkeys are the signal).
+    passkey_rp_ids: String,
 }
 crate::i18n::words!(AccountTemplate);
 
@@ -898,6 +999,15 @@ pub(crate) async fn render_account(
         .rp_id
         .as_deref()
         .is_some_and(|rp| keys.iter().any(|key| key.rp_id == rp));
+    // Read for the words only (D2.1): the switch's statement doesn't depend on it.
+    let passkey_only_alone = match crate::passkeys::another_ready_parent(&state.db, admin.id).await
+    {
+        Ok(another) => !another,
+        Err(err) => {
+            tracing::error!(%err, "couldn't count the ready parents");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let page = AccountTemplate {
         lang,
         title: t(lang, "account.title").to_string(),
@@ -922,6 +1032,14 @@ pub(crate) async fn render_account(
         passkey_reauth,
         passkey_name: ceremony.device_name.unwrap_or_default().to_string(),
         passkey_add_open: answer.passkey_add_open,
+        passkey_only: admin.passkey_only,
+        passkey_only_alone,
+        passkey_rp_ids: {
+            let mut hosts: Vec<&str> = keys.iter().map(|k| k.rp_id.as_str()).collect();
+            hosts.sort_unstable();
+            hosts.dedup();
+            hosts.join(", ")
+        },
         languages: [Lang::Nb, Lang::En]
             .into_iter()
             .map(|choice| LanguageChoice {
@@ -985,6 +1103,14 @@ pub async fn account_page(
             Some(Flash::done("passkeys", t(lang, "passkeys.removed")))
         }
         (_, _, Some("passkey_gone")) => Some(Flash::done("passkeys", t(lang, "passkeys.gone"))),
+        // Design 74 step 2: "Kun passkey" on lands in Passkeys, switched off in Password.
+        (_, _, Some("passkey_only_on")) => {
+            Some(Flash::done("passkeys", t(lang, "passkeys.only.on")))
+        }
+        (_, _, Some("password_on")) => Some(Flash::done(
+            "password",
+            t(lang, "account.password.on_again"),
+        )),
         _ => None,
     };
     let answer = AccountAnswer {
@@ -1028,6 +1154,10 @@ pub async fn update_account_password(
     Form(form): Form<UpdatePasswordForm>,
 ) -> impl IntoResponse {
     use crate::handlers::settings::Flash;
+    // Design 74 D2.2: a passkey-only account gets a password back only with the TOTP, on its own page (D2.5).
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     let refuse = |field: &'static str, why: &'static str| AccountAnswer {
         flash: Some(Flash::refused("password", t(lang, why))),
         password_field: field,
@@ -1106,7 +1236,8 @@ pub async fn update_account_password(
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
          locked_until = NULL, session_epoch = session_epoch + 1 \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING session_epoch",
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
+         RETURNING session_epoch",
     )
     .bind(&new_hash)
     .bind(admin.id)
@@ -1182,6 +1313,10 @@ pub async fn reset_totp(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ResetTotpForm>,
 ) -> axum::response::Response {
+    // Design 74 D2.2: a passkey-only account has no TOTP to reset; one comes back only on the switch-off page.
+    if admin.passkey_only {
+        return passkey_only_refusal();
+    }
     // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
     let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
     let reauth = admin_auth::reauth(&state, &session, &admin, proof).await;
@@ -1222,7 +1357,8 @@ pub async fn reset_totp(
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
          session_epoch = session_epoch + 1 \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING session_epoch",
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
+         RETURNING session_epoch",
     )
     .bind(admin.id)
     .bind(admin.session_epoch)

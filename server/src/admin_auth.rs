@@ -160,6 +160,9 @@ pub enum Reauth {
     SignedOut,
     /// Too many password checks at once (429, [busy_response]); nothing counted.
     Busy,
+    /// A passkey-only account sent a password (design 74 D2.2, qa-passkeys-2 M1): it has none, so nothing was
+    /// checked or counted - the form says "Confirm with a passkey".
+    NeedsPasskey,
 }
 
 /// What a re-auth form sent (design 74 D1.6): the password, or - "Confirm with passkey" - a
@@ -214,6 +217,9 @@ pub async fn reauth(
     admin: &crate::models::AdminUser,
     proof: Proof<'_>,
 ) -> Reauth {
+    if admin.passkey_only && !proof.is_passkey() {
+        return Reauth::NeedsPasskey;
+    }
     let right = match proof {
         Proof::Password(password) => match state
             .passwords
@@ -266,6 +272,9 @@ pub async fn reauth_and_hash(
     proof: Proof<'_>,
     new: &str,
 ) -> Result<(Reauth, Option<String>), Busy> {
+    if admin.passkey_only && !proof.is_passkey() {
+        return Ok((Reauth::NeedsPasskey, None));
+    }
     match proof {
         Proof::Password(current) => {
             let changed = state
@@ -388,20 +397,7 @@ pub async fn check_totp(
     code: &str,
     now_secs: u64,
 ) -> Result<Totp, sqlx::Error> {
-    let code = code.trim();
-    let totp = crate::security::totp_for_secret(secret, username);
-    let now_step = (now_secs / STEP_SECS) as i64;
-    let mut matched = None;
-    for step in (now_step - SKEW)..=(now_step + SKEW) {
-        if step < 0 {
-            continue;
-        }
-        let expected = totp.generate(step as u64 * STEP_SECS);
-        if constant_time_eq(expected.as_bytes(), code.as_bytes()) {
-            matched = Some(step);
-        }
-    }
-    let Some(step) = matched else {
+    let Some(step) = totp_step(secret, username, code, now_secs) else {
         return Ok(Totp::Refused);
     };
     let stored = sqlx::query(
@@ -418,6 +414,25 @@ pub async fn check_totp(
     } else {
         Totp::Refused
     })
+}
+
+/// The 30-second step `code` (trimmed) matches for `secret` within [SKEW] of `now_secs`, read only: [check_totp]
+/// stores it, and the switch-off page (design 74 D2.5) stores it in its one `UPDATE` with the new secret.
+pub fn totp_step(secret: &str, username: &str, code: &str, now_secs: u64) -> Option<i64> {
+    let code = code.trim();
+    let totp = crate::security::totp_for_secret(secret, username);
+    let now_step = (now_secs / STEP_SECS) as i64;
+    let mut matched = None;
+    for step in (now_step - SKEW)..=(now_step + SKEW) {
+        if step < 0 {
+            continue;
+        }
+        let expected = totp.generate(step as u64 * STEP_SECS);
+        if constant_time_eq(expected.as_bytes(), code.as_bytes()) {
+            matched = Some(step);
+        }
+    }
+    matched
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -587,7 +602,7 @@ pub async fn change_first_password(
          invite_expires_at = CASE WHEN totp_enabled = 1 THEN NULL ELSE invite_expires_at END, \
          session_epoch = session_epoch + 1 \
          WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND password_hash = ? \
-         RETURNING session_epoch",
+           AND passkey_only = 0 RETURNING session_epoch",
     )
     .bind(new_hash)
     .bind(admin_id)
@@ -636,7 +651,8 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 /// It also clears a one-time password's expiry, and restores a removed account (logged
 /// `parent_restored`): the shell is the way back for a parent the other one removed. The account's
 /// passkeys are deleted in the same transaction (design 74 D1.3b: no way back leaves a lost
-/// phone's passkey working). `reset-sign-in <user>` is the same command (D2.4).
+/// phone's passkey working), and "Kun passkey" goes with them (D2.4: the way back for the last parent, never
+/// needing the password). `reset-sign-in <user>` is the same command (D2.4).
 /// Returns a line for the terminal.
 pub async fn reset_2fa(
     db: &sqlx::SqlitePool,
@@ -659,21 +675,28 @@ pub async fn reset_2fa(
     // username, and no one-time password's expiry stays on the account.
     let passkeys = async {
         let mut tx = db.begin().await?;
+        // Read in the transaction for the terminal's line (qa-passkeys-2 L3).
+        let passkey_only: bool =
+            sqlx::query_scalar("SELECT passkey_only FROM admin_users WHERE id = ?")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
         sqlx::query(
             "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
              failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
              password_hash = ?, must_change_password = 1, invite_expires_at = NULL, \
-             removed_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?",
+             removed_at = NULL, passkey_only = 0, session_epoch = session_epoch + 1 WHERE id = ?",
         )
         .bind(&hash)
         .bind(id)
         .execute(&mut *tx)
         .await?;
         let passkeys = crate::passkeys::delete_all(&mut *tx, id).await?;
-        tx.commit().await.map(|()| passkeys)
+        tx.commit().await.map(|()| (passkeys, passkey_only))
     }
     .await
     .map_err(|err: sqlx::Error| format!("couldn't reset: {err}"))?;
+    let (passkeys, passkey_only) = passkeys;
     // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
     sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
         .bind(id)
@@ -722,8 +745,13 @@ pub async fn reset_2fa(
         1 => "its passkey is deleted, ".to_string(),
         n => format!("its {n} passkeys are deleted, "),
     };
+    let what = if passkey_only {
+        format!("Passkey Only for {username} is turned off")
+    } else {
+        format!("Two-factor login for {username} is reset")
+    };
     Ok(format!(
-        "{}Two-factor login for {username} is reset, every session is signed out, {passkeys}notifications are \
+        "{}{what}, every session is signed out, {passkeys}notifications are \
          turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
         restored,

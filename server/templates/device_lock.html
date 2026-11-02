@@ -74,11 +74,11 @@
                 <form method="post" action="/devices/{{ device.id }}/lock#show-pin" class="edit-body">
                     <input type="hidden" name="action" value="reveal_kid_pin">
                     {% include "partials/reauth_passkey.html" %}
-                    <label class="field-label" for="reveal_password">{{ self.t("device.lock.your_password") }}</label>
-                    <input type="password" id="reveal_password" name="password" autocomplete="off" required aria-describedby="reveal_password-hint"{% if reveal_error.is_some() %} aria-invalid="true" autofocus{% endif %}>
+                    <label class="field-label" for="reveal_password"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
+                    <input type="password" id="reveal_password" name="password" autocomplete="off"{% if passkey_only %} hidden{% else %} required{% endif %} aria-describedby="reveal_password-hint"{% if reveal_error.is_some() %} aria-invalid="true" autofocus{% endif %}>
                     {% if let Some(error) = reveal_error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
-                    <p class="field-hint" id="reveal_password-hint">{{ self.t("device.lock.reveal_hint") }}</p>
-                    <button type="submit" class="button-wide">{{ self.t("device.lock.show_child_pin") }}</button>
+                    <p class="field-hint" id="reveal_password-hint"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.reveal_hint") }}</p>
+                    <button type="submit" class="button-wide"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.show_child_pin") }}</button>
                 </form>
             </details>
             {%- endif %}
@@ -270,7 +270,7 @@
         <p class="group-footer">{{ self.t("device.lock.notifications_footer") }}</p>
     </section>
     {% if reveal_answer %}<script src="/static/reveal.js?v=4"></script>{% endif %}
-    {% if passkey_reauth %}<script src="/static/passkey.js?v=1" defer></script>{% endif %}
+    {% if passkey_reauth %}<script src="/static/passkey.js?v=3" defer></script>{% endif %}
 </main>
 </body>
 </html>
