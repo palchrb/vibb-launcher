@@ -53,21 +53,78 @@ pub const SIGN_IN_ROUTE: &str = "/auth/passkey";
 /// The route a registration's credential is posted to.
 pub const REGISTER_ROUTE: &str = "/account/passkeys";
 
-/// The pre-session's counted `passkey_started` row (its id): taken back when the ceremony ends.
+/// The pre-session's counted `passkey_started` rows (their ids, oldest first): taken back when the ceremony ends
+/// (qa-passkeys-2 limiter L4: a list, so a row whose challenge was evicted is still this session's).
 pub const PRE_SIGN_IN_KEY: &str = "passkey_sign_in";
 
-/// Ends a signed-out session's passkey count (qa-passkeys-1 B-M3): its `passkey_started` row goes,
-/// at a passkey sign-in's POST (whose refusal counts on its own) and at a password sign-in's - so
-/// opening the sign-in page costs nothing once the parent does sign in, and a wrong password
-/// costs what it cost before passkeys.
-pub async fn end_sign_in_attempt(db: &sqlx::SqlitePool, session: &tower_sessions::Session) {
-    if let Ok(Some(id)) = session.remove::<i64>(PRE_SIGN_IN_KEY).await {
-        sqlx::query("DELETE FROM security_events WHERE id = ? AND event_type = 'passkey_started'")
-            .bind(id)
-            .execute(db)
-            .await
-            .ok();
+/// At most this many open rows a session remembers: one per live challenge a client can hold, and the one asked
+/// for again. Past it the oldest is forgotten (it keeps counting until the ban's window ends).
+pub const PRE_SIGN_IN_ROWS: usize = SIGN_IN_PER_CLIENT + 1;
+
+/// The session's open rows (a session from before the list kept one id).
+async fn started_rows(session: &tower_sessions::Session) -> Vec<i64> {
+    match session.get_value(PRE_SIGN_IN_KEY).await {
+        Ok(Some(serde_json::Value::Number(n))) => n.as_i64().into_iter().collect(),
+        Ok(Some(value)) => serde_json::from_value(value).unwrap_or_default(),
+        _ => Vec::new(),
     }
+}
+
+async fn keep_rows(session: &tower_sessions::Session, rows: &[i64]) {
+    if rows.is_empty() {
+        session.remove_value(PRE_SIGN_IN_KEY).await.ok();
+    } else {
+        session.insert(PRE_SIGN_IN_KEY, rows).await.ok();
+    }
+}
+
+async fn delete_row(db: &sqlx::SqlitePool, id: i64, older_than: Option<Duration>) -> bool {
+    let age = older_than.map(|age| format!("-{} seconds", age.as_secs()));
+    sqlx::query(
+        "DELETE FROM security_events WHERE id = ?1 AND event_type = 'passkey_started' \
+         AND (?2 IS NULL OR created_at <= datetime('now', ?2))",
+    )
+    .bind(id)
+    .bind(age)
+    .execute(db)
+    .await
+    .map(|done| done.rows_affected() == 1)
+    .unwrap_or(false)
+}
+
+/// Ends a signed-out session's passkey count (qa-passkeys-1 B-M3): its newest `passkey_started` row goes, at a
+/// passkey sign-in's POST (whose refusal counts on its own) and at a password sign-in's - so opening the sign-in
+/// page costs nothing once the parent does sign in, and a wrong password costs what it cost before passkeys.
+pub async fn end_sign_in_attempt(db: &sqlx::SqlitePool, session: &tower_sessions::Session) {
+    let mut rows = started_rows(session).await;
+    if let Some(id) = rows.pop() {
+        delete_row(db, id, None).await;
+        keep_rows(session, &rows).await;
+    }
+}
+
+/// A sign-in that succeeded (a right password or a passkey): every open row of the session goes - a household whose
+/// pages evicted each other's challenges pays nothing once it signs in (qa-passkeys-2 limiter L4).
+pub async fn sign_in_done(db: &sqlx::SqlitePool, session: &tower_sessions::Session) {
+    for id in started_rows(session).await {
+        delete_row(db, id, None).await;
+    }
+    keep_rows(session, &[]).await;
+}
+
+/// A new options call's row: the session's rows past [LIVE_REUSE] go first (their ceremony is over - qa-passkeys-1
+/// B-RN1), younger ones (their challenge evicted) stay and count until a sign-in or their window ends, then `id`
+/// joins them.
+pub async fn note_started(db: &sqlx::SqlitePool, session: &tower_sessions::Session, id: i64) {
+    let mut kept = Vec::new();
+    for row in started_rows(session).await {
+        if !delete_row(db, row, Some(LIVE_REUSE)).await {
+            kept.push(row);
+        }
+    }
+    kept.push(id);
+    let skip = kept.len().saturating_sub(PRE_SIGN_IN_ROWS);
+    keep_rows(session, &kept[skip..]).await;
 }
 
 /// What a challenge is for.
@@ -218,14 +275,34 @@ impl Challenges {
         Some(challenge)
     }
 
+    /// The live sign-in challenges `client` (its limit key) holds: a banned key gets one at most (qa-passkeys-2
+    /// limiter L3).
+    pub fn live_sign_ins_of(&self, client: &str) -> usize {
+        let now = Instant::now();
+        let map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        map.values()
+            .filter(|entry| {
+                entry.bound.kind == Kind::Login
+                    && entry.client == client
+                    && now.saturating_duration_since(entry.made) < CHALLENGE_TTL
+            })
+            .count()
+    }
+
     /// The session's live sign-in challenge at `rp_id`, when it has one younger than [LIVE_REUSE]:
     /// a reload of the sign-in page, or the button after the conditional get, gets it again
-    /// (qa-passkeys-1 B-M3).
-    pub fn live_sign_in(&self, session: &str, rp_id: &str) -> Option<[u8; 32]> {
+    /// (qa-passkeys-1 B-M3) - with the time it has left, which its options say as `timeout`, so the
+    /// page refreshes before it dies (qa-passkeys-2 limiter L1).
+    pub fn live_sign_in(&self, session: &str, rp_id: &str) -> Option<([u8; 32], Duration)> {
         self.live_sign_in_at(Instant::now(), session, rp_id)
     }
 
-    fn live_sign_in_at(&self, now: Instant, session: &str, rp_id: &str) -> Option<[u8; 32]> {
+    fn live_sign_in_at(
+        &self,
+        now: Instant,
+        session: &str,
+        rp_id: &str,
+    ) -> Option<([u8; 32], Duration)> {
         let map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         map.iter()
             .filter(|(_, entry)| {
@@ -235,7 +312,10 @@ impl Challenges {
                     && now.saturating_duration_since(entry.made) < LIVE_REUSE
             })
             .max_by_key(|(_, entry)| entry.made)
-            .map(|(key, _)| *key)
+            .map(|(key, entry)| {
+                let left = CHALLENGE_TTL.saturating_sub(now.saturating_duration_since(entry.made));
+                (*key, left)
+            })
     }
 
     /// Removes `challenge` and answers what was kept with it only when it is fresh and bound to
@@ -936,11 +1016,17 @@ pub async fn log_refused(
 
 /// The options a browser's `navigator.credentials.get` takes (as JSON for `static/passkey.js`):
 /// the challenge, the RP ID, UV required, and the credentials it may use (empty for a sign-in).
-pub fn request_options(challenge: &[u8], rp_id: &str, allow: &[PasskeyRow]) -> serde_json::Value {
+/// `timeout` is the challenge's time left ([CHALLENGE_TTL] for a new one).
+pub fn request_options(
+    challenge: &[u8],
+    rp_id: &str,
+    allow: &[PasskeyRow],
+    timeout: Duration,
+) -> serde_json::Value {
     serde_json::json!({
         "challenge": webauthn::b64url(challenge),
         "rpId": rp_id,
-        "timeout": TIMEOUT_MS,
+        "timeout": u64::try_from(timeout.as_millis()).unwrap_or(TIMEOUT_MS).min(TIMEOUT_MS),
         "userVerification": "required",
         "allowCredentials": allow.iter().map(descriptor).collect::<Vec<_>>(),
     })
@@ -996,6 +1082,10 @@ pub struct Shown {
     /// "Synced" / "Only on this device" (BS; + "for handy.example.com" when the family's passkeys
     /// are for more than one RP ID).
     pub kind: String,
+    /// The address (RP ID) it is for, and whether it is the account's only passkey there while others are
+    /// elsewhere: a passkey-only parent's removal then says signing in there stops (qa-passkeys-2 L1).
+    pub rp_id: String,
+    pub last_for_host: bool,
 }
 
 /// Account's rows of `admin`'s passkeys, in `zone`'s words.
@@ -1046,8 +1136,11 @@ pub fn shown(
                 kind.push_str(" · ");
                 kind.push_str(&t_params(lang, "passkeys.row.for", &[("host", &row.rp_id)]));
             }
+            let here = rows.iter().filter(|r| r.rp_id == row.rp_id).count();
             Shown {
                 id: row.id,
+                rp_id: row.rp_id.clone(),
+                last_for_host: here == 1 && rows.len() > 1,
                 name: row.name.clone(),
                 sub: format!(
                     "{} · {used}",
@@ -1170,6 +1263,7 @@ mod tests {
         assert_eq!(store.len(), SIGN_IN_PER_CLIENT);
         assert!(store.take(&oldest, &sign_in("a")).is_none());
         assert!(store.live_sign_in("d", "handy.example.com").is_some());
+        assert!(store.live_sign_in("d", "handy.example.com").unwrap().1 <= CHALLENGE_TTL);
         assert!(store.live_sign_in("d", "example.com").is_none());
     }
 
@@ -1291,10 +1385,14 @@ mod tests {
             .issue_at(now, sign_in("s"), by("c"), Taken::default())
             .unwrap();
         let rp = "handy.example.com";
-        assert_eq!(store.live_sign_in_at(now, "s", rp), Some(c));
+        assert_eq!(
+            store.live_sign_in_at(now, "s", rp),
+            Some((c, CHALLENGE_TTL))
+        );
+        // Handed out again with the time it has left (qa-passkeys-2 limiter L1).
         assert_eq!(
             store.live_sign_in_at(now + LIVE_REUSE - Duration::from_secs(1), "s", rp),
-            Some(c)
+            Some((c, CHALLENGE_TTL - LIVE_REUSE + Duration::from_secs(1)))
         );
         assert_eq!(store.live_sign_in_at(now + LIVE_REUSE, "s", rp), None);
         // Still takeable until its five minutes end: a prompt opened from it isn't cut short.

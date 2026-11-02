@@ -80,7 +80,7 @@ pub(super) async fn add_passkey(
 }
 
 /// [add_passkey] at `host`, made at `origin`, with the re-auth `proof` (the password or an `assertion`).
-async fn add_passkey_at(
+pub(super) async fn add_passkey_at(
     app: &TestApp,
     cookie: &str,
     fake: &mut FakeAuthenticator,

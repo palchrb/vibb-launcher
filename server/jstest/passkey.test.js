@@ -430,7 +430,11 @@ function conditionalPage(attrs) {
     return {
         win, button, fetched, gets, aborted, docListeners,
         advance: (ms) => { clock += ms; },
-        fire: () => { for (const t of timers.splice(0)) if (t.at <= clock) t.fn(); },
+        fire: () => {
+            const due = timers.filter((t) => t.at <= clock);
+            for (const t of due) timers.splice(timers.indexOf(t), 1);
+            for (const t of due) t.fn();
+        },
     };
 }
 
@@ -477,4 +481,61 @@ test("the passkey-only sign-in page starts nothing on its own; its button signs 
     await flush();
     assert.strictEqual(page.gets.length, 1);
     assert.strictEqual(page.gets[0].mediation, undefined);
+});
+
+test("a passkey-only form's submit (Enter included) starts the passkey, never sends the empty password (qa-passkeys-2 M1)", async () => {
+    const assertion = { value: "" };
+    let sent = 0;
+    const formListeners = {};
+    const button = element({ "data-w-failed": "failed", "data-passkey-only": "" });
+    const form = element({ action: "/account/parents#parents" });
+    form.addEventListener = (type, fn) => { formListeners[type] = fn; };
+    form.querySelector = (s) =>
+        s === "input[name=\"assertion\"]" ? assertion : s === "[data-passkey-reauth][data-passkey-only]" ? button : null;
+    form.querySelectorAll = () => [];
+    form.requestSubmit = () => { sent++; };
+    const error = element();
+    button.closest = () => form;
+    button.parentNode = { querySelector: () => error };
+    const { win, fetched } = browser(
+        { "[data-passkey-reauth]": [button] },
+        ASSERTION,
+        { "/account/passkeys/reauth-options": { challenge: "AQID", allowCredentials: [{ id: "AQI" }] } },
+    );
+    passkey.install(win);
+    let prevented = false;
+    formListeners.submit({ preventDefault: () => { prevented = true; } });
+    await flush();
+    await flush();
+    assert.ok(prevented, "the empty submit is held");
+    assert.strictEqual(fetched[0][0], "/account/passkeys/reauth-options");
+    assert.strictEqual(sent, 1, "sent once the assertion is in");
+    // With the assertion in, the submit goes through.
+    let again = false;
+    formListeners.submit({ preventDefault: () => { again = true; } });
+    assert.strictEqual(again, false);
+});
+
+test("reused options with a minute left refresh within 30 seconds (qa-passkeys-2 limiter L1)", async () => {
+    const page = conditionalPage();
+    page.win.fetch = (url, init) => {
+        page.fetched.push([url, init]);
+        const n = page.fetched.length;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ challenge: passkey.b64url(bytes(n)), timeout: n === 1 ? 60000 : 300000, allowCredentials: [] }) });
+    };
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 1);
+    page.advance(29000);
+    page.fire();
+    await flush();
+    assert.strictEqual(page.gets.length, 1, "not yet");
+    page.advance(1000);
+    page.fire();
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(page.gets.length, 2);
+    assert.deepStrictEqual(new Uint8Array(page.gets[1].publicKey.challenge), new Uint8Array([2]));
 });

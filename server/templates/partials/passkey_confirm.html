@@ -4,7 +4,7 @@
     the passkey can't be used here the reason shows instead. -#}
 {%- if passkey_reauth %}
 <div class="reauth-passkey" data-passkey-ui hidden>
-    <button type="button" class="button-outline" data-passkey-reauth data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t(confirm_label) }}</button>
+    <button type="button" class="button-outline" data-passkey-reauth data-passkey-only data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t(confirm_label) }}</button>
     <p class="field-error" data-passkey-error role="alert" hidden></p>
 </div>
 <p class="field-hint" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"></p>

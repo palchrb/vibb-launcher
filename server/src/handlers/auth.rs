@@ -142,7 +142,9 @@ pub async fn login(
     Form(form): Form<LoginForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
-    let here = LoginView::load(&state.db, ceremony.rp_id.is_some()).await;
+    // Read only when a page is rendered: a sign-in that goes on needs no extra query (qa-passkeys-2 N2).
+    let rp_here = ceremony.rp_id.is_some();
+    let here = || LoginView::load(&state.db, rp_here);
     // The sign-in page's passkey options call stops counting: this attempt counts on its own
     // (design 74, qa-passkeys-1 B-M3).
     crate::passkeys::end_sign_in_attempt(&state.db, &session).await;
@@ -153,7 +155,7 @@ pub async fn login(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_login(Some(BANNED_MESSAGE.to_string()), lang, here),
+            render_login(Some(BANNED_MESSAGE.to_string()), lang, here().await),
         )
             .into_response();
     }
@@ -217,12 +219,14 @@ pub async fn login(
         return render_login(
             Some("Incorrect username or password.".to_string()),
             lang,
-            here,
+            here().await,
         )
         .into_response();
     };
 
     take_back().await;
+    // A right password: the pre-session's passkey rows go too (qa-passkeys-2 limiter L4).
+    crate::passkeys::sign_in_done(&state.db, &session).await;
     // Only someone who knows the password learns that it ran out (design 62 §4.1).
     if admin_auth::invite_expired(&state.db, admin.id).await {
         security::record_security_event(
@@ -236,7 +240,7 @@ pub async fn login(
             )),
         )
         .await;
-        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here).into_response();
+        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here().await).into_response();
     }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
@@ -247,7 +251,7 @@ pub async fn login(
             Some(security::Detail::words("security.detail.login_locked", &[])),
         )
         .await;
-        return render_login(Some(locked_message(minutes)), lang, here).into_response();
+        return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
     }
 
     // A new id or no sign-in (qa-passkeys-1 A-N3: never the id the browser came with).
@@ -361,7 +365,9 @@ pub async fn verify_2fa(
     Form(form): Form<Verify2faForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
-    let here = LoginView::load(&state.db, ceremony.rp_id.is_some()).await;
+    // Read only when a page is rendered: a sign-in that goes on needs no extra query (qa-passkeys-2 N2).
+    let rp_here = ceremony.rp_id.is_some();
+    let here = || LoginView::load(&state.db, rp_here);
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -373,7 +379,7 @@ pub async fn verify_2fa(
 
     let Some(admin_id) = pending_admin(&session).await else {
         session.flush().await.ok();
-        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here).into_response();
+        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here().await).into_response();
     };
 
     let admin = sqlx::query_as::<_, AdminUser>(concat!(
@@ -405,7 +411,7 @@ pub async fn verify_2fa(
                 .await
                 .unwrap_or(1);
             session.flush().await.ok();
-            return render_login(Some(locked_message(minutes)), lang, here).into_response();
+            return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't count the 2FA attempt");
@@ -438,7 +444,8 @@ pub async fn verify_2fa(
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
                 session.flush().await.ok();
-                return render_login(Some(locked_message(minutes)), lang, here).into_response();
+                return render_login(Some(locked_message(minutes)), lang, here().await)
+                    .into_response();
             }
             return render_verify(Some("That code didn't match. Try again.".to_string()), lang)
                 .into_response();
@@ -890,8 +897,9 @@ struct AccountTemplate {
     /// No other ready parent could Reset you: the switch's and the removal's warnings end with the shell (D2.1,
     /// D2.3).
     passkey_only_alone: bool,
-    /// The family's passkeys are for more than one address: the switch says signing in elsewhere stops (D4.3).
-    several_rp_ids: bool,
+    /// The addresses (RP IDs) this parent has passkeys for: the switch says signing in works only there (D4.3,
+    /// qa-passkeys-2 L2 - sessions don't keep their host, so the passkeys are the signal).
+    passkey_rp_ids: String,
 }
 crate::i18n::words!(AccountTemplate);
 
@@ -1026,7 +1034,12 @@ pub(crate) async fn render_account(
         passkey_add_open: answer.passkey_add_open,
         passkey_only: admin.passkey_only,
         passkey_only_alone,
-        several_rp_ids: rp_ids > 1,
+        passkey_rp_ids: {
+            let mut hosts: Vec<&str> = keys.iter().map(|k| k.rp_id.as_str()).collect();
+            hosts.sort_unstable();
+            hosts.dedup();
+            hosts.join(", ")
+        },
         languages: [Lang::Nb, Lang::En]
             .into_iter()
             .map(|choice| LanguageChoice {

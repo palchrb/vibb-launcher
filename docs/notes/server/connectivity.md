@@ -18,8 +18,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   makes the client unknown (`Client::ip` is `None`, keyed `unknown via <peer>` by `Client::key`) - never the peer,
   which is the proxy (QA 22 H1); IPv4-mapped peers are canonical.
   `limit_key`: IPv4 address or IPv6 /56 (a /64 until design 74 step 2: a home line has at least a /56, so fresh /64s
-  of it were fresh keys - qa-passkeys-1 A-R1); `crowd_key` (IPv4 /24, IPv6 /48) only orders the sign-in challenge
-  pool's room. Login uses it (the old `security::client_ip` took the left-most XFF entry
+  of it were fresh keys - qa-passkeys-1 A-R1), a tailnet address (100.64.0.0/10, `fd7a:115c:a1e0::/48`) the whole
+  address (every node's IPv6 is in one /64 there, qa-passkeys-2 limiter L2); `crowd_key` (IPv4 /24, IPv6 /48, a
+  tailnet node itself) only orders the sign-in challenge pool's room. **Release note (the server with design 74 step
+  2):** IPv6 bans and their 15-minute counts running at the upgrade are lifted (their rows are keyed by the old /64
+  and match no key; stale rows show under Blocked Addresses until they run out, Unblock still works). Login uses it (the old `security::client_ip` took the left-most XFF entry
   from anyone - §0 #1).
 - **Admin gate** (`src/gate.rs`, outermost layer of the admin router): passes loopback and tailnet
   (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; an unknown client and any forward
@@ -313,12 +316,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `require_full_auth` never sends the account to the TOTP setup; Account's Password and Two-Factor groups are one
   ("Password and code: Off", "Turn the Password On Again…", the shell's line); every re-auth field takes only the
   passkey (`partials/reauth_passkey.html`: no "or", the password field and the form's own submit hidden, the reason
-  where the passkey can't be used here). `/login` with a passkey-only name verifies `PasswordGate`'s dummy hash
+  where the passkey can't be used here; `[data-passkey-only]` on its button makes the form's submit - Enter in a field
+  included - start the passkey). A password sent anyway is `admin_auth::Reauth::NeedsPasskey` in `reauth` and
+  `reauth_and_hash`: nothing checked, nothing counted, "Confirm with a passkey. Nothing was changed." under the field
+  (qa-passkeys-2 M1). `/login` with a passkey-only name verifies `PasswordGate`'s dummy hash
   (`handlers::auth::login_hash`, the unknown name's path) and says the usual refusal; its `login_failed` row says
   "Passkey only: no password" (written in the same `INSERT`, before argon2). The Parents rows add "· Passkey Only".
 - **The last passkey** stays: `passkeys::remove`'s `DELETE` refuses a passkey-only account's last one in its own
   condition (`Removed::Last`, "Turn the password on first…", 400 under the row); the row's confirm has no form then,
-  and the footer says so. Going down to one with no other ready parent, the confirm says the shell is the way back.
+  and the footer says so. Going down to one with no other ready parent, the confirm says the shell is the way back;
+  removing the only passkey for one address while others are elsewhere says signing in there stops (`Shown::
+  last_for_host`, qa-passkeys-2 L1). The switch's confirm names the addresses its passkeys are for (sessions keep no
+  host, so the passkeys are the signal - qa-passkeys-2 L2); the shell's line says "Passkey Only for <user> is turned
+  off" (L3).
 - **The ways back** (D2.4): another parent's Reset… (`parents::reset_parent`), a soft Remove and `reset-2fa`/
   `reset-sign-in` set `passkey_only = 0` in their statement (and delete the passkeys, step 1). None needs the password.
 - **The switch-off page** `GET`/`POST /account/password-sign-in` (`templates/password_sign_in.html`, only while on, else
@@ -336,10 +346,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`net::limit_key`); a full sign-in pool drops the oldest challenge of the crowd holding the most (`net::crowd_key`,
   IPv4 /24, IPv6 /48), so a flood from one range evicts its own and a parent's one challenge stays unless 500
   neighbourhoods ask at once (qa-passkeys-1 A-R1). A session's live sign-in challenge is handed out again only while
-  younger than 4 minutes (`passkeys::LIVE_REUSE`), and `passkey.js` restarts the autofill's get with fresh options at
-  4.5 minutes (a timer, `visibilitychange`, `pageshow`; B-RN2). A new options call deletes the session's previous
-  `passkey_started` row when it is past that age (its ceremony is over); a younger one whose challenge was evicted keeps
-  counting, so churning sessions still costs one each (B-RN1). `passkey.js` counts only a 401 or a redirect that lands
+  younger than 4 minutes (`passkeys::LIVE_REUSE`), with the time it has left as its options' `timeout`; `passkey.js`
+  restarts the autofill's get with fresh options 30 s before that time ends (4.5 minutes after a fetch at most; a
+  timer, `visibilitychange`, `pageshow`; B-RN2, qa-passkeys-2 limiter L1) and the button fetches anew under a minute
+  left. A session's open `passkey_started` rows are a list (`PRE_SIGN_IN_KEY`, at most 4): a new options call deletes
+  those past that age (their ceremony is over), a younger one whose challenge was evicted keeps counting (churning
+  sessions still costs one each, B-RN1), a POST takes back the newest, and a sign-in that succeeds (a right password or
+  a passkey, `passkeys::sign_in_done`) takes back all (limiter L4). A banned key (a shared address) still gets one live
+  sign-in challenge, uncounted, and `/auth/passkey` verifies first: a valid passkey signs in through the ban, a refusal
+  is counted and answered 429; `/login` stays banned (limiter L3). `passkey.js` counts only a 401 or a redirect that lands
   on `/login` as signed out - `csrf_guard`'s 403 page is an error shown where the parent is (B-RN3).
 - Tests: `src/tests/passkey_only.rs`, `passkeys::tests` (the crowd, the reuse window), `net::tests`,
   `jstest/passkey.test.js`.

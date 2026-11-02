@@ -160,6 +160,9 @@ pub enum Reauth {
     SignedOut,
     /// Too many password checks at once (429, [busy_response]); nothing counted.
     Busy,
+    /// A passkey-only account sent a password (design 74 D2.2, qa-passkeys-2 M1): it has none, so nothing was
+    /// checked or counted - the form says "Confirm with a passkey".
+    NeedsPasskey,
 }
 
 /// What a re-auth form sent (design 74 D1.6): the password, or - "Confirm with passkey" - a
@@ -214,6 +217,9 @@ pub async fn reauth(
     admin: &crate::models::AdminUser,
     proof: Proof<'_>,
 ) -> Reauth {
+    if admin.passkey_only && !proof.is_passkey() {
+        return Reauth::NeedsPasskey;
+    }
     let right = match proof {
         Proof::Password(password) => match state
             .passwords
@@ -266,6 +272,9 @@ pub async fn reauth_and_hash(
     proof: Proof<'_>,
     new: &str,
 ) -> Result<(Reauth, Option<String>), Busy> {
+    if admin.passkey_only && !proof.is_passkey() {
+        return Ok((Reauth::NeedsPasskey, None));
+    }
     match proof {
         Proof::Password(current) => {
             let changed = state
@@ -666,6 +675,12 @@ pub async fn reset_2fa(
     // username, and no one-time password's expiry stays on the account.
     let passkeys = async {
         let mut tx = db.begin().await?;
+        // Read in the transaction for the terminal's line (qa-passkeys-2 L3).
+        let passkey_only: bool =
+            sqlx::query_scalar("SELECT passkey_only FROM admin_users WHERE id = ?")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
         sqlx::query(
             "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
              failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
@@ -677,10 +692,11 @@ pub async fn reset_2fa(
         .execute(&mut *tx)
         .await?;
         let passkeys = crate::passkeys::delete_all(&mut *tx, id).await?;
-        tx.commit().await.map(|()| passkeys)
+        tx.commit().await.map(|()| (passkeys, passkey_only))
     }
     .await
     .map_err(|err: sqlx::Error| format!("couldn't reset: {err}"))?;
+    let (passkeys, passkey_only) = passkeys;
     // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
     sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
         .bind(id)
@@ -729,8 +745,13 @@ pub async fn reset_2fa(
         1 => "its passkey is deleted, ".to_string(),
         n => format!("its {n} passkeys are deleted, "),
     };
+    let what = if passkey_only {
+        format!("Passkey Only for {username} is turned off")
+    } else {
+        format!("Two-factor login for {username} is reset")
+    };
     Ok(format!(
-        "{}Two-factor login for {username} is reset, every session is signed out, {passkeys}notifications are \
+        "{}{what}, every session is signed out, {passkeys}notifications are \
          turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
         restored,

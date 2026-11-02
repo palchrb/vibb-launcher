@@ -84,13 +84,7 @@ pub async fn login_options(
 ) -> Response {
     let ip = ceremony.client_key.clone();
     security::check_and_ban_ip_if_needed(&state.db, &ip).await;
-    if security::is_ip_banned(&state.db, &ip).await {
-        return json_refused(
-            StatusCode::TOO_MANY_REQUESTS,
-            t(lang, "passkeys.sign_in.banned"),
-            None,
-        );
-    }
+    let banned = security::is_ip_banned(&state.db, &ip).await;
     let Some(rp_id) = ceremony.rp_id.clone() else {
         return json_refused(
             StatusCode::NOT_FOUND,
@@ -102,41 +96,38 @@ pub async fn login_options(
     let fresh = session.is_empty().await || session.id().is_none();
     if !fresh
         && let Some(session_id) = passkeys::session_id(&session)
-        && let Some(challenge) = state.passkeys.challenges.live_sign_in(&session_id, &rp_id)
+        && let Some((challenge, left)) = state.passkeys.challenges.live_sign_in(&session_id, &rp_id)
     {
         return json(
             StatusCode::OK,
-            passkeys::request_options(&challenge, &rp_id, &[]),
+            passkeys::request_options(&challenge, &rp_id, &[], left),
         );
     }
-    // The session's own row from a challenge that aged out (step 2, qa-passkeys-1 B-RN1): its ceremony is over, so
-    // it stops counting - the page counts once however long it stays open. A row younger than that (its challenge
-    // was evicted by this client's other sessions or the pool's crowd) stays: churning sessions costs one each.
-    if !fresh && let Ok(Some(previous)) = session.get::<i64>(passkeys::PRE_SIGN_IN_KEY).await {
-        sqlx::query(
-            "DELETE FROM security_events WHERE id = ? AND event_type = 'passkey_started' \
-             AND created_at <= datetime('now', ?)",
+    if banned {
+        // A banned key (a shared address someone else got banned) still gets one live challenge at a time
+        // (qa-passkeys-2 limiter L3): a passkey can't be guessed, and `/auth/passkey` lets only a valid one through,
+        // every refusal counted as before. Nothing more is counted here - the key is banned already.
+        if state.passkeys.challenges.live_sign_ins_of(&ip) >= 1 {
+            return json_refused(
+                StatusCode::TOO_MANY_REQUESTS,
+                t(lang, "passkeys.sign_in.banned"),
+                None,
+            );
+        }
+    } else {
+        // Counted before anything is issued; the session's aged-out rows go first, a younger one whose challenge
+        // was evicted keeps counting until a sign-in (qa-passkeys-1 B-RN1, qa-passkeys-2 limiter L4).
+        let attempt: Option<i64> = sqlx::query_scalar(
+            "INSERT INTO security_events (event_type, ip_address) VALUES ('passkey_started', ?) \
+             RETURNING id",
         )
-        .bind(previous)
-        .bind(format!("-{} seconds", passkeys::LIVE_REUSE.as_secs()))
-        .execute(&state.db)
+        .bind(&ip)
+        .fetch_one(&state.db)
         .await
         .ok();
-    }
-    // Counted before anything is issued.
-    let attempt: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO security_events (event_type, ip_address) VALUES ('passkey_started', ?) \
-         RETURNING id",
-    )
-    .bind(&ip)
-    .fetch_one(&state.db)
-    .await
-    .ok();
-    if let Some(attempt) = attempt {
-        session
-            .insert(passkeys::PRE_SIGN_IN_KEY, attempt)
-            .await
-            .ok();
+        if let Some(attempt) = attempt {
+            passkeys::note_started(&state.db, &session, attempt).await;
+        }
     }
     // The challenge is bound to this session: a browser without one gets a short-lived one.
     if session.id().is_none() {
@@ -169,7 +160,7 @@ pub async fn login_options(
     };
     json(
         StatusCode::OK,
-        passkeys::request_options(&challenge, &rp_id, &[]),
+        passkeys::request_options(&challenge, &rp_id, &[], passkeys::CHALLENGE_TTL),
     )
 }
 
@@ -188,21 +179,12 @@ pub async fn login(
     Form(form): Form<SignInForm>,
 ) -> Response {
     let ip = ceremony.client_key.clone();
-    let view = crate::handlers::auth::LoginView::load(&state.db, ceremony.rp_id.is_some()).await;
     // The options' count ends here whatever comes: a refusal counts on its own (B-M3).
     passkeys::end_sign_in_attempt(&state.db, &session).await;
     security::check_and_ban_ip_if_needed(&state.db, &ip).await;
-    if security::is_ip_banned(&state.db, &ip).await {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            crate::handlers::auth::render_login(
-                Some(t(lang, "passkeys.sign_in.banned").to_string()),
-                lang,
-                view,
-            ),
-        )
-            .into_response();
-    }
+    // A banned key's assertion is verified all the same (qa-passkeys-2 limiter L3): a valid passkey signs in through a
+    // ban on a shared address; a refusal is counted as always and answered 429.
+    let banned = security::is_ip_banned(&state.db, &ip).await;
     let signed_in = passkeys::sign_in(
         &state,
         passkeys::session_id(&session),
@@ -223,6 +205,19 @@ pub async fn login(
             )
             .await;
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
+            let view =
+                crate::handlers::auth::LoginView::load(&state.db, ceremony.rp_id.is_some()).await;
+            if banned || security::is_ip_banned(&state.db, &ip).await {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    crate::handlers::auth::render_login(
+                        Some(t(lang, "passkeys.sign_in.banned").to_string()),
+                        lang,
+                        view,
+                    ),
+                )
+                    .into_response();
+            }
             return crate::handlers::auth::render_login(
                 Some(t(lang, view.passkey_failed()).to_string()),
                 lang,
@@ -232,6 +227,8 @@ pub async fn login(
         }
     };
     let admin = signed_in.admin;
+    // Signed in: every open row of this pre-session goes (qa-passkeys-2 limiter L4).
+    passkeys::sign_in_done(&state.db, &session).await;
     // A fresh session id first (qa-passkeys-1 A-N3): on a store error nothing is signed in.
     if let Err(err) = session.cycle_id().await {
         tracing::error!(%err, "couldn't cycle the session id at a passkey sign-in");
@@ -348,7 +345,7 @@ pub async fn reauth_options(
     };
     json(
         StatusCode::OK,
-        passkeys::request_options(&challenge, &rp_id, &here),
+        passkeys::request_options(&challenge, &rp_id, &here, passkeys::CHALLENGE_TTL),
     )
 }
 
@@ -454,6 +451,14 @@ pub async fn add_options(
         Reauth::Right => {}
         Reauth::Busy => return admin_auth::busy_response(),
         Reauth::SignedOut => return signed_out_json(),
+        // A passkey-only parent's empty password: nothing counted (qa-passkeys-2 M1).
+        Reauth::NeedsPasskey => {
+            return json_refused(
+                StatusCode::BAD_REQUEST,
+                t(lang, "passkeys.only.needs_passkey"),
+                Some("password"),
+            );
+        }
         Reauth::Wrong { left } => {
             log_wrong(&state, &admin, &proof, "security.detail.passkey.add").await;
             let words = wrong_words(
@@ -665,15 +670,19 @@ pub async fn remove(
         Reauth::Right => {}
         Reauth::Busy => return admin_auth::busy_response(),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
-        Reauth::Wrong { left } => {
-            log_wrong(&state, &admin, &proof, "security.detail.passkey.remove").await;
-            let words = wrong_words(
-                lang,
-                &proof,
-                left,
-                "account.password.wrong",
-                "account.password.wrong_last",
-            );
+        reauth @ (Reauth::Wrong { .. } | Reauth::NeedsPasskey) => {
+            let words = if let Reauth::Wrong { left } = reauth {
+                log_wrong(&state, &admin, &proof, "security.detail.passkey.remove").await;
+                wrong_words(
+                    lang,
+                    &proof,
+                    left,
+                    "account.password.wrong",
+                    "account.password.wrong_last",
+                )
+            } else {
+                t(lang, "passkeys.only.needs_passkey").to_string()
+            };
             let answer = AccountAnswer {
                 field_error: Some((remove_field(id), words)),
                 ..AccountAnswer::default()
@@ -795,6 +804,20 @@ pub async fn passkey_only_on(
         Reauth::Right => {}
         Reauth::Busy => return admin_auth::busy_response(),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
+        // Never with a passkey's proof; answered as a missing one.
+        Reauth::NeedsPasskey => {
+            let answer = refuse(t(lang, "passkeys.only.needs_passkey").to_string());
+            return render_account(
+                &state,
+                &session,
+                &admin,
+                &ceremony,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
+        }
         Reauth::Wrong { left } => {
             let words = wrong_words(lang, &proof, left, "", "");
             return render_account(
@@ -1038,6 +1061,14 @@ pub async fn password_sign_in(
         Reauth::Right => {}
         Reauth::Busy => return admin_auth::busy_response(),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
+        // Never with a passkey's proof; answered as a missing one.
+        Reauth::NeedsPasskey => {
+            return refuse(
+                "passkey",
+                t(lang, "passkeys.only.needs_passkey").to_string(),
+            )
+            .await;
+        }
         Reauth::Wrong { left } => {
             return refuse("passkey", wrong_words(lang, &proof, left, "", "")).await;
         }
@@ -1071,6 +1102,7 @@ pub async fn password_sign_in(
             .await
             .unwrap_or(false);
             if still {
+                session.remove::<String>(PASSWORD_ON_SECRET_KEY).await.ok();
                 Redirect::to("/account#password").into_response()
             } else {
                 session.flush().await.ok();

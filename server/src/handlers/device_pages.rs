@@ -963,6 +963,8 @@ pub(crate) enum Reveal {
         left: i64,
         passkey: bool,
     },
+    /// A passkey-only parent sent no passkey (design 74 D2.2): nothing was checked.
+    NeedsPasskey,
     Shown(crate::kid_lock::ShownPin),
 }
 
@@ -1006,6 +1008,9 @@ impl RevealView {
                     )
                     .to_string(),
                 );
+            }
+            Reveal::NeedsPasskey => {
+                view.error = Some(t(lang, "passkeys.only.needs_passkey").to_string());
             }
             Reveal::Shown(ShownPin::Pin { pin, phone }) => {
                 view.pin = Some(pin.as_str().to_string());
@@ -1124,6 +1129,8 @@ pub async fn lock_action(
                 passkey: proof.is_passkey(),
             }
         }
+        // A passkey-only parent's empty password: nothing checked, nothing counted (qa-passkeys-2 M1).
+        crate::admin_auth::Reauth::NeedsPasskey => Reveal::NeedsPasskey,
         crate::admin_auth::Reauth::Right => {
             let latest = match load_latest(&state, id).await {
                 Ok(latest) => latest,

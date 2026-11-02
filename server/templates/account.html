@@ -186,6 +186,9 @@
                     {%- if passkey_only && passkeys.len() == 2 && passkey_only_alone %}
                     <p class="passkey-warn">{{ self.t("passkeys.only.down_to_one") }}</p>
                     {%- endif %}
+                    {%- if passkey_only && k.last_for_host %}
+                    <p class="passkey-warn">{{ self.tp("passkeys.only.last_for_host", [("host", k.rp_id.as_str())]) }}</p>
+                    {%- endif %}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
                     {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="passkey_remove_password_{{ k.id }}"{% if passkey_only %} hidden{% endif %}>{{ self.t("account.password.current") }}</label>
@@ -248,9 +251,7 @@
                     {%- else %}
                     <p>{{ self.t("passkeys.only.way_back") }}</p>
                     {%- endif %}
-                    {%- if several_rp_ids %}
-                    <p>{{ self.t("passkeys.only.hosts") }}</p>
-                    {%- endif %}
+                    <p>{{ self.tp("passkeys.only.hosts", [("hosts", passkey_rp_ids.as_str())]) }}</p>
                     <p>{{ self.t("passkeys.only.any_time") }}</p>
                     {% let confirm_label = "passkeys.confirm" %}
                     {% include "partials/passkey_confirm.html" %}
@@ -366,6 +367,6 @@
     </section>
 </main>
 {% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
-<script src="/static/passkey.js?v=2" defer></script>
+<script src="/static/passkey.js?v=3" defer></script>
 </body>
 </html>

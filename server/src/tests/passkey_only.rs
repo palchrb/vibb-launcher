@@ -7,8 +7,8 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 
 use super::passkeys::{
-    HOST, PASSWORD, add_passkey, challenge_of, count_passkeys, reauth_assertion, scalar, send,
-    sign_in,
+    HOST, ORIGIN, PASSWORD, add_passkey, add_passkey_at, challenge_of, count_passkeys,
+    reauth_assertion, scalar, send, sign_in,
 };
 use super::{LOOPBACK_PEER, TestApp, TestResponse};
 use crate::webauthn::fake::FakeAuthenticator;
@@ -852,14 +852,14 @@ async fn the_sign_in_page_without_passwords() {
 /// they can't keep a passkey-only parent's sign-in challenge evicted, nor dodge the ban.
 #[tokio::test]
 async fn fresh_64s_of_one_56_share_the_ban() {
-    let app = TestApp::new().await;
+    let app = TestApp::with_env(&[("ADMIN_PUBLIC", "on")]).await;
     let options = |n: u32| {
         Request::builder()
             .method(Method::POST)
             .uri("/auth/passkey/options")
             .header(header::HOST, HOST)
             .header("sec-fetch-site", "same-origin")
-            .header("x-forwarded-for", format!("fd7a:115c:a1e0:1{n:02x}::9"))
+            .header("x-forwarded-for", format!("2001:db8:7:1{n:02x}::9"))
             .body(Body::empty())
             .unwrap()
     };
@@ -875,7 +875,7 @@ async fn fresh_64s_of_one_56_share_the_ban() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(banned, "fd7a:115c:a1e0:100::/56");
+    assert_eq!(banned, "2001:db8:7:100::/56");
 }
 
 /// qa-passkeys-1 B-RN1: a pre-session's counted row goes when its challenge aged out and the page asks again (it
@@ -931,5 +931,365 @@ async fn a_pre_sessions_aged_out_row_stops_counting() {
         &[],
     )
     .await;
-    assert_eq!(started().await, 8, "its aged row went, a new one came");
+    assert_eq!(
+        started().await,
+        7,
+        "its aged rows went (both), a new one came"
+    );
+}
+
+/// qa-passkeys-2 M1: a passkey-only *actor*'s password proof on any re-auth form is answered "Confirm with a
+/// passkey" and counts nothing (no `reauth_wrong`, never three that sign out); each form works by passkey.
+#[tokio::test]
+async fn a_passkey_only_parents_reauth_forms_take_only_the_passkey() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let pappa_id = scalar(&app, "SELECT id FROM admin_users WHERE username = 'pappa'").await;
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    let mut second = FakeAuthenticator::es256(b"");
+    let other = add_passkey(&app, &cookie, &mut second, "Mac").await;
+    switch_on(&app, &cookie, &mut fake).await;
+    let (device, _) = app.create_device("Anna").await;
+    for (path, field, pin) in [
+        ("parent-pin", "new_pin", "739146"),
+        ("kid-lock", "new_kid_pin", "2580"),
+    ] {
+        let saved = send(
+            &app,
+            Method::POST,
+            &format!("/devices/{device}/{path}"),
+            HOST,
+            Some(&cookie),
+            &[(field, pin)],
+        )
+        .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.text());
+    }
+    let lock = format!("/devices/{device}/lock");
+    let remove_passkey = format!("/account/passkeys/{other}/remove");
+    let reset = format!("/account/parents/{pappa_id}/reset");
+    let remove = format!("/account/parents/{pappa_id}/remove");
+    let forms: Vec<(&str, Vec<(&str, &str)>)> = vec![
+        (
+            "/account/passkeys/options",
+            vec![("name", "Laptop"), ("current_password", "guess")],
+        ),
+        (
+            "/account/parents",
+            vec![
+                ("new_username", "mormor"),
+                ("name", "Mormor"),
+                ("current_password", ""),
+            ],
+        ),
+        (&reset, vec![("current_password", "guess")]),
+        (&remove, vec![("current_password", "")]),
+        (&remove_passkey, vec![("current_password", "guess")]),
+        (
+            &lock,
+            vec![("action", "reveal_kid_pin"), ("password", "guess")],
+        ),
+    ];
+    for (path, fields) in &forms {
+        let res = send(&app, Method::POST, path, HOST, Some(&cookie), fields).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{path}");
+        let said = text(&res);
+        assert!(
+            said.contains("Confirm with a passkey. Nothing was changed."),
+            "{path}: {said}"
+        );
+        assert!(!said.contains("password is wrong"), "{path}");
+    }
+    // Nothing counted: no wrong re-auth, no sign-out, nothing written.
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT reauth_wrong FROM admin_users WHERE username = 'parent'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        send(&app, Method::GET, "/devices", HOST, Some(&cookie), &[])
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(count_passkeys(&app, "parent").await, 2);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM admin_users WHERE username = 'mormor'"
+        )
+        .await,
+        0
+    );
+    assert!(
+        send(&app, Method::GET, "/devices", HOST, Some(&pappa), &[])
+            .await
+            .status
+            == StatusCode::OK,
+        "pappa untouched"
+    );
+    // The account page's forms mark their passkey button so a submit starts it (passkey.js).
+    let page = account_page(&app, &cookie).await;
+    assert!(page.contains("data-passkey-reauth data-passkey-only"));
+
+    // By passkey each one works: a passkey added, a parent added, Show Child PIN, pappa reset.
+    let assertion = reauth_assertion(&app, &cookie, &mut fake, "/account/passkeys/options").await;
+    let mut third = FakeAuthenticator::es256(b"");
+    add_passkey_at(
+        &app,
+        &cookie,
+        &mut third,
+        "Laptop",
+        HOST,
+        ORIGIN,
+        &[("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(count_passkeys(&app, "parent").await, 3);
+    let assertion = reauth_assertion(&app, &cookie, &mut fake, "/account/parents").await;
+    let res = send(
+        &app,
+        Method::POST,
+        "/account/parents",
+        HOST,
+        Some(&cookie),
+        &[
+            ("new_username", "mormor"),
+            ("name", "Mormor"),
+            ("assertion", &assertion),
+        ],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let assertion = reauth_assertion(&app, &cookie, &mut fake, &lock).await;
+    let res = send(
+        &app,
+        Method::POST,
+        &lock,
+        HOST,
+        Some(&cookie),
+        &[("action", "reveal_kid_pin"), ("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let assertion = reauth_assertion(&app, &cookie, &mut fake, &reset).await;
+    let res = send(
+        &app,
+        Method::POST,
+        &reset,
+        HOST,
+        Some(&cookie),
+        &[("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT must_change_password FROM admin_users WHERE username = 'pappa'"
+        )
+        .await,
+        1
+    );
+}
+
+/// qa-passkeys-2 L1, L2: a passkey-only parent's only passkey for one address says signing in there stops; the switch
+/// names the addresses its passkeys are for.
+#[tokio::test]
+async fn the_last_passkey_for_an_address_says_so() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    let page = account_page(&app, &cookie).await;
+    assert!(
+        page.contains("Then you can sign in only at handy.example.com, where you have a passkey."),
+        "{page}"
+    );
+    let mut other = FakeAuthenticator::es256(b"");
+    let elsewhere = add_passkey(&app, &cookie, &mut other, "Tailnet").await;
+    sqlx::query("UPDATE admin_passkeys SET rp_id = 'phone.tail1234.ts.net' WHERE id = ?")
+        .bind(elsewhere)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    switch_on(&app, &cookie, &mut fake).await;
+    let page = account_page(&app, &cookie).await;
+    assert!(page.contains(
+        "This is your only passkey for handy.example.com: after removing it you can't sign in there any more."
+    ));
+    assert!(page.contains(
+        "This is your only passkey for phone.tail1234.ts.net: after removing it you can't sign in there any more."
+    ));
+}
+
+/// qa-passkeys-2 L3: the shell's line says Passkey Only was turned off.
+#[tokio::test]
+async fn the_shell_says_passkey_only_is_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    switch_on(&app, &cookie, &mut fake).await;
+    let said = crate::admin_auth::reset_2fa(&app.db, "parent", &app.state.data_dir)
+        .await
+        .unwrap();
+    assert!(
+        said.starts_with("Passkey Only for parent is turned off,"),
+        "{said}"
+    );
+    let said = crate::admin_auth::reset_2fa(&app.db, "parent", &app.state.data_dir)
+        .await
+        .unwrap();
+    assert!(
+        said.starts_with("Two-factor login for parent is reset,"),
+        "{said}"
+    );
+}
+
+/// qa-passkeys-2 limiter L1: a challenge handed out again says the time it has left as `timeout`.
+#[tokio::test]
+async fn a_reused_challenge_says_its_time_left() {
+    let app = TestApp::new().await;
+    let first = send(&app, Method::POST, "/auth/passkey/options", HOST, None, &[]).await;
+    assert_eq!(first.json()["timeout"], 300_000);
+    let cookie = super::session_cookie(&first).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let again = send(
+        &app,
+        Method::POST,
+        "/auth/passkey/options",
+        HOST,
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    assert_eq!(challenge_of(&again), challenge_of(&first));
+    let left = again.json()["timeout"].as_u64().unwrap();
+    assert!(left < 300_000 && left > 290_000, "{left}");
+}
+
+/// qa-passkeys-2 limiter L3: a banned key (a shared address) gets one live challenge and a valid passkey signs in
+/// through the ban; a bad assertion is still counted and answered 429; a second challenge is refused; /login stays
+/// banned.
+#[tokio::test]
+async fn a_valid_passkey_signs_in_through_a_ban() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    for _ in 0..crate::security::MAX_FAILED_PER_IP {
+        app.request_form(
+            Method::POST,
+            "/login",
+            None,
+            &[("username", "parent"), ("password", "wrong")],
+        )
+        .await;
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/login",
+            None,
+            &[("username", "parent"), ("password", PASSWORD)],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    // A bad assertion through the ban: counted, 429.
+    let refused = scalar(
+        &app,
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'passkey_refused'",
+    )
+    .await;
+    let res = send(
+        &app,
+        Method::POST,
+        "/auth/passkey",
+        HOST,
+        None,
+        &[("assertion", "{}")],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'passkey_refused'"
+        )
+        .await,
+        refused + 1
+    );
+    // One live challenge for the banned key; another session's ask is refused while it lives.
+    let options = send(&app, Method::POST, "/auth/passkey/options", HOST, None, &[]).await;
+    let challenge = challenge_of(&options);
+    let pre = super::session_cookie(&options).unwrap();
+    let second = send(&app, Method::POST, "/auth/passkey/options", HOST, None, &[]).await;
+    assert_eq!(second.status, StatusCode::TOO_MANY_REQUESTS);
+    // The valid passkey signs in.
+    let assertion = fake.assert(&challenge, ORIGIN, HOST, true);
+    let res = send(
+        &app,
+        Method::POST,
+        "/auth/passkey",
+        HOST,
+        Some(&pre),
+        &[("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/"), "{}", res.text());
+}
+
+/// qa-passkeys-2 limiter L4: a session's open rows are a list; a sign-in takes them all back, so a household whose
+/// pages evicted each other's challenges pays nothing once it signs in.
+#[tokio::test]
+async fn a_sign_in_takes_back_every_open_row_of_its_session() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    let started = || async {
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'passkey_started'",
+        )
+        .await
+    };
+    let first = send(&app, Method::POST, "/auth/passkey/options", HOST, None, &[]).await;
+    let a = super::session_cookie(&first).unwrap();
+    for _ in 0..crate::passkeys::SIGN_IN_PER_CLIENT {
+        send(&app, Method::POST, "/auth/passkey/options", HOST, None, &[]).await;
+    }
+    // Evicted while young: asked again, a second open row of the same session.
+    let again = send(
+        &app,
+        Method::POST,
+        "/auth/passkey/options",
+        HOST,
+        Some(&a),
+        &[],
+    )
+    .await;
+    assert_eq!(started().await, 5);
+    let assertion = fake.assert(&challenge_of(&again), ORIGIN, HOST, true);
+    let res = send(
+        &app,
+        Method::POST,
+        "/auth/passkey",
+        HOST,
+        Some(&a),
+        &[("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/"));
+    assert_eq!(
+        started().await,
+        3,
+        "both of its rows went; the other sessions' stay"
+    );
 }

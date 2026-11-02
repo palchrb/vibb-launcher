@@ -190,18 +190,22 @@
     // ---- Sign-in (D1.4) -------------------------------------------------------------------------------------
 
     // A challenge lives 5 minutes on the server, which hands a session's live one out again for 4 (passkeys::
-    // LIVE_REUSE). The autofill's get is started again with a fresh one once its options are this old, so a parent
-    // who comes back to an open page doesn't pick a passkey for a challenge that died under it (step 2,
-    // qa-passkeys-1 B-RN2).
+    // LIVE_REUSE) with the time it has left as `timeout`. The autofill's get starts again with fresh options this
+    // long before that time ends (and 4.5 minutes after a fetch at most), so a parent who comes back to an open page -
+    // or a reload that got an older challenge again - never picks a passkey for a challenge that died under it
+    // (step 2, qa-passkeys-1 B-RN2, qa-passkeys-2 limiter L1). The button fetches anew when less than a minute is left.
     var CONDITIONAL_REFRESH_MS = 270000;
+    var REFRESH_BEFORE_END_MS = 30000;
+    var BUTTON_MIN_LEFT_MS = 60000;
 
     function installLogin(win, form) {
         var button = form.querySelector("[data-passkey-login]");
         var error = win.document.querySelector("[data-passkey-error]");
         var options = null;
         var fetchedAt = 0;
+        var endsAt = 0;
         var conditional = null;
-        var conditionalAt = 0;
+        var refreshAt = 0;
         var refreshTimer = null;
         var creds = win.navigator.credentials;
         // The passkey-only page (§6.4) has no username field for the autofill: only the button, never on its own.
@@ -211,11 +215,12 @@
         // One challenge serves the conditional get and the button's (it is spent only by a sign-in) for a minute, so
         // a prompt opened from it has its 5 minutes (the server hands the same session's live one back anyway).
         function fetchOptions() {
-            if (options && now() - fetchedAt < 60000) return win.Promise.resolve(options);
+            if (options && now() - fetchedAt < 60000 && endsAt - now() > BUTTON_MIN_LEFT_MS) return win.Promise.resolve(options);
             return post(win, "/auth/passkey/options", {}).then(function (answer) {
                 if (!answer.ok) throw { name: "refused", message: answer.json.error || "" };
                 options = answer.json;
                 fetchedAt = now();
+                endsAt = fetchedAt + (typeof options.timeout === "number" ? options.timeout : 300000);
                 return options;
             });
         }
@@ -242,10 +247,10 @@
                 conditional = controller;
                 fetchOptions().then(function (json) {
                     if (conditional !== controller) return null;
-                    conditionalAt = fetchedAt;
+                    refreshAt = Math.min(fetchedAt + CONDITIONAL_REFRESH_MS, endsAt - REFRESH_BEFORE_END_MS);
                     if (win.setTimeout) {
                         if (refreshTimer && win.clearTimeout) win.clearTimeout(refreshTimer);
-                        refreshTimer = win.setTimeout(refreshConditional, CONDITIONAL_REFRESH_MS);
+                        refreshTimer = win.setTimeout(refreshConditional, Math.max(1000, refreshAt - now()));
                     }
                     return creds.get({ mediation: "conditional", publicKey: requestOptions(json), signal: controller.signal });
                 }).then(function (cred) {
@@ -258,7 +263,7 @@
         // the page shown again - a phone's background tab has its timers held).
         function refreshConditional() {
             refreshTimer = null;
-            if (!conditional || now() - conditionalAt < CONDITIONAL_REFRESH_MS) return;
+            if (!conditional || now() < refreshAt) return;
             conditional.abort();
             conditional = null;
             options = null;
@@ -318,12 +323,19 @@
         });
     }
 
+    // A form only a passkey confirms (a passkey-only parent's re-auth forms, "Kun passkey"'s switch and its switch-off
+    // page; the button is `[data-passkey-only]`): its submit - Enter in a field included - runs the passkey first,
+    // never sends a password it doesn't have (qa-passkeys-2 M1).
+    function passkeyOnly(form) {
+        return !!form.querySelector("[data-passkey-reauth][data-passkey-only]");
+    }
+
     function installReauth(win, button) {
         var form = button.closest("form");
         if (!form) return;
         var error = button.parentNode.querySelector("[data-passkey-error]");
         if (error && !error.getAttribute("data-w-failed")) error.setAttribute("data-w-failed", w(button, "failed"));
-        button.addEventListener("click", function () {
+        function start() {
             show(error, "");
             if (!othersValid(form, passwordField(form))) return;
             reauth(win, form, error).then(function (done) {
@@ -331,7 +343,16 @@
                 if (form.hasAttribute("data-passkey-add")) add(win, form);
                 else send(form);
             });
-        });
+        }
+        button.addEventListener("click", start);
+        if (button.hasAttribute("data-passkey-only")) {
+            form.addEventListener("submit", function (e) {
+                var assertion = form.querySelector("input[name=\"assertion\"]");
+                if (assertion && assertion.value) return;
+                e.preventDefault();
+                start();
+            });
+        }
     }
 
     // ---- Adding (D1.2) --------------------------------------------------------------------------------------
@@ -382,6 +403,9 @@
         form.addEventListener("submit", function (e) {
             if (form.querySelector("input[name=\"credential\"]").value) return;
             e.preventDefault();
+            // A passkey-only parent's add starts with the passkey (its own submit listener, installReauth).
+            var assertion = form.querySelector("input[name=\"assertion\"]");
+            if (passkeyOnly(form) && !(assertion && assertion.value)) return;
             add(win, form);
         });
     }

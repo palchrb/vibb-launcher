@@ -5,7 +5,7 @@
     form's password field is hidden, and where the passkey can't be used here the reason shows instead. -#}
 {%- if passkey_reauth %}
 <div class="reauth-passkey" data-passkey-ui hidden>
-    <button type="button" class="button-outline" data-passkey-reauth data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t("passkeys.confirm") }}</button>
+    <button type="button" class="button-outline" data-passkey-reauth{% if passkey_only %} data-passkey-only{% endif %} data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t("passkeys.confirm") }}</button>
     <p class="field-error" data-passkey-error role="alert" hidden></p>
     {%- if !passkey_only %}
     <p class="or-divider">{{ self.t("passkeys.or") }}</p>

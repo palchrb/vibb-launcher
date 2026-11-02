@@ -117,9 +117,16 @@ pub fn is_loopback(ip: IpAddr) -> bool {
 /// /56 or /48), so one home line is one key, as one IPv4 address is; a /64 key let a client with
 /// its own /56 or /48 rotate through 256 or 65 536 fresh keys and dodge the ban (and, with
 /// "Kun passkey", keep a parent's sign-in challenge evicted - qa-passkeys-1 A-R1). A /48 would
-/// lump up to 256 such lines of one ISP into one ban.
+/// lump up to 256 such lines of one ISP into one ban. A tailnet address (100.64.0.0/10,
+/// `fd7a:115c:a1e0::/48`) is one node, whatever its prefix: keyed by the whole address, so the kid's
+/// phone on the tailnet never shares a key with a parent's (every node's IPv6 is in one /64 there -
+/// qa-passkeys-2 limiter L2).
 pub fn limit_key(ip: IpAddr) -> String {
-    match ip.to_canonical() {
+    let ip = ip.to_canonical();
+    if is_tailnet(ip) {
+        return ip.to_string();
+    }
+    match ip {
         IpAddr::V4(v4) => v4.to_string(),
         IpAddr::V6(v6) => {
             let network = u128::from(v6) & (u128::MAX << 72);
@@ -133,7 +140,12 @@ pub fn limit_key(ip: IpAddr) -> String {
 /// challenge of the neighbourhood holding the most, so a flood from one provider's range evicts its
 /// own and a parent's one challenge from elsewhere stays (design 74 step 2).
 pub fn crowd_key(ip: IpAddr) -> String {
-    match ip.to_canonical() {
+    let ip = ip.to_canonical();
+    // A tailnet node is a crowd of its own, as it is a key of its own ([limit_key]).
+    if is_tailnet(ip) {
+        return ip.to_string();
+    }
+    match ip {
         IpAddr::V4(v4) => {
             let network = u32::from(v4) & (u32::MAX << 8);
             format!("{}/24", std::net::Ipv4Addr::from(network))
@@ -590,6 +602,22 @@ mod tests {
             limit_key(ip("2001:db8:1:102::1"))
         );
         assert_eq!(limit_key(ip("::ffff:203.0.113.7")), "203.0.113.7");
+    }
+
+    /// qa-passkeys-2 limiter L2: every tailnet node is its own key and crowd (they share one /64 over IPv6).
+    #[test]
+    fn a_tailnet_address_is_a_key_of_its_own() {
+        let a = ip("fd7a:115c:a1e0::e801:4d42");
+        let b = ip("fd7a:115c:a1e0::e801:4d43");
+        assert_eq!(limit_key(a), "fd7a:115c:a1e0::e801:4d42");
+        assert_ne!(limit_key(a), limit_key(b));
+        assert_ne!(crowd_key(a), crowd_key(b));
+        assert_eq!(limit_key(ip("100.101.102.103")), "100.101.102.103");
+        assert_eq!(crowd_key(ip("100.101.102.103")), "100.101.102.103");
+        assert_ne!(
+            crowd_key(ip("100.101.102.103")),
+            crowd_key(ip("100.101.102.104"))
+        );
     }
 
     #[test]
