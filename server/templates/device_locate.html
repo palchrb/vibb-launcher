@@ -111,8 +111,8 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
-            {% if view.zones.full %}
-            <p class="row row-note" data-row="zones-full">{{ self.t("locate.zones.full") }}</p>
+            {% if let Some(full) = view.zones.full %}
+            <p class="row row-note" data-row="zones-full">{{ full }}</p>
             {% else %}
             <a class="row row-button" href="/devices/{{ view.device.id }}/zones/new" data-row="add-zone">{{ self.t("locate.zones.add") }}</a>
             {% endif %}

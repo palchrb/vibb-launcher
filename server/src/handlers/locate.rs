@@ -124,8 +124,8 @@ struct Locate {
 /// save or a delete, what the location settings mean for the zones.
 struct ZonesView {
     rows: Vec<ZoneRow>,
-    /// 10 zones: Add Zone is replaced by a note.
-    full: bool,
+    /// 10 zones: Add Zone is replaced by a note, "10 zones is the most".
+    full: Option<String>,
     /// After a delete (`?zone=deleted`): the group's line.
     flash: Option<&'static str>,
     /// Only when asked, with zones: the orange row and Locate Regularly.
@@ -279,7 +279,13 @@ fn zones_view(
         },
     );
     ZonesView {
-        full: rows.len() as i64 >= crate::zones::MAX_ZONES,
+        full: (rows.len() as i64 >= crate::zones::MAX_ZONES).then(|| {
+            t_params(
+                lang,
+                "locate.zones.full",
+                &[("max", &crate::zones::MAX_ZONES.to_string())],
+            )
+        }),
         flash: (flash == Some("deleted")).then(|| t(lang, "locate.zones.deleted")),
         needs_regularly: some && mode == "on_request",
         location_unlocked: some && !locked && mode != "off",
@@ -1945,7 +1951,7 @@ async fn send(
             crate::i18n::error(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "error.install_send",
+                "error.command_send",
             )
         }
     }
@@ -2711,5 +2717,18 @@ mod tests {
             Some(("Avbrutt. Telefonen får den aldri.", false))
         );
         assert_eq!(t(Lang::Nb, command_label("locate")), "Oppdater posisjon");
+        // The watch's motion line reads with every interval (qa light 3c, 3).
+        for (minutes, tail) in [
+            (30, "hver 30 min."),
+            (60, "hver 1 time."),
+            (120, "hver 2 timer."),
+        ] {
+            let line = t_params(
+                Lang::Nb,
+                "locate.watch.no_motion",
+                &[("interval", &interval_label(Lang::Nb, minutes))],
+            );
+            assert!(line.ends_with(tail), "{line}");
+        }
     }
 }
