@@ -60,17 +60,17 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   launcher's vectors and both tables (`src/app_icons.rs`, generated, rustfmt-clean - don't edit). Tests check the
   table against the JSON, a glyph per icon with its "Converted from" line, and white >= 4.5:1 on every tile, none
   green or red by hue.
-- **Three icon states** (design 34 P1, `docs/design/34-launcher-polish.md`, QA H1; no migration): **Vibb style** (the
+- **Three icon states** (design 34 P1, `docs/design/34-launcher-polish.md`, QA H1; no migration): **Vibb style**, worded "Automatic" / "Automatisk" in the PWA since 2026-11-02 (the
   default - no row, or `icon` NULL; the phone draws the app's monochrome glyph white on its tone), **the app's own
   logo** (`icon = 'own'`, `app_display::OWN`, stored and sent with colour `auto`; the phone draws the real icon in its
   own colours) and **a chosen glyph** (design 14). `own` is not in `ICONS`/`app_icons.json`: `validate` and
   `sanitized` accept it beside the glyphs. `DisplayValues::is_empty` (label and icon `None`, "nothing to send") is what
   `keep_row` and `policy_app_display` decide on; `is_own` is the logo. A catalog default may be `own`. The form's Icon
-  radios are "Vibb style" (`value=""`), "The app's own logo" (`value="own"`, `static/app-display.js` disables the colour
-  fieldset; the preview's tile says "Vibb style" / "Its own logo" on `OWN_PREVIEW`) and the 16 glyphs; the colour keys
+  radios are "Automatic" (`value=""`), "App logo" (`value="own"`, `static/app-display.js` disables the colour
+  fieldset; the preview's tile says "Automatic" / "Logo" on `OWN_PREVIEW`) and the 16 glyphs; the colour keys
   keep their names in the database and read as their tones in the PWA (`color_label`: peach Rose, plum Plum, sky
   Blue, sunset Indigo, night Teal, grey Slate; `auto` "The app's tone", previewed slate `AUTO_PREVIEW`). The one
-  secondary button is **Reset** (`action=reset`, shown only with something to reset - `can_reset`: the phone's own row, or a stored catalog default; an older page's `catalog` does the same, its `own` keeps its old meaning, an empty row - qa-34-s1-code L1, N1): it deletes the phone's
+  secondary button is **Reset** (`action=reset`; no hint paragraph under the picker since 2026-11-02, the button's own label only; shown only with something to reset - `can_reset`: the phone's own row, or a stored catalog default; an older page's `catalog` does the same, its `own` keeps its old meaning, an empty row - qa-34-s1-code L1, N1): it deletes the phone's
   row (the phone then follows the catalog default, else Vibb style) or clears the catalog default. Vibb style with no
   name on a phone with a catalog default keeps an empty row (Vibb style there). An older launcher drops `own` as an
   unknown icon (with no label the entry is gone - today's look).
@@ -101,7 +101,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "About This Phone · Vibb One 0.23.6", "Vibb One's Settings", Attention titles such as "Vibb One isn't the Home app",
   `provision_qr.html`'s setup text, "Vibb One didn't install that app", the clock warning's Settings path "›
   Vibb One ›" - pinned by `provisioning` and `launcher_ui` tests -, the security log's details "Vibb One's Settings
-  opened." and "start(s) without Vibb One running", ...). **Not renamed**: "Vibb Phone" (the PWA), "Vibb style" (the icon state), "Vibb music"/"Vibb
+  opened." and "start(s) without Vibb One running", ...). **Not renamed**: "Vibb Phone" (the PWA), "Vibb style" (the icon state; in the PWA it reads "Automatic"), "Vibb music"/"Vibb
   Musikk" (the music app and its catalog row), "Import from Vibb", "(from Vibb)", the Vibb box/Pi (the vibb music
   project), "Vibb night" (a wallpaper), the Vibb logo/mark, the manifest's "Vibb phones", the 2FA issuer "Kids
   Device MDM" (it only labels new authenticator entries; a change would make a second entry look like another

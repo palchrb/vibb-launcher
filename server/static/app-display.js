@@ -1,7 +1,7 @@
 // The "Name and icon" forms' live preview (design 14, templates/partials/app_display_form.html; the
 // three icon states of design 34 P1): the tile's colour (the phone's tone for a chosen colour; "the
-// app's tone" previews as slate), the glyph or the state's words (the page's, "Vibb style", "Its own logo") and
-// the name follow the fields as they change, and the colours are off while "The app's own logo" is
+// app's tone" previews as slate), the glyph or the state's words (the page's, "Automatic", "Logo") and
+// the name follow the fields as they change, and the colours are off while "App logo" is
 // chosen (the logo has no tile; a disabled fieldset posts nothing, which the server reads as auto).
 // The form works without this.
 (function () {

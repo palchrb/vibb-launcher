@@ -291,11 +291,11 @@ async fn the_apps_own_logo_is_stored_sent_and_shown() {
     let form = &page[page.find(r#"id="display-com.spotify.music""#).unwrap()..];
     let form = &form[..form.find("</details>").unwrap()];
     assert!(
-        form.contains("its own name, with the app&#39;s own logo"),
+        form.contains("its own name, with the app&#39;s logo"),
         "{form}"
     );
     assert!(form.contains(r#"value="own" checked"#), "{form}");
-    assert!(form.contains("Its own logo"));
+    assert!(form.contains("Logo"));
     assert!(form.contains(r#"<button type="submit" name="action" value="reset""#));
     assert!(form.contains("data-colors"));
     // Element ("Chat") has the logo too.

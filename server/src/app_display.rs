@@ -27,7 +27,7 @@ pub const OWN: &str = "own";
 /// What the preview shows for [AUTO]: the slate tone (QA #3 - the real tone comes from the app's
 /// icon on the phone). Also in `static/app-display.js`.
 pub const AUTO_PREVIEW: &str = "#606B80";
-/// The preview tile without a glyph ("Vibb style", "Its own logo"): dark enough for its white
+/// The preview tile without a glyph ("Automatic", "Logo"): dark enough for its white
 /// text at 4.5:1 (qa-14-code #4). Also in `static/app-display.js`.
 pub const OWN_PREVIEW: &str = "#5C6370";
 
@@ -517,22 +517,7 @@ impl AppDisplayForm {
         }
     }
 
-    /// What Reset does here, as a catalog key: the catalog form clears its default, the device
-    /// form deletes the phone's row (it then follows the catalog default, else Vibb style). Empty
-    /// without Reset.
-    pub fn reset_hint(&self) -> &'static str {
-        if !self.can_reset() {
-            ""
-        } else if self.package_name.is_empty() {
-            "apps.display.reset_catalog"
-        } else if self.catalog_default.is_some() {
-            "apps.display.reset_follow"
-        } else {
-            "apps.display.reset_vibb"
-        }
-    }
-
-    /// The preview tile's text without a glyph, as a catalog key: "Vibb style" or "Its own logo".
+    /// The preview tile's text without a glyph, as a catalog key: "Automatic" or "Logo".
     pub fn preview_text(&self) -> &'static str {
         if self.own_checked() {
             "apps.display.preview_own"
@@ -733,7 +718,7 @@ mod tests {
         );
         assert_eq!(
             DisplayValues::empty().describe(Lang::En),
-            "its own name, with the Vibb-style icon"
+            "its own name, with the automatic icon"
         );
         assert_eq!(
             DisplayValues {
@@ -742,7 +727,7 @@ mod tests {
                 color: AUTO.into()
             }
             .describe(Lang::En),
-            "Chat, with the Vibb-style icon"
+            "Chat, with the automatic icon"
         );
     }
 
@@ -769,10 +754,10 @@ mod tests {
         assert!(!stored.is_empty());
         assert_eq!(
             stored.describe(Lang::En),
-            "its own name, with the app's own logo"
+            "its own name, with the app's logo"
         );
-        assert_eq!(labelled.describe(Lang::En), "Chat, with the app's own logo");
-        assert_eq!(labelled.describe(Lang::Nb), "Chat, med appens egen logo");
+        assert_eq!(labelled.describe(Lang::En), "Chat, with the app's logo");
+        assert_eq!(labelled.describe(Lang::Nb), "Chat, med appens logo");
         // Vibb style is the empty choice, not `own`.
         assert!(DisplayValues::empty().is_empty() && !DisplayValues::empty().is_own());
     }
@@ -822,16 +807,11 @@ mod tests {
         // The catalog page: a stored default.
         assert!(!form("", DisplayValues::empty()).can_reset());
         assert!(form("", chat.clone()).can_reset());
-        assert_eq!(form("", DisplayValues::empty()).reset_hint(), "");
         // The device page: the phone's own row, not the default it shows.
         let mut device = form("a.b", chat);
         assert!(!device.can_reset());
         device.own_row = true;
         assert!(device.can_reset());
-        assert_eq!(
-            t(Lang::En, device.reset_hint()),
-            "Reset: back to Vibb style."
-        );
     }
 
     /// QA M3: design 14's colour keys stay, their names follow the tones.
