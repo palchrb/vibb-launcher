@@ -174,15 +174,16 @@ pub async fn unlock(
                 why,
                 "security.detail.app_lock.unlock",
                 Some(&admin.username),
-                Some(&ceremony.client),
+                Some(&ceremony.client_key),
             )
             .await;
         }
+        // The client as the sign-in events name it (its limit key, qa-passkeys-3 server N1).
         security::record_security_event(
             &state.db,
             "app_unlock_failed",
             Some(&admin.username),
-            Some(&ceremony.client),
+            Some(&ceremony.client_key),
             Some(security::Detail::facts(why.code())),
         )
         .await;
@@ -208,7 +209,7 @@ pub async fn unlock(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     lock::used_now(&session).await;
-    lock::record_unlocked(&state.db, &admin.username, Some(&ceremony.client)).await;
+    lock::record_unlocked(&state.db, &admin.username, Some(&ceremony.client_key)).await;
     json(StatusCode::OK, serde_json::json!({ "next": next }))
 }
 
@@ -316,9 +317,18 @@ pub async fn set(
         Some(minutes_detail(minutes)),
     )
     .await;
-    lock::with_cookie(
+    let mut done = lock::with_cookie(
         Redirect::to("/account?done=lock#app-lock").into_response(),
         lock::insecure(&state),
         minutes,
-    )
+    );
+    // Turned on: the pages this browser kept from before go (qa-passkeys-3 client M1) - they carry no lock, and a Back
+    // could show one from the cache. From now on a lock-on session's pages are never kept (`lock::mark_page`).
+    if minutes > 0 {
+        done.headers_mut().insert(
+            "clear-site-data",
+            axum::http::HeaderValue::from_static("\"cache\""),
+        );
+    }
+    done
 }

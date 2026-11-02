@@ -11,7 +11,7 @@ const MIN = 60 * 1000;
 
 // A fake window: a clock, timers run by the clock, events fired by hand, the <html> element's attributes and
 // classes, sessionStorage (or one that throws), fetches recorded and answered by the test.
-function fakeWindow({ lockMs = 5 * MIN, idle = 0, stored = {}, storage = true, path = "/devices/1", search = "?tab=apps", hash = "" } = {}) {
+function fakeWindow({ lockMs = 5 * MIN, idle = 0, stored = {}, storage = true, path = "/devices/1", search = "?tab=apps", hash = "", navigation = null } = {}) {
     let clock = 10000000;
     let timerId = 0;
     const timers = new Map();
@@ -45,7 +45,9 @@ function fakeWindow({ lockMs = 5 * MIN, idle = 0, stored = {}, storage = true, p
         addEventListener: (type, fn) => {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
         },
+        performance: navigation ? { getEntriesByType: (t) => (t === "navigation" ? [navigation] : []) } : undefined,
         document: {
+            title: "Anna's phone · Vibb Phone",
             documentElement: {
                 getAttribute: (name) => (name in attrs ? attrs[name] : null),
                 classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) },
@@ -101,7 +103,11 @@ function fakeWindow({ lockMs = 5 * MIN, idle = 0, stored = {}, storage = true, p
         win.visibility = "visible";
         win.fire("doc", "visibilitychange");
     };
-    win.install = () => install(win, { now: win.now });
+    // The wall clock can be stepped (`wallShift`) and the page's own clock paused (`monoPause`, a sleeping phone).
+    win.wallShift = 0;
+    win.monoPause = 0;
+    win.install = () =>
+        install(win, { now: () => win.now() + win.wallShift, mono: () => win.now() - win.monoPause });
     return win;
 }
 
@@ -303,4 +309,78 @@ test("the script is ES5 (§5.7)", () => {
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "");
     assert.ok(!/=>|\blet\s|\bconst\s|`|\bclass\s/.test(src), "no ES2015 syntax");
+});
+
+test("a history load (Back past the bfcache) or a cached page counts only the stored input; none is due (QA M1)", () => {
+    // Served long ago with a fresh-looking idle: the stored input says 6 min.
+    const back = fakeWindow({ idle: 2000, navigation: { type: "back_forward", transferSize: 900, decodedBodySize: 900 } });
+    back.stored[USED_KEY] = String(back.now() - 6 * MIN);
+    back.install();
+    assert.deepStrictEqual(back.replaced, [LOCK]);
+    assert.ok(back.classes.has("locked"));
+    // No stored input at all: due.
+    const none = fakeWindow({ idle: 0, navigation: { type: "back_forward", transferSize: 900, decodedBodySize: 900 } });
+    none.install();
+    assert.deepStrictEqual(none.replaced, [LOCK]);
+    // From the HTTP cache (nothing transferred) on a plain navigation: the same.
+    const cached = fakeWindow({ idle: 0, navigation: { type: "navigate", transferSize: 0, decodedBodySize: 5000 } });
+    cached.install();
+    assert.deepStrictEqual(cached.replaced, [LOCK]);
+    // A recent stored input keeps a history load open; a fresh navigation uses the server's numbers.
+    const recent = fakeWindow({ idle: 0, navigation: { type: "back_forward", transferSize: 900, decodedBodySize: 900 } });
+    recent.stored[USED_KEY] = String(recent.now() - MIN);
+    recent.install();
+    assert.deepStrictEqual(recent.replaced, []);
+    const fresh = fakeWindow({ idle: 0, navigation: { type: "navigate", transferSize: 900, decodedBodySize: 900 } });
+    fresh.install();
+    assert.deepStrictEqual(fresh.replaced, []);
+});
+
+test("pagehide into the back-forward cache veils the page and its title says only Vibb; shown again, both come back", () => {
+    const win = fakeWindow();
+    win.install();
+    win.fire("win", "pagehide", { persisted: false });
+    assert.ok(!win.classes.has("veiled"), "a plain unload isn't veiled");
+    win.fire("win", "pagehide", { persisted: true });
+    assert.ok(win.classes.has("veiled"));
+    assert.strictEqual(win.document.title, "Vibb");
+    win.fire("win", "pageshow", { persisted: true });
+    assert.ok(!win.classes.has("veiled"));
+    assert.strictEqual(win.document.title, "Anna's phone · Vibb Phone");
+    win.hide();
+    assert.strictEqual(win.document.title, "Vibb");
+    win.show();
+    assert.strictEqual(win.document.title, "Anna's phone · Vibb Phone");
+    // Locked: the title stays "Vibb".
+    const due = fakeWindow({ idle: 5 * MIN });
+    due.install();
+    assert.strictEqual(due.document.title, "Vibb");
+});
+
+test("a wall clock set back while the page is open doesn't hold the lock; nor does a sleeping phone's paused clock (QA L1)", () => {
+    const stepped = fakeWindow();
+    stepped.install();
+    stepped.advance(2 * MIN);
+    stepped.wallShift = -10 * MIN;
+    stepped.advance(3 * MIN + 1000);
+    assert.deepStrictEqual(stepped.replaced, [LOCK], "on time by the page's own clock");
+    const slept = fakeWindow();
+    slept.setTimeout = () => 0;
+    slept.install();
+    slept.hide();
+    slept.advance(6 * MIN);
+    slept.monoPause = 6 * MIN;
+    slept.show();
+    assert.deepStrictEqual(slept.replaced, [LOCK], "the wall clock saw the sleep");
+});
+
+test("a script's synthetic event is no use (isTrusted)", () => {
+    const win = fakeWindow();
+    win.install();
+    win.advance(4 * MIN);
+    win.fire("doc", "pointerdown", { type: "pointerdown", isTrusted: false });
+    assert.strictEqual(win.stored[USED_KEY], undefined);
+    assert.strictEqual(win.fetches.length, 0);
+    win.advance(MIN + 1000);
+    assert.deepStrictEqual(win.replaced, [LOCK]);
 });

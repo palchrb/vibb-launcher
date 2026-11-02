@@ -9,7 +9,12 @@
 // - Due = the lock time since the last input. Then `html.locked` (style.css hides `body > *`) and
 //   `location.replace("/lock?next=<this path>")` - at once at load, when the page becomes visible or comes back from
 //   the back-forward cache, when the time runs out on screen, or at an input that comes too late.
-// - Hidden: `html.veiled` too (best effort: the iOS app switcher's picture may be taken before it).
+// - A history load (Back/Forward) or a page served from the HTTP cache counts only the stored input, and none is due:
+//   its server numbers are old (qa-passkeys-3 client M1; the server also serves a lock-on session's pages `no-store`).
+// - Time within the page is the longer of the page's own clock (`performance.now()`) and the wall clock, so neither a
+//   clock set back nor a sleeping phone holds the lock (L1). Only real input counts (`isTrusted`).
+// - Hidden: `html.veiled` too (best effort: the iOS app switcher's picture may be taken before it), and the title is
+//   "Vibb" while hidden or locked.
 // - The input beacon `POST /api/used` (the server's "used", D3.3): on an input while the page is visible, at most
 //   once a minute (sessionStorage `handy-used-sent`); a 423 goes to the lock.
 // - `window.handyLock.due()` / `.lock(next)`: auto-reload.js, install-now.js, pull-refresh.js and reconnect.js ask it
@@ -62,17 +67,54 @@
         else el.className = (" " + (el.className || "") + " ").replace(" " + name + " ", " ").trim();
     }
 
+    /**
+     * How this page was loaded: a history load (Back/Forward) or one served from the HTTP cache, whose server numbers
+     * (`data-lock-idle`) are from when it was first served (qa-passkeys-3 client M1).
+     */
+    function oldPage(win) {
+        var perf = win.performance;
+        try {
+            var entry = perf && typeof perf.getEntriesByType === "function" ? perf.getEntriesByType("navigation")[0] : null;
+            if (entry) return entry.type === "back_forward" || (entry.transferSize === 0 && entry.decodedBodySize > 0);
+            return !!(perf && perf.navigation && perf.navigation.type === 2);
+        } catch (e) {
+            return false;
+        }
+    }
+
     function install(win, opts) {
         opts = opts || {};
         var now = opts.now || function () { return Date.now(); };
+        // Time within the page (qa-passkeys-3 client L1): the wall clock can be set back while the page is open, the
+        // page's own clock stops while the phone sleeps - the longer of the two counts, so neither holds the lock.
+        var mono = opts.mono || function () {
+            var perf = win.performance;
+            return perf && typeof perf.now === "function" ? perf.now() : now();
+        };
         var doc = win.document;
         var html = doc.documentElement;
         var going = false;
+        // The page's own title while it is hidden or locked: "Vibb" stands in (a device's name could show in the
+        // recents or a tab).
+        var title = null;
+
+        function hideTitle() {
+            if (title !== null || typeof doc.title !== "string") return;
+            title = doc.title;
+            doc.title = "Vibb";
+        }
+
+        function showTitle() {
+            if (title === null) return;
+            doc.title = title;
+            title = null;
+        }
 
         function lock(next) {
             if (going) return;
             going = true;
             addClass(html, "locked");
+            hideTitle();
             win.location.replace(lockUrl(next || here(win)));
         }
 
@@ -85,17 +127,34 @@
         var lockMs = parseInt(html && html.getAttribute ? html.getAttribute("data-lock-ms") : "", 10);
         if (!(lockMs > 0) || win.location.pathname === LOCK_PATH) return api;
 
-        var loaded = now();
-        var idle = parseInt(html.getAttribute("data-lock-idle"), 10);
-        var last = isNaN(idle) ? loaded : loaded - Math.max(0, idle);
+        var wallLoaded = now();
+        var monoLoaded = mono();
         var stored = readTime(win, USED_KEY);
         // A stored time past this load (the clock was set back) counts as this load.
-        if (stored !== null) last = Math.max(last, Math.min(stored, loaded));
+        var storedAgo = stored === null ? null : Math.max(0, wallLoaded - stored);
+        var ago;
+        if (oldPage(win)) {
+            // A history or cached load: only the stored input counts; none is due (the server sees no such load).
+            ago = storedAgo === null ? lockMs : storedAgo;
+        } else {
+            var idle = parseInt(html.getAttribute("data-lock-idle"), 10);
+            ago = isNaN(idle) ? 0 : Math.max(0, idle);
+            if (storedAgo !== null) ago = Math.min(ago, storedAgo);
+        }
+        // The last use, on both clocks.
+        var lastWall = wallLoaded - ago;
+        var lastMono = monoLoaded - ago;
+        // The stored time this page wrote last (a newer one is another page's of this tab: an unlock).
+        var written = null;
         var sent = 0;
         var timer = null;
 
+        function elapsed() {
+            return Math.max(mono() - lastMono, now() - lastWall);
+        }
+
         function due() {
-            return going || now() - last >= lockMs;
+            return going || elapsed() >= lockMs;
         }
         api.due = due;
 
@@ -122,16 +181,19 @@
             } catch (e) {}
         }
 
-        // An input: too late locks; else it is the last use (kept for the next page) and maybe the beacon.
-        function input() {
-            if (going) return;
+        // An input the parent made (a script's synthetic event never counts): too late locks; else it is the last use
+        // (kept for the next page) and maybe the beacon.
+        function input(e) {
+            if (going || (e && e.isTrusted === false)) return;
             if (due()) {
                 lock();
                 return;
             }
-            last = now();
-            writeTime(win, USED_KEY, last);
-            beacon(last);
+            lastMono = mono();
+            lastWall = now();
+            written = lastWall;
+            writeTime(win, USED_KEY, lastWall);
+            beacon(lastWall);
         }
 
         // Locks once due; until then a timer for the time left (a phone holds a hidden page's timers - the visible
@@ -146,13 +208,16 @@
             timer = win.setTimeout(function () {
                 timer = null;
                 check();
-            }, Math.max(1000, lockMs - (now() - last) + 50));
+            }, Math.max(1000, lockMs - elapsed() + 50));
         }
 
-        // The newest input this tab's other pages kept (an unlock writes one too).
+        // A newer input another page of this tab kept (an unlock writes one too).
         function reread() {
             var kept = readTime(win, USED_KEY);
-            if (kept !== null) last = Math.max(last, Math.min(kept, now()));
+            if (kept === null || kept === written || kept <= lastWall) return;
+            var at = Math.min(kept, now());
+            lastMono = mono() - (now() - at);
+            lastWall = at;
         }
 
         function shown() {
@@ -162,17 +227,23 @@
                 return;
             }
             removeClass(html, "veiled");
+            showTitle();
             check();
+        }
+
+        function veil() {
+            addClass(html, "veiled");
+            hideTitle();
         }
 
         doc.addEventListener("pointerdown", input, true);
         doc.addEventListener("keydown", input, true);
         doc.addEventListener("visibilitychange", function () {
             if (visible()) shown();
-            else addClass(html, "veiled");
+            else veil();
         });
         win.addEventListener("pagehide", function (e) {
-            if (e && e.persisted) addClass(html, "veiled");
+            if (e && e.persisted) veil();
         });
         win.addEventListener("pageshow", function (e) {
             if (!e || !e.persisted) return;
@@ -192,7 +263,8 @@
         USED_KEY: USED_KEY,
         SENT_KEY: SENT_KEY,
         BEACON_EVERY: BEACON_EVERY,
-        BEACON_URL: BEACON_URL
+        BEACON_URL: BEACON_URL,
+        oldPage: oldPage
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = exported;

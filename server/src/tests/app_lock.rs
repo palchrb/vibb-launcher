@@ -793,16 +793,54 @@ async fn losing_the_last_passkey_turns_the_lock_off() {
 }
 
 /// D3.4: every route of the admin router - the admin, host, `require_session`, JSON and lock groups, `/api/session` -
-/// either answers a locked session with the lock (a navigation 303 to `/lock`, a fetch 423) or is in `lock::EXEMPT`;
-/// and every exempt route is one (the list holds no stale entry). Read from main.rs's own `.route(` calls.
+/// either answers a locked session with the lock (a navigation 303 to `/lock`, a fetch 423) or is in `lock::EXEMPT`,
+/// which is probed with its own methods; every exempt route is one (the list holds no stale entry). Read from
+/// main.rs's own `.route(` calls, with the router's merges and services pinned (a group added another way would be
+/// unseen) and every phone route under `/api/devices/` (qa-passkeys-3 server L2).
 #[tokio::test]
 async fn every_route_is_locked_or_exempt() {
     let app = TestApp::new().await;
-    let (cookie, _, _) = locked_parent(&app, "1").await;
+    let (cookie, _, mut fake) = locked_parent(&app, "1").await;
     let main = include_str!("../main.rs");
     let router = &main[main.find("pub fn build_admin_router(").unwrap()..];
     let router = &router[..router.find("\n}\n").unwrap()];
-    let mut routes: Vec<String> = Vec::new();
+    // Every way a route joins the router: the known groups, the phone API and the static files - nothing else.
+    let joins: std::collections::BTreeSet<String> = regex::Regex::new(
+        r"\.(merge|nest|nest_service|route_service|fallback_service)\(\s*([^\s(),]+)",
+    )
+    .unwrap()
+    .captures_iter(router)
+    .map(|c| format!("{} {}", &c[1], &c[2]))
+    .collect();
+    let known: std::collections::BTreeSet<String> = [
+        "merge public_routes",
+        "merge onboarding_routes",
+        "merge lock_routes",
+        "merge admin_routes",
+        "merge host_routes",
+        "merge device_routes::device_routes",
+        "nest_service \"/static\"",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    assert_eq!(joins, known, "a new way into the router: walk it here");
+    let device = include_str!("../device_routes.rs");
+    let mut rest = device;
+    while let Some(at) = rest.find(".route(") {
+        rest = &rest[at + ".route(".len()..];
+        let path = rest.trim_start().trim_start_matches('"');
+        assert!(
+            path.starts_with("/api/devices/"),
+            "a phone route outside /api/devices/: {}",
+            &path[..40.min(path.len())]
+        );
+    }
+
+    // (path, methods) of every `.route(` call.
+    let get = regex::Regex::new(r"(^|[^a-z_])get\(").unwrap();
+    let post = regex::Regex::new(r"(^|[^a-z_])post\(").unwrap();
+    let mut routes: Vec<(String, Vec<Method>)> = Vec::new();
     let mut rest = router;
     while let Some(at) = rest.find(".route(") {
         rest = &rest[at + ".route(".len()..];
@@ -817,11 +855,23 @@ async fn every_route_is_locked_or_exempt() {
                 other => panic!("a route named by {other}: teach this test its path"),
             }
         };
-        routes.push(path);
+        let own = &rest[..rest.find(".route(").unwrap_or(rest.len())];
+        let mut methods = Vec::new();
+        if get.is_match(own) {
+            methods.push(Method::GET);
+        }
+        if post.is_match(own) {
+            methods.push(Method::POST);
+        }
+        assert!(!methods.is_empty(), "{path}: no method read");
+        routes.push((path, methods));
     }
     assert!(routes.len() > 150, "{} routes read", routes.len());
     for exempt in crate::lock::EXEMPT {
-        assert!(routes.iter().any(|r| r == exempt), "{exempt} is no route");
+        assert!(
+            routes.iter().any(|(r, _)| r == exempt),
+            "{exempt} is no route"
+        );
     }
     unused_for(&app, &cookie, 3600).await;
     let fill = |route: &str| {
@@ -840,37 +890,85 @@ async fn every_route_is_locked_or_exempt() {
             StatusCode::LOCKED
         );
     }
-    // The exempt ones last, by a GET only: their POSTs act (Sign Out, a sign-in step that ends the session).
-    routes.sort_by_key(|route| crate::lock::EXEMPT.contains(&route.as_str()));
-    for route in &routes {
-        // The session check answers itself (above).
-        if route == "/api/session" {
+    let not_locked = |res: &TestResponse| {
+        res.status != StatusCode::LOCKED
+            && !res.location().is_some_and(|to| to.starts_with("/lock"))
+    };
+    for (route, methods) in &routes {
+        let exempt = crate::lock::EXEMPT.contains(&route.as_str());
+        if route == "/api/session" || exempt {
             continue;
         }
         let uri = fill(route);
-        let exempt = crate::lock::EXEMPT.contains(&route.as_str());
         let navigation = browse(&app, Method::GET, &uri, &cookie, Way::Tap).await;
-        if exempt {
+        let fetch = browse(&app, Method::POST, &uri, &cookie, Way::Fetch).await;
+        let locked = navigation
+            .location()
+            .is_some_and(|to| to == "/lock" || to.starts_with("/lock?next="))
+            && fetch.status == StatusCode::LOCKED;
+        assert!(
+            locked,
+            "{route} ({methods:?}): neither locked nor exempt ({} / {})",
+            navigation.status, fetch.status
+        );
+    }
+    // The exempt ones, each by its own methods. Sign Out and the code step (its page too, without a code pending) end
+    // the session they come with: each gets a locked session of its own.
+    let ending = ["/logout", "/auth/verify-2fa"];
+    for (route, methods) in routes
+        .iter()
+        .filter(|(r, _)| crate::lock::EXEMPT.contains(&r.as_str()))
+    {
+        let uri = fill(route);
+        for method in methods {
+            let session = if ending.contains(&route.as_str()) {
+                let other = app.admin_cookie().await;
+                let res = set_lock(&app, &other, &mut fake, "1").await;
+                let other = session_after(&res, &other);
+                unused_for(&app, &other, 3600).await;
+                assert_eq!(
+                    browse(&app, Method::GET, "/devices", &other, Way::Tap)
+                        .await
+                        .location(),
+                    Some("/lock?next=%2Fdevices"),
+                    "the fresh session is locked"
+                );
+                other
+            } else {
+                cookie.clone()
+            };
+            let way = if *method == Method::GET {
+                Way::Tap
+            } else {
+                Way::Fetch
+            };
+            let res = browse(&app, method.clone(), &uri, &session, way).await;
             assert!(
-                navigation.status != StatusCode::LOCKED
-                    && !navigation
-                        .location()
-                        .is_some_and(|to| to.starts_with("/lock")),
-                "{route} is exempt but locked"
+                not_locked(&res),
+                "{method} {route} is exempt but locked ({})",
+                res.status
             );
-        } else {
-            let fetch = browse(&app, Method::POST, &uri, &cookie, Way::Fetch).await;
-            let locked = navigation
-                .location()
-                .is_some_and(|to| to == "/lock" || to.starts_with("/lock?next="))
-                && fetch.status == StatusCode::LOCKED;
-            assert!(
-                locked,
-                "{route}: neither locked nor exempt ({} / {})",
-                navigation.status, fetch.status
+            assert_ne!(
+                res.status,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {route}"
             );
+            if route == crate::lock::OPTIONS_ROUTE {
+                assert_eq!(
+                    res.status,
+                    StatusCode::OK,
+                    "the unlock's options while locked"
+                );
+            }
         }
     }
+    // Still locked after the probes (none of them opened it).
+    assert_eq!(
+        browse(&app, Method::GET, "/devices", &cookie, Way::Tap)
+            .await
+            .location(),
+        Some("/lock?next=%2Fdevices")
+    );
     for file in [
         "/static/style.css",
         "/static/manifest.webmanifest",
@@ -880,4 +978,131 @@ async fn every_route_is_locked_or_exempt() {
         let res = browse(&app, Method::GET, file, &cookie, Way::Fetch).await;
         assert!(res.status.is_success(), "{file}: {}", res.status);
     }
+}
+
+/// qa-passkeys-3 client M1: a lock-on session's pages are never kept (`no-store`, so a history load goes to the server
+/// and is sent to /lock), and the answer that turns the lock on clears the pages this browser kept from before.
+#[tokio::test]
+async fn a_lock_on_sessions_pages_are_never_kept() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let before = browse(&app, Method::GET, "/devices", &cookie, Way::Tap).await;
+    assert_eq!(before.headers[header::CACHE_CONTROL], "private, no-cache");
+    let mut fake = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut fake, "iPhone").await;
+    let on = set_lock(&app, &cookie, &mut fake, "5").await;
+    assert_eq!(on.headers["clear-site-data"], "\"cache\"");
+    for page in ["/devices", "/settings", "/devices/locate"] {
+        let res = browse(&app, Method::GET, page, &cookie, Way::Tap).await;
+        assert_eq!(res.status, StatusCode::OK, "{page}");
+        assert_eq!(res.headers[header::CACHE_CONTROL], "no-store", "{page}");
+    }
+    // Another time keeps it on (cleared again, harmless); Off clears nothing more and the pages are kept again.
+    let off = set_lock(&app, &cookie, &mut fake, "0").await;
+    assert!(off.headers.get("clear-site-data").is_none());
+    let after = browse(&app, Method::GET, "/devices", &cookie, Way::Tap).await;
+    assert_eq!(after.headers[header::CACHE_CONTROL], "private, no-cache");
+}
+
+/// qa-passkeys-3 server L1: a new sign-in in a locked session starts unlocked - another parent's password sign-in in
+/// it (no lock cookie, no passkey) isn't sent to a lock it could never open.
+#[tokio::test]
+async fn a_new_sign_in_in_a_locked_session_starts_unlocked() {
+    let app = TestApp::new().await;
+    let (cookie, _, _) = locked_parent(&app, "5").await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    unused_for(&app, &cookie, 3600).await;
+    assert_eq!(
+        browse(&app, Method::GET, "/devices", &cookie, Way::Tap)
+            .await
+            .location(),
+        Some("/lock?next=%2Fdevices")
+    );
+    let login = send(
+        &app,
+        Method::POST,
+        "/login",
+        HOST,
+        Some(&cookie),
+        &[("username", "pappa"), ("password", PASSWORD)],
+    )
+    .await;
+    assert_eq!(login.location(), Some("/auth/verify-2fa"));
+    let pending = session_after(&login, &cookie);
+    let code = app
+        .next_totp_code("pappa", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
+        .await;
+    let res = send(
+        &app,
+        Method::POST,
+        "/auth/verify-2fa",
+        HOST,
+        Some(&pending),
+        &[("code", &code)],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/"));
+    let signed_in = session_after(&res, &pending);
+    assert_eq!(session_minutes(&app, &signed_in).await, None);
+    assert_eq!(
+        browse(&app, Method::GET, "/devices", &signed_in, Way::Tap)
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+/// qa-passkeys-3 server N2/N3: a locked form POST goes back to the page it was sent from (its Referer, this host's
+/// only); the unlock's form takes an assertion past 4 KiB.
+#[tokio::test]
+async fn a_locked_form_comes_back_to_its_page() {
+    let app = TestApp::new().await;
+    let (cookie, _, _) = locked_parent(&app, "5").await;
+    unused_for(&app, &cookie, 3600).await;
+    let post = |referer: &'static str| {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/account/name")
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, cookie.clone())
+            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-mode", "navigate")
+            .header("sec-fetch-user", "?1")
+            .header(header::REFERER, referer)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("display_name=x"))
+            .unwrap();
+        app.send_via(&app.router, LOOPBACK_PEER, request)
+    };
+    assert_eq!(
+        post("https://handy.example.com/account?x=1#name")
+            .await
+            .location(),
+        Some("/lock?next=%2Faccount%3Fx%3D1")
+    );
+    assert_eq!(
+        post("https://evil.example/account").await.location(),
+        Some("/lock")
+    );
+    assert_eq!(
+        post("https://handy.example.com//evil.example")
+            .await
+            .location(),
+        Some("/lock")
+    );
+    let long = "a".repeat(5000);
+    let res = send(
+        &app,
+        Method::POST,
+        "/lock",
+        HOST,
+        Some(&cookie),
+        &[("assertion", &long), ("next", "/devices")],
+    )
+    .await;
+    assert_eq!(
+        res.status,
+        StatusCode::BAD_REQUEST,
+        "read, refused - not too large"
+    );
 }

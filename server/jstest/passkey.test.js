@@ -702,3 +702,28 @@ test("a 423 (the server's lock) goes to the lock screen and ends the flow there"
     assert.deepStrictEqual(locks, ["/account"]);
     assert.strictEqual(error.hidden, true, "no error shown");
 });
+
+test("the lock screen fetches a fresh challenge every 3.5 minutes on screen, so a late tap still prompts at once (QA L2)", async () => {
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => Promise.resolve(null));
+    const timers = [];
+    page.win.setTimeout = (fn, ms) => timers.push({ fn, ms });
+    page.win.document.visibilityState = "visible";
+    passkey.install(page.win);
+    await flush();
+    assert.strictEqual(timers.length, 1);
+    assert.strictEqual(timers[0].ms, passkey.UNLOCK_REFRESH_MS);
+    assert.ok(passkey.UNLOCK_REFRESH_MS < passkey.AHEAD_MS);
+    timers.shift().fn();
+    await flush();
+    assert.strictEqual(page.fetched.filter((f) => f[0] === "/lock/options").length, 2, "fetched again");
+    assert.strictEqual(timers.length, 1, "and again later");
+    // Hidden: no fetch (the page refetches when shown).
+    page.win.document.visibilityState = "hidden";
+    timers.shift().fn();
+    await flush();
+    assert.strictEqual(page.fetched.filter((f) => f[0] === "/lock/options").length, 2);
+    // The tap after the refresh prompts within the gesture.
+    page.win.document.visibilityState = "visible";
+    page.button.listeners.click();
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get");
+});

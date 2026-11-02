@@ -318,6 +318,8 @@ pub async fn login(
             .insert(admin_auth::EPOCH_KEY, admin.session_epoch)
             .await
             .ok();
+        // A new sign-in starts unlocked (design 74 D3.1, qa-passkeys-3 server L1); this account has no passkey yet.
+        crate::lock::set(&session, 0).await.ok();
         Redirect::to("/").into_response()
     }
 }

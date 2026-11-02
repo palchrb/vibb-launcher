@@ -440,6 +440,9 @@
     // a fetch between the tap and the prompt can lose it): `ready()` is the fresh options or null, `fetch()` gets new
     // ones. A challenge lives 5 minutes; options are used for 4.
     var AHEAD_MS = 240000;
+    // The lock screen fetches a fresh challenge this often while it is on screen (qa-passkeys-3 client L2), so a tap
+    // after a long wait still prompts at once.
+    var UNLOCK_REFRESH_MS = 210000;
 
     function ahead(win, url, fields) {
         var options = null;
@@ -522,6 +525,15 @@
             });
         });
         prefetch();
+        // On screen for long (a tablet on a stand): fresh options before the ready ones age out.
+        function refresh() {
+            if (win.document.visibilityState !== "hidden") {
+                challenge.spend();
+                prefetch();
+            }
+            if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
+        }
+        if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
         // A page shown again (a phone holds a hidden one) or back from the back-forward cache: fresh options.
         if (win.document.addEventListener) {
             win.document.addEventListener("visibilitychange", function () {
@@ -608,6 +620,7 @@
         routeOf: routeOf,
         encode: encode,
         AHEAD_MS: AHEAD_MS,
+        UNLOCK_REFRESH_MS: UNLOCK_REFRESH_MS,
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

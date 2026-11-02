@@ -185,8 +185,9 @@ pub async fn used_now(session: &Session) {
     session.insert(USED_AT_KEY, now_secs()).await.ok();
 }
 
-/// A new sign-in in this browser (D3.1): the lock cookie's minutes are copied into the session - only when the parent
-/// has a passkey for this RP ID; otherwise the lock could never be opened, and the cookie is left alone.
+/// A new sign-in in this browser (D3.1): it starts unlocked - whatever lock the session held before (another parent's,
+/// an old one) goes (qa-passkeys-3 server L1) -, then the lock cookie's minutes are copied into the session, only when
+/// the parent has a passkey for this RP ID; otherwise the lock could never be opened, and the cookie is left alone.
 pub async fn carry(
     state: &crate::AppState,
     session: &Session,
@@ -194,6 +195,9 @@ pub async fn carry(
     admin_id: i64,
     ceremony: &crate::passkeys::Ceremony,
 ) {
+    if let Err(err) = set(session, 0).await {
+        tracing::warn!(%err, "couldn't clear the old app lock at a sign-in");
+    }
     let Some(minutes) = cookie_minutes(headers, insecure(state)) else {
         return;
     };
@@ -238,6 +242,9 @@ pub struct Facts {
     pub user_activated: bool,
     /// The page's beacon ([BEACON_ROUTE]).
     pub beacon: bool,
+    /// The `Referer`'s path and query when it names this host (`Host`, or `X-Forwarded-Host`): where a form's POST was
+    /// sent from (only ever used through [local_next]).
+    pub from: Option<String>,
 }
 
 impl Facts {
@@ -260,6 +267,9 @@ impl Facts {
         Facts {
             method: request.method().clone(),
             beacon: matched.as_deref() == Some(BEACON_ROUTE),
+            from: header("referer").and_then(|referer| {
+                referer_path(referer, &[header("host"), header("x-forwarded-host")])
+            }),
             target,
             matched,
             navigation,
@@ -339,6 +349,20 @@ pub fn local_next(raw: &str) -> Option<String> {
     Some(raw.to_string())
 }
 
+/// The path and query of `referer` (`https://host/path?query#…`) when its host is one of `hosts`.
+fn referer_path(referer: &str, hosts: &[Option<&str>]) -> Option<String> {
+    let rest = referer
+        .strip_prefix("https://")
+        .or_else(|| referer.strip_prefix("http://"))?;
+    let (host, path) = rest.split_at(rest.find('/')?);
+    let ours = hosts.iter().flatten().any(|h| {
+        h.split(',')
+            .next()
+            .is_some_and(|h| h.trim().eq_ignore_ascii_case(host))
+    });
+    ours.then(|| path.split('#').next().unwrap_or("").to_string())
+}
+
 /// `/lock`, with `?next=` when there is a local one.
 pub fn lock_url(next: Option<&str>) -> String {
     match next.and_then(local_next) {
@@ -352,13 +376,17 @@ pub fn lock_url(next: Option<&str>) -> String {
     }
 }
 
-/// A locked request's answer (D3.4): a navigation goes to the lock screen (303 `/lock?next=<path?query>` - for a GET;
-/// a form's POST loses what was sent and comes back to the start, since the page locks first), anything else is 423
-/// with no body. `no-store` either way.
+/// A locked request's answer (D3.4): a navigation goes to the lock screen (303 `/lock?next=<path?query>` - a GET's own;
+/// a form's POST loses what was sent and comes back to the page it was sent from, since the page locks first),
+/// anything else is 423 with no body. `no-store` either way.
 pub fn locked_response(facts: &Facts) -> Response {
     let mut response = if facts.navigation {
-        let next =
-            matches!(facts.method, Method::GET | Method::HEAD).then_some(facts.target.as_str());
+        // A GET goes on to itself; a form's POST back to the page it was sent from (its `Referer`, when this host's).
+        let next = if matches!(facts.method, Method::GET | Method::HEAD) {
+            Some(facts.target.as_str())
+        } else {
+            facts.from.as_deref()
+        };
         Redirect::to(&lock_url(next)).into_response()
     } else {
         StatusCode::LOCKED.into_response()
@@ -411,6 +439,11 @@ pub async fn mark_page(response: Response, shown: Option<Shown>) -> Response {
         }
     };
     parts.headers.remove(header::CONTENT_LENGTH);
+    // Never kept (qa-passkeys-3 client M1): a history load of a lock-on session's page goes to the server, which sends a
+    // locked one to /lock - a page out of the HTTP cache would show with its old numbers.
+    parts
+        .headers
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Response::from_parts(parts, axum::body::Body::from(mark_html(&bytes, shown)))
 }
 
@@ -471,6 +504,25 @@ mod tests {
         assert_eq!(local_next(&format!("/{}", "a".repeat(600))), None);
         // `/locks` is a page of its own, not the lock.
         assert!(local_next("/locks").is_some());
+    }
+
+    #[test]
+    fn a_referer_counts_only_from_this_host() {
+        let ours = [Some("handy.example.com"), None];
+        assert_eq!(
+            referer_path("https://handy.example.com/account?x=1#name", &ours).as_deref(),
+            Some("/account?x=1")
+        );
+        assert_eq!(referer_path("https://evil.example/account", &ours), None);
+        assert_eq!(referer_path("https://handy.example.com", &ours), None);
+        assert_eq!(
+            referer_path(
+                "https://lan.example.com/x",
+                &[Some("a"), Some("lan.example.com, b")]
+            )
+            .as_deref(),
+            Some("/x")
+        );
     }
 
     #[test]

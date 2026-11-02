@@ -406,6 +406,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   shows after a failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`: `/logout` then answers
   `/login?next=…`, and the passkey sign-in (`POST /auth/passkey`'s `next`, the sign-in page's hidden field) goes on
   there (step 3: D1.5's Devices only without one). The unlock is no sign-in: `SIGNED_IN_AT_KEY` stays.
+- **The fix round** (`docs/review/qa-passkeys-3-*`, the coordinator's copies in the scratchpad): a lock-on session's
+  HTML is served `no-store` (`lock::mark_page`; a Back past the bfcache goes to the server and is sent to /lock), and
+  turning the lock on answers `Clear-Site-Data: "cache"`; app-lock.js counts only the stored input on a history or
+  HTTP-cache load (none = due), times within the page by the longer of `performance.now()` and the wall clock, takes
+  only `isTrusted` input, and shows the title "Vibb" while veiled or locked; the lock screen refreshes its challenge
+  every 3.5 minutes on screen. Every sign-in completion starts unlocked (`lock::carry` clears first; the not-ready
+  password sign-in too). A locked form POST's `next` is its `Referer`'s path when that names this host. `/lock` takes 6
+  KiB. calendar-preview.js never swaps a redirected answer into the page (an old Safari's fetch could get the lock's
+  303). The router walk pins the router's merges and services, every phone route under `/api/devices/`, and probes the
+  exempt routes by their own methods.
 - No migration (the lock lives in the session and the cookie).
 - Tests: `src/tests/app_lock.rs`, `lock::tests`, `jstest/app-lock.test.js`, and the lock's cases in
   `jstest/{reconnect,auto-reload,install-now,pull-refresh,passkey}.test.js`. Owed by hand: the iPhone PWA (the app

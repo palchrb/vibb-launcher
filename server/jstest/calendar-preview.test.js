@@ -30,7 +30,7 @@ function page() {
     install(doc, fetchFn, timers);
     const fire = (type, el) => (listeners[type] || []).forEach((fn) => fn({ target: el }));
     const run = () => timers.queue.splice(0).forEach((t) => t.fn && t.fn());
-    const answer = (i, html) => answers[i]({ ok: true, text: () => Promise.resolve(html) });
+    const answer = (i, html, extra) => answers[i](Object.assign({ ok: true, text: () => Promise.resolve(html) }, extra));
     return { fields, target, calls, fire, run, answer, timers };
 }
 
@@ -72,4 +72,13 @@ test("an older answer never overwrites a newer one; another form's input asks no
     p.answer(0, "older");
     await new Promise((r) => setImmediate(r));
     assert.strictEqual(p.target.innerHTML, "newer");
+});
+
+test("a redirected answer (the app lock's 303 to /lock) is never swapped into the page (design 74 D3.4)", async () => {
+    const p = page();
+    p.fire("input", p.fields[1]);
+    p.run();
+    p.answer(0, "<main>Locked</main>", { redirected: true, url: "https://handy.example.com/lock" });
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(p.target.innerHTML, "old");
 });
