@@ -512,6 +512,38 @@ class LockGlanceGuardTest {
         assertTrue(code("ClockApp.kt").contains("Handler(Looper.getMainLooper()).post { ClockReader.unverified() }"))
     }
 
+    /** Bug 2026-11-02 (a2): the alarm reader reads whether a notification rings - never its text or an intent. */
+    @Test
+    fun `the alarm notice reader reads only the ringing shape, catches everything and is wired in the listener`() {
+        val alarmReader = code("AlarmNoticeReader.kt")
+        assertTrue(alarmReader.contains("ringingAlarmShape(n.category, sbn.isOngoing, n.fullScreenIntent != null)"))
+        for (forbidden in listOf(
+            "extras", "EXTRA_", "contentIntent", "actions", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
+            ".send(", "startActivity", "Intent(", "SharedPreferences", "cancelNotification", "tickerText",
+        )) {
+            assertFalse("AlarmNoticeReader uses $forbidden", alarmReader.contains(forbidden))
+        }
+        for (line in Regex("""\bLog\.\w\(.*""").findAll(alarmReader).map { it.value }) {
+            val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
+            assertEquals(line, setOf("\${e.javaClass.simpleName}"), interpolations)
+        }
+        val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(alarmReader).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("connected", "disconnected", "posted", "removed", "ringing", "lockResumed"), publicFuns)
+        for (name in publicFuns - "ringing") assertTrue(name, body(alarmReader, name).contains("= guarded {"))
+        assertTrue(body(alarmReader, "ringing").contains("} catch (e: Throwable) {"))
+        val listener = code("BadgeListenerService.kt")
+        for (call in listOf("AlarmNoticeReader.connected(active)", "AlarmNoticeReader.posted(it)", "AlarmNoticeReader.removed(it)")) {
+            assertTrue(call, listener.contains(call))
+        }
+        assertTrue(body(listener, "onListenerDisconnected").contains("AlarmNoticeReader.disconnected()"))
+        assertTrue(body(listener, "onDestroy").contains("AlarmNoticeReader.disconnected()"))
+        // The lock asks for its clock apps only, and spends the notifications when it is back after the alarm.
+        val runtime = code("PinLockRuntime.kt")
+        assertTrue(body(runtime, "alarmNow").contains("AlarmNoticeReader.ringing(clockPackages())"))
+        val resumed = body(runtime, "onLockResumed")
+        assertTrue(resumed.indexOf("AlarmNoticeReader.lockResumed(yielding)") in 0 until resumed.indexOf("yielding = null"))
+    }
+
     @Test
     fun `Stopp sends one broadcast with background starts denied, never an activity (design 42)`() {
         val actions = code("ClockActions.kt")

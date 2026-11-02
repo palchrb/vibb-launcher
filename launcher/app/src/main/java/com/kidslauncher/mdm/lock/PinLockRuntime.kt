@@ -1309,10 +1309,13 @@ object PinLockRuntime {
         return SystemClock.elapsedRealtime() < emergencyFlowUntilElapsed && !(emergencyCallSeen && !telecom)
     }
 
-    /** The system clock app's alarm is probably ringing ([alarmLikelyRinging]). */
+    /** A clock app's alarm is probably ringing ([alarmRingingNow]): its ringing notification is up (bug 2026-11-02,
+     * a2 - the yield lasts while it rings, bounded by [ALARM_NOTICE_MAX_MS]), or the window after its time. */
     private fun alarmNow(context: Context): Boolean {
         rememberAlarm(context)
-        return alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis())
+        return alarmRingingNow(
+            com.kidslauncher.mdm.badges.AlarmNoticeReader.ringing(clockPackages()), rememberedAlarmMs, System.currentTimeMillis(),
+        )
     }
 
     // ---- the notice wake (launcher round 7 §3) ------------------------------------------------
@@ -1665,8 +1668,9 @@ object PinLockRuntime {
         KeyguardCover.onLockResumed(context, interactiveNow)
         skipBootMark("the lock is up")
         refrontAttempt = 0
-        // Back in front after the alarm: its exemption ends now (qa-10-code #4).
+        // Back in front after the alarm: its exemption ends now (qa-10-code #4) - the ringing notifications' too (a2).
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.lockResumed(yielding)
         yielding = null
         sosFlowUntilElapsed = 0L
         sosMarkUnlogged = false

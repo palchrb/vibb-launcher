@@ -20,7 +20,7 @@ data class RefrontInputs(
     /** "Emergency call" was tapped on the lock less than [EMERGENCY_FLOW_MS] ago: the
      * emergency dialer / Telecom confirmation is in front. */
     val emergencyFlow: Boolean,
-    /** The default clock app's alarm is probably ringing ([alarmLikelyRinging]). */
+    /** A clock app's alarm is probably ringing ([alarmRingingNow]). */
     val alarmRinging: Boolean,
     /** An allowed app's VoIP call rings or is on ([VoipPhase] not NONE, design 17): its ring or
      * call screen may be in front. */
@@ -249,6 +249,71 @@ fun rememberAlarm(remembered: Long?, next: Long?, nextCreator: String?, clockPac
 /** The lock came back after stepping aside for the alarm: the alarm was dismissed or snoozed, the
  * exemption ends now rather than after the window. */
 fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yieldedTo == "alarm") null else remembered
+
+/** `Notification.CATEGORY_ALARM` (duplicated to stay Android-free). */
+const val ALARM_CATEGORY = "alarm"
+
+/** Bug 2026-11-02 (a2): the longest one ringing notification holds the alarm's yield, from when it was first seen
+ * ringing - a notification stuck in the shade never holds the lock open past it. Clocks silence a ringing alarm
+ * by themselves well before (Google's and AOSP's "Silence after" at most 30 min, 10 by default). */
+const val ALARM_NOTICE_MAX_MS = 30 * 60_000L
+
+/**
+ * Bug 2026-11-02 (a2): whether a notification is a clock's ringing alarm (or ended timer) as the listener sees it -
+ * [ALARM_CATEGORY], ongoing and with a full-screen intent (its ringing screen). A snoozed, upcoming or missed alarm's
+ * notification has the category but no full-screen intent. Whose it is decides [AlarmNotices.ringingNow].
+ */
+fun ringingAlarmShape(category: String?, ongoing: Boolean, fullScreen: Boolean): Boolean =
+    category == ALARM_CATEGORY && ongoing && fullScreen
+
+/** One ringing-shaped notification: its package and when it was first seen ringing (elapsed realtime). */
+data class AlarmNotice(val packageName: String, val sinceMs: Long)
+
+/**
+ * Bug 2026-11-02 (a2): the alarm's yield lasts while a clock app's ringing notification is posted, not only the fixed
+ * [ALARM_RING_MS] after the alarm's time ([alarmLikelyRinging], kept as the fallback - no listener access, a clock
+ * whose notification isn't [ringingAlarmShape]). [ringing]: the ringing-shaped notifications by key; [consumed]: the
+ * keys whose yield ended - the lock came back in front after yielding to the alarm ([afterResume], as
+ * [alarmAfterResume]). A key leaves both when its notification is removed or posted again not ringing (a snooze),
+ * so the same alarm ringing again yields again. Pure; the listener's glue is `badges/AlarmNoticeReader`.
+ */
+data class AlarmNotices(
+    val ringing: Map<String, AlarmNotice> = emptyMap(),
+    val consumed: Set<String> = emptySet(),
+) {
+    /** A post (also an update of the same key): a ringing one keeps its first-seen time and whether it is consumed. */
+    fun posted(key: String, packageName: String, ringingShape: Boolean, nowMs: Long): AlarmNotices =
+        if (ringingShape) {
+            val kept = ringing[key]?.takeIf { it.packageName == packageName }
+            copy(ringing = ringing + (key to (kept ?: AlarmNotice(packageName, nowMs))))
+        } else {
+            removed(key)
+        }
+
+    fun removed(key: String): AlarmNotices =
+        if (key !in ringing && key !in consumed) this else AlarmNotices(ringing - key, consumed - key)
+
+    /** The listener's connect sweep: exactly [active]'s ringing ones (key, package, shape), keeping what was known. */
+    fun swept(active: List<Triple<String, String, Boolean>>, nowMs: Long): AlarmNotices {
+        val next = active.filter { it.third }.associate { (key, pkg, _) ->
+            key to (ringing[key]?.takeIf { it.packageName == pkg } ?: AlarmNotice(pkg, nowMs))
+        }
+        return AlarmNotices(next, consumed intersect next.keys)
+    }
+
+    /** The lock came back in front: after yielding to the alarm ([yieldedTo] "alarm"), every ringing key is spent. */
+    fun afterResume(yieldedTo: String?): AlarmNotices = if (yieldedTo == "alarm") copy(consumed = consumed + ringing.keys) else this
+
+    /** A notification of one of [clockPackages] rings, isn't spent and is younger than [ALARM_NOTICE_MAX_MS]. */
+    fun ringingNow(clockPackages: Set<String>, nowMs: Long): Boolean = ringing.any { (key, notice) ->
+        notice.packageName in clockPackages && key !in consumed && nowMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS
+    }
+}
+
+/** The alarm's yield ([RefrontInputs.alarmRinging] and the other "an alarm rings" reads): a clock's ringing
+ * notification ([AlarmNotices.ringingNow]) or, as before, the window after its time ([alarmLikelyRinging]). */
+fun alarmRingingNow(noticeRinging: Boolean, rememberedTriggerMs: Long?, nowWallMs: Long): Boolean =
+    noticeRinging || alarmLikelyRinging(rememberedTriggerMs, nowWallMs)
 
 /*
  * Crash guard (design §2(b), QA 10 #14, qa-10-code #6): only real crashes of the lock count -

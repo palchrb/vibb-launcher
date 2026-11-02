@@ -229,7 +229,16 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   by package and pinned signer (`lock/ClockApp`, `verified` refreshed off the main thread at start and on its package
   changes). `PinLockRuntime.clockPackages()` (the system clock - a system `ACTION_SHOW_ALARMS` handler - + Fossify while
   verified) opens the alarm exemption (`rememberAlarm` takes the set) and, with the kiosk off, `pinLockHelpers(clockApp)`
-  lets its alarm screen up. The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  lets its alarm screen up (with the kiosk on, the plan pins the allowed alarm apps during a rule too - bug 2026-11-02,
+  hardening.md). **The alarm's yield** (bug 2026-11-02, a2): `alarmNow` = `alarmRingingNow` - a clock app's ringing
+  notification (`badges/AlarmNoticeReader`, pure `AlarmNotices`/`ringingAlarmShape` in `RefrontPolicy.kt`: category
+  alarm, ongoing, a full-screen intent - a snoozed/upcoming/missed one has none; package, key and those flags only) holds
+  it while posted, at most `ALARM_NOTICE_MAX_MS` (30 min) from first seen; else, as before, `ALARM_RING_MS` (3 min) after
+  the alarm's time (no listener access, another clock's shape). The lock back in front after an "alarm" yield spends the
+  ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key, so it yields again
+  when it rings again. An ended timer's ringing notification has the same shape and yields too. Not covered: the kid
+  pressing power while it rings - the screen-off's lock-up comes over the ringing screen and nothing brings it back
+  (the clock silences itself, or the PIN opens the phone; as before). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
   always shown while there is one, r11). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
   stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
   (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally

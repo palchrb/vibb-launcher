@@ -83,6 +83,58 @@ class RefrontPolicyTest {
         assertEquals(at, alarmAfterResume(at, "call"))
     }
 
+    /** Bug 2026-11-02 (a2): the alarm's yield lasts while a clock's ringing notification is up, at most 30 minutes. */
+    @Test
+    fun `a ringing alarm notification holds the yield while posted, bounded, spent once the lock is back`() {
+        assertTrue(ringingAlarmShape(ALARM_CATEGORY, ongoing = true, fullScreen = true))
+        // A snoozed, upcoming or missed alarm (no full-screen intent), a clearable one, another category: not ringing.
+        assertFalse(ringingAlarmShape(ALARM_CATEGORY, ongoing = true, fullScreen = false))
+        assertFalse(ringingAlarmShape(ALARM_CATEGORY, ongoing = false, fullScreen = true))
+        assertFalse(ringingAlarmShape("call", ongoing = true, fullScreen = true))
+        assertFalse(ringingAlarmShape(null, ongoing = true, fullScreen = true))
+
+        val clocks = setOf("com.android.deskclock", "org.fossify.clock")
+        val t = 1_000_000L
+        val ringing = AlarmNotices().posted("k", "com.android.deskclock", ringingShape = true, nowMs = t)
+        assertTrue(ringing.ringingNow(clocks, t))
+        // Past the fixed 3-minute window - the bug: the lock came back over a ringing alarm.
+        assertTrue(ringing.ringingNow(clocks, t + ALARM_RING_MS + 1))
+        assertTrue(ringing.ringingNow(clocks, t + ALARM_NOTICE_MAX_MS - 1))
+        assertFalse("a stuck notification holds no lock open", ringing.ringingNow(clocks, t + ALARM_NOTICE_MAX_MS))
+        // An update of the same ringing notification keeps its first-seen time.
+        val updated = ringing.posted("k", "com.android.deskclock", ringingShape = true, nowMs = t + ALARM_NOTICE_MAX_MS - 1)
+        assertFalse(updated.ringingNow(clocks, t + ALARM_NOTICE_MAX_MS))
+        // Only the lock's clock apps: an allowlisted app's alarm-shaped notification never opens it.
+        assertFalse(AlarmNotices().posted("g", "com.example.game", true, t).ringingNow(clocks, t))
+        // Removed, or posted again without ringing (a snooze): gone at once.
+        assertFalse(ringing.removed("k").ringingNow(clocks, t + 1))
+        val snoozed = ringing.posted("k", "com.android.deskclock", ringingShape = false, nowMs = t + 1)
+        assertFalse(snoozed.ringingNow(clocks, t + 1))
+        assertEquals(AlarmNotices(), snoozed)
+        // The lock back in front after yielding to the alarm spends it (qa-10-code #4) - another yield doesn't.
+        assertTrue(ringing.afterResume("call").ringingNow(clocks, t + 1))
+        assertTrue(ringing.afterResume(null).ringingNow(clocks, t + 1))
+        val spent = ringing.afterResume("alarm")
+        assertFalse(spent.ringingNow(clocks, t + 1))
+        assertFalse("an update stays spent", spent.posted("k", "com.android.deskclock", true, t + 2).ringingNow(clocks, t + 2))
+        // ... until it stops ringing: the snoozed alarm ringing again yields again, with a fresh bound.
+        val again = spent.posted("k", "com.android.deskclock", false, t + 3).posted("k", "com.android.deskclock", true, t + 4)
+        assertTrue(again.ringingNow(clocks, t + 4 + ALARM_NOTICE_MAX_MS - 1))
+        // A second alarm ringing after the first was spent yields.
+        assertTrue(spent.posted("k2", "org.fossify.clock", true, t + 5).ringingNow(clocks, t + 5))
+        // The connect sweep: exactly the active ringing ones, keeping first-seen times and spent keys.
+        val swept = spent.swept(listOf(Triple("k", "com.android.deskclock", true), Triple("k3", "org.fossify.clock", false)), t + 6)
+        assertEquals(setOf("k"), swept.ringing.keys)
+        assertEquals(t, swept.ringing.getValue("k").sinceMs)
+        assertEquals(setOf("k"), swept.consumed)
+        assertEquals(AlarmNotices(), spent.swept(emptyList(), t + 6))
+        // The yield: the notification, or as before the window after the alarm's time (no listener, another clock).
+        assertTrue(alarmRingingNow(noticeRinging = true, rememberedTriggerMs = null, nowWallMs = t))
+        assertTrue(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = t, nowWallMs = t + 1))
+        assertFalse(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = t, nowWallMs = t + ALARM_RING_MS))
+        assertFalse(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = null, nowWallMs = t))
+    }
+
     @Test
     fun `crash guard - three crashes in two minutes trip it at the next start, a sync re-arms after 10 minutes`() {
         val t = 5_000_000L

@@ -108,10 +108,14 @@ data class EnforcementPlan(
  *   while SMS is blocked they're suspended whatever the allowlist says, override or not.
  * - [scheduleLocked]: bedtime or outside screen time ([KidModeEnforcer.lockReasonNow] isn't NONE,
  *   so never under an override). Every controllable package except [neverRestrict] and
- *   [alarmApps] (the system clock apps and a verified clock app holding the next alarm, so alarms ring) is suspended - but not hidden -
+ *   [alarmApps] (the lock's clock apps - every system clock and a verified Fossify Clock, [sparedAlarmApps] - so
+ *   alarms ring) is suspended - but not hidden -
  *   whatever the allowlist (also an unmanaged one - the lock comes from a server policy), and
  *   kiosk pins only our own package (which holds LockActivity, the phone book and the in-call UI)
- *   plus an allowlisted system dialer while calls are unmanaged.
+ *   plus an allowlisted system dialer while calls are unmanaged, and (bug 2026-11-02) the allowed [alarmApps]: their
+ *   ringing screen is a new task of their own, which lock task refuses for a package off the list - the alarm rang and
+ *   Stop never came up. The kid can reach the clock app (alarms, timer, stopwatch) during the rule through it, as
+ *   with the kiosk off (`pinLockHelpers`' clock app) - accepted.
  * - [lockUsableApps]: while [scheduleLocked], the apps the lock leaves usable - a rule's exempt
  *   apps, or the contacts' messaging apps once the screen-time budget is used up (handy step 6,
  *   `decideTimeLock`). They are spared by the lock and pinned, but still only if the allowlist
@@ -197,8 +201,8 @@ fun computeEnforcementPlan(
     if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE }
     if (restrictSms) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()
-    // The alarm app is spared by the lock only, so an alarm set inside bedtime still rings; it
-    // isn't pinned, so in kiosk it can show its alarm but not be opened from Home.
+    // The alarm apps are spared by the lock only, so an alarm set inside bedtime still rings (an alarm app that isn't
+    // allowed is hidden above, lock or not); the allowed ones are pinned during the lock too (below).
     // Design 69 §4.4: the calendar sync apps, while allowed, keep syncing through a lock (not neverRestrict, which
     // would also spare them the hide of an app that isn't allowed).
     if (locked) {
@@ -215,10 +219,11 @@ fun computeEnforcementPlan(
     val kiosk = if (appsManaged && kioskDesired) {
         // During the lock: our package and the lock's usable apps, plus an allowlisted system
         // dialer while calls are unmanaged (then it is the in-call UI the parent allowed) unless
-        // the rule allows no calls.
+        // the rule allows no calls, plus the allowed alarm apps (bug 2026-11-02): an unpinned clock's ringing
+        // screen is refused by lock task, so the alarm rang with no way to Stop it.
         val pinned = if (locked) {
             setOf(ownPackage) + allowed.filter { it in lockUsableApps } +
-                allowed.filter { it == systemDialer && !callsBlockedByRule }
+                allowed.filter { it == systemDialer && !callsBlockedByRule } + allowed.filter { it in alarmApps }
         } else {
             allowed + ownPackage
         }
@@ -377,16 +382,15 @@ fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<Stri
 }
 
 /**
- * Security review S-L3 (with code QA L2): the alarm apps the schedule lock spares - every [systemClocks] app (each
- * system `SHOW_ALARMS` handler), plus the next alarm's creator ([nextAlarmCreator]) or the `SHOW_ALARMS` resolver
- * ([resolvedClock]) only when it is one of the lock's clock apps (a system clock, or Fossify Clock while
- * [clockAppVerified]: [com.kidslauncher.mdm.lock.lockClockPackages]). An allowlisted app that calls `setAlarmClock` is
- * never spared by it.
+ * Security review S-L3 (with code QA L2): the alarm apps the schedule lock spares (and, while allowed, pins in kiosk) -
+ * the lock's clock apps ([com.kidslauncher.mdm.lock.lockClockPackages]): every [systemClocks] app (each system
+ * `SHOW_ALARMS` handler) and Fossify Clock while [clockAppVerified] (installed with its pinned signer). Since bug
+ * 2026-11-02 the verified Fossify Clock always, as `pinLockHelpers`' clock app - no longer only while it held the next
+ * alarm or resolved `SHOW_ALARMS`, so its alarm queued behind a system clock's was suspended. An allowlisted app that
+ * calls `setAlarmClock` is never spared by it.
  */
-fun sparedAlarmApps(nextAlarmCreator: String?, resolvedClock: String?, systemClocks: Set<String>, clockAppVerified: Boolean): Set<String> {
-    val clocks = com.kidslauncher.mdm.lock.lockClockPackages(systemClocks, clockAppVerified)
-    return systemClocks + listOfNotNull(nextAlarmCreator, resolvedClock).filter { it in clocks }
-}
+fun sparedAlarmApps(systemClocks: Set<String>, clockAppVerified: Boolean): Set<String> =
+    com.kidslauncher.mdm.lock.lockClockPackages(systemClocks, clockAppVerified)
 
 /** Security review S-L5: `DISALLOW_BLUETOOTH_SHARING` while the phone is [managed] (hardening's sense), lifted by the
  * override and the pause ([overrideActive]) - Bluetooth headphones (design 52) are unaffected. */
