@@ -70,11 +70,6 @@ class LockActivity : UIObjectActivity() {
      * rule began or stopped silencing alarms - the alarm row (or the clock row) comes or goes. */
     private val alarmListener: () -> Unit = { if (!isFinishing) render() }
 
-    /** E7 code QA 3: a ringing screen was sent from here - the next resume is the kid coming back from it (Stop,
-     * Snooze, Back), so it sends nothing (a clock slow to drop its notification would get its stale screen again);
-     * the alarm row stays for a ring still going. Main thread. */
-    private var alarmScreenSent = false
-
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** E7's M1: after a PIN unlock the alarm may still ring - once settled ([ALARM_SCREEN_SETTLE_MS]) the resumed screen
@@ -82,11 +77,10 @@ class LockActivity : UIObjectActivity() {
     private val alarmScreenSend: Runnable = object : Runnable {
         override fun run() {
             if (isFinishing) return
-            when (PinLockRuntime.sendAlarmScreen(this@LockActivity, typing = false, timeRuleScreen = true)) {
-                com.kidslauncher.mdm.lock.AlarmScreenStep.LATER -> handler.postDelayed(this, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
-                com.kidslauncher.mdm.lock.AlarmScreenStep.SEND -> alarmScreenSent = true
-                else -> {}
-            }
+            // E7 code QA 3, E7b's L1: a ring this screen (any instance) already sent this screen-on isn't sent again - the
+            // kid back from it (Stop, Snooze, Back, Home) lands on the card, the row there for a ring still going.
+            val step = PinLockRuntime.sendAlarmScreen(this@LockActivity, typing = false, timeRuleScreen = true)
+            if (step == com.kidslauncher.mdm.lock.AlarmScreenStep.LATER) handler.postDelayed(this, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
         }
     }
 
@@ -188,7 +182,7 @@ class LockActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         handler.removeCallbacks(alarmScreenSend)
-        if (alarmScreenSent) alarmScreenSent = false else handler.postDelayed(alarmScreenSend, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
+        handler.postDelayed(alarmScreenSend, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
         val handedOver = com.kidslauncher.mdm.lock.GlanceOpener.handOverPending()
         com.kidslauncher.mdm.lock.GlanceOpener.openHandedOver(this)
         val marked = takeUnlockMark() && PinLockRuntime.mode != com.kidslauncher.mdm.lock.LockMode.LOCKED
@@ -302,7 +296,7 @@ class LockActivity : UIObjectActivity() {
             // Its own task (`DayActivity.intent`); Back from it comes back here.
             is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))
             // The clock's own ringing screen (Stop, Snooze); Stop brings this screen back.
-            is LockRow.Alarm -> if (PinLockRuntime.openRingingAlarm(this)) alarmScreenSent = true
+            is LockRow.Alarm -> PinLockRuntime.openRingingAlarm(this)
             is LockRow.App -> {
                 val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return
                 try {

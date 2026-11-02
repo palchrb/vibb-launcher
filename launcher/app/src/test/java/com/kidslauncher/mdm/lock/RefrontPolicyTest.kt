@@ -201,6 +201,17 @@ class RefrontPolicyTest {
         assertEquals("k", notices.screenKey(clocks, capped = false))
         assertEquals("k", notices.screenOn().screenKey(clocks))
         assertEquals(ringing, ringing.screenOn())
+        // E7b's L1: a ring the time-rule screen sent (or the kid opened from its row) stays marked for every instance
+        // until the next screen-on or a new ring; a ring gone takes its mark along.
+        val shown = ringing.sentFromTimeRule("k")
+        assertEquals(setOf("k"), shown.timeRuleSent)
+        assertNull(shown.screenKey(clocks, kept = setOf("k") - shown.timeRuleSent))
+        assertEquals(emptySet<String>(), shown.screenOn().timeRuleSent)
+        assertEquals(emptySet<String>(), shown.removed("k").timeRuleSent)
+        assertEquals(emptySet<String>(), shown.posted(post(at = 6L), t + 50).timeRuleSent)
+        assertEquals(setOf("k"), shown.posted(post(), t + 50).timeRuleSent)
+        assertEquals(emptySet<String>(), shown.swept(emptyList(), t + 50).timeRuleSent)
+        assertEquals("no mark for a ring not kept", ringing, ringing.sentFromTimeRule("gone"))
         // The newest of two; a snooze's re-post or a new ring clears the count, so the alarm is brought back again.
         assertEquals("k2", notices.posted(post("k2"), t + 10).screenKey(clocks))
         val rangAgain = notices.posted(post(rings = false), t + 20).posted(post(), t + 30)

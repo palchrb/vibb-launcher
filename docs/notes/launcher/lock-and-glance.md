@@ -264,8 +264,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   and Android's face). **After an unlock** (E7's M1: the time-rule screen didn't bring it back, the shade shut by the
   kiosk, Recents empty - it rang until the clock gave up): `LockActivity`'s resume posts the same send after
   `ALARM_SCREEN_SETTLE_MS` (`sendAlarmScreen(.., timeRuleScreen = true)`: in charge while not LOCKED, the same count,
-  no time bound, no yield and so no check; a pause drops it; the resume right after a send from this screen - the kid
-  back from the ringing screen - sends nothing, code QA 3: a clock slow to drop its notification would get its stale
+  no time bound, no yield and so no check; a pause drops it; a ring the time-rule screen - any instance, Home starts a
+  new one - already sent this screen-on, or the kid opened from its row, isn't sent from there again
+  (`AlarmNotices.timeRuleSent`, cleared at the screen-on and with the ring; code QA 3, E7b's L1: the kid back from the
+  ringing screen by Stop, Back or Home lands on the card, and a clock slow to drop its notification never gets its stale
   screen again), and while an allowed clock's alarm rings unsilenced (`PinLockRuntime.alarmToStop`:
   `AlarmNoticeReader.openable`, not `silencesAlarms`) the card's first row is "Slå av alarmen" (`LockRow.Alarm`, the
   alarm glyph), whose tap sends the ringing screen uncapped (`openRingingAlarm`, `screenKey(.., capped = false)` after
