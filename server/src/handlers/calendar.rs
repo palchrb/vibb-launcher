@@ -464,6 +464,7 @@ fn kid_status_lines(
     status: &crate::calendar_kid_events::KidStatus,
     stop: Option<(&'static str, String)>,
     other_phone: Option<&str>,
+    server: &str,
 ) -> Vec<KidStatusLine> {
     let line = |text: String, warn: bool, data: &'static str| KidStatusLine {
         text,
@@ -496,6 +497,15 @@ fn kid_status_lines(
             t(lang, "calendar.kid_caldav.status.no_etag").to_string(),
             true,
             "no_etag",
+        )),
+        Some("not_listed") => out.push(line(
+            t_params(
+                lang,
+                "calendar.kid_caldav.status.not_listed",
+                &[("server", server)],
+            ),
+            true,
+            "not_listed",
         )),
         Some("too_big") => out.push(line(
             t(lang, "calendar.kid_caldav.status.too_big").to_string(),
@@ -569,6 +579,13 @@ fn kid_status_lines(
             ),
             true,
             "back_held",
+        ));
+    }
+    if status.restoring > 0 {
+        out.push(line(
+            count("calendar.kid_caldav.status.restoring", status.restoring),
+            false,
+            "restoring",
         ));
     }
     if status.refused > 0 {
@@ -816,7 +833,15 @@ pub async fn view_calendar(
                 .flatten(),
             None => None,
         };
-        kid_lines = kid_status_lines(lang, &zone, now, status, stop, other_phone.as_deref());
+        kid_lines = kid_status_lines(
+            lang,
+            &zone,
+            now,
+            status,
+            stop,
+            other_phone.as_deref(),
+            &kid_server,
+        );
         kid_restore = status.held.is_some();
     }
     render(

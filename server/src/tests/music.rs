@@ -95,8 +95,14 @@ pub struct CannedFetch {
 }
 
 /// [CannedFetch::serve]'s server.
-pub type Server =
-    std::sync::Arc<dyn Fn(&Recorded) -> Option<crate::music_net::SourceResponse> + Send + Sync>;
+pub type Server = std::sync::Arc<
+    dyn Fn(
+            &Recorded,
+        )
+            -> Option<Result<crate::music_net::SourceResponse, crate::music_net::FetchError>>
+        + Send
+        + Sync,
+>;
 
 impl CannedFetch {
     pub fn answer(&self, url: &str, status: u16, body: impl Into<Vec<u8>>) {
@@ -331,7 +337,7 @@ impl crate::music_net::Source for CannedFetch {
             if let Some(server) = server {
                 let seen = self.requests.lock().unwrap().last().cloned();
                 if let Some(answer) = seen.as_ref().and_then(|r| server(r)) {
-                    return Ok(answer);
+                    return answer;
                 }
             }
             let by_method = self

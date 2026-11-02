@@ -1260,6 +1260,7 @@ async fn the_kids_mass_delete_is_held_a_day_or_put_back() {
         &format!("/devices/{}/calendar", k.device),
         Some("dagen"),
     );
+    k.work().await;
     let answer = k.post_ok(&k.set(vec![])).await;
     let back = answer["back"].as_array().unwrap();
     assert_eq!(back.len(), 6);
@@ -1746,4 +1747,388 @@ async fn removing_the_account_or_the_phone_takes_every_row() {
         .await
         .unwrap();
     assert_eq!(tags, 0);
+}
+
+// ---- the code QA's findings, as regression tests ----------------------------------------------
+
+/// H1: a delete hand-back the phone may have applied is never cleared when the resource comes back: the restored
+/// version goes back as an upsert, and nothing is deleted.
+#[tokio::test]
+async fn a_restored_resource_after_a_delivered_delete_is_handed_back_not_deleted() {
+    let k = kid().await;
+    let set = k.set(vec![
+        event(1, "Kino", "20261103T160000Z", "20261103T180000Z"),
+        event(2, "Tannlege", "20261104T071500Z", "20261104T074500Z"),
+    ]);
+    k.post_ok(&set).await;
+    k.sync().await;
+    let kino = k.dav.href(&uid(1));
+    let body = k.dav.body(&kino).unwrap();
+    k.dav.parent_delete(&kino);
+    k.fetch().await;
+    let answer = k.post_ok(&set).await;
+    let back = answer["back"].as_array().unwrap().clone();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0]["op"], "delete");
+    let id = back[0]["id"].as_str().unwrap().to_string();
+    // The phone applies the delete; before it acknowledges, the parent restores the event (trash bin / undo).
+    k.dav.parent_put(&kino, &body);
+    k.fetch().await;
+    k.clear_writes();
+    let after = k.set_with(
+        vec![event(2, "Tannlege", "20261104T071500Z", "20261104T074500Z")],
+        json!({ "applied": [id] }),
+    );
+    let answer = k.post_ok(&after).await;
+    k.work().await;
+    assert!(
+        k.writes().iter().all(|w| w.0 != "DELETE"),
+        "{:?}",
+        k.writes()
+    );
+    assert!(k.dav.body(&kino).is_some());
+    let back = answer["back"].as_array().unwrap();
+    assert_eq!(
+        (back[0]["op"].as_str(), back[0]["summary"].as_str()),
+        (Some("upsert"), Some("Kino"))
+    );
+}
+
+/// H2: "Legg dem tilbake" whose GETs partly fail keeps the rest from being deleted; the job reads them later.
+#[tokio::test]
+async fn a_partly_failed_put_back_deletes_nothing_and_finishes_later() {
+    let k = kid().await;
+    k.post_ok(&k.set(six())).await;
+    k.sync().await;
+    k.clear_writes();
+    k.post_ok(&k.set(vec![])).await;
+    k.work().await;
+    assert!(k.writes().is_empty());
+    k.dav.switches(|s| s.fail_gets = 2);
+    assert_eq!(
+        restore_held(&k.app.state, k.device, k.now()).await.unwrap(),
+        6
+    );
+    k.work().await;
+    k.post_ok(&k.set(vec![])).await;
+    k.work().await;
+    assert_eq!(k.writes().iter().filter(|w| w.0 == "DELETE").count(), 0);
+    assert!(k.page().await.contains("data-kid-status=\"restoring\""));
+    // The account's backoffs pass (each 429 backs it off): every one is read and handed back.
+    k.set_now(t0() + TimeDelta::minutes(16));
+    k.work().await;
+    k.set_now(t0() + TimeDelta::hours(3));
+    k.work().await;
+    let back = k.post_ok(&k.set(vec![])).await["back"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(back, 6);
+    k.work().await;
+    assert_eq!(k.writes().iter().filter(|w| w.0 == "DELETE").count(), 0);
+}
+
+/// M2: a wipe the calendar undid before the day passed leaves no stale start: the next wipe is held too.
+#[tokio::test]
+async fn the_calendars_hold_survives_an_undone_wipe() {
+    let k = kid().await;
+    let set = k.set(six());
+    k.post_ok(&set).await;
+    k.sync().await;
+    let bodies: Vec<(String, String)> = (1..=6)
+        .map(|n| {
+            let h = k.dav.href(&uid(n));
+            (h.clone(), k.dav.body(&h).unwrap())
+        })
+        .collect();
+    for (h, _) in &bodies {
+        k.dav.parent_delete(h);
+    }
+    k.fetch().await;
+    assert_eq!(k.post_ok(&set).await["back"], json!([]), "held");
+    for (h, b) in &bodies {
+        k.dav.parent_put(h, b);
+    }
+    k.fetch().await;
+    assert_eq!(k.post_ok(&set).await["back"], json!([]));
+    k.set_now(t0() + TimeDelta::hours(25));
+    for (h, _) in &bodies {
+        k.dav.parent_delete(h);
+    }
+    k.fetch().await;
+    let back = k.post_ok(&k.set(six())).await["back"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(back, 0, "the second wipe is held as the first");
+}
+
+/// M1: the parent's undo while a delivered hand-back waits replaces the hand-back; nothing is overwritten.
+#[tokio::test]
+async fn a_parents_undo_while_a_hand_back_waits_replaces_it() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    let set = k.set(vec![
+        kino.clone(),
+        event(2, "Tannlege", "20261104T071500Z", "20261104T074500Z"),
+    ]);
+    k.post_ok(&set).await;
+    k.sync().await;
+    let href = k.dav.href(&uid(1));
+    let original = k.dav.body(&href).unwrap();
+    k.dav
+        .parent_edit(&href, |b| b.replace("SUMMARY:Kino", "SUMMARY:Kino P1"));
+    k.fetch().await;
+    let back = k.post_ok(&set).await["back"].as_array().unwrap().clone();
+    assert_eq!(back.len(), 1);
+    let id = back[0]["id"].as_str().unwrap().to_string();
+    // The phone applies P1; before it acknowledges, the parent undoes the edit.
+    k.dav.parent_put(&href, &original);
+    k.fetch().await;
+    k.clear_writes();
+    let applied = k.set_with(
+        vec![
+            event(1, "Kino P1", "20261103T160000Z", "20261103T180000Z"),
+            event(2, "Tannlege", "20261104T071500Z", "20261104T074500Z"),
+        ],
+        json!({ "applied": [id] }),
+    );
+    let answer = k.post_ok(&applied).await;
+    k.work().await;
+    assert!(!k.dav.body(&href).unwrap().contains("Kino P1"));
+    assert!(k.writes().is_empty());
+    assert_eq!(answer["back"][0]["summary"], "Kino", "the undo handed back");
+}
+
+/// H3: a REPORT answered before a write is never judged after it.
+#[tokio::test]
+async fn a_report_from_before_a_write_says_nothing_about_it() {
+    let k = kid().await;
+    let other = event(2, "Tannlege", "20261104T071500Z", "20261104T074500Z");
+    k.post_ok(&k.set(vec![
+        event(1, "Kino", "20261103T160000Z", "20261103T180000Z"),
+        other.clone(),
+    ]))
+    .await;
+    k.sync().await;
+    let href = k.dav.href(&uid(1));
+    let old_body = k.dav.body(&href).unwrap();
+    let old_etag: String =
+        sqlx::query_scalar("SELECT etag FROM kid_caldav_events WHERE device_id = ? AND uid = ?")
+            .bind(k.device)
+            .bind(uid(1))
+            .fetch_one(&k.app.db)
+            .await
+            .unwrap();
+    let fetch_began = k.now();
+    let stale = vec![crate::caldav::DavResource {
+        href: href
+            .trim_start_matches("https://dav.example.org")
+            .to_string(),
+        etag: Some(old_etag),
+        data: old_body,
+    }];
+    k.set_now(t0() + TimeDelta::seconds(30));
+    let edited = k.set(vec![
+        event(1, "Kino med Ola", "20261103T160000Z", "20261103T180000Z"),
+        other,
+    ]);
+    k.post_ok(&edited).await;
+    k.work().await;
+    assert!(k.dav.body(&href).unwrap().contains("Kino med Ola"));
+    after_fetch(&k.app.state, k.source, &stale, fetch_began, fetch_began)
+        .await
+        .unwrap();
+    let answer = k.post_ok(&edited).await;
+    assert_eq!(answer["back"], json!([]));
+    assert_eq!(
+        answer["pending"], 1,
+        "still waiting for a fetch that saw it (R-L2)"
+    );
+}
+
+/// M3: the claim is a token: a job whose claim was taken over neither keeps nor releases the new one.
+#[tokio::test]
+async fn the_claim_is_kept_and_released_only_by_its_own_job() {
+    let k = kid().await;
+    let db = &k.app.db;
+    let first = claim(db, k.account, t0()).await.unwrap().unwrap();
+    assert!(claim(db, k.account, t0()).await.unwrap().is_none());
+    assert!(
+        keep_claim(db, k.account, &first, t0() + TimeDelta::minutes(4))
+            .await
+            .unwrap()
+    );
+    // Lost for good (a job that died): taken over after CLAIM_FOR.
+    let later = t0() + TimeDelta::minutes(10);
+    let second = claim(db, k.account, later).await.unwrap().unwrap();
+    assert!(!keep_claim(db, k.account, &first, later).await.unwrap());
+    assert!(keep_claim(db, k.account, &second, later).await.unwrap());
+}
+
+/// A POST while a write is in flight: the newer version is written next, the older never wins.
+#[tokio::test]
+async fn a_set_posted_during_a_write_wins() {
+    let k = kid().await;
+    k.post_ok(&k.set(vec![event(
+        1,
+        "Kino",
+        "20261103T160000Z",
+        "20261103T180000Z",
+    )]))
+    .await;
+    k.app.fetch.hold();
+    let state = k.app.state.clone();
+    let (account, now) = (k.account, k.now());
+    let job = tokio::spawn(async move { work(&state, account, now).await });
+    k.app.fetch.wait_in_flight().await;
+    k.post_ok(&k.set(vec![event(
+        1,
+        "Kino 2",
+        "20261103T160000Z",
+        "20261103T180000Z",
+    )]))
+    .await;
+    k.app.fetch.release();
+    job.await.unwrap().unwrap();
+    k.work().await;
+    k.fetch().await;
+    assert!(k.dav.body(&k.dav.href(&uid(1))).unwrap().contains("Kino 2"));
+    let answer = k
+        .post_ok(&k.set(vec![event(
+            1,
+            "Kino 2",
+            "20261103T160000Z",
+            "20261103T180000Z",
+        )]))
+        .await;
+    assert_eq!(
+        (answer["back"].clone(), answer["pending"].clone()),
+        (json!([]), json!(0))
+    );
+}
+
+/// L2: a refused delete backs off instead of going round every pass.
+#[tokio::test]
+async fn a_refused_delete_backs_off() {
+    let k = kid().await;
+    k.post_ok(&k.set(vec![event(
+        1,
+        "Kino",
+        "20261103T160000Z",
+        "20261103T180000Z",
+    )]))
+    .await;
+    k.sync().await;
+    k.dav.switches(|s| s.writes_answer = Some(409));
+    k.clear_writes();
+    k.post_ok(&k.set(vec![])).await;
+    k.work().await;
+    k.work().await;
+    assert_eq!(k.writes().len(), 1);
+    assert_eq!(k.state_of(1).await.as_deref(), Some("deleting"));
+}
+
+/// L3: a write's 404 with the collection itself gone is no parent's delete.
+#[tokio::test]
+async fn a_gone_collection_hands_back_no_delete() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.sync().await;
+    k.dav.switches(|s| s.collection_gone = true);
+    let mut moved = kino;
+    moved["summary"] = "Kino flyttet".into();
+    k.post_ok(&k.set(vec![moved.clone()])).await;
+    k.work().await;
+    assert_eq!(k.post_ok(&k.set(vec![moved])).await["back"], json!([]));
+}
+
+/// L5: an update whose ETag couldn't be read back keeps the old one: the parent's later delete is seen (412, 404),
+/// never answered by a create.
+#[tokio::test]
+async fn a_lost_etag_after_an_update_never_becomes_a_create() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.sync().await;
+    k.dav.switches(|s| {
+        s.put_without_etag = true;
+        s.fail_gets = 1;
+    });
+    let mut v2 = kino.clone();
+    v2["summary"] = "Kino 2".into();
+    k.post_ok(&k.set(vec![v2.clone()])).await;
+    k.work().await;
+    k.dav.parent_delete(&k.dav.href(&uid(1)));
+    let mut v3 = kino;
+    v3["summary"] = "Kino 3".into();
+    k.post_ok(&k.set(vec![v3.clone()])).await;
+    k.due().await;
+    k.clear_writes();
+    k.work().await;
+    assert!(
+        k.writes().iter().all(|w| w.3.is_none()),
+        "no create: {:?}",
+        k.writes()
+    );
+    assert!(k.dav.body(&k.dav.href(&uid(1))).is_none());
+    assert_eq!(k.post_ok(&k.set(vec![v3])).await["back"][0]["op"], "delete");
+}
+
+/// L7: a server whose ETags never match stops after a couple of tries per row.
+#[tokio::test]
+async fn again_and_again_backs_off() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.sync().await;
+    k.dav.switches(|s| s.fail_next_with_412 = 100);
+    let mut v2 = kino;
+    v2["summary"] = "Kino 2".into();
+    k.clear_writes();
+    k.post_ok(&k.set(vec![v2])).await;
+    k.work().await;
+    assert!(k.writes().len() <= 3, "{}", k.writes().len());
+    k.work().await;
+    assert!(k.writes().len() <= 3, "backed off");
+}
+
+/// L8 and N7: a calendar the last Test no longer lists says so; a second resource with the kid's UID at another
+/// href is never taken for ours.
+#[tokio::test]
+async fn not_listed_says_so_and_a_copy_elsewhere_is_not_ours() {
+    let k = kid().await;
+    k.post_ok(&k.set(vec![event(
+        1,
+        "Kino",
+        "20261103T160000Z",
+        "20261103T180000Z",
+    )]))
+    .await;
+    k.sync().await;
+    // Another client's copy of the UID, its text changed, at another href that sorts first.
+    let copy = k
+        .dav
+        .body(&k.dav.href(&uid(1)))
+        .unwrap()
+        .replace("SUMMARY:Kino", "SUMMARY:Kopi");
+    k.dav.parent_put(&format!("{COLLECTION}0-kopi.ics"), &copy);
+    k.fetch().await;
+    assert_eq!(
+        k.post_ok(&k.set(vec![event(
+            1,
+            "Kino",
+            "20261103T160000Z",
+            "20261103T180000Z"
+        )]))
+        .await["back"],
+        json!([])
+    );
+    sqlx::query("UPDATE caldav_accounts SET calendars_json = '[]'")
+        .execute(&k.app.db)
+        .await
+        .unwrap();
+    k.work().await;
+    assert!(k.page().await.contains("data-kid-status=\"not_listed\""));
 }

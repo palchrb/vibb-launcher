@@ -846,6 +846,7 @@ async fn fetch_with(
         let data = data.text.trim().trim_start_matches('\u{feff}').trim();
         // Each resource as it came, for design 72b's per-resource read of the kid's events (D4.6).
         kept.push(DavResource {
+            href: r.href.clone(),
             etag: r
                 .prop(DAV, "getetag")
                 .map(|p| p.text.trim().to_string())
@@ -890,6 +891,8 @@ async fn fetch_with(
 /// One resource of a calendar's `REPORT` (design 72b D4.6): its `getetag` and its `calendar-data` - matched to a
 /// kid event by its UID, never by its href (QA N5). No `Debug`: the data is the calendar's events.
 pub struct DavResource {
+    /// As the server wrote it: only to choose between two resources with the same UID, never stored.
+    pub href: String,
     pub etag: Option<String>,
     pub data: String,
 }

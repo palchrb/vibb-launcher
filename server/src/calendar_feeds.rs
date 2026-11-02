@@ -418,6 +418,7 @@ pub async fn refresh(
             &row.url_key_fp,
         )
     });
+    let mut report_at = now;
     let result = match url.and_then(|u| String::from_utf8(u).ok()) {
         None => Err((FeedError::code("key_lost"), row.lan)),
         // A CalDAV calendar (design 72 step 2): its account's login, its validator the collection's ctag. A calendar
@@ -432,6 +433,9 @@ pub async fn refresh(
                 None => false,
             };
             let validator = if force { None } else { row.etag.as_deref() };
+            // The instant the REPORT goes, after the writes made first (code QA H3): `after_fetch` judges nothing
+            // written after it.
+            report_at = state.kid_writes.now().max(now);
             crate::caldav::refresh_source(
                 state,
                 row.account_id,
@@ -602,7 +606,7 @@ pub async fn refresh(
     }
     if row.kind == "caldav" {
         // Design 72b D4.6: the kid's events in this calendar read one by one - a parent's edit or delete handed back.
-        crate::calendar_kid_events::after_fetch(state, id, &resources, now).await?;
+        crate::calendar_kid_events::after_fetch(state, id, &resources, now, report_at).await?;
     }
     if changed {
         nudge(state, id).await;

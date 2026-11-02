@@ -266,8 +266,12 @@ entry.json timestamp taken) follows 0111, and `0113_calendar_lock_ping.sql` (the
 `device_emergency_numbers`, a phone's emergency menu) follows 0113, and `0115_device_rule_off.sql` (Tidsregler,
 2026-11-01: `device_rule_off`, a switch per rule and phone; the old Own rules choice turned into its rows;
 `extra_time_request` targets repointed to `#quick`) follows 0114, and `0116_passkeys.sql` (design 74 step 1:
-`admin_passkeys`, `admin_users.webauthn_user_id`) follows 0115 (`migrations_from_73_in_order`, which takes every
-migration from 0073 on). The next free number is 0117.
+`admin_passkeys`, `admin_users.webauthn_user_id`) follows 0115, and `0120_calendar_kid_writes.sql` (design 72b: the
+kid's events written to a marked CalDAV calendar - `device_calendar_feeds.kid_writes`, `device_kid_events`,
+`kid_caldav_events`, `kid_caldav_tags`, the account's write claim and backoff) follows 0116; it was 0117 on its branch
+and was renumbered past `calendar-in-rules`' 0119 before any release ran it, since a lower number arriving after a
+higher one gets no pre-migration backup (`startup::pre_migration_backup` compares only the highest version)
+(`migrations_from_73_in_order`, which takes every migration from 0073 on). The next free number is 0121.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request), `webauthn_user_id` (0116, design 74: a passkey's user handle, 16 random bytes made at the first add); `admin_passkeys` (0116: a parent's passkeys - the COSE key, its RP ID, the counter, BE/BS; `docs/notes/server/connectivity.md`, "Passkeys")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture")

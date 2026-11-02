@@ -1,5 +1,5 @@
 //! CalDAV write-back of the kid's own events (design 72b, `docs/design/72b-caldav-write-back.md` at the monorepo
-//! root; migration `0117_calendar_kid_writes.sql`). The parent marks one CalDAV calendar, ticked for the phone, as the
+//! root; migration `0120_calendar_kid_writes.sql`). The parent marks one CalDAV calendar, ticked for the phone, as the
 //! kid's (Kalender's select "Barnets avtaler", `caldav:<source uid>`); the phone keeps writing in its own "Min
 //! kalender" and posts the whole set of the kid's coming events ([post], `POST /api/devices/calendar/kid-events`);
 //! the server diffs it against what it wrote and writes each event to `<collection>/<uid>.ics` with the account's app
@@ -497,6 +497,24 @@ fn read_set(body: &Value) -> Result<Set, &'static str> {
     })
 }
 
+/// A set read and encoded again as the server keeps it (`intake_limits`: every key the contract's `snapshot` has
+/// survives the reading).
+#[cfg(test)]
+pub(crate) fn set_as_read(body: &Value) -> Option<Value> {
+    let set = read_set(body).ok()?;
+    Some(serde_json::json!({
+        "calendar": set.calendar,
+        "rev": set.rev,
+        "from": KidTime::At(set.from.naive_utc()).wire(),
+        "cut": set.cut,
+        "cut_from": set.cut_from.map(KidTime::wire),
+        "cut_uids": set.cut_uids,
+        "ended": set.ended,
+        "applied": set.applied,
+        "events": set.events,
+    }))
+}
+
 /// The set as stored (`device_kid_events`). No `Debug`.
 struct StoredSet {
     rev: Option<String>,
@@ -507,6 +525,7 @@ struct StoredSet {
     cut_uids: Option<Vec<String>>,
     ended: HashSet<String>,
     held_since: Option<DateTime<Utc>>,
+    held_deletes: usize,
     error: Option<String>,
 }
 
@@ -520,6 +539,7 @@ struct SetRow {
     cut_uids: Option<String>,
     ended: String,
     held_since: Option<String>,
+    held_deletes: i64,
     error: Option<String>,
 }
 
@@ -528,7 +548,7 @@ async fn stored_set(
     device_id: i64,
 ) -> Result<Option<StoredSet>, sqlx::Error> {
     let row: Option<SetRow> = sqlx::query_as(
-        "SELECT rev, events_json, from_at, cut, cut_from, cut_uids, ended, held_since, error \
+        "SELECT rev, events_json, from_at, cut, cut_from, cut_uids, ended, held_since, held_deletes, error \
          FROM device_kid_events WHERE device_id = ?",
     )
     .bind(device_id)
@@ -550,6 +570,7 @@ async fn stored_set(
             .and_then(|j| serde_json::from_str(j).ok()),
         ended: serde_json::from_str(&r.ended).unwrap_or_default(),
         held_since: r.held_since.as_deref().and_then(parse_stamp),
+        held_deletes: r.held_deletes.max(0) as usize,
         error: r.error,
     }))
 }
@@ -574,10 +595,13 @@ struct Row {
     next_at: Option<String>,
     back_id: Option<String>,
     back_json: Option<String>,
+    back_after: Option<String>,
+    fetch_wait: Option<String>,
+    restore_wanted: bool,
 }
 
 const ROW_COLUMNS: &str = "uid, href, etag, sent_hash, remote_hash, attempted_hash, sequence, created_at_remote, \
-     start_at, end_at, state, failures, next_at, back_id, back_json";
+     start_at, end_at, state, failures, next_at, back_id, back_json, back_after, fetch_wait, restore_wanted";
 
 /// The versions sent whose answers weren't seen (`attempted_hash`, at most [MAX_ATTEMPTS], the newest last): a 412
 /// that reads one of them is our own lost answer (R-L1a), never a parent's edit.
@@ -610,7 +634,23 @@ impl Row {
 
     /// The resource may exist on the calendar: written (an ETag), or a create sent whose answer was lost.
     fn on_calendar(&self) -> bool {
-        self.etag.is_some() || (self.state == "pending" && self.attempted_hash.is_some())
+        self.etag.is_some()
+            || (matches!(self.state.as_str(), "pending" | "kept") && self.attempted_hash.is_some())
+    }
+
+    /// Its hand-back is a delete.
+    fn back_is_delete(&self) -> bool {
+        self.back_json
+            .as_deref()
+            .is_some_and(|b| b.contains("\"op\":\"delete\""))
+    }
+
+    /// Its hand-back is held (the calendar's mass delete, D2.6) and so was never sent.
+    fn back_held(&self, now: DateTime<Utc>) -> bool {
+        self.back_after
+            .as_deref()
+            .and_then(parse_stamp)
+            .is_some_and(|after| after > now)
     }
 
     fn written(&self) -> bool {
@@ -653,8 +693,10 @@ struct Plan {
     deletes: Vec<String>,
     /// Ended: kept on the calendar as it is.
     past: Vec<String>,
-    /// Missing, not deletable now (cut, frozen): a waiting write or delete dropped.
+    /// Missing, not deletable now (cut, frozen, a put-back asked for): a waiting write or delete dropped.
     keep: Vec<String>,
+    /// A delete kept back by the phone's clock (L4): the set isn't taken as done.
+    frozen_keeps: bool,
     /// Never on the calendar: the row goes.
     drop: Vec<String>,
     released_present: Vec<String>,
@@ -694,7 +736,7 @@ fn plan(set: &StoredSet, rows: &HashMap<String, Row>, now: DateTime<Utc>) -> Pla
                     out.writes.push(row.uid.clone());
                 }
             }
-            // ok, pending, deleting (the kid undid a delete).
+            // ok, pending, deleting (the kid undid a delete), kept.
             _ => {
                 // D2.5 rule 1: written only when the kid changed it (`sent_hash`) and the calendar doesn't hold it
                 // already (`remote_hash`); a row never confirmed on the calendar (no ETag) is written (or found).
@@ -742,7 +784,8 @@ fn plan(set: &StoredSet, rows: &HashMap<String, Row>, now: DateTime<Utc>) -> Pla
                                 }
                         }
                     };
-                if frozen || cut_keeps {
+                if frozen || cut_keeps || row.restore_wanted {
+                    out.frozen_keeps |= frozen && !cut_keeps && !row.restore_wanted;
                     out.keep.push(row.uid.clone());
                 } else {
                     out.deletes.push(row.uid.clone());
@@ -804,9 +847,10 @@ async fn apply_plan(
         .await?;
     }
     for uid in &plan.keep {
+        // Neither written nor deleted while it is kept out of the set; never counted as waiting (code QA N5).
         sqlx::query(
-            "UPDATE kid_caldav_events SET state = 'ok' WHERE device_id = ? AND uid = ? \
-             AND state IN ('pending', 'deleting') AND etag IS NOT NULL",
+            "UPDATE kid_caldav_events SET state = 'kept', next_at = NULL WHERE device_id = ? AND uid = ? \
+             AND state IN ('pending', 'deleting')",
         )
         .bind(device_id)
         .bind(uid)
@@ -850,19 +894,26 @@ async fn apply_plan(
         .await?;
     }
     // The kid's mass delete waits 24 h by time (QA M4): once held, every delete waits out the day (a later set with
-    // fewer deletes, a partial "put them back"); with no delete left the hold ends.
-    let held_since = if plan.deletes.is_empty() {
-        None
-    } else if plan.mass || set.held_since.is_some() {
-        Some(set.held_since.unwrap_or(now))
+    // fewer deletes); with no delete left the hold ends. A hold that has run out while a delete is stuck (refused,
+    // backed off, stopped) starts again when a new mass delete comes (code QA L1).
+    let expired = set.held_since.is_some_and(|since| now - since >= HOLD);
+    let (held_since, held_deletes) = if plan.deletes.is_empty() {
+        (None, 0)
+    } else if plan.mass
+        && (set.held_since.is_none() || (expired && plan.deletes.len() > set.held_deletes))
+    {
+        (Some(now), plan.deletes.len())
+    } else if set.held_since.is_some() {
+        (set.held_since, set.held_deletes.max(plan.deletes.len()))
     } else {
-        None
+        (None, 0)
     };
     let holding = held_since.is_some_and(|since| now - since < HOLD);
     let state = if holding { "ok" } else { "deleting" };
     for uid in &plan.deletes {
         sqlx::query(
-            "UPDATE kid_caldav_events SET state = ? WHERE device_id = ? AND uid = ? AND back_id IS NULL",
+            "UPDATE kid_caldav_events SET state = ? WHERE device_id = ? AND uid = ? AND back_id IS NULL \
+             AND restore_wanted = 0",
         )
         .bind(state)
         .bind(device_id)
@@ -870,13 +921,16 @@ async fn apply_plan(
         .execute(&mut **tx)
         .await?;
     }
+    // `accepted` stays the old rev while a delete is held or frozen by the phone's clock: the phone keeps the deleted
+    // uids skipped (D3.2, launcher QA L4).
     sqlx::query(
-        "UPDATE device_kid_events SET held_since = ?, held_kind = ?, \
+        "UPDATE device_kid_events SET held_since = ?, held_kind = ?, held_deletes = ?, \
          accepted = CASE WHEN ? THEN accepted ELSE rev END WHERE device_id = ?",
     )
     .bind(held_since.map(stamp))
     .bind(held_since.map(|_| "kid"))
-    .bind(holding)
+    .bind(held_deletes as i64)
+    .bind(holding || plan.frozen_keeps)
     .bind(device_id)
     .execute(&mut **tx)
     .await?;
@@ -1120,16 +1174,7 @@ async fn post_inner(
         .chain(set.ended.iter().map(String::as_str))
         .map(tag_of)
         .collect();
-    for tag in &tags {
-        let holder: Option<i64> =
-            sqlx::query_scalar("SELECT device_id FROM kid_caldav_tags WHERE tag = ?")
-                .bind(tag)
-                .fetch_optional(&state.db)
-                .await?;
-        if let Some(other) = holder.filter(|other| *other != device_id) {
-            return Ok(rejected(state, device_id, &format!("tag_pinned:{other}"), now).await);
-        }
-    }
+    // Inside the transaction (code QA L9): pinned first, then read - two phones posting one new tag can't both pass.
     let mut tx = state.db.begin().await?;
     for tag in &tags {
         sqlx::query("INSERT INTO kid_caldav_tags (tag, device_id) VALUES (?, ?) ON CONFLICT(tag) DO NOTHING")
@@ -1137,6 +1182,14 @@ async fn post_inner(
             .bind(device_id)
             .execute(&mut *tx)
             .await?;
+        let holder: i64 = sqlx::query_scalar("SELECT device_id FROM kid_caldav_tags WHERE tag = ?")
+            .bind(tag)
+            .fetch_one(&mut *tx)
+            .await?;
+        if holder != device_id {
+            tx.rollback().await?;
+            return Ok(rejected(state, device_id, &format!("tag_pinned:{holder}"), now).await);
+        }
     }
     // The acknowledgements first (D2.3, R-M2): only the uid's current hand-back id clears it.
     acknowledge(&mut tx, device_id, &set.applied).await?;
@@ -1315,7 +1368,9 @@ async fn remember_remote(
     .map(|_| ())
 }
 
-/// The calendar wins (D2.1): the parent's version handed back, no write while it waits (a waiting write dropped).
+/// The calendar wins (D2.1): the parent's version handed back, no write while it waits (a waiting write dropped) -
+/// the base, the ETag, the times and the hand-back in one statement (code QA L4). A hand-back that waited is
+/// replaced by this one (a new id): the phone applies it and acknowledges that.
 async fn hand_back(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -1324,12 +1379,17 @@ async fn hand_back(
     etag: &str,
     sequence: i64,
 ) -> Result<(), sqlx::Error> {
-    remember_remote(db, device_id, uid, version, etag, sequence).await?;
     let (id, json) = upsert_json(uid, version);
     sqlx::query(
-        "UPDATE kid_caldav_events SET back_id = ?, back_json = ?, back_after = NULL, state = 'ok', \
+        "UPDATE kid_caldav_events SET remote_hash = ?, etag = ?, sequence = MAX(sequence, ?), start_at = ?, \
+         end_at = ?, back_id = ?, back_json = ?, back_after = NULL, restore_wanted = 0, state = 'ok', \
          failures = 0, next_at = NULL WHERE device_id = ? AND uid = ?",
     )
+    .bind(version_hash(version))
+    .bind(etag)
+    .bind(sequence)
+    .bind(instant_stamp(version.start_time()))
+    .bind(instant_stamp(version.end_time()))
     .bind(id)
     .bind(json)
     .bind(device_id)
@@ -1351,7 +1411,7 @@ async fn release(
     let (id, json) = delete_json(uid);
     sqlx::query(
         "UPDATE kid_caldav_events SET state = 'released', remote_hash = ?, etag = ?, back_id = ?, back_json = ?, \
-         back_after = NULL, released_absent_since = NULL, next_at = NULL, failures = 0 \
+         back_after = NULL, released_absent_since = NULL, restore_wanted = 0, next_at = NULL, failures = 0 \
          WHERE device_id = ? AND uid = ?",
     )
     .bind(version_hash(version))
@@ -1635,8 +1695,16 @@ async fn backoff_account(
             .fetch_optional(db)
             .await?
             .unwrap_or(1);
+    // Seconds, or an HTTP date (RFC 9110 §10.2.3; code QA N6).
     let wait = retry_after
-        .and_then(|r| r.trim().parse::<i64>().ok())
+        .and_then(|r| {
+            let r = r.trim();
+            r.parse::<i64>().ok().or_else(|| {
+                DateTime::parse_from_rfc2822(r)
+                    .ok()
+                    .map(|at| (at.with_timezone(&Utc) - now).num_seconds())
+            })
+        })
         .filter(|s| (1..=86_400).contains(s))
         .map(TimeDelta::seconds)
         .unwrap_or_else(|| crate::music_sweep::backoff(failures, TimeDelta::hours(1)));
@@ -1760,10 +1828,11 @@ async fn wrote(
                     None => Some(etag),
                 }
             }
-            // Written, its ETag unknown: the next pass's create finds it by its content (412, GET).
+            // Written, its ETag unknown: the next write finds it by its content - a create by its 412, an update by
+            // the old ETag's 412 (kept: never a create over a parent's later delete, code QA L5).
             _ => {
                 sqlx::query(
-                    "UPDATE kid_caldav_events SET href = ?, attempted_hash = ?, state = 'pending', etag = NULL, \
+                    "UPDATE kid_caldav_events SET href = ?, attempted_hash = ?, state = 'pending', \
                      fetch_wait = ?, next_at = ? WHERE device_id = ? AND uid = ?",
                 )
                 .bind(href)
@@ -1876,13 +1945,28 @@ async fn judge(
         return remember_remote(&state.db, device_id, uid, &theirs, etag, resource.sequence).await;
     }
     let ours = row.was_attempted(&read) && row.back_id.is_none();
-    if ours || (phone.as_deref() == Some(read.as_str()) && row.state != "past") {
-        // Our own write in flight, or the parent made it what the phone has: nothing to hand back.
-        remember_remote(&state.db, device_id, uid, &theirs, etag, resource.sequence).await?;
+    let phones = phone.as_deref() == Some(read.as_str()) && row.state != "past";
+    if row.back_id.is_some()
+        && (ours || phones)
+        && !row.back_held(Utc::now().max(state.kid_writes.now()))
+    {
+        // A hand-back that may have been delivered is never cleared (code QA M1): the phone may have applied it, and
+        // its acknowledgement would then match nothing. The calendar's version replaces it - a no-op or a revert.
+        return hand_back(&state.db, device_id, uid, &theirs, etag, resource.sequence).await;
+    }
+    if ours || phones {
+        // Our own write in flight, or the parent made it what the phone has: nothing to hand back. One statement
+        // (code QA L4).
         sqlx::query(
-            "UPDATE kid_caldav_events SET sent_hash = ?, back_id = NULL, back_json = NULL, back_after = NULL, \
+            "UPDATE kid_caldav_events SET remote_hash = ?, etag = ?, sequence = MAX(sequence, ?), start_at = ?, \
+             end_at = ?, sent_hash = ?, back_id = NULL, back_json = NULL, back_after = NULL, \
              state = CASE WHEN state = 'past' THEN state ELSE 'ok' END WHERE device_id = ? AND uid = ?",
         )
+        .bind(&read)
+        .bind(etag)
+        .bind(resource.sequence)
+        .bind(instant_stamp(theirs.start_time()))
+        .bind(instant_stamp(theirs.end_time()))
         .bind(&read)
         .bind(device_id)
         .bind(uid)
@@ -1917,12 +2001,7 @@ async fn read_first(
         if create {
             return backoff_event(&state.db, target.device_id, row, now, "status").await;
         }
-        hand_back_delete(&state.db, target.device_id, &row.uid, None).await?;
-        tracing::info!(
-            device_id = target.device_id,
-            "a kid's event the parent deleted is handed back"
-        );
-        return Ok(Step::Done);
+        return parents_delete(state, target, row, now).await;
     }
     if got.status != 200 {
         return other_answer(state, target, row, &got, now).await;
@@ -1995,6 +2074,35 @@ async fn read_first(
     // The calendar wins: no base, or another than it.
     hand_back(&state.db, target.device_id, &row.uid, &theirs, &etag, seq).await?;
     Ok(Step::Done)
+}
+
+/// A write's resource answered 404: the parent's delete, handed back - once the collection itself answers (code QA
+/// L3: a calendar deleted at the provider, a server's bad hour, is no reason to empty the kid's day).
+async fn parents_delete(
+    state: &AppState,
+    target: &Target<'_>,
+    row: &Row,
+    now: DateTime<Utc>,
+) -> Result<Step, sqlx::Error> {
+    let request = DavRequest {
+        method: "PROPFIND",
+        depth: Some("0"),
+        content_type: Some("application/xml; charset=utf-8"),
+        condition: None,
+        body: br#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>"#,
+    };
+    match target.send(state, &target.collection, &request).await {
+        Ok(answer) if answer.status == 207 => {
+            hand_back_delete(&state.db, target.device_id, &row.uid, None).await?;
+            tracing::info!(
+                device_id = target.device_id,
+                "a kid's event the parent deleted is handed back"
+            );
+            Ok(Step::Done)
+        }
+        Ok(_) => backoff_event(&state.db, target.device_id, row, now, "collection").await,
+        Err(err) => failed_request(state, target, row, err, now).await,
+    }
 }
 
 /// A 403 read by its body (D4.4): `no-uid-conflict` adopted only through [read_first] at a direct child of the
@@ -2126,10 +2234,7 @@ async fn step(
         }
         412 => read_first(state, target, &row, &href, &version, create, now).await,
         404 if create => read_first(state, target, &row, &href, &version, true, now).await,
-        404 => {
-            hand_back_delete(&state.db, target.device_id, &row.uid, None).await?;
-            Ok(Step::Done)
-        }
+        404 => parents_delete(state, target, &row, now).await,
         403 => forbidden(state, target, &row, &answer, &version, create, now).await,
         _ => other_answer(state, target, &row, &answer, now).await,
     }
@@ -2183,11 +2288,28 @@ async fn delete_step(
             Ok(Step::Wrote)
         }
         412 => delete_read_first(state, target, row, &href, now).await,
-        403 => {
-            let version = Version::of("", "", "", KidTime::At(now.naive_utc()), None);
-            forbidden(state, target, row, &answer, &version, false, now).await
+        // `need-privileges` (or no body) stops this phone's writes; a precondition backs this delete off.
+        403 if forbidden_body(&answer.body)
+            .0
+            .iter()
+            .any(|(ns, _)| ns == crate::caldav::CALDAV) =>
+        {
+            backoff_event(&state.db, target.device_id, row, now, "403").await
         }
-        _ => other_answer(state, target, row, &answer, now).await,
+        403 => Ok(Step::StopDevice("write_refused")),
+        507 => Ok(Step::StopDevice("full")),
+        429 | 503 => {
+            backoff_account(
+                &state.db,
+                target.login.id,
+                answer.retry_after.as_deref(),
+                now,
+            )
+            .await
+        }
+        // A refused delete is tried again by its backoff, never every pass (code QA L2), and never `refused`: a
+        // refused row missing from the set would be planned as a delete again at once.
+        _ => backoff_event(&state.db, target.device_id, row, now, "status").await,
     }
 }
 
@@ -2213,14 +2335,18 @@ async fn delete_read_first(
         .await?;
         return Ok(Step::Wrote);
     }
+    if matches!(got.status, 429 | 503) {
+        return backoff_account(&state.db, target.login.id, got.retry_after.as_deref(), now).await;
+    }
     if got.status != 200 {
-        return other_answer(state, target, row, &got, now).await;
+        return backoff_event(&state.db, target.device_id, row, now, "status").await;
     }
     let Some(etag) = strong(got.etag.as_deref()) else {
         return Ok(Step::StopDevice("no_etag"));
     };
+    // Content we can't read is never deleted; tried again by its backoff, never `refused` (code QA L2).
     let Some(resource) = ics::read_kid_resource(&got.body).filter(|r| r.uid == row.uid) else {
-        return refuse_event(&state.db, target.device_id, &row.uid, "unreadable").await;
+        return backoff_event(&state.db, target.device_id, row, now, "unreadable").await;
     };
     let zone = row_zone(state, target.device_id, &row.uid).await?;
     let theirs = resource_version(&resource, zone);
@@ -2257,19 +2383,49 @@ async fn delete_read_first(
     Ok(Step::Done)
 }
 
-/// Claims the account's write job (QA L4): a POST, a pass and a sibling's POST never race.
+/// A claim's own token (code QA M3): the process's start and a counter, never reused.
+fn claim_token() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static START: std::sync::LazyLock<i64> =
+        std::sync::LazyLock::new(|| Utc::now().timestamp_nanos_opt().unwrap_or_default());
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", *START)
+}
+
+/// Claims the account's write job (QA L4): a POST, a pass and a sibling's POST never race. Returns the claim's token,
+/// `None` when another job holds it.
 async fn claim(
     db: &sqlx::SqlitePool,
     account_id: i64,
     now: DateTime<Utc>,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Option<String>, sqlx::Error> {
+    let token = claim_token();
     let done = sqlx::query(
-        "UPDATE caldav_accounts SET write_claimed_at = ? WHERE id = ? \
+        "UPDATE caldav_accounts SET write_claimed_at = ?, write_claim = ? WHERE id = ? \
          AND (write_claimed_at IS NULL OR write_claimed_at <= ?)",
     )
     .bind(stamp(now))
+    .bind(&token)
     .bind(account_id)
     .bind(stamp(now - CLAIM_FOR))
+    .execute(db)
+    .await?;
+    Ok((done.rows_affected() > 0).then_some(token))
+}
+
+/// The claim kept alive at each step (code QA M3); `false` when another job has taken it (this one then stops).
+async fn keep_claim(
+    db: &sqlx::SqlitePool,
+    account_id: i64,
+    token: &str,
+    now: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE caldav_accounts SET write_claimed_at = ? WHERE id = ? AND write_claim = ?",
+    )
+    .bind(stamp(now))
+    .bind(account_id)
+    .bind(token)
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
@@ -2354,14 +2510,18 @@ pub async fn work(
     if marks_of(&state.db, account_id).await?.is_empty() {
         return Ok(Vec::new());
     }
-    if !claim(&state.db, account_id, now).await? {
+    let Some(token) = claim(&state.db, account_id, now).await? else {
         return Ok(Vec::new());
-    }
-    let result = work_claimed(state, account_id, now).await;
-    let released = sqlx::query("UPDATE caldav_accounts SET write_claimed_at = NULL WHERE id = ?")
-        .bind(account_id)
-        .execute(&state.db)
-        .await;
+    };
+    let result = work_claimed(state, account_id, &token, now).await;
+    // Released only while it is still this job's (code QA M3).
+    let released = sqlx::query(
+        "UPDATE caldav_accounts SET write_claimed_at = NULL, write_claim = NULL WHERE id = ? AND write_claim = ?",
+    )
+    .bind(account_id)
+    .bind(&token)
+    .execute(&state.db)
+    .await;
     if let Err(err) = released {
         tracing::error!(account_id, %err, "couldn't release a CalDAV account's write job");
     }
@@ -2382,9 +2542,80 @@ pub async fn work(
     Ok(wrote)
 }
 
+/// A step's own time: the instant it runs, never before the pass began - a write's `fetch_wait` is when it was
+/// written (code QA H3), not when the pass started.
+fn step_time(state: &AppState, pass: DateTime<Utc>) -> DateTime<Utc> {
+    state.kid_writes.now().max(pass)
+}
+
+/// Steps a row may take again within one pass (an ETag learned, our own lost answer) before it backs off (code QA
+/// L7).
+const AGAIN_PER_ROW: u32 = 2;
+
+/// "Legg dem tilbake på telefonen" for one row (D2.6, code QA H2): read from the calendar and handed back; a 404
+/// drops the row (gone on both sides); anything else waits for the next pass - the row is never deleted meanwhile.
+async fn restore_step(
+    state: &AppState,
+    target: &Target<'_>,
+    row: &Row,
+    now: DateTime<Utc>,
+) -> Result<Step, sqlx::Error> {
+    let Some(href) = row.href.clone() else {
+        sqlx::query("DELETE FROM kid_caldav_events WHERE device_id = ? AND uid = ?")
+            .bind(target.device_id)
+            .bind(&row.uid)
+            .execute(&state.db)
+            .await?;
+        return Ok(Step::Done);
+    };
+    let got = match target.get(state, &href).await {
+        Ok(got) => got,
+        Err(err) => return failed_request(state, target, row, err, now).await,
+    };
+    match got.status {
+        200 => {}
+        404 => {
+            sqlx::query("DELETE FROM kid_caldav_events WHERE device_id = ? AND uid = ?")
+                .bind(target.device_id)
+                .bind(&row.uid)
+                .execute(&state.db)
+                .await?;
+            return Ok(Step::Done);
+        }
+        429 | 503 => {
+            return backoff_account(&state.db, target.login.id, got.retry_after.as_deref(), now)
+                .await;
+        }
+        _ => return backoff_event(&state.db, target.device_id, row, now, "status").await,
+    }
+    let Some(etag) = strong(got.etag.as_deref()) else {
+        return Ok(Step::StopDevice("no_etag"));
+    };
+    let Some(read) = ics::read_kid_resource(&got.body).filter(|r| r.uid == row.uid) else {
+        return backoff_event(&state.db, target.device_id, row, now, "unreadable").await;
+    };
+    let zone = row_zone(state, target.device_id, &row.uid).await?;
+    let theirs = resource_version(&read, zone);
+    if read.recurring || read.invites {
+        release(&state.db, target.device_id, &row.uid, &theirs, &etag).await?;
+    } else {
+        hand_back(
+            &state.db,
+            target.device_id,
+            &row.uid,
+            &theirs,
+            &etag,
+            read.sequence,
+        )
+        .await?;
+    }
+    Ok(Step::Done)
+}
+
 async fn work_claimed(
     state: &AppState,
     account_id: i64,
+    token: &str,
     now: DateTime<Utc>,
 ) -> Result<Vec<i64>, sqlx::Error> {
     let mut wrote = Vec::new();
@@ -2423,13 +2654,18 @@ async fn work_claimed(
         }) else {
             continue;
         };
-        // A calendar the last Test no longer lists, or one it says the account can't write to, takes no write.
+        // A calendar the last Test no longer lists, or one it says the account can't write to, takes no write - and
+        // the page says so (code QA L8).
         let listed = login.calendars.iter().find(|c| c.href == collection);
-        if listed.is_none() || source_error.as_deref() == Some("not_listed") {
-            continue;
-        }
-        if listed.is_some_and(|c| c.writable == Some(false)) {
-            stop_device(&state.db, device_id, "write_refused", now).await?;
+        let stop = if listed.is_none() || source_error.as_deref() == Some("not_listed") {
+            Some("not_listed")
+        } else if listed.is_some_and(|c| c.writable == Some(false)) {
+            Some("write_refused")
+        } else {
+            None
+        };
+        if let Some(code) = stop {
+            stop_device(&state.db, device_id, code, now).await?;
             let after = counts(&state.db, device_id, now).await?;
             nudge_if(state, device_id, &before, &after);
             continue;
@@ -2441,7 +2677,7 @@ async fn work_claimed(
         if set
             .error
             .as_deref()
-            .is_some_and(|e| matches!(e, "write_refused" | "full" | "no_etag"))
+            .is_some_and(|e| matches!(e, "write_refused" | "full" | "no_etag" | "not_listed"))
         {
             continue;
         }
@@ -2452,7 +2688,13 @@ async fn work_claimed(
         };
         let mut wrote_here = false;
         let mut stopped_account = false;
+        let mut again: HashMap<String, u32> = HashMap::new();
         loop {
+            let at = step_time(state, now);
+            if !keep_claim(&state.db, account_id, token, at).await? {
+                tracing::warn!(account_id, "a CalDAV account's write job lost its claim");
+                break 'devices;
+            }
             // Each write reads the latest set just before it goes (D4.2).
             let rev: Option<Option<String>> =
                 sqlx::query_scalar("SELECT rev FROM device_kid_events WHERE device_id = ?")
@@ -2460,30 +2702,50 @@ async fn work_claimed(
                     .fetch_optional(&state.db)
                     .await?;
             if rev.flatten() != set.rev {
-                replan(state, device_id, source_id, now).await?;
+                replan(state, device_id, source_id, at).await?;
                 match stored_set(&state.db, device_id).await? {
                     Some(fresh) => set = fresh,
                     None => break,
                 }
             }
-            let next: Option<Row> = sqlx::query_as(&format!(
+            // "Put them back" first: those rows wait for nothing else.
+            let restore: Option<Row> = sqlx::query_as(&format!(
                 "SELECT {ROW_COLUMNS} FROM kid_caldav_events WHERE device_id = ? AND back_id IS NULL \
-                 AND state IN ('pending', 'deleting') AND (next_at IS NULL OR next_at <= ?) ORDER BY uid LIMIT 1"
+                 AND restore_wanted = 1 AND (next_at IS NULL OR next_at <= ?) ORDER BY uid LIMIT 1"
             ))
             .bind(device_id)
-            .bind(stamp(now))
+            .bind(stamp(at))
             .fetch_optional(&state.db)
             .await?;
+            let next: Option<Row> = match restore {
+                Some(row) => Some(row),
+                None => {
+                    sqlx::query_as(&format!(
+                        "SELECT {ROW_COLUMNS} FROM kid_caldav_events WHERE device_id = ? AND back_id IS NULL \
+                         AND restore_wanted = 0 AND state IN ('pending', 'deleting') \
+                         AND (next_at IS NULL OR next_at <= ?) ORDER BY uid LIMIT 1"
+                    ))
+                    .bind(device_id)
+                    .bind(stamp(at))
+                    .fetch_optional(&state.db)
+                    .await?
+                }
+            };
             let Some(next) = next else {
                 break;
             };
-            if steps >= WRITES_A_MINUTE || !take_budget(&state.db, account_id, now).await? {
+            if steps >= WRITES_A_MINUTE || !take_budget(&state.db, account_id, at).await? {
                 stopped_account = true;
                 break;
             }
             steps += 1;
-            let wanted = set.events.iter().find(|e| e.uid == next.uid);
-            match step(state, &target, &next, wanted, now).await? {
+            let outcome = if next.restore_wanted {
+                restore_step(state, &target, &next, at).await?
+            } else {
+                let wanted = set.events.iter().find(|e| e.uid == next.uid);
+                step(state, &target, &next, wanted, at).await?
+            };
+            match outcome {
                 Step::Wrote => wrote_here = true,
                 Step::Done => {
                     // A step that left the row as it was would come round again: wait for the next pass.
@@ -2493,18 +2755,27 @@ async fn work_claimed(
                             && a.etag == next.etag
                             && a.back_id.is_none()
                             && a.next_at == next.next_at
+                            && a.restore_wanted == next.restore_wanted
                     }) {
                         sqlx::query("UPDATE kid_caldav_events SET next_at = ? WHERE device_id = ? AND uid = ?")
-                            .bind(stamp(now + TimeDelta::minutes(15)))
+                            .bind(stamp(at + TimeDelta::minutes(15)))
                             .bind(device_id)
                             .bind(&next.uid)
                             .execute(&state.db)
                             .await?;
                     }
                 }
-                Step::Again => {}
+                Step::Again => {
+                    let n = again.entry(next.uid.clone()).or_default();
+                    *n += 1;
+                    if *n > AGAIN_PER_ROW
+                        && let Some(row) = row(&state.db, device_id, &next.uid).await?
+                    {
+                        backoff_event(&state.db, device_id, &row, at, "again").await?;
+                    }
+                }
                 Step::StopDevice(code) => {
-                    stop_device(&state.db, device_id, code, now).await?;
+                    stop_device(&state.db, device_id, code, at).await?;
                     break;
                 }
                 Step::StopAccount => {
@@ -2515,7 +2786,7 @@ async fn work_claimed(
         }
         if wrote_here {
             sqlx::query("UPDATE device_kid_events SET written_at = ? WHERE device_id = ?")
-                .bind(stamp(now))
+                .bind(stamp(step_time(state, now)))
                 .bind(device_id)
                 .execute(&state.db)
                 .await?;
@@ -2528,10 +2799,15 @@ async fn work_claimed(
         }
     }
     if !wrote.is_empty() {
-        sqlx::query("UPDATE caldav_accounts SET write_failures = 0 WHERE id = ? AND write_backoff_until IS NULL")
-            .bind(account_id)
-            .execute(&state.db)
-            .await?;
+        // A write that went through ends a backoff that has passed (code QA L6).
+        sqlx::query(
+            "UPDATE caldav_accounts SET write_failures = 0, write_backoff_until = NULL WHERE id = ? \
+             AND (write_backoff_until IS NULL OR write_backoff_until <= ?)",
+        )
+        .bind(account_id)
+        .bind(stamp(step_time(state, now)))
+        .execute(&state.db)
+        .await?;
     }
     Ok(wrote)
 }
@@ -2560,7 +2836,8 @@ async fn stop_device(
 /// every phone writing to one of the account's calendars, and the account's backoff.
 pub async fn account_tested(db: &sqlx::SqlitePool, account_id: i64) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE device_kid_events SET error = NULL, error_at = NULL WHERE error IN ('write_refused', 'full', 'no_etag') \
+        "UPDATE device_kid_events SET error = NULL, error_at = NULL \
+         WHERE error IN ('write_refused', 'full', 'no_etag', 'not_listed') \
          AND source_id IN (SELECT id FROM calendar_sources WHERE account_id = ?)",
     )
     .bind(account_id)
@@ -2612,6 +2889,7 @@ pub async fn after_fetch(
     source_id: i64,
     resources: &[DavResource],
     now: DateTime<Utc>,
+    report_at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     let devices: Vec<(i64, Option<i64>)> = sqlx::query_as(
         "SELECT d.device_id, s.account_id FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
@@ -2623,12 +2901,25 @@ pub async fn after_fetch(
     if devices.is_empty() {
         return Ok(());
     }
-    let mut by_uid: HashMap<String, &DavResource> = HashMap::new();
+    let mut by_uid: HashMap<String, Vec<&DavResource>> = HashMap::new();
     for r in resources {
         if let Some(uid) = ics::resource_uid(&r.data) {
-            by_uid.entry(uid).or_insert(r);
+            by_uid.entry(uid).or_default().push(r);
         }
     }
+    // Two resources with the kid's UID (another client's copy): the one at our own href (code QA N7).
+    let ours = |row: &Row| -> Option<&DavResource> {
+        let found = by_uid.get(&row.uid)?;
+        let mine = row.href.as_deref().and_then(|href| {
+            let base = reqwest::Url::parse(href).ok()?;
+            let path = decoded(base.path());
+            found.iter().copied().find(|r| {
+                base.join(&r.href)
+                    .is_ok_and(|url| decoded(url.path()) == path)
+            })
+        });
+        mine.or_else(|| found.first().copied())
+    };
     let today = now.date_naive();
     let window = (
         (today - TimeDelta::days(ics::PAST_DAYS))
@@ -2641,13 +2932,15 @@ pub async fn after_fetch(
     let mut login: Option<Option<WriteLogin>> = None;
     for (device_id, account_id) in devices {
         let before = counts(&state.db, device_id, now).await?;
-        // The writes made before this fetch began are in its set now.
+        clear_back_held(&state.db, device_id).await?;
+        // The writes made before this REPORT was sent are in its set now (R-L2); one made after it is judged by a
+        // later fetch, never by this one (code QA H3).
         sqlx::query(
             "UPDATE kid_caldav_events SET fetch_wait = NULL WHERE device_id = ? AND source_id = ? AND fetch_wait <= ?",
         )
         .bind(device_id)
         .bind(source_id)
-        .bind(fine_stamp(now))
+        .bind(fine_stamp(report_at))
         .execute(&state.db)
         .await?;
         sqlx::query("DELETE FROM kid_caldav_events WHERE device_id = ? AND state = 'gone' AND fetch_wait IS NULL")
@@ -2666,30 +2959,56 @@ pub async fn after_fetch(
         .fetch_all(&state.db)
         .await?;
         let written = rows.len();
+        let rows: Vec<Row> = rows
+            .into_iter()
+            .filter(|r| r.fetch_wait.is_none())
+            .collect();
         let mut deleted: Vec<String> = Vec::new();
         for r in &rows {
             let zone = zones.get(&r.uid).copied().flatten();
-            let deleting_back = r
-                .back_json
-                .as_deref()
-                .is_some_and(|b| b.contains("\"op\":\"delete\""));
-            match by_uid.get(&r.uid) {
+            let deleting_back = r.back_is_delete() && r.state != "released";
+            match ours(r) {
                 Some(resource) => {
-                    if deleting_back {
-                        // Back on the calendar before the phone took the delete (a held wipe undone): no delete.
-                        sqlx::query(
-                            "UPDATE kid_caldav_events SET back_id = NULL, back_json = NULL, back_after = NULL \
-                             WHERE device_id = ? AND uid = ? AND state <> 'released'",
-                        )
-                        .bind(device_id)
-                        .bind(&r.uid)
-                        .execute(&state.db)
-                        .await?;
-                    }
                     let Some(etag) = strong(resource.etag.as_deref()) else {
                         stop_device(&state.db, device_id, "no_etag", now).await?;
                         continue;
                     };
+                    if deleting_back {
+                        if r.back_held(now) {
+                            // Back on the calendar while its delete was held, never sent (a wipe undone): no delete.
+                            sqlx::query(
+                                "UPDATE kid_caldav_events SET back_id = NULL, back_json = NULL, back_after = NULL \
+                                 WHERE device_id = ? AND uid = ?",
+                            )
+                            .bind(device_id)
+                            .bind(&r.uid)
+                            .execute(&state.db)
+                            .await?;
+                        } else {
+                            // The phone may have deleted its copy already (code QA H1): the restored version goes
+                            // back as an upsert with a new id - re-inserted, or a no-op - never cleared.
+                            let Some(read) = ics::read_kid_resource(resource.data.as_bytes())
+                                .filter(|read| read.uid == r.uid)
+                            else {
+                                continue;
+                            };
+                            let theirs = resource_version(&read, zone);
+                            if read.recurring || read.invites {
+                                release(&state.db, device_id, &r.uid, &theirs, &etag).await?;
+                            } else {
+                                hand_back(
+                                    &state.db,
+                                    device_id,
+                                    &r.uid,
+                                    &theirs,
+                                    &etag,
+                                    read.sequence,
+                                )
+                                .await?;
+                            }
+                            continue;
+                        }
+                    }
                     if r.etag.as_deref() == Some(etag.as_str()) {
                         continue;
                     }
@@ -2774,6 +3093,7 @@ pub async fn after_fetch(
         for uid in &deleted {
             hand_back_delete(&state.db, device_id, uid, after_at.filter(|at| *at > now)).await?;
         }
+        clear_back_held(&state.db, device_id).await?;
         if !deleted.is_empty() {
             tracing::info!(
                 device_id,
@@ -2786,6 +3106,20 @@ pub async fn after_fetch(
         nudge_if(state, device_id, &before, &after);
     }
     Ok(())
+}
+
+/// The calendar's hold ends with its last held hand-back (code QA M2: a wipe undone must not leave a stale start
+/// that lets the next wipe through at once).
+async fn clear_back_held(db: &sqlx::SqlitePool, device_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE device_kid_events SET back_held_since = NULL WHERE device_id = ? AND NOT EXISTS \
+         (SELECT 1 FROM kid_caldav_events WHERE device_id = ? AND back_after IS NOT NULL)",
+    )
+    .bind(device_id)
+    .bind(device_id)
+    .execute(db)
+    .await
+    .map(|_| ())
 }
 
 // ---- the scheduler -----------------------------------------------------------------------------
@@ -2851,91 +3185,49 @@ pub async fn run_due(state: &AppState, now: DateTime<Utc>) {
 
 // ---- the parent's side -------------------------------------------------------------------------
 
-/// "Legg dem tilbake på telefonen" (D2.6): the kid's held deletes handed back as upserts, each read from the
-/// calendar; the hold ends. Returns how many went back.
+/// "Legg dem tilbake på telefonen" (D2.6): the kid's held deletes marked to be handed back as the calendar has them.
+/// The job reads each one under the account's claim, backoff and budget; until then a marked row is never deleted,
+/// and one that can't be read waits for the next pass (code QA H2). Returns how many were marked; nothing while no
+/// hold runs.
 pub async fn restore_held(
     state: &AppState,
     device_id: i64,
     now: DateTime<Utc>,
 ) -> Result<usize, sqlx::Error> {
-    let Some((source_id, _, Some(account_id))) = marked(&state.db, device_id).await? else {
+    let Some((source_id, _, Some(_))) = marked(&state.db, device_id).await? else {
         return Ok(0);
     };
     let Some(set) = stored_set(&state.db, device_id).await? else {
         return Ok(0);
     };
-    if set.held_since.is_none() {
+    if set.held_since.is_none_or(|since| now - since >= HOLD) {
         return Ok(0);
     }
     let rows = rows_of(&state.db, device_id).await?;
     let held = plan(&set, &rows, now).deletes;
-    let Ok(login) = crate::caldav::write_login(state, account_id).await? else {
-        return Ok(0);
-    };
-    let zones: HashMap<String, Option<Tz>> = set
-        .events
-        .iter()
-        .map(|e| (e.uid.clone(), e.zone()))
-        .collect();
-    let mut back = 0;
-    for uid in held {
-        let Some(r) = rows.get(&uid) else {
-            continue;
-        };
-        let Some(href) = r.href.as_deref() else {
-            continue;
-        };
-        let request = DavRequest {
-            method: "GET",
-            depth: None,
-            content_type: None,
-            condition: None,
-            body: &[],
-        };
-        match login.send(state.music_fetch.as_ref(), href, &request).await {
-            Ok(got) if got.status == 200 => {
-                let (Some(etag), Some(read)) = (
-                    strong(got.etag.as_deref()),
-                    ics::read_kid_resource(&got.body),
-                ) else {
-                    continue;
-                };
-                if read.uid != uid {
-                    continue;
-                }
-                let zone = zones.get(&uid).copied().flatten();
-                let theirs = resource_version(&read, zone);
-                if read.recurring || read.invites {
-                    release(&state.db, device_id, &uid, &theirs, &etag).await?;
-                } else {
-                    hand_back(&state.db, device_id, &uid, &theirs, &etag, read.sequence).await?;
-                }
-                back += 1;
-            }
-            Ok(got) if got.status == 404 => {
-                sqlx::query("DELETE FROM kid_caldav_events WHERE device_id = ? AND uid = ?")
-                    .bind(device_id)
-                    .bind(&uid)
-                    .execute(&state.db)
-                    .await?;
-            }
-            _ => {}
-        }
+    let mut tx = state.db.begin().await?;
+    for uid in &held {
+        sqlx::query(
+            "UPDATE kid_caldav_events SET restore_wanted = 1, next_at = NULL WHERE device_id = ? AND uid = ? \
+             AND back_id IS NULL",
+        )
+        .bind(device_id)
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     }
-    sqlx::query(
-        "UPDATE device_kid_events SET held_since = NULL, held_kind = NULL WHERE device_id = ?",
-    )
-    .bind(device_id)
-    .execute(&state.db)
-    .await?;
-    let _ = source_id;
-    let _ = state.command_notify.send(device_id);
+    // Planned again at once: the marked rows are kept, the hold ends with no delete left.
+    let rows = rows_of(&mut *tx, device_id).await?;
+    let fresh = plan(&set, &rows, now);
+    apply_plan(&mut tx, device_id, source_id, &set, &fresh, now).await?;
+    tx.commit().await?;
+    state.kid_writes.wake();
     tracing::info!(
         device_id,
-        back,
-        "the kid's held events were handed back to the phone"
+        held = held.len(),
+        "the kid's held events are to be handed back to the phone"
     );
-    Ok(back)
+    Ok(held.len())
 }
 
 /// What the status line under the select says (D5.2): counts only, never a title.
@@ -2955,6 +3247,8 @@ pub struct KidStatus {
     pub held: Option<(usize, DateTime<Utc>)>,
     /// The calendar's held deletes: how many, until when.
     pub back_held: Option<(i64, DateTime<Utc>)>,
+    /// "Legg dem tilbake": the events still to be read from the calendar and handed back.
+    pub restoring: i64,
 }
 
 pub async fn status(
@@ -2979,6 +3273,7 @@ pub async fn status(
             clock: false,
             held: None,
             back_held: None,
+            restoring: 0,
         }));
     };
     let extra: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
@@ -2994,6 +3289,7 @@ pub async fn status(
     .fetch_one(db)
     .await?;
     let rows = rows_of(db, device_id).await?;
+    let restoring = rows.values().filter(|r| r.restore_wanted).count() as i64;
     let held = match set.held_since {
         Some(since) if set.rev.is_some() && now - since < HOLD => {
             let n = plan(&set, &rows, now).deletes.len();
@@ -3031,6 +3327,7 @@ pub async fn status(
         clock: set.from.is_some_and(|from| (from - now).abs() > CLOCK_SKEW),
         held,
         back_held,
+        restoring,
     }))
 }
 

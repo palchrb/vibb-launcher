@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::music_net::SourceResponse;
+use crate::music_net::{FetchError, SourceResponse};
 
 use super::music::Recorded;
 
@@ -40,6 +40,10 @@ pub struct Switches {
     pub fail_next_with_412: usize,
     /// The next PUT is stored but answered with a network error (a timed-out answer).
     pub lose_next_put: bool,
+    /// The next N GETs answer 429 (code QA H2's probe).
+    pub fail_gets: usize,
+    /// The collection itself is gone (the calendar deleted at the provider): everything under it answers 404.
+    pub collection_gone: bool,
 }
 
 #[derive(Default)]
@@ -88,6 +92,15 @@ impl FakeDav {
     pub fn serve_on(self: &Arc<Self>, fetch: &super::music::CannedFetch) {
         let me = self.clone();
         fetch.serve(Arc::new(move |r: &Recorded| me.answer(r)));
+    }
+
+    /// The REPORT's `time-range` (`start="20260903T000000Z"`), as dates.
+    fn window(body: &str) -> Option<(String, String)> {
+        let at = |key: &str| {
+            let from = body.find(&format!("{key}=\""))? + key.len() + 2;
+            body.get(from..from + 8).map(str::to_string)
+        };
+        Some((at("start")?, at("end")?))
     }
 
     pub fn href(&self, uid: &str) -> String {
@@ -147,12 +160,23 @@ impl FakeDav {
         }
     }
 
-    fn answer(&self, r: &Recorded) -> Option<SourceResponse> {
+    fn answer(&self, r: &Recorded) -> Option<Result<SourceResponse, FetchError>> {
+        self.answer_ok(r).map(|answer| match answer {
+            // A PUT stored whose answer was lost (R-L1a): a transport error, as a timeout is (code QA N2).
+            SourceResponse { status: 599, .. } => Err(FetchError::Timeout),
+            answer => Ok(answer),
+        })
+    }
+
+    fn answer_ok(&self, r: &Recorded) -> Option<SourceResponse> {
         let in_collection = r.url == self.collection || r.url.starts_with(&self.collection);
         if !in_collection {
             return None;
         }
         let mut s = self.state.lock().unwrap();
+        if s.switches.collection_gone {
+            return Some(Self::ok(404, None, Vec::new()));
+        }
         let weak = s.switches.weak;
         let no_etag = s.switches.no_etag;
         let tag = |etag: u64| (!no_etag).then(|| quoted(etag, weak));
@@ -168,8 +192,24 @@ impl FakeDav {
                 let mut body = String::from(
                     r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">"#,
                 );
+                let window = Self::window(&String::from_utf8_lossy(
+                    r.body.as_deref().unwrap_or_default(),
+                ));
                 for (url, res) in &s.resources {
                     if s.switches.hidden.contains(url) {
+                        continue;
+                    }
+                    // The time range as a server applies it, by the event's start date (D4.6's window).
+                    let start = res
+                        .body
+                        .split("\r\n")
+                        .find(|l| l.starts_with("DTSTART"))
+                        .and_then(|l| l.split(':').nth(1))
+                        .and_then(|v| v.get(..8))
+                        .unwrap_or("");
+                    if let Some((from, to)) = &window
+                        && (start < from.as_str() || start >= to.as_str())
+                    {
                         continue;
                     }
                     let path = url
@@ -187,6 +227,10 @@ impl FakeDav {
                 }
                 body.push_str("</d:multistatus>");
                 Some(Self::ok(207, None, body.into_bytes()))
+            }
+            "GET" if s.switches.fail_gets > 0 => {
+                s.switches.fail_gets -= 1;
+                Some(Self::ok(429, None, Vec::new()))
             }
             "GET" => Some(match s.resources.get(&r.url) {
                 Some(res) => Self::ok(200, tag(res.etag), res.body.clone().into_bytes()),
@@ -226,15 +270,14 @@ impl FakeDav {
                     return Some(Self::ok(412, None, Vec::new()));
                 }
                 let current = s.resources.get(&r.url).map(|res| res.etag);
-                let matches = |cond: &str, etag: u64| {
-                    cond == quoted(etag, false) || cond == quoted(etag, true)
-                };
+                // `If-Match` compares strongly (RFC 9110 §13.1.1): a weak ETag never matches (code QA N1).
+                let matches = |cond: &str, etag: u64| cond == quoted(etag, false);
                 let allowed = match (&if_match, &if_none, current) {
                     (Some(m), _, Some(etag)) => matches(m, etag),
                     (Some(_), _, None) => false,
                     (None, Some(n), current) => n == "*" && current.is_none(),
-                    // Never a write without a condition: the tests assert none came.
-                    (None, None, _) => true,
+                    // Never a write without a condition: 428 Precondition Required, so every test guards it.
+                    (None, None, _) => return Some(Self::ok(428, None, Vec::new())),
                 };
                 if !allowed {
                     return Some(Self::ok(412, None, Vec::new()));
