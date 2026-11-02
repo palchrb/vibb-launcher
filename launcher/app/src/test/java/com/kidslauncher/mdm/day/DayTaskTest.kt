@@ -48,6 +48,12 @@ class DayTaskTest {
         val guard = day.substringAfter("internal fun redirectIfLocked(").substringBefore("\n        }\n")
         assertTrue(guard.contains("if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false"))
         assertTrue(guard.substringAfter("return false").contains("LockActivity.start(activity)"))
+        // PLAN 2026-11-02: a rule set that allows Kalender lets the pages through, read from the lock in force (an
+        // error is no).
+        assertTrue(guard.indexOf("if (calendarUsableNow(activity)) return false") in 0 until guard.indexOf("LockActivity.start(activity)"))
+        val usable = day.substringAfter("internal fun calendarUsableNow(").substringBefore("\n        }\n")
+        assertTrue(usable.contains("calendarUsableUnder("))
+        assertTrue(usable.substringAfter("catch (e: Exception)").contains("false"))
         val intent = day.substringAfter("fun intent(context: Context, day: LocalDate? = null): Intent =").substringBefore("\n            }\n")
         assertTrue(intent.contains("Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(intent.substringAfter("if (day != null) {").contains("addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)"))
@@ -57,6 +63,9 @@ class DayTaskTest {
             val code = file("java/com/kidslauncher/mdm/ui/day/$name.kt").readText()
             val onResume = code.substringAfter("override fun onResume()").substringBefore("\n    }\n")
             assertTrue(name, onResume.contains("redirectIfLocked(this)"))
+            // Let through, the page watches the lock (a rule without Kalender beginning), and stops in onPause.
+            assertTrue(name, onResume.contains("lockWatch.start()"))
+            assertTrue(name, code.substringAfter("override fun onPause()").substringBefore("\n    }\n").contains("lockWatch.stop()"))
         }
     }
 }

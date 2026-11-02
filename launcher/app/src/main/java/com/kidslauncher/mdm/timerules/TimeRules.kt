@@ -33,6 +33,9 @@ data class TimeRule(
     val kind: String = KIND_CUSTOM,
     val callsAllowed: Boolean = false,
     val exemptApps: List<String> = emptyList(),
+    /** Kalender (our own day view, "Vibb-kalender" in the PWA) stays usable while the rule runs (PLAN 2026-11-02,
+     * server migration 0119). Missing - an older server - is false: Kalender stays closed under the rule, as before. */
+    val calendarAllowed: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
 )
 
@@ -145,6 +148,9 @@ data class TimeLock(
     val usableApps: Set<String> = emptySet(),
     /** When the strongest active rule's current occurrence ends. */
     val until: LocalDateTime? = null,
+    /** Kalender (our day view, its event pages and "Ny avtale") stays usable: every active rule allows it. Never
+     * under the used-up budget alone. */
+    val calendarUsable: Boolean = false,
 ) {
     val locked: Boolean get() = reason != LockReason.NONE
     val callsBlocked: Boolean get() = locked && !callsAllowed
@@ -184,6 +190,7 @@ fun decideTimeLock(
             callsAllowed = active.all { it.callsAllowed },
             usableApps = usable,
             until = activeSpan(active.first(), at)?.end,
+            calendarUsable = active.all { it.calendarAllowed },
         )
     }
     if (exhausted) return TimeLock(LockReason.SCREEN_TIME, budgetExhausted = true, usableApps = messagingApps + musicApps)
@@ -303,4 +310,7 @@ fun decodeBootCallBlocks(json: String?): BootCallBlocks? {
 /** Identifies what a lock enforces (reason, rules, usable apps, calls) - a change of any of them
  * means the suspension must be re-applied, even when the reason stays the same. */
 fun TimeLock.key(): String =
-    if (!locked) "NONE" else "$reason|${rules.map { it.id }}|${usableApps.sorted()}|$callsAllowed"
+    if (!locked) "NONE" else "$reason|${rules.map { it.id }}|${usableApps.sorted()}|$callsAllowed" + if (calendarUsable) "|calendar" else ""
+
+/** Whether Kalender may be used under [lock] (PLAN 2026-11-02): no time lock, or one whose every rule allows it. */
+fun calendarUsableUnder(lock: TimeLock): Boolean = !lock.locked || lock.calendarUsable

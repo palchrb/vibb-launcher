@@ -1,24 +1,33 @@
         {#- A rule's or the bedtime's Exceptions, inside its form (H1: the handler writes the exempt
-            apps with every save). Needs `rule.apps`, `rule.apps_error` and `rule.apps_value()`. -#}
+            apps and the Vibb calendar with every save). Needs `rule.exceptions` (schedules::Exceptions:
+            the calendar row first - Kalender on the phone, its own `calendar_allowed` - then only the
+            apps the phones in scope allow, and a ticked one they don't with its note, so it can be
+            taken off) and `rule.apps_error`. -#}
         <section id="exceptions" aria-labelledby="exceptions-title">
             <h2 class="group-header" id="exceptions-title">{{ self.t("device.exceptions.title") }}</h2>
             <div class="group">
                 <details class="cell disclosure"{% if rule.apps_error.is_some() %} open{% endif %}>
                     <summary class="row">
                         <span class="row-label">{{ self.t("device.exceptions.apps") }}</span>
-                        <span class="row-value" data-value="apps">{{ rule.apps_value() }}</span>
+                        <span class="row-value" data-value="apps">{{ rule.exceptions.value(lang) }}</span>
                         <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </summary>
                     {% if let Some(why) = rule.apps_error %}<p class="flash flash-error" id="apps-error" data-flash="apps">{{ why }}</p>{% endif %}
-                    {% for a in rule.apps %}
+                    {% if rule.exceptions.calendar_shown %}
+                    <label class="row" data-row="calendar">
+                        <span class="row-label">{{ self.t("device.exceptions.calendar") }}<span class="row-sub">{{ self.t("device.exceptions.calendar_sub") }}</span></span>
+                        <input type="checkbox" role="switch" class="sw" name="calendar_allowed" value="on"{% if rule.exceptions.calendar %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                    </label>
+                    {% endif %}
+                    {% for a in rule.exceptions.apps %}
                     <label class="row">
-                        <span class="row-label">{{ a.label }}</span>
+                        <span class="row-label">{{ a.label }}{% if let Some(note) = a.note %}<span class="row-sub" data-note="exception">{{ self.t(note) }}</span>{% endif %}</span>
                         <input type="checkbox" role="switch" class="sw" name="exempt_apps" value="{{ a.package }}"{% if a.checked %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                     </label>
                     {% else %}
-                    <p class="row row-note">{{ self.t("device.exceptions.none") }}</p>
+                    <p class="row row-note">{{ self.t(rule.exceptions.empty) }}</p>
                     {% endfor %}
                 </details>
             </div>
-            <p class="group-footer">{{ self.t("device.exceptions.footer") }}</p>
+            <p class="group-footer">{{ self.t(rule.exceptions.footer) }}</p>
         </section>

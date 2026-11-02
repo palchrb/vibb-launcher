@@ -131,6 +131,51 @@ class TimeLockModelTest {
         assertTrue(timeLockRows(false, true, "Telefonbok", apps).none { it is LockRow.PhoneBook })
         assertTrue(timeLockRows(false, true, "Telefonbok", emptyList()).isEmpty())
         assertEquals(listOf<LockRow>(LockRow.PhoneBook("Phone book")), timeLockRows(true, true, "Phone book", emptyList()))
+        // Kalender (PLAN 2026-11-02): after the phone book, before the apps.
+        val withCalendar = timeLockRows(true, true, "Telefonbok", apps, calendarLabel = "Kalender")
+        assertEquals(listOf("Telefonbok", "Kalender", "Bøker", "meldinger", "Musikk"), withCalendar.map { it.label })
+        assertEquals(LockRow.Calendar("Kalender"), withCalendar[1])
+        assertEquals(listOf<LockRow>(LockRow.Calendar("Kalender")), timeLockRows(true, false, "Telefonbok", emptyList(), "Kalender"))
+    }
+
+    /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's
+     * fresh mark, never over a glance row the lock handed over. */
+    @Test
+    fun `after an unlock the only usable thing opens, once`() {
+        val music = LockRow.App("me.vibb.music", "Musikk")
+        val calendar = LockRow.Calendar("Kalender")
+        val phoneBook = LockRow.PhoneBook("Telefonbok")
+        assertEquals(music, unlockOpenRow(marked = true, handedOver = false, rows = listOf(music)))
+        assertEquals(calendar, unlockOpenRow(true, false, listOf(calendar)))
+        assertEquals("the phone book counts as one", phoneBook, unlockOpenRow(true, false, listOf(phoneBook)))
+        assertNull("two things: the card stays", unlockOpenRow(true, false, listOf(phoneBook, music)))
+        assertNull(unlockOpenRow(true, false, listOf(calendar, music)))
+        assertNull("nothing usable", unlockOpenRow(true, false, emptyList()))
+        assertNull("no unlock (Back, Home, a redirect)", unlockOpenRow(false, false, listOf(music)))
+        assertNull("the glance's row opens instead", unlockOpenRow(true, true, listOf(music)))
+        // The mark is fresh for the screen's coming up only.
+        assertTrue(unlockMarkFresh(1_000, 1_000 + UNLOCK_OPEN_MS))
+        assertFalse(unlockMarkFresh(1_000, 1_001 + UNLOCK_OPEN_MS))
+        assertFalse("none", unlockMarkFresh(0, 5_000))
+        assertFalse("a clock before the mark", unlockMarkFresh(5_000, 4_000))
+        // Wiring: the mark is set where the unlock brings the time-rule screen, taken once in onResume after the
+        // hand-over, and the open is a row's tap.
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        val after = runtime.substringAfter("private fun afterUnlock(context: Context)").substringBefore("\n    }\n")
+        assertTrue(after, after.indexOf("LockActivity.markUnlock()") in 0 until after.indexOf("LockActivity.start(context)"))
+        assertEquals(1, Regex("""markUnlock\(\)""").findAll(runtime).count())
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        val resume = activity.substringAfter("override fun onResume()").substringBefore("\n    }\n")
+        val pending = resume.indexOf("GlanceOpener.handOverPending()")
+        assertTrue(resume, pending in 0 until resume.indexOf("GlanceOpener.openHandedOver(this)"))
+        assertTrue(resume, resume.indexOf("takeUnlockMark()") > resume.indexOf("GlanceOpener.openHandedOver(this)"))
+        assertTrue(resume.contains("unlockOpenRow(marked, handedOver, shownRows)"))
+        assertTrue(resume.contains("open(only)"))
+        assertTrue(activity.contains("view.root.setOnClickListener { open(row) }"))
+        assertEquals("taken in onResume alone", 1, Regex("""(?<!fun )takeUnlockMark\(\)""").findAll(activity).count())
+        // Kalender's row only when the lock leaves it usable and it is on for the phone.
+        assertTrue(activity.contains("lock?.calendarUsable == true && CalendarStore.dagenOn()"))
+        assertTrue(activity.contains("is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))"))
     }
 
     @Test

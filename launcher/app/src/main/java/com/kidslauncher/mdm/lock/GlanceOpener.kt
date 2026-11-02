@@ -86,6 +86,10 @@ object GlanceOpener {
         run(activity, pending, GlanceOpenFrom.TIME_RULE_SCREEN, homeBelow = false)
     }
 
+    /** A row's target waits for the time-rule screen (read before [openHandedOver] takes it): that screen then opens
+     * nothing else by itself (PLAN 2026-11-02's one usable thing). */
+    fun handOverPending(): Boolean = handedOver != null
+
     /**
      * Whether a time rule that locks the phone now leaves [target] usable (QA Q1): the app among the
      * time lock's usable apps (the budget's messaging and music apps, a rule's exempt apps); missed

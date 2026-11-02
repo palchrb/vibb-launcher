@@ -621,12 +621,13 @@ fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !t
  * Whether the time lock [lock] leaves [target] usable (QA Q1, for the tap and the hand-over): no time
  * lock - yes; a conversation - its app among the lock's usable apps (the budget's messaging and music
  * apps, a rule's exempt apps); missed calls - calls managed ([callsManaged]) and allowed by the rule
- * (the time-rule screen's own condition for its phone book).
+ * (the time-rule screen's own condition for its phone book); Kalender's reminder row - every rule allows
+ * Kalender ([TimeLock.calendarUsable]).
  */
 fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target: GlanceTarget, callsManaged: Boolean): Boolean = when {
     !lock.locked -> true
-    // Dagen isn't one of a time rule's usable screens (design 69 §2.2).
-    target is GlanceTarget.Day -> false
+    // Kalender only under rules that each allow it (PLAN 2026-11-02; design 69 §2.2 had it never usable).
+    target is GlanceTarget.Day -> lock.calendarUsable
     else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
 

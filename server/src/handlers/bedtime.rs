@@ -15,7 +15,7 @@
 //! An unknown phone is a 404, a DB error a 500; a save or a remove nudges the phone and is in the
 //! security log (`bedtime_saved`, `bedtime_removed`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use askama::Template;
 use axum::Extension;
@@ -26,8 +26,8 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::handlers::schedules::{
-    AppChoice, app_choices, apps_value, field, form_pairs, log_change, minutes_to_time_input,
-    nudge, parse_exempt_apps_form, read_failed_in, render, reported_apps, server_error_in,
+    Exceptions, ScopeApps, field, form_pairs, log_change, minutes_to_time_input, nudge,
+    parse_exempt_apps_form, read_failed_in, render, scope_apps, server_error_in,
     time_input_to_minutes, window_text,
 };
 use crate::i18n::{Lang, Words, t, t_params};
@@ -133,18 +133,12 @@ struct NightsInput {
 }
 
 /// The page's fields, from the stored bedtime, the defaults or as typed. The names match
-/// `partials/exceptions.html`'s (`rule.apps`, ...).
+/// `partials/exceptions.html`'s (`rule.exceptions`, `rule.apps_error`).
 struct BedtimeForm {
     rows: Vec<NightsInput>,
     calls_allowed: bool,
-    apps: Vec<AppChoice>,
+    exceptions: Exceptions,
     apps_error: Option<String>,
-}
-
-impl BedtimeForm {
-    fn apps_value(&self) -> String {
-        apps_value(&self.apps)
-    }
 }
 
 fn nights_inputs(lang: Lang, nights: &[Option<DayWindow>; 2]) -> Vec<NightsInput> {
@@ -188,6 +182,8 @@ pub(crate) struct BedtimeInput {
     pub nights: Nights,
     pub calls_allowed: bool,
     pub exempt_apps: Vec<String>,
+    /// The Vibb calendar row, as a rule's.
+    pub calendar_allowed: bool,
 }
 
 /// Why a bedtime form was refused, by the field it is shown under.
@@ -247,6 +243,7 @@ pub(crate) fn parse_bedtime_form(
         },
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         exempt_apps: parse_exempt_apps_form(fields).map_err(BedtimeError::Apps)?,
+        calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
     })
 }
 
@@ -270,8 +267,8 @@ async fn phone_or_answer(state: &AppState, id: i64, lang: Lang) -> Result<String
     }
 }
 
-/// The stored bedtime, and the phone's reported apps (package -> label).
-type StoredAndApps = (Option<TimeRuleRow>, BTreeMap<String, String>);
+/// The stored bedtime, and what the phone's Exceptions offer (its allowed apps, Kalender).
+type StoredAndApps = (Option<TimeRuleRow>, ScopeApps);
 
 async fn stored_and_apps(
     state: &AppState,
@@ -281,7 +278,7 @@ async fn stored_and_apps(
     let stored = time_rules::bedtime_row(&state.db, id)
         .await
         .map_err(|err| Box::new(read_failed_in(lang, err, "the bedtime")))?;
-    let apps = reported_apps(state, &[id])
+    let apps = scope_apps(state, &[id], true)
         .await
         .map_err(|err| Box::new(read_failed_in(lang, err, "the reported apps")))?;
     Ok((stored, apps))
@@ -329,14 +326,14 @@ pub async fn show_bedtime(
             BedtimeForm {
                 rows: nights_inputs(lang, &nights),
                 calls_allowed: row.calls_allowed,
-                apps: app_choices(&available, &exempt),
+                exceptions: available.exceptions(&exempt, row.calendar_allowed),
                 apps_error: None,
             }
         }
         None => BedtimeForm {
             rows: nights_inputs(lang, &[Some(DEFAULT_NIGHT); 2]),
             calls_allowed: true,
-            apps: app_choices(&available, &[]),
+            exceptions: available.exceptions(&[], false),
             apps_error: None,
         },
     };
@@ -387,7 +384,8 @@ async fn refuse(
             })
             .collect(),
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
-        apps: app_choices(&available, &chosen),
+        exceptions: available
+            .exceptions(&chosen, fields.iter().any(|(k, _)| k == "calendar_allowed")),
         apps_error: None,
     };
     let refusal = match error {
@@ -437,15 +435,17 @@ pub async fn save_bedtime(
     // one updates the row the other made, never a second row or a 500.
     if let Err(err) = sqlx::query(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         days_json, bedtime) VALUES (?, ?, 'bedtime', ?, ?, ?, 1) \
+         calendar_allowed, days_json, bedtime) VALUES (?, ?, 'bedtime', ?, ?, ?, ?, 1) \
          ON CONFLICT(device_id) WHERE bedtime = 1 DO UPDATE SET name = excluded.name, \
          kind = 'bedtime', calls_allowed = excluded.calls_allowed, \
-         exempt_apps_json = excluded.exempt_apps_json, days_json = excluded.days_json",
+         exempt_apps_json = excluded.exempt_apps_json, \
+         calendar_allowed = excluded.calendar_allowed, days_json = excluded.days_json",
     )
     .bind(id)
     .bind(BEDTIME_NAME)
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
+    .bind(input.calendar_allowed)
     .bind(serde_json::to_string(&input.nights.days()).expect("windows serialize"))
     .execute(&state.db)
     .await
@@ -633,6 +633,7 @@ mod tests {
             days_json: days.to_string(),
             sort_order: 0,
             bedtime: true,
+            calendar_allowed: false,
         };
         let every = serde_json::to_string(&[w(1260, 420); 7]).unwrap();
         assert_eq!(

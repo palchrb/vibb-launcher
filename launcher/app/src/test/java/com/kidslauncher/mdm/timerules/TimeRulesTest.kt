@@ -187,6 +187,31 @@ class TimeRulesTest {
         assertNotEquals(a.key(), b.key())
         assertNotEquals(a.key(), c.key())
         assertEquals("NONE", UNLOCKED.key())
+        // Kalender's switch moves it too; a lock without it keeps the key it had before 0119.
+        val d = decideTimeLock(policy(school.copy(calendarAllowed = true)), at(0, 9), false)
+        assertNotEquals(a.key(), d.key())
+        assertFalse(a.key().contains("calendar"))
+    }
+
+    /** PLAN "Kalender usable during a time rule" (2026-11-02): only when every active rule allows it; never under the
+     * used-up budget alone; an older server's rule (no key) keeps it closed. */
+    @Test
+    fun `Kalender is usable only when every active rule allows it`() {
+        val calSchool = school.copy(calendarAllowed = true)
+        val calBedtime = bedtime.copy(calendarAllowed = true, days = List(7) { w(13, 0, 15, 0) })
+        assertTrue(decideTimeLock(policy(calSchool), at(0, 9), false).calendarUsable)
+        assertFalse(decideTimeLock(policy(school), at(0, 9), false).calendarUsable)
+        assertTrue(decideTimeLock(policy(calSchool, calBedtime), at(0, 13, 30), false).calendarUsable)
+        assertFalse(decideTimeLock(policy(calSchool, bedtime.copy(days = List(7) { w(13, 0, 15, 0) })), at(0, 13, 30), false).calendarUsable)
+        val used = BudgetUse(usedMs = 60 * 60_000L, budgetMinutes = 60, extraMinutes = 0)
+        val budget = decideTimeLock(policy(calSchool, budget = List(7) { 60 }), at(0, 16), false, budget = used)
+        assertEquals(LockReason.SCREEN_TIME, budget.reason)
+        assertFalse(budget.calendarUsable)
+        assertFalse(calendarUsableUnder(budget))
+        assertTrue(calendarUsableUnder(UNLOCKED))
+        // The wire: a rule without the key is false.
+        val decoded = com.kidslauncher.mdm.server.ServerJson.decodeFromString(TimeRule.serializer(), """{"id": 1, "kind": "school"}""")
+        assertFalse(decoded.calendarAllowed)
     }
 
     // Next boundary

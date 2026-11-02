@@ -91,19 +91,46 @@ sealed interface LockRow {
 
     data class PhoneBook(override val label: String) : LockRow
 
+    /** Kalender, our own day view ("Kalender"; PLAN 2026-11-02). */
+    data class Calendar(override val label: String) : LockRow
+
     data class App(val packageName: String, override val label: String) : LockRow
 }
 
 /**
  * The card's rows: the phone book first while calls are managed and the lock allows them (as
- * before P6, when it was its own button), then every usable [apps] entry sorted by its name (QA #6
- * of design 14) - the music app among them under a budget lock. Every app is a row: [apps] comes
- * from the lock's set of packages, and two apps the parent named alike both stay.
+ * before P6, when it was its own button), then Kalender when every rule allows it and it is on for
+ * the phone ([calendarLabel], null = no row; PLAN 2026-11-02), then every usable [apps] entry sorted
+ * by its name (QA #6 of design 14) - the music app among them under a budget lock. Every app is a
+ * row: [apps] comes from the lock's set of packages, and two apps the parent named alike both stay.
  */
-fun timeLockRows(callsManaged: Boolean, callsAllowed: Boolean, phoneBookLabel: String, apps: List<LockApp>): List<LockRow> {
+fun timeLockRows(
+    callsManaged: Boolean,
+    callsAllowed: Boolean,
+    phoneBookLabel: String,
+    apps: List<LockApp>,
+    calendarLabel: String? = null,
+): List<LockRow> {
     val rows = mutableListOf<LockRow>()
     if (callsManaged && callsAllowed) rows += LockRow.PhoneBook(phoneBookLabel)
+    if (calendarLabel != null) rows += LockRow.Calendar(calendarLabel)
     apps.sortedWith(compareBy({ it.label.lowercase() }, { it.packageName }))
         .mapTo(rows) { LockRow.App(it.packageName, it.label) }
     return rows
 }
+
+/** How long after the unlock its mark may still open the one usable thing (the time-rule screen comes up within it;
+ * the glance's hand-over has the same, `GLANCE_HAND_OVER_MS`). */
+const val UNLOCK_OPEN_MS = 10_000L
+
+/** The unlock's mark, set at [markedAtMs] (elapsed realtime; 0 = none), is still fresh at [nowMs]. */
+fun unlockMarkFresh(markedAtMs: Long, nowMs: Long): Boolean = markedAtMs > 0 && nowMs - markedAtMs in 0..UNLOCK_OPEN_MS
+
+/**
+ * PLAN "one usable thing opens straight after the PIN" (2026-11-02): the row the time-rule screen opens by itself as it
+ * comes up after an unlock - its only row (an app, Kalender, or the phone book while calls are managed and allowed),
+ * when the unlock marked it ([marked]: fresh, the phone still unlocked) and the lock handed it no glance row
+ * ([handedOver], which opens instead). Otherwise none: the card stays. Emergency call is no row and never counts.
+ */
+fun unlockOpenRow(marked: Boolean, handedOver: Boolean, rows: List<LockRow>): LockRow? =
+    if (marked && !handedOver && rows.size == 1) rows.single() else null

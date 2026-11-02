@@ -73,9 +73,18 @@ class EventEditActivity : UIObjectActivity() {
             finish()
             return
         }
-        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27).
-        DayActivity.redirectIfLocked(this)
+        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27) -
+        // unless every rule in force allows Kalender, "Ny avtale" included (the user, 2026-11-02).
+        if (!DayActivity.redirectIfLocked(this)) lockWatch.start()
     }
+
+    override fun onPause() {
+        lockWatch.stop()
+        super.onPause()
+    }
+
+    /** A rule that doesn't allow Kalender beginning while the form is open: the time-rule screen. */
+    private val lockWatch = LockWatch(this)
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
