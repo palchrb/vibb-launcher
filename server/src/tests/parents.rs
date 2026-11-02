@@ -58,7 +58,7 @@ fn otp_of(html: &str) -> String {
 }
 
 async fn account(app: &TestApp, username: &str) -> AdminUser {
-    sqlx::query_as("SELECT * FROM admin_users WHERE username = ?")
+    sqlx::query_as(concat!(crate::admin_select!(), " WHERE username = ?"))
         .bind(username)
         .fetch_one(&app.db)
         .await

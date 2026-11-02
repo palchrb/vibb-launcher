@@ -6,8 +6,10 @@
 //!   `TRUSTED_PROXIES`, walked from the right; from anyone else it is ignored (§0 #1: the old
 //!   `client_ip` took the left-most entry from any peer, which nginx and a non-loopback bind let a
 //!   client forge).
-//! - [limit_key]: what limits and bans count by - an IPv4 address, or an IPv6 /64 (one home gets
-//!   a whole /64, so a single IPv6 address is no key at all).
+//! - [limit_key]: what limits and bans count by - an IPv4 address, or an IPv6 /56 (one home gets
+//!   at least a /56, so a single IPv6 address - or a single /64 - is no key at all; design 74 step 2).
+//! - [crowd_key]: the coarser neighbourhood (IPv4 /24, IPv6 /48) the sign-in challenge pool makes
+//!   room by - it drops from the crowd holding the most first.
 //! - [USER_AGENT]: what this server calls itself when it asks others.
 
 use std::collections::HashMap;
@@ -110,14 +112,47 @@ pub fn is_loopback(ip: IpAddr) -> bool {
     ip.to_canonical().is_loopback()
 }
 
-/// The key limits and bans count by: the IPv4 address itself, or the IPv6 /64 written as
-/// "2001:db8:1:2::/64".
+/// The key limits and bans count by: the IPv4 address itself, or the IPv6 /56 written as
+/// "2001:db8:1:200::/56". A /56 is the smallest prefix a residential line is given (RIPE-690 says
+/// /56 or /48), so one home line is one key, as one IPv4 address is; a /64 key let a client with
+/// its own /56 or /48 rotate through 256 or 65 536 fresh keys and dodge the ban (and, with
+/// "Kun passkey", keep a parent's sign-in challenge evicted - qa-passkeys-1 A-R1). A /48 would
+/// lump up to 256 such lines of one ISP into one ban. A tailnet address (100.64.0.0/10,
+/// `fd7a:115c:a1e0::/48`) is one node, whatever its prefix: keyed by the whole address, so the kid's
+/// phone on the tailnet never shares a key with a parent's (every node's IPv6 is in one /64 there -
+/// qa-passkeys-2 limiter L2).
 pub fn limit_key(ip: IpAddr) -> String {
-    match ip.to_canonical() {
+    let ip = ip.to_canonical();
+    if is_tailnet(ip) {
+        return ip.to_string();
+    }
+    match ip {
         IpAddr::V4(v4) => v4.to_string(),
         IpAddr::V6(v6) => {
-            let network = u128::from(v6) & (u128::MAX << 64);
-            format!("{}/64", Ipv6Addr::from(network))
+            let network = u128::from(v6) & (u128::MAX << 72);
+            format!("{}/56", Ipv6Addr::from(network))
+        }
+    }
+}
+
+/// The neighbourhood a client is in for the sign-in challenge pool's room ([limit_key]'s coarser
+/// sibling, never a ban): an IPv4 /24, an IPv6 /48. When the pool is full it drops the oldest
+/// challenge of the neighbourhood holding the most, so a flood from one provider's range evicts its
+/// own and a parent's one challenge from elsewhere stays (design 74 step 2).
+pub fn crowd_key(ip: IpAddr) -> String {
+    let ip = ip.to_canonical();
+    // A tailnet node is a crowd of its own, as it is a key of its own ([limit_key]).
+    if is_tailnet(ip) {
+        return ip.to_string();
+    }
+    match ip {
+        IpAddr::V4(v4) => {
+            let network = u32::from(v4) & (u32::MAX << 8);
+            format!("{}/24", std::net::Ipv4Addr::from(network))
+        }
+        IpAddr::V6(v6) => {
+            let network = u128::from(v6) & (u128::MAX << 80);
+            format!("{}/48", Ipv6Addr::from(network))
         }
     }
 }
@@ -547,21 +582,53 @@ mod tests {
     }
 
     #[test]
-    fn limit_keys_are_ipv4_addresses_and_ipv6_64s() {
+    fn limit_keys_are_ipv4_addresses_and_ipv6_56s() {
         assert_eq!(limit_key(ip("203.0.113.7")), "203.0.113.7");
         assert_eq!(
-            limit_key(ip("2001:db8:1:2:aaaa:bbbb:cccc:dddd")),
-            "2001:db8:1:2::/64"
+            limit_key(ip("2001:db8:1:2aa:aaaa:bbbb:cccc:dddd")),
+            "2001:db8:1:200::/56"
         );
         assert_eq!(
             limit_key(ip("2001:db8:1:2::1")),
             limit_key(ip("2001:db8:1:2:ffff::9"))
         );
+        // Every /64 of a home's /56 is one key (design 74 step 2: no rotating through fresh /64s).
+        assert_eq!(
+            limit_key(ip("2001:db8:1:2::1")),
+            limit_key(ip("2001:db8:1:ff::1"))
+        );
         assert_ne!(
             limit_key(ip("2001:db8:1:2::1")),
-            limit_key(ip("2001:db8:1:3::1"))
+            limit_key(ip("2001:db8:1:102::1"))
         );
         assert_eq!(limit_key(ip("::ffff:203.0.113.7")), "203.0.113.7");
+    }
+
+    /// qa-passkeys-2 limiter L2: every tailnet node is its own key and crowd (they share one /64 over IPv6).
+    #[test]
+    fn a_tailnet_address_is_a_key_of_its_own() {
+        let a = ip("fd7a:115c:a1e0::e801:4d42");
+        let b = ip("fd7a:115c:a1e0::e801:4d43");
+        assert_eq!(limit_key(a), "fd7a:115c:a1e0::e801:4d42");
+        assert_ne!(limit_key(a), limit_key(b));
+        assert_ne!(crowd_key(a), crowd_key(b));
+        assert_eq!(limit_key(ip("100.101.102.103")), "100.101.102.103");
+        assert_eq!(crowd_key(ip("100.101.102.103")), "100.101.102.103");
+        assert_ne!(
+            crowd_key(ip("100.101.102.103")),
+            crowd_key(ip("100.101.102.104"))
+        );
+    }
+
+    #[test]
+    fn crowd_keys_are_ipv4_24s_and_ipv6_48s() {
+        assert_eq!(crowd_key(ip("203.0.113.7")), "203.0.113.0/24");
+        assert_eq!(crowd_key(ip("::ffff:203.0.113.7")), "203.0.113.0/24");
+        assert_eq!(crowd_key(ip("2001:db8:1:ff02::9")), "2001:db8:1::/48");
+        assert_ne!(
+            crowd_key(ip("2001:db8:1::1")),
+            crowd_key(ip("2001:db8:2::1"))
+        );
     }
 
     #[test]

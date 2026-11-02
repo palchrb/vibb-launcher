@@ -700,9 +700,11 @@ async fn the_security_log_is_pruned_after_180_days() {
     assert_eq!(left, 1);
 }
 
+/// Every /64 of one /56 is one key (design 74 step 2): fresh /64s from one home line dodge nothing.
 #[tokio::test]
-async fn ipv6_login_failures_are_banned_by_their_64() {
-    let app = TestApp::new().await;
+async fn ipv6_login_failures_are_banned_by_their_56() {
+    // A public range (a tailnet address is a key of its own): the admin listener answers it with ADMIN_PUBLIC.
+    let app = TestApp::with_env(&[("ADMIN_PUBLIC", "on")]).await;
     app.admin_cookie().await;
     for n in 0..security::MAX_FAILED_PER_IP {
         let request = Request::builder()
@@ -711,7 +713,7 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(
                 "x-forwarded-for",
-                format!("fd7a:115c:a1e0:1:2:3:4:{:x}", n + 1),
+                format!("2001:db8:5:1{:02x}:2:3:4:1", n + 1),
             )
             .body(Body::from(format!("username={USER}&password=wrong")))
             .unwrap();
@@ -722,7 +724,7 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
         .method(Method::POST)
         .uri("/login")
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header("x-forwarded-for", "fd7a:115c:a1e0:1:ffff::1")
+        .header("x-forwarded-for", "2001:db8:5:1ff:ffff::1")
         .body(Body::from(format!("username={USER}&password={PASSWORD}")))
         .unwrap();
     let res = app.send_via(&app.router, LOOPBACK_PEER, request).await;
@@ -731,8 +733,8 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(banned, "fd7a:115c:a1e0:1::/64");
-    // The security page unbans it by a form field (a /64 can't be a path segment).
+    assert_eq!(banned, "2001:db8:5:100::/56");
+    // The security page unbans it by a form field (a /56 can't be a path segment).
     let session = app.admin_cookie().await;
     let res = app
         .request_form(
@@ -745,7 +747,7 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
     // Back to Blocked Addresses, the address in the flash (design 31 step 14).
     super::assert_redirect(
         &res,
-        "/security?unbanned=fd7a%3A115c%3Aa1e0%3A1%3A%3A%2F64",
+        "/security?unbanned=2001%3Adb8%3A5%3A100%3A%3A%2F56",
         Some("banned"),
     );
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM banned_ips")

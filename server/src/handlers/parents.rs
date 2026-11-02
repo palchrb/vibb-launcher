@@ -137,6 +137,20 @@ fn wrong_password(lang: Lang, proof: &admin_auth::Proof, left: i64, nothing: &st
     out
 }
 
+/// [wrong_password]'s words, or - a passkey-only parent's empty password (qa-passkeys-2 M1) - "Confirm with a
+/// passkey".
+fn refused_words(
+    lang: Lang,
+    proof: &admin_auth::Proof,
+    reauth: &admin_auth::Reauth,
+    nothing: &str,
+) -> String {
+    match reauth {
+        admin_auth::Reauth::Wrong { left } => wrong_password(lang, proof, *left, nothing),
+        _ => t(lang, "passkeys.only.needs_passkey").to_string(),
+    }
+}
+
 /// Add Parent (design 62 §4.1). The username is trimmed and lowercased, then checked; whether it
 /// is taken is said only after your password was right (no enumeration).
 pub async fn add(
@@ -192,7 +206,10 @@ pub async fn add(
             Ok(answer) => answer,
             Err(admin_auth::Busy) => return admin_auth::busy_response(),
         };
-    if reauth != admin_auth::Reauth::Right {
+    if !matches!(
+        reauth,
+        admin_auth::Reauth::Right | admin_auth::Reauth::NeedsPasskey
+    ) {
         security::record_security_event(
             &state.db,
             "parent_change_refused",
@@ -207,10 +224,10 @@ pub async fn add(
     }
     let otp_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
-        (admin_auth::Reauth::Wrong { left }, _) => {
+        (reauth @ (admin_auth::Reauth::Wrong { .. } | admin_auth::Reauth::NeedsPasskey), _) => {
             let answer = refuse(
                 "add_password",
-                wrong_password(lang, &proof, left, "account.add.nobody"),
+                refused_words(lang, &proof, &reauth, "account.add.nobody"),
             );
             return render_account(
                 &state,
@@ -317,14 +334,17 @@ async fn otp_shown(
 
 /// The account a Reset or Remove names, while it isn't removed.
 async fn target_of(state: &AppState, id: i64) -> Result<Option<AdminUser>, Box<Response>> {
-    sqlx::query_as("SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|err| {
-            tracing::error!(%err, "couldn't read the parent account");
-            Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())
-        })
+    sqlx::query_as(concat!(
+        crate::admin_select!(),
+        " WHERE id = ? AND removed_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| {
+        tracing::error!(%err, "couldn't read the parent account");
+        Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    })
 }
 
 /// The Reset form: your password.
@@ -362,7 +382,10 @@ pub async fn reset(
             Ok(answer) => answer,
             Err(admin_auth::Busy) => return admin_auth::busy_response(),
         };
-    if reauth != admin_auth::Reauth::Right {
+    if !matches!(
+        reauth,
+        admin_auth::Reauth::Right | admin_auth::Reauth::NeedsPasskey
+    ) {
         security::record_security_event(
             &state.db,
             "parent_change_refused",
@@ -377,11 +400,11 @@ pub async fn reset(
     }
     let otp_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
-        (admin_auth::Reauth::Wrong { left }, _) => {
+        (reauth @ (admin_auth::Reauth::Wrong { .. } | admin_auth::Reauth::NeedsPasskey), _) => {
             let answer = AccountAnswer {
                 field_error: Some((
                     reset_field(id),
-                    wrong_password(lang, &proof, left, "account.parents.nothing_changed"),
+                    refused_words(lang, &proof, &reauth, "account.parents.nothing_changed"),
                 )),
                 ..AccountAnswer::default()
             };
@@ -506,6 +529,19 @@ pub async fn remove(
     match admin_auth::reauth(&state, &session, &actor, proof).await {
         admin_auth::Reauth::Right => {}
         admin_auth::Reauth::Busy => return admin_auth::busy_response(),
+        admin_auth::Reauth::NeedsPasskey => {
+            let answer = refuse(t(lang, "passkeys.only.needs_passkey").to_string());
+            return render_account(
+                &state,
+                &session,
+                &actor,
+                &ceremony,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
+        }
         reauth => {
             security::record_security_event(
                 &state.db,

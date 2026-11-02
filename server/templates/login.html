@@ -16,6 +16,22 @@
     <p class="flash flash-error auth-error" role="alert" data-passkey-error hidden></p>
     {%- endif %}
 
+    {%- if passwords_off %}
+    {#- Design 74 §6.4: every parent is passkey-only and no one-time password is pending - no username, no password,
+        no divider; one filled "Sign in with passkey". No auto-start: iOS needs a tap, and a cancelled automatic
+        prompt would leave a blank page. -#}
+    {%- if passkeys_here %}
+    <form method="post" action="/auth/passkey" id="passkey-sign-in" data-passkey-ui data-passkey-only hidden data-w-failed="{{ self.t("passkeys.browser_failed") }}">
+        <input type="hidden" name="assertion" value="">
+        <button type="button" class="button-wide button-key" data-passkey-login>{% include "partials/key_icon.html" %}{{ self.t("passkeys.sign_in.button") }}</button>
+    </form>
+    <p class="auth-note" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.sign_in.no_browser") }}"></p>
+    <noscript><p class="auth-note">{{ self.t("passkeys.sign_in.no_browser") }}</p></noscript>
+    <script src="/static/passkey.js?v=3" defer></script>
+    {%- else %}
+    <p class="auth-note">{{ self.t("passkeys.not_here") }}</p>
+    {%- endif %}
+    {%- else %}
     <form method="post" action="/login">
         <div class="group form-group">
             <div class="field">
@@ -37,7 +53,8 @@
         <p class="or-divider">{{ self.t("passkeys.or") }}</p>
         <button type="button" class="button-outline" data-passkey-login>{% include "partials/key_icon.html" %}{{ self.t("passkeys.sign_in.button") }}</button>
     </form>
-    <script src="/static/passkey.js?v=1" defer></script>
+    <script src="/static/passkey.js?v=3" defer></script>
+    {%- endif %}
     {%- endif %}
 </main>
 </body>

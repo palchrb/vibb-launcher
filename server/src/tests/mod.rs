@@ -45,6 +45,7 @@ mod music_sweep;
 mod notifications;
 mod parent_pin;
 mod parents;
+mod passkey_only;
 mod passkeys;
 mod play;
 mod power;
@@ -478,10 +479,13 @@ impl TestApp {
         .execute(&self.db)
         .await
         .expect("failed to seed the admin user");
-        sqlx::query_as("SELECT * FROM admin_users WHERE username = 'parent'")
-            .fetch_one(&self.db)
-            .await
-            .expect("no admin")
+        sqlx::query_as(concat!(
+            crate::admin_select!(),
+            " WHERE username = 'parent'"
+        ))
+        .fetch_one(&self.db)
+        .await
+        .expect("no admin")
     }
 
     /// A TOTP code the server accepts now: for the current step, or a later one when that step

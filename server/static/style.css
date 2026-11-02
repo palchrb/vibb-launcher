@@ -2692,3 +2692,20 @@ details.confirm > summary.row.passkey-row { justify-content: flex-start; color: 
 [data-passkey-ui][hidden], [data-passkey-unsupported][hidden], [data-passkey-error][hidden] { display: none; }
 .reauth-passkey .field-error { margin: 6px 4px 0; }
 .passkeys-still { margin: 12px 4px 0; }
+/* ---- Design 74 step 2: "Kun passkey" (account.html's #passkey-only, password_sign_in.html, login.html) ---- */
+/* The passkey-only sign-in's one filled button carries the key glyph like the outline one. */
+.button-key { display: flex; align-items: center; justify-content: center; }
+.button-key svg { flex: none; width: 18px; height: 18px; margin-right: 8px; }
+.auth-note { margin: 0 4px; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
+/* The switch row's switch is a picture of one (its row opens the confirm, or the switch-off page when on): the same
+   look as `.sw` on a span. */
+span.sw { display: inline-block; cursor: inherit; }
+span.sw.on { background: var(--switch-on); border-color: var(--switch-on); }
+span.sw.on + .knob { -webkit-transform: translateX(20px); transform: translateX(20px); }
+details.confirm > summary.row.passkey-only-row,
+a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
+.passkey-only-row .row-label { flex: 1 1 auto; }
+.row.passkey-only-off { opacity: 0.55; }
+.confirm-body p.passkey-warn { padding: 10px 12px; border-radius: 10px; background: var(--field-bg); color: var(--label); }
+.password-on-confirm { margin-top: 20px; }
+.password-on-lede { margin: -4px 4px 8px; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
