@@ -253,54 +253,67 @@ fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yielded
 /** `Notification.CATEGORY_ALARM` (duplicated to stay Android-free). */
 const val ALARM_CATEGORY = "alarm"
 
-/** Bug 2026-11-02 (a2): the longest one ringing notification holds the alarm's yield, from when it was first seen
- * ringing - a notification stuck in the shade never holds the lock open past it. Clocks silence a ringing alarm
- * by themselves well before (Google's and AOSP's "Silence after" at most 30 min, 10 by default). */
-const val ALARM_NOTICE_MAX_MS = 30 * 60_000L
+/** Bug 2026-11-02 (a2): the longest one ring holds the alarm's yield, from when it was first seen ringing - a
+ * notification stuck in the shade never holds the lock open past it. 15 min (code QA L3: the yield steps aside for any
+ * front task while it lasts, so it is kept short): Google's and AOSP's "Silence after" is 10 min by default and most
+ * clocks stop by then; an alarm set to ring longer has the fixed window and the PIN after it. */
+const val ALARM_NOTICE_MAX_MS = 15 * 60_000L
 
 /**
- * Bug 2026-11-02 (a2): whether a notification is a clock's ringing alarm (or ended timer) as the listener sees it -
- * [ALARM_CATEGORY], ongoing and with a full-screen intent (its ringing screen). A snoozed, upcoming or missed alarm's
- * notification has the category but no full-screen intent. Whose it is decides [AlarmNotices.ringingNow].
+ * Bug 2026-11-02 (a2): whether a notification is a clock's ringing alarm as the listener sees it - [ALARM_CATEGORY]
+ * with a full-screen intent (its ringing screen). Not "ongoing" (code QA H1): Fossify Clock posts its ringing alarm
+ * with `startForeground` and no `setOngoing`, so on API 34+ it carries only `FLAG_FOREGROUND_SERVICE`/`FLAG_NO_CLEAR`.
+ * A snoozed, upcoming or missed alarm's notification has the category but no full-screen intent. Whose it is decides
+ * [AlarmNotices.ringingNow] (the lock's clock apps only). AOSP's and Google's ended timer has the same shape; Fossify's
+ * (`CATEGORY_EVENT`, no full-screen intent, design 42 §0d) is the glance tile's Stopp instead.
  */
-fun ringingAlarmShape(category: String?, ongoing: Boolean, fullScreen: Boolean): Boolean =
-    category == ALARM_CATEGORY && ongoing && fullScreen
+fun ringingAlarmShape(category: String?, fullScreen: Boolean): Boolean = category == ALARM_CATEGORY && fullScreen
 
-/** One ringing-shaped notification: its package and when it was first seen ringing (elapsed realtime). */
-data class AlarmNotice(val packageName: String, val sinceMs: Long)
+/** A notification as [AlarmNotices] takes it: its [key], [packageName], whether it is [ringingAlarmShape] and its
+ * `Notification.when` ([whenMs]) - a new `when` under the same key is a new ring (code QA L1: Fossify rings every
+ * alarm under one id, so an alarm replacing a ringing one is an update of its key). */
+data class AlarmPost(val key: String, val packageName: String, val ringing: Boolean, val whenMs: Long)
+
+/** One ring: its package, its `when` and when it was first seen ringing (elapsed realtime). */
+data class AlarmNotice(val packageName: String, val sinceMs: Long, val whenMs: Long = 0L)
 
 /**
  * Bug 2026-11-02 (a2): the alarm's yield lasts while a clock app's ringing notification is posted, not only the fixed
  * [ALARM_RING_MS] after the alarm's time ([alarmLikelyRinging], kept as the fallback - no listener access, a clock
  * whose notification isn't [ringingAlarmShape]). [ringing]: the ringing-shaped notifications by key; [consumed]: the
  * keys whose yield ended - the lock came back in front after yielding to the alarm ([afterResume], as
- * [alarmAfterResume]); [sends]: the ringing screen's re-sends per key ([screenKey], [resent]). A key leaves all three
- * when its notification is removed or posted again not ringing (a snooze), so the same alarm ringing again yields
- * again. Pure; the listener's glue is `badges/AlarmNoticeReader`.
+ * [alarmAfterResume]), or a re-send brought nothing up ([spent]); [sends]: the ringing screen's re-sends per key
+ * ([screenKey], [resent]). A key leaves all three when its notification is removed or posted again not ringing (a
+ * snooze), and starts afresh when posted with a new `when` (a new ring), so an alarm ringing again yields again. Pure;
+ * the listener's glue is `badges/AlarmNoticeReader`.
  */
 data class AlarmNotices(
     val ringing: Map<String, AlarmNotice> = emptyMap(),
     val consumed: Set<String> = emptySet(),
     val sends: Map<String, Int> = emptyMap(),
 ) {
-    /** A post (also an update of the same key): a ringing one keeps its first-seen time and whether it is consumed. */
-    fun posted(key: String, packageName: String, ringingShape: Boolean, nowMs: Long): AlarmNotices =
-        if (ringingShape) {
-            val kept = ringing[key]?.takeIf { it.packageName == packageName }
-            copy(ringing = ringing + (key to (kept ?: AlarmNotice(packageName, nowMs))))
-        } else {
-            removed(key)
-        }
+    /** A post: an update of the same ring (same package and `when`) keeps its first-seen time, spent mark and sends;
+     * a new ring under the key starts afresh; a post that doesn't ring drops the key. */
+    fun posted(post: AlarmPost, nowMs: Long): AlarmNotices {
+        if (!post.ringing) return removed(post.key)
+        val known = ringing[post.key]
+        if (known != null && known.packageName == post.packageName && known.whenMs == post.whenMs) return this
+        val fresh = removed(post.key)
+        return fresh.copy(ringing = fresh.ringing + (post.key to AlarmNotice(post.packageName, nowMs, post.whenMs)))
+    }
 
     fun removed(key: String): AlarmNotices =
         if (key !in ringing && key !in consumed && key !in sends) this else AlarmNotices(ringing - key, consumed - key, sends - key)
 
-    /** The listener's connect sweep: exactly [active]'s ringing ones (key, package, shape), keeping what was known. */
-    fun swept(active: List<Triple<String, String, Boolean>>, nowMs: Long): AlarmNotices {
-        val next = active.filter { it.third }.associate { (key, pkg, _) ->
-            key to (ringing[key]?.takeIf { it.packageName == pkg } ?: AlarmNotice(pkg, nowMs))
+    /** The listener's connect sweep: exactly [active]'s ringing ones, keeping what was known of the same rings. */
+    fun swept(active: List<AlarmPost>, nowMs: Long): AlarmNotices {
+        val known = active.filter { it.ringing }.filter { post ->
+            ringing[post.key]?.let { it.packageName == post.packageName && it.whenMs == post.whenMs } == true
+        }.map { it.key }.toSet()
+        val next = active.filter { it.ringing }.associate { post ->
+            post.key to (ringing[post.key]?.takeIf { post.key in known } ?: AlarmNotice(post.packageName, nowMs, post.whenMs))
         }
-        return AlarmNotices(next, consumed intersect next.keys, sends.filterKeys { it in next.keys })
+        return AlarmNotices(next, consumed intersect known, sends.filterKeys { it in known })
     }
 
     /** What the listener still has active of [ringing] ([active], asked for exactly those keys): the rest goes - a
@@ -321,11 +334,15 @@ data class AlarmNotices(
         .maxByOrNull { it.value.sinceMs }?.key
 
     /** One re-send of [key]'s screen: counted; when it went ([sent]) the yield is open again for it, so the re-front
-     * check steps aside for the screen that comes up. */
+     * check steps aside for the screen that comes up ([spent] closes it if none did). */
     fun resent(key: String, sent: Boolean): AlarmNotices = copy(
         consumed = if (sent) consumed - key else consumed,
         sends = sends + (key to (sends[key] ?: 0) + 1),
     )
+
+    /** Code QA L2: a re-send went out but the lock is still in front [ALARM_SCREEN_CHECK_MS] later (refused, or the
+     * screen closed at once) - [key]'s yield closes again rather than stay open while the notification lasts. */
+    fun spent(key: String): AlarmNotices = if (key in ringing) copy(consumed = consumed + key) else this
 
     /** The lock came back in front: after yielding to the alarm ([yieldedTo] "alarm"), every ringing key is spent. */
     fun afterResume(yieldedTo: String?): AlarmNotices = if (yieldedTo == "alarm") copy(consumed = consumed + ringing.keys) else this
@@ -340,32 +357,50 @@ data class AlarmNotices(
  * once while its notification stays can't loop the lock and the clock. */
 const val ALARM_SCREEN_MAX_SENDS = 5
 
-/** How long the lock is resumed before it sends a ringing alarm's screen again: the platform's own launch of the
- * full-screen intent (the alarm firing with the screen off) pauses the lock first and cancels the send, and Stop's
- * removal of the notification arrives before it. */
+/** How long the lock is resumed (or the screen on) before it sends a ringing alarm's screen again: the platform's own
+ * launch of the full-screen intent (the alarm firing with the screen off) pauses the lock first and cancels the send,
+ * and Stop's removal of the notification arrives before it. Also the wait before another look while held
+ * ([AlarmScreenStep.LATER]). */
 const val ALARM_SCREEN_SETTLE_MS = 1_500L
+
+/** Code QA L2 (as design 17b's [VOIP_FSI_CHECK_MS]): a re-send that left the lock in front this long brought nothing
+ * up - its yield closes ([AlarmNotices.spent]). */
+const val ALARM_SCREEN_CHECK_MS = 1_500L
 
 /** What the resumed, settled lock does about a ringing alarm's screen ([alarmScreenStep]). */
 enum class AlarmScreenStep {
     /** Nothing: no ringing alarm to bring back, not LOCKED, or a phone call or the emergency flow is in front. */
     NONE,
 
-    /** The screen is off (the lock may be resumed in the dark): look again in [ALARM_SCREEN_SETTLE_MS], while it rings. */
-    WAIT,
+    /** The screen is off (the lock may be resumed in the dark): no polling - the screen-on looks again (code QA L6). */
+    SCREEN_ON,
 
-    /** Send its full-screen intent now. */
+    /** Held for now - the PIN being typed on the keypad (code QA N4), or the keyguard cover's keyguard still locked
+     * ([KeyguardCover.mustWait], as 17b, code QA N3): look again in [ALARM_SCREEN_SETTLE_MS]. */
+    LATER,
+
+    /** Send its full-screen intent now, then check in [ALARM_SCREEN_CHECK_MS] that the lock left the front. */
     SEND,
 }
 
 /**
  * Gap closed 2026-11-02 (the power button pressed while the alarm rings: the screen-off's lock-up covered the ringing
  * screen, nothing brought it back): the resumed, settled lock sends a still-ringing alarm's full-screen intent again
- * ([key], [AlarmNotices.screenKey]) - only LOCKED, with the screen on, and never over a phone call (ours or
- * Telecom's, emergency included) or the emergency flow; the lock's own dialogs hold it (the activity's check).
+ * ([key], [AlarmNotices.screenKey]) - only LOCKED, with the screen on, never over a phone call (ours or Telecom's,
+ * emergency included) or the emergency flow, and not while the kid types the PIN ([typing]) or the cover's keyguard
+ * must be dismissed first ([coverWaits]); the lock's own dialogs hold it (the activity's check).
  */
-fun alarmScreenStep(key: String?, locked: Boolean, interactive: Boolean, otherScreen: Boolean): AlarmScreenStep = when {
+fun alarmScreenStep(
+    key: String?,
+    locked: Boolean,
+    interactive: Boolean,
+    otherScreen: Boolean,
+    typing: Boolean = false,
+    coverWaits: Boolean = false,
+): AlarmScreenStep = when {
     key == null || !locked || otherScreen -> AlarmScreenStep.NONE
-    !interactive -> AlarmScreenStep.WAIT
+    !interactive -> AlarmScreenStep.SCREEN_ON
+    typing || coverWaits -> AlarmScreenStep.LATER
     else -> AlarmScreenStep.SEND
 }
 

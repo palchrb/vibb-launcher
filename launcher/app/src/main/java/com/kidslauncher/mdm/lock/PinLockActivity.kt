@@ -124,13 +124,27 @@ class PinLockActivity : AppCompatActivity() {
     }
     private val voipRender = Runnable { renderVoip() }
 
-    /** Gap closed 2026-11-02: a still-ringing alarm's screen, sent once per resume after [ALARM_SCREEN_SETTLE_MS]
-     * ([PinLockRuntime.sendAlarmScreen]; resumed in the dark, it looks again until the screen is on); a pause before
-     * it (the platform's own launch, an unlock) drops it. */
+    /** Gap closed 2026-11-02: a still-ringing alarm's screen, sent once per resume (and per screen-on while resumed)
+     * after [ALARM_SCREEN_SETTLE_MS] ([PinLockRuntime.sendAlarmScreen]); held while digits are typed or the cover's
+     * keyguard waits, it looks again after the settle; a pause before it (the platform's own launch, an unlock) drops
+     * it. A send is checked after [ALARM_SCREEN_CHECK_MS] ([PinLockRuntime.alarmScreenCheck]). */
     private val alarmScreenSend: Runnable = object : Runnable {
         override fun run() {
             if (!resumed || !openDialogs.isEmpty()) return
-            PinLockRuntime.sendAlarmScreen(this@PinLockActivity)?.let { handler.postDelayed(this, it) }
+            when (PinLockRuntime.sendAlarmScreen(this@PinLockActivity, typing = entered.isNotEmpty())) {
+                AlarmScreenStep.LATER -> handler.postDelayed(this, ALARM_SCREEN_SETTLE_MS)
+                AlarmScreenStep.SEND -> handler.postDelayed(alarmScreenCheck, ALARM_SCREEN_CHECK_MS)
+                AlarmScreenStep.NONE, AlarmScreenStep.SCREEN_ON -> {}
+            }
+        }
+    }
+    private val alarmScreenCheck = Runnable { PinLockRuntime.alarmScreenCheck() }
+
+    /** The screen came on while resumed (a lock resumed in the dark gets no new resume): the alarm-screen look again. */
+    private val alarmScreenOn: () -> Unit = {
+        if (resumed) {
+            handler.removeCallbacks(alarmScreenSend)
+            handler.postDelayed(alarmScreenSend, ALARM_SCREEN_SETTLE_MS)
         }
     }
 
@@ -582,6 +596,7 @@ class PinLockActivity : AppCompatActivity() {
         }
         binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
         PinLockRuntime.addModeListener(modeListener)
+        PinLockRuntime.addScreenOnListener(alarmScreenOn)
         PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
         // Design 59: USER_PRESENT after Android's keyguard went comes here first.
@@ -811,6 +826,8 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(voipFsiSend)
         handler.removeCallbacks(voipAnswerCheck)
         handler.removeCallbacks(alarmScreenSend)
+        // A pause after a re-send: the screen came up - no check (the runtime's key stays until the next send's).
+        handler.removeCallbacks(alarmScreenCheck)
         voipFsiPending = false
         PinLockRuntime.voipLockLeft(sendPending)
         PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)
@@ -828,6 +845,7 @@ class PinLockActivity : AppCompatActivity() {
         glance?.stop()
         PinLockRuntime.onLockDestroyed()
         PinLockRuntime.removeModeListener(modeListener)
+        PinLockRuntime.removeScreenOnListener(alarmScreenOn)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
         if (PinLockRuntime.androidUnlockHook === androidUnlockHook) PinLockRuntime.androidUnlockHook = null

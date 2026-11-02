@@ -231,23 +231,33 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   verified) opens the alarm exemption (`rememberAlarm` takes the set) and, with the kiosk off, `pinLockHelpers(clockApp)`
   lets its alarm screen up (with the kiosk on, the plan pins the allowed alarm apps during a rule too - bug 2026-11-02,
   hardening.md). **The alarm's yield** (bug 2026-11-02, a2): `alarmNow` = `alarmRingingNow` - a clock app's ringing
-  notification (`badges/AlarmNoticeReader`, pure `AlarmNotices`/`ringingAlarmShape` in `RefrontPolicy.kt`: category
-  alarm, ongoing, a full-screen intent - a snoozed/upcoming/missed one has none; package, key and those flags only) holds
-  it while posted, at most `ALARM_NOTICE_MAX_MS` (30 min) from first seen; else, as before, `ALARM_RING_MS` (3 min) after
-  the alarm's time (no listener access, another clock's shape). The lock back in front after an "alarm" yield spends the
-  ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key, so it yields again
-  when it rings again. An ended timer's ringing notification has the same shape and yields too. **The ringing screen
-  brought back** (gap closed 2026-11-02: the kid presses power while it rings, the screen-off's lock-up covers the
-  ringing screen): `PinLockActivity.onResume` posts `alarmScreenSend` after `ALARM_SCREEN_SETTLE_MS` (1.5 s; `onPause`
-  drops it - the platform's own launch of the full-screen intent, an unlock), resumed in the dark it looks again until
-  the screen is on; `PinLockRuntime.sendAlarmScreen` - pure `alarmScreenStep` (LOCKED, screen on, no phone call or
-  emergency flow) and `AlarmNotices.screenKey` (a clock app's, younger than 30 min, under `ALARM_SCREEN_MAX_SENDS` = 5
-  re-sends per ring, the newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the
-  kept keys (`reconciled`: Stop's removal makes it nothing; no listener answer, nothing) - sends that notification's
-  full-screen intent (the reader keeps only that PendingIntent of a ringing-shaped one, never extras, text or actions)
-  from the visible lock with `VisibleSender.options()`, as one of our own starts (`noteOwnStart`); a sent one opens the
-  yield again (`resent`), so the screen that comes up is yielded to and Stop/Snooze brings the lock back. The lock's
-  own dialogs hold it (no retry until the next resume). Both modes (own and Android's face). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  notification (`badges/AlarmNoticeReader`, pure `AlarmNotices`/`AlarmPost`/`ringingAlarmShape` in `RefrontPolicy.kt`:
+  category alarm with a full-screen intent - a snoozed/upcoming/missed one has none; not "ongoing", code QA H1: Fossify
+  rings from `startForeground` without `setOngoing`; key, package, `when` and those facts only) holds it while posted,
+  at most `ALARM_NOTICE_MAX_MS` (15 min, code QA L3: the yield steps aside for any front task while it lasts) from
+  first seen; else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
+  shape, a denied `USE_FULL_SCREEN_INTENT` - API 34+ strips the intent then). The lock back in front after an "alarm"
+  yield spends the ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key,
+  and a post with a new `when` is a new ring (code QA L1: Fossify rings every alarm under one key), so it yields again.
+  AOSP's and Google's ended timer has the same shape and yields too; Fossify's ended timer (`CATEGORY_EVENT`, no
+  full-screen intent) doesn't - it is the glance tile's Stopp. **The ringing screen brought back** (gap closed
+  2026-11-02: the kid presses power while it rings, the screen-off's lock-up covers the ringing screen):
+  `PinLockActivity.onResume`, and every screen-on while it is resumed (`PinLockRuntime.addScreenOnListener` - no
+  polling in the dark, code QA L6), posts `alarmScreenSend` after `ALARM_SCREEN_SETTLE_MS` (1.5 s; `onPause` drops it -
+  the platform's own launch of the full-screen intent, an unlock). `PinLockRuntime.sendAlarmScreen` - pure
+  `alarmScreenStep` (LOCKED, screen on, no phone call or emergency flow; held for `LATER` while the keypad has digits,
+  code QA N4, or the keyguard cover's keyguard must go first, `KeyguardCover.mustWait` as 17b, N3) and
+  `AlarmNotices.screenKey` (a clock app's, under 15 min, under `ALARM_SCREEN_MAX_SENDS` = 5 re-sends per ring, the
+  newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
+  Stop's removal makes it nothing; no listener answer, nothing) - sends that notification's full-screen intent (the
+  reader keeps only that PendingIntent, only of the lock's clock apps, never extras, text or actions; sent only when it
+  is an activity intent a clock app created, code QA N1/N2) from the visible lock with `VisibleSender.options()`, as one
+  of our own starts (`noteOwnStart`). A sent one opens the yield again (`resent`), so the screen that comes up is
+  yielded to and Stop/Snooze brings the lock back; if the lock is still in front `ALARM_SCREEN_CHECK_MS` (1.5 s) later,
+  nothing came up and that ring's yield closes again (`alarmScreenCheck` -> `spent`, code QA L2, as 17b's
+  `VOIP_FSI_CHECK_MS`). The lock's own dialogs hold it (no retry until the next resume or screen-on). Both modes (own
+  and Android's face). **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
+  Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both. The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
   always shown while there is one, r11). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
   stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
   (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally

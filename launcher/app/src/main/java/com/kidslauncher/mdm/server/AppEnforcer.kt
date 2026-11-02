@@ -170,6 +170,10 @@ private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
     null
 }
 
+/** The last [alarmAppPackages] logged. */
+@Volatile
+private var loggedAlarmApps: Set<String>? = null
+
 /**
  * The alarm/clock apps the schedule lock spares, so an alarm set inside bedtime still rings (QA step 4 #2), and pins
  * while allowed (bug 2026-11-02): the lock's clock apps - every system clock app and Fossify Clock with its pinned
@@ -178,6 +182,14 @@ private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
  */
 internal fun alarmAppPackages(context: Context): Set<String> = try {
     sparedAlarmApps(com.kidslauncher.mdm.lock.ClockApp.systemClocks(context), com.kidslauncher.mdm.lock.ClockApp.installed(context))
+        .also { apps ->
+            // Code QA L5: the set (every system SHOW_ALARMS handler) is usable during a rule once allowed - logged when
+            // it changes, so a device shows what an OEM puts in it (package names of system apps only).
+            if (apps != loggedAlarmApps) {
+                loggedAlarmApps = apps
+                Log.i(LOG_TAG, "Alarm apps (spared by a rule, pinned while allowed): ${apps.sorted()}")
+            }
+        }
 } catch (e: Exception) {
     Log.w(LOG_TAG, "Couldn't look up the alarm app", e)
     emptySet()
