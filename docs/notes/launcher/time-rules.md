@@ -29,6 +29,33 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   have opened the dialer or a browser. Back returns to the time-rule screen; Back/Home/other resumes don't
   open it again. Reminder ping stays silent under every rule, Recents unchanged. `TimeRulesTest`, `TimeLockModelTest`,
   `LockGlanceTest`, `DayTaskTest`, `PolicyResponseCompatTest`.
+- **A rule's Silent** (PLAN "an alarm ringing during school mode", the user 2026-11-02; server 0121): `TimeRule.silent`
+  (default false). The pure `timerules/RuleSilence.kt` (`RuleSilenceTest`): `ruleSilenceFor(lock, callsScreened)` from
+  the lock's rules (the active, un-lifted ones - none under the override or the pause, so it is liftable; the used-up
+  budget alone never silences) - no silent rule: none; any silent rule that isn't a bedtime: fully silent (no alarms,
+  no media); only silent bedtimes: alarms and media sound (a bedtime's usable apps - an audiobook - keep their sound;
+  nothing else plays under the lock); calls from anyone + repeat callers when every rule allows calls or calls are
+  managed (`KidCallScreeningService` already rejects everyone the rules don't allow, the callback window's calls
+  ring), none only with unmanaged calls under a no-calls rule. **`timerules/ZenRuleRuntime.kt`** is the one place
+  that owns a Do Not Disturb: one `AutomaticZenRule` (condition id `condition://<package>/rule-silence`, a
+  priority-only `ZenPolicy` - system sounds, reminders, events, messages, conversations, priority channels off;
+  intercepted notifications stay in the shade without full-screen, heads-up, lights or ambient - so a silenced alarm's
+  full-screen screen never comes up; `TYPE_MANAGED` on Android 15+, plain if refused; its configuration activity is
+  our PIN-gated Settings; name "Stille tidsregel"/"Silent time rule") switched with `setAutomaticZenRuleState`.
+  Off = the condition false: Android hands back the kid's own state (their DND, a mode, nothing); nothing is saved or
+  restored, never a manual DND, the ringer mode, master mute, `DISALLOW_ADJUST_VOLUME` or a suspended clock
+  (`SoundModeTest` scans for them and allows the zen-rule calls only in this file). `follow(context, lock)` from
+  `TimeRulesRuntime.recheck` (boundary alarm, screen on, boot, accepted policy, process start - so a process that
+  died mid-rule is put right at its next start) and `AppEnforcer.apply`; it acts only on a change of what is in
+  force. Find My Device's ring holds it off (`LocateCommands.ring` before the player starts, `stopRingAndRestore`
+  puts it back). A runtime receiver (not exported) for `ACTION_AUTOMATIC_ZEN_RULE_STATUS_CHANGED` and
+  `ACTION_INTERRUPTION_FILTER_CHANGED`, 1.5 s debounced: while it should be on and the filter is ALL (the kid's
+  Quick Settings tile) or our rule is gone or disabled, off and on again (a user's switch-off stays until the
+  condition has been false) - never when another filter is on. The VoIP ring (`VoipRinger`) counts our rule's calls
+  before Android 16 (`letsCallsRing`; the policy it reads there is the manual one). The device owner has policy
+  access; without it nothing happens. `MdmDeviceAdminReceiver.onDisabled` removes the rule. Under the rule the kid's
+  sound row is read-only ("Ikke forstyrr er på", design 18) and the lock reminder ping stays quiet. Capability
+  `rule_silence_v1`. A reboot mid-rule keeps the rule as Android stored it until the first re-check after unlock.
 - **School and calls**: the call services and phone book use `CallPolicyStore.effectiveState()` (`withTimeRule`: managed rules act as calls-off - emergency numbers and the callback window only). `TimeRulesStore` holds the enforced time policy in memory (refreshed with `CallPolicyStore`), mirrors only the no-calls windows to DE (`boot_call_blocks`, `v:1`; missing/unreadable = blocked before the first unlock, lifts/override unknown then); after unlock `TimeRulesRuntime.callsBlockedNow` (lifts + override aware) answers. Unmanaged calls: only outgoing is restricted.
 - **Screen time** (`ScreenTime.kt` pure, `ScreenTimeTest`; `ScreenTimeTracker`, `TimeRulesRuntime`): counted while interactive, keyguard unlocked, no call (our list or audio mode in call/communication/ringtone) and none of our activities resumed; events only (screen on/off, user present, activity lifecycle, audio-mode listener), a 60 s checkpoint and a one-shot budget timer while counting. Ledger in CE prefs `time_rules_state` (`commit()`): within a boot the trusted clock is anchor + elapsed realtime - set back is ignored, forward moves the date but carries usage; reset only when elapsed time passes midnight or a new boot is on a later date. Budget lifts add minutes once per id to the day first seen; rule lifts use `timedWindowActive` from first sight (`LiftRecord`, a reboot ends them) and stop when the server stops sending them.
 - **Timing**: no 60 s polling anywhere. `TimeRuleAlarm` sets one `setExactAndAllowWhileIdle` alarm (`USE_EXACT_ALARM`; inexact fallback) at the next boundary (rule edges over 8 days, midnight with a budget, lift ends, override/pause end) on the non-exported `TimeRuleAlarmReceiver` (security review S-L7; the exported `TimeRuleReceiver` takes only `TIME_SET`, `TIMEZONE_CHANGED`, `BOOT_COMPLETED`) and screen-on/user-present call `TimeRulesRuntime.recheck` (accrue, re-evaluate, show LockActivity if a lock began and no call, re-arm). Every accepted sync posts a re-check too.

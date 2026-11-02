@@ -136,6 +136,9 @@
     <string name="kid_settings_sound">Phone sound</string>
     <string name="kid_settings_sound_on">Sound</string>
     <string name="kid_settings_sound_vibrate">Silent (vibrate)</string>
+    <!-- Our own Do Not Disturb rule while a silent time rule runs (server 0121): its name and when it runs, in Android's Do Not Disturb settings. -->
+    <string name="rule_silence_name">Silent time rule</string>
+    <string name="rule_silence_trigger">While a time rule is on</string>
     <string name="kid_settings_sound_dnd">Do Not Disturb is on.</string>
     <string name="kid_settings_sound_fully_silent">The phone is fully silent now, without vibration.</string>
     <string name="kid_settings_sound_volume_keys">The sound can\'t be changed here right now. The volume buttons work.</string>

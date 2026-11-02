@@ -44,9 +44,14 @@ object VoipRinger {
             } else {
                 notifications?.notificationPolicy
             }
-            val anyone = policy != null &&
+            val policyAnyone = policy != null &&
                 policy.priorityCategories and NotificationManager.Policy.PRIORITY_CATEGORY_CALLS != 0 &&
                 policy.priorityCallSenders == NotificationManager.Policy.PRIORITY_SENDERS_ANY
+            // A silent time rule's own Do Not Disturb (server 0121) lets calls ring when the rule allows them: before
+            // Android 16 the policy read above is the manual one, without our rule.
+            val ourRuleAnyone = Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA &&
+                com.kidslauncher.mdm.timerules.ZenRuleRuntime.letsCallsRing()
+            val anyone = policyAnyone || ourRuleAnyone
             ringPlan(audio?.ringerMode ?: RINGER_MODE_NORMAL, notifications?.currentInterruptionFilter ?: INTERRUPTION_FILTER_ALL, anyone)
         } catch (e: Exception) {
             RingPlan(sound = true, vibrate = true)

@@ -6,7 +6,7 @@
 //!
 //! - `GET /devices/{id}/bedtime` (`device_bedtime.html`): one form shaped like the rule editor, Save
 //!   in the sticky top bar with the save's flash or a refusal's reason. A phone without one opens
-//!   filled in (21:00-07:00 both rows, calls on) with Add, nothing stored before that.
+//!   filled in (21:00-07:00 both rows, calls on, silent) with Add, nothing stored before that.
 //! - `POST /devices/{id}/bedtime`: one upsert (`ON CONFLICT` on the partial unique index, so two
 //!   saves of a new bedtime at once make one row), then `?saved=1#bedtime`; a refusal renders the
 //!   page again (400) as typed.
@@ -120,7 +120,13 @@ fn nights_of(row: &TimeRuleRow) -> Option<Nights> {
 /// The bedtime's words for Device › Time and Settings › Time Rules; `None` for a row that
 /// doesn't read ("Can't be read", `text-alarm`).
 pub(crate) fn bedtime_summary(lang: Lang, row: &TimeRuleRow) -> Option<String> {
-    stored_nights(row).map(|n| nights_summary(lang, &n))
+    stored_nights(row).map(|n| {
+        format!(
+            "{}{}",
+            nights_summary(lang, &n),
+            crate::handlers::schedules::silent_tag(lang, row.silent)
+        )
+    })
 }
 
 /// One row of nights on the page.
@@ -137,6 +143,8 @@ struct NightsInput {
 struct BedtimeForm {
     rows: Vec<NightsInput>,
     calls_allowed: bool,
+    /// The "Silent" switch (0121): alarms still ring.
+    silent: bool,
     exceptions: Exceptions,
     apps_error: Option<String>,
 }
@@ -184,6 +192,8 @@ pub(crate) struct BedtimeInput {
     pub exempt_apps: Vec<String>,
     /// The Vibb calendar row, as a rule's.
     pub calendar_allowed: bool,
+    /// The "Silent" switch (`silent`, absent = off).
+    pub silent: bool,
 }
 
 /// Why a bedtime form was refused, by the field it is shown under.
@@ -244,6 +254,7 @@ pub(crate) fn parse_bedtime_form(
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         exempt_apps: parse_exempt_apps_form(fields).map_err(BedtimeError::Apps)?,
         calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
+        silent: fields.iter().any(|(k, _)| k == "silent"),
     })
 }
 
@@ -326,6 +337,7 @@ pub async fn show_bedtime(
             BedtimeForm {
                 rows: nights_inputs(lang, &nights),
                 calls_allowed: row.calls_allowed,
+                silent: row.silent,
                 exceptions: available.exceptions(&exempt, row.calendar_allowed),
                 apps_error: None,
             }
@@ -333,6 +345,8 @@ pub async fn show_bedtime(
         None => BedtimeForm {
             rows: nights_inputs(lang, &[Some(DEFAULT_NIGHT); 2]),
             calls_allowed: true,
+            // Silent with alarms by default (the user, 2026-11-02: muted "bortsett fra alarm for leggetid").
+            silent: true,
             exceptions: available.exceptions(&[], false),
             apps_error: None,
         },
@@ -384,6 +398,7 @@ async fn refuse(
             })
             .collect(),
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
+        silent: fields.iter().any(|(k, _)| k == "silent"),
         exceptions: available
             .exceptions(&chosen, fields.iter().any(|(k, _)| k == "calendar_allowed")),
         apps_error: None,
@@ -435,17 +450,19 @@ pub async fn save_bedtime(
     // one updates the row the other made, never a second row or a 500.
     if let Err(err) = sqlx::query(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         calendar_allowed, days_json, bedtime) VALUES (?, ?, 'bedtime', ?, ?, ?, ?, 1) \
+         calendar_allowed, silent, days_json, bedtime) VALUES (?, ?, 'bedtime', ?, ?, ?, ?, ?, 1) \
          ON CONFLICT(device_id) WHERE bedtime = 1 DO UPDATE SET name = excluded.name, \
          kind = 'bedtime', calls_allowed = excluded.calls_allowed, \
          exempt_apps_json = excluded.exempt_apps_json, \
-         calendar_allowed = excluded.calendar_allowed, days_json = excluded.days_json",
+         calendar_allowed = excluded.calendar_allowed, silent = excluded.silent, \
+         days_json = excluded.days_json",
     )
     .bind(id)
     .bind(BEDTIME_NAME)
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
     .bind(input.calendar_allowed)
+    .bind(input.silent)
     .bind(serde_json::to_string(&input.nights.days()).expect("windows serialize"))
     .execute(&state.db)
     .await
@@ -634,6 +651,7 @@ mod tests {
             sort_order: 0,
             bedtime: true,
             calendar_allowed: false,
+            silent: false,
         };
         let every = serde_json::to_string(&[w(1260, 420); 7]).unwrap();
         assert_eq!(

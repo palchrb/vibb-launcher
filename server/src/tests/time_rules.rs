@@ -1567,7 +1567,7 @@ async fn the_bedtime_is_served_after_the_rule_set_once_and_without_a_name() {
     assert_eq!(
         rules[1],
         json!({"id": bedtime, "name": "", "kind": "bedtime", "calls_allowed": true,
-               "exempt_apps": [], "calendar_allowed": false,
+               "exempt_apps": [], "calendar_allowed": false, "silent": false,
                "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap()})
     );
     own_rules_on(&app, id).await;
@@ -1903,4 +1903,74 @@ async fn the_switch_per_rule_migration_keeps_every_phones_rules() {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+/// Migration 0121: every school rule and every bedtime stored before it becomes silent (the user,
+/// 2026-11-02: yes to existing school rules becoming silent; bedtimes silent with alarms); every
+/// other rule stays as it was. The phone gets `silent` on each rule.
+#[tokio::test]
+async fn the_silent_migration_silences_school_rules_and_bedtimes() {
+    let (db, _dir) = super::cleanup::migrated_before(121).await;
+    let anna: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('Anna') RETURNING id")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO device_policy (device_id, kiosk_desired) VALUES (?, 1)")
+        .bind(anna)
+        .execute(&db)
+        .await
+        .unwrap();
+    let rule = |device: Option<i64>, name: &'static str, kind: &'static str, bedtime: bool| {
+        let db = &db;
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, \
+                 bedtime) VALUES (?, ?, ?, 1, ?, ?) RETURNING id",
+            )
+            .bind(device)
+            .bind(name)
+            .bind(kind)
+            .bind(if bedtime {
+                NIGHTS
+            } else {
+                "[null,null,null,null,null,null,null]"
+            })
+            .bind(bedtime)
+            .fetch_one(db)
+            .await
+            .unwrap()
+        }
+    };
+    let skole = rule(None, "Skole", "school", false).await;
+    let middag = rule(None, "Middag", "custom", false).await;
+    let morning = rule(Some(anna), "Leggetid (morning)", "bedtime", false).await;
+    let own_school = rule(Some(anna), "Annas skole", "school", false).await;
+    let bedtime = rule(Some(anna), "Bedtime", "bedtime", true).await;
+    super::cleanup::finish(&db).await;
+    for (id, silent) in [
+        (skole, true),
+        (middag, false),
+        (morning, true),
+        (own_school, true),
+        (bedtime, true),
+    ] {
+        let stored: bool = sqlx::query_scalar("SELECT silent FROM time_rules WHERE id = ?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(stored, silent, "rule {id}");
+    }
+    let served: Vec<(i64, bool)> = crate::time_rules::effective_rule_rows(&db, anna)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let p = r.to_policy().unwrap();
+            (p.id, p.silent)
+        })
+        .collect();
+    assert!(served.contains(&(middag, false)), "{served:?}");
+    assert!(served.contains(&(skole, true)), "{served:?}");
+    assert!(served.contains(&(bedtime, true)), "{served:?}");
 }

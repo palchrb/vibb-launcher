@@ -1759,3 +1759,154 @@ async fn the_exceptions_offer_the_vibb_calendar_and_the_allowed_apps() {
     let html = app.get_page(&page, &cookie).await.text();
     assert!(section(&html, "exceptions").contains("data-value=\"apps\">Vibb calendar<"));
 }
+
+/// Migration 0121 (PLAN "an alarm ringing during school mode", the user 2026-11-02): a "Silent"
+/// switch per rule and on Bedtime. The editor's Type presets it (a new rule is school: on), a save
+/// writes it (absent = off, H1), the phone gets `silent`, the lists say "· silent"; a new bedtime
+/// opens with it on, a save without it turns it off. Norwegian words on the nb page.
+#[tokio::test]
+async fn the_silent_switch_saves_serves_and_shows() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, anna_token) = app.enrolled_device("Anna").await;
+
+    // A new rule: school, Silent on, inside the rule's one form with its sub-line.
+    let html = app.get_page("/schedules/rules/new", &cookie).await.text();
+    assert_eq!(input_checked(&html, "silent", "on"), Some(true));
+    assert_eq!(
+        form_action_of(&html, "silent"),
+        Some("/schedules/rules#rule")
+    );
+    assert!(html.contains(
+        ">Silent<span class=\"row-sub\">No sounds, notifications, music or alarms while the rule is on. Calls the rule allows still ring.</span>"
+    ));
+    let nb = app
+        .get_page("/schedules/rules/new?lang=nb", &cookie)
+        .await
+        .text();
+    assert!(nb.contains(">Stille<span class=\"row-sub\">Ingen lyder, varsler, musikk"));
+
+    // Saved silent: stored, served, "· silent" in the lists.
+    let days = |name: &'static str| -> Vec<(&'static str, String)> {
+        vec![
+            ("scope", String::new()),
+            ("name", name.to_string()),
+            ("kind", "school".to_string()),
+            ("d0_start", "08:00".to_string()),
+            ("d0_end", "14:00".to_string()),
+        ]
+    };
+    let mut fields = days("Skole");
+    fields.push(("silent", "on".to_string()));
+    let pairs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let res = app
+        .request_form(Method::POST, "/schedules/rules", Some(&cookie), &pairs)
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let (rule, silent): (i64, bool) =
+        sqlx::query_as("SELECT id, silent FROM time_rules WHERE name = 'Skole'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(silent);
+    let rules = app.policy(&anna_token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules[0]["silent"], json!(true), "{rules}");
+    let list = app.get_page("/schedules", &cookie).await.text();
+    assert!(list.contains("· calls off · silent<"), "{list}");
+    let nb = app.get_page("/schedules?lang=nb", &cookie).await.text();
+    assert!(nb.contains("· anrop av · stille<"), "{nb}");
+    let time = app
+        .get_page(&format!("/devices/{anna}/time"), &cookie)
+        .await
+        .text();
+    assert!(time.contains("· calls off · silent<"));
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    assert_eq!(input_checked(&html, "silent", "on"), Some(true));
+
+    // A save without it turns it off: not served silent, no tag.
+    let fields = days("Skole");
+    let pairs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}"),
+            Some(&cookie),
+            &pairs,
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{rule}?saved=1"),
+        Some("rule"),
+    );
+    let rules = app.policy(&anna_token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules[0]["silent"], json!(false), "{rules}");
+    let list = app.get_page("/schedules", &cookie).await.text();
+    assert!(list.contains("· calls off<"), "{list}");
+    assert!(!list.contains("silent<"));
+
+    // A refused save keeps the switch as typed.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}"),
+            Some(&cookie),
+            &[
+                ("scope", ""),
+                ("name", ""),
+                ("kind", "custom"),
+                ("silent", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(input_checked(&res.text(), "silent", "on"), Some(true));
+
+    // Bedtime: a new one opens silent (alarms still ring, the sub-line says so); a save keeps what is sent.
+    let page = format!("/devices/{anna}/bedtime");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(input_checked(&html, "silent", "on"), Some(true));
+    assert_eq!(
+        form_action_of(&html, "silent"),
+        Some(format!("{page}#bedtime").as_str())
+    );
+    assert!(html.contains("Alarms still ring"));
+    let res = app
+        .request_form(
+            Method::POST,
+            &page,
+            Some(&cookie),
+            &[("n0_start", "21:00"), ("n0_end", "07:00"), ("silent", "on")],
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    let rules = app.policy(&anna_token).await["time_policy"]["rules"].clone();
+    let bedtime = rules.as_array().unwrap().last().unwrap().clone();
+    assert_eq!(bedtime["kind"], "bedtime");
+    assert_eq!(bedtime["silent"], json!(true));
+    let time = app
+        .get_page(&format!("/devices/{anna}/time"), &cookie)
+        .await
+        .text();
+    assert!(
+        time.contains("Sun-Thu nights 21:00-07:00 · silent<"),
+        "{time}"
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &page,
+            Some(&cookie),
+            &[("n0_start", "21:00"), ("n0_end", "07:00")],
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    let rules = app.policy(&anna_token).await["time_policy"]["rules"].clone();
+    let bedtime = rules.as_array().unwrap().last().unwrap().clone();
+    assert_eq!(bedtime["silent"], json!(false));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(input_checked(&html, "silent", "on"), Some(false));
+}

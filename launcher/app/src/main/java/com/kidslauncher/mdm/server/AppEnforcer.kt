@@ -365,6 +365,8 @@ object AppEnforcer {
         // the lock screen uses. A rule without calls (school) also turns managed calls off.
         val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive)
         val scheduleLocked = lock.locked
+        // A silent rule's Do Not Disturb (server 0121) from the same lock: off under the override, the pause and a lift.
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.follow(context, lock)
         val timePolicy = KidModeEnforcer.timePolicyOf(policy)
 
         // The update fence (step 11): the one release rule runs on every pass, and while the fence

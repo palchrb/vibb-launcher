@@ -126,23 +126,30 @@ class SoundModeTest {
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("//[^\\n]*"), "")
 
-    /** Design 18: never set DND or an interruption filter; the ringer mode is set in exactly one
-     * place (the sound row's tap) - Find My Device's ring no longer touches it (QA #2). */
+    /** Design 18: never set a manual DND, an interruption filter or the notification policy; the ringer mode is set in
+     * exactly one place (the sound row's tap) - Find My Device's ring no longer touches it (QA #2). The one Do Not
+     * Disturb we own is a silent time rule's `AutomaticZenRule` (server 0121), only in ZenRuleRuntime.kt: switching it
+     * off hands Android back the kid's own state. */
     @Test
     fun `the launcher never sets DND, and sets the ringer mode only from the sound row`() {
         val root = listOf("src/main/java/com/kidslauncher/mdm", "app/src/main/java/com/kidslauncher/mdm").map(::File).first { it.exists() }
         val sources = root.walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         assertTrue(sources.size > 50)
         val ringerSetters = mutableListOf<String>()
+        val zenRuleUsers = mutableSetOf<String>()
         for (file in sources) {
             val text = code(file)
-            for (banned in listOf("setInterruptionFilter", "setNotificationPolicy", "addAutomaticZenRule", "setZenMode")) {
+            for (banned in listOf("setInterruptionFilter", "setNotificationPolicy", "setZenMode", "setMasterVolumeMuted", "DISALLOW_ADJUST_VOLUME")) {
                 if (text.contains(banned)) fail("${file.name} references $banned")
+            }
+            for (zenRule in listOf("addAutomaticZenRule", "updateAutomaticZenRule", "setAutomaticZenRuleState", "removeAutomaticZenRule")) {
+                if (text.contains(zenRule)) zenRuleUsers += file.name
             }
             if (Regex("""\.notificationPolicy\s*=[^=]""").containsMatchIn(text)) fail("${file.name} sets the notification policy")
             if (Regex("""\.ringerMode\s*=[^=]|setRingerMode\(""").containsMatchIn(text)) ringerSetters += file.name
         }
         assertEquals(listOf("QuickControls.kt"), ringerSetters)
+        assertEquals(setOf("ZenRuleRuntime.kt"), zenRuleUsers)
         val locate = code(sources.first { it.name == "LocateCommands.kt" })
         for (stream in listOf("STREAM_RING", "STREAM_NOTIFICATION", "STREAM_MUSIC")) {
             assertTrue("Find My Device raises the alarm stream only: $stream", !locate.contains(stream))

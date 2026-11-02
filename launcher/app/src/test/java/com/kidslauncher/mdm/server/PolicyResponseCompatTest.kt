@@ -1059,7 +1059,7 @@ class PolicyResponseCompatTest {
             """
             "time_policy": {
               "rules": [{"id": 4, "name": "Skole", "kind": "school", "calls_allowed": false,
-                "exempt_apps": ["org.fossify.calendar"], "calendar_allowed": true,
+                "exempt_apps": ["org.fossify.calendar"], "calendar_allowed": true, "silent": true,
                 "days": [{"start": 495, "end": 840}, {"start": 495, "end": 840}, {"start": 495, "end": 840},
                          {"start": 495, "end": 840}, {"start": 495, "end": 840}, null, null]}],
               "daily_budget_minutes": [60, 60, 60, 60, 60, 120, null],
@@ -1079,6 +1079,10 @@ class PolicyResponseCompatTest {
         assertEquals(true, time.rules[0].calendarAllowed)
         val older = (decodeCached(withTime.replace("\"calendar_allowed\": true,", "")) as CachedPolicy.Ok).policy
         assertEquals(false, older.timePolicy!!.rules[0].calendarAllowed)
+        // Server 0121: a silent rule; an older server's rule without the key is not silent.
+        assertEquals(true, time.rules[0].silent)
+        val notSilent = (decodeCached(withTime.replace(" \"silent\": true,", "")) as CachedPolicy.Ok).policy
+        assertEquals(false, notSilent.timePolicy!!.rules[0].silent)
         assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
         assertNull(time.rules[0].days[5])
         assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)

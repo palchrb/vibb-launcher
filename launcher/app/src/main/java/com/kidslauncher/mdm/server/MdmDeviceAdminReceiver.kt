@@ -32,6 +32,8 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
         Log.i(LOG_TAG, "Device admin disabled")
+        // Still the device owner until this returns: our silent rule's Do Not Disturb goes (server 0121).
+        com.kidslauncher.mdm.timerules.ZenRuleRuntime.release(context)
     }
 
     /**
