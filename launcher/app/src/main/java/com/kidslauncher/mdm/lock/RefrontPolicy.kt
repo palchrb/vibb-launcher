@@ -274,12 +274,14 @@ data class AlarmNotice(val packageName: String, val sinceMs: Long)
  * [ALARM_RING_MS] after the alarm's time ([alarmLikelyRinging], kept as the fallback - no listener access, a clock
  * whose notification isn't [ringingAlarmShape]). [ringing]: the ringing-shaped notifications by key; [consumed]: the
  * keys whose yield ended - the lock came back in front after yielding to the alarm ([afterResume], as
- * [alarmAfterResume]). A key leaves both when its notification is removed or posted again not ringing (a snooze),
- * so the same alarm ringing again yields again. Pure; the listener's glue is `badges/AlarmNoticeReader`.
+ * [alarmAfterResume]); [sends]: the ringing screen's re-sends per key ([screenKey], [resent]). A key leaves all three
+ * when its notification is removed or posted again not ringing (a snooze), so the same alarm ringing again yields
+ * again. Pure; the listener's glue is `badges/AlarmNoticeReader`.
  */
 data class AlarmNotices(
     val ringing: Map<String, AlarmNotice> = emptyMap(),
     val consumed: Set<String> = emptySet(),
+    val sends: Map<String, Int> = emptyMap(),
 ) {
     /** A post (also an update of the same key): a ringing one keeps its first-seen time and whether it is consumed. */
     fun posted(key: String, packageName: String, ringingShape: Boolean, nowMs: Long): AlarmNotices =
@@ -291,15 +293,39 @@ data class AlarmNotices(
         }
 
     fun removed(key: String): AlarmNotices =
-        if (key !in ringing && key !in consumed) this else AlarmNotices(ringing - key, consumed - key)
+        if (key !in ringing && key !in consumed && key !in sends) this else AlarmNotices(ringing - key, consumed - key, sends - key)
 
     /** The listener's connect sweep: exactly [active]'s ringing ones (key, package, shape), keeping what was known. */
     fun swept(active: List<Triple<String, String, Boolean>>, nowMs: Long): AlarmNotices {
         val next = active.filter { it.third }.associate { (key, pkg, _) ->
             key to (ringing[key]?.takeIf { it.packageName == pkg } ?: AlarmNotice(pkg, nowMs))
         }
-        return AlarmNotices(next, consumed intersect next.keys)
+        return AlarmNotices(next, consumed intersect next.keys, sends.filterKeys { it in next.keys })
     }
+
+    /** What the listener still has active of [ringing] ([active], asked for exactly those keys): the rest goes - a
+     * removal missed for any reason never sends a dismissed alarm's screen. */
+    fun reconciled(active: Set<String>): AlarmNotices = (ringing.keys - active).fold(this) { notices, key -> notices.removed(key) }
+
+    /**
+     * Gap closed 2026-11-02: the ringing alarm whose screen the resumed lock sends again ([alarmScreenStep]) - of one of
+     * [clockPackages], younger than [ALARM_NOTICE_MAX_MS], fewer than [ALARM_SCREEN_MAX_SENDS] re-sends; spent or not
+     * (the lock just came back over it - Stop's resume is told apart by the notification being gone after the settle,
+     * [reconciled]). The newest when there are several.
+     */
+    fun screenKey(clockPackages: Set<String>, nowMs: Long): String? = ringing.entries
+        .filter { (key, notice) ->
+            notice.packageName in clockPackages && nowMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS &&
+                (sends[key] ?: 0) < ALARM_SCREEN_MAX_SENDS
+        }
+        .maxByOrNull { it.value.sinceMs }?.key
+
+    /** One re-send of [key]'s screen: counted; when it went ([sent]) the yield is open again for it, so the re-front
+     * check steps aside for the screen that comes up. */
+    fun resent(key: String, sent: Boolean): AlarmNotices = copy(
+        consumed = if (sent) consumed - key else consumed,
+        sends = sends + (key to (sends[key] ?: 0) + 1),
+    )
 
     /** The lock came back in front: after yielding to the alarm ([yieldedTo] "alarm"), every ringing key is spent. */
     fun afterResume(yieldedTo: String?): AlarmNotices = if (yieldedTo == "alarm") copy(consumed = consumed + ringing.keys) else this
@@ -308,6 +334,39 @@ data class AlarmNotices(
     fun ringingNow(clockPackages: Set<String>, nowMs: Long): Boolean = ringing.any { (key, notice) ->
         notice.packageName in clockPackages && key !in consumed && nowMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS
     }
+}
+
+/** Gap closed 2026-11-02: at most this many re-sends of one ringing alarm's screen - a clock screen that closes at
+ * once while its notification stays can't loop the lock and the clock. */
+const val ALARM_SCREEN_MAX_SENDS = 5
+
+/** How long the lock is resumed before it sends a ringing alarm's screen again: the platform's own launch of the
+ * full-screen intent (the alarm firing with the screen off) pauses the lock first and cancels the send, and Stop's
+ * removal of the notification arrives before it. */
+const val ALARM_SCREEN_SETTLE_MS = 1_500L
+
+/** What the resumed, settled lock does about a ringing alarm's screen ([alarmScreenStep]). */
+enum class AlarmScreenStep {
+    /** Nothing: no ringing alarm to bring back, not LOCKED, or a phone call or the emergency flow is in front. */
+    NONE,
+
+    /** The screen is off (the lock may be resumed in the dark): look again in [ALARM_SCREEN_SETTLE_MS], while it rings. */
+    WAIT,
+
+    /** Send its full-screen intent now. */
+    SEND,
+}
+
+/**
+ * Gap closed 2026-11-02 (the power button pressed while the alarm rings: the screen-off's lock-up covered the ringing
+ * screen, nothing brought it back): the resumed, settled lock sends a still-ringing alarm's full-screen intent again
+ * ([key], [AlarmNotices.screenKey]) - only LOCKED, with the screen on, and never over a phone call (ours or
+ * Telecom's, emergency included) or the emergency flow; the lock's own dialogs hold it (the activity's check).
+ */
+fun alarmScreenStep(key: String?, locked: Boolean, interactive: Boolean, otherScreen: Boolean): AlarmScreenStep = when {
+    key == null || !locked || otherScreen -> AlarmScreenStep.NONE
+    !interactive -> AlarmScreenStep.WAIT
+    else -> AlarmScreenStep.SEND
 }
 
 /** The alarm's yield ([RefrontInputs.alarmRinging] and the other "an alarm rings" reads): a clock's ringing

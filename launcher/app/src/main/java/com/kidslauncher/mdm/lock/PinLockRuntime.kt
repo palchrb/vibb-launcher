@@ -1318,6 +1318,30 @@ object PinLockRuntime {
         )
     }
 
+    /**
+     * Gap closed 2026-11-02: the resumed lock, settled [ALARM_SCREEN_SETTLE_MS], brings a still-ringing alarm's screen
+     * back over itself ([alarmScreenStep], [com.kidslauncher.mdm.badges.AlarmNoticeReader.screenKey]) - the kid pressed
+     * power while it rang and the screen-off's lock-up covered it. Sent from [context], the visible lock; one of our own
+     * starts for the face's loss rule. The screen that comes up is yielded to ([AlarmNotices.resent]); Stop or Snooze
+     * brings the lock back. Returns when to look again (the screen still off), else `null`. Main thread.
+     */
+    fun sendAlarmScreen(context: Context): Long? {
+        val app = context.applicationContext
+        val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
+        val telecom = telecomInCall(app)
+        val key = reader.screenKey(clockPackages())
+        return when (alarmScreenStep(key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom))) {
+            AlarmScreenStep.NONE -> null
+            AlarmScreenStep.WAIT -> ALARM_SCREEN_SETTLE_MS
+            AlarmScreenStep.SEND -> {
+                noteOwnStart("the ringing alarm's screen")
+                val sent = key != null && reader.sendScreen(context, key)
+                Log.i(LOG_TAG, if (sent) "The ringing alarm's screen sent again" else "The ringing alarm's screen couldn't be sent")
+                null
+            }
+        }
+    }
+
     // ---- the notice wake (launcher round 7 §3) ------------------------------------------------
 
     /** The parent's "Wake the screen for a notification" (`launcher_ui.lock_wake_on_notification`),

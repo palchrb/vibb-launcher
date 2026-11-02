@@ -124,6 +124,16 @@ class PinLockActivity : AppCompatActivity() {
     }
     private val voipRender = Runnable { renderVoip() }
 
+    /** Gap closed 2026-11-02: a still-ringing alarm's screen, sent once per resume after [ALARM_SCREEN_SETTLE_MS]
+     * ([PinLockRuntime.sendAlarmScreen]; resumed in the dark, it looks again until the screen is on); a pause before
+     * it (the platform's own launch, an unlock) drops it. */
+    private val alarmScreenSend: Runnable = object : Runnable {
+        override fun run() {
+            if (!resumed || !openDialogs.isEmpty()) return
+            PinLockRuntime.sendAlarmScreen(this@PinLockActivity)?.let { handler.postDelayed(this, it) }
+        }
+    }
+
     /** Svar went out but the lock never left the front: the start was refused (17b QA #3) - the card
      * says so, and the ring is as before Svar (qa-17b-code #1). */
     private val voipAnswerCheck = Runnable {
@@ -755,6 +765,8 @@ class PinLockActivity : AppCompatActivity() {
         }
         ensureLockTask(fallbackDue = false)
         renderVoip()
+        handler.removeCallbacks(alarmScreenSend)
+        handler.postDelayed(alarmScreenSend, ALARM_SCREEN_SETTLE_MS)
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
         com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
@@ -798,6 +810,7 @@ class PinLockActivity : AppCompatActivity() {
         val sendPending = voipFsiPending
         handler.removeCallbacks(voipFsiSend)
         handler.removeCallbacks(voipAnswerCheck)
+        handler.removeCallbacks(alarmScreenSend)
         voipFsiPending = false
         PinLockRuntime.voipLockLeft(sendPending)
         PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)

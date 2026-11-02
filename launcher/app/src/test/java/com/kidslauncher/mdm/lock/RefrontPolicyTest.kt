@@ -135,6 +135,50 @@ class RefrontPolicyTest {
         assertFalse(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = null, nowWallMs = t))
     }
 
+    /** The gap closed 2026-11-02: power pressed while the alarm rings - the lock-up covers it; the resumed lock sends
+     * the still-ringing alarm's screen again, capped, and the screen that comes up is yielded to. */
+    @Test
+    fun `the resumed lock brings a still-ringing alarm's screen back, capped, only while posted`() {
+        val clocks = setOf("com.android.deskclock")
+        val t = 2_000_000L
+        val ringing = AlarmNotices().posted("k", "com.android.deskclock", true, t)
+        assertEquals("k", ringing.screenKey(clocks, t + 1))
+        // Spent by the lock's resume after the yield - still the one to bring back (the settle's lookup tells Stop apart).
+        val spent = ringing.afterResume("alarm")
+        assertEquals("k", spent.screenKey(clocks, t + 1))
+        // Stop: the listener no longer has it - nothing to send.
+        assertNull(spent.reconciled(emptySet()).screenKey(clocks, t + 1))
+        assertEquals(AlarmNotices(), spent.reconciled(emptySet()))
+        assertEquals(spent, spent.reconciled(setOf("k")))
+        // Never another app's, never past the bound.
+        assertNull(AlarmNotices().posted("g", "com.example.game", true, t).screenKey(clocks, t))
+        assertNull(ringing.screenKey(clocks, t + ALARM_NOTICE_MAX_MS))
+        // A sent screen opens the yield again for it (the re-front check steps aside); a failed one doesn't.
+        assertTrue(spent.resent("k", sent = true).ringingNow(clocks, t + 1))
+        assertFalse(spent.resent("k", sent = false).ringingNow(clocks, t + 1))
+        // The cap: a clock screen that closes at once while its notification stays can't loop.
+        var notices = ringing
+        repeat(ALARM_SCREEN_MAX_SENDS) {
+            assertEquals("k", notices.screenKey(clocks, t + 1))
+            notices = notices.resent("k", sent = true)
+        }
+        assertNull(notices.screenKey(clocks, t + 1))
+        // The newest of two; a snooze's re-post clears the count, so the alarm ringing again is brought back again.
+        assertEquals("k2", notices.posted("k2", "com.android.deskclock", true, t + 10).screenKey(clocks, t + 11))
+        val rangAgain = notices.posted("k", "com.android.deskclock", false, t + 20).posted("k", "com.android.deskclock", true, t + 30)
+        assertEquals("k", rangAgain.screenKey(clocks, t + 31))
+        // The sweep keeps the counts of what is still active.
+        assertEquals(ALARM_SCREEN_MAX_SENDS, notices.swept(listOf(Triple("k", "com.android.deskclock", true)), t + 40).sends["k"])
+
+        // The step: only LOCKED, screen on, no call or emergency flow; dark waits.
+        assertEquals(AlarmScreenStep.SEND, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false))
+        assertEquals(AlarmScreenStep.WAIT, alarmScreenStep("k", locked = true, interactive = false, otherScreen = false))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep(null, locked = true, interactive = true, otherScreen = false))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = false, interactive = true, otherScreen = false))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = true, otherScreen = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = false, otherScreen = true))
+    }
+
     @Test
     fun `crash guard - three crashes in two minutes trip it at the next start, a sync re-arms after 10 minutes`() {
         val t = 5_000_000L

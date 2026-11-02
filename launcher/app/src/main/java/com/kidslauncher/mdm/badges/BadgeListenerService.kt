@@ -22,7 +22,8 @@ import com.kidslauncher.mdm.calls.ElementPost
  * update, connect and disconnect; this class itself still reads none of it. Since design 42
  * [ClockReader] reads the title and text of the pinned clock app's ongoing notification (its timer).
  * Since bug 2026-11-02 [AlarmNoticeReader] reads whether a notification is a ringing alarm (category, ongoing, a
- * full-screen intent - never its text or intents) for the alarm's yield over the PIN lock.
+ * full-screen intent - never its text, extras or actions) for the alarm's yield over the PIN lock, and keeps a
+ * ringing one's full-screen intent for the lock to bring the ringing screen back.
  * Since round L5 [ElementDmReader] also names the contact of a missed Element X call (the same facts plus the
  * category), kept by the notification's key in [ElementMissedCallStore]'s memory for the contact card and badges.
  * Here: never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
@@ -36,6 +37,7 @@ class BadgeListenerService : NotificationListenerService() {
         NotificationRuleRuntime.attach(this)
         ElementMissedCallStore.attach(elementSweep)
         ClockReader.attach { keys -> activeOrNull(keys) }
+        AlarmNoticeReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
     }

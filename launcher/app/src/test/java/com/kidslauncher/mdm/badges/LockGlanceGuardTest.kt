@@ -519,18 +519,30 @@ class LockGlanceGuardTest {
         assertTrue(alarmReader.contains("ringingAlarmShape(n.category, sbn.isOngoing, n.fullScreenIntent != null)"))
         for (forbidden in listOf(
             "extras", "EXTRA_", "contentIntent", "actions", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
-            ".send(", "startActivity", "Intent(", "SharedPreferences", "cancelNotification", "tickerText",
+            "startActivity", "Intent(", "SharedPreferences", "cancelNotification", "tickerText",
         )) {
             assertFalse("AlarmNoticeReader uses $forbidden", alarmReader.contains(forbidden))
         }
+        // The gap closed 2026-11-02: of a ringing one also its full-screen intent - kept only when ringing-shaped, sent
+        // once, from the lock's visible window, nowhere else.
+        assertEquals(2, Regex("""\bfullScreenIntent\b""").findAll(alarmReader).count())
+        assertTrue(alarmReader.contains("if (shape(sbn)) sbn.notification?.fullScreenIntent else null"))
+        assertEquals(1, Regex("""\.send\(""").findAll(alarmReader).count())
+        assertTrue(alarmReader.contains("intent.send(context, 0, null, null, null, null, VisibleSender.options())"))
+        assertTrue(body(alarmReader, "screenKey").contains("notices = notices.reconciled(active.mapTo(mutableSetOf()) { it.key })"))
+        assertTrue(body(alarmReader, "screenKey").contains("?.takeIf { it in screens }"))
+        for (name in listOf("disconnected", "connected")) assertTrue(name, body(alarmReader, name).contains("screens.clear()"))
         for (line in Regex("""\bLog\.\w\(.*""").findAll(alarmReader).map { it.value }) {
             val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
             assertEquals(line, setOf("\${e.javaClass.simpleName}"), interpolations)
         }
         val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(alarmReader).map { it.groupValues[1] }.toList()
-        assertEquals(listOf("connected", "disconnected", "posted", "removed", "ringing", "lockResumed"), publicFuns)
-        for (name in publicFuns - "ringing") assertTrue(name, body(alarmReader, name).contains("= guarded {"))
-        assertTrue(body(alarmReader, "ringing").contains("} catch (e: Throwable) {"))
+        assertEquals(
+            listOf("attach", "connected", "disconnected", "posted", "removed", "ringing", "lockResumed", "screenKey", "sendScreen"),
+            publicFuns,
+        )
+        for (name in publicFuns - setOf("ringing", "screenKey", "sendScreen")) assertTrue(name, body(alarmReader, name).contains("= guarded {"))
+        for (name in listOf("ringing", "screenKey", "sendScreen")) assertTrue(name, body(alarmReader, name).contains("} catch (e: Throwable) {"))
         val listener = code("BadgeListenerService.kt")
         for (call in listOf("AlarmNoticeReader.connected(active)", "AlarmNoticeReader.posted(it)", "AlarmNoticeReader.removed(it)")) {
             assertTrue(call, listener.contains(call))
@@ -542,6 +554,17 @@ class LockGlanceGuardTest {
         assertTrue(body(runtime, "alarmNow").contains("AlarmNoticeReader.ringing(clockPackages())"))
         val resumed = body(runtime, "onLockResumed")
         assertTrue(resumed.indexOf("AlarmNoticeReader.lockResumed(yielding)") in 0 until resumed.indexOf("yielding = null"))
+        assertTrue(listener.contains("AlarmNoticeReader.attach { keys -> activeOrNull(keys) }"))
+        // The re-send: the runtime decides (alarmScreenStep, the clock apps only) and counts it as our own start; the lock
+        // sends it once per resume after the settle, from its visible window, and a pause drops it.
+        val send = body(runtime, "sendAlarmScreen")
+        assertTrue(send.contains("reader.screenKey(clockPackages())"))
+        assertTrue(send.contains("alarmScreenStep(key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom))"))
+        assertTrue(send.indexOf("noteOwnStart(") in 0 until send.indexOf("reader.sendScreen(context, key)"))
+        val activity = code("PinLockActivity.kt")
+        assertTrue(body(activity, "onResume").contains("handler.postDelayed(alarmScreenSend, ALARM_SCREEN_SETTLE_MS)"))
+        assertTrue(body(activity, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))
+        assertTrue(activity.contains("if (!resumed || !openDialogs.isEmpty()) return"))
     }
 
     @Test
