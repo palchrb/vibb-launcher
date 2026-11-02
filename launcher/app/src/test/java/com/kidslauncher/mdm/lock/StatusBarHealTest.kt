@@ -171,22 +171,23 @@ class StatusBarHealTest {
         assertEquals("a visible blink like the lock's resume heal", STATUS_BAR_HEAL_FLIP_MS, HealTrigger.SYSTEM_HOME.flipMs)
     }
 
-    /** Code QA L1 (59b R2): without lock task while LOCKED, the screen-off heal writes DPM's disable off and on - only dark. */
+    /** Code QA L1 (59b R2) and E7 L3: with lock task the flip; without it nothing reaches SystemUI's lock-task flags, so
+     * nothing runs - except the screen-off heal while LOCKED and still dark, which writes DPM's disable off and on. */
     @Test
-    fun `without lock task the screen-off heal toggles the status bar disable, only dark and LOCKED`() {
-        assertTrue(statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = false))
-        assertFalse("lit: the shade would open between the writes", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = true))
-        assertFalse("lock task runs: the flip heals", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = true, interactive = false))
-        assertFalse("unlocked: nothing disabled to heal", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = false, lockTaskRunning = false, interactive = false))
-        for (trigger in HealTrigger.values().filter { it != HealTrigger.SCREEN_OFF }) {
-            assertFalse(trigger.name, statusBarDisableHealDue(trigger, locked = true, lockTaskRunning = false, interactive = false))
+    fun `without lock task no flip, only the dark LOCKED screen-off toggles the status bar disable`() {
+        for (trigger in HealTrigger.entries) for (locked in listOf(false, true)) for (interactive in listOf(false, true)) {
+            assertEquals("lock task runs", StatusBarHeal.FLIP, statusBarHealKind(trigger, locked, lockTaskRunning = true, interactive))
         }
-        val runtime = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-            .map { java.io.File(it) }.first { it.exists() }.readText()
-        val heal = runtime.substringAfter("private fun healStatusBar(context: Context, trigger: HealTrigger) {").substringBefore("\n    }\n")
-        val due = heal.indexOf("if (statusBarDisableHealDue(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {")
-        assertTrue(heal, due >= 0 && due < heal.indexOf("if (LockTaskChrome.healStatusBar(app, trigger)) {"))
-        assertTrue(heal.contains("LockTaskChrome.healStatusBarDisable(app)\n                    return@execute"))
+        assertEquals(StatusBarHeal.DISABLE_TOGGLE, statusBarHealKind(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = false))
+        assertEquals("lit: the shade would open between the writes", StatusBarHeal.NONE, statusBarHealKind(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = true))
+        assertEquals("unlocked: nothing disabled to heal", StatusBarHeal.NONE, statusBarHealKind(HealTrigger.SCREEN_OFF, locked = false, lockTaskRunning = false, interactive = false))
+        // E7 L3: the face's glance with the kiosk off - the lock-resumed and first screen-on heals wrote a dead flip.
+        for (trigger in HealTrigger.entries.filter { it != HealTrigger.SCREEN_OFF }) {
+            assertEquals(trigger.name, StatusBarHeal.NONE, statusBarHealKind(trigger, locked = true, lockTaskRunning = false, interactive = true))
+        }
+        val heal = body(code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"), "healStatusBar")
+        assertTrue(heal, heal.contains("when (statusBarHealKind(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {"))
+        assertTrue(heal, heal.contains("StatusBarHeal.DISABLE_TOGGLE -> LockTaskChrome.healStatusBarDisable(app)"))
     }
 
     /**

@@ -102,16 +102,35 @@ class LockTaskRootTest {
         assertEquals(5 * 2, changed)
     }
 
-    /** Code QA L2 (59b R2): a chrome pass re-runs the entry check for a lock waiting for its pin, and for a kiosk that
-     * just went on under a glance without lock task. */
+    /** E7 M2 (59b R2): a policy that turns the kiosk or the face on or off re-runs the resumed lock's entry check at once
+     * - before, only the runtime's own passes told the lock, so the kiosk turned on under the face's glance without lock
+     * task waited for the next screen cycle. */
     @Test
-    fun `a chrome pass re-checks the entry on the pin and on a kiosk off-on edge without lock task`() {
-        val b = listOf(false, true)
-        for (was in listOf(null, false, true)) for (now in b) for (running in b) {
-            assertTrue("waiting for the pin: always", chromeEntryRecheckDue(true, was, now, running))
-            assertEquals("was=$was now=$now running=$running", was == false && now && !running, chromeEntryRecheckDue(false, was, now, running))
-        }
+    fun `a policy's kiosk or face change re-runs the entry check, which follows it both ways`() {
+        val r2 = EntryPolicy(kioskOn = false, face = true)
+        val kioskOn = EntryPolicy(kioskOn = true, face = true)
+        val own = EntryPolicy(kioskOn = false, face = false)
+        assertFalse("the same policy again", chromeEntryRecheckDue(false, r2, r2))
+        assertFalse("not seen yet: the resume checks", chromeEntryRecheckDue(false, null, kioskOn))
+        assertTrue("waiting for the pin", chromeEntryRecheckDue(true, r2, r2))
+        // The kiosk on under the face's glance (Android locked, no lock task): the glance roots it (59d A).
+        assertTrue(chromeEntryRecheckDue(false, r2, kioskOn))
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        // The kiosk off again, Android locked: the glance's lock task is stopped (STOP_OWN), a helper isn't cleared later.
+        assertTrue(chromeEntryRecheckDue(false, kioskOn, r2))
+        assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        // Android's lock switched off (own mode, kiosk off): the lock roots its own lock task, as in step 10.
+        assertTrue(chromeEntryRecheckDue(false, r2, own))
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = false))
+        // The policy's pass tells the lock, after its writes; the face is set before it in the same apply.
+        val plan = source("lock/LockTaskChrome.kt").substringAfter("fun applyPlan(").substringBefore("\n    fun ")
+        assertTrue(plan, plan.indexOf("applyNow(context)") in 0 until plan.indexOf("PinLockRuntime.chromePassLanded()"))
+        val enforcer = source("server/AppEnforcer.kt")
+        assertTrue(enforcer.indexOf("PinLockRuntime.configure(") in 0 until enforcer.indexOf("LockTaskChrome.applyPlan("))
     }
+
+    private fun source(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
+        .map { java.io.File(it) }.first { it.exists() }.readText()
 
     @Test
     fun `kiosk on - the lock always leaves through Home, stopping lock task only as the root`() {

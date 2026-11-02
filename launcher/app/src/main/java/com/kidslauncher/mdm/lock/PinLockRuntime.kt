@@ -160,8 +160,8 @@ object PinLockRuntime {
     }
 
     private val modeListeners = mutableListOf<() -> Unit>()
-    /** Told on the main thread after a chrome pass ([refreshChrome]) - the lock enters lock task
-     * once its package is pinned (kiosk off). */
+    /** Told on the main thread after a chrome pass ([chromePassLanded]) - the lock enters lock task
+     * once its package is pinned (kiosk off), and follows a policy's kiosk or face change. */
     private val chromeListeners = mutableListOf<() -> Unit>()
 
     /**
@@ -829,8 +829,14 @@ object PinLockRuntime {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Lock chrome change failed", e)
             }
-            handler.post { chromeListeners.toList().forEach { it() } }
+            chromePassLanded()
         }
+    }
+
+    /** Tells the [chromeListeners] on the main thread that a chrome pass landed: [refreshChrome]'s, or a policy's
+     * (`LockTaskChrome.applyPlan` - the lock's entry check follows a kiosk or face change at once, E7 M2). Any thread. */
+    fun chromePassLanded() {
+        handler.post { chromeListeners.toList().forEach { it() } }
     }
 
     /**
@@ -843,15 +849,15 @@ object PinLockRuntime {
         val app = context.applicationContext
         chromeExecutor.execute {
             try {
-                // Design 59b R2 (code QA L1): no lock task while LOCKED - the flip reaches nothing; at the screen-off, still
-                // dark, DPM's own disable is written off and on instead.
-                if (statusBarDisableHealDue(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {
-                    LockTaskChrome.healStatusBarDisable(app)
-                    return@execute
-                }
-                if (LockTaskChrome.healStatusBar(app, trigger)) {
-                    Thread.sleep(trigger.flipMs)
-                    LockTaskChrome.endStatusBarHeal(app)
+                // Without lock task the flip reaches nothing (E7 L3); LOCKED and still dark, DPM's own disable is written
+                // off and on instead (59b R2, code QA L1).
+                when (statusBarHealKind(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {
+                    StatusBarHeal.FLIP -> if (LockTaskChrome.healStatusBar(app, trigger)) {
+                        Thread.sleep(trigger.flipMs)
+                        LockTaskChrome.endStatusBarHeal(app)
+                    }
+                    StatusBarHeal.DISABLE_TOGGLE -> LockTaskChrome.healStatusBarDisable(app)
+                    StatusBarHeal.NONE -> Unit
                 }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Status bar heal (${trigger.label}) failed", e)
