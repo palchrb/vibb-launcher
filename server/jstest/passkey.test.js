@@ -539,3 +539,166 @@ test("reused options with a minute left refresh within 30 seconds (qa-passkeys-2
     assert.strictEqual(page.gets.length, 2);
     assert.deepStrictEqual(new Uint8Array(page.gets[1].publicKey.challenge), new Uint8Array([2]));
 });
+
+// ---- Step 3: the app lock ------------------------------------------------------------------------------------------
+
+/** A browser whose fetch answers `answers[url]` = {status, json} (default 200). */
+function lockBrowser(nodes, answers, get) {
+    const fetched = [];
+    const win = fakePage({
+        isSecureContext: true,
+        PublicKeyCredential: function () {},
+        Promise,
+        URL,
+        Date,
+        replaced: [],
+        stored: {},
+        sessionStorage: { setItem(key, value) { win.stored[key] = value; } },
+        addEventListener: () => {},
+        location: {
+            href: "https://handy.example.com/lock?next=%2Fdevices%2F3",
+            pathname: "/lock",
+            search: "?next=%2Fdevices%2F3",
+            hash: "",
+            replace: (to) => win.replaced.push(to),
+        },
+        navigator: { credentials: { get: (o) => { fetched.push(["get", o]); return get(o); } } },
+        fetch: (url, init) => {
+            fetched.push([url, init]);
+            const answer = answers[url] || { status: 404, json: {} };
+            const status = answer.status || 200;
+            return Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve(answer.json || {}) });
+        },
+    }, nodes);
+    win.document.addEventListener = () => {};
+    return { win, fetched };
+}
+
+function unlockPage(answers, get) {
+    const next = { value: "/devices/3" };
+    const button = element();
+    const error = element({ "data-w-failed": "Couldn't unlock" });
+    const form = element();
+    form.querySelector = (s) =>
+        s === "[data-passkey-unlock-button]" ? button : s === "[data-passkey-error]" ? error : s === "input[name=\"next\"]" ? next : null;
+    const page = lockBrowser({ "[data-passkey-unlock]": [form], "[data-passkey-ui]": [button] }, answers, get);
+    return Object.assign(page, { button, error });
+}
+
+const UNLOCK_OPTIONS = { json: { challenge: "AQID", rpId: "handy.example.com", allowCredentials: [{ id: "AQI" }] } };
+
+test("the lock screen: its challenge is fetched at load, a tap prompts at once, the unlock replaces the page", async () => {
+    const page = unlockPage(
+        { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
+        () => Promise.resolve(ASSERTION),
+    );
+    passkey.install(page.win);
+    assert.strictEqual(page.button.hidden, false);
+    assert.strictEqual(page.fetched[0][0], "/lock/options");
+    await flush();
+    page.button.listeners.click();
+    // Within the tap: the prompt before any fetch (iOS needs the gesture).
+    assert.strictEqual(page.fetched[1][0], "get");
+    await flush();
+    await flush();
+    const post = page.fetched.find((f) => f[0] === "/lock");
+    assert.ok(post, "posted");
+    const body = new URLSearchParams(post[1].body);
+    assert.strictEqual(JSON.parse(body.get("assertion")).id, "AQI");
+    assert.strictEqual(body.get("next"), "/devices/3");
+    assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+    assert.ok(page.win.stored["handy-used"], "the use starts now in this tab");
+});
+
+test("the lock screen: a cancelled or refused try shows the red line and fetches a fresh challenge", async () => {
+    const cancelled = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => Promise.reject({ name: "NotAllowedError" }));
+    passkey.install(cancelled.win);
+    await flush();
+    cancelled.button.listeners.click();
+    await flush();
+    await flush();
+    assert.strictEqual(cancelled.error.hidden, false);
+    assert.strictEqual(cancelled.error.textContent, "Couldn't unlock");
+    assert.strictEqual(cancelled.fetched.filter((f) => f[0] === "/lock/options").length, 2);
+    assert.deepStrictEqual(cancelled.win.replaced, []);
+    const refused = unlockPage(
+        { "/lock/options": UNLOCK_OPTIONS, "/lock": { status: 400, json: { error: "Couldn't unlock. Try again" } } },
+        () => Promise.resolve(ASSERTION),
+    );
+    passkey.install(refused.win);
+    await flush();
+    refused.button.listeners.click();
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(refused.error.textContent, "Couldn't unlock. Try again");
+    assert.deepStrictEqual(refused.win.replaced, []);
+});
+
+test("Account's lock: a change asks the passkey, then sends the form; a cancel puts the control back", async () => {
+    function lockForm(get, control) {
+        const assertion = { value: "" };
+        const error = element({ "data-w-failed": "failed" });
+        let sent = 0;
+        const form = element({ action: "/account/lock#app-lock", "data-saved": "0" });
+        form.querySelector = (s) =>
+            s === "[data-app-lock-pick]" ? control : s === "[data-passkey-error]" ? error : s === "input[name=\"assertion\"]" ? assertion : null;
+        form.requestSubmit = () => { sent++; };
+        const page = lockBrowser(
+            { "[data-app-lock]": [form] },
+            { "/account/passkeys/reauth-options": UNLOCK_OPTIONS },
+            get,
+        );
+        page.win.location.href = "https://handy.example.com/account";
+        passkey.install(page.win);
+        return Object.assign(page, { assertion, sent: () => sent });
+    }
+    const sw = Object.assign(element(), { type: "checkbox", value: "5", checked: false });
+    const on = lockForm(() => Promise.resolve(ASSERTION), sw);
+    sw.listeners.pointerdown();
+    await flush();
+    assert.strictEqual(on.fetched[0][1].body, "route=%2Faccount%2Flock");
+    sw.checked = true;
+    sw.listeners.change();
+    assert.strictEqual(on.fetched[1][0], "get", "the prompt within the tap");
+    await flush();
+    assert.strictEqual(on.sent(), 1);
+    assert.strictEqual(JSON.parse(on.assertion.value).id, "AQI");
+    // Cancelled: back off, nothing sent.
+    const sw2 = Object.assign(element(), { type: "checkbox", value: "5", checked: false });
+    const off = lockForm(() => Promise.reject({ name: "NotAllowedError" }), sw2);
+    sw2.checked = true;
+    sw2.listeners.change();
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(off.sent(), 0);
+    assert.strictEqual(sw2.checked, false);
+});
+
+test("a 423 (the server's lock) goes to the lock screen and ends the flow there", async () => {
+    const assertion = { value: "" };
+    const form = element({ action: "/account/reset-2fa#two-factor" });
+    form.querySelector = (s) => (s === "input[name=\"assertion\"]" ? assertion : null);
+    form.querySelectorAll = () => [];
+    form.requestSubmit = () => assert.fail("sent");
+    const error = element();
+    const button = element({ "data-w-failed": "failed" });
+    button.closest = () => form;
+    button.parentNode = { querySelector: () => error };
+    const page = lockBrowser(
+        { "[data-passkey-reauth]": [button] },
+        { "/account/passkeys/reauth-options": { status: 423 } },
+        () => assert.fail("no prompt"),
+    );
+    page.win.location.pathname = "/account";
+    page.win.location.search = "";
+    const locks = [];
+    page.win.handyLock = { lock: (next) => locks.push(next) };
+    passkey.install(page.win);
+    button.listeners.click();
+    await flush();
+    await flush();
+    assert.deepStrictEqual(locks, ["/account"]);
+    assert.strictEqual(error.hidden, true, "no error shown");
+});

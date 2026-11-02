@@ -187,3 +187,33 @@ test("the reload's record holds <main>'s position in the app shell", async () =>
     assert.strictEqual(win.reloads, 1);
     assert.strictEqual(JSON.parse(stored["handy-scroll"]).y, 512);
 });
+
+test("the app lock: no poll and no reload once it is due; a poll answered 423 goes to the lock", async () => {
+    const win = fakeWindow({
+        rows: { "phone-3": fakeRow("waiting", "Install Now: waiting for the phone") },
+        answer: { phones: [{ id: 3, state: "working", sub: "Installing" }] },
+    });
+    const locks = [];
+    let due = true;
+    win.handyLock = { due: () => due, lock: () => locks.push("lock") };
+    install(win);
+    await win.advance();
+    assert.strictEqual(win.fetches, 0);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(locks, ["lock"]);
+    assert.strictEqual(win.pending(), 0, "nothing more");
+    // The server's lock: 423.
+    const locked = fakeWindow({ rows: { "phone-3": fakeRow("waiting", "x") }, answer: null });
+    const went = [];
+    locked.handyLock = { due: () => false, lock: () => went.push("lock") };
+    locked.fetch = () => {
+        locked.fetches += 1;
+        return Promise.resolve({ ok: false, status: 423 });
+    };
+    install(locked);
+    await locked.advance();
+    assert.deepStrictEqual(went, ["lock"]);
+    assert.strictEqual(locked.reloads, 0);
+    assert.strictEqual(locked.pending(), 0);
+    due = false;
+});

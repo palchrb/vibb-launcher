@@ -233,3 +233,14 @@ test("the script is ES5 (§5.7)", () => {
         .replace(/^\s*\/\/.*$/gm, "");
     assert.ok(!/=>|\blet\s|\bconst\s|`|\bclass\s/.test(src), "no ES2015 syntax");
 });
+
+test("the app lock: a release once it is due goes to the lock instead of the reload (design 74 D3.3)", () => {
+    const win = fakeWindow();
+    const locks = [];
+    win.handyLock = { due: () => true, lock: () => locks.push("lock") };
+    win.install();
+    win.drag(180, 100, [110, 130, 165, 190]);
+    assert.deepStrictEqual(locks, ["lock"]);
+    assert.strictEqual(win.asked, 0, "no reload asked for");
+    assert.strictEqual(win.reloads, 0);
+});

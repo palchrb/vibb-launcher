@@ -595,6 +595,8 @@ mod tests {
         "device_locate.html",
         "device_locations.html",
         "device_zone.html",
+        // Design 74 step 3: the lock screen.
+        "lock.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,
@@ -644,8 +646,8 @@ mod tests {
         let text = regex::Regex::new(r"&#?[a-zA-Z0-9]+;")
             .unwrap()
             .replace_all(&text, " ");
-        // The names: "Vibb Phone", "Vibb One" and the brand row's "vibb".
-        regex::Regex::new(r"\b(Vibb Phone|Vibb One|vibb)\b")
+        // The names: "Vibb Phone", "Vibb One", the brand row's "vibb" and the lock screen's title "Vibb" (design 74 §6.5).
+        regex::Regex::new(r"\b(Vibb Phone|Vibb One|Vibb|vibb)\b")
             .unwrap()
             .replace_all(&text, " ")
             .into_owned()

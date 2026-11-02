@@ -17,6 +17,12 @@
 // - Step 2: the passkey-only sign-in page (`[data-passkey-only]`, §6.4) has only the button - no autofill, nothing
 //   on its own; the autofill's get starts again with fresh options once they are 4.5 minutes old; and only a 401 or
 //   a redirect that lands on /login counts as signed out (an HTML error page is an error, qa-passkeys-1 B-RN3).
+// - Step 3, the app lock: the lock screen's "Unlock" (`#unlock`, `[data-passkey-unlock]`, D3.5) - an `unlock` challenge
+//   fetched when the page loads (`POST /lock/options`), so the tap calls the browser's prompt at once (iOS needs the
+//   gesture), the assertion posted to `/lock`, the page replaced with the answer's `next`; a failed or cancelled try
+//   shows the red line. Account's "Lock with Face ID" (`[data-app-lock]`, D3.2): a change runs a re-auth assertion
+//   for `/account/lock` first (its challenge fetched on the first touch of the control), then the form is sent; a
+//   cancel puts the control back. A 423 (the server's lock) goes to /lock and ends the flow there.
 // A cancelled prompt (`NotAllowedError`, `AbortError`) is the browser's and sends nothing (D1.5). The words come from
 // the page (`data-w-*`, design 70 §5.3). ES5 with promises, no framework. Tests: node --test jstest/passkey.test.js
 (function (root) {
@@ -132,7 +138,21 @@
         }
     }
 
-    // POSTs `fields` and answers {ok, status, json, signedOut}.
+    // The app is locked (design 74 D3.4): the server answers 423 to anything but the lock screen's own calls.
+    function locked(res) {
+        return res.status === 423;
+    }
+
+    // To the lock screen, back to this page afterwards (app-lock.js's way when it is on the page).
+    function toLock(win) {
+        var l = win.location;
+        var next = (l.pathname || "/") + (l.search || "") + (l.hash || "");
+        if (win.handyLock && typeof win.handyLock.lock === "function") win.handyLock.lock(next);
+        else l.replace("/lock?next=" + encodeURIComponent(next));
+    }
+
+    // POSTs `fields` and answers {ok, status, json, signedOut}. Locked: to the lock screen, and the answer never comes
+    // (the flow ends there).
     function post(win, url, fields) {
         return win.fetch(url, {
             method: "POST",
@@ -140,6 +160,10 @@
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: encode(fields),
         }).then(function (res) {
+            if (locked(res)) {
+                toLock(win);
+                return new win.Promise(function () {});
+            }
             if (signedOut(win, res)) return { ok: false, status: res.status, json: {}, signedOut: true };
             return res.json().then(
                 function (json) { return { ok: res.ok, status: res.status, json: json, signedOut: !!json.signed_out }; },
@@ -410,6 +434,140 @@
         });
     }
 
+    // ---- The app lock (step 3) ------------------------------------------------------------------------------
+
+    // A challenge for `url` fetched ahead of the tap that uses it (iOS opens WebAuthn only within a user gesture, and
+    // a fetch between the tap and the prompt can lose it): `ready()` is the fresh options or null, `fetch()` gets new
+    // ones. A challenge lives 5 minutes; options are used for 4.
+    var AHEAD_MS = 240000;
+
+    function ahead(win, url, fields) {
+        var options = null;
+        var fetchedAt = 0;
+        var asking = null;
+        var now = function () { return win.Date ? win.Date.now() : Date.now(); };
+        return {
+            ready: function () {
+                return options && now() - fetchedAt < AHEAD_MS ? options : null;
+            },
+            // Spent by one prompt: the next try asks again.
+            spend: function () {
+                options = null;
+            },
+            fetch: function () {
+                if (asking) return asking;
+                asking = post(win, url, fields()).then(function (answer) {
+                    asking = null;
+                    if (answer.signedOut) {
+                        toSignIn(win);
+                        return new win.Promise(function () {});
+                    }
+                    if (!answer.ok) throw { name: "refused", message: answer.json.error || "" };
+                    options = answer.json;
+                    fetchedAt = now();
+                    return options;
+                }, function (err) {
+                    asking = null;
+                    throw err;
+                });
+                return asking;
+            },
+        };
+    }
+
+    // The prompt for `challenge`'s options: at once when they are ready (within the tap), else after fetching them.
+    function promptWith(win, challenge) {
+        var ready = challenge.ready();
+        challenge.spend();
+        if (ready) return win.navigator.credentials.get({ publicKey: requestOptions(ready) });
+        return challenge.fetch().then(function (json) {
+            challenge.spend();
+            return win.navigator.credentials.get({ publicKey: requestOptions(json) });
+        });
+    }
+
+    // The lock screen (§6.5, D3.5).
+    function installUnlock(win, form) {
+        var button = form.querySelector("[data-passkey-unlock-button]");
+        var error = form.querySelector("[data-passkey-error]");
+        var next = form.querySelector("input[name=\"next\"]");
+        if (!button) return;
+        var challenge = ahead(win, "/lock/options", function () { return {}; });
+        function prefetch() {
+            if (!challenge.ready()) challenge.fetch().then(null, function () {});
+        }
+        // §6.5: after a failed or cancelled try, the red line - the way out is beside it.
+        function failed(text) {
+            show(error, text || w(error, "failed"));
+            prefetch();
+        }
+        button.addEventListener("click", function () {
+            show(error, "");
+            promptWith(win, challenge).then(function (cred) {
+                if (!cred) return failed();
+                return post(win, "/lock", {
+                    assertion: JSON.stringify(credentialJSON(cred)),
+                    next: next ? next.value : "",
+                }).then(function (answer) {
+                    if (answer.signedOut) return toSignIn(win);
+                    if (!answer.ok) return failed(answer.json.error);
+                    // The use starts now in this tab too (app-lock.js's record), so the page doesn't lock again.
+                    try {
+                        win.sessionStorage.setItem("handy-used", String(win.Date ? win.Date.now() : Date.now()));
+                    } catch (e) {}
+                    win.location.replace(answer.json.next || "/");
+                });
+            }).then(null, function (err) {
+                failed(err && err.name === "refused" ? err.message : "");
+            });
+        });
+        prefetch();
+        // A page shown again (a phone holds a hidden one) or back from the back-forward cache: fresh options.
+        if (win.document.addEventListener) {
+            win.document.addEventListener("visibilitychange", function () {
+                if (win.document.visibilityState !== "hidden") prefetch();
+            });
+        }
+        if (win.addEventListener) win.addEventListener("pageshow", prefetch);
+    }
+
+    // Account's "Lock with Face ID" (§6.1, D3.2): every change behind a passkey that works here.
+    function installAppLock(win, form) {
+        var control = form.querySelector("[data-app-lock-pick]");
+        var error = form.querySelector("[data-passkey-error]");
+        var assertion = form.querySelector("input[name=\"assertion\"]");
+        if (!control || !assertion) return;
+        var saved = form.getAttribute("data-saved") || "0";
+        var challenge = ahead(win, "/account/passkeys/reauth-options", function () {
+            return { route: routeOf(win, form) };
+        });
+        function value() {
+            if (control.type === "checkbox") return control.checked ? control.value : "0";
+            return control.value;
+        }
+        function revert() {
+            if (control.type === "checkbox") control.checked = saved !== "0";
+            else control.value = saved;
+        }
+        function prefetch() {
+            if (!challenge.ready()) challenge.fetch().then(null, function () {});
+        }
+        control.addEventListener("pointerdown", prefetch);
+        control.addEventListener("focus", prefetch);
+        control.addEventListener("change", function () {
+            if (value() === saved) return;
+            show(error, "");
+            promptWith(win, challenge).then(function (cred) {
+                if (!cred) return revert();
+                assertion.value = JSON.stringify(credentialJSON(cred));
+                send(form);
+            }, function (err) {
+                revert();
+                if (!cancelled(err)) show(error, (err && err.name === "refused" && err.message) || w(error, "failed"));
+            });
+        });
+    }
+
     // ---- The page -------------------------------------------------------------------------------------------
 
     function install(win) {
@@ -432,6 +590,10 @@
         for (i = 0; i < buttons.length; i++) installReauth(win, buttons[i]);
         var adds = doc.querySelectorAll("[data-passkey-add]");
         for (i = 0; i < adds.length; i++) installAdd(win, adds[i]);
+        var unlock = doc.querySelector("[data-passkey-unlock]");
+        if (unlock) installUnlock(win, unlock);
+        var locks = doc.querySelectorAll("[data-app-lock]");
+        for (i = 0; i < locks.length; i++) installAppLock(win, locks[i]);
         return true;
     }
 
@@ -445,6 +607,7 @@
         supported: supported,
         routeOf: routeOf,
         encode: encode,
+        AHEAD_MS: AHEAD_MS,
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

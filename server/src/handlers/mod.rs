@@ -14,6 +14,7 @@ pub mod dns_filter;
 pub mod install_now;
 pub mod lifts;
 pub mod locate;
+pub mod lock;
 pub mod lock_glance;
 pub mod music;
 pub mod music_api;

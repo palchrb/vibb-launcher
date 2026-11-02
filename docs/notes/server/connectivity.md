@@ -358,3 +358,56 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   on `/login` as signed out - `csrf_guard`'s 403 page is an error shown where the parent is (B-RN3).
 - Tests: `src/tests/passkey_only.rs`, `passkeys::tests` (the crowd, the reuse window), `net::tests`,
   `jstest/passkey.test.js`.
+
+## The app lock (design 74 step 3, `docs/design/74-passkeys.md` §3, §6.1, §6.5)
+
+- **The setting** (`POST /account/lock`, `handlers::lock::set`, Account's `#app-lock`): this browser's lock time - the
+  session's `lock_minutes` (1, 5, 15 or 60; none = off, `lock::MINUTES_KEY`) and the cookie `__Host-handy-lock`
+  (`handy-lock` with `INSECURE_COOKIES`; the minutes only, Secure, HttpOnly, Strict, 400 days; Off deletes it). Every
+  change - on, another time, off - is confirmed by a passkey that works here (a `reauth` challenge bound to
+  `/account/lock`; a bad one counts in `reauth_wrong`; without a passkey for this RP ID the row is dimmed "Add a
+  passkey on this device first."). Off, the row is a switch that turns it on at 5 minutes (D3.1's "5 min first" - a
+  native select can't open on another value than its own); on, a picker Off / 1 min / 5 min / 15 min / 1 hour.
+  `app_lock_set` "5 min", PRG `/account?done=lock#app-lock` ("Saved"). A new sign-in in this browser (`verify_2fa`,
+  the passkey sign-in) copies the cookie's time into its session only while that parent has a passkey for this RP ID
+  (`lock::carry`); the last passkey for this RP ID removed, this session's lock goes off and the cookie is deleted
+  (`lock::off_without_passkey`; the other sessions ended with the removal's epoch).
+- **"Uten bruk"** (`lock::check`, from `security::admin_or_why`): the session's `used_at` (Unix seconds) moves only by a
+  navigation with `Sec-Fetch-User: ?1`, an unsafe method, and the page's beacon `POST /api/used` (always written; the
+  others only when it moved 30 s). A scripted reload, a script's GET, `/ping` and `/api/session` never move it.
+  Locked at `used_at + minutes + 1 min` (the beacon's minute of slack); a lock-on session whose `used_at` is missing
+  is locked (fail closed).
+- **Enforcement** (`security::Why::Locked`): `require_full_auth`, `require_session` and `/api/session` read the session
+  through `admin_or_why`, which asks `lock::check` unless the matched route is in `lock::EXEMPT` (`/lock`,
+  `/lock/options`, `/logout`, and the routes that read no session: the sign-in steps, `/sw.js`, `/healthz`,
+  `/notifications/receipt`, `/phone-avatars/{hash}`, Spotify's callback and done; `/static/*` and the device API are
+  no admin routes). A locked navigation (`Sec-Fetch-Mode: navigate`, or an `Accept` with `text/html` without
+  `Sec-Fetch-*`) is a 303 to `/lock?next=<path?query>` (a GET's; a form's POST goes to `/lock`), anything else 423 with
+  no body, `/api/session` 423 always; all `no-store`. `tests::app_lock::every_route_is_locked_or_exempt` walks every
+  `.route(` of `build_admin_router` with a locked session.
+- **The page's side** (`static/app-lock.js?v=1`, from the head, not deferred): pages of a lock-on session carry
+  `<html data-lock-ms data-lock-idle>` (`lock::mark_page`, the server's numbers, relative); the last input in
+  sessionStorage `handy-used` (the later of it and the server's last use counts); due = lock time since the last input
+  → `html.locked` (style.css hides `body > *`) and `location.replace("/lock?next=…")`, at load, visible again, back from
+  the back-forward cache, on screen when the time runs out, or at a late input; hidden → `html.veiled`. The beacon on
+  an input while visible, at most once a minute (`handy-used-sent`). `window.handyLock.due()`/`.lock(next)`:
+  auto-reload.js, install-now.js (also a poll's 423), pull-refresh.js and reconnect.js (the return reload, a restart,
+  `handyReconnect.reload`, a ping's 423, the sign-in page's session check 423) go to the lock instead of reloading;
+  passkey.js's `post` sends a 423 to the lock and ends its flow.
+- **The lock screen** (`GET /lock`, `templates/lock.html`; no tab bar, `no-store`, `<title>Vibb</title>`, nothing
+  private): with the lock off it goes on to `next` or Devices; on, it shows whether the server already locks or the page
+  locked first. `POST /lock/options` is an `unlock` challenge (`passkeys::Kind::Unlock`, bound to `/lock`) with the
+  signed-in parent's passkeys here; passkey.js fetches it at load so "Unlock" calls the prompt within the tap (iOS).
+  `POST /lock` (`assertion`, `next`): the parent's own credential only (`passkeys::unlock`); done: `record_reauth`
+  right, `cycle_id`, `used_at` now, `app_unlocked` (one row per parent and hour, "×N"), answer `{next}` (a local path,
+  `lock::local_next`: one leading `/`, printable ASCII, never `/lock`, `/login`, `/logout`, `/auth/…`; else `/`) and
+  the page replaces itself with it; a bad assertion is `app_unlock_failed` (its code; a copied counter also
+  `passkey_cloned`) and counts in `reauth_wrong` (the third ends every session: `{signed_out: true}`). The red line
+  shows after a failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`: `/logout` then answers
+  `/login?next=…`, and the passkey sign-in (`POST /auth/passkey`'s `next`, the sign-in page's hidden field) goes on
+  there (step 3: D1.5's Devices only without one). The unlock is no sign-in: `SIGNED_IN_AT_KEY` stays.
+- No migration (the lock lives in the session and the cookie).
+- Tests: `src/tests/app_lock.rs`, `lock::tests`, `jstest/app-lock.test.js`, and the lock's cases in
+  `jstest/{reconnect,auto-reload,install-now,pull-refresh,passkey}.test.js`. Owed by hand: the iPhone PWA (the app
+  switcher's picture under the veil, the back-forward cache, the standalone WebAuthn prompt from the tap), Android
+  Chrome's WebAPK, Mac Safari.

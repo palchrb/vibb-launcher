@@ -428,6 +428,14 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
    evicted young one keeps counting), and `passkey.js` reads only a 401 or a redirect to /login as signed out.
 3. **The lock** (M): the session keys and the cookie, `Why::Locked` in `admin_or_why` with `lock::EXEMPT`, `/api/used`,
    `/lock`, `static/app-lock.js`, the scripted reloads asking `handyLock.due()`, `reconnect.js`'s 423, the veil.
+   *As built (branch `passkeys-3`, no migration):* `/lock/options` is a POST (as every other options call, through
+   `csrf_guard`); the unlock answers `{next}` as JSON and the page `location.replace`s itself with it (Back never returns
+   to the lock); every change of the setting needs the passkey, off included (a held session can't turn it off for
+   good); off, the row is a switch that turns it on at 5 minutes, on, a picker with Off among the times; the page also
+   gets the server's last use (`data-lock-idle`, relative), the later of it and the stored input counting; the beacon
+   always writes `used_at` (so the server's slack holds), a tap or a save only past 30 s; a locked form POST goes to
+   `/lock` without `next`; the lock screen's Sign Out keeps `next` for the passkey sign-in (`/login?next=`).
+   `docs/notes/server/connectivity.md`, "The app lock".
 
 ## 8. Open for the user
 

@@ -174,3 +174,20 @@ test("in the app shell the record holds <main>'s position", () => {
     assert.strictEqual(win.reloads, 1);
     assert.strictEqual(JSON.parse(win.stored[scrollRestore.KEY]).y, 640);
 });
+
+test("the app lock: no reload once it is due - the lock instead (design 74 D3.3)", () => {
+    const before = fakeWindow();
+    before.handyLock = { due: () => false, lock: () => assert.fail("not due") };
+    install(before);
+    before.advance();
+    assert.strictEqual(before.reloads, 1, "before its time, the reload as ever");
+    const win = fakeWindow();
+    const locks = [];
+    win.handyLock = { due: () => true, lock: () => locks.push("lock") };
+    install(win);
+    win.advance();
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(locks, ["lock"]);
+    win.advance();
+    assert.deepStrictEqual(locks, ["lock"], "once");
+});

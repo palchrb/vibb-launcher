@@ -932,6 +932,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`handyPlaceRecord`, the bounce mark left alone). Owed: the next time it happens, the time and whether the address bar showed
   `/login…`, and the server log's line.
 
+- **The app lock** (design 74 step 3, `reconnect.js?v=8`, `static/app-lock.js?v=1`): before the return reload, a
+  restart, `handyReconnect.reload()` (pull to refresh) and auto-reload.js's/install-now.js's reloads, the scripts ask
+  `window.handyLock.due()` and go to `/lock?next=<this page>` instead; a ping, an Install Now poll or the sign-in page's
+  `/api/session` answered 423 (the server's lock) goes there too. `docs/notes/server/connectivity.md`, "The app lock".
+
 ## Tab-switch timing (Q28 step 1, 0.54.0, `static/nav-timing.js`)
 
 - **Off until switched on in a browser**: any page with `?timing=1` (remembered in localStorage `handy-timing`;

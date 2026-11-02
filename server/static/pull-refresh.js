@@ -99,6 +99,12 @@
         }
 
         function reload() {
+            // A due app lock (design 74 D3.3): the lock screen instead of the reload.
+            var lock = win.handyLock;
+            if (lock && typeof lock.due === "function" && lock.due()) {
+                lock.lock();
+                return true;
+            }
             var shared = win.handyReconnect;
             if (shared && typeof shared.reload === "function") return shared.reload();
             win.location.reload();

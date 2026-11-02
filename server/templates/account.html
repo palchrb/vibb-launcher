@@ -269,6 +269,51 @@
         <p class="group-footer">{% if passkey_only && passkeys.len() == 1 %}{{ self.t("passkeys.only.footer_last") }} {% endif %}{{ self.t("passkeys.footer") }}{% if let Some(host) = passkey_host %} {{ self.tp("passkeys.footer_host", [("host", host.as_str())]) }}{% endif %}</p>
     </section>
 
+    <section id="app-lock" aria-labelledby="app-lock-title">
+        <h2 class="group-header" id="app-lock-title">{{ self.t("lock.title") }}</h2>
+        {#- Design 74 §6.1, D3.1-D3.2: this browser's lock. Every change asks a passkey that works here first
+            (static/passkey.js: the assertion into `assertion`, then the form is sent; a cancel puts the control back).
+            Off it is a switch that turns it on at 5 minutes; on, the time is a picker with Off among the times.
+            Without a passkey for this host the row is dimmed with the reason; a browser without passkeys (http
+            included) gets its own reason from passkey.js. -#}
+        <div class="group">
+            {%- if passkey_host.is_some() && passkey_reauth %}
+            <form method="post" action="/account/lock#app-lock" class="cell" data-app-lock data-saved="{{ lock_minutes }}" data-passkey-ui hidden>
+                {%- if lock_minutes == 0 %}
+                <label class="row">
+                    <span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{{ self.t("lock.sub") }}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="minutes" value="{{ lock_first }}" data-app-lock-pick><span class="knob" aria-hidden="true"></span>
+                </label>
+                {%- else %}
+                <label class="row">
+                    <span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{{ self.t("lock.sub") }}</span></span>
+                    <select class="pick" name="minutes" data-app-lock-pick>
+                        {% for c in lock_choices %}<option value="{{ c.minutes }}"{% if c.selected %} selected{% endif %}>{{ self.t(c.label) }}</option>{% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {%- endif %}
+                <input type="hidden" name="assertion" value="">
+                <p class="field-error lock-field-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("passkeys.browser_failed") }}"></p>
+                {%- if let Some(why) = self.error_for("app-lock") %}
+                <p class="field-error lock-field-error" role="alert">{{ why }}</p>
+                {%- endif %}
+            </form>
+            <div class="row passkey-only-off" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"><span class="row-label">{{ self.t("lock.row") }}<span class="row-sub" data-passkey-unsupported-text></span></span></div>
+            <noscript><div class="row passkey-only-off"><span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{{ self.t("passkeys.no_browser") }}</span></span></div></noscript>
+            {%- else %}
+            <div class="row passkey-only-off" data-row="app-lock-disabled">
+                <span class="row-label">{{ self.t("lock.row") }}<span class="row-sub">{% if passkey_host.is_none() %}{{ self.t("passkeys.not_here") }}{% else %}{{ self.t("lock.add_first") }}{% endif %}</span></span>
+                <span class="row-value">{{ self.t("lock.choice.off") }}</span>
+            </div>
+            {%- if let Some(why) = self.error_for("app-lock") %}
+            <p class="field-error lock-field-error" role="alert">{{ why }}</p>
+            {%- endif %}
+            {%- endif %}
+            {% call group_flash::show(flash, "app-lock") %}{% endcall %}
+        </div>
+        <p class="group-footer">{{ self.t("lock.footer") }}</p>
+    </section>
+
     <section id="sessions" aria-labelledby="sessions-title">
         <h2 class="group-header" id="sessions-title">{{ self.t("account.sessions.title") }}</h2>
         <div class="group">
@@ -367,6 +412,6 @@
     </section>
 </main>
 {% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
-<script src="/static/passkey.js?v=3" defer></script>
+<script src="/static/passkey.js?v=4" defer></script>
 </body>
 </html>
