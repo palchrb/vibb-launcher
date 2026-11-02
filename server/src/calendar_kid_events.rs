@@ -904,7 +904,9 @@ async fn apply_plan(
     {
         (Some(now), plan.deletes.len())
     } else if set.held_since.is_some() {
-        (set.held_since, set.held_deletes.max(plan.deletes.len()))
+        // The count as this plan has it, never a running maximum (revision check RL1): a later wipe below an old
+        // peak is a new mass delete too.
+        (set.held_since, plan.deletes.len())
     } else {
         (None, 0)
     };
@@ -2745,6 +2747,17 @@ async fn work_claimed(
                 let wanted = set.events.iter().find(|e| e.uid == next.uid);
                 step(state, &target, &next, wanted, at).await?
             };
+            // The answer's instant on what this step wrote or read (revision RN1, RL2): a REPORT sent before it is never
+            // judged against it - a written row, a hand-back or a release from a 412 or a 404.
+            sqlx::query(
+                "UPDATE kid_caldav_events SET fetch_wait = ? WHERE device_id = ? AND uid = ? \
+                 AND (fetch_wait IS NOT NULL OR back_id IS NOT NULL OR state = 'released')",
+            )
+            .bind(fine_stamp(step_time(state, now)))
+            .bind(device_id)
+            .bind(&next.uid)
+            .execute(&state.db)
+            .await?;
             match outcome {
                 Step::Wrote => wrote_here = true,
                 Step::Done => {

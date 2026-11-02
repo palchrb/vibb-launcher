@@ -2132,3 +2132,76 @@ async fn not_listed_says_so_and_a_copy_elsewhere_is_not_ours() {
     k.work().await;
     assert!(k.page().await.contains("data-kid-status=\"not_listed\""));
 }
+
+/// Revision RL1: the hold's count is the plan's own, never a running maximum - a later wipe at or below an old peak
+/// is held a day too.
+#[tokio::test]
+async fn a_second_wipe_after_stuck_deletes_is_held_again() {
+    let k = kid().await;
+    let twelve: Vec<Value> = (1..=12)
+        .map(|n| {
+            event(
+                n,
+                &format!("Avtale {n}"),
+                "20261120T160000Z",
+                "20261120T170000Z",
+            )
+        })
+        .collect();
+    k.post_ok(&k.set(twelve.clone())).await;
+    k.sync().await;
+    // A wipe, held; a day later its deletes are refused and back off.
+    k.post_ok(&k.set(vec![])).await;
+    k.set_now(t0() + TimeDelta::hours(25));
+    k.dav.switches(|s| s.writes_answer = Some(409));
+    k.post_ok(&k.set(vec![])).await;
+    k.work().await;
+    k.dav.switches(|s| s.writes_answer = None);
+    // The kid puts eleven back (one delete still stuck), then wipes again: held, not deleted at once.
+    k.post_ok(&k.set(twelve[..11].to_vec())).await;
+    k.work().await;
+    k.clear_writes();
+    k.due().await;
+    k.post_ok(&k.set(vec![])).await;
+    k.work().await;
+    assert_eq!(k.writes().iter().filter(|w| w.0 == "DELETE").count(), 0);
+}
+
+/// Revision RL2: a hand-back made on the write path (a 412's read) is not judged by a REPORT sent before it.
+#[tokio::test]
+async fn a_report_from_before_a_write_paths_hand_back_leaves_it() {
+    let k = kid().await;
+    let kino = event(1, "Kino", "20261103T160000Z", "20261103T180000Z");
+    k.post_ok(&k.set(vec![kino.clone()])).await;
+    k.sync().await;
+    let href = k.dav.href(&uid(1));
+    let old_body = k.dav.body(&href).unwrap();
+    let old_etag: String =
+        sqlx::query_scalar("SELECT etag FROM kid_caldav_events WHERE device_id = ? AND uid = ?")
+            .bind(k.device)
+            .bind(uid(1))
+            .fetch_one(&k.app.db)
+            .await
+            .unwrap();
+    let fetch_began = k.now();
+    let stale = vec![crate::caldav::DavResource {
+        href: href
+            .trim_start_matches("https://dav.example.org")
+            .to_string(),
+        etag: Some(old_etag),
+        data: old_body,
+    }];
+    // The parent edits it; the kid's change meets it (412), and the parent's version is handed back.
+    k.dav
+        .parent_edit(&href, |b| b.replace("SUMMARY:Kino", "SUMMARY:Kino P1"));
+    k.set_now(t0() + TimeDelta::seconds(30));
+    let mut mine = kino;
+    mine["summary"] = "Kino barn".into();
+    k.post_ok(&k.set(vec![mine.clone()])).await;
+    k.work().await;
+    after_fetch(&k.app.state, k.source, &stale, fetch_began, fetch_began)
+        .await
+        .unwrap();
+    let back = k.post_ok(&k.set(vec![mine])).await["back"].clone();
+    assert_eq!(back[0]["summary"], "Kino P1", "{back}");
+}
