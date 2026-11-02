@@ -407,3 +407,20 @@ impl Names {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Names;
+
+    #[test]
+    fn a_lift_names_its_granter_only_with_several_accounts() {
+        let mut names = Names::default();
+        names.display.insert("mamma".into(), "Mamma".into());
+        // One account: no name, as a command's requester.
+        assert_eq!(names.granter(Some("mamma")), None);
+        names.several = true;
+        assert_eq!(names.granter(Some("mamma")).as_deref(), Some("Mamma"));
+        assert_eq!(names.granter(Some("pappa")).as_deref(), Some("pappa"));
+        assert_eq!(names.granter(None), None);
+    }
+}

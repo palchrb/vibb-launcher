@@ -36,7 +36,7 @@ pub const PHONE_LOG_DAYS: i64 = 30;
 /// into the name field); the line, its time and address stay.
 pub const SIGN_IN_NAME_HOURS: i64 = 24;
 /// An extra-time grant (`time_lifts`) goes this many days after it ended, with the inbox's
-/// events (security review P6).
+/// events (security review P6) - well past the summary's 7-day Activity, which lists them.
 pub const LIFT_DAYS: i64 = crate::parent_events::EVENT_DAYS;
 /// A download's progress (`device_install_progress`) is shown this long after the phone's last
 /// word (`devices::view_device`), then pruned (security review P6).

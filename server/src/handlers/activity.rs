@@ -91,15 +91,15 @@ pub(crate) async fn rows(
     .bind(admin_id)
     .fetch_all(&state.db)
     .await?;
-    // Every lift but a rule pause the server still sends (Quick actions' End now rows).
+    // Every lift but a rule pause the server still sends (Quick actions' End now rows): the same
+    // `datetime('now')` test as `lifts::today`, so a pause at its expiry is in one of the two.
     let lifts: Vec<TimeLiftRow> = sqlx::query_as(
         "SELECT * FROM time_lifts WHERE device_id = ?1 AND created_at >= ?2 \
-           AND NOT (target = 'rule' AND ended_early_at IS NULL AND expires_at > ?3) \
-         ORDER BY created_at DESC, id DESC LIMIT ?4",
+           AND NOT (target = 'rule' AND ended_early_at IS NULL AND expires_at > datetime('now')) \
+         ORDER BY created_at DESC, id DESC LIMIT ?3",
     )
     .bind(device_id)
     .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
-    .bind(now.format("%Y-%m-%d %H:%M:%S").to_string())
     .bind(MAX_ROWS as i64)
     .fetch_all(&state.db)
     .await?;
