@@ -159,14 +159,34 @@ class StatusBarHealTest {
     /** Design 59d §8.9 (a): the system's Home while LOCKED is the desync's proof (the edge-swipe capture). */
     @Test
     fun `the system's Home while locked heals at once, at most every 5 s, never for our own Home or unlocked`() {
-        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
-        assertFalse("our own HomeFront start", systemHomeHealDue(locked = true, interactive = true, broughtByUs = true, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
-        assertFalse("the kid's Home press, unlocked", systemHomeHealDue(locked = false, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
-        assertFalse("dark (a lock-up)", systemHomeHealDue(locked = true, interactive = false, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
-        assertFalse(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 9_999L))
-        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 10_000L))
-        assertTrue("a clock that went back", systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 9_000L, nowElapsedMs = 5_000L))
+        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L, lockTaskRunning = true))
+        assertFalse("our own HomeFront start", systemHomeHealDue(locked = true, interactive = true, broughtByUs = true, lastHealElapsedMs = null, nowElapsedMs = 5_000L, lockTaskRunning = true))
+        assertFalse("the kid's Home press, unlocked", systemHomeHealDue(locked = false, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L, lockTaskRunning = true))
+        assertFalse("dark (a lock-up)", systemHomeHealDue(locked = true, interactive = false, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L, lockTaskRunning = true))
+        assertFalse(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 9_999L, lockTaskRunning = true))
+        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 10_000L, lockTaskRunning = true))
+        assertTrue("a clock that went back", systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 9_000L, nowElapsedMs = 5_000L, lockTaskRunning = true))
+        // Code QA L3 (59b R2): no lock task running - no lock-task flags to heal (the gesture ask is decided apart).
+        assertFalse(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L, lockTaskRunning = false))
         assertEquals("a visible blink like the lock's resume heal", STATUS_BAR_HEAL_FLIP_MS, HealTrigger.SYSTEM_HOME.flipMs)
+    }
+
+    /** Code QA L1 (59b R2): without lock task while LOCKED, the screen-off heal writes DPM's disable off and on - only dark. */
+    @Test
+    fun `without lock task the screen-off heal toggles the status bar disable, only dark and LOCKED`() {
+        assertTrue(statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = false))
+        assertFalse("lit: the shade would open between the writes", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = false, interactive = true))
+        assertFalse("lock task runs: the flip heals", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = true, lockTaskRunning = true, interactive = false))
+        assertFalse("unlocked: nothing disabled to heal", statusBarDisableHealDue(HealTrigger.SCREEN_OFF, locked = false, lockTaskRunning = false, interactive = false))
+        for (trigger in HealTrigger.values().filter { it != HealTrigger.SCREEN_OFF }) {
+            assertFalse(trigger.name, statusBarDisableHealDue(trigger, locked = true, lockTaskRunning = false, interactive = false))
+        }
+        val runtime = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        val heal = runtime.substringAfter("private fun healStatusBar(context: Context, trigger: HealTrigger) {").substringBefore("\n    }\n")
+        val due = heal.indexOf("if (statusBarDisableHealDue(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {")
+        assertTrue(heal, due >= 0 && due < heal.indexOf("if (LockTaskChrome.healStatusBar(app, trigger)) {"))
+        assertTrue(heal.contains("LockTaskChrome.healStatusBarDisable(app)\n                    return@execute"))
     }
 
     /**
@@ -291,7 +311,7 @@ class StatusBarHealTest {
         assertTrue(resumed.contains("healStatusBar(context, HealTrigger.LOCK_RESUMED)"))
         // Design 59d §8.9 (a): Home's every new intent is offered; the runtime decides, stamps both gaps, heals.
         val home = body(runtime, "homeIntent")
-        assertTrue(home.contains("if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now)) return"))
+        assertTrue(home.contains("if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now, lockTaskRunning(context))) return"))
         assertTrue(home.contains("lockResumedHealAt = now"))
         assertTrue(home.contains("healStatusBar(context, HealTrigger.SYSTEM_HOME)"))
         // Design 59d §8.16: the gesture ask is decided before the heal's gap can return, marked once, taken by the lock's resume.

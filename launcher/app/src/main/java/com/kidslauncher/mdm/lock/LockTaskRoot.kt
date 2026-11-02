@@ -34,6 +34,12 @@ enum class LockTaskEntry {
     /** The lock starts lock task itself: the kiosk is off (own mode, or the face with Android not locked), Home didn't
      * (fallback), or the face with Android locked and the kiosk on. */
     START_SELF,
+
+    /** Design 59b R2 (code QA M1): kiosk off, as the face with Android locked, a lock task runs - started while Android
+     * read open (a resume in a RELOCK's wait: a process start with the screen on, a remote lock's show before its
+     * `lockNow`, a late `USER_PRESENT`) or left from the kiosk. With the kiosk off any running lock task is the lock's
+     * own (`lockLeave`'s kiosk-off row): the glance stops it now, not at the leave, where it would clear a helper's task. */
+    STOP_OWN,
 }
 
 /**
@@ -59,14 +65,26 @@ fun lockTaskEntry(
      * (`lockTaskWhileLocked`), the power menu is the keyguard's; and a helper the kid unlocks into on SystemUI's face or
      * pad stays - the leave stops nothing (`lockLeave`: nothing running), where stopping the glance's root lock task
      * cleared the helper's task with it (AOSP `clearLockedTasks`, the rc.2 run's R2). A lock task the glance started
-     * before Android locked (a resume in the lock's delay) stays until the leave, as before. */
+     * while Android read open (the face's RESUME/UNLOCK_TAP wait before a RELOCK: a process start with the screen on, a
+     * remote lock, a late `USER_PRESENT`; or one left from a kiosk on -> off flip) is stopped at the next entry check
+     * with Android locked ([LockTaskEntry.STOP_OWN]) - never during a VoIP call (its PiP, design 17 QA #10). */
     androidLocked: Boolean = false,
 ): LockTaskEntry = when {
+    running && !kioskOn && androidLocked && !voipCall -> LockTaskEntry.STOP_OWN
     running || !permitted || (!kioskOn && (voipCall || androidLocked)) -> LockTaskEntry.NONE
     !kioskOn || fallbackDue || androidLocked -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
     else -> LockTaskEntry.START_HOME
 }
+
+/**
+ * Code QA L2 (59b R2): whether a chrome pass that just landed re-runs the lock's entry check - the pass pinned our
+ * package for a lock that found it not pinned ([waitingForPin], 16c), or the kiosk went on ([kioskWas] off, [kioskNow]
+ * on; `null` = not seen yet) under a glance that runs no lock task ([running] false: the R2 state, or a VoIP call) - the
+ * kiosk's lock wants one now (59d A).
+ */
+fun chromeEntryRecheckDue(waitingForPin: Boolean, kioskWas: Boolean?, kioskNow: Boolean, running: Boolean): Boolean =
+    waitingForPin || (kioskWas == false && kioskNow && !running)
 
 /** What the lock does when it leaves (unlocked, or switched off). */
 data class LockLeave(

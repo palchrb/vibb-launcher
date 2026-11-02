@@ -117,9 +117,22 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     SystemUI's face and the loss rule's re-front with §8.16's gesture ask), and the refusal (101) of other apps'
     starts - a showWhenLocked screen of an allowed app (its full-screen intent: an alarm, a call) can now come over
     the glance, never past Android's PIN. Unchanged: the kiosk on (the glance roots it, 59d A), own mode, the
-    fallback, the face with Android not locked (START_SELF; a lock task started then - a resume inside the lock's
-    delay - stays until the leave, the old R2 residual). Pinned in `LockTaskRootTest` (the R2 rows and every other input
-    against the old rule).
+    fallback, the face with Android not locked (START_SELF). **A lock task already running** in that state is stopped
+    at the entry check (`LockTaskEntry.STOP_OWN`, log `AndroidLock: lock task: the glance's own stopped ...`; code QA
+    M1): the face starts one whenever Android reads open at an entry check - the RESUME/UNLOCK_TAP wait before a
+    RELOCK: a process start with the screen on (a crash, a self-update's restart), a remote lock (`lockNow` posts the
+    show before `DPM.lockNow`), a late or missed `USER_PRESENT` - or one is left from a kiosk on -> off flip; with the
+    kiosk off any running lock task is the lock's own (`lockLeave`'s kiosk-off row). Never during a VoIP call (its
+    PiP). After a kiosk flip Home may be the root: the glance's stop then only takes its own task out, and Home's ends
+    at the leave as before. A kiosk off -> on edge under a resumed LOCKED glance without lock task re-runs the entry
+    check (`chromeEntryRecheckDue`, L2), so the kiosk's lock gets its lock task at once. **The status-bar heal** (16d)
+    flips lock-task features, which SystemUI never hears without lock task: there the screen-off heal, still dark,
+    writes `setStatusBarDisabled` off and on instead (`statusBarDisableHealDue`, `LockTaskChrome.healStatusBarDisable`;
+    L1) - never lit, since the shade is unblocked between the two writes; a failed "on" write is retried and then
+    rewritten by a normal pass. The system-Home heal (59d §8.9 (a)) and its "a home gesture got through" line need a
+    lock task running (`systemHomeHealDue(.., lockTaskRunning)`, L3); §8.16's gesture ask is unchanged. Pinned in
+    `LockTaskRootTest` (the R2 and STOP_OWN rows, every other input against the old rule, the chrome recheck) and
+    `StatusBarHealTest`.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read

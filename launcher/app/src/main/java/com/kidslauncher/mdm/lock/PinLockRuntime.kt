@@ -843,6 +843,12 @@ object PinLockRuntime {
         val app = context.applicationContext
         chromeExecutor.execute {
             try {
+                // Design 59b R2 (code QA L1): no lock task while LOCKED - the flip reaches nothing; at the screen-off, still
+                // dark, DPM's own disable is written off and on instead.
+                if (statusBarDisableHealDue(trigger, chromeLocked, lockTaskRunning(app), interactive(app))) {
+                    LockTaskChrome.healStatusBarDisable(app)
+                    return@execute
+                }
                 if (LockTaskChrome.healStatusBar(app, trigger)) {
                     Thread.sleep(trigger.flipMs)
                     LockTaskChrome.endStatusBarHeal(app)
@@ -882,7 +888,7 @@ object PinLockRuntime {
             gestureAskPending = true
             Log.i(LOG_TAG, "The system's Home while LOCKED: the lock asks for the unlock when it is back")
         }
-        if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now)) return
+        if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now, lockTaskRunning(context))) return
         systemHomeHealAt = now
         lockResumedHealAt = now
         Log.i(LOG_TAG, "The system's Home while LOCKED (a home gesture got through): lock task's flags healed")
@@ -2074,6 +2080,13 @@ object PinLockRuntime {
 
     private fun interactive(context: Context): Boolean =
         context.getSystemService(PowerManager::class.java)?.isInteractive == true
+
+    /** Any lock task runs now (kiosk, the lock's own); unreadable = running - the heals then keep today's path. */
+    private fun lockTaskRunning(context: Context): Boolean = try {
+        context.getSystemService(android.app.ActivityManager::class.java)?.lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE
+    } catch (e: Exception) {
+        true
+    }
 
     /** [interactive], with no context yet counting as interactive - [lockOnTop] is then cleared. */
     private fun interactiveOrUnknown(): Boolean = appContext?.let { interactive(it) } ?: true
