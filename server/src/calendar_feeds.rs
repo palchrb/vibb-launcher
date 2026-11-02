@@ -242,6 +242,8 @@ pub enum Fetched {
         parsed: ics::Parsed,
         etag: Option<String>,
         last_modified: Option<String>,
+        /// A CalDAV calendar's resources one by one (design 72b D4.6); empty for a link.
+        resources: Vec<crate::caldav::DavResource>,
     },
 }
 
@@ -286,6 +288,7 @@ pub async fn fetch(
         parsed,
         etag: answer.etag,
         last_modified: answer.last_modified,
+        resources: Vec::new(),
     })
 }
 
@@ -415,19 +418,35 @@ pub async fn refresh(
             &row.url_key_fp,
         )
     });
+    let mut report_at = now;
     let result = match url.and_then(|u| String::from_utf8(u).ok()) {
         None => Err((FeedError::code("key_lost"), row.lan)),
-        // A CalDAV calendar (design 72 step 2): its account's login, its validator the collection's ctag.
-        Some(url) if row.kind == "caldav" => crate::caldav::refresh_source(
-            state,
-            row.account_id,
-            &url,
-            (row.etag.as_deref(), row.last_modified.as_deref()),
-            now,
-        )
-        .await?
-        .map(|f| (f, row.lan))
-        .map_err(|e| (e, row.lan)),
+        // A CalDAV calendar (design 72 step 2): its account's login, its validator the collection's ctag. A calendar
+        // a phone writes the kid's events to (design 72b D4.2) has its waiting writes made first.
+        Some(url) if row.kind == "caldav" => {
+            // A write since the last stored fetch reads the calendar whatever its ctag says (R-L2: the phone's
+            // `pending` waits for it).
+            let force = match row.account_id {
+                Some(account) => {
+                    crate::calendar_kid_events::before_fetch(state, id, account, now).await?
+                }
+                None => false,
+            };
+            let validator = if force { None } else { row.etag.as_deref() };
+            // The instant the REPORT goes, after the writes made first (code QA H3): `after_fetch` judges nothing
+            // written after it.
+            report_at = state.kid_writes.now().max(now);
+            crate::caldav::refresh_source(
+                state,
+                row.account_id,
+                &url,
+                (validator, row.last_modified.as_deref()),
+                now,
+            )
+            .await?
+            .map(|f| (f, row.lan))
+            .map_err(|e| (e, row.lan))
+        }
         Some(url) => match route(state.music_fetch.as_ref(), &url, row.lan).await {
             Err(err) => Err((err, row.lan)),
             Ok(route) => {
@@ -494,7 +513,7 @@ pub async fn refresh(
             return Ok(Outcome::Failed(err));
         }
     };
-    let (parsed, etag, last_modified) = match fetched {
+    let (parsed, etag, last_modified, resources) = match fetched {
         Fetched::NotModified => {
             sqlx::query(
                 "UPDATE calendar_sources SET failures = 0, error = NULL, error_status = NULL, empty_count = 0, \
@@ -513,7 +532,8 @@ pub async fn refresh(
             parsed,
             etag,
             last_modified,
-        } => (parsed, etag, last_modified),
+            resources,
+        } => (parsed, etag, last_modified, resources),
     };
     // An empty answer while the set had events is held (QA M1); its validators aren't kept, so the next fetch asks
     // again and counts.
@@ -583,6 +603,10 @@ pub async fn refresh(
     .await?;
     if written.rows_affected() == 0 {
         return Ok(Outcome::Gone);
+    }
+    if row.kind == "caldav" {
+        // Design 72b D4.6: the kid's events in this calendar read one by one - a parent's edit or delete handed back.
+        crate::calendar_kid_events::after_fetch(state, id, &resources, now, report_at).await?;
     }
     if changed {
         nudge(state, id).await;
@@ -776,6 +800,7 @@ pub async fn add(
         parsed,
         etag,
         last_modified,
+        ..
     } = fetched
     else {
         return Err(AddError::Fetch(FeedError::code("network")));

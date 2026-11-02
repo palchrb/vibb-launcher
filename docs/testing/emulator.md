@@ -2312,6 +2312,68 @@ key is replaced by a new one at start (the form says nothing; the old links' URL
 and a removed link's row doesn't grey - it reads "· Phone" until the phone's next report and then goes, with the
 settings kept (the re-add got Sun back). The 390 px page wasn't rendered this session.
 
+## 6z. CalDAV write-back: the kid's own events in the parent's calendar (design 72b)
+
+Branch `caldav-write`; `jelly36`, `wm density 240`. Logcat: `KidCaldav`, `CalendarFeeds`, `CalendarStore`; the server's
+log (`calendar_kid_events`, never a title). No DAVx5. **Radicale on the host** (as design 72 §10), plain http on the
+host's LAN (`10.0.2.2` from the emulator; the server judges it LAN, so plain http is allowed with the warning):
+
+```
+python3 -m venv ~/radicale && ~/radicale/bin/pip install radicale
+mkdir -p ~/radicale/data && printf 'forelder:test-only-not-a-real-password\n' > ~/radicale/users
+cat > ~/radicale/rights <<'EOF'
+[ro]
+user: forelder
+collection: forelder/skrivebeskyttet(/.*)?
+permissions: r
+[owner]
+user: forelder
+collection: forelder(/.*)?
+permissions: RrWw
+EOF
+cat > ~/radicale/config <<'EOF'
+[server]
+hosts = 0.0.0.0:5232
+[auth]
+type = htpasswd
+htpasswd_filename = ~/radicale/users
+htpasswd_encryption = plain
+[rights]
+type = from_file
+file = ~/radicale/rights
+[storage]
+filesystem_folder = ~/radicale/data
+EOF
+~/radicale/bin/radicale --config ~/radicale/config &
+D=http://localhost:5232/forelder; A='forelder:test-only-not-a-real-password'
+curl -u "$A" -X MKCALENDAR $D/familie/ ; curl -u "$A" -X MKCALENDAR $D/skrivebeskyttet/
+```
+
+The server runs on the host (`dev-rebuild.sh`); Device › Calendar › Legg til kalender… › CalDAV-konto: server
+`http://10.0.2.2:5232/`, username `forelder`, the password above. Tick "familie" and "skrivebeskyttet" on the phone's
+account page. Before the pick, the kid has "Lekser" (today, ended), "Kino" (tomorrow) and "Tur" (next week) in "Min
+kalender" (Kalender's "+"). Listing Radicale: `curl -s -u "$A" $D/familie/ -X PROPFIND -H 'Depth: 1'`, a resource
+`curl -s -u "$A" $D/familie/<uid>.ics`.
+
+| Step | Expected |
+|---|---|
+| Pick "familie · 10.0.2.2 (skrives av serveren)" in Barnets avtaler | Only the kid's coming events appear in Radicale (`curl`); not "Lekser". The status line "Skrevet hh:mm · 2 avtaler" after the next fetch. |
+| The kid adds "Kino 2" in Kalender | It is in Radicale within a sync (the save asks for one) and shows once on the phone (not twice: the feed skips it). |
+| Edit "Kino" by `curl -X PUT` (new DTSTART) | The phone shows the new time after the next fetch and sync; the status line meanwhile "1 endring fra kalenderen venter på telefonen". |
+| Make "Tur" recurring by `curl` (add `RRULE:FREQ=WEEKLY`) | It leaves "Min kalender" and shows read-only from the feed (in the calendar's colour); the kid can't change it. |
+| Delete "Kino 2" by `curl -X DELETE` | It is gone on the phone. |
+| The kid deletes "Kino" | It is gone in Radicale, and no ghost appears on the phone between the delete and the next fetch. |
+| Airplane mode: two added, one deleted, back online | Radicale matches the phone after the next sync. |
+| An event far ahead (2028) | It is written. |
+| Pick "skrivebeskyttet" | Orange "Kalenderen tar ikke imot avtaler - velg en annen"; the account stays signed in (no "Passordet ble avvist"). |
+| Untick the marked calendar on the account page | The notice "Barnets avtaler skrives ikke lenger til familie - …", the select falls back to "Min kalender (på telefonen)"; what was written stays in Radicale. |
+
+Also look at: every PUT/DELETE in Radicale's log carries `If-None-Match`/`If-Match`; no event title in the server's or
+the phone's log. **A real account** (the user's iCloud preferred, else Fastmail or Nextcloud), each a [verify] of the
+note: the UTC body is accepted and shows at the right local time in the account's own app; a PUT answers with an ETag
+(or the GET after it finds our body); Test fills `writable` from `current-user-privilege-set`; iCloud's rewrite of the
+body after a PUT (`X-APPLE-*`, its own DTSTAMP) is not read as a parent's edit (no hand-back after the first fetch).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

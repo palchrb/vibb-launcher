@@ -13,8 +13,9 @@
     {#- A CalDAV account's page (design 72 step 2, the look of 2026-11-01). The account is the family's - every phone's
         page has it -, the switches are this phone's: one auto-saving form back to #calendars. Test Again opens its form
         (an optional new app password; the stored one otherwise) and returns to #test, which says how it went; Remove
-        Account goes back to the Calendar page's #sources. The password is never rendered back. Design 72 step 3's
-        "the kid's own calendar" would be a group of its own under the switches (nothing built). -#}
+        Account goes back to the Calendar page's #sources. The password is never rendered back. Design 72b: the
+        calendar the kid's events are written to says so on its row, with a link to Kalender's select (#dagen) where
+        it is chosen. -#}
     {% if let Some(key) = stop %}
     <div class="attention attention-action" data-caldav-failing><div class="attention-text">{{ self.t(key) }}</div></div>
     {% endif %}
@@ -30,11 +31,12 @@
     <section id="calendars" aria-labelledby="calendars-title">
         <h2 class="group-header" id="calendars-title">{{ self.t("calendar.caldav.on_phone") }}</h2>
         {% if let Some(key) = calendars_notice %}<p class="flash flash-error" role="alert" data-flash="caldav-full">{{ self.t(key) }}</p>{% endif %}
+        {% if let Some(line) = kid_ended %}<p class="flash" role="status" data-flash="kid-caldav-ended">{{ line }}</p>{% endif %}
         <form method="post" action="/devices/{{ device_id }}/calendar/caldav/{{ account }}/calendars#calendars" class="group">
             {% for c in calendars %}
             <input type="hidden" name="cal" value="{{ c.id }}">
             <label class="row" data-caldav-calendar="{{ c.id }}">
-                <span class="row-label">{{ c.name }}{% if let Some(sub) = c.sub %}<span class="row-sub{% if c.failing %} tone-orange{% endif %}"{% if c.failing %} data-link-failing{% endif %}>{{ sub }}</span>{% endif %}</span>
+                <span class="row-label">{{ c.name }}{% if let Some(sub) = c.sub %}<span class="row-sub{% if c.failing %} tone-orange{% endif %}"{% if c.failing %} data-link-failing{% endif %}>{{ sub }}</span>{% endif %}{% if c.kid_writes %}<span class="row-sub" data-kid-writes><a href="/devices/{{ device_id }}/calendar#dagen">{{ self.t("calendar.kid_caldav.here") }}</a></span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="on_{{ c.id }}" value="on"{% if c.ticked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% endfor %}

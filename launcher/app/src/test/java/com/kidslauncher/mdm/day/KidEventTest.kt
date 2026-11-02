@@ -35,6 +35,44 @@ class KidEventTest {
     }
 
     @Test
+    fun `a change writes the title and place only when the kid changed them (72b R-L5, QA L6)`() {
+        // The parent's 150-character title came back; the field shows its first 100. The kid moves only the time.
+        val parents = "Foreldremøte og dugnad: " + "x".repeat(126)
+        val shown = parents.take(KID_EVENT_TITLE_MAX)
+        val moved = kidEventInput(shown, "Skolen", day, LocalTime.of(18, 0), 60, oslo, titleShown = shown, placeShown = "Skolen")!!
+        val columns = kidEventUpdateColumns(moved, "Europe/Oslo")
+        assertFalse(FeedColumns.TITLE in columns)
+        assertTrue(moved.timesChanged)
+        assertFalse(FeedColumns.LOCATION in columns)
+        assertEquals(moved.beginMs, columns[FeedColumns.DTSTART])
+        // A handed-back all-day event changed in the form becomes a timed one, in the phone's zone.
+        assertEquals(0, columns[FeedColumns.ALL_DAY])
+        assertEquals("Europe/Oslo", columns[FeedColumns.TIMEZONE])
+        // A field the kid changed goes in, cleaned and cut as ever.
+        val renamed = kidEventInput("Dugnad  ", "Skolen", day, LocalTime.of(18, 0), 60, oslo, titleShown = shown, placeShown = "Skolen")!!
+        assertEquals("Dugnad", kidEventUpdateColumns(renamed, "Europe/Oslo")[FeedColumns.TITLE])
+        assertFalse(FeedColumns.LOCATION in kidEventUpdateColumns(renamed, "Europe/Oslo"))
+        // A new event writes both.
+        val fresh = kidEventInput("Tur", "", day, LocalTime.NOON, 60, oslo)!!
+        assertTrue(fresh.titleChanged && fresh.placeChanged && fresh.timesChanged)
+        // A handed-back all-day event whose place alone changed keeps its day: no time column (launcher QA M1).
+        val shownTimes = KidEventTimes(day, LocalTime.of(1, 0), 180)
+        val place = kidEventInput("Skidag", "Tryvann", day, LocalTime.of(1, 0), 180, oslo, titleShown = "Skidag", placeShown = "", timesShown = shownTimes)!!
+        assertEquals(setOf(FeedColumns.LOCATION), kidEventUpdateColumns(place, "Europe/Oslo").keys)
+        // The kid moves it: the times go in whole, timed.
+        val later = kidEventInput("Skidag", "", day, LocalTime.of(9, 0), 180, oslo, titleShown = "Skidag", placeShown = "", timesShown = shownTimes)!!
+        assertEquals(setOf(FeedColumns.DTSTART, FeedColumns.DTEND, FeedColumns.ALL_DAY, FeedColumns.TIMEZONE), kidEventUpdateColumns(later, "Europe/Oslo").keys)
+        // A parent's 2 h 20 min event moved to another start keeps its length; a new length is the kid's (revision RN1).
+        val odd = KidEventTimes(day, LocalTime.of(17, 0), 120, 140 * 60_000L)
+        val moved2 = kidEventInput("Kino", "", day, LocalTime.of(18, 0), 120, oslo, "Kino", "", odd)!!
+        assertEquals(140 * 60_000L, moved2.endMs - moved2.beginMs)
+        val longer = kidEventInput("Kino", "", day, LocalTime.of(18, 0), 180, oslo, "Kino", "", odd)!!
+        assertEquals(180 * 60_000L, longer.endMs - longer.beginMs)
+        // Nothing changed: nothing written.
+        assertTrue(kidEventUpdateColumns(kidEventInput("Skidag", "", day, LocalTime.of(1, 0), 180, oslo, "Skidag", "", shownTimes)!!, "Europe/Oslo").isEmpty())
+    }
+
+    @Test
     fun `an event's length is the nearest offered one`() {
         assertEquals(120, kidEventMinutes(2 * 3_600_000L))
         assertEquals(90, kidEventMinutes(80 * 60_000L))
@@ -113,8 +151,15 @@ class KidEventTest {
         }
         // The kid's own: the local calendar and the three guarded writes; design 72's link calendars below their own
         // marker (`FeedEventsTest` checks those go through the sync-adapter URI).
-        val kid = store.substringBefore("// ---- calendar links (design 72")
+        val kid = store.substringBefore("// ---- the kid's events written to a CalDAV calendar")
         assertTrue(kid.length < store.length)
         assertEquals(4, Regex("""contentResolver\.(insert|update|delete)\(""").findAll(kid).count())
+        // Design 72b's hand-backs: three writes, each against the row as it is now - live, this phone's, no second row
+        // with the uid.
+        val back = store.substringAfter("// ---- the kid's events written to a CalDAV calendar").substringBefore("// ---- calendar links (design 72")
+        assertEquals(3, Regex("""contentResolver\.(insert|update|delete)\(""").findAll(back).count())
+        val apply = back.substringAfter("fun applyKidBackBlocking(").substringBefore("\n    }\n")
+        assertEquals(2, Regex("""if \(ours\(op\.eventId\) == null\) continue""").findAll(apply).count())
+        assertTrue(apply.contains("if (rows.any { !it.deleted && it.uid == op.uid }) continue"))
     }
 }

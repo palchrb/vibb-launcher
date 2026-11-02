@@ -11,8 +11,9 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
 - **What**: a day view in Vibb One over Android's calendar provider, which ICSx5 (subscribed feeds) and DAVx5 (CalDAV)
   feed; one day as a list, swiped endlessly from day to day, an event's own page with the whole description; the
   parent's title rules applied wherever a title shows; on the lock the "Neste" line and the calm reminder row; the kid's
-  own events in their calendar. **No event, title, description, count or time ever leaves the phone**: the status
-  report's `calendar` names calendars only. Mockup `docs/design/69-mockups/dagen.html` (§1, §1b, §3 A and C, §5).
+  own events in their calendar. **No event, title, description, count or time leaves the phone** - but the kid's
+  coming events, only to the CalDAV calendar the parent picked (design 72b, below): the status report's `calendar`
+  names calendars only. Mockup `docs/design/69-mockups/dagen.html` (§1, §1b, §3 A and C, §5).
 - **Pure** (`day/`, no Android imports): `TitleRules.kt` (cleaning - control/bidi out, whitespace runs one space, NFC,
   200/2000 code points - and matching that ignores case per code point and whitespace; replace / prefix with the
   separators trimmed / hide; the first rule that applies wins; the server's `calendar.rs` is the same code, both run
@@ -157,3 +158,47 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   from a plain app, the EXDATE forms (else flip `EXDATE_COLUMN`), UNTIL, the override linking by ORIGINAL_SYNC_ID and
   the back reference, the first apply of 2000 events (timed), a kill mid-apply. Also still to do: the server's
   itslearning fixture folds a synthesised body - the real feed's bytes are still to be captured (QA N7).
+
+## The kid's events written to a CalDAV calendar (design 72b, `docs/design/72b-caldav-write-back.md`, branch `caldav-write`)
+
+- **What**: the parent marks a CalDAV calendar the server reads as the kid's (`calendar.kid_caldav` `{id, accepted,
+  back, pending}`, `null` otherwise); the kid keeps writing in "Min kalender" (no `writable_for_kid` is sent while
+  marked, so `kidCalendarOf` picks it), and the server writes the events into the calendar with the password it keeps -
+  the phone never sees it, the account or the host. The parent's edits and deletes there come back and are applied in
+  "Min kalender" (the calendar wins). The kid sees nothing new but that; no permission, no adb. Capability
+  `calendar_kid_caldav_v1` (`CALENDAR_KID_CALDAV_CAPABILITY`).
+- **Pure** (`day/KidCaldav.kt`): `kidCaldavPolicy` (missing or malformed = off), D2.7's `canonicalText` (`\r\n`/`\r` as
+  `\n`, C0 but LF/TAB out, cut by code point 200/200/2000) and `kidVersion`/`kidHash` (16 hex of SHA-256 over the
+  serde-compatible canonical JSON), `kidSnapshot` (this phone's rows - `ownedByVibb`, the UID pattern, live, no series -
+  that end after now, no forward horizon; at most 300 rows and 512 KB, the farthest left out, `cut`/`cut_from` the
+  earliest left out/`cut_uids` or `null` past 2000; `ended` the uids that ended within 60 days; `rev` over the rows by
+  uid; the body in the server's key order), `kidAnswer`, `backOps` (by the live row with the UID: update, insert with
+  the UID when the kid deleted it, delete, or ignore - a row `ownedByVibb` refuses is never touched; all-day at UTC
+  midnights in `UTC`), the posted union and `skipSet` (D3.2), `skipChange` for `CAL_SYNC6`. `KidEvent.kt`:
+  `kidEventInput(.., titleShown, placeShown, timesShown)` and `kidEventUpdateColumns` - a change writes the title, the
+  place or the times only when the kid changed that field (R-L5; the times since code QA M1, so a parent's all-day day,
+  odd length or later move survives a kid's title fix); changed times go in whole with `ALL_DAY` 0 and the zone (QA
+  L6). `shouldPost` (D1.2, plus a set that differs from the last posted one or whose cut moved), `nextApplied`,
+  `afterBackDeletes` (an applied hand-back delete leaves the skip set at once).
+- **Glue** (`calendar/KidCaldavSync.syncIfNeeded`, in `MdmSyncWorker` right before `CalendarFeeds.refreshIfNeeded`, never
+  throws): a full read of "Min kalender" only (`CalendarStore.kidEventsBlocking`); posts
+  (`MdmApi.kidEvents`, `POST /api/devices/calendar/kid-events`) when the set differs from `accepted`, `back` > 0 or
+  hand-backs wait to be acknowledged; a 429 asks for one more sync after `Retry-After`; the answer's hand-backs through
+  `CalendarStore.applyKidBackBlocking` (each re-checked: live, in "Min kalender", this phone's), their ids kept in
+  prefs (`kid_caldav`, at most 300) and sent as `applied` (cleared on a 200; a refused write isn't acknowledged; one more
+  sync 11 s later carries them). The form's save and the event page's delete ask for a sync while marked
+  (`KidCaldavSync.requestSoon`).
+- **The skip set** (`CalendarFeeds`, always, marked or not): the live UIDs of "Min kalender" and every UID posted since
+  the server last showed that set accepted with `pending` 0 are dropped from every feed document before `feedPlan`; a
+  feed calendar keeps the UIDs it actually skipped in `CAL_SYNC6` (`feedSkipped`: those in its set, a JSON array, at
+  most 300) - one that joins loses its rows locally with no GET (remembered once the delete went), one that leaves
+  makes `feedFetch` fetch the set again without `If-None-Match` (QA N3). An unreadable "Min kalender" keeps each
+  calendar's stored uids as its skip set (`kidLiveUidsBlocking`: `null` vs no calendar). `CAL_SYNC7` holds the skip
+  set's fingerprint at the calendar's last pass (`skipHash`): its rows are read for newly skipped uids only when the
+  set moved (`skipPassDue`). A move of an event's day or start keeps its own length (a parent's 2 h 20 min) unless the
+  kid chose another; a hand-back takes the same row as the snapshot when two live rows share a UID. Events
+  this phone once wrote through DAVx5 (its tag, not in "Min kalender") show from the feed, read-only.
+- Tests: `KidCaldavTest` (the shared `calendar_kid_events.json`: `provider` to exactly `snapshot` and `cut_variant`,
+  `canonical`, the policy and the answers, `back_provider`, the ids, both copies), `FeedPlanTest` (the skip set,
+  `skipLeft`), `KidEventTest` (R-L5, the hand-back writes' guards), `PolicyResponseCompatTest`.
+- **Not device-tested**: `docs/testing/emulator.md` §6z (Radicale) and one real account.

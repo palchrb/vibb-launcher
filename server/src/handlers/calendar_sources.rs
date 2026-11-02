@@ -39,7 +39,7 @@ type NoticeQuery = Query<std::collections::HashMap<String, String>>;
 
 /// A stored stamp as the parent reads it: the clock today, else the date and the clock (`calendar.links.when_date`:
 /// "27.10. 14:05", "10/27 14:05").
-fn when_text(lang: Lang, zone: &Zone, stored: Option<&str>, now: Now) -> String {
+pub(super) fn when_text(lang: Lang, zone: &Zone, stored: Option<&str>, now: Now) -> String {
     use chrono::Datelike;
     let Some(at) = stored.and_then(crate::music_sweep::parse_stamp) else {
         return "-".to_string();
@@ -159,7 +159,7 @@ fn own_error(link: &LinkRow) -> Option<&str> {
 
 /// What stops a CalDAV account (no request for any of its calendars): the key its password is sealed with gone, a
 /// refused password, a new host. Each says "test again".
-fn account_stop(state: &AppState, account: &AccountView) -> Option<&'static str> {
+pub(super) fn account_stop(state: &AppState, account: &AccountView) -> Option<&'static str> {
     if sealed_with_an_old_key(state, &account.key_fp) {
         return Some("key_lost");
     }
@@ -172,7 +172,7 @@ fn account_stop(state: &AppState, account: &AccountView) -> Option<&'static str>
 
 /// The account's server as the parent knows it: iCloud's and Fastmail's names (where `caldav::KNOWN_DOMAINS` sends
 /// their e-mail addresses), else the host.
-fn provider_of(server_url: &str) -> String {
+pub(super) fn provider_of(server_url: &str) -> String {
     let host = crate::music_net::host_of(server_url).unwrap_or_default();
     let of = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
     if of("icloud.com") {
@@ -188,7 +188,7 @@ fn link_page(id: i64, uid: &str) -> String {
     format!("/devices/{id}/calendar/links/{uid}")
 }
 
-fn caldav_page(id: i64, account: i64) -> String {
+pub(super) fn caldav_page(id: i64, account: i64) -> String {
     format!("/devices/{id}/calendar/caldav/{account}")
 }
 
@@ -605,6 +605,8 @@ pub struct CaldavCalendar {
     pub id: String,
     pub name: String,
     pub ticked: bool,
+    /// The kid's events are written here (design 72b D5.1).
+    pub kid_writes: bool,
     /// A ticked calendar's fetch: "Fetched 15:10 · 12 events", or what is failing.
     pub sub: Option<String>,
     pub failing: bool,
@@ -639,6 +641,8 @@ struct CaldavTemplate {
     gone: Vec<GoneCalendar>,
     /// A refused tick (too many calendars on the phone, on the server).
     calendars_notice: Option<&'static str>,
+    /// The marked calendar was unticked (design 72b D5.1): the kid's events are no longer written to it.
+    kid_ended: Option<String>,
     /// Test Again's result or the last Test's failure, and its colour: `ok` (it passed, green), `failed` (a Test that
     /// failed, orange as the account's row) or `refused` (Test Again refused before testing - too soon, no password -,
     /// red as a refused save).
@@ -666,6 +670,10 @@ pub async fn show_caldav(
         ))
     }
     .await;
+    let marked = match crate::calendar_kid_events::marked_uid(&state.db, id).await {
+        Ok(marked) => marked,
+        Err(err) => return read_failed(lang, err, "the kid's CalDAV calendar"),
+    };
     let (accounts, links) = match loaded {
         Ok(found) => found,
         Err(err) => return read_failed(lang, err, "a CalDAV account"),
@@ -703,6 +711,7 @@ pub async fn show_caldav(
                 id: c.id.clone(),
                 name: c.name.clone(),
                 ticked: link.is_some(),
+                kid_writes: marked.as_deref() == Some(uid.as_str()),
                 sub,
                 failing,
             }
@@ -767,6 +776,11 @@ pub async fn show_caldav(
         lan_http: account.lan_http,
         calendars,
         gone,
+        kid_ended: (notice == Some("kid_caldav_ended"))
+            .then(|| query.get("cal"))
+            .flatten()
+            .and_then(|cal| account.calendars().into_iter().find(|c| c.id == *cal))
+            .map(|c| t_params(lang, "calendar.kid_caldav.ended", &[("name", &c.name)])),
         calendars_notice: match notice {
             Some("caldav_full") => Some("calendar.caldav.error.too_many_calendars"),
             Some("caldav_sources_full") => Some("calendar.links.error.too_many_sources"),
@@ -856,18 +870,46 @@ pub async fn save_caldav_calendars(
         .cloned()
         .collect();
     let now = chrono::Utc::now();
+    // Design 72b D5.1: unticking the marked calendar ends the mark by the cascade - the save says so.
+    let marked = crate::calendar_kid_events::marked_uid(&state.db, id)
+        .await
+        .ok()
+        .flatten();
+    // The marked calendar's id in this account's list (the notice names it), when it is one of this account's.
+    let marked_cal: Option<String> = match &marked {
+        Some(uid) => caldav::accounts(&state.db)
+            .await
+            .ok()
+            .and_then(|all| all.into_iter().find(|a| a.id == account))
+            .and_then(|a| {
+                a.calendars()
+                    .into_iter()
+                    .find(|c| a.uid(c) == *uid)
+                    .map(|c| c.id)
+            }),
+        None => None,
+    };
     match caldav::save_ticks(&state, id, account, &listed, &ticked, now).await {
         Ok(made) => {
+            let still = crate::calendar_kid_events::marked_uid(&state.db, id)
+                .await
+                .ok()
+                .flatten();
+            let ended = marked_cal.filter(|_| still.is_none());
             for source in made {
                 if let Err(err) = calendar_feeds::refresh(&state, source, now).await {
                     tracing::error!(source_id = source, %err, "couldn't store a CalDAV calendar's first fetch");
                 }
             }
             colors_after_link_save(&state, id).await;
+            let query = match ended {
+                Some(cal) => format!("?notice=kid_caldav_ended&cal={cal}"),
+                None => String::new(),
+            };
             nudged(
                 &state,
                 id,
-                &format!("{}#calendars", caldav_page(id, account)),
+                &format!("{}{query}#calendars", caldav_page(id, account)),
             )
         }
         Err(caldav::TickError::Gone) => crate::settings_log::refused(back_to_sources(id)),
@@ -906,12 +948,29 @@ pub async fn remove_caldav(
     if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
+    let marked_here = crate::calendar_kid_events::marked_uid(&state.db, id)
+        .await
+        .ok()
+        .flatten();
     match caldav::remove(&state, account).await {
         Ok(phones) => {
             for phone in phones {
                 let _ = state.command_notify.send(phone);
             }
             colors_after_link_save(&state, id).await;
+            let ended = marked_here.is_some()
+                && crate::calendar_kid_events::marked_uid(&state.db, id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_none();
+            if ended {
+                // Design 72b D5.1: the kid's events are no longer written to that account's calendar.
+                return Redirect::to(&format!(
+                    "/devices/{id}/calendar?notice=kid_caldav_ended#sources"
+                ))
+                .into_response();
+            }
             back_to_sources(id)
         }
         Err(err) => failed(lang, err, "couldn't remove a CalDAV account"),

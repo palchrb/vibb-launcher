@@ -1,0 +1,790 @@
+{
+  "_comment": "Design 72b §8: the kid's own events handed to the server for the marked CalDAV calendar. Byte-identical in launcher/app/src/test/resources/. The server's calendar_kid_events::tests::the_contract and the launcher's KidCaldavTest read every row; CALENDAR_KID_EVENTS_CONTRACT_WRITE=1 rewrites `answers` and `back_provider` from the server's run.",
+  "answers": [
+    {
+      "body": {
+        "accepted": "28a80423e7f7cc98",
+        "back": [],
+        "pending": 7
+      },
+      "name": "first",
+      "status": 200
+    },
+    {
+      "body": {
+        "accepted": "28a80423e7f7cc98",
+        "back": [
+          {
+            "all_day": false,
+            "description": "Husk billett\nTa med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn.",
+            "end": "20261103T190000Z",
+            "id": "b91c7ff96b4376be",
+            "location": "Saga kino",
+            "op": "upsert",
+            "start": "20261103T170000Z",
+            "summary": "Kino med klassen",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d01"
+          },
+          {
+            "id": "456a2d79dd8f4d23",
+            "op": "delete",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+          },
+          {
+            "all_day": true,
+            "description": "",
+            "end": "20261113",
+            "id": "b2ca985953c5b277",
+            "location": "Tryvann",
+            "op": "upsert",
+            "start": "20261112",
+            "summary": "Skidag",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+          }
+        ],
+        "pending": 0
+      },
+      "name": "accepted",
+      "status": 200
+    },
+    {
+      "body": {
+        "accepted": "ed272bcba5bdb3cc",
+        "back": [
+          {
+            "id": "456a2d79dd8f4d23",
+            "op": "delete",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+          },
+          {
+            "all_day": true,
+            "description": "",
+            "end": "20261113",
+            "id": "b2ca985953c5b277",
+            "location": "Tryvann",
+            "op": "upsert",
+            "start": "20261112",
+            "summary": "Skidag",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+          }
+        ],
+        "pending": 0
+      },
+      "name": "acknowledged",
+      "status": 200
+    },
+    {
+      "body": {
+        "accepted": "ed272bcba5bdb3cc",
+        "back": [
+          {
+            "id": "456a2d79dd8f4d23",
+            "op": "delete",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+          },
+          {
+            "all_day": true,
+            "description": "",
+            "end": "20261114",
+            "id": "3ce90b015c4b2f34",
+            "location": "Tryvann",
+            "op": "upsert",
+            "start": "20261113",
+            "summary": "Skidag",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+          }
+        ],
+        "pending": 0
+      },
+      "name": "stale_ack",
+      "status": 200
+    },
+    {
+      "body": {
+        "accepted": "ed272bcba5bdb3cc",
+        "back": [
+          {
+            "id": "456a2d79dd8f4d23",
+            "op": "delete",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+          },
+          {
+            "all_day": true,
+            "description": "",
+            "end": "20261114",
+            "id": "3ce90b015c4b2f34",
+            "location": "Tryvann",
+            "op": "upsert",
+            "start": "20261113",
+            "summary": "Skidag",
+            "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+          }
+        ],
+        "pending": 0
+      },
+      "name": "held",
+      "status": 200
+    },
+    {
+      "body": {
+        "error": "not_marked"
+      },
+      "name": "not_marked",
+      "status": 409
+    },
+    {
+      "body": {
+        "error": "limited"
+      },
+      "name": "limited",
+      "status": 429
+    },
+    {
+      "body": {
+        "error": "too_big"
+      },
+      "name": "too_big",
+      "status": 413
+    },
+    {
+      "body": {
+        "error": "bad_set"
+      },
+      "name": "bad_set",
+      "status": 400
+    },
+    {
+      "body": {
+        "error": "tag_pinned"
+      },
+      "name": "tag_pinned",
+      "status": 400
+    }
+  ],
+  "back_provider": [
+    {
+      "action": "update",
+      "event": 1,
+      "id": "b91c7ff96b4376be",
+      "values": {
+        "all_day": false,
+        "description": "Husk billett\nTa med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn.",
+        "dtend": 1793732400000,
+        "dtstart": 1793725200000,
+        "location": "Saga kino",
+        "title": "Kino med klassen",
+        "tz": "Europe/Oslo"
+      }
+    },
+    {
+      "action": "delete",
+      "event": 2,
+      "id": "456a2d79dd8f4d23"
+    },
+    {
+      "action": "update",
+      "event": 3,
+      "id": "b2ca985953c5b277",
+      "values": {
+        "all_day": true,
+        "description": "",
+        "dtend": 1794528000000,
+        "dtstart": 1794441600000,
+        "location": "Tryvann",
+        "title": "Skidag",
+        "tz": "UTC"
+      }
+    }
+  ],
+  "canonical": [
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "ÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+      },
+      "hash": "826782a1aa500c9e",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": null,
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "ÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅÅééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "tz": "Europe/Oslo"
+      },
+      "name": "title_250_code_points"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje\nny linje linje",
+        "end": "20261103T170000Z",
+        "location": "Saga",
+        "start": "20261103T160000Z",
+        "summary": "Kino"
+      },
+      "hash": "f7e7837441da8e3c",
+      "input": {
+        "all_day": false,
+        "description": "linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nny linje\u0007 linje\r\nn",
+        "duration": null,
+        "end": "20261103T170000Z",
+        "location": "Saga",
+        "start": "20261103T160000Z",
+        "summary": "Kino",
+        "tz": "Europe/Oslo"
+      },
+      "name": "description_3000_crlf_c0"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261103T170000Z",
+        "location": "  Saga ",
+        "start": "20261103T160000Z",
+        "summary": "Kino  med\tvenner "
+      },
+      "hash": "41e58d084b62c0d3",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": null,
+        "end": "20261103T170000Z",
+        "location": "  Saga ",
+        "start": "20261103T160000Z",
+        "summary": "Kino  med\tvenner ",
+        "tz": "Europe/Oslo"
+      },
+      "name": "double_spaces_and_tab"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👨‍"
+      },
+      "hash": "75e553c4b2402a81",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": null,
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👨‍👩‍👧 middag",
+        "tz": "Europe/Oslo"
+      },
+      "name": "emoji_zwj_at_the_cut"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "Én\n\nto",
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "Linje1\nLinje2"
+      },
+      "hash": "c44b4dcd41cfed00",
+      "input": {
+        "all_day": false,
+        "description": "Én\r\rto",
+        "duration": null,
+        "end": "20261103T170000Z",
+        "location": "",
+        "start": "20261103T160000Z",
+        "summary": "Linje1\rLinje2",
+        "tz": "Europe/Oslo"
+      },
+      "name": "lone_cr"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261104T084500Z",
+        "location": "",
+        "start": "20261104T071500Z",
+        "summary": "Tannlege"
+      },
+      "hash": "dad1420a74ad4841",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": "PT1H30M",
+        "end": null,
+        "location": "",
+        "start": "20261104T071500Z",
+        "summary": "Tannlege",
+        "tz": "Europe/Oslo"
+      },
+      "name": "duration"
+    },
+    {
+      "canonical": {
+        "all_day": true,
+        "description": "",
+        "end": "20261111",
+        "location": "",
+        "start": "20261110",
+        "summary": "Skidag"
+      },
+      "hash": "0479dd3c088aea74",
+      "input": {
+        "all_day": true,
+        "description": "",
+        "duration": null,
+        "end": null,
+        "location": "",
+        "start": "20261110",
+        "summary": "Skidag",
+        "tz": null
+      },
+      "name": "all_day_without_dtend"
+    },
+    {
+      "canonical": {
+        "all_day": true,
+        "description": "",
+        "end": "20261115",
+        "location": "",
+        "start": "20261113",
+        "summary": "Hytta"
+      },
+      "hash": "829e9feb940ff629",
+      "input": {
+        "all_day": true,
+        "description": "",
+        "duration": null,
+        "end": "20261115",
+        "location": "",
+        "start": "20261113",
+        "summary": "Hytta",
+        "tz": null
+      },
+      "name": "all_day_two_days"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261110T170000Z",
+        "location": "",
+        "start": "20261110T160000Z",
+        "summary": "Middag"
+      },
+      "hash": "57a6c6619f6810f4",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": null,
+        "end": "20261110T180000",
+        "location": "",
+        "start": "20261110T170000",
+        "summary": "Middag",
+        "tz": "Europe/Oslo"
+      },
+      "name": "floating_in_its_tz"
+    },
+    {
+      "canonical": {
+        "all_day": false,
+        "description": "",
+        "end": "20261110T170000Z",
+        "location": "",
+        "start": "20261110T170000Z",
+        "summary": "Påminnelse"
+      },
+      "hash": "37ee7b47598fa5d1",
+      "input": {
+        "all_day": false,
+        "description": "",
+        "duration": null,
+        "end": null,
+        "location": "",
+        "start": "20261110T170000Z",
+        "summary": "Påminnelse",
+        "tz": "UTC"
+      },
+      "name": "no_end_is_zero_length"
+    }
+  ],
+  "cut_variant": {
+    "bytes": 627,
+    "rows": 3,
+    "snapshot": {
+      "applied": [],
+      "calendar": "94137b2f28ea70dd756c7a81e56aa9c3",
+      "cut": 4,
+      "cut_from": "20261103T160000Z",
+      "cut_uids": [
+        "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d01",
+        "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03",
+        "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d06",
+        "vibb-9f8e7d6c-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d07"
+      ],
+      "ended": [
+        "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d11"
+      ],
+      "events": [
+        {
+          "all_day": false,
+          "description": "",
+          "end": "20261105T150000Z",
+          "location": "",
+          "start": "20261105T140000Z",
+          "summary": "Øving – kor 🎶",
+          "tz": "Europe/Oslo",
+          "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+        },
+        {
+          "all_day": false,
+          "description": "",
+          "end": "20261102T123000Z",
+          "location": "",
+          "start": "20261102T113000Z",
+          "summary": "Lekser",
+          "tz": "Europe/Oslo",
+          "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d04"
+        },
+        {
+          "all_day": false,
+          "description": "",
+          "end": "20261104T074500Z",
+          "location": "Tannklinikken",
+          "start": "20261104T071500Z",
+          "summary": "Tannlege",
+          "tz": "Europe/Oslo",
+          "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d05"
+        }
+      ],
+      "from": "20261102T120000Z",
+      "rev": "f126834911e0db16"
+    }
+  },
+  "limits": {
+    "applied": 300,
+    "bytes": 512000,
+    "cut_uids": 2000,
+    "ended": 300,
+    "rows": 300
+  },
+  "now": "20261102T120000Z",
+  "own_package": "me.vibb.launcher",
+  "phone_tag": "1a2b3c4d",
+  "policy": {
+    "accepted": null,
+    "back": 0,
+    "id": "94137b2f28ea70dd756c7a81e56aa9c3",
+    "pending": 0
+  },
+  "policy_waiting": {
+    "accepted": "28a80423e7f7cc98",
+    "back": 3,
+    "id": "94137b2f28ea70dd756c7a81e56aa9c3",
+    "pending": 0
+  },
+  "provider": [
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "Husk billett\nTa med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn.",
+      "dtend": 1793728800000,
+      "dtstart": 1793721600000,
+      "duration": null,
+      "id": 1,
+      "location": "Saga kino",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Kino",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d01"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1793890800000,
+      "dtstart": 1793887200000,
+      "duration": null,
+      "id": 2,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Øving – kor 🎶",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+    },
+    {
+      "all_day": true,
+      "deleted": false,
+      "description": "",
+      "dtend": 1794355200000,
+      "dtstart": 1794268800000,
+      "duration": null,
+      "id": 3,
+      "location": "Tryvann",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Skidag",
+      "tz": "UTC",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1793622600000,
+      "dtstart": 1793619000000,
+      "duration": null,
+      "id": 4,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Lekser",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d04"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": null,
+      "dtstart": 1793776500000,
+      "duration": "PT30M",
+      "id": 5,
+      "location": "Tannklinikken",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Tannlege",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d05"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1845381600000,
+      "dtstart": 1845100800000,
+      "duration": null,
+      "id": 6,
+      "location": "Hove",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Sommerleir",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d06"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1795197600000,
+      "dtstart": 1795186800000,
+      "duration": null,
+      "id": 7,
+      "location": "",
+      "package": "me.vibb.launcher.debug",
+      "rdate": null,
+      "rrule": null,
+      "title": "Bursdag hos Ola",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-9f8e7d6c-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d07"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1793721600000,
+      "dtstart": 1793718000000,
+      "duration": null,
+      "id": 8,
+      "location": "",
+      "package": null,
+      "rdate": null,
+      "rrule": null,
+      "title": "Søskens trening",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-aaaabbbb-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d08"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1793700000000,
+      "dtstart": 1793696400000,
+      "duration": null,
+      "id": 9,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Rar",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-not-a-uuid"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": null,
+      "dtstart": 1793980800000,
+      "duration": "PT1H",
+      "id": 10,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": "FREQ=WEEKLY",
+      "title": "Svømming",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d10"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1793530800000,
+      "dtstart": 1793527200000,
+      "duration": null,
+      "id": 11,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Fotball",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d11"
+    },
+    {
+      "all_day": false,
+      "deleted": true,
+      "description": "",
+      "dtend": 1794049200000,
+      "dtstart": 1794045600000,
+      "duration": null,
+      "id": 12,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Slettet",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d12"
+    },
+    {
+      "all_day": false,
+      "deleted": false,
+      "description": "",
+      "dtend": 1785841200000,
+      "dtstart": 1785837600000,
+      "duration": null,
+      "id": 13,
+      "location": "",
+      "package": "me.vibb.launcher",
+      "rdate": null,
+      "rrule": null,
+      "title": "Gammel",
+      "tz": "Europe/Oslo",
+      "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d13"
+    }
+  ],
+  "snapshot": {
+    "applied": [],
+    "calendar": "94137b2f28ea70dd756c7a81e56aa9c3",
+    "cut": 0,
+    "cut_from": null,
+    "cut_uids": [],
+    "ended": [
+      "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d11"
+    ],
+    "events": [
+      {
+        "all_day": false,
+        "description": "Husk billett\nTa med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn. Ta med billett og penger til popcorn.",
+        "end": "20261103T180000Z",
+        "location": "Saga kino",
+        "start": "20261103T160000Z",
+        "summary": "Kino",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d01"
+      },
+      {
+        "all_day": false,
+        "description": "",
+        "end": "20261105T150000Z",
+        "location": "",
+        "start": "20261105T140000Z",
+        "summary": "Øving – kor 🎶",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d02"
+      },
+      {
+        "all_day": true,
+        "description": "",
+        "end": "20261111",
+        "location": "Tryvann",
+        "start": "20261110",
+        "summary": "Skidag",
+        "tz": "UTC",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d03"
+      },
+      {
+        "all_day": false,
+        "description": "",
+        "end": "20261102T123000Z",
+        "location": "",
+        "start": "20261102T113000Z",
+        "summary": "Lekser",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d04"
+      },
+      {
+        "all_day": false,
+        "description": "",
+        "end": "20261104T074500Z",
+        "location": "Tannklinikken",
+        "start": "20261104T071500Z",
+        "summary": "Tannlege",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d05"
+      },
+      {
+        "all_day": false,
+        "description": "",
+        "end": "20280623T140000Z",
+        "location": "Hove",
+        "start": "20280620T080000Z",
+        "summary": "Sommerleir",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-1a2b3c4d-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d06"
+      },
+      {
+        "all_day": false,
+        "description": "",
+        "end": "20261120T180000Z",
+        "location": "",
+        "start": "20261120T150000Z",
+        "summary": "Bursdag hos Ola",
+        "tz": "Europe/Oslo",
+        "uid": "vibb-9f8e7d6c-0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d07"
+      }
+    ],
+    "from": "20261102T120000Z",
+    "rev": "28a80423e7f7cc98"
+  }
+}
