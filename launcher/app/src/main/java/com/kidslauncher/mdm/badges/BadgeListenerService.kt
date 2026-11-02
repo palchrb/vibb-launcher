@@ -4,6 +4,8 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.kidslauncher.mdm.calls.ElementMissedCallStore
+import com.kidslauncher.mdm.calls.ElementPost
 
 /**
  * Counts unread notifications per app for the home-grid badges ([badgeCounts]) and, since handy
@@ -19,6 +21,8 @@ import android.util.Log
  * kept in memory only ([GlanceStore]) - gets every post with its ranking, every removal, ranking
  * update, connect and disconnect; this class itself still reads none of it. Since design 42
  * [ClockReader] reads the title and text of the pinned clock app's ongoing notification (its timer).
+ * Since round L5 [ElementDmReader] also names the contact of a missed Element X call (the same facts plus the
+ * category), kept by the notification's key in [ElementMissedCallStore]'s memory for the contact card and badges.
  * Here: never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
  * ([NotificationRuleRuntime] keeps package + channel counts only). Needs notification-listener
  * access, granted with adb at provisioning (see [BadgeStore.accessGranted]); without it Android
@@ -36,6 +40,7 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         NotificationRuleRuntime.detach(this)
         BadgeStore.update(emptyMap())
+        ElementMissedCallStore.cleared()
         VoipCallReader.disconnected(this)
         GlanceReader.disconnected()
         ClockReader.disconnected()
@@ -51,6 +56,8 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn?.let {
             ElementDmReader.learn(this, it)
+            // After the learning: a room this post teaches is known (round L5).
+            ElementMissedCallStore.posted(elementPost(it))
             VoipCallReader.posted(this, it)
             ClockReader.posted(it)
             applyRule(it, null)
@@ -74,6 +81,7 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn?.let {
+            ElementMissedCallStore.removed(it.key)
             VoipCallReader.removed(this, it)
             ClockReader.removed(it)
             GlanceReader.removed(it)
@@ -96,6 +104,7 @@ class BadgeListenerService : NotificationListenerService() {
     internal fun sweep() {
         val active = activeOrNull() ?: return
         active.forEach { ElementDmReader.learn(this, it) }
+        ElementMissedCallStore.swept(active.map { elementPost(it) })
         VoipCallReader.connected(this, active)
         ClockReader.connected(active)
         if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
@@ -148,6 +157,10 @@ class BadgeListenerService : NotificationListenerService() {
             NotificationRuleRuntime.removeFailed(facts, e)
         }
     }
+
+    /** Round L5: the key, the missed call's contact (null for every other notification) and the post time - memory only. */
+    private fun elementPost(sbn: StatusBarNotification) =
+        ElementPost(sbn.key, ElementDmReader.missedCallContact(this, sbn), sbn.postTime)
 
     private fun facts(sbn: StatusBarNotification): NotificationFacts {
         val notification = sbn.notification

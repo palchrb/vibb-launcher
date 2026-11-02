@@ -68,6 +68,10 @@
         <item quantity="one">%1$d tapt anrop %2$s</item>
         <item quantity="other">%1$d tapte anrop %2$s</item>
     </plurals>
+    <plurals name="missed_calls_in_app_at">
+        <item quantity="one">%1$d tapt anrop i %2$s %3$s</item>
+        <item quantity="other">%1$d tapte anrop i %2$s %3$s</item>
+    </plurals>
     <plurals name="contact_missed">
         <item quantity="one">%1$s, %2$d tapt anrop</item>
         <item quantity="other">%1$s, %2$d tapte anrop</item>

@@ -83,6 +83,12 @@
         <item quantity="one">%1$d missed call %2$s</item>
         <item quantity="other">%1$d missed calls %2$s</item>
     </plurals>
+    <!-- Round L5: missed calls in Element X on the contact card. %1$d = count, %2$s = the app's name as the kid sees
+         it (e.g. "Element X"), %3$s = when, e.g. "today 13:05" -->
+    <plurals name="missed_calls_in_app_at">
+        <item quantity="one">%1$d missed call in %2$s %3$s</item>
+        <item quantity="other">%1$d missed calls in %2$s %3$s</item>
+    </plurals>
     <plurals name="contact_missed">
         <item quantity="one">%1$s, %2$d missed call</item>
         <item quantity="other">%1$s, %2$d missed calls</item>

@@ -13,10 +13,18 @@ import java.util.Date
 
 /** "1 missed call today 13:05" / "2 tapte anrop i går 09:10", in the launcher's language. */
 object MissedCallText {
-    fun describe(context: Context, summary: MissedSummary, zone: ZoneId = ZoneId.systemDefault()): String {
+    fun describe(context: Context, summary: MissedSummary, zone: ZoneId = ZoneId.systemDefault()): String =
+        context.resources.getQuantityString(R.plurals.missed_calls_at, summary.count, summary.count, whenText(context, summary, zone))
+
+    /** Round L5: "1 missed call in Element X today 13:05" / "1 tapt anrop i Element X i dag 13:05" - [app] the name the
+     * kid sees for the app (design 14's shown label). */
+    fun describeIn(context: Context, summary: MissedSummary, app: String, zone: ZoneId = ZoneId.systemDefault()): String =
+        context.resources.getQuantityString(R.plurals.missed_calls_in_app_at, summary.count, summary.count, app, whenText(context, summary, zone))
+
+    private fun whenText(context: Context, summary: MissedSummary, zone: ZoneId): String {
         val at = Instant.ofEpochMilli(summary.lastAtMs).atZone(zone)
         val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, summary.lastAtMs, zone)
-        val whenText = when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
+        return when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
             RelativeDay.TODAY -> context.getString(R.string.missed_when_today, time)
             RelativeDay.YESTERDAY -> context.getString(R.string.missed_when_yesterday, time)
             RelativeDay.EARLIER -> {
@@ -27,6 +35,5 @@ object MissedCallText {
                 context.getString(R.string.missed_when_date, day, time)
             }
         }
-        return context.resources.getQuantityString(R.plurals.missed_calls_at, summary.count, summary.count, whenText)
     }
 }
