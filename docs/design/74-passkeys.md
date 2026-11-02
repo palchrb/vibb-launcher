@@ -87,11 +87,14 @@ one use, atomic. A sign-in's session id changes at `cycle_id`, after the take.
 Is it dangerous? No, if the way back never needs the password. A passkey (UV required, phishing-proof, bound to the
 domain) is stronger than password + TOTP; the risk is losing every passkey. The guard rails:
 
-**D2.1 - Switching on needs a way back.** Allowed when the account has **at least 2 passkeys, or 1 passkey and another
-ready parent** (who can Reset it) - counted inside the switch's `UPDATE` (its `WHERE` holds both counts), never by a
-read before it, so a removal in flight can't slip between. The switch itself asks for a passkey assertion now (proves one works on this
-host). Otherwise the row is disabled with the reason: "Legg til en passkey til først (eller en forelder til)."
-*Alt: 1 synced passkey is enough (iCloud/Google backs it up, but a lost Apple ID is the same lock-out) / ≥2 always.*
+**D2.1 - Switching on needs one passkey; two are recommended** (the user, 2026-11-02: "man må ha lov til å bruke bare 1
+passkey, men man bør få en advarsel om at to anbefales"). Allowed when the account has **at least 1 passkey** - counted
+inside the switch's `UPDATE` (its `WHERE` holds the count), never by a read before it, so a removal in flight can't
+slip between. With exactly 1, the confirm carries the warning "Vi anbefaler to passkeys. Mister du den eneste, må en
+annen forelder nullstille deg" - and with no other ready parent "…, ellers er serverens kommandolinje veien tilbake"
+(the same counts, read for the text only; the `UPDATE` doesn't depend on them). The switch itself asks for a passkey assertion now (proves one works on this
+host). With none the row is disabled with the reason: "Legg til en passkey først."
+*Alt (not taken): 2 passkeys or 1 and another parent required / ≥2 always.*
 
 **D2.2 - What it does** (one `UPDATE ... AND session_epoch = ? AND removed_at IS NULL`): `passkey_only = 1`,
 `password_hash = '!passkey'` (no argon2 string matches it, as `'!removed'`), `totp_secret = NULL, totp_enabled = 0,
@@ -402,6 +405,12 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
 
 1. The lock's times: Av / 1 / 5 / 15 / 60 min - also "Med en gang" (every time the app has been away)? **Answered
    2026-11-02: no "Med en gang"** (the user: "Med en gang er unødvendig"); D3.1's list stands.
+
+**Answered 2026-11-02** (the user: "Enig i det meste ... resten kan du tenke jeg godtok dine forslag"): Q2 per device
+(D3.1); Q3 **1 passkey is enough, with a warning that two are recommended** (D2.1 changed); Q4 "passkey"; Q5/Q8 the
+user sets `PASSKEY_RP_ID` to the PWA's own subdomain (e.g. `handy.example.com`; other services on the parent domain
+then never see the passkey offered, and another address such as the tailnet name signs in with the password); Q6
+unlocks merged per hour, failures each; Q7 fine as it is, **no warning text about it** in the app.
 2. The lock per device (this phone remembers it) - or follow the account to every device?
 3. Kun passkey needs 2 passkeys, or 1 and another parent - or is 1 synced iCloud passkey enough?
 4. The Norwegian word: "passkey" (yours), "passnøkkel" (Apple) or "tilgangsnøkkel" (Google)?
