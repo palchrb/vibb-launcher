@@ -93,10 +93,11 @@ object EmergencyCall {
         grantCallPhone(activity)
         if (CallSystem.placeCall(activity, number)) return
         val openedAtMs = System.currentTimeMillis()
+        val watch = !CallSystem.callBeforePlacing(activity)
         if (!EmergencyDialer.open(activity, number)) {
             Log.w("EmergencyCall", "Neither Telecom nor the emergency dialer took the emergency call")
         } else if (Emergency.platformConfirms(number, CallSystem.platformEmergency(activity))) {
-            CallSystem.emergencyPlaced(activity, openedAtMs)
+            CallSystem.emergencyPlaced(activity, openedAtMs, watch)
         }
     }
 }

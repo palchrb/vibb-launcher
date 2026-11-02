@@ -86,12 +86,26 @@ class EmergencyConnectsTest {
         assertFalse(placingOf(true, placed, 0))
     }
 
+    /** H1 QA revision: a later placing or Telecom-mark record never shortens an open window. */
     @Test
-    fun `the in-call service sees a call connected, ended without connecting, or nothing yet`() {
-        assertEquals(EmergencySighting.CONNECTED, emergencySighting(active = true, disconnected = false, connectTimeMs = 1_000))
-        assertEquals(EmergencySighting.CONNECTED, emergencySighting(active = false, disconnected = true, connectTimeMs = 1_000))
-        assertEquals(EmergencySighting.ENDED_UNCONNECTED, emergencySighting(active = false, disconnected = true, connectTimeMs = 0))
-        assertEquals(null, emergencySighting(active = false, disconnected = false, connectTimeMs = 0)) // dialling
+    fun `a redial that never connects keeps the hour of the call that did`() {
+        val connect = 1_000_000L
+        val hour = emergencyRecord(connect, 10, 4, atMs = connect) // connected and dropped
+        val redial = connect + 2 * 60_000L
+        val placing = emergencyRecord(redial, 10 + 2 * 60_000L, 4, atMs = redial, windowMs = PROVISIONAL_WINDOW_MS, placed = true)
+        val kept = keepLaterWindow(hour, storedOpen = true, next = placing)
+        assertEquals(hour.window, kept.window)
+        assertEquals(CALLBACK_WINDOW_MS, kept.windowMs)
+        // The status report's instant and placingOf's flag are the redial's.
+        assertEquals(redial, kept.atMs)
+        assertTrue(kept.placed)
+        val at20 = 20 * 60_000L
+        assertTrue(com.kidslauncher.mdm.server.timedWindowActive(kept.window, connect + at20, 10 + at20, 4, kept.windowMs))
+        // A closed window, or a later end, gives way to the new record.
+        assertEquals(placing, keepLaterWindow(hour, storedOpen = false, next = placing))
+        val later = emergencyRecord(connect + 30 * 60_000L, 10 + 30 * 60_000L, 4, atMs = connect)
+        assertEquals(later, keepLaterWindow(hour, storedOpen = true, next = later))
+        assertEquals(placing, keepLaterWindow(null, storedOpen = false, next = placing))
     }
 
     @Test
@@ -101,21 +115,25 @@ class EmergencyConnectsTest {
         val place = system.substringAfter("fun placeCall(").substringBefore("\n    }\n")
         val placedAt = place.indexOf("val placedAtMs = System.currentTimeMillis()")
         val telecom = place.indexOf(".placeCall(Uri.fromParts(")
-        val record = place.indexOf("if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs)")
-        assertTrue(placedAt in 0 until telecom && telecom < record)
+        val busy = place.indexOf("val watch = !callBeforePlacing(context)")
+        val record = place.indexOf("if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs, watch)")
+        assertTrue(placedAt in 0 until telecom && busy in 0 until telecom && telecom < record)
         val placed = system.substringAfter("fun emergencyPlaced(").substringBefore("\n    }\n")
         assertTrue("CallPrefs.recordEmergencyPlaced(context, placedAtMs)" in placed)
-        assertTrue("PlacedCallWatch.start(context, placedAtMs)" in placed && "emergencySync(context)" in placed)
+        assertTrue("if (watch) PlacedCallWatch.start(context, placedAtMs)" in placed && "emergencySync(context)" in placed)
+        assertTrue("keepLaterWindow(" in system.substringAfter("private fun store(").substringBefore("\n    }\n"))
         // It never throws into placeCall: a false return would open the emergency dialer over the call.
         assertTrue(placed.substringAfter("{\n").trimStart().startsWith("try {") && "catch (e: Exception)" in placed)
         val prefs = system.substringAfter("object CallPrefs")
         assertTrue("store(context, placedAtMs, PROVISIONAL_WINDOW_MS, placed = true)" in prefs.substringAfter("fun recordEmergencyPlaced("))
         assertTrue("CALLBACK_WINDOW_MS" in prefs.substringAfter("fun recordEmergencyConnected(").substringBefore("\n    }\n"))
         assertTrue("PROVISIONAL_WINDOW_MS" in prefs.substringAfter("fun recordEmergencyCallback(").substringBefore("\n"))
-        assertTrue("getLong(EMERGENCY_WINDOW_MS, CALLBACK_WINDOW_MS)" in prefs.substringAfter("fun recordedWindowUntil("))
+        assertTrue("storedWindowMs(context)" in prefs.substringAfter("fun recordedWindowUntil(").substringBefore("\n    }\n"))
+        assertTrue("getLong(EMERGENCY_WINDOW_MS, CALLBACK_WINDOW_MS)" in prefs.substringAfter("fun storedWindowMs("))
         // The emergency dialer fallback (Telecom refused) is a placing too.
         val fallback = sources.walkTopDown().first { it.name == "EmergencyCall.kt" }.readText().substringAfter("fun callEmergency(")
-        assertTrue("CallSystem.emergencyPlaced(activity, openedAtMs)" in fallback)
+        assertTrue("CallSystem.emergencyPlaced(activity, openedAtMs, watch)" in fallback)
+        assertTrue(fallback.indexOf("val watch = !CallSystem.callBeforePlacing(activity)") < fallback.indexOf("EmergencyDialer.open("))
     }
 
     @Test
@@ -172,9 +190,9 @@ class EmergencyConnectsTest {
         assertTrue("reportedEmergencyAt(" in sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText())
         assertTrue("emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis" in record)
         assertTrue("CallPrefs.recordEmergencyConnected(this, it, details.creationTimeMillis)" in record)
-        // Ended without connecting: a launcher placing of it drops back; seeing the call ends the call-state watch.
-        assertTrue("EmergencySighting.ENDED_UNCONNECTED -> CallPrefs.demotePlaced(this, details.creationTimeMillis)" in record)
-        assertTrue(record.indexOf("PlacedCallWatch.stop()") in 0 until record.indexOf("when (sighting)"))
+        // An emergency call we see ourselves ends the call-state watch at once: only its own connect promotes it.
+        val added = service.substringAfter("override fun onCallAdded(").substringBefore("\n    }\n")
+        assertTrue(added.indexOf("PlacedCallWatch.stop()") in 0 until added.indexOf("recordEmergency(call, call.details.state)"))
         assertTrue("emergencyConnects.removed(call)" in service.substringAfter("override fun onCallRemoved("))
         assertTrue("unlocked = { CallPolicyStore.userUnlocked(this) }" in service)
         // Called directly and caught: a post could be dropped by onDestroy, a throw would reach the

@@ -90,9 +90,10 @@ object CallSystem {
             // Before Telecom creates the call, so the in-call service's records of it keep this
             // instant (placingOf).
             val placedAtMs = System.currentTimeMillis()
+            val watch = !callBeforePlacing(context)
             context.getSystemService(TelecomManager::class.java)
                 .placeCall(Uri.fromParts("tel", number, null), Bundle())
-            if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs)
+            if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs, watch)
             true
         }
     } catch (e: Exception) {
@@ -103,13 +104,14 @@ object CallSystem {
 
     /** Records an emergency call the launcher just placed (or handed to the emergency dialer) with the
      * provisional window ([PROVISIONAL_WINDOW_MS]), watches the call state for evidence that it connected
-     * ([PlacedCallWatch]), and syncs at once so the parent hears of it. Never throws: the call is
-     * placed, and a false [placeCall] would open the emergency dialer on top of it. */
-    fun emergencyPlaced(context: Context, placedAtMs: Long) {
+     * ([PlacedCallWatch]; not when [watch] is false - another call was on), and syncs at once so the
+     * parent hears of it. Never throws: the call is placed, and a false [placeCall] would open the
+     * emergency dialer on top of it. */
+    fun emergencyPlaced(context: Context, placedAtMs: Long, watch: Boolean) {
         try {
             CallPrefs.recordEmergencyPlaced(context, placedAtMs)
-            Log.i(LOG_TAG, "Emergency call placed: provisional callback window")
-            PlacedCallWatch.start(context, placedAtMs)
+            Log.i(LOG_TAG, "Emergency call placed: provisional callback window (call-state watch: $watch)")
+            if (watch) PlacedCallWatch.start(context, placedAtMs)
             emergencySync(context)
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Couldn't record or watch the emergency call: ${e.javaClass.simpleName}")
@@ -129,6 +131,16 @@ object CallSystem {
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Couldn't record the emergency callback: ${e.javaClass.simpleName}")
         }
+    }
+
+    /** Whether a call is already on before an emergency call is placed: ours, or any Telecom knows of
+     * (`isInCall`; can't tell = yes). The phone's call state can't tell two calls apart, so the placing
+     * is then not watched ([PlacedCallWatch]) and keeps its provisional window unless our in-call service
+     * sees it connect. */
+    fun callBeforePlacing(context: Context): Boolean = OngoingCalls.hasLiveCall || try {
+        context.getSystemService(TelecomManager::class.java)?.isInCall != false
+    } catch (e: Exception) {
+        true
     }
 
     /** The parent hears of an emergency call within seconds (as [EmergencyConnects] asks for a call our
@@ -259,14 +271,19 @@ object CallPrefs {
     }
 
     /**
-     * Writes the emergency-call record ([emergencyRecord]): the callback window lasts [windowMs] by the
+     * Writes the emergency-call record ([emergencyRecord]; an open window is never shortened,
+     * [keepLaterWindow]): the callback window lasts [windowMs] by the
      * wall clock AND by elapsed realtime in this boot ([timedWindowActive]), so a clock change or a
      * reboot can't reopen it (QA step 2 #4). [atMs] is the call's instant, the status report's
      * `last_emergency_call_at` (design 35 step 3); [placed]: it is the launcher's own placing ([placingOf]).
      */
     private fun store(context: Context, atMs: Long, windowMs: Long, placed: Boolean) {
-        val record = emergencyRecord(
-            System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), atMs, windowMs, placed,
+        val stored = recordedWindow(context)?.let {
+            EmergencyRecord(it, storedWindowMs(context), 0, false)
+        }
+        val record = keepLaterWindow(
+            stored, recordedWindowUntil(context) != null,
+            emergencyRecord(System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), atMs, windowMs, placed),
         )
         bootPrefs(context).edit()
             .putLong(EMERGENCY_UNTIL_WALL_MS, record.window.untilWallMs)
@@ -304,15 +321,8 @@ object CallPrefs {
         }
     }
 
-    /** Our in-call service saw the emergency call Telecom created at [createdAtMs] end without connecting:
-     * if the record is the launcher's placing of it, back to the provisional window (from now). */
-    fun demotePlaced(context: Context, createdAtMs: Long) {
-        val prefs = bootPrefs(context)
-        val storedAt = prefs.getLong(EMERGENCY_CONNECTED_AT_MS, 0)
-        if (placingOf(prefs.getBoolean(EMERGENCY_PLACED, false), storedAt, createdAtMs)) {
-            store(context, storedAt, PROVISIONAL_WINDOW_MS, placed = true)
-        }
-    }
+    /** The stored window's length; a record an older build wrote is an hour's. */
+    private fun storedWindowMs(context: Context) = bootPrefs(context).getLong(EMERGENCY_WINDOW_MS, CALLBACK_WINDOW_MS)
 
     private fun recordedWindow(context: Context): WindowStart? {
         val prefs = bootPrefs(context)
@@ -324,9 +334,8 @@ object CallPrefs {
      * older build wrote is an hour's). */
     fun recordedWindowUntil(context: Context): Long? {
         val window = recordedWindow(context) ?: return null
-        val length = bootPrefs(context).getLong(EMERGENCY_WINDOW_MS, CALLBACK_WINDOW_MS)
         val open = timedWindowActive(
-            window, System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), length,
+            window, System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), storedWindowMs(context),
         )
         return if (open) window.untilWallMs else null
     }

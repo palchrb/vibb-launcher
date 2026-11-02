@@ -21,16 +21,17 @@ private const val START_TIMEOUT_MS = 30_000L
 private const val MAX_WATCH_MS = 3 * 60 * 60 * 1000L
 
 /**
- * What the phone's call state (`TelephonyCallback.CallStateListener`: idle or off-hook, nothing finer)
- * says of an emergency call the launcher placed that only the system dialer shows (E7's H1, QA fix
- * round) - pure, [PlacedCallWatch] feeds it elapsed-realtime instants. Off-hook held for
+ * What the phone's call state (`TelephonyCallback.CallStateListener`: idle, ringing or off-hook, nothing
+ * finer) says of an emergency call the launcher placed that only the system dialer shows (E7's H1, QA
+ * fix rounds) - pure, [PlacedCallWatch] feeds it elapsed-realtime instants. Off-hook held for
  * [PLACED_CONNECT_EVIDENCE_MS] is the evidence that it connected ([Step.PROMOTE]: the full window);
- * the end of the call after that re-records it so the hour runs from the hang-up ([Step.HUNG_UP]); an
- * end before it leaves the provisional window ([Step.STOP]). Not off-hook yet (the listener's first
- * report, sent at registration, may be the idle before the call starts) changes nothing.
+ * the end of the call after that - or the watch's own end ([MAX_WATCH_MS]) - records it once more, so
+ * the hour runs from then ([Step.PROMOTE_AND_STOP]); an end before it leaves the provisional window
+ * ([Step.STOP]). Idle before off-hook (the listener's first report, sent at registration, before the
+ * call starts) changes nothing; ringing before it means another call, not ours ([Step.STOP]).
  */
 internal class PlacedCallEvidence {
-    enum class Step { NONE, PROMOTE, HUNG_UP, STOP }
+    enum class Step { NONE, PROMOTE, PROMOTE_AND_STOP, STOP }
 
     private var offhookSinceMs = -1L
     private var promoted = false
@@ -51,10 +52,15 @@ internal class PlacedCallEvidence {
             Step.NONE
         }
 
-    /** Any state but off-hook: the call ended (a ringing call can only follow it). */
-    fun notOffhook(nowMs: Long): Step = when {
-        !started -> Step.NONE
-        promoted || check(nowMs) == Step.PROMOTE -> Step.HUNG_UP
+    fun idle(nowMs: Long): Step = if (started) finish(nowMs) else Step.NONE
+
+    /** After off-hook only a call that ended can let a ringing one show; before it, it is someone else's. */
+    fun ringing(nowMs: Long): Step = finish(nowMs)
+
+    /** The call ended, or the watch does ([MAX_WATCH_MS]). */
+    fun finish(nowMs: Long): Step = when {
+        !started -> Step.STOP
+        promoted || check(nowMs) == Step.PROMOTE -> Step.PROMOTE_AND_STOP
         else -> Step.STOP
     }
 }
@@ -62,9 +68,10 @@ internal class PlacedCallEvidence {
 /**
  * The Android side of [PlacedCallEvidence]: one call-state listener per launcher-placed emergency call
  * (READ_PHONE_STATE, self-granted while calls are managed; without it the placing keeps its provisional
- * window). Main thread. Ends at the call's end, [START_TIMEOUT_MS] without a start, [MAX_WATCH_MS], the
- * next placing, or when our in-call service sees the call itself ([stop]: its own states decide then).
- * A process death ends it too: the placing then keeps what was recorded last.
+ * window). Main thread. Not started when another call was on before the placing (its off-hook would
+ * read as ours - [CallSystem.callBeforePlacing]). Ends at the call's end, [START_TIMEOUT_MS] without a
+ * start, [MAX_WATCH_MS], the next placing, or when our in-call service sees the call itself ([stop]: its
+ * own states decide then). A process death ends it too: the placing then keeps what was recorded last.
  */
 object PlacedCallWatch {
     private class Watch(val telephony: TelephonyManager, val callback: TelephonyCallback)
@@ -83,7 +90,7 @@ object PlacedCallWatch {
             when (step) {
                 PlacedCallEvidence.Step.NONE -> Unit
                 PlacedCallEvidence.Step.PROMOTE -> CallPrefs.promotePlaced(app, placedAtMs)
-                PlacedCallEvidence.Step.HUNG_UP -> {
+                PlacedCallEvidence.Step.PROMOTE_AND_STOP -> {
                     CallPrefs.promotePlaced(app, placedAtMs)
                     stop()
                 }
@@ -94,7 +101,13 @@ object PlacedCallWatch {
         val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
             override fun onCallStateChanged(state: Int) {
                 val now = SystemClock.elapsedRealtime()
-                act(if (state == TelephonyManager.CALL_STATE_OFFHOOK) evidence.offhook(now) else evidence.notOffhook(now))
+                act(
+                    when (state) {
+                        TelephonyManager.CALL_STATE_OFFHOOK -> evidence.offhook(now)
+                        TelephonyManager.CALL_STATE_RINGING -> evidence.ringing(now)
+                        else -> evidence.idle(now)
+                    },
+                )
             }
         }
         watch = Watch(telephony, callback)
@@ -108,7 +121,7 @@ object PlacedCallWatch {
         }
         handler.postDelayed({ act(evidence.check(SystemClock.elapsedRealtime())) }, PLACED_CONNECT_EVIDENCE_MS + 500)
         handler.postDelayed({ if (!evidence.started) act(PlacedCallEvidence.Step.STOP) }, START_TIMEOUT_MS)
-        handler.postDelayed({ act(PlacedCallEvidence.Step.STOP) }, MAX_WATCH_MS)
+        handler.postDelayed({ act(evidence.finish(SystemClock.elapsedRealtime())) }, MAX_WATCH_MS)
     }
 
     fun stop() {

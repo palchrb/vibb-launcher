@@ -225,6 +225,20 @@ fun emergencyRecord(
 ): EmergencyRecord =
     EmergencyRecord(WindowStart(untilWallMs = nowWallMs + windowMs, elapsedStartMs = nowElapsedMs, bootCount = bootCount), windowMs, atMs, placed)
 
+/**
+ * The record to store when [next] comes while [stored] is open ([storedOpen]): a window is never
+ * shortened (H1 QA) - a later placing or Telecom-mark record after a real call that connected keeps that
+ * call's longer end (end, length and elapsed start together), so a redial that never connects can't
+ * close the hour for the emergency services' callback. The instant and the placed flag are always
+ * [next]'s: they are the status report's and [placingOf]'s.
+ */
+fun keepLaterWindow(stored: EmergencyRecord?, storedOpen: Boolean, next: EmergencyRecord): EmergencyRecord =
+    if (stored != null && storedOpen && stored.window.untilWallMs > next.window.untilWallMs) {
+        next.copy(window = stored.window, windowMs = stored.windowMs)
+    } else {
+        next
+    }
+
 /** How long before Telecom creates a call the launcher's record of placing it may be ([placingOf]): the
  * placing is read just before `TelecomManager.placeCall`, which creates the call. */
 const val PLACED_BEFORE_CREATED_MS = 5_000L
@@ -232,8 +246,8 @@ const val PLACED_BEFORE_CREATED_MS = 5_000L
 /**
  * Whether the stored record ([storedPlaced], [storedAtMs]) is the launcher's own placing of the call
  * Telecom created at [createdAtMs] - then our in-call service's records of that call keep the placing's
- * instant (one instant per call, so the server announces it once), and a disconnect without a connect
- * drops it back to [PROVISIONAL_WINDOW_MS]. Only a placing counts, never another call's record.
+ * instant (one instant per call, so the server announces it once). Only a placing counts, never another
+ * call's record.
  */
 fun placingOf(storedPlaced: Boolean, storedAtMs: Long, createdAtMs: Long): Boolean =
     storedPlaced && createdAtMs > 0 && storedAtMs in (createdAtMs - PLACED_BEFORE_CREATED_MS)..createdAtMs

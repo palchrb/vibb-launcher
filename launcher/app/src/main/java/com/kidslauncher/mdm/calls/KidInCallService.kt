@@ -101,6 +101,13 @@ class KidInCallService : InCallService() {
         }
         OngoingCalls.add(call)
         call.registerCallback(callback)
+        // An emergency call the launcher placed that we see ourselves is judged by its own states: the
+        // call-state watch ends, so a call that never connects stays provisional (H1 QA).
+        if (call.details.callDirection == Call.Details.DIRECTION_OUTGOING &&
+            Emergency.platformConfirms(PhoneNumbers.numberFromHandle(call.details.handle?.toString()), CallSystem.platformEmergency(this))
+        ) {
+            PlacedCallWatch.stop()
+        }
         recordEmergency(call, call.details.state)
         showUi(call)
     }
@@ -108,26 +115,19 @@ class KidInCallService : InCallService() {
     /**
      * Opens the callback window (CallSystem.callbackWindowUntil) for an emergency call that
      * connected, as our in-call service sees it - extended at every connected state, so it runs from
-     * the hang-up -, and takes a launcher placing of a call that ended without connecting back to the
-     * provisional window (H1 QA). Seeing the call ends the call-state watch: our own view decides. When
-     * the system dialer showed it instead, the launcher's placing (CallSystem.emergencyPlaced), the call
-     * log or Telecom's own mark on the callback opens the window. Only the platform's answer counts.
+     * the hang-up. When the system dialer showed it instead, the launcher's placing
+     * (CallSystem.emergencyPlaced), the call log or Telecom's own mark on the callback opens the window.
+     * Only the platform's answer counts.
      */
     private fun recordEmergency(call: Call, state: Int) {
         val details = call.details
         if (details.callDirection != Call.Details.DIRECTION_OUTGOING) return
-        val sighting = emergencySighting(
-            active = state == Call.STATE_ACTIVE, disconnected = state == Call.STATE_DISCONNECTED, connectTimeMs = details.connectTimeMillis,
-        ) ?: return
-        val raw = PhoneNumbers.numberFromHandle(details.handle?.toString())
-        if (!Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) return
-        PlacedCallWatch.stop()
-        when (sighting) {
-            EmergencySighting.CONNECTED ->
-                emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis, System.currentTimeMillis()) {
-                    CallPrefs.recordEmergencyConnected(this, it, details.creationTimeMillis)
-                }
-            EmergencySighting.ENDED_UNCONNECTED -> CallPrefs.demotePlaced(this, details.creationTimeMillis)
+        val connected = state == Call.STATE_ACTIVE || (state == Call.STATE_DISCONNECTED && details.connectTimeMillis > 0)
+        if (!connected) return
+        if (Emergency.platformConfirms(PhoneNumbers.numberFromHandle(details.handle?.toString()), CallSystem.platformEmergency(this))) {
+            emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis, System.currentTimeMillis()) {
+                CallPrefs.recordEmergencyConnected(this, it, details.creationTimeMillis)
+            }
         }
     }
 
