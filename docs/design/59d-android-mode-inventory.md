@@ -357,9 +357,9 @@ Android's PIN; every exit still needs `faceStep`'s LEAVE.
    through a `@Volatile` accessor (apply runs on a background thread). Tests: a pure `chromeHeld(askOpen, ..)` and a
    pinned release on the ask's close.
 
-**Out of round 1**: step I (not built), Q3's build (phase D), R2's decision ("as the face, kiosk off, no own lock
-task" - its own small round after this one; it touches `lockTaskEntry`/`lockLeave`/`LockTaskChrome` too, but the
-user's test runs with the kiosk on, and it needs its own shade/QS check), 59b §4.4's ring rule after a notice dump,
+**Out of round 1**: step I (not built), Q3's build (phase D), R2 ("as the face, kiosk off, no own lock task" -
+decided 2026-11-02 and built in its own round, branch `android-r2`: design 59b R2 and
+`docs/notes/launcher/lock-and-glance.md`, "R2, decided"; its shade/QS check is the emulator run's), 59b §4.4's ring rule after a notice dump,
 N2 (Jelly Star palette), r10 (falls with phase D).
 
 ### 8.3 Round 2 (its own worktree and code QA, in parallel with round 1): step F, §5 revised

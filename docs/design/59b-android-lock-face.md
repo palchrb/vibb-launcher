@@ -382,7 +382,10 @@ Launcher only, no contract change. Every new rule is gated on the face (`Android
     The proposal: as the face with the kiosk off and Android locked, the glance takes **no** lock task of its own -
     Android's locked keyguard already keeps non-showWhenLocked starts away, and a helper (DeskClock) unlocked into
     then stays. Its cost to weigh: what lock task adds over the keyguard while the glance is in front (the status-bar
-    disable stays through `setStatusBarDisabled`; the power menu is the keyguard's). Not built.
+    disable stays through `setStatusBarDisabled`; the power menu is the keyguard's). **Decided 2026-11-02** (the user:
+    "Ja til ditt r2 forslag"), built on branch `android-r2`: `lockTaskEntry(.., androidLocked)` gives NONE with the kiosk
+    off (kiosk on, own mode, the fallback and Android not locked unchanged); what changes and what still holds:
+    `docs/notes/launcher/lock-and-glance.md`, "R2, decided".
   - R3 (Low, label only): SystemUI's `ThemeOverlayController` (16, flag `newCustomizationPickerUi` off as on the AVD)
     takes its colours from the wallpaper last set (`getDefaultWallpaperColorsSource`: the higher id), so `setBoth`'s
     lock set (id n) then home set (id n+1) leaves `mCurrentColors` = Home's and the palette seeded from Home; the lock

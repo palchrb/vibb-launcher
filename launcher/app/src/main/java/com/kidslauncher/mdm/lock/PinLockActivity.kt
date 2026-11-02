@@ -52,8 +52,9 @@ private const val STATE_ENTERED = "entered"
  * by the lock if it can help it, and it leaves through Home (design 16, [lockTaskEntry],
  * [lockLeave]) - with the kiosk off it starts lock task itself (our package plus the emergency
  * helpers are pinned for it) and stops it on unlock, and leaves through Home too unless a call is
- * live (design 32). Back does nothing; leaving the front any other way brings it back (re-front, never
- * giving up, except for our call screen, the system dialer/Telecom and the alarm).
+ * live (design 32); as Android's face with Android locked and the kiosk off it takes none (design 59b R2). Back
+ * does nothing; leaving the front any other way brings it back (re-front, never giving up, except for our call
+ * screen, the system dialer/Telecom and the alarm).
  *
  * It always comes up on its glance page (design 25, [GlancePanel]): the clock, the music tile, the
  * newest missed calls and messages, the swipe hint and Emergency call; a swipe up (design 59d step J, the "Lås opp"
@@ -100,10 +101,21 @@ class PinLockActivity : AppCompatActivity() {
     /** The last [ensureLockTask] found our package not pinned (kiosk off, the chrome not yet set). */
     private var waitingForPin = false
 
+    /** [LockTaskChrome.kioskOn] at the last [ensureLockTask] or chrome pass (`null` = not seen yet). */
+    private var kioskSeen: Boolean? = null
+
     /** A chrome pass landed (it runs off the main thread since 16c): with the kiosk off it pins our
-     * package for the lock - enter lock task now if the resume found it not permitted. */
+     * package for the lock - enter lock task now if the resume found it not permitted; and a kiosk off -> on edge under
+     * a glance without lock task (59b R2's state) enters the kiosk's now (code QA L2, [chromeEntryRecheckDue]). */
     private val chromeListener: () -> Unit = {
-        if (waitingForPin && resumed && PinLockRuntime.mode == LockMode.LOCKED) ensureLockTask(fallbackDue = false)
+        val kiosk = LockTaskChrome.kioskOn
+        val was = kioskSeen
+        kioskSeen = kiosk
+        if (resumed && PinLockRuntime.mode == LockMode.LOCKED &&
+            chromeEntryRecheckDue(waitingForPin, was, kiosk, running = was == false && kiosk && lockTaskRunning())
+        ) {
+            ensureLockTask(fallbackDue = false)
+        }
     }
 
     private lateinit var voipRing: ViewVoipRingBinding
@@ -832,7 +844,9 @@ class PinLockActivity : AppCompatActivity() {
      * package that isn't permitted - that would ask for screen pinning instead. With the kiosk on
      * the lock is never the root if it can help it (design 16, QA #2, [lockTaskEntry]): it starts
      * Home, whose resume roots lock task and shows the lock again; only [LOCK_FALLBACK_MS] later
-     * without lock task does it start it itself.
+     * without lock task does it start it itself. Kiosk off, as Android's face with Android locked, it starts none and
+     * stops a running one (design 59b R2: Android's locked keyguard is the gate, and a helper unlocked into isn't cleared
+     * at the leave).
      */
     private fun ensureLockTask(fallbackDue: Boolean) {
         handler.removeCallbacks(lockTaskFallback)
@@ -845,8 +859,17 @@ class PinLockActivity : AppCompatActivity() {
         voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
         waitingForPin = !running && !permitted
         val androidLocked = AndroidLock.refrontHeld(this)
+        kioskSeen = LockTaskChrome.kioskOn
         when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask, androidLocked = androidLocked)) {
-            LockTaskEntry.NONE -> if (!running && !permitted) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
+            LockTaskEntry.NONE -> when {
+                !running && !permitted -> Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
+                !running && androidLocked && !voipHeldLockTask && !LockTaskChrome.kioskOn ->
+                    Log.i(ANDROID_LOCK_TAG, "lock task: none of the glance's own (kiosk off, Android locked - design 59b R2)")
+            }
+            LockTaskEntry.STOP_OWN -> {
+                Log.i(ANDROID_LOCK_TAG, "lock task: the glance's own stopped (kiosk off, Android locked - design 59b R2)")
+                stopLockTaskQuietly()
+            }
             LockTaskEntry.START_SELF -> try {
                 startLockTask()
                 startedLockTask = true

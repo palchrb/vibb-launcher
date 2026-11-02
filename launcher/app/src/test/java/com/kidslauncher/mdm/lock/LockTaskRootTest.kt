@@ -45,6 +45,74 @@ class LockTaskRootTest {
         assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = 500L, fallbackDue = true, voipCall = true))
     }
 
+    /** Design 59b R2 (the user, 2026-11-02): as Android's face with Android locked and the kiosk off, the glance takes
+     * no lock task of its own - a helper unlocked into on SystemUI's face or pad is no longer cleared with it. */
+    @Test
+    fun `59b R2 - kiosk off as the face with Android locked the glance takes no lock task`() {
+        for (fallback in listOf(false, true)) for (since in listOf(null, 500L, HOME_ROOT_RETRY_MS)) for (voip in listOf(false, true)) {
+            assertEquals(LockTaskEntry.NONE, lockTaskEntry(false, true, kioskOn = false, since, fallback, voipCall = voip, androidLocked = true))
+        }
+        // Kiosk off, Android not locked (own mode, or the face before Android locks): the glance's own, as in step 10.
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = false))
+        // Kiosk on as the face with Android locked: the glance still roots it itself (59d A, qa-59b-code B-1).
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = 500L, fallbackDue = false, voipCall = true, androidLocked = true))
+        // Code QA M1: a lock task already running there (started while Android read open, or left from the kiosk) is
+        // stopped at the entry check - with the kiosk off any running lock task is the lock's own. Not during a VoIP call.
+        for (fallback in listOf(false, true)) for (permitted in listOf(false, true)) {
+            assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true))
+            assertEquals(LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, voipCall = true, androidLocked = true))
+            assertEquals("Android open: kept", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = false))
+            assertEquals("kiosk on: kept", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true))
+        }
+        // The leave then stops nothing (nothing runs) and keeps today's Home rule.
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = false, androidFace = true))
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = false, glanceInFront = true, androidFace = true))
+    }
+
+    /** 59b R2: every input but the one case gives what the rule gave before it (kept here as the oracle). */
+    @Test
+    fun `59b R2 - every other input unchanged`() {
+        fun before(running: Boolean, permitted: Boolean, kiosk: Boolean, since: Long?, fallback: Boolean, voip: Boolean, android: Boolean) = when {
+            running || !permitted || (voip && !kiosk) -> LockTaskEntry.NONE
+            !kiosk || fallback || android -> LockTaskEntry.START_SELF
+            since != null && since in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
+            else -> LockTaskEntry.START_HOME
+        }
+        val b = listOf(false, true)
+        var changed = 0
+        for (running in b) for (permitted in b) for (kiosk in b) for (since in listOf(null, -5L, 0L, 500L, HOME_ROOT_RETRY_MS)) {
+            for (fallback in b) for (voip in b) for (android in b) {
+                val now = lockTaskEntry(running, permitted, kiosk, since, fallback, voipCall = voip, androidLocked = android)
+                val r2 = !running && permitted && !kiosk && android
+                val stop = running && !kiosk && android && !voip
+                if (stop) {
+                    assertEquals(LockTaskEntry.STOP_OWN, now)
+                    assertEquals("was: kept running", LockTaskEntry.NONE, before(running, permitted, kiosk, since, fallback, voip, android))
+                } else if (r2) {
+                    assertEquals(LockTaskEntry.NONE, now)
+                    if (before(running, permitted, kiosk, since, fallback, voip, android) != now) changed++
+                } else {
+                    assertEquals("running=$running permitted=$permitted kiosk=$kiosk since=$since fallback=$fallback voip=$voip android=$android",
+                        before(running, permitted, kiosk, since, fallback, voip, android), now)
+                }
+            }
+        }
+        // Only the no-VoIP rows of the R2 case changed (START_SELF -> NONE); with a VoIP call they were NONE already.
+        assertEquals(5 * 2, changed)
+    }
+
+    /** Code QA L2 (59b R2): a chrome pass re-runs the entry check for a lock waiting for its pin, and for a kiosk that
+     * just went on under a glance without lock task. */
+    @Test
+    fun `a chrome pass re-checks the entry on the pin and on a kiosk off-on edge without lock task`() {
+        val b = listOf(false, true)
+        for (was in listOf(null, false, true)) for (now in b) for (running in b) {
+            assertTrue("waiting for the pin: always", chromeEntryRecheckDue(true, was, now, running))
+            assertEquals("was=$was now=$now running=$running", was == false && now && !running, chromeEntryRecheckDue(false, was, now, running))
+        }
+    }
+
     @Test
     fun `kiosk on - the lock always leaves through Home, stopping lock task only as the root`() {
         for (call in listOf(false, true)) {
