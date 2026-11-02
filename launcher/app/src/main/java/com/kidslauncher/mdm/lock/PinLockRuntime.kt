@@ -2010,11 +2010,13 @@ object PinLockRuntime {
     fun unlocked(context: Context, checkedAt: Int) =
         dispatch(context.applicationContext, LockEvent.Unlocked(checkedAt, screenOffs))
 
-    /** After an unlock: the time-rule screen comes up if a rule is on (it was never suppressed). */
+    /** After an unlock: the time-rule screen comes up if a rule is on (it was never suppressed), marked as the
+     * unlock's - with one usable thing it opens that at once (PLAN 2026-11-02, `LockActivity.onResume`). */
     private fun afterUnlock(context: Context) {
         try {
             TimeRulesRuntime.recheck(context)
             if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) {
+                LockActivity.markUnlock()
                 LockActivity.start(context)
             }
         } catch (e: Exception) {

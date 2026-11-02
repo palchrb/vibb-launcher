@@ -59,8 +59,17 @@ class EventActivity : UIObjectActivity() {
         }
         // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27).
         if (DayActivity.redirectIfLocked(this)) return
+        lockWatch.start()
         load()
     }
+
+    override fun onPause() {
+        lockWatch.stop()
+        super.onPause()
+    }
+
+    /** A rule that doesn't allow Kalender beginning while the page is in front: the time-rule screen. */
+    private val lockWatch = LockWatch(this)
 
     private fun load() {
         val app = applicationContext

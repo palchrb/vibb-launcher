@@ -1059,7 +1059,7 @@ class PolicyResponseCompatTest {
             """
             "time_policy": {
               "rules": [{"id": 4, "name": "Skole", "kind": "school", "calls_allowed": false,
-                "exempt_apps": ["org.fossify.calendar"],
+                "exempt_apps": ["org.fossify.calendar"], "calendar_allowed": true,
                 "days": [{"start": 495, "end": 840}, {"start": 495, "end": 840}, {"start": 495, "end": 840},
                          {"start": 495, "end": 840}, {"start": 495, "end": 840}, null, null]}],
               "daily_budget_minutes": [60, 60, 60, 60, 60, 120, null],
@@ -1075,6 +1075,10 @@ class PolicyResponseCompatTest {
         assertEquals("school", time.rules[0].kind)
         assertEquals(false, time.rules[0].callsAllowed)
         assertEquals(listOf("org.fossify.calendar"), time.rules[0].exemptApps)
+        // PLAN 2026-11-02 (server 0119): Kalender usable during the rule; an older server's rule without it is false.
+        assertEquals(true, time.rules[0].calendarAllowed)
+        val older = (decodeCached(withTime.replace("\"calendar_allowed\": true,", "")) as CachedPolicy.Ok).policy
+        assertEquals(false, older.timePolicy!!.rules[0].calendarAllowed)
         assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
         assertNull(time.rules[0].days[5])
         assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)

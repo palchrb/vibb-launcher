@@ -461,6 +461,35 @@ async fn policy_json_keys_snapshot() {
     let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();
     time_keys.sort_unstable();
     assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
+    // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
+    // during the rule - the launcher's default is false, so an older server keeps it closed).
+    sqlx::query(
+        "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, calendar_allowed, \
+         days_json) VALUES ('Skole', 'school', 0, '[]', 1, '[null,null,null,null,null,null,null]')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let with_rule = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    let rule = with_rule["time_policy"]["rules"][0].as_object().unwrap();
+    let mut rule_keys: Vec<&str> = rule.keys().map(String::as_str).collect();
+    rule_keys.sort_unstable();
+    assert_eq!(
+        rule_keys,
+        [
+            "calendar_allowed",
+            "calls_allowed",
+            "days",
+            "exempt_apps",
+            "id",
+            "kind",
+            "name"
+        ]
+    );
+    assert_eq!(rule["calendar_allowed"], serde_json::json!(true));
     assert_eq!(
         object["location_policy"],
         serde_json::json!({"mode": "on_request", "interval_minutes": 30, "zones": []})

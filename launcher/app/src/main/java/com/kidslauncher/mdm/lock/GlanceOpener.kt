@@ -77,14 +77,20 @@ object GlanceOpener {
      * with the phone still unlocked is opened over it - if the rule leaves it usable. */
     fun openHandedOver(activity: Activity) = guarded {
         val pending = handedOver ?: return@guarded
-        val age = SystemClock.elapsedRealtime() - handedOverAt
+        val fresh = glanceHandOverFresh(handedOverAt, SystemClock.elapsedRealtime())
         handedOver = null
-        if (age !in 0..GLANCE_HAND_OVER_MS || PinLockRuntime.mode == LockMode.LOCKED) {
+        if (!fresh || PinLockRuntime.mode == LockMode.LOCKED) {
             Log.i(LOG_TAG, "Glance: nothing opened (the hand-over expired)")
             return@guarded
         }
         run(activity, pending, GlanceOpenFrom.TIME_RULE_SCREEN, homeBelow = false)
     }
+
+    /** A fresh row's target waits for the time-rule screen (read before [openHandedOver] takes it): that screen then
+     * opens nothing else by itself (PLAN 2026-11-02's one usable thing). A stale one - an unlock whose screen never
+     * came up - doesn't count, by the hand-over's own rule ([glanceHandOverFresh], code QA L1). */
+    fun handOverPending(): Boolean =
+        handedOver != null && glanceHandOverFresh(handedOverAt, SystemClock.elapsedRealtime())
 
     /**
      * Whether a time rule that locks the phone now leaves [target] usable (QA Q1): the app among the

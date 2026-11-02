@@ -546,20 +546,190 @@ pub(crate) struct AppChoice {
     pub(crate) package: String,
     pub(crate) label: String,
     pub(crate) checked: bool,
+    /// A ticked app the scope doesn't offer (not allowed, or not on the phones): the i18n key of
+    /// its note under the name, so the tick stays in view and can be taken off - the page never
+    /// drops a stored choice by itself.
+    pub(crate) note: Option<&'static str>,
 }
 
-/// "Klokke, Kalkulator", "None": the chosen apps, for the Exceptions row.
-pub(crate) fn apps_value(apps: &[AppChoice]) -> String {
-    let chosen: Vec<&str> = apps
-        .iter()
-        .filter(|a| a.checked)
-        .map(|a| a.label.as_str())
-        .collect();
-    match chosen.len() {
-        0 => "None".to_string(),
-        1 | 2 => chosen.join(", "),
-        n => format!("{n} apps"),
+/// A rule's or the bedtime's Exceptions (`partials/exceptions.html`): the built-in Vibb calendar
+/// row (Kalender on the phone; its own `calendar_allowed`, never a package) first, then the apps.
+pub(crate) struct Exceptions {
+    /// The Vibb calendar row shows: Kalender is on for a phone in scope, or the rule has it on.
+    pub(crate) calendar_shown: bool,
+    pub(crate) calendar: bool,
+    pub(crate) apps: Vec<AppChoice>,
+    /// The i18n key of the line when no app is listed.
+    pub(crate) empty: &'static str,
+    /// The i18n key of the group's footer: one phone's rule, or everyone's.
+    pub(crate) footer: &'static str,
+}
+
+impl Exceptions {
+    /// "Vibb-kalender, Klokke", "None", "Vibb-kalender, 3 apps": what the Exceptions row shows.
+    /// (`&Lang`: Askama passes a template's arguments by reference.)
+    pub(crate) fn value(&self, lang: &Lang) -> String {
+        let lang = *lang;
+        let apps: Vec<&str> = self
+            .apps
+            .iter()
+            .filter(|a| a.checked)
+            .map(|a| a.label.as_str())
+            .collect();
+        let calendar = t(lang, "device.exceptions.calendar");
+        let mut chosen: Vec<&str> = Vec::new();
+        if self.calendar {
+            chosen.push(calendar);
+        }
+        chosen.extend(&apps);
+        match chosen.len() {
+            0 => t(lang, "device.exceptions.value_none").to_string(),
+            1 | 2 => chosen.join(", "),
+            _ => {
+                let count = t_count(lang, "device.exceptions.value_apps", apps.len() as i64, &[]);
+                if self.calendar {
+                    format!("{calendar}, {count}")
+                } else {
+                    count
+                }
+            }
+        }
     }
+}
+
+/// What a scope's Exceptions may offer (PLAN "the Exceptions list shows only apps the phone
+/// allows", 2026-11-02): a phone's own rule and its bedtime the apps that phone allows and reported
+/// installed; everyone's rules the apps allowed on at least one phone that reported them. A phone
+/// without an allowlist (not managed yet) allows what it reports; one whose allowlist doesn't read
+/// allows nothing here (its policy is a 500 until that is fixed).
+pub(crate) struct ScopeApps {
+    /// package -> label: offered.
+    pub(crate) offered: BTreeMap<String, String>,
+    /// package -> label: every app a phone in scope reported, allowed or not (a ticked one's note).
+    pub(crate) reported: BTreeMap<String, String>,
+    /// Kalender is on (`calendar_on_home`, the Calendar page's "Kalender on Home") for a phone in scope.
+    pub(crate) calendar_on: bool,
+    /// The scope is one phone: the notes and the footer say "the phone".
+    pub(crate) one_phone: bool,
+}
+
+impl ScopeApps {
+    /// The Exceptions for the rule's [chosen] apps and its [calendar] switch: every offered app,
+    /// and every chosen one the scope doesn't offer with its note (so nothing stored disappears
+    /// from the form - a save writes exactly what is shown ticked).
+    pub(crate) fn exceptions(&self, chosen: &[String], calendar: bool) -> Exceptions {
+        let mut apps: Vec<AppChoice> = self
+            .offered
+            .iter()
+            .map(|(package, label)| AppChoice {
+                checked: chosen.contains(package),
+                package: package.clone(),
+                label: label.clone(),
+                note: None,
+            })
+            .collect();
+        let mut seen: Vec<&String> = Vec::new();
+        for package in chosen {
+            if self.offered.contains_key(package) || seen.contains(&package) {
+                continue;
+            }
+            seen.push(package);
+            let reported = self.reported.get(package);
+            apps.push(AppChoice {
+                package: package.clone(),
+                label: reported.cloned().unwrap_or_else(|| package.clone()),
+                checked: true,
+                note: Some(match (reported.is_some(), self.one_phone) {
+                    (true, true) => "device.exceptions.not_allowed",
+                    (true, false) => "device.exceptions.not_allowed_any",
+                    (false, true) => "device.exceptions.not_installed",
+                    (false, false) => "device.exceptions.not_installed_any",
+                }),
+            });
+        }
+        apps.sort_by_key(|a| a.label.to_lowercase());
+        Exceptions {
+            calendar_shown: self.calendar_on || calendar,
+            calendar,
+            apps,
+            empty: if self.reported.is_empty() {
+                "device.exceptions.none"
+            } else {
+                "device.exceptions.none_allowed"
+            },
+            footer: if self.one_phone {
+                "device.exceptions.footer"
+            } else {
+                "device.exceptions.footer_everyone"
+            },
+        }
+    }
+}
+
+/// package -> label from one device's latest installed-apps report.
+async fn reported_by(state: &AppState, id: i64) -> Result<BTreeMap<String, String>, sqlx::Error> {
+    let json: Option<String> = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
+         AND installed_apps_json IS NOT NULL ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let installed: Vec<InstalledApp> = json
+        .as_deref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
+    let mut apps = BTreeMap::new();
+    for app in installed {
+        if time_rules::valid_package_name(&app.package_name) {
+            apps.entry(app.package_name).or_insert(app.label);
+        }
+    }
+    Ok(apps)
+}
+
+/// [ScopeApps] for the devices in `device_ids` (one phone when [one_phone]).
+pub(crate) async fn scope_apps(
+    state: &AppState,
+    device_ids: &[i64],
+    one_phone: bool,
+) -> Result<ScopeApps, sqlx::Error> {
+    let mut scope = ScopeApps {
+        offered: BTreeMap::new(),
+        reported: BTreeMap::new(),
+        calendar_on: false,
+        one_phone,
+    };
+    for &id in device_ids {
+        let policy: Option<(Option<String>, bool)> = sqlx::query_as(
+            "SELECT allowlist_json, calendar_on_home FROM device_policy WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some((allowlist, calendar_on)) = policy else {
+            continue;
+        };
+        scope.calendar_on |= calendar_on;
+        let allowed: Option<Vec<String>> = match allowlist.as_deref().map(serde_json::from_str) {
+            None => None,
+            Some(Ok(list)) => Some(list),
+            Some(Err(err)) => {
+                tracing::warn!(device_id = id, %err, "an unreadable allowlist offers no exceptions");
+                Some(Vec::new())
+            }
+        };
+        for (package, label) in reported_by(state, id).await? {
+            if allowed.as_ref().is_none_or(|list| list.contains(&package)) {
+                scope
+                    .offered
+                    .entry(package.clone())
+                    .or_insert_with(|| label.clone());
+            }
+            scope.reported.entry(package).or_insert(label);
+        }
+    }
+    Ok(scope)
 }
 
 struct DayInput {
@@ -579,16 +749,10 @@ struct RuleForm {
     kind: String,
     calls_allowed: bool,
     days: Vec<DayInput>,
-    apps: Vec<AppChoice>,
+    /// For `partials/exceptions.html`: the Vibb calendar row and the apps.
+    exceptions: Exceptions,
     name_error: Option<String>,
     apps_error: Option<String>,
-}
-
-impl RuleForm {
-    /// For `partials/exceptions.html`.
-    fn apps_value(&self) -> String {
-        apps_value(&self.apps)
-    }
 }
 
 fn day_inputs(days: &[Option<DayWindow>]) -> Vec<DayInput> {
@@ -607,56 +771,6 @@ fn day_inputs(days: &[Option<DayWindow>]) -> Vec<DayInput> {
             }
         })
         .collect()
-}
-
-/// The apps a rule may exempt: what the devices in scope reported installed, plus whatever the
-/// rule already has (so a choice never silently disappears from the form).
-pub(crate) fn app_choices(
-    available: &BTreeMap<String, String>,
-    chosen: &[String],
-) -> Vec<AppChoice> {
-    let mut all = available.clone();
-    for package in chosen {
-        all.entry(package.clone())
-            .or_insert_with(|| package.clone());
-    }
-    let mut choices: Vec<AppChoice> = all
-        .into_iter()
-        .map(|(package, label)| AppChoice {
-            checked: chosen.contains(&package),
-            package,
-            label,
-        })
-        .collect();
-    choices.sort_by_key(|a| a.label.to_lowercase());
-    choices
-}
-
-/// package -> label from the latest installed-apps report of each device in `device_ids`.
-pub(crate) async fn reported_apps(
-    state: &AppState,
-    device_ids: &[i64],
-) -> Result<BTreeMap<String, String>, sqlx::Error> {
-    let mut apps = BTreeMap::new();
-    for id in device_ids {
-        let json: Option<String> = sqlx::query_scalar(
-            "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
-             AND installed_apps_json IS NOT NULL ORDER BY reported_at DESC, id DESC LIMIT 1",
-        )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-        let installed: Vec<InstalledApp> = json
-            .as_deref()
-            .and_then(|j| serde_json::from_str(j).ok())
-            .unwrap_or_default();
-        for app in installed {
-            if time_rules::valid_package_name(&app.package_name) {
-                apps.entry(app.package_name).or_insert(app.label);
-            }
-        }
-    }
-    Ok(apps)
 }
 
 /// Where a rule belongs: everyone's (`None`) or one phone's own, with the phone's name.
@@ -689,13 +803,12 @@ impl RuleScope {
         }
     }
 
-    /// The apps its exceptions offer: the phone's, or every phone's.
-    async fn apps(&self, state: &AppState) -> Result<BTreeMap<String, String>, sqlx::Error> {
-        let ids = match self.id() {
-            Some(id) => vec![id],
-            None => time_rules::all_device_ids(&state.db).await?,
-        };
-        reported_apps(state, &ids).await
+    /// What its exceptions offer: the phone's allowed apps, or those of every phone ([ScopeApps]).
+    async fn apps(&self, state: &AppState) -> Result<ScopeApps, sqlx::Error> {
+        match self.id() {
+            Some(id) => scope_apps(state, &[id], true).await,
+            None => scope_apps(state, &time_rules::all_device_ids(&state.db).await?, false).await,
+        }
     }
 }
 
@@ -897,7 +1010,7 @@ pub async fn show_rule(
         name: row.name,
         calls_allowed: row.calls_allowed,
         days: day_inputs(&days),
-        apps: app_choices(&available, &exempt),
+        exceptions: available.exceptions(&exempt, row.calendar_allowed),
         name_error: None,
         apps_error: None,
     };
@@ -929,7 +1042,7 @@ pub async fn new_rule(
         kind: "school".to_string(),
         calls_allowed: false,
         days: day_inputs(&[]),
-        apps: app_choices(&available, &[]),
+        exceptions: available.exceptions(&[], false),
         name_error: None,
         apps_error: None,
     };
@@ -943,6 +1056,8 @@ pub(crate) struct RuleInput {
     pub kind: String,
     pub calls_allowed: bool,
     pub exempt_apps: Vec<String>,
+    /// The Vibb calendar row (`calendar_allowed`, absent = off).
+    pub calendar_allowed: bool,
     pub days: Vec<Option<DayWindow>>,
 }
 
@@ -1034,6 +1149,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
     let exempt_apps = parse_exempt_apps_form(fields).map_err(RuleError::Apps)?;
     Ok(RuleInput {
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
+        calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
         name,
         kind,
         exempt_apps,
@@ -1046,7 +1162,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
 fn rule_entered(
     id: i64,
     fields: &[(String, String)],
-    available: &BTreeMap<String, String>,
+    available: &ScopeApps,
     error: RuleError,
 ) -> RuleForm {
     let typed =
@@ -1077,7 +1193,8 @@ fn rule_entered(
                 error: None,
             })
             .collect(),
-        apps: app_choices(available, &chosen),
+        exceptions: available
+            .exceptions(&chosen, fields.iter().any(|(k, _)| k == "calendar_allowed")),
         name_error: None,
         apps_error: None,
     };
@@ -1177,7 +1294,7 @@ pub async fn create_rule(
     let device = scope.id();
     let result = sqlx::query_scalar::<_, i64>(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, \
+         calendar_allowed, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, \
          (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM time_rules WHERE device_id IS ?)) \
          RETURNING id",
     )
@@ -1186,6 +1303,7 @@ pub async fn create_rule(
     .bind(&input.kind)
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
+    .bind(input.calendar_allowed)
     .bind(serde_json::to_string(&input.days).expect("windows serialize"))
     .bind(device)
     .fetch_one(&state.db)
@@ -1257,12 +1375,13 @@ pub async fn update_rule(
     };
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
-         days_json = ? WHERE id = ? AND device_id IS ? AND bedtime = 0",
+         calendar_allowed = ?, days_json = ? WHERE id = ? AND device_id IS ? AND bedtime = 0",
     )
     .bind(&input.name)
     .bind(&input.kind)
     .bind(input.calls_allowed)
     .bind(serde_json::to_string(&input.exempt_apps).expect("strings serialize"))
+    .bind(input.calendar_allowed)
     .bind(serde_json::to_string(&input.days).expect("windows serialize"))
     .bind(rule_id)
     .bind(scope.id())

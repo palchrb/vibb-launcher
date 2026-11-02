@@ -288,6 +288,14 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
         })),
     )
     .await;
+    // Only the clock is allowed: the rule's calendar app stays ticked with its note (PLAN 2026-11-02).
+    sqlx::query(
+        "UPDATE device_policy SET allowlist_json = '[\"org.fossify.clock\"]' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let rule = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
     let html = app
         .get_page(&format!("/schedules/rules/{rule}"), &cookie)
@@ -331,6 +339,12 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
         input_checked(exceptions, "exempt_apps", "org.fossify.clock"),
         Some(false)
     );
+    assert!(exceptions.contains(
+        "Kalender<span class=\"row-sub\" data-note=\"exception\">Not allowed on any phone</span>"
+    ));
+    for name in ["name", "kind", "calendar_allowed"] {
+        assert_eq!(form_action_of(&html, name), Some(save.as_str()), "{name}");
+    }
     // Delete is behind a confirm, after the rule's form.
     let confirm = section(&html, "delete");
     assert!(confirm.contains("<details class=\"confirm cell\">"));
@@ -1525,4 +1539,223 @@ async fn two_saves_of_a_new_bedtime_make_one_row() {
         assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
     }
     assert_eq!(bedtime_of(&app, id).await.0, 1);
+}
+
+/// PLAN "Kalender usable during a time rule" (2026-11-02): the Exceptions offer the Vibb calendar
+/// first (Kalender on the phone, its own `calendar_allowed`, never a package) and only the apps the
+/// phones in scope allow - a phone's own rule and its bedtime that phone's allowlist, everyone's
+/// rules the apps allowed on at least one phone. A ticked app outside stays in view with its note
+/// (nothing stored is dropped by the page). A save stores the calendar, the phone gets it, the row's
+/// value names it; with Kalender off on every phone the row shows only on a rule that has it.
+#[tokio::test]
+async fn the_exceptions_offer_the_vibb_calendar_and_the_allowed_apps() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, anna_token) = app.enrolled_device("Anna").await;
+    let (emil, emil_token) = app.enrolled_device("Emil").await;
+    for (id, token, apps, allowed) in [
+        (
+            anna,
+            &anna_token,
+            json!([{"package_name": "com.android.chrome", "label": "Chrome"},
+                   {"package_name": "org.fossify.clock", "label": "Klokke"}]),
+            r#"["org.fossify.clock"]"#,
+        ),
+        (
+            emil,
+            &emil_token,
+            json!([{"package_name": "org.fossify.clock", "label": "Klokke"},
+                   {"package_name": "com.example.game", "label": "Spill"}]),
+            r#"["org.fossify.clock","com.example.game"]"#,
+        ),
+    ] {
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(token),
+                Some(json!({"lock_reason": "NONE", "kiosk_engaged": true, "installed_apps": apps})),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+        sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+            .bind(allowed)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let offered = |html: &str| -> Vec<String> {
+        tags(section(html, "exceptions"), "input")
+            .into_iter()
+            .filter(|t| t.attr("name") == Some("exempt_apps"))
+            .map(|t| t.attr("value").unwrap().to_string())
+            .collect()
+    };
+
+    // Anna's own rule: her allowed app alone, the calendar row first, off.
+    let html = app
+        .get_page(&format!("/schedules/rules/new?device={anna}"), &cookie)
+        .await
+        .text();
+    let exceptions = section(&html, "exceptions");
+    assert_eq!(offered(&html), ["org.fossify.clock"]);
+    assert_eq!(
+        input_checked(exceptions, "calendar_allowed", "on"),
+        Some(false)
+    );
+    assert!(
+        exceptions.find("name=\"calendar_allowed\"").unwrap()
+            < exceptions.find("name=\"exempt_apps\"").unwrap()
+    );
+    assert!(exceptions.contains(">Vibb calendar<span class=\"row-sub\">"));
+    assert!(exceptions.contains("data-value=\"apps\">None<"));
+    assert!(exceptions.contains("Only apps the phone allows under Apps are listed."));
+    // Everyone's: the apps allowed on at least one phone; Chrome is allowed on none.
+    let html = app.get_page("/schedules/rules/new", &cookie).await.text();
+    assert_eq!(offered(&html), ["org.fossify.clock", "com.example.game"]);
+    assert!(
+        section(&html, "exceptions")
+            .contains("Only apps allowed on at least one phone are listed.")
+    );
+    // In Norwegian the row is Vibb-kalender.
+    let html = app
+        .get_page(
+            &format!("/schedules/rules/new?device={anna}&lang=nb"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        section(&html, "exceptions")
+            .contains(">Vibb-kalender<span class=\"row-sub\">Kalender på telefonen")
+    );
+
+    // A save with the calendar and Chrome (posted by hand: not offered): stored, served, and Chrome
+    // stays ticked with its note.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/schedules/rules",
+            Some(&cookie),
+            &[
+                ("scope", &anna.to_string()),
+                ("name", "Kveld"),
+                ("kind", "custom"),
+                ("calendar_allowed", "on"),
+                ("exempt_apps", "com.android.chrome"),
+                ("d0_start", "18:00"),
+                ("d0_end", "20:00"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let (rule, calendar): (i64, bool) =
+        sqlx::query_as("SELECT id, calendar_allowed FROM time_rules WHERE name = 'Kveld'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(calendar);
+    let rules = app.policy(&anna_token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules[0]["calendar_allowed"], json!(true), "{rules}");
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    let exceptions = section(&html, "exceptions");
+    assert!(
+        exceptions.contains("data-value=\"apps\">Vibb calendar, Chrome<"),
+        "{exceptions}"
+    );
+    assert_eq!(
+        input_checked(exceptions, "calendar_allowed", "on"),
+        Some(true)
+    );
+    assert_eq!(
+        input_checked(exceptions, "exempt_apps", "com.android.chrome"),
+        Some(true)
+    );
+    assert!(exceptions.contains(
+        "Chrome<span class=\"row-sub\" data-note=\"exception\">Not allowed on the phone</span>"
+    ));
+    // A save without the switch turns it off (every save writes it, H1).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}"),
+            Some(&cookie),
+            &[
+                ("scope", &anna.to_string()),
+                ("name", "Kveld"),
+                ("kind", "custom"),
+                ("d0_start", "18:00"),
+                ("d0_end", "20:00"),
+            ],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{rule}?saved=1"),
+        Some("rule"),
+    );
+    let calendar: bool = sqlx::query_scalar("SELECT calendar_allowed FROM time_rules WHERE id = ?")
+        .bind(rule)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(!calendar);
+    sqlx::query("UPDATE time_rules SET calendar_allowed = 1 WHERE id = ?")
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Kalender off on Home for both phones: no row on a new rule, the row kept on one that has it.
+    sqlx::query("UPDATE device_policy SET calendar_on_home = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page("/schedules/rules/new", &cookie).await.text();
+    assert_eq!(input_checked(&html, "calendar_allowed", "on"), None);
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    assert_eq!(input_checked(&html, "calendar_allowed", "on"), Some(true));
+    sqlx::query("UPDATE device_policy SET calendar_on_home = 1 WHERE device_id = ?")
+        .bind(emil)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page("/schedules/rules/new", &cookie).await.text();
+    assert_eq!(
+        input_checked(&html, "calendar_allowed", "on"),
+        Some(false),
+        "on for one phone"
+    );
+
+    // Emil's bedtime: the same row and his own allowlist, saved with the bedtime and served.
+    let page = format!("/devices/{emil}/bedtime");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(offered(&html), ["org.fossify.clock", "com.example.game"]);
+    assert_eq!(input_checked(&html, "calendar_allowed", "on"), Some(false));
+    let res = app
+        .request_form(
+            Method::POST,
+            &page,
+            Some(&cookie),
+            &[
+                ("n0_start", "21:00"),
+                ("n0_end", "07:00"),
+                ("calendar_allowed", "on"),
+            ],
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    let rules = app.policy(&emil_token).await["time_policy"]["rules"].clone();
+    let bedtime = rules.as_array().unwrap().last().unwrap().clone();
+    assert_eq!(bedtime["kind"], "bedtime");
+    assert_eq!(bedtime["calendar_allowed"], json!(true));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(section(&html, "exceptions").contains("data-value=\"apps\">Vibb calendar<"));
 }
