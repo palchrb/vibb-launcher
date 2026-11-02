@@ -20,6 +20,23 @@ class PlacedCallEvidenceTest {
         assertEquals(Step.PROMOTE_AND_STOP, evidence.idle(50 * 60_000L))
     }
 
+    /** E7b's M-C1: the check is due 20 s after the first off-hook, not after the placing, and is re-armed
+     * if it fires early - so a steady call is promoted during the call. */
+    @Test
+    fun `the evidence check is due from the first off-hook and again until it promotes`() {
+        assertEquals(null, evidence.checkDueInMs(0)) // not started: no timer
+        evidence.offhook(600) // the first off-hook, a little after the placing
+        assertEquals(PLACED_CONNECT_EVIDENCE_MS, evidence.checkDueInMs(600))
+        evidence.offhook(5_000) // a later off-hook report doesn't move the start
+        assertEquals(600 + PLACED_CONNECT_EVIDENCE_MS - 5_000, evidence.checkDueInMs(5_000))
+        // The old timer at placing + 20.5 s fired just short: nothing yet, due again in 100 ms.
+        assertEquals(Step.NONE, evidence.check(20_500))
+        assertEquals(100L, evidence.checkDueInMs(20_500))
+        assertEquals(Step.PROMOTE, evidence.check(20_600))
+        assertEquals(null, evidence.checkDueInMs(20_600))
+        assertEquals(0L, PlacedCallEvidence().apply { offhook(0) }.checkDueInMs(60_000)) // overdue: at once
+    }
+
     @Test
     fun `a call that ends while dialling keeps the provisional window`() {
         evidence.offhook(1_000)
@@ -51,6 +68,10 @@ class PlacedCallEvidenceTest {
         assertTrue("if (current !== watch) return" in watch)
         assertTrue("PlacedCallEvidence.Step.PROMOTE -> CallPrefs.promotePlaced(app, placedAtMs)" in watch)
         assertTrue("TelephonyManager.CALL_STATE_RINGING -> evidence.ringing(now)" in watch)
+        // The check is armed at off-hook and re-armed by itself, never by a fixed timer from the placing.
+        assertTrue("if (current === watch && state == TelephonyManager.CALL_STATE_OFFHOOK) armCheck()" in watch)
+        assertTrue("act(evidence.check(SystemClock.elapsedRealtime()))\n            if (current === watch) armCheck()" in watch)
+        assertTrue("PLACED_CONNECT_EVIDENCE_MS + 500" !in watch)
         assertTrue("act(evidence.finish(SystemClock.elapsedRealtime())) }, MAX_WATCH_MS)" in watch)
         assertTrue("telephony.unregisterTelephonyCallback(watch.callback)" in watch.substringAfter("fun stop()"))
         assertTrue("handler.removeCallbacksAndMessages(null)" in watch.substringAfter("fun stop()"))

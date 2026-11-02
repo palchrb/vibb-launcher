@@ -43,6 +43,12 @@ internal class PlacedCallEvidence {
         return check(nowMs)
     }
 
+    /** How long until [check] can promote: counted from the first off-hook (E7b's M-C1: a timer armed
+     * at the placing fired just short of it, and nothing checked again during a steady call); `null`
+     * once promoted or before the call started - no timer then. */
+    fun checkDueInMs(nowMs: Long): Long? =
+        if (promoted || !started) null else maxOf(0L, offhookSinceMs + PLACED_CONNECT_EVIDENCE_MS - nowMs)
+
     /** At the evidence timer, or any later report while off-hook. */
     fun check(nowMs: Long): Step =
         if (!promoted && started && nowMs - offhookSinceMs >= PLACED_CONNECT_EVIDENCE_MS) {
@@ -85,6 +91,13 @@ object PlacedCallWatch {
         val telephony = app.getSystemService(TelephonyManager::class.java) ?: return
         val evidence = PlacedCallEvidence()
         lateinit var watch: Watch
+        lateinit var checkAtDue: Runnable
+
+        /** Arms the evidence check for when it is due ([PlacedCallEvidence.checkDueInMs]); one at a time. */
+        fun armCheck() {
+            handler.removeCallbacks(checkAtDue)
+            evidence.checkDueInMs(SystemClock.elapsedRealtime())?.let { handler.postDelayed(checkAtDue, it) }
+        }
         fun act(step: PlacedCallEvidence.Step) {
             if (current !== watch) return
             when (step) {
@@ -108,7 +121,13 @@ object PlacedCallWatch {
                         else -> evidence.idle(now)
                     },
                 )
+                if (current === watch && state == TelephonyManager.CALL_STATE_OFFHOOK) armCheck()
             }
+        }
+        // Re-armed while not yet due (a timer firing early), none once promoted.
+        checkAtDue = Runnable {
+            act(evidence.check(SystemClock.elapsedRealtime()))
+            if (current === watch) armCheck()
         }
         watch = Watch(telephony, callback)
         current = watch
@@ -119,7 +138,6 @@ object PlacedCallWatch {
             Log.w(LOG_TAG, "Can't watch the placed emergency call (provisional window only): ${e.javaClass.simpleName}")
             return
         }
-        handler.postDelayed({ act(evidence.check(SystemClock.elapsedRealtime())) }, PLACED_CONNECT_EVIDENCE_MS + 500)
         handler.postDelayed({ if (!evidence.started) act(PlacedCallEvidence.Step.STOP) }, START_TIMEOUT_MS)
         handler.postDelayed({ act(evidence.finish(SystemClock.elapsedRealtime())) }, MAX_WATCH_MS)
     }
