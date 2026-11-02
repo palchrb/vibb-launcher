@@ -5,14 +5,21 @@
 //! the cap: the summary is the only place to cancel Lock again, Unlock for 2 h or Allow these
 //! apps. Each row carries the clock (`Zone::at`). The window is a filter; retention is
 //! `retention::prune`'s.
+//!
+//! The phone's lifts (`time_lifts`) are rows too since 2026-11-02 (Device › Time Rules' Recent went
+//! on 2026-11-01): every rule pause that is over and every extra screen time, at when it was
+//! granted, read-only. A pause still running isn't one - Quick actions has it with End now - so
+//! each lift shows once on the summary.
 
 use chrono::{DateTime, Utc};
 
 use crate::AppState;
-use crate::display_time::{Zone, parse_db_utc};
+use crate::display_time::{Zone, duration, parse_db_utc};
 use crate::handlers::locate::{CommandRow, cancel_flash, command_row};
 use crate::handlers::notifications::{InboxRow, ROW_COLUMNS, Row, inbox_row, row_from};
+use crate::i18n::{t, t_params};
 use crate::models::DeviceCommand;
+use crate::time_rules::TimeLiftRow;
 
 /// How far back Activity reads.
 const WINDOW_DAYS: i64 = 7;
@@ -23,6 +30,22 @@ const MAX_ROWS: usize = 10;
 pub(crate) enum ActivityRow {
     Command(CommandRow),
     Event(InboxRow),
+    Lift(LiftRow),
+}
+
+/// A lift in Activity, laid out as a command's row without Cancel: "Skole paused for 30 min",
+/// "14:00 · Mamma · Ended 14:30".
+pub(crate) struct LiftRow {
+    pub(crate) id: i64,
+    pub(crate) what: String,
+    /// When it was granted (`Zone::at`), the exact time for `title=`.
+    pub(crate) when: String,
+    pub(crate) exact: String,
+    /// Who granted it, only in a family with more than one account (as a command's).
+    pub(crate) by: Option<String>,
+    /// "Ended 14:30", "Ended early 14:20", "Added", and its tone class.
+    pub(crate) word: String,
+    pub(crate) tone: &'static str,
 }
 
 /// The summary's `#activity` group.
@@ -68,6 +91,18 @@ pub(crate) async fn rows(
     .bind(admin_id)
     .fetch_all(&state.db)
     .await?;
+    // Every lift but a rule pause the server still sends (Quick actions' End now rows): the same
+    // `datetime('now')` test as `lifts::today`, so a pause at its expiry is in one of the two.
+    let lifts: Vec<TimeLiftRow> = sqlx::query_as(
+        "SELECT * FROM time_lifts WHERE device_id = ?1 AND created_at >= ?2 \
+           AND NOT (target = 'rule' AND ended_early_at IS NULL AND expires_at > datetime('now')) \
+         ORDER BY created_at DESC, id DESC LIMIT ?3",
+    )
+    .bind(device_id)
+    .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
+    .bind(MAX_ROWS as i64)
+    .fetch_all(&state.db)
+    .await?;
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
     let names = crate::parents::Names::load(&state.db).await?;
@@ -89,6 +124,14 @@ pub(crate) async fn rows(
         row.summary = without_own_clock(&row.summary, &row.when);
         all.push((at, false, ActivityRow::Event(row)));
     }
+    for lift in &lifts {
+        let at = parse_db_utc(&lift.created_at);
+        all.push((
+            at,
+            false,
+            ActivityRow::Lift(lift_row(lift, &names, zone, now)),
+        ));
+    }
     // Newest first; a time that doesn't read goes last. Stable, so each table keeps its order.
     all.sort_by_key(|(at, _, _)| std::cmp::Reverse(*at));
     let mut capped = 0;
@@ -102,6 +145,59 @@ pub(crate) async fn rows(
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
         flash: cancel_flash(cancel),
     })
+}
+
+/// A lift's row in the reader's language: what it was, when and by whom it was granted, how it went.
+fn lift_row(
+    lift: &TimeLiftRow,
+    names: &crate::parents::Names,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> LiftRow {
+    let lang = zone.lang();
+    let length = duration(lang, lift.minutes);
+    let what = match (lift.target.as_str(), lift.rule_name.as_deref()) {
+        ("rule", Some(rule)) => t_params(
+            lang,
+            "device.summary.lift.rule",
+            &[("rule", rule), ("duration", &length)],
+        ),
+        ("rule", None) => t_params(
+            lang,
+            "device.summary.lift.all_rules",
+            &[("duration", &length)],
+        ),
+        _ => t_params(lang, "device.summary.lift.extra", &[("duration", &length)]),
+    };
+    let (word, tone) = if lift.target == "rule" {
+        let early = lift.ended_early_at.as_deref().and_then(parse_db_utc);
+        let word = match (early, parse_db_utc(&lift.expires_at)) {
+            (Some(at), _) => t_params(
+                lang,
+                "device.summary.lift.ended_early",
+                &[("at", &zone.at(at, now))],
+            ),
+            (None, Some(end)) => t_params(
+                lang,
+                "device.summary.lift.ended",
+                &[("at", &zone.at(end, now))],
+            ),
+            (None, None) => t(lang, "device.summary.lift.over").to_string(),
+        };
+        (word, "grey")
+    } else {
+        (t(lang, "device.summary.lift.added").to_string(), "green")
+    };
+    let made = parse_db_utc(&lift.created_at);
+    LiftRow {
+        id: lift.id,
+        what,
+        when: made.map(|t| zone.at(t, now)).unwrap_or_default(),
+        exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
+        by: names.granter(lift.created_by.as_deref()),
+        word,
+        tone,
+    }
 }
 
 /// The clock at the end of a row's `when` ("14:09", "yesterday 14:09", "15 Oct 14:02", with

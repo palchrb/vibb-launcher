@@ -386,6 +386,14 @@ impl Names {
             .flatten()
     }
 
+    /// A lift's "· Mamma" in the summary's Activity: who granted it by [Names::of_username], only
+    /// in a family with more than one account, as [Names::requester].
+    pub fn granter(&self, created_by: Option<&str>) -> Option<String> {
+        self.several
+            .then(|| created_by.map(|by| self.of_username(by).to_string()))
+            .flatten()
+    }
+
     /// A username as a "by" line shows it: its display name, else itself (a lift's `created_by`).
     pub fn of_username<'a>(&'a self, username: &'a str) -> &'a str {
         self.display.get(username).map_or(username, String::as_str)
@@ -397,5 +405,22 @@ impl Names {
             Some(display) => format!("{display} ({username})"),
             None => username.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Names;
+
+    #[test]
+    fn a_lift_names_its_granter_only_with_several_accounts() {
+        let mut names = Names::default();
+        names.display.insert("mamma".into(), "Mamma".into());
+        // One account: no name, as a command's requester.
+        assert_eq!(names.granter(Some("mamma")), None);
+        names.several = true;
+        assert_eq!(names.granter(Some("mamma")).as_deref(), Some("Mamma"));
+        assert_eq!(names.granter(Some("pappa")).as_deref(), Some("pappa"));
+        assert_eq!(names.granter(None), None);
     }
 }
