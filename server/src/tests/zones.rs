@@ -775,7 +775,7 @@ async fn the_locate_page_says_what_the_location_setting_means_for_zones() {
         .await
         .unwrap();
     let html = page().await;
-    assert!(html.contains("Zones can't see where the phone is."));
+    assert!(html.contains("Zones can&#39;t see where the phone is."));
     assert!(!html.contains("data-note=\"location-unlocked\""));
 }
 

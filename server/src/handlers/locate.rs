@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{
     AdminUser, CancelledBy, CommandStatus, Device, DeviceCommand, DeviceLocation, Unconfirmed,
     command_label,
@@ -35,13 +35,13 @@ pub(crate) const LOCATE_KINDS: &[&str] = &["locate", "ring", "stop_ring", "lock"
 /// How long a request that went wrong stays in Requests (design 48 §1.4).
 const REQUESTS_HOURS: i64 = 24;
 
-/// The trail's spans in hours (0 = everything kept) and their words, the first the default
+/// The trail's spans in hours (0 = everything kept) and their words' keys, the first the default
 /// (design 44 §1.5). The browser remembers the pick (`static/locate.js`).
 pub(crate) const SPANS: [(i64, &str); 4] = [
-    (12, "12 hours"),
-    (24, "24 hours"),
-    (168, "7 days"),
-    (0, "All kept"),
+    (12, "locate.span.12"),
+    (24, "locate.span.24"),
+    (168, "locate.span.168"),
+    (0, "locate.span.0"),
 ];
 
 /// How many fixes the Locations page lists at a time.
@@ -132,7 +132,7 @@ struct ZonesView {
     needs_regularly: bool,
     /// "Keep location on" is off, with zones: the kid can turn Location off.
     location_unlocked: bool,
-    /// The footer under the group.
+    /// The footer under the group (in the reader's language).
     footer: &'static str,
     /// Regularly: "within about two intervals (here 60 min)" - not for a phone that watches the
     /// zones itself (design 64 step 2).
@@ -177,7 +177,7 @@ impl Presence {
 
 /// The zones the fix itself is surely inside (`zones::side`), "At Home · School": the fix row's
 /// and the popup's words are that fix's own, never the zones' confirmed sides (code QA Q-1).
-fn fix_badge(zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<String> {
+fn fix_badge(lang: Lang, zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<String> {
     let inside: Vec<&str> = zones
         .iter()
         .filter(|z| {
@@ -190,17 +190,25 @@ fn fix_badge(zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<Strin
         })
         .map(|z| z.name.as_str())
         .collect();
-    (!inside.is_empty()).then(|| format!("At {}", inside.join(" · ")))
+    let key = match inside.len() {
+        0 => return None,
+        1 => "locate.fix.at_zone",
+        _ => "locate.fix.at_zones",
+    };
+    Some(t_params(lang, key, &[("zones", &inside.join(" · "))]))
 }
 
 /// What a zone's row says it notifies about.
-fn notify_words(arrive: bool, leave: bool) -> &'static str {
-    match (arrive, leave) {
-        (true, true) => "arrive and leave",
-        (true, false) => "arrive",
-        (false, true) => "leave",
-        (false, false) => "no notifications",
-    }
+fn notify_words(lang: Lang, arrive: bool, leave: bool) -> &'static str {
+    t(
+        lang,
+        match (arrive, leave) {
+            (true, true) => "locate.zones.notify.both",
+            (true, false) => "locate.zones.notify.arrive",
+            (false, true) => "locate.zones.notify.leave",
+            (false, false) => "locate.zones.notify.none",
+        },
+    )
 }
 
 /// The zones' part of the page for `zones` with the location setting (`mode`, `interval` - the
@@ -221,11 +229,12 @@ fn zones_view(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> ZonesView {
+    let lang = zone.lang();
     // "Here now" counts from the newest fix's last still re-send too (Q-3): `seen`.
     let fresh = crate::zones::fresh(seen, mode, interval, now);
     let row_flash = match flash {
-        Some("added") => Some("Added."),
-        Some("saved") => Some("Saved."),
+        Some("added") => Some(t(lang, "locate.zones.added")),
+        Some("saved") => Some(t(lang, "common.saved")),
         _ => None,
     };
     let rows = zones
@@ -233,16 +242,24 @@ fn zones_view(
         .map(|z| ZoneRow {
             id: z.id,
             name: z.name.clone(),
-            sub: format!(
-                "{} m · {}",
-                z.radius_m,
-                notify_words(z.notify_arrive, z.notify_leave)
+            sub: t_params(
+                lang,
+                "locate.zones.sub",
+                &[
+                    ("radius", &z.radius_m.to_string()),
+                    (
+                        "notify",
+                        notify_words(lang, z.notify_arrive, z.notify_leave),
+                    ),
+                ],
             ),
             presence: match newest {
                 _ if z.here_now(fresh) => Presence::Here,
-                Some(at) if z.here_now(true) => {
-                    Presence::LastSeen(format!("Last seen at {} {}", z.name, zone.at(at, now)))
-                }
+                Some(at) if z.here_now(true) => Presence::LastSeen(t_params(
+                    lang,
+                    "locate.zones.last_seen",
+                    &[("zone", &z.name), ("at", &zone.at(at, now))],
+                )),
                 _ => Presence::None,
             },
             flash: row_flash.filter(|_| flash_zone == Some(z.id)),
@@ -252,63 +269,56 @@ fn zones_view(
     // Design 64 step 2 (§3.6's last rows): a phone whose watch holds fences sends a location as
     // soon as it notices a crossing, so the "two intervals" timing is an older launcher's.
     let watched = mode == "interval" && crate::zones::watching(watch);
-    let footer = match mode {
-        "off" => "Location is off for this phone, so the zones see nothing.",
-        "on_request" => "The zones are judged on the locations Update Location brings.",
-        _ if watched => {
-            "The phone watches the zones itself and sends a location as soon as it notices a \
-             crossing. Arrivals and departures show after two locations on the same side."
-        }
-        _ => "Arrivals and departures show after two locations on the same side.",
-    };
+    let footer = t(
+        lang,
+        match mode {
+            "off" => "locate.zones.footer_off",
+            "on_request" => "locate.zones.footer_on_request",
+            _ if watched => "locate.zones.footer_watched",
+            _ => "locate.zones.footer_interval",
+        },
+    );
     ZonesView {
         full: rows.len() as i64 >= crate::zones::MAX_ZONES,
-        flash: (flash == Some("deleted")).then_some("Zone deleted."),
+        flash: (flash == Some("deleted")).then(|| t(lang, "locate.zones.deleted")),
         needs_regularly: some && mode == "on_request",
         location_unlocked: some && !locked && mode != "off",
         footer,
-        confirm_within: (mode == "interval" && !watched).then(|| interval_label(interval * 2)),
+        confirm_within: (mode == "interval" && !watched)
+            .then(|| interval_label(lang, interval * 2)),
         watch_line: watch
             .filter(|_| some && mode == "interval")
-            .map(|w| watch_line(w, rows.len(), interval)),
+            .map(|w| watch_line(lang, w, rows.len(), interval)),
         rows,
     }
 }
 
 /// What the phone's zone watch says (design 64 §4.1), under the zones while Regularly: the
 /// fences it holds, or why it can't watch. Counts and switches only, never a place.
-fn watch_line(watch: &crate::zones::ZoneWatch, zones: usize, interval: i64) -> String {
+fn watch_line(lang: Lang, watch: &crate::zones::ZoneWatch, zones: usize, interval: i64) -> String {
     if !watch.location_on {
-        return "Location is off on the phone, so it can't watch the zones.".to_string();
+        return t(lang, "locate.watch.location_off").to_string();
     }
     if !watch.background_location {
-        return "The phone can't use its location in the background yet, so it can't watch the \
-                zones."
-            .to_string();
+        return t(lang, "locate.watch.no_background").to_string();
     }
     if watch.fences == 0 {
-        return "The phone hasn't set up its zones yet; they are judged at each location it \
-                reports."
-            .to_string();
+        return t(lang, "locate.watch.not_set_up").to_string();
     }
-    let watching = match watch.fences {
-        1 => "Watching 1 zone on the phone.".to_string(),
-        n => format!("Watching {n} zones on the phone."),
-    };
-    let pending = if (watch.fences as usize) < zones {
-        " The newest zone is set up at its next sync."
-    } else {
-        ""
-    };
-    let motion = if watch.motion_sensor {
-        String::new()
-    } else {
-        format!(
-            " It has no motion sensor, so it takes a location every {}.",
-            interval_label(interval)
-        )
-    };
-    format!("{watching}{pending}{motion}")
+    let mut line = t_count(lang, "locate.watch.watching", watch.fences, &[]);
+    if (watch.fences as usize) < zones {
+        line.push(' ');
+        line.push_str(t(lang, "locate.watch.pending"));
+    }
+    if !watch.motion_sensor {
+        line.push(' ');
+        line.push_str(&t_params(
+            lang,
+            "locate.watch.no_motion",
+            &[("interval", &interval_label(lang, interval))],
+        ));
+    }
+    line
 }
 
 /// What `static/locate.js` needs from the page, as `data-` attributes on the map box: the phone,
@@ -427,6 +437,7 @@ enum AnswerState {
 /// The newest Update Location `command` (its `status` now) as the row under the fix, given the
 /// newest fix's own time `newest_fix` (pure, `tests::the_answer_row_comes_and_goes`).
 fn answer_state(
+    lang: Lang,
     command: &DeviceCommand,
     status: &CommandStatus,
     newest_fix: Option<DateTime<Utc>>,
@@ -439,9 +450,9 @@ fn answer_state(
         command
             .result
             .as_deref()
-            .and_then(answer)
+            .and_then(|raw| answer(lang, raw))
             .unwrap_or_else(|| Answer {
-                text: fallback.to_string(),
+                text: t(lang, fallback).to_string(),
                 raw: None,
             })
     };
@@ -469,16 +480,16 @@ fn answer_state(
                 && age < chrono::Duration::minutes(ANSWER_SHOWN_MINUTES)
                 && age > -chrono::Duration::minutes(1))
             .then(|| AnswerState::Found {
-                answer: said("Found"),
+                answer: said("locate.answer.found"),
                 at,
             })
         }
         CommandStatus::Done { .. } | CommandStatus::Failed { .. } => {
-            failed(said("The phone couldn't find its location"), answered)
+            failed(said("locate.answer.no_fix"), answered)
         }
         CommandStatus::Expired => failed(
             Answer {
-                text: "No position - the phone is offline".to_string(),
+                text: t(lang, "locate.answer.offline").to_string(),
                 raw: None,
             },
             asked,
@@ -489,7 +500,7 @@ fn answer_state(
             ..
         } => failed(
             Answer {
-                text: "No position - the phone didn't answer".to_string(),
+                text: t(lang, "locate.answer.no_answer").to_string(),
                 raw: None,
             },
             asked,
@@ -510,7 +521,7 @@ fn answer_view(
         AnswerState::Asking => (
             "asking",
             Answer {
-                text: "Asking the phone…".to_string(),
+                text: t(zone.lang(), "locate.answer.asking").to_string(),
                 raw: None,
             },
             None,
@@ -569,15 +580,15 @@ impl Fix {
     pub(crate) fn age(&self, zone: &Zone, now: DateTime<Utc>) -> String {
         match self.at {
             Some(at) => zone.relative(at, now),
-            None => "Time unknown".to_string(),
+            None => t(zone.lang(), "locate.time_unknown").to_string(),
         }
     }
 
     /// "Within 40 m", or "Accuracy unknown".
-    pub(crate) fn accuracy(&self) -> String {
+    pub(crate) fn accuracy(&self, lang: Lang) -> String {
         match self.accuracy_m {
-            Some(m) => format!("Within {m} m"),
-            None => "Accuracy unknown".to_string(),
+            Some(m) => t_params(lang, "locate.fix.within", &[("m", &m.to_string())]),
+            None => t(lang, "locate.fix.accuracy_unknown").to_string(),
         }
     }
 }
@@ -592,39 +603,41 @@ struct Answer {
 }
 
 /// The launcher's answers (`MdmSyncWorker.dispatchPendingCommand`, `locateResultMessage`,
-/// `wipeResultMessage`, `endWindowsResult`) as §4 words. `None` for one it doesn't know.
-fn reword(raw: &str) -> Option<String> {
+/// `wipeResultMessage`, `endWindowsResult`) as §4 words in the reader's language. `None` for one it
+/// doesn't know.
+fn reword(lang: Lang, raw: &str) -> Option<String> {
     let known = match raw {
-        "ringing" => "Ringing",
-        "stopped" => "Stopped ringing",
-        "locked (handy lock)" => "Locked with the Child PIN",
-        "locked (Android)" => "Screen off (no Child PIN set)",
+        "ringing" => "locate.answer.ringing",
+        "stopped" => "locate.answer.stopped",
+        "locked (handy lock)" => "locate.answer.locked_pin",
+        "locked (Android)" => "locate.answer.screen_off",
         // Design 59 §2.3: Android's lock; a fingerprint opens it again only after the PIN.
-        "locked (android pin)" => "Locked with the Child PIN (fingerprint off until it's typed)",
-        "failed to lock" => "The phone couldn't lock",
-        "paused for 2 hours" => "Unlocked for 2 hours",
-        "nothing was open" => "Nothing was unlocked",
-        "location is off for this device" => "Location is off on the phone",
-        "no location fix" => "The phone couldn't find its location",
-        "unknown command - update the launcher" => "Vibb One on the phone is too old for this",
+        "locked (android pin)" => "locate.answer.locked_android",
+        "failed to lock" => "locate.answer.lock_failed",
+        "paused for 2 hours" => "locate.answer.unlocked_2h",
+        "nothing was open" => "locate.answer.nothing_open",
+        "location is off for this device" => "locate.answer.location_off",
+        "no location fix" => "locate.answer.no_fix",
+        "unknown command - update the launcher" => "locate.answer.too_old",
         // Install Now (design 37 §2.4).
-        "not offered" => "No update for this phone",
-        "refused: wrong_signer" => "Refused: signed with another key",
-        "refused: not_ours" => "Refused: not Vibb One",
-        "refused: downgrade" => "Refused: older than the phone's version",
-        "refused: unparseable" => "Refused: not a readable app",
-        "refused: release" => "Refused: this release can't be installed",
-        "download failed" => "The download kept failing",
-        "download corrupt" => "The download didn't match the release",
-        "no space" => "Not enough space on the phone",
-        "superseded" => "Ended: a newer Install Now took over",
-        "call never ended" => "Not installed: a call stayed on",
+        "not offered" => "locate.answer.not_offered",
+        "refused: wrong_signer" => "locate.answer.wrong_signer",
+        "refused: not_ours" => "locate.answer.not_ours",
+        "refused: downgrade" => "locate.answer.downgrade",
+        "refused: unparseable" => "locate.answer.unparseable",
+        "refused: release" => "locate.answer.release",
+        "download failed" => "locate.answer.download_failed",
+        "download corrupt" => "locate.answer.download_corrupt",
+        "no space" => "locate.answer.no_space",
+        "superseded" => "locate.answer.superseded",
+        "call never ended" => "locate.answer.call",
         _ => "",
     };
     if !known.is_empty() {
-        return Some(known.to_string());
+        return Some(t(lang, known).to_string());
     }
-    // Design 59: `set_kid_pin`'s answers, in the summary's Activity (the Lock page words them too).
+    // Design 59: `set_kid_pin`'s answers, in the summary's Activity (the Lock page words them too;
+    // English until slice 4 moves `kid_lock`'s words).
     if let Some(answer) = crate::kid_lock::PinAnswer::parse(raw) {
         return Some(answer.words().to_string());
     }
@@ -633,22 +646,27 @@ fn reword(raw: &str) -> Option<String> {
         .and_then(|rest| rest.strip_suffix(" apps"))
         .and_then(|n| n.parse::<u32>().ok())
     {
-        return Some(match count {
-            1 => "1 app allowed".to_string(),
-            n => format!("{n} apps allowed"),
-        });
+        return Some(t_count(lang, "locate.answer.allowed", count.into(), &[]));
     }
     if raw.starts_with("ended: ") {
-        return Some("Locked again".to_string());
+        return Some(t(lang, "locate.answer.locked_again").to_string());
     }
     if let Some(version) = raw.strip_prefix("installed: ") {
-        return Some(format!("Installed {version}"));
+        return Some(t_params(
+            lang,
+            "locate.answer.installed",
+            &[("version", version)],
+        ));
     }
     if let Some(version) = raw.strip_prefix("already running: ") {
-        return Some(format!("Already on {version}"));
+        return Some(t_params(
+            lang,
+            "locate.answer.already",
+            &[("version", version)],
+        ));
     }
     if raw.starts_with("install failed: ") {
-        return Some("Android refused the install".to_string());
+        return Some(t(lang, "locate.answer.install_failed").to_string());
     }
     // "fix ±12 m, 3 s old" / "fix, 3 s old".
     if let Some(rest) = raw.strip_prefix("fix")
@@ -659,27 +677,27 @@ fn reword(raw: &str) -> Option<String> {
             .and_then(|r| r.split_once(" m,"))
             .and_then(|(m, _)| m.parse::<i64>().ok());
         return Some(match metres {
-            Some(m) => format!("Found within {m} m"),
-            None => "Found".to_string(),
+            Some(m) => t_params(lang, "locate.answer.found_within", &[("m", &m.to_string())]),
+            None => t(lang, "locate.answer.found").to_string(),
         });
     }
     if raw.starts_with("wiping") {
-        return Some("Erasing".to_string());
+        return Some(t(lang, "locate.status.erasing").to_string());
     }
     if raw.starts_with("wipe failed") {
-        return Some("Not erased: the phone keeps its data".to_string());
+        return Some(t(lang, "locate.answer.not_erased").to_string());
     }
     None
 }
 
-fn answer(raw: &str) -> Option<Answer> {
+fn answer(lang: Lang, raw: &str) -> Option<Answer> {
     let raw = raw.trim();
     // "ok"/"failed" are this server's own words for an answer without a message
     // (`device_api::command_result`): the row's word says it already.
     if raw.is_empty() || raw == "ok" || raw == "failed" {
         return None;
     }
-    Some(match reword(raw) {
+    Some(match reword(lang, raw) {
         Some(text) => Answer {
             text,
             raw: Some(raw.to_string()),
@@ -691,102 +709,139 @@ fn answer(raw: &str) -> Option<Answer> {
     })
 }
 
-/// " (10:59)" after a past time, or nothing when it doesn't read.
-fn bracket(at: Option<DateTime<Utc>>, zone: &Zone, now: DateTime<Utc>) -> String {
-    at.map(|at| format!(" ({})", zone.when(at, now)))
-        .unwrap_or_default()
+/// A line with the time it happened ("The phone got it (10:59)."), or the one without when the
+/// time doesn't read.
+fn line_at(
+    at: Option<DateTime<Utc>>,
+    (with, without): (&str, &str),
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> String {
+    let lang = zone.lang();
+    match at {
+        Some(at) => t_params(lang, with, &[("at", &zone.when(at, now))]),
+        None => t(lang, without).to_string(),
+    }
 }
 
-/// A status's word, its colour and the line under the row (times local, §3.10).
+/// A status's word, its colour and the line under the row (times local, §3.10), in the zone's
+/// language.
 fn status_words(
     status: &CommandStatus,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> (&'static str, &'static str, Option<String>) {
-    match *status {
-        CommandStatus::Done { .. } => ("Done", "green", None),
-        CommandStatus::Failed { .. } => ("Failed", "red", None),
+    let lang = zone.lang();
+    let line = |key: &str| Some(t(lang, key).to_string());
+    let (word, tone, line) = match *status {
+        CommandStatus::Done { .. } => ("locate.status.done", "green", None),
+        CommandStatus::Failed { .. } => ("locate.status.failed", "red", None),
         CommandStatus::Expired => (
-            "Expired",
+            "locate.status.expired",
             "grey",
-            Some("Never sent: the phone wasn't back within an hour.".to_string()),
+            line("locate.status.line.expired"),
         ),
         CommandStatus::Cancelled { by, .. } => match by {
-            CancelledBy::Parent => ("Cancelled", "grey", Some("Never sent.".to_string())),
-            CancelledBy::Restart => (
-                "Cancelled",
+            CancelledBy::Parent => (
+                "locate.status.cancelled",
                 "grey",
-                Some("Never sent: the server restarted first.".to_string()),
+                line("locate.status.line.cancelled"),
+            ),
+            CancelledBy::Restart => (
+                "locate.status.cancelled",
+                "grey",
+                line("locate.status.line.restart"),
             ),
             CancelledBy::Enrolled => (
-                "Cancelled",
+                "locate.status.cancelled",
                 "grey",
-                Some("Never sent: the phone was set up again.".to_string()),
+                line("locate.status.line.enrolled"),
             ),
             CancelledBy::Replaced => (
-                "Replaced",
+                "locate.status.replaced",
                 "grey",
-                Some("Never sent: a newer one took its place.".to_string()),
+                line("locate.status.line.replaced"),
             ),
         },
         CommandStatus::Erasing { at } => (
-            "Erasing",
+            "locate.status.erasing",
             "orange",
-            Some(format!(
-                "The phone got it{}. An erased phone stops reporting.",
-                bracket(at, zone, now)
+            Some(line_at(
+                at,
+                (
+                    "locate.status.line.erasing_at",
+                    "locate.status.line.erasing",
+                ),
+                zone,
+                now,
             )),
         ),
         CommandStatus::Received { at, overdue: true } => (
-            "No answer",
+            "locate.status.no_answer",
             "red",
-            Some(format!(
-                "The phone got it{} but never said it finished.",
-                bracket(at, zone, now)
+            Some(line_at(
+                at,
+                (
+                    "locate.status.line.overdue_at",
+                    "locate.status.line.overdue",
+                ),
+                zone,
+                now,
             )),
         ),
         CommandStatus::Received { at, overdue: false } => (
-            "Received",
+            "locate.status.received",
             "grey",
-            Some(format!("The phone got it{}.", bracket(at, zone, now))),
+            Some(line_at(
+                at,
+                (
+                    "locate.status.line.received_at",
+                    "locate.status.line.received",
+                ),
+                zone,
+                now,
+            )),
         ),
         CommandStatus::Waiting {
             expires: Some(expires),
         } => (
-            "Waiting",
+            "locate.status.waiting",
             "orange",
-            Some(format!(
-                "Expires {} if the phone isn't back.",
-                zone.until(expires, now)
+            Some(t_params(
+                lang,
+                "locate.status.line.expires",
+                &[("at", &zone.until(expires, now))],
             )),
         ),
         CommandStatus::Waiting { expires: None } => (
-            "Waiting",
+            "locate.status.waiting",
             "orange",
-            Some("Goes out when the phone is back.".to_string()),
+            line("locate.status.line.when_back"),
         ),
         CommandStatus::Sent { unconfirmed, .. } => match unconfirmed {
-            Unconfirmed::NotYet => ("Sent", "grey", Some("Not confirmed yet.".to_string())),
+            Unconfirmed::NotYet => (
+                "locate.status.sent",
+                "grey",
+                line("locate.status.line.not_yet"),
+            ),
             Unconfirmed::OfferedAgain => (
-                "Sent",
+                "locate.status.sent",
                 "orange",
-                Some("Not confirmed; sent again when the phone is back.".to_string()),
+                line("locate.status.line.offered_again"),
             ),
             Unconfirmed::Lost => (
-                "Not confirmed",
+                "locate.status.not_confirmed",
                 "red",
-                Some("It may not have reached the phone. Send it again.".to_string()),
+                line("locate.status.line.lost"),
             ),
             Unconfirmed::CantConfirm => (
-                "Sent",
+                "locate.status.sent",
                 "grey",
-                Some(
-                    "This phone's Vibb One can't confirm an erase. An erased phone stops reporting."
-                        .to_string(),
-                ),
+                line("locate.status.line.cant_confirm"),
             ),
         },
-    }
+    };
+    (t(lang, word), tone, line)
 }
 
 pub(crate) fn command_row(
@@ -796,6 +851,7 @@ pub(crate) fn command_row(
     now: DateTime<Utc>,
     receipts: bool,
 ) -> CommandRow {
+    let lang = zone.lang();
     let naive_now = now.naive_utc();
     let status = command.status(naive_now, receipts);
     let (word, tone, line) = status_words(&status, zone, now);
@@ -804,7 +860,7 @@ pub(crate) fn command_row(
     // going through reads as one it confirmed (one wording for both).
     let answered = match status {
         CommandStatus::Erasing { .. } => None,
-        _ => command.result.as_deref().and_then(answer),
+        _ => command.result.as_deref().and_then(|raw| answer(lang, raw)),
     };
     let (detail, detail_title) = match answered {
         Some(Answer { text, raw }) => (Some(text), raw),
@@ -813,8 +869,11 @@ pub(crate) fn command_row(
     let asked = parse_db_utc(&command.requested_at);
     CommandRow {
         kind: command.command.clone(),
-        label: command_label(&command.command),
-        asked: asked.map_or_else(|| "Time unknown".to_string(), |t| zone.at(t, now)),
+        label: t(lang, command_label(&command.command)),
+        asked: asked.map_or_else(
+            || t(lang, "locate.time_unknown").to_string(),
+            |at| zone.at(at, now),
+        ),
         asked_exact: asked.map(|t| zone.exact(t)).unwrap_or_default(),
         word,
         tone,
@@ -841,15 +900,23 @@ async fn latest_locate(
 }
 
 /// `{"id": .., "result": ".." | null, "text": ".." | null}` of the newest `locate` command (`{}`
-/// if none) - the page's wait shows the phone's answer (`text`, reworded) as soon as it arrives.
-pub async fn locate_result_json(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+/// if none) - the page's wait shows the phone's answer (`text`, reworded in the reader's language:
+/// `static/locate.js` asks with the page's `?lang=`) as soon as it arrives.
+pub async fn locate_result_json(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
     match latest_locate(&state, id).await {
         Ok(Some((cmd, result, _))) => {
-            let text = result.as_deref().and_then(answer).map(|a| a.text);
+            let text = result
+                .as_deref()
+                .and_then(|raw| answer(lang, raw))
+                .map(|a| a.text);
             Json(serde_json::json!({ "id": cmd, "result": result, "text": text })).into_response()
         }
         Ok(None) => Json(serde_json::json!({})).into_response(),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -905,7 +972,7 @@ pub(crate) async fn requests(
     Ok(Recent {
         device_id,
         rows,
-        flash: cancel_flash(cancel),
+        flash: cancel_flash(zone.lang(), cancel),
     })
 }
 
@@ -954,48 +1021,49 @@ fn span_start(hours: i64, now: DateTime<Utc>) -> Option<String> {
 /// The Locations row's value (design 44 §1.4, §1.6): "14 in the last 12 hours", "3 kept" (All
 /// kept), "None yet"; with nothing in the span but an older fix, "0 in the last 12 hours · newest
 /// 3 days ago". `static/locate.js` words it the same way when the span changes.
-fn locations_value(count: i64, hours: i64, newest_age: Option<&str>) -> String {
-    let words = SPANS
-        .iter()
-        .find(|(h, _)| *h == hours)
-        .map_or("", |(_, words)| words);
+fn locations_value(lang: Lang, count: i64, hours: i64, newest_age: Option<&str>) -> String {
+    let n = count.to_string();
+    let in_span = |n: &str| {
+        let key = match hours {
+            24 => "locate.locations.in_24",
+            168 => "locate.locations.in_168",
+            _ => "locate.locations.in_12",
+        };
+        t_params(lang, key, &[("count", n)])
+    };
     match (count, newest_age) {
-        (0, None) => "None yet".to_string(),
-        (n, _) if hours == 0 => format!("{n} kept"),
-        (0, Some(age)) => format!("0 in the last {words} · newest {age}"),
-        (n, _) => format!("{n} in the last {words}"),
+        (0, None) => t(lang, "locate.locations.none").to_string(),
+        _ if hours == 0 => t_params(lang, "locate.locations.kept", &[("count", &n)]),
+        (0, Some(age)) => format!(
+            "{} · {}",
+            in_span("0"),
+            t_params(lang, "locate.locations.newest", &[("age", age)])
+        ),
+        _ => in_span(&n),
     }
 }
 
 /// The line after a Cancel (`?cancel=`), in Requests or the summary's Activity, and whether it
 /// was refused.
-pub(crate) fn cancel_flash(code: Option<&str>) -> Option<(&'static str, bool)> {
+pub(crate) fn cancel_flash(lang: Lang, code: Option<&str>) -> Option<(&'static str, bool)> {
     match code? {
-        "done" => Some(("Cancelled. The phone will never get it.", false)),
-        "too_late" => Some((
-            "Too late to cancel: the phone already has it, or it expired.",
-            true,
-        )),
+        "done" => Some((t(lang, "locate.cancel.done"), false)),
+        "too_late" => Some((t(lang, "locate.cancel.too_late"), true)),
         _ => None,
     }
 }
 
 /// A read failed: the page isn't shown with made-up values (qa-31-s4-code L4).
-fn db_error(device_id: i64, err: sqlx::Error) -> Response {
+fn db_error(device_id: i64, err: sqlx::Error, lang: Lang) -> Response {
     tracing::error!(device_id, %err, "can't read the Locate page's data");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read this phone - check the server log.",
-    )
-        .into_response()
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
 }
 
 /// "10 min", "1 hour", "4 hours".
-fn interval_label(minutes: i64) -> String {
+fn interval_label(lang: Lang, minutes: i64) -> String {
     match minutes {
-        m if m < 60 => format!("{m} min"),
-        60 => "1 hour".to_string(),
-        m => format!("{} hours", m / 60),
+        m if m < 60 => t_params(lang, "common.n_min", &[("n", &m.to_string())]),
+        m => t_count(lang, "locate.hours", m / 60, &[]),
     }
 }
 
@@ -1129,7 +1197,7 @@ async fn render_locate_page(
     Ok(Html(
         LocateTemplate {
             lang,
-            title: "Locate".to_string(),
+            title: t(lang, "nav.locate").to_string(),
             phones,
             selected,
             bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
@@ -1155,6 +1223,7 @@ async fn locate_view(
         zone_id: flash_zone,
     } = asked;
     let id = device.id;
+    let lang = zone.lang();
     let recent = requests(state, id, cancel, zone, now).await?;
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
@@ -1195,7 +1264,7 @@ async fn locate_view(
 
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
-    let badge = newest.as_ref().and_then(|l| fix_badge(&zone_list, l));
+    let badge = newest.as_ref().and_then(|l| fix_badge(lang, &zone_list, l));
     let shutdown_at = newest
         .as_ref()
         .and_then(|l| l.shutdown_at.as_deref())
@@ -1235,22 +1304,19 @@ async fn locate_view(
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
         let accuracy = match &badge {
-            Some(badge) => format!("{} · {badge}", fix.accuracy()),
-            None => fix.accuracy(),
+            Some(badge) => format!("{} · {badge}", fix.accuracy(lang)),
+            None => fix.accuracy(lang),
         };
         FixView {
             age: fix.age(zone, now),
             accuracy,
-            exact: fix_title(fix.at.map(|t| zone.exact(t)).unwrap_or_default(), l),
+            exact: fix_title(lang, fix.at.map(|at| zone.exact(at)).unwrap_or_default(), l),
             before_off: fix_before_off,
             aged: fix
                 .at
                 .map(|at| (now - at).num_days())
                 .filter(|days| *days >= location_retention.max(1))
-                .map(|days| match days {
-                    1 => "Last seen 1 day ago".to_string(),
-                    days => format!("Last seen {days} days ago"),
-                }),
+                .map(|days| t_count(lang, "locate.fix.aged", days, &[])),
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -1258,6 +1324,7 @@ async fn locate_view(
     }
     let count = count_in_span(state, id, span, now).await?;
     let locations_value = locations_value(
+        lang,
         count,
         span,
         newest.is_some().then_some(map.newest_age.as_str()),
@@ -1277,7 +1344,7 @@ async fn locate_view(
                 crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
             let status = command.status(now.naive_utc(), receipts);
             let newest_fix = newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at));
-            answer_state(&command, &status, newest_fix, now)
+            answer_state(lang, &command, &status, newest_fix, now)
                 .and_then(|state| answer_view(state, waiting_for_fix, zone, now))
         }
         None => None,
@@ -1306,22 +1373,22 @@ async fn locate_view(
         now,
     );
     let interval_note = (served_interval != location_interval).then(|| {
-        format!(
-            "{} while the phone has zones",
-            interval_label(served_interval)
+        t_params(
+            lang,
+            "locate.settings.interval_note",
+            &[("interval", &interval_label(lang, served_interval))],
         )
     });
     // Q-9: with when the count last rose.
     let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
-    let mock_ignored = watch.filter(|w| w.mock_ignored > 0).map(|w| {
-        let count = match w.mock_ignored {
-            1 => "1 made-up location ignored".to_string(),
-            n => format!("{n} made-up locations ignored"),
-        };
-        match mock_at {
-            Some(at) => format!("{count}, the last {}", zone.at(at, now)),
-            None => count,
-        }
+    let mock_ignored = watch.filter(|w| w.mock_ignored > 0).map(|w| match mock_at {
+        Some(at) => t_count(
+            lang,
+            "locate.mock.ignored_last",
+            w.mock_ignored,
+            &[("at", &zone.at(at, now))],
+        ),
+        None => t_count(lang, "locate.mock.ignored", w.mock_ignored, &[]),
     });
     Ok(Locate {
         device,
@@ -1339,24 +1406,17 @@ async fn locate_view(
         location_interval,
         location_retention,
         modes: [
-            ("off", "Off"),
-            ("on_request", "Only when asked"),
-            ("interval", "Regularly"),
+            ("off", t(lang, "common.off")),
+            ("on_request", t(lang, "locate.settings.on_request")),
+            ("interval", t(lang, "locate.settings.interval")),
         ],
         intervals: crate::time_rules::LOCATION_INTERVALS
             .iter()
-            .map(|m| (*m, interval_label(*m)))
+            .map(|m| (*m, interval_label(lang, *m)))
             .collect(),
         retention_choices: crate::retention::LOCATION_RETENTION_DAYS
             .iter()
-            .map(|d| {
-                let label = if *d == 1 {
-                    "1 day".to_string()
-                } else {
-                    format!("{d} days")
-                };
-                (*d, label)
-            })
+            .map(|d| (*d, t_count(lang, "locate.days", *d, &[])))
             .collect(),
         recent,
         zones,
@@ -1368,7 +1428,7 @@ async fn locate_view(
 /// The newest fix row's title (design 64 step 2, migration 0093): its exact time, then the phone's
 /// provider word and "test location" for a mock fix (only a debug launcher sends one) - "24 Oct
 /// 2026, 08:14:05 · gps · test location". Only the title: the row's words stay as they are.
-fn fix_title(exact: String, fix: &DeviceLocation) -> String {
+fn fix_title(lang: Lang, exact: String, fix: &DeviceLocation) -> String {
     let mut parts: Vec<String> = Vec::new();
     if !exact.is_empty() {
         parts.push(exact);
@@ -1377,7 +1437,7 @@ fn fix_title(exact: String, fix: &DeviceLocation) -> String {
         parts.push(provider.to_string());
     }
     if fix.mock == Some(true) {
-        parts.push("test location".to_string());
+        parts.push(t(lang, "locate.fix.test_location").to_string());
     }
     parts.join(" · ")
 }
@@ -1419,7 +1479,7 @@ async fn map_data(
             .unwrap_or_default(),
         shown_text: fix
             .as_ref()
-            .map(|f| format!("{newest_age} · {}", f.accuracy().to_lowercase()))
+            .map(|f| format!("{newest_age} · {}", f.accuracy(zone.lang()).to_lowercase()))
             .unwrap_or_default(),
         newest_age,
         span,
@@ -1474,7 +1534,7 @@ pub async fn show_locate(
     .await
     {
         Ok(page) => page.into_response(),
-        Err(err) => db_error(selected_id.unwrap_or(0), err),
+        Err(err) => db_error(selected_id.unwrap_or(0), err, lang),
     }
 }
 
@@ -1487,6 +1547,7 @@ pub async fn show_locate(
 /// Activity (`#activity`, design 48 §1.5), anything else the Locate page's Requests (`#recent`).
 pub async fn cancel_command(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, command_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
@@ -1496,11 +1557,11 @@ pub async fn cancel_command(
         Ok(false) => "too_late",
         Err(err) => {
             tracing::error!(device_id = id, command_id, %err, "can't cancel the command");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't cancel it - check the server log. The command may still reach the phone.",
-            )
-                .into_response();
+                "error.cancel_command",
+            );
         }
     };
     let back = match form.get("back").map(String::as_str) {
@@ -1591,6 +1652,7 @@ struct Point {
 /// §1.8).
 pub async fn locations_json(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -1630,7 +1692,7 @@ pub async fn locations_json(
     };
     match points.await {
         Ok(points) => Json(points).into_response(),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -1686,8 +1748,10 @@ pub async fn show_locations(
         .await
     {
         Ok(Some(device)) => device,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return db_error(id, err),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return db_error(id, err, lang),
     };
     let span = span_of(params.get("span"));
     let before = before_of(params.get("before"));
@@ -1713,7 +1777,7 @@ pub async fn show_locations(
     };
     let (map, mut rows) = match page.await {
         Ok(page) => page,
-        Err(err) => return db_error(id, err),
+        Err(err) => return db_error(id, err, lang),
     };
     let older = (rows.len() > FIXES_PER_PAGE).then(|| {
         rows.truncate(FIXES_PER_PAGE);
@@ -1725,15 +1789,21 @@ pub async fn show_locations(
         .iter()
         .map(|l| {
             let at = parse_db_utc(&l.captured_at);
-            let when = at.map_or_else(|| "Time unknown".to_string(), |t| zone.at(t, now));
+            let when = at.map_or_else(
+                || t(lang, "locate.time_unknown").to_string(),
+                |at| zone.at(at, now),
+            );
             let accuracy = Fix::of(&l.captured_at, l.accuracy_meters)
                 .accuracy_m
-                .map_or_else(|| "accuracy unknown".to_string(), |m| format!("± {m} m"));
+                .map_or_else(
+                    || t(lang, "locate.locations.accuracy_unknown").to_string(),
+                    |m| format!("± {m} m"),
+                );
             FixRow {
                 latitude: l.latitude,
                 longitude: l.longitude,
                 popup: format!("{when} · {accuracy}"),
-                exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+                exact: at.map(|at| zone.exact(at)).unwrap_or_default(),
                 when,
                 accuracy,
             }
@@ -1742,7 +1812,7 @@ pub async fn show_locations(
     Html(
         LocationsTemplate {
             lang,
-            title: "Locations".to_string(),
+            title: t(lang, "locate.locations.title").to_string(),
             device,
             map,
             span,
@@ -1855,6 +1925,7 @@ async fn send(
     command: &str,
     (event, detail): (&str, &str),
     back: String,
+    lang: Lang,
 ) -> Response {
     match queue_command(state, id, command, admin).await {
         Ok(true) => {
@@ -1868,14 +1939,14 @@ async fn send(
             .await;
             Redirect::to(&back).into_response()
         }
-        Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(false) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Err(err) => {
             tracing::error!(device_id = id, command, %err, "can't queue the command");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't send it - nothing was queued. Check the server log.",
+                "error.install_send",
             )
-                .into_response()
         }
     }
 }
@@ -1888,29 +1959,41 @@ fn back_to_actions(id: i64) -> String {
 
 pub async fn ring(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "ring");
-    send(&state, id, &admin, "ring", event, back_to_actions(id)).await
+    send(&state, id, &admin, "ring", event, back_to_actions(id), lang).await
 }
 
 pub async fn stop_ring(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "stop_ring");
-    send(&state, id, &admin, "stop_ring", event, back_to_actions(id)).await
+    send(
+        &state,
+        id,
+        &admin,
+        "stop_ring",
+        event,
+        back_to_actions(id),
+        lang,
+    )
+    .await
 }
 
 pub async fn lock(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "lock");
-    send(&state, id, &admin, "lock", event, back_to_actions(id)).await
+    send(&state, id, &admin, "lock", event, back_to_actions(id), lang).await
 }
 
 /// Update Location: queues `locate`, which makes the phone take a fresh fix (bypassing its own
@@ -1918,12 +2001,13 @@ pub async fn lock(
 /// the map (`#location`).
 pub async fn locate(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let back = format!("/devices/locate?device={id}&requested=1#location");
     let event = ("device_command_queued", "locate");
-    send(&state, id, &admin, "locate", event, back).await
+    send(&state, id, &admin, "locate", event, back, lang).await
 }
 
 /// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
@@ -1935,6 +2019,7 @@ pub async fn locate(
 /// or a save after a refused erase doesn't land at the top (qa-31-s13-code M1).
 pub async fn update_location_retention(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -1944,7 +2029,7 @@ pub async fn update_location_retention(
         .and_then(|d| d.trim().parse::<i64>().ok())
         .filter(|d| crate::retention::LOCATION_RETENTION_DAYS.contains(d))
     else {
-        return (StatusCode::BAD_REQUEST, "Unknown retention period").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_retention");
     };
     let result = sqlx::query(
         "UPDATE device_policy SET location_retention_days = ?, updated_at = datetime('now') \
@@ -1956,7 +2041,7 @@ pub async fn update_location_retention(
     .await;
     match result {
         Ok(done) if done.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             security::record_security_event(
@@ -1979,11 +2064,11 @@ pub async fn update_location_retention(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location retention");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }
@@ -1997,6 +2082,7 @@ pub async fn update_location_retention(
 /// (`back=zones`, design 64 §3.6; anything else is the settings).
 pub async fn update_location_policy(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -2008,7 +2094,7 @@ pub async fn update_location_policy(
     if !crate::time_rules::LOCATION_MODES.contains(&mode)
         || interval.is_some_and(|m| !crate::time_rules::LOCATION_INTERVALS.contains(&m))
     {
-        return (StatusCode::BAD_REQUEST, "Unknown location mode or interval").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_location_mode");
     }
     let result = sqlx::query(
         "UPDATE device_policy SET location_mode = ?, \
@@ -2022,7 +2108,7 @@ pub async fn update_location_policy(
     .await;
     match result {
         Ok(done) if done.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             security::record_security_event(
@@ -2062,11 +2148,11 @@ pub async fn update_location_policy(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location policy");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }
@@ -2089,8 +2175,10 @@ pub async fn wipe(
         .await
     {
         Ok(Some(device)) => device,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return db_error(id, err),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return db_error(id, err, lang),
     };
 
     let confirm = form.get("confirm_name").map(|s| s.trim()).unwrap_or("");
@@ -2112,11 +2200,11 @@ pub async fn wipe(
         .await
         {
             Ok(page) => page.into_response(),
-            Err(err) => db_error(id, err),
+            Err(err) => db_error(id, err, lang),
         };
     }
     let event = ("device_wipe_queued", device.name.as_str());
-    send(&state, id, &admin, "wipe", event, back_to_actions(id)).await
+    send(&state, id, &admin, "wipe", event, back_to_actions(id), lang).await
 }
 
 #[cfg(test)]
@@ -2192,11 +2280,11 @@ mod tests {
         let now = utc("2026-10-13 10:00:00");
         let fix = Fix::of("2026-10-13T09:50:00.000Z", Some(39.6));
         assert_eq!(fix.age(&oslo, now), "10 min ago");
-        assert_eq!(fix.accuracy(), "Within 40 m");
+        assert_eq!(fix.accuracy(Lang::En), "Within 40 m");
         // A day old: the date, in local time; no accuracy.
         let old = Fix::of("2026-10-10T22:30:00Z", None);
         assert_eq!(old.age(&oslo, now), "11 Oct");
-        assert_eq!(old.accuracy(), "Accuracy unknown");
+        assert_eq!(old.accuracy(Lang::En), "Accuracy unknown");
         // Yesterday evening, local (21:40 UTC is 23:40 in Oslo).
         let late = Fix::of("2026-10-12T21:40:00Z", Some(5.0));
         assert_eq!(late.age(&oslo, now), "yesterday 23:40");
@@ -2205,7 +2293,7 @@ mod tests {
         // A time that doesn't read, a nonsense accuracy.
         let bad = Fix::of("z", Some(f64::NAN));
         assert_eq!(bad.age(&oslo, now), "Time unknown");
-        assert_eq!(bad.accuracy(), "Accuracy unknown");
+        assert_eq!(bad.accuracy(Lang::En), "Accuracy unknown");
     }
 
     /// 2026-10-25 (PLAN "Locate: the \"Answer to Update Location\" row goes"): asked → "Asking the
@@ -2230,7 +2318,7 @@ mod tests {
             requested_by: None,
         };
         let state = |cmd: &DeviceCommand, status: CommandStatus, fix: Option<&str>, at: &str| {
-            answer_state(cmd, &status, fix.map(utc), utc(at))
+            answer_state(Lang::En, cmd, &status, fix.map(utc), utc(at))
         };
         let words = |state: Option<AnswerState>| {
             state
@@ -2443,7 +2531,7 @@ mod tests {
             ("call never ended", "Not installed: a call stayed on"),
         ] {
             assert_eq!(
-                answer(raw),
+                answer(Lang::En, raw),
                 Some(Answer {
                     text: text.to_string(),
                     raw: Some(raw.to_string())
@@ -2453,13 +2541,13 @@ mod tests {
         }
         // An answer this server doesn't know is shown as sent; an empty one is none.
         assert_eq!(
-            answer(" something new "),
+            answer(Lang::En, " something new "),
             Some(Answer {
                 text: "something new".to_string(),
                 raw: None
             })
         );
-        assert_eq!(answer("  "), None);
+        assert_eq!(answer(Lang::En, "  "), None);
     }
 
     #[test]
@@ -2576,7 +2664,52 @@ mod tests {
             ("install_update", "Install Now"),
             ("made_up", "Other request"),
         ] {
-            assert_eq!(command_label(command), label);
+            assert_eq!(t(Lang::En, command_label(command)), label);
         }
+    }
+
+    /// The Locate tab in Norwegian (design 70 §5.1, slice 3c): the Rust-built words follow the
+    /// reader's language - the answers, a status and its line, the Locations row, the intervals.
+    #[test]
+    fn the_words_follow_the_readers_language() {
+        let oslo = Zone::from_setting("Europe/Oslo").in_lang(Lang::Nb);
+        let now = utc("2026-10-13 10:00:00");
+        assert_eq!(
+            answer(Lang::Nb, "fix ±12 m, 3 s old").map(|a| a.text),
+            Some("Funnet innenfor 12 m".to_string())
+        );
+        assert_eq!(
+            answer(Lang::Nb, "allowed: 3 apps").map(|a| a.text),
+            Some("3 apper tillatt".to_string())
+        );
+        let (word, _, line) = status_words(
+            &CommandStatus::Received {
+                at: Some(utc("2026-10-13 09:58:00")),
+                overdue: false,
+            },
+            &oslo,
+            now,
+        );
+        assert_eq!(word, "Mottatt");
+        assert_eq!(line.as_deref(), Some("Telefonen fikk den (11:58)."));
+        assert_eq!(locations_value(Lang::Nb, 0, 12, None), "Ingen ennå");
+        assert_eq!(
+            locations_value(Lang::Nb, 14, 168, None),
+            "14 de siste 7 dagene"
+        );
+        assert_eq!(
+            locations_value(Lang::En, 0, 24, Some("3 days ago")),
+            "0 in the last 24 hours · newest 3 days ago"
+        );
+        assert_eq!(locations_value(Lang::En, 3, 0, None), "3 kept");
+        assert_eq!(interval_label(Lang::En, 60), "1 hour");
+        assert_eq!(interval_label(Lang::En, 240), "4 hours");
+        assert_eq!(interval_label(Lang::Nb, 120), "2 timer");
+        assert_eq!(interval_label(Lang::Nb, 30), "30 min");
+        assert_eq!(
+            cancel_flash(Lang::Nb, Some("done")),
+            Some(("Avbrutt. Telefonen får den aldri.", false))
+        );
+        assert_eq!(t(Lang::Nb, command_label("locate")), "Oppdater posisjon");
     }
 }

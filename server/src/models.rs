@@ -896,21 +896,22 @@ pub enum Unconfirmed {
     CantConfirm,
 }
 
-/// A command's name as the parent knows it (§4.3), never its id: the Locate page's Recent rows.
+/// A command's name as the parent knows it (§4.3), never its id: the catalog key of the Locate
+/// page's Requests rows, the summary's Activity, Install Now's answer (`locate::command_row` words it).
 pub fn command_label(command: &str) -> &'static str {
     match command {
-        "ring" => "Ring",
-        "stop_ring" => "Stop Ringing",
-        "lock" => "Lock",
-        "locate" => "Update Location",
-        "wipe" => "Erase Phone",
-        "end_windows" => "Lock again",
-        "start_pause" => "Unlock for 2 h",
-        "allow_blocked" => "Allow these apps",
-        "install_update" => "Install Now",
+        "ring" => "locate.command.ring",
+        "stop_ring" => "locate.command.stop_ring",
+        "lock" => "locate.command.lock",
+        "locate" => "locate.command.locate",
+        "wipe" => "locate.command.wipe",
+        "end_windows" => "locate.command.end_windows",
+        "start_pause" => "locate.command.start_pause",
+        "allow_blocked" => "locate.command.allow_blocked",
+        "install_update" => "locate.command.install_update",
         // Design 59: the Child PIN for Android's lock (its answers: `kid_lock::PinAnswer`).
-        "set_kid_pin" => "Child PIN to the phone",
-        _ => "Other request",
+        "set_kid_pin" => "locate.command.set_kid_pin",
+        _ => "locate.command.unknown",
     }
 }
 

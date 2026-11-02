@@ -19,7 +19,7 @@ use axum::{Extension, Form};
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 use crate::models::{AdminUser, Device};
 use crate::security::{self, CurrentAdmin};
 use crate::zones::{self, MAX_ZONES, NAME_MAX, RADIUS};
@@ -56,7 +56,7 @@ struct ZoneForm {
     notify_leave: bool,
 }
 
-/// Each field's refusal.
+/// Each field's refusal, as its catalog key (the page words it).
 #[derive(Default)]
 struct ZoneErrors {
     name: Option<&'static str>,
@@ -152,19 +152,19 @@ fn parse(form: &HashMap<String, String>) -> (ZoneForm, Result<Input, ZoneErrors>
     let mut errors = ZoneErrors::default();
     let name = typed.name.clone();
     if name.is_empty() {
-        errors.name = Some("Give the zone a name.");
+        errors.name = Some("locate.zone.error.name_empty");
     } else if name.chars().count() > NAME_MAX {
-        errors.name = Some("At most 40 characters.");
+        errors.name = Some("locate.zone.error.name_long");
     } else if name.chars().any(|c| c.is_control() || is_format(c)) {
-        errors.name = Some("No line breaks or invisible characters.");
+        errors.name = Some("locate.zone.error.name_invisible");
     }
     let latitude = number(&typed.latitude).filter(|v| v.abs() <= 90.0);
     if latitude.is_none() {
-        errors.latitude = Some("A latitude between -90 and 90.");
+        errors.latitude = Some("locate.zone.error.latitude");
     }
     let longitude = number(&typed.longitude).filter(|v| v.abs() <= 180.0);
     if longitude.is_none() {
-        errors.longitude = Some("A longitude between -180 and 180.");
+        errors.longitude = Some("locate.zone.error.longitude");
     }
     let radius = typed
         .radius
@@ -172,7 +172,7 @@ fn parse(form: &HashMap<String, String>) -> (ZoneForm, Result<Input, ZoneErrors>
         .ok()
         .filter(|r| RADIUS.contains(r));
     if radius.is_none() {
-        errors.radius = Some("Between 100 and 2000 m.");
+        errors.radius = Some("locate.zone.error.radius");
     }
     let parsed = match (latitude, longitude, radius) {
         (Some(latitude), Some(longitude), Some(radius_m)) if !errors.any() => Ok(Input {
@@ -259,17 +259,14 @@ async fn device_of(state: &AppState, id: i64) -> Result<Option<Device>, sqlx::Er
         .await
 }
 
-fn not_found(what: &'static str) -> Response {
-    (StatusCode::NOT_FOUND, what).into_response()
+/// A 404 worded by `key` (`error.device_not_found`, `error.zone_not_found`).
+fn not_found(lang: Lang, key: &str) -> Response {
+    crate::i18n::error(lang, StatusCode::NOT_FOUND, key)
 }
 
-fn db_error(device_id: i64, err: sqlx::Error) -> Response {
+fn db_error(device_id: i64, err: sqlx::Error, lang: Lang) -> Response {
     tracing::error!(device_id, %err, "zones: database error");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Nothing was saved - check the server log.",
-    )
-        .into_response()
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.zone_save")
 }
 
 /// The page, with `status` (200, or 400 for a refusal).
@@ -287,12 +284,12 @@ async fn render(
 ) -> Response {
     let phone_fix = match newest_point(state, device.id).await {
         Ok(fix) => fix.map(|(lat, lng)| (coordinate(lat), coordinate(lng))),
-        Err(err) => return db_error(device.id, err),
+        Err(err) => return db_error(device.id, err, lang),
     };
     let title = if zone_id.is_some() {
         stored_name.clone()
     } else {
-        "New Zone".to_string()
+        t(lang, "locate.zone.new").to_string()
     };
     let page = ZoneTemplate {
         lang,
@@ -316,13 +313,13 @@ async fn render(
 pub async fn new_zone(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let (latitude, longitude) = match newest_point(&state, id).await {
         Ok(Some((lat, lng))) => (coordinate(lat), coordinate(lng)),
         Ok(None) => (String::new(), String::new()),
-        Err(err) => return db_error(id, err),
+        Err(err) => return db_error(id, err, lang),
     };
     let form = ZoneForm {
         name: String::new(),
@@ -367,13 +364,13 @@ pub async fn show_zone(
 ) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let zone = match zone_of(&state, id, zone_id).await {
         Ok(Some(zone)) => zone,
-        Ok(None) => return not_found("Zone not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.zone_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let form = ZoneForm {
         name: zone.name.clone(),
@@ -438,8 +435,8 @@ pub async fn create_zone(
 ) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let (typed, parsed) = parse(&form);
     let input = match parsed {
@@ -509,7 +506,11 @@ pub async fn create_zone(
             saved(&state, &admin, &device, "zone_added", detail, back).await
         }
         Ok(Outcome::Full) => {
-            let refusal = format!("{MAX_ZONES} zones is the most for one phone. Delete one first.");
+            let refusal = t_params(
+                lang,
+                "locate.zone.error.full",
+                &[("max", &MAX_ZONES.to_string())],
+            );
             render(
                 &state,
                 device,
@@ -525,7 +526,7 @@ pub async fn create_zone(
         }
         Ok(Outcome::NameTaken) => {
             let errors = ZoneErrors {
-                name: Some("This phone has a zone with that name."),
+                name: Some("locate.zone.error.name_taken"),
                 ..ZoneErrors::default()
             };
             render(
@@ -541,8 +542,8 @@ pub async fn create_zone(
             )
             .await
         }
-        Ok(Outcome::Gone) => not_found("Device not found"),
-        Err(err) => db_error(id, err),
+        Ok(Outcome::Gone) => not_found(lang, "error.device_not_found"),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -558,13 +559,13 @@ pub async fn save_zone(
 ) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let stored = match zone_of(&state, id, zone_id).await {
         Ok(Some(zone)) => zone,
-        Ok(None) => return not_found("Zone not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.zone_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let (typed, parsed) = parse(&form);
     let input = match parsed {
@@ -647,7 +648,7 @@ pub async fn save_zone(
         }
         Ok((Outcome::NameTaken, _)) => {
             let errors = ZoneErrors {
-                name: Some("This phone has a zone with that name."),
+                name: Some("locate.zone.error.name_taken"),
                 ..ZoneErrors::default()
             };
             render(
@@ -663,8 +664,8 @@ pub async fn save_zone(
             )
             .await
         }
-        Ok((Outcome::Gone | Outcome::Full, _)) => not_found("Zone not found"),
-        Err(err) => db_error(id, err),
+        Ok((Outcome::Gone | Outcome::Full, _)) => not_found(lang, "error.zone_not_found"),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -672,13 +673,14 @@ pub async fn save_zone(
 /// until the location history's retention takes them. Back to `#zones` with the line.
 pub async fn delete_zone(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, zone_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     };
     let deleted: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
         "DELETE FROM device_zones WHERE id = ? AND device_id = ? RETURNING name",
@@ -700,8 +702,8 @@ pub async fn delete_zone(
             );
             saved(&state, &admin, &device, "zone_deleted", detail, back).await
         }
-        Ok(None) => not_found("Zone not found"),
-        Err(err) => db_error(id, err),
+        Ok(None) => not_found(lang, "error.zone_not_found"),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -718,11 +720,15 @@ struct ZonePoint {
 
 /// `GET /devices/{id}/zones.json` (no-store: the coordinates of a child's home never sit in a
 /// cached page): the phone's zones, oldest first; 404 for an unknown phone (code QA N-8).
-pub async fn zones_json(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn zones_json(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
     match device_of(&state, id).await {
         Ok(Some(_)) => {}
-        Ok(None) => return not_found("Device not found"),
-        Err(err) => return db_error(id, err),
+        Ok(None) => return not_found(lang, "error.device_not_found"),
+        Err(err) => return db_error(id, err, lang),
     }
     match zones::list(&state.db, id).await {
         Ok(list) => Json(
@@ -737,7 +743,7 @@ pub async fn zones_json(State(state): State<AppState>, Path(id): Path<i64>) -> R
                 .collect::<Vec<_>>(),
         )
         .into_response(),
-        Err(err) => db_error(id, err),
+        Err(err) => db_error(id, err, lang),
     }
 }
 
@@ -891,7 +897,7 @@ mod tests {
                 ("radius_m", "150"),
             ]));
             let errors = parsed.expect_err(name);
-            assert_eq!(errors.name, Some("No line breaks or invisible characters."));
+            assert_eq!(errors.name, Some("locate.zone.error.name_invisible"));
         }
         let (_, fine) = parse(&form(&[
             ("name", "Bestemor & Co. (Ålesund) 🏠"),

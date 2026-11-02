@@ -589,6 +589,10 @@ mod tests {
         "tracked_app_add.html",
         "tracked_app_detail.html",
         "partials/app_display_form.html",
+        // 3c: Locate.
+        "device_locate.html",
+        "device_locations.html",
+        "device_zone.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,

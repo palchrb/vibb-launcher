@@ -1176,7 +1176,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
   popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while **that fix** is surely inside
   the zone (`locate::fix_badge`, `zones::side`; code QA Q-1).
-- **The map**: the box gets `data-zones` while the phone has any; `static/locate.js` (`?v=4` since the code QA fix round, both Locate pages) then
+- **The map**: the box gets `data-zones` while the phone has any; `static/locate.js` (`?v=4` since the code QA fix round, `?v=5` since S-i18n slice 3c; both Locate pages) then
   fetches `GET /devices/{id}/zones.json` once (`no_store_path`: a child's home is never in a cached answer) and draws
   each as `L.circle` in `--map-zone` (#2F6F62, the same on OSM's light tiles in both schemes, beside `--map-trail`),
   fill 0.08, its name a tooltip built as a text node; a zone that isn't numbers isn't drawn. `zones.json` is asked
@@ -1220,7 +1220,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `--map-zone` in `:root`.
 - Tests: `tests::zones` (the pages, the redirects with `assert_lands`, the refusals, the group by mode, the badge, the
   summary line, the switch once, "Here now" against a pending or stale fix), the two "every form lands" tests with a
-  zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=4`),
+  zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=5`),
   `jstest/zones.test.js`, `jstest/locate.test.js`.
 
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
@@ -1479,6 +1479,19 @@ man er inne på en device". Branch `pwa-fixes-b`.
   words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4:
   a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `app_downloads::progress`
   (`fdroid::normalize_repo`/`parse_package` take `lang` since the merge with round S4); for 3c Install Now's answer row (`locate::CommandRow`).
+- **Slice 3c (Locate)**: the Locate tab, a phone's Locations page and a zone's page are worded (`locate.*`), with
+  the handlers' titles, rows, notices, the zones' rows and footers (`locate::zones_view`, `watch_line`), the field
+  refusals (`ZoneErrors` holds keys the page words) and error bodies (`i18n::error`). Every command row
+  (`locate::CommandRow`: Locate's Requests, the summary's Activity, Install Now's answer) is worded by
+  `command_row` in the `Zone`'s language: `models::command_label` gives a key (`locate.command.*`), `status_words`
+  the status word and its line, `reword(lang, raw)` the phone's answer (`locate.answer.*`), `cancel_flash(lang, …)`
+  the line after a Cancel. `locate-result.json` takes `lang: Lang` and words its `text` so; `static/locate.js`
+  (`?v=5`) asks it with the page's `?lang=` (the map box's `data-lang`, as Install Now's poll), and reads its other
+  words from the page: the Locations count's `data-w-none`/`-kept`/`-in-12`/`-in-24`/`-in-168`/`-newest`, the map
+  box's `data-w-newest` (the marker's popup for a newer fix) and the wait line's `data-w-answered`/`-no-answer`.
+  The span pick's words are `locate.span.<hours>` (`locate::SPANS` holds the keys). Zone events and their pushes were
+  keys already (design 64, slice 2). Left for slice 4: `kid_lock::PinAnswer::words` (a `set_kid_pin` answer in
+  Activity stays English with `kid_lock`'s other words).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`
