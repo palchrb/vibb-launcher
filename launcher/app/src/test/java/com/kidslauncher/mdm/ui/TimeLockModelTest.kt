@@ -141,8 +141,12 @@ class TimeLockModelTest {
         assertEquals(LockRow.Alarm("Slå av alarmen"), ringing.first())
         assertEquals(withCalendar, ringing.drop(1))
         assertEquals(listOf<LockRow>(LockRow.Alarm("Slå av alarmen")), timeLockRows(true, false, "Telefonbok", emptyList(), alarmLabel = "Slå av alarmen"))
-        // After an unlock its row alone opens it (the ringing screen); beside another row the screen's own send does.
-        assertEquals(LockRow.Alarm("Slå av alarmen"), unlockOpenRow(true, false, listOf(LockRow.Alarm("Slå av alarmen"))))
+        // After an unlock the alarm row never opens by itself - the screen's own settled send does, once (E7 code QA 4).
+        assertNull(unlockOpenRow(true, false, listOf(LockRow.Alarm("Slå av alarmen"))))
+        // E7 code QA 1: without the notification listener the lock's clock apps are offered as rows too.
+        val clocks = setOf("com.google.android.deskclock")
+        assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = true))
+        assertEquals(setOf("org.signal", "com.google.android.deskclock"), lockRowPackages(setOf("org.signal"), clocks, listening = false))
     }
 
     /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's
@@ -345,7 +349,7 @@ class TimeLockModelTest {
         assertTrue("startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))" in activity)
         // The rows come from the lock's own decision, filtered as before (launchable, not suspended).
         assertTrue("timeLockRows(callsManaged, lock?.callsAllowed != false," in activity)
-        assertTrue("openableApps(lock?.usableApps.orEmpty())" in activity)
+        assertTrue("openableApps(rowPackages(lock?.usableApps.orEmpty()))" in activity)
         assertTrue("CameraLock.suspendedForLists(pkg, pm.isPackageSuspended(pkg))" in activity)
         // Back stays off.
         assertTrue("override fun handleOnBackPressed() {}" in activity)

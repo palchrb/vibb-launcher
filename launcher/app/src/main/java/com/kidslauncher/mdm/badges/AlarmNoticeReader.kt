@@ -36,7 +36,8 @@ object AlarmNoticeReader {
     /** The listener's `getActiveNotifications(keys)` while it is connected; null = no answer. */
     private var lookup: ((Array<String>) -> List<StatusBarNotification>?)? = null
 
-    /** Told when the set of kept ringing screens changes (the time-rule screen's alarm row). Main thread. */
+    /** Told when the set of kept ringing screens changes, or the listener connects or goes (the time-rule screen's
+     * alarm row and its clock row, [listening]). Main thread. */
     private val listeners = mutableListOf<() -> Unit>()
 
     fun addListener(listener: () -> Unit) { if (listener !in listeners) listeners += listener }
@@ -46,6 +47,7 @@ object AlarmNoticeReader {
     /** The listener connected: its lookup of active notifications by key (before its sweep). */
     fun attach(activeByKeys: (Array<String>) -> List<StatusBarNotification>?) = guarded {
         lookup = activeByKeys
+        tell()
     }
 
     fun connected(active: List<StatusBarNotification>) = guarded {
@@ -59,8 +61,13 @@ object AlarmNoticeReader {
     fun disconnected() = guarded {
         lookup = null
         notices = AlarmNotices()
-        tellingChanges { screens.clear() }
+        screens.clear()
+        tell()
     }
+
+    /** E7 code QA 1: the listener is connected - without it nothing here sees a ring, and the time-rule screen offers
+     * the clock app itself instead. */
+    fun listening(): Boolean = lookup != null
 
     fun posted(sbn: StatusBarNotification) = guarded {
         notices = notices.posted(post(sbn), SystemClock.elapsedRealtime())
@@ -89,7 +96,7 @@ object AlarmNoticeReader {
     fun clocksKnown() = guarded {
         val missing = notices.screensMissing(screens.keys, PinLockRuntime.clockPackages())
         if (missing.isEmpty()) return@guarded
-        lookup?.invoke(missing.toTypedArray())?.forEach { sbn -> screen(sbn)?.let { screens[sbn.key] = it } }
+        tellingChanges { lookup?.invoke(missing.toTypedArray())?.forEach { sbn -> screen(sbn)?.let { screens[sbn.key] = it } } }
     }
 
     /** A re-send of [key]'s screen brought nothing up ([AlarmNotices.spent]). */
@@ -101,7 +108,7 @@ object AlarmNoticeReader {
     /** E7's M1: one of [clockPackages] has a ringing alarm whose screen is kept - the time-rule screen's alarm row (no
      * listener lookup here; the tap's [screenKey] asks). */
     fun openable(clockPackages: Set<String>): Boolean = try {
-        notices.screenKey(clockPackages, capped = false)?.let { it in screens } == true
+        notices.screenKey(clockPackages, kept = screens.keys, capped = false) != null
     } catch (e: Throwable) {
         Log.w(LOG_TAG, "Alarm screen read failed: ${e.javaClass.simpleName}")
         false
@@ -109,10 +116,11 @@ object AlarmNoticeReader {
 
     /**
      * The ringing alarm whose screen may be sent again ([AlarmNotices.screenKey]; [capped] for the screens' own sends,
-     * not for the kid's tap), after asking the listener which of the kept keys are still active
-     * ([AlarmNotices.reconciled]; no listener or no answer: none).
+     * not for the kid's tap; [inYield] for the PIN lock, whose send opens the alarm's yield - inside its bound), after
+     * asking the listener which of the kept keys are still active ([AlarmNotices.reconciled]; no listener or no answer:
+     * none) - right before every send, so a ring stopped meanwhile is never sent.
      */
-    fun screenKey(clockPackages: Set<String>, capped: Boolean = true): String? = try {
+    fun screenKey(clockPackages: Set<String>, capped: Boolean = true, inYield: Boolean = false): String? = try {
         val kept = notices.ringing.keys
         val active = if (kept.isEmpty()) null else lookup?.invoke(kept.toTypedArray())
         if (active == null) {
@@ -120,7 +128,8 @@ object AlarmNoticeReader {
         } else {
             notices = notices.reconciled(active.mapTo(mutableSetOf()) { it.key })
             tellingChanges { screens.keys.retainAll(notices.ringing.keys) }
-            notices.screenKey(clockPackages, capped)?.takeIf { it in screens }
+            val now = SystemClock.elapsedRealtime().takeIf { inYield }
+            notices.screenKey(clockPackages, kept = screens.keys, capped = capped, yieldAtMs = now)
         }
     } catch (e: Throwable) {
         Log.w(LOG_TAG, "Alarm screen read failed: ${e.javaClass.simpleName}")
@@ -144,7 +153,7 @@ object AlarmNoticeReader {
             Log.w(LOG_TAG, "Alarm screen not sent: ${e.javaClass.simpleName}")
             false
         }
-        guarded { notices = notices.resent(key, sent, SystemClock.elapsedRealtime()) }
+        guarded { notices = notices.resent(key, sent) }
         return sent
     }
 
@@ -159,12 +168,15 @@ object AlarmNoticeReader {
     private fun screen(sbn: StatusBarNotification): PendingIntent? =
         if (shape(sbn) && sbn.packageName in PinLockRuntime.clockPackages()) sbn.notification?.fullScreenIntent else null
 
-    /** Runs [change] on [screens]; when their keys changed, every listener is told (each caught alone). */
+    /** Runs [change] on [screens]; when their keys changed, every listener is told. */
     private inline fun tellingChanges(change: () -> Unit) {
         val before = screens.keys.toSet()
         change()
-        if (screens.keys != before) listeners.toList().forEach { listener -> guarded { listener() } }
+        if (screens.keys != before) tell()
     }
+
+    /** Every listener told, each caught alone. */
+    private fun tell() = listeners.toList().forEach { listener -> guarded { listener() } }
 
     private inline fun guarded(work: () -> Unit) {
         try {

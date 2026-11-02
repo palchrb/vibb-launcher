@@ -171,26 +171,30 @@ class RefrontPolicyTest {
         // Never another app's.
         assertNull(AlarmNotices().posted(post("g", "com.example.game"), t).screenKey(clocks))
         // A sent screen opens the yield again for it (the re-front check steps aside); a failed one doesn't.
-        val sent = spent.resent("k", sent = true, nowMs = t + 1)
+        val sent = spent.resent("k", sent = true)
         assertTrue(sent.ringingNow(clocks, t + 1))
-        assertFalse(spent.resent("k", sent = false, nowMs = t + 1).ringingNow(clocks, t + 1))
+        assertFalse(spent.resent("k", sent = false).ringingNow(clocks, t + 1))
         // Code QA L2: the lock still in front after the check - nothing came up, the yield closes again.
         assertFalse(sent.spent("k").ringingNow(clocks, t + 1))
         assertEquals(sent.sends, sent.spent("k").sends)
         assertEquals(sent, sent.spent("gone"))
-        // E7's M1: an alarm still ringing past the yield's bound - the re-front covered it - gets its screen back, and
-        // the send opens a new bounded yield from then.
-        val late = t + ALARM_NOTICE_MAX_MS + 60_000L
-        assertFalse(ringing.ringingNow(clocks, late))
-        assertEquals("k", ringing.screenKey(clocks))
-        val lateSend = ringing.resent("k", sent = true, nowMs = late)
-        assertTrue(lateSend.ringingNow(clocks, late + ALARM_NOTICE_MAX_MS - 1))
-        assertFalse(lateSend.ringingNow(clocks, late + ALARM_NOTICE_MAX_MS))
+        // E7 code QA 2: the PIN lock's send (it opens the yield) keeps to the yield's bound, and a send never extends it -
+        // past it the PIN, then the time-rule screen (no time bound) reaches the ringing screen.
+        val late = t + ALARM_NOTICE_MAX_MS
+        assertEquals("k", ringing.screenKey(clocks, yieldAtMs = late - 1))
+        assertNull(ringing.screenKey(clocks, yieldAtMs = late))
+        assertEquals("the time-rule screen's", "k", ringing.screenKey(clocks))
+        assertFalse(ringing.resent("k", sent = true).ringingNow(clocks, late))
+        // E7 code QA 5: only a ring whose screen is kept - the newest kept one, not the newest of all.
+        val two = ringing.posted(post("k2"), t + 5)
+        assertEquals("k2", two.screenKey(clocks))
+        assertEquals("k", two.screenKey(clocks, kept = setOf("k")))
+        assertNull(two.screenKey(clocks, kept = emptySet()))
         // The cap: a clock screen that closes at once while its notification stays can't loop within one screen-on.
         var notices = ringing
         repeat(ALARM_SCREEN_MAX_SENDS) {
             assertEquals("k", notices.screenKey(clocks))
-            notices = notices.resent("k", sent = true, nowMs = t + 1)
+            notices = notices.resent("k", sent = true)
         }
         assertNull(notices.screenKey(clocks))
         // E7's M1: the kid's own tap (uncapped) still reaches it, and the next screen-on - a power press - starts afresh.

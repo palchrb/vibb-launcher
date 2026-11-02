@@ -53,7 +53,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   rule back: one Android keeps disabled (Android 15+ ignores an app's re-enable of a user-disabled rule) is removed
   and added again under a fresh condition id (`zenRuleNeedsReplacing`, QA M2). Of duplicate rules (a lost add's
   retry) an enabled one is kept, the rest removed (`zenRulesKeptFirst`, the revision check's L-R1), and a switch-on
-  clears a deactivation heard before (L-R2: its "activated" broadcast may never come). A failed call leaves "applied"
+  clears a deactivation heard before (L-R2: its "activated" broadcast may never come); a "deactivated" within
+  `OWN_OFF_ECHO_MS` (2 s) of our own switch-off of that rule is its echo, not the kid's (`ownOffEcho`, E7 code QA 5). A failed call leaves "applied"
   unknown, retried at the next follow. **Alarms** (QA H1): `ZenRuleRuntime.silencesAlarms()` (our rule on, alarms
   not allowed) makes the lock's `alarmRingingNow` false and `alarmScreenStep` NONE - an alarm nobody hears is no
   ringing alarm for the lock: no yield, the VoIP ring not held back, the silenced alarm's screen never re-sent (the

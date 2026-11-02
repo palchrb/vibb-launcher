@@ -253,12 +253,12 @@ fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yielded
 /** `Notification.CATEGORY_ALARM` (duplicated to stay Android-free). */
 const val ALARM_CATEGORY = "alarm"
 
-/** Bug 2026-11-02 (a2): the longest one yield to a ringing alarm lasts, from when it was first seen ringing or its
- * screen was last sent ([AlarmNotices.resent]) - the lock looks again at least this often, a notification stuck in the
- * shade never holds it open for good. 15 min (code QA L3: the yield steps aside for any front task while it lasts, so
- * it is kept short): Google's and AOSP's "Silence after" is 10 min by default and most clocks stop by then. E7's M1:
- * it no longer ends what the lock does for the ring - an alarm still ringing past it is covered by the re-front, and
- * the resumed lock sends its screen again ([AlarmNotices.screenKey] has no time bound), which opens a new yield. */
+/** Bug 2026-11-02 (a2): the longest one ring holds the alarm's yield, from when it was first seen ringing - a
+ * notification stuck in the shade never holds the lock open past it. 15 min (code QA L3: the yield steps aside for any
+ * front task while it lasts, so it is kept short): Google's and AOSP's "Silence after" is 10 min by default and most
+ * clocks stop by then. The PIN lock's re-sends keep to it too (they open the yield; [AlarmNotices.screenKey]'s
+ * `yieldAtMs`); an alarm set to ring longer is reached through the PIN after it - the time-rule screen sends its screen
+ * and shows its row with no time bound (E7's M1, its code QA 2: the PIN-free yield stays bounded). */
 const val ALARM_NOTICE_MAX_MS = 15 * 60_000L
 
 /**
@@ -276,7 +276,7 @@ fun ringingAlarmShape(category: String?, fullScreen: Boolean): Boolean = categor
  * alarm under one id, so an alarm replacing a ringing one is an update of its key). */
 data class AlarmPost(val key: String, val packageName: String, val ringing: Boolean, val whenMs: Long)
 
-/** One ring: its package, its `when` and when it was first seen ringing or its screen last sent (elapsed realtime). */
+/** One ring: its package, its `when` and when it was first seen ringing (elapsed realtime). */
 data class AlarmNotice(val packageName: String, val sinceMs: Long, val whenMs: Long = 0L)
 
 /**
@@ -324,21 +324,25 @@ data class AlarmNotices(
 
     /**
      * Gap closed 2026-11-02: the ringing alarm whose screen the resumed lock (or the time-rule screen) sends again
-     * ([alarmScreenStep]) - of one of [clockPackages], while it rings (no time bound, E7's M1: an alarm still ringing
-     * always gets its screen back), with [capped] fewer than [ALARM_SCREEN_MAX_SENDS] re-sends since the last screen-on;
-     * spent or not (the lock just came back over it - Stop's resume is told apart by the notification being gone after
-     * the settle, [reconciled]). Uncapped: the kid's own tap on the time-rule screen's alarm row. The newest when there
-     * are several.
+     * ([alarmScreenStep]) - of one of [clockPackages], with its screen [kept] (E7 code QA 5: any such ring, not only the
+     * newest of all), with [capped] fewer than [ALARM_SCREEN_MAX_SENDS] re-sends since the last screen-on, and for the
+     * PIN lock ([yieldAtMs], now) inside the yield's bound ([ALARM_NOTICE_MAX_MS]: its send opens the yield); spent or
+     * not (the lock just came back over it - Stop's resume is told apart by the notification being gone after the
+     * settle, [reconciled]). The time-rule screen has no time bound, and the kid's own tap on its alarm row no cap. The
+     * newest when there are several.
      */
-    fun screenKey(clockPackages: Set<String>, capped: Boolean = true): String? = ringing.entries
-        .filter { (key, notice) -> notice.packageName in clockPackages && (!capped || (sends[key] ?: 0) < ALARM_SCREEN_MAX_SENDS) }
-        .maxByOrNull { it.value.sinceMs }?.key
+    fun screenKey(clockPackages: Set<String>, kept: Set<String> = ringing.keys, capped: Boolean = true, yieldAtMs: Long? = null): String? =
+        ringing.entries
+            .filter { (key, notice) ->
+                notice.packageName in clockPackages && key in kept &&
+                    (!capped || (sends[key] ?: 0) < ALARM_SCREEN_MAX_SENDS) &&
+                    (yieldAtMs == null || yieldAtMs - notice.sinceMs in 0 until ALARM_NOTICE_MAX_MS)
+            }
+            .maxByOrNull { it.value.sinceMs }?.key
 
-    /** One re-send of [key]'s screen at [nowMs]: counted; when it went ([sent]) the yield is open again for it, for
-     * [ALARM_NOTICE_MAX_MS] from now, so the re-front check steps aside for the screen that comes up ([spent] closes it
-     * if none did). */
-    fun resent(key: String, sent: Boolean, nowMs: Long): AlarmNotices = copy(
-        ringing = if (sent) ringing.mapValues { (k, notice) -> if (k == key) notice.copy(sinceMs = nowMs) else notice } else ringing,
+    /** One re-send of [key]'s screen: counted; when it went ([sent]) the yield is open again for it, so the re-front
+     * check steps aside for the screen that comes up ([spent] closes it if none did). */
+    fun resent(key: String, sent: Boolean): AlarmNotices = copy(
         consumed = if (sent) consumed - key else consumed,
         sends = sends + (key to (sends[key] ?: 0) + 1),
     )
