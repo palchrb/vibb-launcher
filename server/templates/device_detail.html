@@ -271,8 +271,9 @@
     {% endif %}
 
     {#- Activity (design 48 §1.2): the phone's history, newest first - every command asked of it
-        (Cancel while it waits, back here: #activity) and its events (a tap marks one read and goes
-        where it happened; a pruned one comes back to this phone's inbox). The last week, at most
+        (Cancel while it waits, back here: #activity), its events (a tap marks one read and goes
+        where it happened; a pruned one comes back to this phone's inbox) and its lifts but the
+        running pauses (Quick actions has those). The last week, at most
         ten rows, plus what can still be cancelled. Shown for the Cancel's line too. -#}
     {% if !activity.rows.is_empty() || activity.flash.is_some() %}
     <section id="activity" aria-labelledby="activity-title">
@@ -282,6 +283,12 @@
             {% match r %}
             {% when ActivityRow::Command(c) %}
             {% call recent_group::row(c, device.id, "summary", "activity") %}{% endcall %}
+            {% when ActivityRow::Lift(l) %}
+            {#- A rule pause that is over or extra screen time: read-only, granted at its time. -#}
+            <div class="row" data-lift="{{ l.id }}">
+                <span class="row-label">{{ l.what }}</span>
+                <span class="row-value"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{% if !l.when.is_empty() %}{{ l.when }} · {% endif %}{% if let Some(by) = l.by %}{{ by }} · {% endif %}<span class="tone-{{ l.tone }}">{{ l.word }}</span></span>
+            </div>
             {% when ActivityRow::Event(e) %}
             <form method="post" action="/notifications/{{ e.id }}/open" class="cell">
                 <input type="hidden" name="from" value="devices">

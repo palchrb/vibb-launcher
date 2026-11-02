@@ -386,6 +386,14 @@ impl Names {
             .flatten()
     }
 
+    /// A lift's "· Mamma" in the summary's Activity: who granted it by [Names::of_username], only
+    /// in a family with more than one account, as [Names::requester].
+    pub fn granter(&self, created_by: Option<&str>) -> Option<String> {
+        self.several
+            .then(|| created_by.map(|by| self.of_username(by).to_string()))
+            .flatten()
+    }
+
     /// A username as a "by" line shows it: its display name, else itself (a lift's `created_by`).
     pub fn of_username<'a>(&'a self, username: &'a str) -> &'a str {
         self.display.get(username).map_or(username, String::as_str)

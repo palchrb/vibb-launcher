@@ -839,7 +839,8 @@ struct DeviceDetailTemplate {
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
     /// The lifts End now can still end (`can_end`; the running rule pauses): rows at the end of Quick
-    /// actions (Now went, the user 2026-10-20; the Parent PIN's notices are Activity's events).
+    /// actions (Now went, the user 2026-10-20; the Parent PIN's notices are Activity's events, and every
+    /// other lift is an Activity row since 2026-11-02).
     lifts: Vec<crate::handlers::lifts::LiftView>,
     /// The not-set-up variant's Connect This Phone group (design 22 §3.1).
     access: AccessCard,

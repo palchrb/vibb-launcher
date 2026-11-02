@@ -520,7 +520,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `show_now`, no Parent PIN notices on the summary (the uses and lockouts are Activity's events; Lock Screen & PINs
   keeps its Recent use list; `parent_pin::notices`/`Notice` and the card's `notices` are deleted). Only the lifts End
   now can still end (`can_end`: the running rule pauses, filtered in the summary's view) are rows at the end of
-  **Quick Actions** - an ended pause or added screen time is history, shown only on Device › Time - in a `.group` after the `act-grid` (`l.what`, the
+  **Quick Actions** - an ended pause or added screen time is history, Activity's since 2026-11-02 (below) - in a `.group` after the `act-grid` (`l.what`, the
   sub-line `l.when · l.by`, `l.status` as the value, End now posting to `/devices/{id}/lifts/{id}/end#quick` with
   `back=summary`); `lifts::summary_group` is always `quick`, so End now lands on `?done=ended|over#quick` with the
   flash in that same group, which shows while it has a lift row or its flash. **One clock per Activity row**: an
@@ -528,6 +528,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Settings · 09:20") loses it when it is the row's (`activity::without_own_clock`: a leading "HH:MM · " or trailing
   " · HH:MM" equal to the clock at the end of `Zone::at`'s words, or all of them), so the row reads "no shutdown seen …
   · 14:09". The inbox keeps the summary whole: its time is `Zone::relative` ("3 min ago"), never the same words.
+- **Lifts in Activity (the user, 2026-11-02, after Device › Time Rules lost Recent on 2026-11-01)**: every
+  `time_lifts` row but a rule pause the server still sends (`NOT (target = 'rule' AND ended_early_at IS NULL AND
+  expires_at > now)` - exactly Quick Actions' `can_end` rows' complement, so each lift shows once on the summary) is an
+  `ActivityRow::Lift` (`activity::lift_row`), mixed in by when it was granted (`created_at`), inside the same week and
+  ten-row cap (its own read is `LIMIT 10` too). Laid out as a command's row without Cancel, read-only: the label
+  "Skole paused for 30 min" / "All rules paused for 1 h" / "+15 min extra screen time" (nb "Skole satt på pause i 30
+  min", "Alle regler satt på pause i 1 t", "+15 min ekstra skjermtid"), the value "yesterday 14:00 · Mamma · Ended
+  14:30" - the grant's `Zone::at` (exact in `title`), who granted it only in a family with several accounts
+  (`parents::Names::granter`, as a command's requester), then the word: a pause "Ended {at}" (its expiry) or "Ended
+  early {at}" (End now), grey (nb "Sluttet", "Avsluttet tidlig"); extra screen time "Added" (nb "Lagt til"), green, at
+  once - it has nothing to end (its 12 h delivery window isn't shown). `device.summary.lift.*` in both catalogs. The
+  phone's own pause ("Unlock for 2 h", a command) and the Parent PIN's pause (an event) were Activity rows already.
+  Test: `summary::activity_shows_ended_pauses_and_extra_time_by_when_granted`.
   Tests: `summary::quick_actions_*`, `end_now_lands_on_quick_actions_when_nothing_else_is_left`,
   `an_event_row_shows_its_clock_once`, `activity::tests`.
 

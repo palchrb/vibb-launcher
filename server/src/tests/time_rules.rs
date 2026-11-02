@@ -604,8 +604,14 @@ async fn lifts_are_recorded_delivered_and_end() {
     let page = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await;
-    // Over: no longer on the summary (only what End now can end); the security log keeps it.
-    assert!(!page.text().contains("data-lift="));
+    // Over: no longer in Quick actions (only what End now can end) but Activity's history
+    // (2026-11-02), with nothing to end; the security log keeps it too.
+    let html = page.text();
+    let quick = &html[html.find("id=\"quick\"").unwrap()..html.find("id=\"activity\"").unwrap()];
+    assert!(!quick.contains("data-lift="), "{quick}");
+    let activity = &html[html.find("id=\"activity\"").unwrap()..];
+    assert!(activity.contains("data-lift="), "{activity}");
+    assert!(!activity.contains("/end#"), "{activity}");
 }
 
 #[tokio::test]

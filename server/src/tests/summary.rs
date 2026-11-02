@@ -387,7 +387,7 @@ async fn every_form_on_the_summary_returns_to_its_group() {
 
 /// §3.2 item 4: Quick Actions ends with the pauses End now can still end (Now went, the user
 /// 2026-10-20), in local time with the exact one in `title`; a pause of today that is over and
-/// added screen time are history - Device › Time's only, nowhere on the summary.
+/// added screen time are history - Activity's since 2026-11-02, never Quick's.
 #[tokio::test]
 async fn quick_actions_list_running_pauses_in_local_time() {
     let app = TestApp::new().await;
@@ -439,12 +439,21 @@ async fn quick_actions_list_running_pauses_in_local_time() {
         )),
         "{quick}"
     );
-    // The pause that is over and the screen time: nowhere on the summary.
+    // The pause that is over and the screen time: Activity's (2026-11-02), not Quick's; the running
+    // pause is Quick's alone.
+    let activity = group(&html, "activity");
     for lift in &ids[1..] {
-        assert!(!html.contains(&format!("data-lift=\"{lift}\"")), "{html}");
+        assert!(!quick.contains(&format!("data-lift=\"{lift}\"")), "{quick}");
+        assert!(
+            activity.contains(&format!("data-lift=\"{lift}\"")),
+            "{activity}"
+        );
     }
-    assert!(!html.contains("Kveld"), "{html}");
-    assert!(!html.contains("+15 min screen time"), "{html}");
+    assert!(!quick.contains("Kveld"), "{quick}");
+    assert!(
+        !activity.contains(&format!("data-lift=\"{}\"", ids[0])),
+        "{activity}"
+    );
     // Nothing happened: no lift rows, no Now, no Activity.
     let (emil, _) = app.enrolled_device("Emil").await;
     let html = app
@@ -568,8 +577,8 @@ async fn quick_actions_keep_running_pauses_and_no_answer_lines() {
     );
 }
 
-/// End now on a pause made yesterday: once ended it is neither running nor today's, so its row
-/// is gone and Quick Actions has the flash where the save lands (no jump).
+/// End now on a pause made yesterday: once ended it is no longer running, so its row leaves Quick
+/// Actions for Activity, and Quick Actions has the flash where the save lands (no jump).
 #[tokio::test]
 async fn end_now_lands_on_quick_actions_when_nothing_else_is_left() {
     let app = TestApp::new().await;
@@ -611,8 +620,12 @@ async fn end_now_lands_on_quick_actions_when_nothing_else_is_left() {
         .text();
     let quick = group(&html, "quick");
     assert!(quick.contains("data-flash=\"quick\""), "{quick}");
-    assert!(!html.contains("data-lift"), "{html}");
+    assert!(!quick.contains("data-lift"), "{quick}");
     assert!(!html.contains("id=\"now\""), "{html}");
+    // History now: Activity's row, without End now.
+    let activity = group(&html, "activity");
+    assert!(activity.contains("Ended early"), "{activity}");
+    assert!(!activity.contains("/end"), "{activity}");
 }
 
 /// Stored like `datetime('now')`.
@@ -971,6 +984,156 @@ async fn an_event_opens_where_it_happened_or_this_phones_inbox() {
         Some("inbox"),
     );
     app.assert_lands(&res, &cookie).await;
+}
+
+/// A lift (`time_lifts`) granted at `made`, over at `expires`; `early` set when ended with End now.
+async fn lift(
+    app: &TestApp,
+    device: i64,
+    rule: Option<&str>,
+    minutes: i64,
+    made: DateTime<Utc>,
+    expires: DateTime<Utc>,
+    early: Option<DateTime<Utc>>,
+) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at, \
+         created_by, ended_early_at) VALUES (?, ?, ?, ?, ?, ?, 'parent', ?) RETURNING id",
+    )
+    .bind(device)
+    .bind(if rule == Some("budget") {
+        "budget"
+    } else {
+        "rule"
+    })
+    .bind(rule.filter(|r| *r != "budget"))
+    .bind(minutes)
+    .bind(db_time(made))
+    .bind(db_time(expires))
+    .bind(early.map(db_time))
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The user, 2026-11-02: ended pauses and extra time show in Activity (Device › Time Rules' Recent
+/// went), mixed in by when each was granted, how it ended in the row, read-only; a pause still
+/// running is Quick actions' alone, and one older than the week is gone.
+#[tokio::test]
+async fn activity_shows_ended_pauses_and_extra_time_by_when_granted() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let oslo = chrono_tz::Europe::Oslo;
+    let now = Utc::now();
+    let today = now.with_timezone(&oslo).date_naive();
+    let yesterday = |h: u32, m: u32| {
+        (today - Duration::days(1))
+            .and_hms_opt(h, m, 0)
+            .unwrap()
+            .and_local_timezone(oslo)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
+    };
+    let all = lift(&app, id, None, 60, yesterday(10, 0), yesterday(11, 0), None).await;
+    let extra = lift(
+        &app,
+        id,
+        Some("budget"),
+        15,
+        yesterday(12, 0),
+        yesterday(12, 0) + Duration::hours(12),
+        None,
+    )
+    .await;
+    let pin = event(&app, id, "Parent PIN used", yesterday(13, 0), "/devices").await;
+    let skole = lift(
+        &app,
+        id,
+        Some("Skole"),
+        30,
+        yesterday(14, 0),
+        yesterday(14, 30),
+        Some(yesterday(14, 10)),
+    )
+    .await;
+    let running = lift(
+        &app,
+        id,
+        Some("Kveld"),
+        30,
+        now - Duration::minutes(2),
+        now + Duration::minutes(28),
+        None,
+    )
+    .await;
+    let old = now - Duration::days(8);
+    let gone = lift(
+        &app,
+        id,
+        Some("Gammel"),
+        15,
+        old,
+        old + Duration::minutes(15),
+        None,
+    )
+    .await;
+
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let activity = group(&html, "activity");
+    let order = [
+        at(activity, &format!("data-lift=\"{skole}\"")),
+        at(activity, &format!("data-event=\"{pin}\"")),
+        at(activity, &format!("data-lift=\"{extra}\"")),
+        at(activity, &format!("data-lift=\"{all}\"")),
+    ];
+    assert!(order.is_sorted(), "{activity}");
+    for words in [
+        ">Skole paused for 30 min<",
+        ">yesterday 14:00 · <span class=\"tone-grey\">Ended early yesterday 14:10<",
+        ">+15 min extra screen time<",
+        ">yesterday 12:00 · <span class=\"tone-green\">Added<",
+        ">All rules paused for 1 h<",
+        ">yesterday 10:00 · <span class=\"tone-grey\">Ended yesterday 11:00<",
+    ] {
+        assert!(activity.contains(words), "{words}: {activity}");
+    }
+    // Read-only; the running pause is Quick actions' alone; the old one is past the week.
+    assert!(!activity.contains("/lifts/"), "{activity}");
+    assert!(
+        group(&html, "quick").contains(&format!("data-lift=\"{running}\"")),
+        "{html}"
+    );
+    for lift in [running, gone] {
+        assert!(
+            !activity.contains(&format!("data-lift=\"{lift}\"")),
+            "{activity}"
+        );
+    }
+
+    let html = app
+        .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
+        .await
+        .text();
+    let activity = group(&html, "activity");
+    for words in [
+        ">Skole satt på pause i 30 min<",
+        ">i går 14:00 · <span class=\"tone-grey\">Avsluttet tidlig i går 14:10<",
+        ">+15 min ekstra skjermtid<",
+        ">i går 12:00 · <span class=\"tone-green\">Lagt til<",
+        ">Alle regler satt på pause i 1 t<",
+        ">i går 10:00 · <span class=\"tone-grey\">Sluttet i går 11:00<",
+    ] {
+        assert!(activity.contains(words), "{words}: {activity}");
+    }
 }
 
 /// The phone, its settings, its last report and its lifts are a 500 on a DB error - never an

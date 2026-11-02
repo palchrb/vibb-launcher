@@ -45,7 +45,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   with a footer saying why), **Daily Limit** (`#screen-time`: the "Own limit" switch; off, a row "Limit for everyone"
   with everyone's summary; on, the 7 day rows (`.cell-rows`, hairlines like a group's) and Save). Extra Time Today,
   Pause a Rule and Recent are gone: the summary's Quick actions have the tiles, Pause a rule… and the running pauses
-  with End now, and the open request for more time (`notifications.md`); its Activity has the history. A phone not
+  with End now, and the open request for more time (`notifications.md`); its Activity has the history (the ended pauses and the extra time since 2026-11-02, `pwa.md`, "Lifts in Activity"). A phone not
   set up has the page. Every read is a 500 on a DB error, never an empty list.
 - **A rule's switch** (`POST /devices/{id}/time/rules/{rule_id}`, `schedules::switch_device_rule`, the checkbox `on`,
   absent = off): everyone's rules and the phone's own; its bedtime or another phone's rule is a 404 (no page sends
