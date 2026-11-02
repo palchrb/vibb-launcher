@@ -882,6 +882,8 @@ pub fn no_store_path(path: &str) -> bool {
             | ["settings", "provisioning"]
             | ["account", ..]
             | ["auth", ..]
+            // Design 74 §6.5: the lock screen.
+            | ["lock", ..]
             | ["notifications", ..]
     )
 }

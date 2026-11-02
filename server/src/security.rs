@@ -1039,18 +1039,35 @@ async fn why_signed_out(
     }
 }
 
-/// The signed-in admin of a request, or why it is sent to the sign-in page.
+/// Why a request isn't served as the signed-in parent's: the sign-in page ([SignInWhy]), or the app lock (design 74
+/// D3.4: a navigation goes to `/lock?next=`, anything else is 423 - `lock::locked_response`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    SignIn(SignInWhy),
+    Locked,
+}
+
+/// The signed-in admin of a request, or why it isn't served. The one place the session's guards read it
+/// ([require_session], [require_full_auth], [session_check]): past the sign-in checks, the app lock's
+/// (`lock::check`, design 74 D3.4) - locked unless the route is in `lock::EXEMPT`; the session's use moved by a
+/// request the parent made (D3.3); and, while the lock is on, its numbers for the page (`lock::Shown`).
 async fn admin_or_why(
     state: &AppState,
     session: &Session,
     headers: &axum::http::HeaderMap,
-) -> Result<AdminUser, SignInWhy> {
+    lock: &crate::lock::Facts,
+) -> Result<(AdminUser, Option<crate::lock::Shown>), Why> {
     let cookie_id = session.id();
     match load_active_admin(state, session).await {
-        Ok(admin) => Ok(admin),
+        Ok(admin) => match crate::lock::check(session, lock).await {
+            Ok(shown) => Ok((admin, shown)),
+            Err(crate::lock::Locked) => Err(Why::Locked),
+        },
         Err(why) => {
             let cookie = has_session_cookie(headers, state.session_cookie);
-            Err(why_signed_out(state, session, cookie, cookie_id, why).await)
+            Err(Why::SignIn(
+                why_signed_out(state, session, cookie, cookie_id, why).await,
+            ))
         }
     }
 }
@@ -1118,7 +1135,8 @@ pub async fn log_sign_in_redirects(
 }
 
 /// `GET /api/session` (2026-10-25, `static/reconnect.js`): 204 while the request's session is a
-/// signed-in, onboarded admin's (what [require_full_auth] lets through), else 401 - no body,
+/// signed-in, onboarded admin's (what [require_full_auth] lets through), 423 while the app lock is due (design 74 D3.4:
+/// reconnect.js goes to /lock), else 401 - no body,
 /// `no-store`, nothing written but a session from before 0.55.0's first sign-in time
 /// (`load_active_admin`, security review L6; the session isn't flushed). The sign-in page asks it before it
 /// stays on screen; each answer is logged with its reason.
@@ -1129,13 +1147,16 @@ pub async fn session_check(
 ) -> Response {
     let cookie = has_session_cookie(&headers, state.session_cookie);
     let site = header_for_log(&headers, "sec-fetch-site");
-    let (status, reason) = match admin_or_why(&state, &session, &headers).await {
-        Ok(admin) if admin.ready() => (axum::http::StatusCode::NO_CONTENT, "signed in"),
+    // A script's GET: never a use, and never exempt from the lock (design 74 D3.4: 423, reconnect.js goes to /lock).
+    let facts = crate::lock::Facts::default();
+    let (status, reason) = match admin_or_why(&state, &session, &headers, &facts).await {
+        Ok((admin, _)) if admin.ready() => (axum::http::StatusCode::NO_CONTENT, "signed in"),
         Ok(_) => (
             axum::http::StatusCode::UNAUTHORIZED,
             "the account's onboarding isn't finished",
         ),
-        Err(why) => (axum::http::StatusCode::UNAUTHORIZED, why.as_str()),
+        Err(Why::Locked) => (axum::http::StatusCode::LOCKED, "the app is locked"),
+        Err(Why::SignIn(why)) => (axum::http::StatusCode::UNAUTHORIZED, why.as_str()),
     };
     tracing::info!(
         status = status.as_u16(),
@@ -1177,12 +1198,14 @@ pub async fn require_session(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match admin_or_why(&state, &session, request.headers()).await {
-        Ok(admin) => {
+    let facts = crate::lock::Facts::of(&request);
+    match admin_or_why(&state, &session, request.headers(), &facts).await {
+        Ok((admin, shown)) => {
             request.extensions_mut().insert(CurrentAdmin(admin));
-            next.run(request).await
+            crate::lock::mark_page(next.run(request).await, shown).await
         }
-        Err(why) => {
+        Err(Why::Locked) => crate::lock::locked_response(&facts),
+        Err(Why::SignIn(why)) => {
             session.flush().await.ok();
             sign_in_redirect(why)
         }
@@ -1198,22 +1221,24 @@ pub async fn require_full_auth(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match admin_or_why(&state, &session, request.headers()).await {
-        Ok(admin) if admin.must_change_password => {
+    let facts = crate::lock::Facts::of(&request);
+    match admin_or_why(&state, &session, request.headers(), &facts).await {
+        Err(Why::Locked) => crate::lock::locked_response(&facts),
+        Ok((admin, _)) if admin.must_change_password => {
             Redirect::to("/auth/change-password").into_response()
         }
         // A passkey-only account has no TOTP by design (D2.2): never sent to set one up.
-        Ok(admin) if !admin.totp_enabled && !admin.passkey_only => {
+        Ok((admin, _)) if !admin.totp_enabled && !admin.passkey_only => {
             Redirect::to("/auth/setup-2fa").into_response()
         }
         // Design 74 D2.2's one predicate: anything else that isn't ready (a one-time password's state on an account
         // that looks onboarded, a passkey-only account without a passkey - no statement leaves either) is no
         // session.
-        Ok(admin) if !admin.ready() => {
+        Ok((admin, _)) if !admin.ready() => {
             session.flush().await.ok();
             sign_in_redirect(SignInWhy::AccountGone)
         }
-        Ok(mut admin) => {
+        Ok((mut admin, shown)) => {
             if admin.lang.is_none() {
                 admin.lang = store_first_lang(
                     &state.db,
@@ -1239,9 +1264,9 @@ pub async fn require_full_auth(
                 );
             }
             request.extensions_mut().insert(CurrentAdmin(admin));
-            next.run(request).await
+            crate::lock::mark_page(next.run(request).await, shown).await
         }
-        Err(why) => {
+        Err(Why::SignIn(why)) => {
             session.flush().await.ok();
             sign_in_redirect(why)
         }

@@ -865,3 +865,98 @@ test("a ping redirected to the sign-in page asks /api/session before it counts",
     await settle();
     assert.deepStrictEqual(flaky.assigned, []);
 });
+
+// ---- The app lock (design 74 step 3): no reload once due, 423 -> the lock ------------------------------------------
+
+// app-lock.js's handyLock, answering as told and recording where it was asked to go.
+function withLock(win, due) {
+    win.locks = [];
+    win.handyLock = {
+        due: () => win.lockDue,
+        lock: (next) => win.locks.push(next === undefined ? null : next),
+    };
+    win.lockDue = due;
+    return win;
+}
+
+test("the lock: back after its time, the lock instead of the return reload (no ping, no reload)", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.lockDue = true;
+    win.show();
+    assert.deepStrictEqual(win.locks, ["/devices/1"]);
+    assert.strictEqual(win.pings.length, 0);
+    win.advance(60000);
+    assert.strictEqual(win.reloads, 0);
+});
+
+test("the lock: due by the time the return ping is answered, the lock instead of the reload", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.show();
+    win.lockDue = true;
+    await answer(win);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.locks, ["/devices/1"]);
+});
+
+test("the lock: a ping answered 423 (the server's lock) goes to the lock, with or without app-lock.js", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.show();
+    await answer(win, 423);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.locks, ["/devices/1"]);
+    // A tap's wait: back to where the tap was going.
+    const tapped = withLock(fakeWindow(), false);
+    tapped.install();
+    tapped.tap(link("/apps?x=1"));
+    tapped.advance(CHIP_AFTER);
+    await answer(tapped, 423);
+    assert.deepStrictEqual(tapped.locks, ["/apps?x=1"]);
+    assert.deepStrictEqual(tapped.assigned, []);
+    assert.strictEqual(tapped.view.chip, false, "the wait is over");
+    // No app-lock.js on the page: the address itself.
+    const bare = fakeWindow();
+    bare.install();
+    bare.hide();
+    bare.advance(AWAY_MS + 1);
+    bare.show();
+    await answer(bare, 423);
+    assert.deepStrictEqual(bare.replaced, ["/lock?next=" + encodeURIComponent("/devices/1")]);
+});
+
+test("the lock: a restart of a navigation and a reload asked for go to the lock once it is due", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.tap(link("/music"));
+    win.advance(CHIP_AFTER);
+    win.pings[0].reject(new TypeError("Failed to fetch"));
+    await settle();
+    win.lockDue = true;
+    win.fire("win", "online");
+    await answer(win);
+    assert.deepStrictEqual(win.assigned, []);
+    assert.deepStrictEqual(win.locks, ["/music"]);
+    const asked = withLock(fakeWindow(), true);
+    asked.install();
+    assert.strictEqual(asked.handyReconnect.reload(), true);
+    assert.strictEqual(asked.reloads, 0);
+    assert.deepStrictEqual(asked.locks, ["/devices/1"]);
+});
+
+test("the lock: the sign-in page's session check answered 423 goes to the lock, then the page wanted", async () => {
+    const now = 1000000;
+    const win = withLock(fakeWindow({ href: LOGIN, stored: { "handy-wanted": JSON.stringify({ href: "/devices/2", t: now - 1000 }) } }), false);
+    win.install();
+    assert.strictEqual(win.pings[0].url, "/api/session");
+    await answer(win, 423);
+    assert.deepStrictEqual(win.locks, ["/devices/2"]);
+    assert.deepStrictEqual(win.replaced, []);
+});

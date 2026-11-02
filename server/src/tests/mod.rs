@@ -5,6 +5,7 @@
 mod admin_auth;
 mod android_lock_page;
 mod app_display;
+mod app_lock;
 mod app_updates;
 mod attention;
 mod avatars;

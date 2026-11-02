@@ -168,6 +168,9 @@ pub async fn login_options(
 pub struct SignInForm {
     #[serde(default)]
     assertion: String,
+    /// Where the sign-in goes on to (step 3: a local path, `lock::local_next`; else Devices).
+    #[serde(default)]
+    next: String,
 }
 
 /// `POST /auth/passkey` (D1.4, D1.5).
@@ -176,8 +179,10 @@ pub async fn login(
     lang: Lang,
     session: Session,
     ceremony: Ceremony,
+    headers: axum::http::HeaderMap,
     Form(form): Form<SignInForm>,
 ) -> Response {
+    let next = crate::lock::local_next(&form.next);
     let ip = ceremony.client_key.clone();
     // The options' count ends here whatever comes: a refusal counts on its own (B-M3).
     passkeys::end_sign_in_attempt(&state.db, &session).await;
@@ -218,10 +223,11 @@ pub async fn login(
                 )
                     .into_response();
             }
-            return crate::handlers::auth::render_login(
+            return crate::handlers::auth::render_login_next(
                 Some(t(lang, view.passkey_failed()).to_string()),
                 lang,
                 view,
+                next.as_deref(),
             )
             .into_response();
         }
@@ -273,7 +279,11 @@ pub async fn login(
             .await
             .ok();
     }
-    Redirect::to("/").into_response()
+    // Design 74 D3.1: this browser's app lock comes back with the new sign-in (the parent has a passkey here: this
+    // one).
+    crate::lock::carry(&state, &session, &headers, admin.id, &ceremony).await;
+    // Step 3: a local `next` (the lock screen's Sign Out keeps one), else Devices (D1.5).
+    Redirect::to(next.as_deref().unwrap_or("/")).into_response()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -714,7 +724,13 @@ pub async fn remove(
                 ),
             )
             .await;
-            Redirect::to("/account?done=passkey_removed#passkeys").into_response()
+            let to = Redirect::to("/account?done=passkey_removed#passkeys").into_response();
+            // Design 74 D3.1: the last passkey for this address gone, this browser's app lock goes with it - it could
+            // never be opened (the other sessions ended with the epoch).
+            if crate::lock::off_without_passkey(&state, &session, admin.id, &ceremony).await {
+                return crate::lock::with_cookie(to, crate::lock::insecure(&state), 0);
+            }
+            to
         }
         Ok(passkeys::Removed::Gone) => {
             crate::settings_log::refused(Redirect::to("/account?done=passkey_gone#passkeys"))
