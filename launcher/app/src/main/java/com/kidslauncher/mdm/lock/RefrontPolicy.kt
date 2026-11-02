@@ -344,6 +344,11 @@ data class AlarmNotices(
      * screen closed at once) - [key]'s yield closes again rather than stay open while the notification lasts. */
     fun spent(key: String): AlarmNotices = if (key in ringing) copy(consumed = consumed + key) else this
 
+    /** Revision R3: the ringing keys of [clockPackages] whose full-screen intent isn't kept ([have]) - a ring already up
+     * when the process started, read before the clock set was known; the reader asks the listener for them again. */
+    fun screensMissing(have: Set<String>, clockPackages: Set<String>): Set<String> =
+        ringing.filter { (key, notice) -> notice.packageName in clockPackages && key !in have }.keys
+
     /** The lock came back in front: after yielding to the alarm ([yieldedTo] "alarm"), every ringing key is spent. */
     fun afterResume(yieldedTo: String?): AlarmNotices = if (yieldedTo == "alarm") copy(consumed = consumed + ringing.keys) else this
 
@@ -366,6 +371,11 @@ const val ALARM_SCREEN_SETTLE_MS = 1_500L
 /** Code QA L2 (as design 17b's [VOIP_FSI_CHECK_MS]): a re-send that left the lock in front this long brought nothing
  * up - its yield closes ([AlarmNotices.spent]). */
 const val ALARM_SCREEN_CHECK_MS = 1_500L
+
+/** Revision R2: the lock resumed with a re-send outstanding ([sentKey]) and no "alarm" yield in between - the screen
+ * came up and closed at once (or never came): that ring is spent, the key returned. After an "alarm" yield
+ * [AlarmNotices.afterResume] spends every ring anyway. */
+fun alarmSendSpentAtResume(sentKey: String?, yieldedTo: String?): String? = sentKey?.takeIf { yieldedTo != "alarm" }
 
 /** What the resumed, settled lock does about a ringing alarm's screen ([alarmScreenStep]). */
 enum class AlarmScreenStep {

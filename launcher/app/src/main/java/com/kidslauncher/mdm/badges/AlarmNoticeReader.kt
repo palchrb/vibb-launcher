@@ -73,6 +73,14 @@ object AlarmNoticeReader {
     /** The lock resumed after yielding to [yieldedTo] ([AlarmNotices.afterResume]). */
     fun lockResumed(yieldedTo: String?) = guarded { notices = notices.afterResume(yieldedTo) }
 
+    /** Revision R3: the clock set is known (or Fossify newly verified) - the ringing keys of the clock apps whose screen
+     * isn't kept ([AlarmNotices.screensMissing]) are asked for again and their full-screen intents kept. */
+    fun clocksKnown() = guarded {
+        val missing = notices.screensMissing(screens.keys, PinLockRuntime.clockPackages())
+        if (missing.isEmpty()) return@guarded
+        lookup?.invoke(missing.toTypedArray())?.forEach { sbn -> screen(sbn)?.let { screens[sbn.key] = it } }
+    }
+
     /** A re-send of [key]'s screen brought nothing up ([AlarmNotices.spent]). */
     fun sendCameToNothing(key: String) = guarded { notices = notices.spent(key) }
 

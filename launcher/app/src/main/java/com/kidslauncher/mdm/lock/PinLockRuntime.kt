@@ -594,6 +594,8 @@ object PinLockRuntime {
         CoroutineScope(Dispatchers.IO).launch {
             systemClocks = ClockApp.systemClocks(app)
             ClockApp.refresh(app)
+            // Revision R3: a ring already up at the start was read before the clock set was known.
+            handler.post { com.kidslauncher.mdm.badges.AlarmNoticeReader.clocksKnown() }
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
             sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
@@ -1720,6 +1722,9 @@ object PinLockRuntime {
         // Back in front after the alarm: its exemption ends now (qa-10-code #4) - the ringing notifications' too (a2).
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.lockResumed(yielding)
+        // Revision R2: a re-send whose screen came and went with no "alarm" yield - that ring's yield closes.
+        alarmSendSpentAtResume(alarmScreenSentKey, yielding)?.let { com.kidslauncher.mdm.badges.AlarmNoticeReader.sendCameToNothing(it) }
+        alarmScreenSentKey = null
         yielding = null
         sosFlowUntilElapsed = 0L
         sosMarkUnlogged = false

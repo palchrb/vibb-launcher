@@ -191,6 +191,17 @@ class RefrontPolicyTest {
         // The sweep keeps the counts of the same rings still active.
         assertEquals(ALARM_SCREEN_MAX_SENDS, notices.swept(listOf(post()), t + 40).sends["k"])
 
+        // Revision R2: a re-send outstanding at a resume without an "alarm" yield (came up and closed at once) is spent.
+        assertEquals("k", alarmSendSpentAtResume("k", null))
+        assertEquals("k", alarmSendSpentAtResume("k", "call"))
+        assertNull("the alarm yield's resume spends every ring itself", alarmSendSpentAtResume("k", "alarm"))
+        assertNull(alarmSendSpentAtResume(null, null))
+        // Revision R3: a ring up before the clock set was known - its key is asked for again, once the set names it.
+        val early = AlarmNotices().posted(post(), t).posted(post("g", "com.example.game"), t)
+        assertEquals(setOf("k"), early.screensMissing(have = emptySet(), clockPackages = clocks))
+        assertEquals(emptySet<String>(), early.screensMissing(have = setOf("k"), clockPackages = clocks))
+        assertEquals(emptySet<String>(), early.screensMissing(have = emptySet(), clockPackages = emptySet()))
+
         // The step: only LOCKED, screen on, no call or emergency flow; dark waits for the screen-on; typing the PIN
         // (code QA N4) and the cover's keyguard (N3) hold it for later.
         assertEquals(AlarmScreenStep.SEND, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false))

@@ -541,7 +541,7 @@ class LockGlanceGuardTest {
         }
         val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(alarmReader).map { it.groupValues[1] }.toList()
         assertEquals(
-            listOf("attach", "connected", "disconnected", "posted", "removed", "ringing", "lockResumed", "sendCameToNothing", "screenKey", "sendScreen"),
+            listOf("attach", "connected", "disconnected", "posted", "removed", "ringing", "lockResumed", "clocksKnown", "sendCameToNothing", "screenKey", "sendScreen"),
             publicFuns,
         )
         for (name in publicFuns - setOf("ringing", "screenKey", "sendScreen")) assertTrue(name, body(alarmReader, name).contains("= guarded {"))
@@ -567,6 +567,11 @@ class LockGlanceGuardTest {
         assertTrue(send.contains("reader.sendScreen(context, key, clocks)"))
         assertTrue(send.indexOf("noteOwnStart(") in 0 until send.indexOf("reader.sendScreen(context, key, clocks)"))
         assertTrue(body(runtime, "alarmScreenCheck").contains("if (!lockResumed) return"))
+        // Revision R2: a re-send outstanding at a resume with no "alarm" yield spends that ring; R3: the clock set known.
+        assertTrue(resumed.contains("alarmSendSpentAtResume(alarmScreenSentKey, yielding)?.let { com.kidslauncher.mdm.badges.AlarmNoticeReader.sendCameToNothing(it) }"))
+        assertTrue(runtime.contains("handler.post { com.kidslauncher.mdm.badges.AlarmNoticeReader.clocksKnown() }"))
+        assertTrue(code("ClockApp.kt").contains("if (now) Handler(Looper.getMainLooper()).post { com.kidslauncher.mdm.badges.AlarmNoticeReader.clocksKnown() }"))
+        assertTrue(body(alarmReader, "clocksKnown").contains("lookup?.invoke(missing.toTypedArray())?.forEach { sbn -> screen(sbn)?.let { screens[sbn.key] = it } }"))
         val activity = code("PinLockActivity.kt")
         assertTrue(body(activity, "onResume").contains("handler.postDelayed(alarmScreenSend, ALARM_SCREEN_SETTLE_MS)"))
         assertTrue(body(activity, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))

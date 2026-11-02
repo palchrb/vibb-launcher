@@ -257,7 +257,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   nothing came up and that ring's yield closes again (`alarmScreenCheck` -> `spent`, code QA L2, as 17b's
   `VOIP_FSI_CHECK_MS`). The lock's own dialogs hold it (no retry until the next resume or screen-on). Both modes (own
   and Android's face). **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
-  Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both. The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both; and (revision R1) `when=`
+  stays the same across two dumps of one ring on the Google/OEM clock (an update with a new `when` would read as a new
+  ring: fresh bound, re-send count reset). Revision R2: a resume with a re-send outstanding and no "alarm" yield in
+  between (the screen came up and closed at once) spends that ring (`alarmSendSpentAtResume`). Revision R3: a ring
+  already up at the process start was read before the clock set was known - once `systemClocks` is resolved, and when
+  Fossify becomes verified, `AlarmNoticeReader.clocksKnown` asks the listener again for the clock apps' ringing keys
+  without a kept intent (`screensMissing`). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
   always shown while there is one, r11). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
   stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
   (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally
