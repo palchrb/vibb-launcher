@@ -293,6 +293,10 @@ data class AlarmNotices(
     val ringing: Map<String, AlarmNotice> = emptyMap(),
     val consumed: Set<String> = emptySet(),
     val sends: Map<String, Int> = emptyMap(),
+    /** E7b's L1: the rings whose screen the time-rule screen (any instance - Home starts a new one) already sent since
+     * the last screen-on, or the kid opened from its row: it doesn't send them again ([screenKey]'s `kept` less these),
+     * so Home from the ringing screen lands on the card with its row, not a bounce. */
+    val timeRuleSent: Set<String> = emptySet(),
 ) {
     /** A post: an update of the same ring (same package and `when`) keeps its first-seen time, spent mark and sends;
      * a new ring under the key starts afresh; a post that doesn't ring drops the key. */
@@ -305,7 +309,8 @@ data class AlarmNotices(
     }
 
     fun removed(key: String): AlarmNotices =
-        if (key !in ringing && key !in consumed && key !in sends) this else AlarmNotices(ringing - key, consumed - key, sends - key)
+        if (key !in ringing && key !in consumed && key !in sends && key !in timeRuleSent) this
+        else AlarmNotices(ringing - key, consumed - key, sends - key, timeRuleSent - key)
 
     /** The listener's connect sweep: exactly [active]'s ringing ones, keeping what was known of the same rings. */
     fun swept(active: List<AlarmPost>, nowMs: Long): AlarmNotices {
@@ -315,7 +320,7 @@ data class AlarmNotices(
         val next = active.filter { it.ringing }.associate { post ->
             post.key to (ringing[post.key]?.takeIf { post.key in known } ?: AlarmNotice(post.packageName, nowMs, post.whenMs))
         }
-        return AlarmNotices(next, consumed intersect known, sends.filterKeys { it in known })
+        return AlarmNotices(next, consumed intersect known, sends.filterKeys { it in known }, timeRuleSent intersect known)
     }
 
     /** What the listener still has active of [ringing] ([active], asked for exactly those keys): the rest goes - a
@@ -349,7 +354,11 @@ data class AlarmNotices(
 
     /** E7's M1: a screen-on - the kid's own power press (or the alarm's wake) - starts the re-send count afresh, so the
      * cap only stops a lock and a clock screen bouncing within one screen-on, never a power press bringing it back. */
-    fun screenOn(): AlarmNotices = if (sends.isEmpty()) this else copy(sends = emptyMap())
+    fun screenOn(): AlarmNotices = if (sends.isEmpty() && timeRuleSent.isEmpty()) this else copy(sends = emptyMap(), timeRuleSent = emptySet())
+
+    /** E7b's L1: the time-rule screen sent [key]'s screen (or the kid opened it from the row) - not again from there
+     * until the next screen-on or a new ring ([timeRuleSent]). */
+    fun sentFromTimeRule(key: String): AlarmNotices = if (key in ringing) copy(timeRuleSent = timeRuleSent + key) else this
 
     /** Code QA L2: a re-send went out but the lock is still in front [ALARM_SCREEN_CHECK_MS] later (refused, or the
      * screen closed at once) - [key]'s yield closes again rather than stay open while the notification lasts. */

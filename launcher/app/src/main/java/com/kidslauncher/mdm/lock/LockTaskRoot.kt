@@ -35,10 +35,13 @@ enum class LockTaskEntry {
      * (fallback), or the face with Android locked and the kiosk on. */
     START_SELF,
 
-    /** Design 59b R2 (code QA M1): kiosk off, as the face with Android locked, a lock task runs - started while Android
-     * read open (a resume in a RELOCK's wait: a process start with the screen on, a remote lock's show before its
-     * `lockNow`, a late `USER_PRESENT`) or left from the kiosk. With the kiosk off any running lock task is the lock's
-     * own (`lockLeave`'s kiosk-off row): the glance stops it now, not at the leave, where it would clear a helper's task. */
+    /** Design 59b R2 (code QA M1): kiosk off, as the face with Android locked, a lock task the glance roots runs -
+     * started while Android read open (a resume in a RELOCK's wait: a process start with the screen on, a remote lock's
+     * show before its `lockNow`, a late `USER_PRESENT`) or left from the face's kiosk (59d A). The glance stops it now,
+     * not at the leave, where it would clear a helper's task. Only as the root (E7b M-B1): `stopLockTask` from a task
+     * that isn't the root takes that task out and clears it (AOSP `clearLockedTask` -> `performClearTaskForReuse`) - the
+     * glance is finished, Home's locked resume shows it again in a new task, which joins the lock task and stops again:
+     * a loop with Android's keyguard un-occluded. Another root (Home's, own mode's kiosk) stays until the leave. */
     STOP_OWN,
 }
 
@@ -69,8 +72,12 @@ fun lockTaskEntry(
      * remote lock, a late `USER_PRESENT`; or one left from a kiosk on -> off flip) is stopped at the next entry check
      * with Android locked ([LockTaskEntry.STOP_OWN]) - never during a VoIP call (its PiP, design 17 QA #10). */
     androidLocked: Boolean = false,
+    /** This lock instance started the running lock task (`startedLockTask`): its task is the root. Unknown (Home rooted
+     * it, an earlier instance or process did) counts as not - a STOP_OWN from a task that isn't the root clears the
+     * glance's own task (E7b M-B1), so the decision must hold across every resume that follows. */
+    glanceRoot: Boolean = false,
 ): LockTaskEntry = when {
-    running && !kioskOn && androidLocked && !voipCall -> LockTaskEntry.STOP_OWN
+    running && glanceRoot && !kioskOn && androidLocked && !voipCall -> LockTaskEntry.STOP_OWN
     running || !permitted || (!kioskOn && (voipCall || androidLocked)) -> LockTaskEntry.NONE
     !kioskOn || fallbackDue || androidLocked -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME

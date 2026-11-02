@@ -124,8 +124,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     RELOCK: a process start with the screen on (a crash, a self-update's restart), a remote lock (`lockNow` posts the
     show before `DPM.lockNow`), a late or missed `USER_PRESENT` - or one is left from a kiosk on -> off flip; with the
     kiosk off any running lock task is the lock's own (`lockLeave`'s kiosk-off row). Never during a VoIP call (its
-    PiP). After a kiosk flip Home may be the root: the glance's stop then only takes its own task out, and Home's ends
-    at the leave as before. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
+    PiP). Only when this lock instance started it (`glanceRoot` = `startedLockTask`, reset when nothing runs): E7b's
+    M-B1 - own mode's kiosk rooted by Home, then Android's lock and the kiosk off in one change - showed that
+    `stopLockTask` from a task that isn't the root takes that task out **and clears it** (AOSP `clearLockedTask` ->
+    `performClearTaskForReuse`): the glance was finished, Home's locked resume showed a new one, which joined the lock
+    task and stopped again - 142-266 resumes a minute with Android's keyguard un-occluded and no way to the pad. Another
+    root (Home's) now stays until the leave (the kiosk-off row, then Home's unlocked `reconcileKioskMode`); unknown
+    (an earlier instance or process rooted it) counts as another root - at worst R2's helper case at that leave. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
     check at once (`chromeEntryRecheckDue` on `EntryPolicy(kioskOn, face)`): `LockTaskChrome.applyPlan` tells the chrome
     listeners after its writes (`PinLockRuntime.chromePassLanded`; `AppEnforcer` sets the face just before it), so the
     kiosk turned on under the face's glance roots its lock task from the glance (59d A) whether Home is in front or not
@@ -301,8 +306,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   and Android's face). **After an unlock** (E7's M1: the time-rule screen didn't bring it back, the shade shut by the
   kiosk, Recents empty - it rang until the clock gave up): `LockActivity`'s resume posts the same send after
   `ALARM_SCREEN_SETTLE_MS` (`sendAlarmScreen(.., timeRuleScreen = true)`: in charge while not LOCKED, the same count,
-  no time bound, no yield and so no check; a pause drops it; the resume right after a send from this screen - the kid
-  back from the ringing screen - sends nothing, code QA 3: a clock slow to drop its notification would get its stale
+  no time bound, no yield and so no check; a pause drops it; a ring the time-rule screen - any instance, Home starts a
+  new one - already sent this screen-on, or the kid opened from its row, isn't sent from there again
+  (`AlarmNotices.timeRuleSent`, cleared at the screen-on and with the ring; code QA 3, E7b's L1: the kid back from the
+  ringing screen by Stop, Back or Home lands on the card, and a clock slow to drop its notification never gets its stale
   screen again), and while an allowed clock's alarm rings unsilenced (`PinLockRuntime.alarmToStop`:
   `AlarmNoticeReader.openable`, not `silencesAlarms`) the card's first row is "Slå av alarmen" (`LockRow.Alarm`, the
   alarm glyph), whose tap sends the ringing screen uncapped (`openRingingAlarm`, `screenKey(.., capped = false)` after

@@ -532,7 +532,7 @@ class LockGlanceGuardTest {
         assertEquals(1, Regex("""\.send\(""").findAll(alarmReader).count())
         assertTrue(alarmReader.contains("intent.send(context, 0, null, null, null, null, VisibleSender.options())"))
         assertTrue(body(alarmReader, "screenKey").contains("notices = notices.reconciled(active.mapTo(mutableSetOf()) { it.key })"))
-        assertTrue(body(alarmReader, "screenKey").contains("kept = screens.keys"))
+        assertTrue(body(alarmReader, "screenKey").contains("val kept = if (timeRule) screens.keys"))
         for (name in listOf("disconnected", "connected")) assertTrue(name, body(alarmReader, name).contains("screens.clear()"))
         for (line in Regex("""\bLog\.\w\(.*""").findAll(alarmReader).map { it.value }) {
             val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
@@ -543,7 +543,7 @@ class LockGlanceGuardTest {
         assertEquals(
             listOf(
                 "addListener", "removeListener", "attach", "connected", "disconnected", "listening", "posted", "removed", "ringing", "lockResumed",
-                "clocksKnown", "sendCameToNothing", "screenOn", "openable", "screenKey", "sendScreen",
+                "clocksKnown", "sendCameToNothing", "sentFromTimeRule", "screenOn", "openable", "screenKey", "sendScreen",
             ),
             publicFuns,
         )
@@ -556,7 +556,7 @@ class LockGlanceGuardTest {
         assertTrue(alarmReader.contains("listeners.toList().forEach { listener -> guarded { listener() } }"))
         // E7 code QA 5: any ringing key with a kept screen, for the row and for every send.
         assertTrue(body(alarmReader, "openable").contains("notices.screenKey(clockPackages, kept = screens.keys, capped = false) != null"))
-        assertTrue(body(alarmReader, "screenKey").contains("notices.screenKey(clockPackages, kept = screens.keys, capped = capped, yieldAtMs = now)"))
+        assertTrue(body(alarmReader, "screenKey").contains("notices.screenKey(clockPackages, kept = kept, capped = capped, yieldAtMs = now)"))
         val listener = code("BadgeListenerService.kt")
         for (call in listOf("AlarmNoticeReader.connected(active)", "AlarmNoticeReader.posted(it)", "AlarmNoticeReader.removed(it)")) {
             assertTrue(call, listener.contains(call))
@@ -573,11 +573,14 @@ class LockGlanceGuardTest {
         // sends it once per resume after the settle, from its visible window, and a pause drops it.
         val send = body(runtime, "sendAlarmScreen")
         // E7 code QA 2: the PIN lock's send keeps to the yield's bound, the time-rule screen's has none.
-        assertTrue(send.contains("val clocks = clockPackages()") && send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen)"))
+        assertTrue(send.contains("val clocks = clockPackages()") && send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)"))
         assertTrue(send.contains("val inCharge = if (timeRuleScreen) mode != LockMode.LOCKED else mode == LockMode.LOCKED"))
         assertTrue(send.contains("key, inCharge, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),"))
         // The time-rule screen has no yield to check.
-        assertTrue(send.contains("if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent }"))
+        assertTrue(send.contains("if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent } else if (sent) reader.sentFromTimeRule(key)"))
+        // E7b's L1: the time-rule screen's send skips a ring it already sent this screen-on, whatever its instance.
+        assertTrue(send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)"))
+        assertTrue(body(alarmReader, "screenKey").contains("val kept = if (timeRule) screens.keys - notices.timeRuleSent else screens.keys"))
         assertTrue(send.contains("typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),"))
         assertTrue(send.contains("reader.sendScreen(context, key, clocks)"))
         assertTrue(send.indexOf("noteOwnStart(") in 0 until send.indexOf("reader.sendScreen(context, key, clocks)"))
@@ -606,10 +609,9 @@ class LockGlanceGuardTest {
         assertTrue(body(timeRule, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))
         assertTrue(body(timeRule, "onStart").contains("AlarmNoticeReader.addListener(alarmListener)"))
         assertTrue(body(timeRule, "onStop").contains("AlarmNoticeReader.removeListener(alarmListener)"))
-        assertTrue(timeRule.contains("is LockRow.Alarm -> if (PinLockRuntime.openRingingAlarm(this)) alarmScreenSent = true"))
+        assertTrue(timeRule.contains("is LockRow.Alarm -> PinLockRuntime.openRingingAlarm(this)"))
+        assertFalse("process-wide, not the instance's (E7b's L1)", timeRule.contains("alarmScreenSent"))
         // E7 code QA 3: the resume after a send from here (the kid back from the ringing screen) sends nothing.
-        assertTrue(body(timeRule, "onResume").contains("if (alarmScreenSent) alarmScreenSent = false else handler.postDelayed(alarmScreenSend,"))
-        assertTrue(timeRule.contains("AlarmScreenStep.SEND -> alarmScreenSent = true"))
         // E7 code QA 5: a silent rule's flip re-renders the row.
         assertTrue(body(timeRule, "onStart").contains("ZenRuleRuntime.addListener(alarmListener)"))
         assertTrue(body(timeRule, "onStop").contains("ZenRuleRuntime.removeListener(alarmListener)"))

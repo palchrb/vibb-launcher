@@ -197,8 +197,8 @@ fun callbackWindowUntil(
 /**
  * How long the callback window lasts on a placing alone (H1 QA): the launcher placed an emergency call
  * (or Telecom marked a callback for one placed elsewhere) but nothing shows it connected - hung up
- * while dialling, no signal. Twice Telecom's own callback window (5 min by AOSP default, seen on the
- * emulator). Evidence that it connected - our in-call service seeing it active, the call log's
+ * while dialling, no signal. Twice the AOSP default of Telecom's own callback window (5 min; on the
+ * E7b emulator its mark lasted more than 8 min). Evidence that it connected - our in-call service seeing it active, the call log's
  * duration, the phone's call state off-hook for [PLACED_CONNECT_EVIDENCE_MS] ([PlacedCallEvidence]) -
  * gives the full [CALLBACK_WINDOW_MS].
  */

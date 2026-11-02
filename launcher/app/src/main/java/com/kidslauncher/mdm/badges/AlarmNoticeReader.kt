@@ -102,6 +102,9 @@ object AlarmNoticeReader {
     /** A re-send of [key]'s screen brought nothing up ([AlarmNotices.spent]). */
     fun sendCameToNothing(key: String) = guarded { notices = notices.spent(key) }
 
+    /** E7b's L1: [key]'s screen went from the time-rule screen ([AlarmNotices.sentFromTimeRule]). */
+    fun sentFromTimeRule(key: String) = guarded { notices = notices.sentFromTimeRule(key) }
+
     /** E7's M1: a screen-on - the re-send count starts afresh ([AlarmNotices.screenOn]). */
     fun screenOn() = guarded { notices = notices.screenOn() }
 
@@ -120,7 +123,7 @@ object AlarmNoticeReader {
      * asking the listener which of the kept keys are still active ([AlarmNotices.reconciled]; no listener or no answer:
      * none) - right before every send, so a ring stopped meanwhile is never sent.
      */
-    fun screenKey(clockPackages: Set<String>, capped: Boolean = true, inYield: Boolean = false): String? = try {
+    fun screenKey(clockPackages: Set<String>, capped: Boolean = true, inYield: Boolean = false, timeRule: Boolean = false): String? = try {
         val kept = notices.ringing.keys
         val active = if (kept.isEmpty()) null else lookup?.invoke(kept.toTypedArray())
         if (active == null) {
@@ -129,7 +132,9 @@ object AlarmNoticeReader {
             notices = notices.reconciled(active.mapTo(mutableSetOf()) { it.key })
             tellingChanges { screens.keys.retainAll(notices.ringing.keys) }
             val now = SystemClock.elapsedRealtime().takeIf { inYield }
-            notices.screenKey(clockPackages, kept = screens.keys, capped = capped, yieldAtMs = now)
+            // E7b's L1: the time-rule screen's own send skips a ring it already sent this screen-on.
+            val kept = if (timeRule) screens.keys - notices.timeRuleSent else screens.keys
+            notices.screenKey(clockPackages, kept = kept, capped = capped, yieldAtMs = now)
         }
     } catch (e: Throwable) {
         Log.w(LOG_TAG, "Alarm screen read failed: ${e.javaClass.simpleName}")

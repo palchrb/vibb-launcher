@@ -60,7 +60,8 @@ class LockTaskRootTest {
         // Code QA M1: a lock task already running there (started while Android read open, or left from the kiosk) is
         // stopped at the entry check - with the kiosk off any running lock task is the lock's own. Not during a VoIP call.
         for (fallback in listOf(false, true)) for (permitted in listOf(false, true)) {
-            assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true))
+            assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true, glanceRoot = true))
+            assertEquals("another root (Home's): kept until the leave", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true, glanceRoot = false))
             assertEquals(LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, voipCall = true, androidLocked = true))
             assertEquals("Android open: kept", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = false))
             assertEquals("kiosk on: kept", LockTaskEntry.NONE, lockTaskEntry(true, permitted, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = fallback, androidLocked = true))
@@ -82,10 +83,10 @@ class LockTaskRootTest {
         val b = listOf(false, true)
         var changed = 0
         for (running in b) for (permitted in b) for (kiosk in b) for (since in listOf(null, -5L, 0L, 500L, HOME_ROOT_RETRY_MS)) {
-            for (fallback in b) for (voip in b) for (android in b) {
-                val now = lockTaskEntry(running, permitted, kiosk, since, fallback, voipCall = voip, androidLocked = android)
+            for (fallback in b) for (voip in b) for (android in b) for (root in b) {
+                val now = lockTaskEntry(running, permitted, kiosk, since, fallback, voipCall = voip, androidLocked = android, glanceRoot = root)
                 val r2 = !running && permitted && !kiosk && android
-                val stop = running && !kiosk && android && !voip
+                val stop = running && root && !kiosk && android && !voip
                 if (stop) {
                     assertEquals(LockTaskEntry.STOP_OWN, now)
                     assertEquals("was: kept running", LockTaskEntry.NONE, before(running, permitted, kiosk, since, fallback, voip, android))
@@ -99,7 +100,47 @@ class LockTaskRootTest {
             }
         }
         // Only the no-VoIP rows of the R2 case changed (START_SELF -> NONE); with a VoIP call they were NONE already.
-        assertEquals(5 * 2, changed)
+        assertEquals(5 * 2 * 2, changed)
+    }
+
+    /**
+     * E7b M-B1: own mode's kiosk rooted by Home, then the face and the kiosk off in one change - the glance stopped "its
+     * own" lock task from a task that wasn't the root at every resume; AOSP then clears that task (the glance finished),
+     * Home's locked resume shows a new glance, which joins the lock task and stops again: 142-266 resumes a minute with
+     * Android's keyguard un-occluded. The decision must settle: resumes on a small model of AOSP's `clearLockedTask`.
+     */
+    @Test
+    fun `the face's entry check settles across resumes, whoever roots the lock task`() {
+        /** Resumes of the glance as the face, kiosk off, Android locked: how many times the glance's task was cleared,
+         * and whether a lock task still runs. [homeRoot]: Home's task roots it; otherwise this glance instance did. */
+        fun resumes(homeRoot: Boolean): Pair<Int, Boolean> {
+            val locked = mutableListOf(if (homeRoot) "home" else "glance")
+            if (homeRoot) locked += "glance"
+            var started = !homeRoot
+            var cleared = 0
+            repeat(20) {
+                val running = locked.isNotEmpty()
+                if (!running) started = false
+                if (lockTaskEntry(running, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true, glanceRoot = started) == LockTaskEntry.STOP_OWN) {
+                    started = false
+                    if (locked.first() == "glance") {
+                        locked.clear()
+                    } else {
+                        // Not the root: the task is taken out and cleared; Home's locked resume starts a new glance in a
+                        // new task, which joins the lock task.
+                        locked.remove("glance")
+                        cleared++
+                        locked += "glance"
+                    }
+                }
+            }
+            return cleared to locked.isNotEmpty()
+        }
+        assertEquals("Home's root: the glance is never cleared, Home's lock task kept until the leave", 0 to true, resumes(homeRoot = true))
+        assertEquals("the glance's root: stopped once, then nothing", 0 to false, resumes(homeRoot = false))
+        // Home's ends after the unlock: the leave's kiosk-off row stops first (the glance's own task, finishing anyway),
+        // and Home's unlocked resume stops its root (`reconcileKioskMode`).
+        assertTrue(lockLeave(false, startedLockTask = false, lockTaskRunning = true, callLive = false, glanceInFront = true, androidFace = true).stopLockTaskFirst)
     }
 
     /** E7 M2 (59b R2): a policy that turns the kiosk or the face on or off re-runs the resumed lock's entry check at once
@@ -118,7 +159,7 @@ class LockTaskRootTest {
         assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
         // The kiosk off again, Android locked: the glance's lock task is stopped (STOP_OWN), a helper isn't cleared later.
         assertTrue(chromeEntryRecheckDue(false, kioskOn, r2))
-        assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        assertEquals(LockTaskEntry.STOP_OWN, lockTaskEntry(true, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true, glanceRoot = true))
         // Android's lock switched off (own mode, kiosk off): the lock roots its own lock task, as in step 10.
         assertTrue(chromeEntryRecheckDue(false, r2, own))
         assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = false))

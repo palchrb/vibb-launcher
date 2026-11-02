@@ -1364,7 +1364,7 @@ object PinLockRuntime {
         val clocks = clockPackages()
         // The PIN lock's send opens the yield, so it keeps to the yield's bound (E7 code QA 2); past it the PIN, then the
         // time-rule screen, reaches the ringing screen.
-        val key = reader.screenKey(clocks, inYield = !timeRuleScreen)
+        val key = reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)
         // The PIN lock while LOCKED, the time-rule screen while not (LOCKED, the PIN lock is above it).
         val inCharge = if (timeRuleScreen) mode != LockMode.LOCKED else mode == LockMode.LOCKED
         val step = alarmScreenStep(
@@ -1376,7 +1376,7 @@ object PinLockRuntime {
         noteOwnStart("the ringing alarm's screen")
         val sent = reader.sendScreen(context, key, clocks)
         Log.i(LOG_TAG, if (sent) "The ringing alarm's screen sent again" else "The ringing alarm's screen couldn't be sent")
-        if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent }
+        if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent } else if (sent) reader.sentFromTimeRule(key)
         return if (sent) AlarmScreenStep.SEND else AlarmScreenStep.NONE
     }
 
@@ -1386,15 +1386,15 @@ object PinLockRuntime {
         com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(clockPackages())
 
     /** E7's M1: the kid tapped the alarm row - the ringing screen, uncapped (a tap can't loop), from [context], the
-     * visible time-rule screen. Returns whether it was sent. Main thread. */
-    fun openRingingAlarm(context: Context): Boolean {
+     * visible time-rule screen; the screen's own send then skips that ring (E7b's L1). Main thread. */
+    fun openRingingAlarm(context: Context) {
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
         val clocks = clockPackages()
-        val key = reader.screenKey(clocks, capped = false) ?: return false
+        val key = reader.screenKey(clocks, capped = false) ?: return
         noteOwnStart("the ringing alarm's screen")
         val sent = reader.sendScreen(context, key, clocks)
+        if (sent) reader.sentFromTimeRule(key)
         Log.i(LOG_TAG, if (sent) "The ringing alarm's screen opened from its row" else "The ringing alarm's screen couldn't be sent")
-        return sent
     }
 
     /** [ALARM_SCREEN_CHECK_MS] after a re-send (code QA L2, as 17b's check): the lock still in front means nothing came
