@@ -1,0 +1,12 @@
+{#- Design 74 D1.6, §6.2: "Confirm with passkey" before the password field of a form that asks for it again, when
+    this parent has a passkey for this host (`passkey_reauth`). Hidden until static/passkey.js finds the browser can
+    use passkeys; it fetches a re-auth challenge bound to the form's route, puts the assertion in `assertion`, empties
+    the password and sends the form. -#}
+{%- if passkey_reauth %}
+<div class="reauth-passkey" data-passkey-ui hidden>
+    <button type="button" class="button-outline" data-passkey-reauth data-w-failed="{{ self.t("passkeys.browser_failed") }}">{% include "partials/key_icon.html" %}{{ self.t("passkeys.confirm") }}</button>
+    <p class="field-error" data-passkey-error role="alert" hidden></p>
+    <p class="or-divider">{{ self.t("passkeys.or") }}</p>
+</div>
+<input type="hidden" name="assertion" value="">
+{%- endif %}

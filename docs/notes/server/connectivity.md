@@ -153,6 +153,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   reads as the username, `AdminUser::name`), `invited_by`, `invite_expires_at` (a one-time password's onboarding ends
   then; written in SQL, `datetime('now', '+72 hours')`), `removed_at` (a soft remove: the row and its username stay,
   `password_hash = '!removed'`, no 2FA). **Ready** = not removed, own password set, 2FA on (`AdminUser::ready`).
+  Since design 74 step 1 that is **the one readiness predicate**: `AdminUser::ready` (also no `invite_expires_at`) and
+  its SQL twin `ready_sql!()` (`models.rs`), used by the actor condition (`parents::actor_ok!`, `passkeys::add`/
+  `remove`), Remove's "another ready parent", the passkey sign-in and `/api/session`; step 2 adds its passkey-only arm.
 - **Usernames** `security::valid_username` (`[a-z0-9._-]{1,32}`): Add lowercases and trims; `ADMIN_USERNAME` is only
   trimmed (sign-in is an exact match) and refused at the first start when invalid (`bootstrap_username`); existing
   installs are untouched. Add refuses a name whose `lower(username)` is taken, removed ones included. **Display
@@ -193,7 +196,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `BEGIN IMMEDIATE` transaction with its prefs and reads, `parent_removed`, its Spotify login in progress dropped
   (`spotify::Accounts::forget_pending`), PRG `/account?parents=removed#parents`); the only ready account can't remove
   itself, and your own row has no action (the route still answers yourself by the same guard, then `/login`). The
-  Backups restore confirm says "Parent accounts come back as they were in this backup."
+  Backups restore confirm says "Parent accounts and passkeys come back as they were in this backup." (design 74,
+  `backups.restore.accounts`).
 - **"By <name>"** (step 4): `device_commands.requested_by` (0087) is set by Locate's commands, Unlock/Lock again/Allow
   these apps (`window_relock`), Install Now and the Child PIN's queue rule after a parent's save (`kid_lock::
   queue_pin_command(.., Some(admin))`; a status report's queue passes `None`). Locate's Requests and the summary's
@@ -203,3 +207,86 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   renders Account (400) with its form open and the reason under the field, at `#parents`.
 - Tests: `src/tests/parents.rs`, `admin_auth::reset_2fa_from_the_command_line_clears_the_lock_and_the_totp`,
   `jstest/reveal.test.js`.
+
+## Passkeys (design 74 step 1, `docs/design/74-passkeys.md`)
+
+- **The verifier** `src/webauthn.rs` (D5.1, no new crate: `ring`, `sha2`, `base64`, `serde_json`): a bounded CBOR
+  reader (definite lengths, at most 4 containers deep, major types 0-5, no duplicate map key, no trailing bytes; a
+  length past the input is refused before anything is allocated), COSE keys ES256 (the point checked on P-256 by an
+  ECDH agreement against a throwaway key - ring has no other public check), EdDSA and RS256 (2048-4096 bit modulus, no leading zero, an odd exponent 3..2^33-1 - what ring verifies),
+  alg/kty/crv agreeing and the alg one of the three asked for; `Registration::verify` (type, the origin exactly one of
+  the request's and its host under the RP ID, `crossOrigin` false, `fmt`/`attStmt` present and ignored, rpIdHash, UP
+  and UV, BS without BE refused, the attested data in order with the extensions map after it when ED is set and
+  nothing left over - `true`/`false` read there -, the authData id = `rawId` = `id`, 16-512 bytes so every assertion fits `/auth/passkey`'s 4 KiB) and `Assertion::verify` (the same plus AT
+  refused, BE equal to the stored one, the signature over `authenticatorData || sha256(clientDataJSON)`, the counter
+  rule: a stored non-zero counter needs a higher one, a 0 included). `webauthn::Refused` is one code per rule, the log's facts. Tests: `webauthn::tests` (every refusal; an RS256
+  vector made once with a throwaway key by `scripts/webauthn-rs256-vector.py`, public data only, in
+  `testdata/webauthn/rs256.json`), the fake authenticator `webauthn::fake` (ring keys signing real authData).
+- **RP ID and origins** (D4.1, D4.2, `webauthn::PasskeyConfig`, `AppState.passkeys`): the RP ID is the request's host
+  (`Host`, or `X-Forwarded-Host` from a trusted peer - the host `csrf_guard` compares), lowercased, the port and one
+  trailing dot dropped; an IP or a name that isn't a DNS name with a dot (or `localhost`) gets no passkey UI.
+  `PASSKEY_RP_ID` (checked at start: lower case, a DNS name with a dot or localhost, not an IP, not one of a short list
+  of public suffixes; a bad value refuses to start) sets one RP ID: at its own host the origin is `https://<rp_id>`
+  (+ its port when not 443); **every other host under it must be in `PASSKEY_ORIGINS`** (an unlisted one gets no
+  passkey UI) - no origin is ever built from another Host, so a client that forges Host can't make a sibling's origin
+  "this request's" (qa-passkeys-1 A-M1). Without `PASSKEY_RP_ID` the origin is `https://` + the host, which is also the
+  RP ID (a forged one can't match a stored `rp_id`). `http://localhost[:port]` only with `INSECURE_COOKIES`;
+  `PASSKEY_ORIGINS` (each an https origin under `PASSKEY_RP_ID`, which it requires, no default port) also lets a
+  proxy's other host name (not an IP) offer the RP ID - only the list passes there. Each passkey keeps its `rp_id`
+  and an assertion is checked against it: a forged Host only proposes an RP ID. `passkeys::Ceremony` (an extractor)
+  is a request's RP ID, origins, route, client and the User-Agent's device name (the add form's prefilled Name).
+- **Challenges** (D1.7, `passkeys::Challenges`): in memory (a `Mutex<HashMap>`, 5 minutes, swept on insert, at most 8
+  per session - a ninth drops the session's oldest; two pools: sign-in challenges at most 500, the oldest dropped, at
+  most 3 live per client key; signed-in ones at most 500, refused past it - signed-out traffic can never refuse them), 32 random bytes bound to the kind
+  (`register`/`login`/`reauth`), the session id, the account and its epoch (none for `login`), the RP ID and the route
+  that consumes it; `take` removes the entry under the lock and answers it only when all match (a mismatch spends it
+  too). A restart drops them. A signed-out options call without a session saves one first (10 minutes, `cycle_id`
+  and the usual lifetime at the sign-in).
+- **Storage** (migration `0116_passkeys.sql`): `admin_passkeys` (credential id unique, the COSE key, alg, rp_id, the
+  name - `security::display_name`'s rule, empty is "Passkey" -, sign_count, backup_eligible fixed at registration,
+  backed_up updated per use, transports, created/last used and from where) and `admin_users.webauthn_user_id` (16
+  random bytes made at the first add, never the row id or the username; a UNIQUE index). Up to 10 per parent (the cap
+  and the actor condition in the `INSERT`). The counter store is one `UPDATE ... WHERE id = ? AND ((sign_count = 0 AND
+  ?1 = 0) OR sign_count < ?1)`: no row is a refusal, so two uses of one counter value can't both pass; a stored
+  non-zero counter and a new one not higher (0 included) = `passkey_cloned`.
+- **Routes** (`handlers::passkeys`, `static/passkey.js`): `POST /auth/passkey/options` (signed out, through
+  `csrf_guard`; a session's first call writes a hidden `passkey_started` row the ban counts, its id kept in the
+  pre-session (`passkeys::PRE_SIGN_IN_KEY`); a later call of that session gets its live challenge back, uncounted; the
+  row goes at the next `POST /auth/passkey` or `POST /login` of that session (`passkeys::end_sign_in_attempt`), so a
+  wrong password costs one as before passkeys; hidden from the Security Log, pruned after a day; the ban's words count
+  failures and started passkey sign-ins apart (`security.detail.ban.failed_and_started`); a banned key gets 429) and `POST /auth/passkey` (form `assertion`, 4 KiB): the
+  user handle is required and finds the account, which must be ready; the credential must be that account's; success
+  is `verify_2fa`'s completion (counters reset, `login_success` "passkey · <name>", `cycle_id`, the session's account,
+  epoch and sign-in time; a failed `cycle_id` refuses it), no TOTP page, a running TOTP lock and its doubling kept
+(`admin_auth::reset_after_passkey`); any refusal is one red line, `passkey_refused` with the code, counted in the
+  ban. `POST /account/passkeys/reauth-options` (form `route`, one of `passkeys::reauth_route`'s): a `reauth`
+  challenge with `allowCredentials` = this parent's passkeys at this RP ID. `POST /account/passkeys/options` (the
+  name and the re-auth; JSON creation options: ES256/EdDSA/RS256, resident key and UV required, attestation none,
+  excludeCredentials) and `POST /account/passkeys` (form `credential`, 8 KiB; PRG
+  `/account?done=passkey_added#passkey-<id>`, `passkey_added`, and `parent_events::Kind::PasskeyAdded` - no phone, no
+  switch: pushed to every parent and in every inbox). `POST /account/passkeys/{id}/remove` (the re-auth; the row and
+  the epoch in one transaction, this session keeps it, every push subscription goes; PRG
+  `/account?done=passkey_removed#passkeys`). JSON refusals are `{error, field}` or `{signed_out: true}`.
+- **The re-auth by passkey** (D1.6): `admin_auth::Proof` (the password, or a non-empty `assertion`), taken by
+  `admin_auth::reauth` and `reauth_and_hash` (the forms that also hash a new secret: the password change, Add Parent's
+  and Reset's one-time password - with a passkey the hash is a separate gated `PasswordGate::hash`). The credential must
+  be the signed-in parent's, a user handle when sent must be the account's; a bad one is logged `passkey_refused`
+  ("Confirming it's you" + the code) and counts in `reauth_wrong` like a wrong password; a wrong password at a passkey's
+  add or removal is `passkey_change_refused`. Add Passkey's form names its re-auth route
+  (`data-reauth-route="/account/passkeys/options"`, which takes it). Every re-auth form - Show
+  Child PIN, the password change, Reset Two-Factor Login, Add Parent, Withdraw/Remove, Reset…, a passkey's add and
+  removal - includes `partials/reauth_passkey.html` ("Confirm with passkey" + "or", shown by `passkey.js` only when
+  the parent has a passkey for this host and the browser supports them); the password change and the 2FA reset list
+  the passkeys that still work (`partials/passkeys_still_work.html`).
+- **The ways back delete passkeys** (D1.3b): `parents::reset_parent` and `remove_parent` in their transaction,
+  `reset-2fa <user>` (and its alias `reset-sign-in <user>`, `main::is_reset_command`) in one with its `UPDATE`; Reset's
+  and Remove's confirms (a waiting row's New One-Time Password… and Withdraw… too) say "Pappa's passkeys are removed
+  too." on a row with any; the Parents rows add "· 2 passkeys" on a ready account with any.
+- **Pages**: Account's Passkeys group between Two-Factor Login and Sessions (`#passkeys`; a row per passkey, its
+  summary the Remove confirm `#passkey-<id>`; Add Passkey… `#add-passkey`, hidden until `passkey.js`; "Passkeys
+  don't work at this address" at an IP; `[data-passkey-unsupported]` says "need https" / "this browser can't"; the
+  footer names the RP ID); the sign-in page's "Sign In with Passkey" under an "or" divider (shown whenever the browser
+  supports passkeys at a host with an RP ID, D4.3; the username field `autocomplete="username webauthn"` and a
+  conditional get where available). The sign-in page itself stays English until slice 3e, so its passkey words follow
+  the request's language meanwhile.
+

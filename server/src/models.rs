@@ -32,11 +32,24 @@ impl AdminUser {
         self.display_name.as_deref().unwrap_or(&self.username)
     }
 
-    /// Ready (design 62 §1): signed in with its own password and two-factor login. Removed
-    /// accounts are filtered in SQL before they get here.
+    /// Ready - design 74 D2.2's one readiness predicate (design 62 §1 before it): not removed (filtered in
+    /// SQL before a row gets here), no one-time password's or forced change's state, and its own
+    /// password with two-factor login on. [ready_sql] is its twin for the statements' conditions;
+    /// `require_full_auth`, the passkey sign-in, Add's and Reset's actor condition and the count of
+    /// another ready parent all use one of the two.
     pub fn ready(&self) -> bool {
-        !self.must_change_password && self.totp_enabled
+        !self.must_change_password && self.totp_enabled && self.invite_expires_at.is_none()
     }
+}
+
+/// [AdminUser::ready] in SQL, for a row of `admin_users` (its columns unqualified): a literal, so
+/// it goes into `concat!`.
+#[macro_export]
+macro_rules! ready_sql {
+    () => {
+        "(removed_at IS NULL AND must_change_password = 0 AND totp_enabled = 1 \
+          AND invite_expires_at IS NULL)"
+    };
 }
 
 #[derive(sqlx::FromRow, Clone)]

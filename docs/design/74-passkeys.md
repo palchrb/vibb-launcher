@@ -48,8 +48,13 @@ virker fortsatt: iPhone, Mac - fjern dem under Passkeys om en er på avveie"), s
 passkey working.
 
 **D1.4 - The sign-in page offers "Logg inn med passkey"** beside username + password, with discoverable credentials:
-`GET /auth/passkey/options` (signed out, behind the admin gate and the per-IP ban - a banned key gets 429, and each
-options call counts toward the login's rate limit, so the challenge store can't be flooded; `allowCredentials: []`,
+`POST /auth/passkey/options` (signed out, through `csrf_guard` - a POST since the step 1 fix round, so a cross-site page
+can't make the calls that count -, behind the admin gate and the per-IP ban - a banned key gets 429; each signed-out
+session's options count once toward the login's rate limit (a reload or the button after the conditional get gets the
+session's live challenge again), and the count is taken back when that ceremony ends - a passkey sign-in's POST (a
+refusal counts on its own) or a password sign-in's POST (a wrong password costs what it cost before passkeys); sign-in
+challenges have their own pool that drops its oldest (500, at most 3 live per client), so signed-out traffic can never
+refuse a re-auth or an add; `allowCredentials: []`,
 `userVerification: "required"`, a `login` challenge, D1.7) and `POST /auth/passkey` (form `assertion` = JSON, 4 KiB
 like `/login`). The `userHandle` finds the account (`webauthn_user_id`; here it is required, with `allowCredentials`
 empty), the credential id must be that account's, and **the account must be ready** by the one predicate of D2.2
@@ -61,8 +66,10 @@ and older Android Chrome don't offer passkeys in autofill reliably).
 
 **D1.5 - A passkey sign-in is both factors**: user verification required (Face ID, fingerprint, the phone's code, a
 security key's PIN) is something you have plus something you are or know. Success is the same completion as
-`verify_2fa`: `cycle_id`, `SIGNED_IN_AT_KEY`, `reset_after_login`, `login_success` with detail "passkey · iPhone", the
-`next` page or Devices; no TOTP page. A bad assertion (signature, origin, challenge, an unknown credential) is one red
+`verify_2fa`: `cycle_id` (a failure refuses the sign-in), `SIGNED_IN_AT_KEY`, `login_success` with detail "passkey ·
+iPhone", Devices (a `next` page comes with step 3); no TOTP page. The re-auth count starts over, and the wrong-2FA
+banner is set as after `verify_2fa`; a running TOTP lock and its doubling stay (`reset_after_passkey`: they guard the
+TOTP step, which a passkey sign-in doesn't take - the passkey itself isn't blocked by them). A bad assertion (signature, origin, challenge, an unknown credential) is one red
 line "Passkeyen virket ikke. Prøv igjen, eller logg inn med passord." and counts in the per-IP ban as a wrong password
 does (`net::limit_key`); a cancelled prompt (`NotAllowedError`) is the browser's and sends nothing. *Alt: a passkey
 replaces only the password and TOTP still follows (no gain on a phone).*
@@ -196,7 +203,9 @@ and safe.
 **D4.1 - The RP ID is the request's host by default**: `Host`, or `X-Forwarded-Host` from a trusted peer (exactly
 the host `csrf_guard` compares), lowercased, port dropped, one trailing dot dropped (`handy.example.com.` is
 `handy.example.com`); an IP literal or a name that isn't a valid DNS name gets no passkey UI. Optional
-`PASSKEY_RP_ID=example.com` sets one RP ID for every host under it (`handy.example.com`, `lan.example.com`); it is
+`PASSKEY_RP_ID=example.com` sets one RP ID; at the RP ID's own host it works as is, and **every other host under it
+must be listed in `PASSKEY_ORIGINS`** (`https://handy.example.com,https://lan.example.com`; an unlisted one gets no
+passkey UI - the step 1 fix round, qa-passkeys-1 A-M1); it is
 **checked at start** (a valid lowercase DNS name with a dot or `localhost`, not an IP, not a public suffix such as `com`
 or `co.uk` - a short built-in list of the common ones, the browser refuses the rest anyway; a bad value refuses to start
 with the reason), and a host outside it gets no passkey UI, which the start-up exposure line says. Each passkey stores its `rp_id`; an assertion is checked against **the stored** `rp_id` (`rpIdHash`) and
@@ -206,10 +215,13 @@ an origin that fits it, so a forged Host header can only propose an RP ID, never
 
 **D4.2 - Origins**: `clientDataJSON.origin` must be **exactly this request's origin**: `https://` + the host D4.1
 derived (Host or the trusted `X-Forwarded-Host`, normalized) + its port when not 443 - never "any host ending in
-`.<rp_id>`". Only the RP ID may be a registrable suffix of the host; the origin is one host, so a sibling subdomain
+`.<rp_id>`". With `PASSKEY_RP_ID` set, the only origin built from the request is `https://<rp_id>[:port]` when the
+host *is* the RP ID; every other one comes from `PASSKEY_ORIGINS`, never from a Host header - a client reaching the
+listener directly could otherwise name a sibling's host and relay its assertion. Only the RP ID may be a registrable suffix of the host; the origin is one host, so a sibling subdomain
 under a shared `PASSKEY_RP_ID` (another service at `wiki.example.com`) can't relay an assertion it got there.
-Optional `PASSKEY_ORIGINS` (a comma list of full origins, each checked at start to fall under the RP ID) is the
-allowlist for a proxy whose outside name differs from what reaches the server. `crossOrigin` must be false or absent.
+Optional `PASSKEY_ORIGINS` (a comma list of full origins, each checked at start to fall under the RP ID, no default
+port) is the allowlist for the other hosts under a shared RP ID and for a proxy whose outside name differs from what
+reaches the server. `crossOrigin` must be false or absent.
 `http://localhost[:port]` passes **only with `INSECURE_COOKIES`** (development); nothing else on http. An IP address is
 never an RP ID (browsers refuse it).
 
@@ -251,10 +263,11 @@ job is small: `src/webauthn.rs` (~450 lines + tests) on `ring` (in the tree for 
   = sha256(rp_id), flags UP, UV and AT set, BS without BE refused; the attested credential data read in order (AAGUID,
   the id length, the id, the COSE key as one CBOR item) and, **when ED is set, the extensions map after it** (read as
   one bounded CBOR map and dropped; ED unset with bytes left over, or ED set with none, is a refusal; no trailing bytes
-  after either); **the authData credential id equal to `rawId` and to `id`'s base64url**, 16-1023 bytes, unique in the
-  table; the COSE key's `alg` (3), `kty` (1) and `crv` (-1) agreeing with each other (-7 = kty 2 + crv 1, -8 = kty 1 +
+  after either); **the authData credential id equal to `rawId` and to `id`'s base64url**, 16-512 bytes (WebAuthn allows 1023; 512
+  with an RSA-4096 signature keeps every assertion inside `/auth/passkey`'s 4 KiB), unique in the table; the COSE key's `alg` (3), `kty` (1) and `crv` (-1) agreeing with each other (-7 = kty 2 + crv 1, -8 = kty 1 +
   crv 6, -257 = kty 3) and the alg one of the requested three; the key parsing (P-256 point on the curve, Ed25519 32
-  bytes, RSA modulus 2048-8192 bits); `fmt` any, `attStmt` ignored (we trust no attestation);
+  bytes, RSA modulus 2048-4096 bits with no leading zero byte and an odd exponent of 3 to 2^33-1 - what ring
+  verifies; the extensions map may hold `true`/`false`); `fmt` any, `attStmt` ignored (we trust no attestation);
 - assertion: `type` `webauthn.get`, challenge, origin, `rpIdHash` against the credential's stored `rp_id`, UP and UV,
   the BE flag equal to the stored one, the signature over `authenticatorData || sha256(clientDataJSON)`, then the
   counter rule (D5.3); `userHandle` as D1.4 and D1.6 say.
@@ -290,9 +303,10 @@ needs no table. Passkeys are in backups with `admin_users`; a restore brings bac
 restore confirm says "Foreldrekontoer og passkeys kommer tilbake som de var i denne sikkerhetskopien." A soft Remove
 of a parent deletes their passkeys in its transaction.
 
-**D5.3 - Counters and backup flags**: most synced passkeys always send 0. When both the stored and the new counter
-are non-zero and the new is not higher, the sign-in is refused and `passkey_cloned` logged ("possibly copied").
-The store is atomic: `UPDATE admin_passkeys SET sign_count = ?1, ... WHERE id = ?2 AND (?1 = 0 OR sign_count < ?1)`
+**D5.3 - Counters and backup flags**: most synced passkeys always send 0. When the stored counter is non-zero and the
+new one is not higher - a 0 included (WebAuthn L3 §7.2; the step 1 fix round) - the sign-in is refused and
+`passkey_cloned` logged ("possibly copied"). The store is atomic: `UPDATE admin_passkeys SET sign_count = ?1, ...
+WHERE id = ?2 AND ((sign_count = 0 AND ?1 = 0) OR sign_count < ?1)`
 - no row (a parallel use already stored as high a counter) is the same refusal, so two replays of one assertion can't
 both pass. BE is fixed at registration (an assertion with another BE is refused); BS is updated on every use (it can
 change) and shown as "Synkronisert" / "Bare på denne enheten". *Alt: log and allow (webauthn-rs's default).*

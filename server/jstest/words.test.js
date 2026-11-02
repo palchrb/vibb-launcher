@@ -35,6 +35,15 @@ const MOVED = {
         "Enter",
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     ],
+    // Design 74: DOM exception names, a header and selectors.
+    "passkey.js": [
+        "NotAllowedError",
+        "AbortError",
+        "InvalidStateError",
+        "Content-Type",
+        "input[name=\"current_password\"], input[name=\"password\"]",
+        "input[required], select[required], textarea[required]",
+    ],
 };
 
 /** Every string literal outside comments, in order. */

@@ -73,6 +73,7 @@
                 </summary>
                 <form method="post" action="/devices/{{ device.id }}/lock#show-pin" class="edit-body">
                     <input type="hidden" name="action" value="reveal_kid_pin">
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="reveal_password">{{ self.t("device.lock.your_password") }}</label>
                     <input type="password" id="reveal_password" name="password" autocomplete="off" required aria-describedby="reveal_password-hint"{% if reveal_error.is_some() %} aria-invalid="true" autofocus{% endif %}>
                     {% if let Some(error) = reveal_error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
@@ -269,6 +270,7 @@
         <p class="group-footer">{{ self.t("device.lock.notifications_footer") }}</p>
     </section>
     {% if reveal_answer %}<script src="/static/reveal.js?v=4"></script>{% endif %}
+    {% if passkey_reauth %}<script src="/static/passkey.js?v=1" defer></script>{% endif %}
 </main>
 </body>
 </html>

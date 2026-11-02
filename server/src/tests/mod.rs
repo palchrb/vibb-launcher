@@ -45,6 +45,7 @@ mod music_sweep;
 mod notifications;
 mod parent_pin;
 mod parents;
+mod passkeys;
 mod play;
 mod power;
 mod provisioning;
@@ -158,14 +159,20 @@ impl TestApp {
             .collect();
         let mut config = ForkConfig::for_tests();
         config.pwa_default_lang = ForkConfig::from_vars(&vars).pwa_default_lang;
-        Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config).await
+        let passkeys = crate::webauthn::PasskeyConfig::from_vars(&vars)
+            .expect("the test's PASSKEY_RP_ID/PASSKEY_ORIGINS");
+        Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config, passkeys).await
     }
 
     pub async fn with_net(net: crate::net::NetConfig) -> Self {
-        Self::with_net_config(net, ForkConfig::for_tests()).await
+        Self::with_net_config(net, ForkConfig::for_tests(), Default::default()).await
     }
 
-    async fn with_net_config(net: crate::net::NetConfig, config: ForkConfig) -> Self {
+    async fn with_net_config(
+        net: crate::net::NetConfig,
+        config: ForkConfig,
+        passkeys: crate::webauthn::PasskeyConfig,
+    ) -> Self {
         // As `main` does before anything opens a connection: handlers that build a reqwest
         // client (the DNS upstream switch refreshes the blocklists) need the process-wide rustls
         // provider. The FCM tests used to install it as a side effect (design 19).
@@ -226,6 +233,7 @@ impl TestApp {
             tokens: Default::default(),
             enrollment: Default::default(),
             passwords: Default::default(),
+            passkeys: std::sync::Arc::new(crate::passkeys::Passkeys::new(passkeys)),
             push: std::sync::Arc::new(crate::push::Push::new(
                 Some(std::sync::Arc::new(
                     crate::webpush::VapidKey::from_pkcs8(

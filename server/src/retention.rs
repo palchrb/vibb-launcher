@@ -330,6 +330,17 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             });
         security += rows(failed, "security_events", query.execute(db).await);
     }
+    // A signed-out passkey options call counts for the ban's window only (design 74 D1.4).
+    security += rows(
+        failed,
+        "security_events",
+        sqlx::query(
+            "DELETE FROM security_events WHERE event_type = 'passkey_started' \
+               AND created_at < datetime('now', '-1 day')",
+        )
+        .execute(db)
+        .await,
+    );
     rows(
         failed,
         "security_events",

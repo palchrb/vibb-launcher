@@ -71,6 +71,7 @@
             </div>
             <form method="post" action="/account/password#password" class="cell form-group">
                 <div class="field">
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="current_password">{{ self.t("account.password.current") }}</label>
                     <input type="password" id="current_password" name="current_password" autocomplete="current-password" required{% if password_field == "current_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
                     {% if password_field == "current_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
@@ -86,6 +87,7 @@
                     {% if password_field == "confirm_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
                 </div>
                 <button type="submit" class="button-wide">{{ self.t("account.password.change") }}</button>
+                {% include "partials/passkeys_still_work.html" %}
             </form>
             {% if password_field.is_empty() %}{% call group_flash::show(flash, "password") %}{% endcall %}{% endif %}
         </div>
@@ -104,10 +106,12 @@
                 <summary class="row">{{ self.t("account.totp.reset_open") }}</summary>
                 <form method="post" action="/account/reset-2fa#two-factor" class="confirm-body">
                     <p>{{ self.t("account.totp.reset_confirm") }}</p>
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="reset_current_password">{{ self.t("account.password.current") }}</label>
                     <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
                     {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}
                     <button type="submit" class="button-destructive">{{ self.t("account.totp.reset") }}</button>
+                    {% include "partials/passkeys_still_work.html" %}
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
@@ -123,6 +127,62 @@
                 </div>
             </details>
         </div>
+    </section>
+
+    <section id="passkeys" aria-labelledby="passkeys-title">
+        <h2 class="group-header" id="passkeys-title">{{ self.t("passkeys.title") }}</h2>
+        {#- Design 74 §6.1: a row per passkey (its summary opens Remove's confirm, behind the re-auth), Add Passkey… where
+            this host can have them (shown by static/passkey.js where the browser can use passkeys), else the reason. -#}
+        <div class="group">
+            {% for k in passkeys %}
+            <details class="confirm cell" id="passkey-{{ k.id }}"{% if self.passkey_remove_error(k.id).is_some() %} open{% endif %}>
+                <summary class="row passkey-row">
+                    <span class="passkey-key">{% include "partials/key_icon.html" %}</span>
+                    <span class="row-label">{{ k.name }}<span class="row-sub">{{ k.sub }}</span><span class="row-sub">{{ k.kind }}</span></span>
+                    <span class="passkey-remove">{{ self.t("passkeys.remove.open") }}</span>
+                </summary>
+                <form method="post" action="/account/passkeys/{{ k.id }}/remove#passkeys" class="confirm-body">
+                    <p>{{ self.tp("passkeys.remove.confirm", [("name", k.name.as_str())]) }}</p>
+                    <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    {% include "partials/reauth_passkey.html" %}
+                    <label class="field-label" for="passkey_remove_password_{{ k.id }}">{{ self.t("account.password.current") }}</label>
+                    <input type="password" id="passkey_remove_password_{{ k.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.passkey_remove_error(k.id) %} aria-invalid="true" aria-describedby="passkey-remove-error-{{ k.id }}" autofocus>
+                    <p class="field-error" id="passkey-remove-error-{{ k.id }}">{{ why }}</p>{% else %}>{% endif %}
+                    <button type="submit" class="button-destructive">{{ self.t("passkeys.remove.submit") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+            {% endfor %}
+            {%- if passkey_host.is_some() %}
+            <details class="edit cell" id="add-passkey" data-passkey-ui hidden{% if passkey_add_open %} open{% endif %}>
+                <summary class="row">
+                    <span class="row-label">{{ self.t("passkeys.add.open") }}</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <form method="post" action="/account/passkeys#add-passkey" class="edit-body" data-passkey-add data-reauth-route="/account/passkeys/options" data-w-failed="{{ self.t("passkeys.add.failed") }}" data-w-exists="{{ self.t("passkeys.add.exists") }}">
+                    <label class="field-label" for="passkey_name">{{ self.t("passkeys.add.name") }}</label>
+                    <input type="text" id="passkey_name" name="name" value="{{ passkey_name }}" maxlength="32" autocomplete="off"{% if let Some(why) = self.error_for("passkey_name") %} aria-invalid="true" aria-describedby="passkey_name-error" autofocus>
+                    <p class="field-error" id="passkey_name-error">{{ why }}</p>{% else %} aria-describedby="passkey_name-hint">
+                    <p class="field-hint" id="passkey_name-hint">{{ self.t("passkeys.add.name_hint") }}</p>{% endif %}
+                    <p class="field-error" data-passkey-field-error="name" role="alert" hidden></p>
+                    <p class="field-label">{{ self.t("passkeys.add.confirm") }}</p>
+                    <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    {% include "partials/reauth_passkey.html" %}
+                    <label class="field-label" for="passkey_password">{{ self.t("account.password.current") }}</label>
+                    <input type="password" id="passkey_password" name="current_password" autocomplete="current-password" required>
+                    <p class="field-error" data-passkey-field-error="password" role="alert" hidden></p>
+                    <input type="hidden" name="credential" value="">
+                    <button type="submit" class="button-wide">{{ self.t("passkeys.add.submit") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+            <div class="row" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"><span class="row-label" data-passkey-unsupported-text></span></div>
+            {%- else %}
+            <div class="row" data-row="passkeys-not-here"><span class="row-label">{{ self.t("passkeys.not_here") }}</span></div>
+            {%- endif %}
+            {% call group_flash::show(flash, "passkeys") %}{% endcall %}
+        </div>
+        <p class="group-footer">{{ self.t("passkeys.footer") }}{% if let Some(host) = passkey_host %} {{ self.tp("passkeys.footer_host", [("host", host.as_str())]) }}{% endif %}</p>
     </section>
 
     <section id="sessions" aria-labelledby="sessions-title">
@@ -166,8 +226,10 @@
             <details class="confirm cell" id="reset-{{ p.id }}"{% if self.parent_reset_error(p.id).is_some() %} open{% endif %}>
                 <summary class="row">{% if p.waiting %}{{ self.t("account.parents.new_otp_open") }}{% else %}{{ self.t("account.parents.reset_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body">
-                    {% if p.waiting %}<p>{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}</p>{% endif %}
+                    {#- Design 74 §6.3: the passkeys go with every Reset, a waiting row's too (qa-passkeys-1 B-L4). -#}
+                    <p>{% if p.waiting %}{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}{% else %}{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}{% endif %}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="reset_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="reset_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.parent_reset_error(p.id) %} aria-invalid="true" aria-describedby="reset-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="reset-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
@@ -178,8 +240,9 @@
             <details class="confirm cell" id="remove-{{ p.id }}"{% if self.remove_error(p.id).is_some() %} open{% endif %}>
                 <summary class="row">{% if p.waiting %}{{ self.t("account.parents.withdraw_open") }}{% else %}{{ self.t("account.parents.remove_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
-                    {% if p.waiting %}<p>{{ self.tp("account.parents.withdraw_confirm", [("name", p.name.as_str()), ("username", p.username.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.remove_confirm", [("name", p.name.as_str())]) }}</p>{% endif %}
+                    <p>{% if p.waiting %}{{ self.tp("account.parents.withdraw_confirm", [("name", p.name.as_str()), ("username", p.username.as_str())]) }}{% else %}{{ self.tp("account.parents.remove_confirm", [("name", p.name.as_str())]) }}{% endif %}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="remove_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="remove_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.remove_error(p.id) %} aria-invalid="true" aria-describedby="remove-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="remove-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
@@ -206,6 +269,7 @@
                     {#- Your own username for the password manager, so it never pairs the new one with your
                         password (qa-62-design Q62-10); it isn't sent. -#}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="add_password">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="add_password" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.error_for("add_password") %} aria-invalid="true" aria-describedby="add_password-error" autofocus>
                     <p class="field-error" id="add_password-error">{{ why }}</p>{% else %} aria-describedby="add_password-hint">
@@ -219,5 +283,6 @@
     </section>
 </main>
 {% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
+<script src="/static/passkey.js?v=1" defer></script>
 </body>
 </html>
