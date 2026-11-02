@@ -281,6 +281,8 @@ class ElementRoomsTest {
         "learnElementRoom", "ElementDmFacts", "tag", "selfKey", "senderKeys", "group",
         // 2026-10-25: the glance's contact from the same facts (design 15's link, a group's newest sender)
         "glanceContact", "elementGlanceContact", "rooms", "Long",
+        // round L5 (2026-11-02): a missed Element X call's contact - the same facts and the notification's category
+        "missedCallContact", "elementMissedCallContact", "category", "String", "glanceMissedCall",
         // the platform: only these members
         "StatusBarNotification", "packageName", "user", "notification", "Process", "myUserHandle",
         "Notification", "EXTRA_MESSAGES", "EXTRA_MESSAGING_PERSON", "EXTRA_IS_GROUP_CONVERSATION",
@@ -298,6 +300,7 @@ class ElementRoomsTest {
                 "com.kidslauncher.mdm.calls.CallPolicyStore", "com.kidslauncher.mdm.calls.ElementDmFacts",
                 "com.kidslauncher.mdm.calls.ElementRoomStore", "com.kidslauncher.mdm.calls.MessagePackages",
                 "com.kidslauncher.mdm.calls.learnElementRoom", "com.kidslauncher.mdm.calls.elementGlanceContact",
+                "com.kidslauncher.mdm.calls.elementMissedCallContact",
             ),
             imports,
         )

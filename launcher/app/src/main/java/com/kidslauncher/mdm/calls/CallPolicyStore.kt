@@ -86,8 +86,11 @@ object CallPolicyStore {
         if (plan.source == PolicySource.BOOT && decodeBootPolicy(deJson?.getOrNull()) !is BootPolicyRead.Ok) {
             Log.w(LOG_TAG, "No usable boot call policy, failing closed until unlock")
         }
+        val before = state
         state = newState
         source = plan.source
+        // Round L5: a contact added to the phone book or moved to Element X after a missed call still gets its mark.
+        if (elementMissedRejudgeDue(before, newState)) ElementMissedCallStore.rejudge()
         if (plan.source != PolicySource.CE) return
         if (plan.repairManagedLast) repairManagedLast(context)
         plan.bootWrite?.let { writeBoot(context, it) }

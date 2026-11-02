@@ -28,8 +28,9 @@ import com.kidslauncher.mdm.appdisplay.OWN_ICON
 import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.appdisplay.appIconKey
 import com.kidslauncher.mdm.appdisplay.appIconKeyApp
+import com.kidslauncher.mdm.calls.ContactMissed
 import com.kidslauncher.mdm.calls.ContactPhotos
-import com.kidslauncher.mdm.calls.MissedSummary
+import com.kidslauncher.mdm.calls.MessagePackages
 import com.kidslauncher.mdm.calls.RuleContact
 
 /** Drawing helpers shared by Home, the phone book and the contact sheet. */
@@ -143,8 +144,17 @@ object KidAvatars {
         badge.text = text
     }
 
-    fun missedText(context: Context, summary: MissedSummary?): String? =
-        summary?.let { MissedCallText.describe(context, it) }
+    /** The sheet's missed-call line: the phone's own, then (round L5) the missed Element X calls, one line each. */
+    fun missedText(context: Context, missed: ContactMissed?): String? {
+        if (missed == null) return null
+        val lines = listOfNotNull(
+            missed.phone?.takeIf { it.count > 0 }?.let { MissedCallText.describe(context, it) },
+            missed.element?.takeIf { it.count > 0 }?.let {
+                MissedCallText.describeIn(context, it, AppDisplay.shownLabel(context, MessagePackages.ELEMENT_X))
+            },
+        )
+        return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
+    }
 
     private val iconCache = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount

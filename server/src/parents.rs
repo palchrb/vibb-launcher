@@ -25,7 +25,9 @@ macro_rules! actor_ok {
             $a,
             " AND session_epoch = ?",
             $e,
-            " AND removed_at IS NULL AND must_change_password = 0 AND totp_enabled = 1)"
+            " AND ",
+            crate::ready_sql!(),
+            ")"
         )
     };
 }
@@ -125,9 +127,9 @@ pub async fn remove_parent(
          totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, reauth_wrong = 0, \
          invite_expires_at = NULL, session_epoch = session_epoch + 1 \
          WHERE id = ?1 AND removed_at IS NULL \
-           AND EXISTS (SELECT 1 FROM admin_users WHERE id != ?1 AND removed_at IS NULL \
-                       AND must_change_password = 0 AND totp_enabled = 1) \
-           AND ",
+           AND EXISTS (SELECT 1 FROM admin_users WHERE id != ?1 AND ",
+        crate::ready_sql!(),
+        ") AND ",
         actor_ok!("2", "3")
     ))
     .bind(target)
@@ -140,6 +142,8 @@ pub async fn remove_parent(
             "push_subscriptions",
             "notification_prefs",
             "parent_event_reads",
+            // Design 74 D1.3b: no way back leaves a lost phone's passkey working.
+            "admin_passkeys",
         ] {
             sqlx::query(&format!("DELETE FROM {table} WHERE admin_id = ?"))
                 .bind(target)
@@ -217,6 +221,9 @@ pub async fn reset_parent(
             .bind(target)
             .execute(&mut *tx)
             .await?;
+        // Design 74 D1.3b: the target onboards again with a one-time password, and no passkey of
+        // theirs keeps working (a Reset is the way back for a lost phone).
+        crate::passkeys::delete_all(&mut *tx, target).await?;
         tx.commit().await?;
         return Ok(Reset::Done {
             expires_at,
@@ -250,6 +257,8 @@ pub struct ParentRow {
     pub you: bool,
     /// Not ready (and not you): its actions read "New One-Time Password…" and "Withdraw…".
     pub waiting: bool,
+    /// Its passkeys (design 74 §6.3): Reset's confirm says they go too.
+    pub passkeys: i64,
 }
 
 /// Every account that isn't removed, oldest first, its state from "ready" (§3).
@@ -265,6 +274,7 @@ pub async fn rows(
         sqlx::query_as("SELECT * FROM admin_users WHERE removed_at IS NULL ORDER BY id")
             .fetch_all(db)
             .await?;
+    let passkeys = crate::passkeys::counts(db).await?;
     let mut rows = Vec::with_capacity(accounts.len());
     for account in accounts {
         let you = account.id == me.id;
@@ -333,9 +343,22 @@ pub async fn rows(
                 None => t(lang, "account.parents.waiting_sign_in").to_string(),
             }
         };
+        // "· 2 passkeys" on a ready row with any (design 74 §6.3; nothing for 0).
+        let count = passkeys.get(&account.id).copied().unwrap_or(0);
+        let mut state = state;
+        if count > 0 && account.ready() {
+            state.push_str(" · ");
+            state.push_str(&crate::i18n::t_count(
+                lang,
+                "account.parents.passkeys",
+                count,
+                &[],
+            ));
+        }
         rows.push(ParentRow {
             id: account.id,
             name: account.name().to_string(),
+            passkeys: count,
             sub: format!("{} · {state}", account.username),
             username: account.username.clone(),
             waiting: !you && !account.ready(),

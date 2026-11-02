@@ -2668,3 +2668,27 @@ details.app-display[open] > summary .section-chev {
 .emergency-move { display: flex; flex: none; gap: 4px; margin: 0; }
 .emergency-move .row-action { margin: -11px 0; padding: 11px 10px; }
 .emergency-row > form.row-end { margin-left: 4px; }
+
+/* ---- Design 74: passkeys (account.html's #passkeys, the re-auth fields, login.html) ---- */
+/* A passkey's row is its confirm's summary: the key glyph, the name with its two sub-lines, a red Remove… at its end
+   (not the centred red summary of the other confirms). */
+details.confirm > summary.row.passkey-row { justify-content: flex-start; color: var(--label); }
+.passkey-key { flex: none; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: var(--field-bg); color: var(--tint); }
+.passkey-key svg { width: 18px; height: 18px; }
+.passkey-remove { flex: none; color: var(--red); }
+/* "Confirm with passkey" and "Sign in with passkey": the outline button with the key glyph. */
+.button-outline,
+.button-outline:hover { display: flex; align-items: center; justify-content: center; width: 100%; padding: 12px; border: 1.5px solid var(--tint); border-radius: 12px; background: transparent; color: var(--tint); font-size: 1rem; }
+.button-outline:hover { background: var(--row-active); }
+.button-outline svg { flex: none; width: 18px; height: 18px; margin-right: 8px; }
+.auth-card .button-outline { padding: 13px; font-size: 1.0625rem; }
+/* The thin "or" between the two ways in. */
+.or-divider { display: flex; align-items: center; margin: 14px 4px; color: var(--label-2); font-size: 0.875rem; }
+.or-divider::before,
+.or-divider::after { content: ""; flex: 1 1 auto; border-top: 1px solid var(--sep); }
+.or-divider::before { margin-right: 10px; }
+.or-divider::after { margin-left: 10px; }
+/* Shown by static/passkey.js only where the browser can use passkeys (D4.4); its display must not beat the attribute. */
+[data-passkey-ui][hidden], [data-passkey-unsupported][hidden], [data-passkey-error][hidden] { display: none; }
+.reauth-passkey .field-error { margin: 6px 4px 0; }
+.passkeys-still { margin: 12px 4px 0; }

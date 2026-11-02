@@ -29,6 +29,17 @@ object MissedCallsRepo {
         return missedCallSummaries(recentLog(context, nowMs), rules.contacts, rules.defaultCc, seenMarks(context))
     }
 
+    /**
+     * Round L5: what the contact cards and badges show - the phone's own missed calls ([summaries]) and the missed
+     * Element X calls the notification listener sees now ([ElementMissedCallStore], [elementMissedSummaries]), both
+     * after the same seen marks; empty unless calls are managed.
+     */
+    fun contactMissed(context: Context, state: CallPolicyState, nowMs: Long = System.currentTimeMillis()): Map<String, ContactMissed> {
+        val rules = (state as? CallPolicyState.Managed)?.rules ?: return emptyMap()
+        val element = elementMissedSummaries(ElementMissedCallStore.calls, rules, seenMarks(context))
+        return contactMissed(summaries(context, state, nowMs), element)
+    }
+
     /** The call log of the last 14 days, newest first (with `_id` and `new`); empty when it can't be read. */
     fun recentLog(context: Context, nowMs: Long = System.currentTimeMillis()): List<CallLogEntry> =
         readLog(context, nowMs - WINDOW_MS)

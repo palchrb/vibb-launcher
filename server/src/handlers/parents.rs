@@ -41,6 +41,7 @@ pub async fn set_name(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<NameForm>,
 ) -> Response {
@@ -56,6 +57,7 @@ pub async fn set_name(
                 &state,
                 &session,
                 &admin,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -107,19 +109,30 @@ pub struct AddForm {
     name: String,
     #[serde(default)]
     current_password: String,
+    /// "Confirm with passkey" (design 74 D1.6).
+    #[serde(default)]
+    assertion: String,
 }
 
-/// The refusal text for the [admin_auth::Reauth::Wrong]th password: three sentences, the middle one `nothing`'s
-/// (`account.add.nobody`, `account.parents.nothing_changed`).
-fn wrong_password(lang: Lang, left: i64, nothing: &str) -> String {
-    let mut out = format!(
-        "{} {}",
-        t(lang, "account.parents.wrong_password"),
-        t(lang, nothing)
-    );
+/// The refusal text for the [admin_auth::Reauth::Wrong]th password (or passkey, design 74 D1.6): three sentences,
+/// the middle one `nothing`'s (`account.add.nobody`, `account.parents.nothing_changed`).
+fn wrong_password(lang: Lang, proof: &admin_auth::Proof, left: i64, nothing: &str) -> String {
+    let first = if proof.is_passkey() {
+        "passkeys.reauth.wrong"
+    } else {
+        "account.parents.wrong_password"
+    };
+    let mut out = format!("{} {}", t(lang, first), t(lang, nothing));
     if left == 1 {
         out.push(' ');
-        out.push_str(t(lang, "account.parents.one_more_wrong"));
+        out.push_str(t(
+            lang,
+            if proof.is_passkey() {
+                "passkeys.reauth.one_more"
+            } else {
+                "account.parents.one_more_wrong"
+            },
+        ));
     }
     out
 }
@@ -130,6 +143,7 @@ pub async fn add(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Form(form): Form<AddForm>,
 ) -> Response {
@@ -160,6 +174,7 @@ pub async fn add(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -168,17 +183,16 @@ pub async fn add(
         }
     };
 
-    // The one-time password's hash comes from the same gated job that checks yours.
+    // The one-time password's hash comes from the same gated job that checks yours (or after the
+    // passkey's assertion, design 74 D1.6).
     let otp = crate::startup::new_password();
-    let changed = match state
-        .passwords
-        .change(&form.current_password, &actor.password_hash, &otp)
-        .await
-    {
-        Ok(changed) => changed,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
-    };
-    if changed.is_none() {
+    let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
+    let (reauth, changed) =
+        match admin_auth::reauth_and_hash(&state, &session, &actor, proof, &otp).await {
+            Ok(answer) => answer,
+            Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        };
+    if reauth != admin_auth::Reauth::Right {
         security::record_security_event(
             &state.db,
             "parent_change_refused",
@@ -191,18 +205,18 @@ pub async fn add(
         )
         .await;
     }
-    let reauth = admin_auth::record_reauth(&state.db, &session, &actor, changed.is_some()).await;
     let otp_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left }, _) => {
             let answer = refuse(
                 "add_password",
-                wrong_password(lang, left, "account.add.nobody"),
+                wrong_password(lang, &proof, left, "account.add.nobody"),
             );
             return render_account(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -238,6 +252,7 @@ pub async fn add(
             &state,
             &session,
             &actor,
+            &ceremony,
             StatusCode::BAD_REQUEST,
             answer,
             lang,
@@ -267,7 +282,16 @@ pub async fn add(
         otp: Some(shown),
         ..AccountAnswer::default()
     };
-    render_account(&state, &session, &actor, StatusCode::OK, answer, lang).await
+    render_account(
+        &state,
+        &session,
+        &actor,
+        &ceremony,
+        StatusCode::OK,
+        answer,
+        lang,
+    )
+    .await
 }
 
 /// A one-time password as the answer shows it: in blocks of 4, with its end.
@@ -308,6 +332,8 @@ async fn target_of(state: &AppState, id: i64) -> Result<Option<AdminUser>, Box<R
 pub struct ResetForm {
     #[serde(default)]
     current_password: String,
+    #[serde(default)]
+    assertion: String,
 }
 
 /// Reset another parent (design 62 §4.3): your password and the new one-time password's hash in one
@@ -317,6 +343,7 @@ pub async fn reset(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<ResetForm>,
@@ -329,15 +356,13 @@ pub async fn reset(
     // Ready before the Reset: its password is new; a waiting one gets another one-time password.
     let was_ready = target.as_ref().is_some_and(AdminUser::ready);
     let otp = crate::startup::new_password();
-    let changed = match state
-        .passwords
-        .change(&form.current_password, &actor.password_hash, &otp)
-        .await
-    {
-        Ok(changed) => changed,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
-    };
-    if changed.is_none() {
+    let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
+    let (reauth, changed) =
+        match admin_auth::reauth_and_hash(&state, &session, &actor, proof, &otp).await {
+            Ok(answer) => answer,
+            Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        };
+    if reauth != admin_auth::Reauth::Right {
         security::record_security_event(
             &state.db,
             "parent_change_refused",
@@ -350,14 +375,13 @@ pub async fn reset(
         )
         .await;
     }
-    let reauth = admin_auth::record_reauth(&state.db, &session, &actor, changed.is_some()).await;
     let otp_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left }, _) => {
             let answer = AccountAnswer {
                 field_error: Some((
                     reset_field(id),
-                    wrong_password(lang, left, "account.parents.nothing_changed"),
+                    wrong_password(lang, &proof, left, "account.parents.nothing_changed"),
                 )),
                 ..AccountAnswer::default()
             };
@@ -365,6 +389,7 @@ pub async fn reset(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -400,7 +425,16 @@ pub async fn reset(
                 otp: Some(shown),
                 ..AccountAnswer::default()
             };
-            render_account(&state, &session, &actor, StatusCode::OK, answer, lang).await
+            render_account(
+                &state,
+                &session,
+                &actor,
+                &ceremony,
+                StatusCode::OK,
+                answer,
+                lang,
+            )
+            .await
         }
         Ok(crate::parents::Reset::Gone) => {
             crate::settings_log::refused(Redirect::to("/account?parents=gone#parents"))
@@ -417,6 +451,7 @@ pub async fn reset(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -443,6 +478,8 @@ pub async fn reset(
 pub struct RemoveForm {
     #[serde(default)]
     current_password: String,
+    #[serde(default)]
+    assertion: String,
 }
 
 /// Remove a parent, or withdraw an invitation (design 62 §4.2): the soft remove behind your
@@ -451,6 +488,7 @@ pub async fn remove(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<RemoveForm>,
@@ -464,7 +502,8 @@ pub async fn remove(
         ..AccountAnswer::default()
     };
     let target_username = target.as_ref().map_or("", |t| t.username.as_str());
-    match admin_auth::reauth(&state, &session, &actor, &form.current_password).await {
+    let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
+    match admin_auth::reauth(&state, &session, &actor, proof).await {
         admin_auth::Reauth::Right => {}
         admin_auth::Reauth::Busy => return admin_auth::busy_response(),
         reauth => {
@@ -484,6 +523,7 @@ pub async fn remove(
             };
             let answer = refuse(wrong_password(
                 lang,
+                &proof,
                 left,
                 "account.parents.nothing_changed",
             ));
@@ -491,6 +531,7 @@ pub async fn remove(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -535,6 +576,7 @@ pub async fn remove(
                 &state,
                 &session,
                 &actor,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,

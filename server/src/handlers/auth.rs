@@ -28,11 +28,15 @@ struct LoginTemplate {
     lang: Lang,
     title: String,
     error: Option<String>,
+    /// This host can have passkeys (design 74 D4.1: a name, not an IP): `static/passkey.js` shows
+    /// "Sign in with passkey" whenever the browser supports them (D4.3), never depending on which
+    /// hosts have any.
+    passkeys_here: bool,
 }
 crate::i18n::words!(LoginTemplate);
 
-pub async fn login_form(lang: Lang) -> impl IntoResponse {
-    render_login(None, lang)
+pub async fn login_form(lang: Lang, ceremony: crate::passkeys::Ceremony) -> impl IntoResponse {
+    render_login(None, lang, ceremony.rp_id.is_some())
 }
 
 #[derive(Deserialize)]
@@ -41,12 +45,13 @@ pub struct LoginForm {
     password: String,
 }
 
-fn render_login(error: Option<String>, lang: Lang) -> Html<String> {
+pub(crate) fn render_login(error: Option<String>, lang: Lang, passkeys_here: bool) -> Html<String> {
     Html(
         LoginTemplate {
             lang,
             title: "Sign In".to_string(),
             error,
+            passkeys_here,
         }
         .render()
         .unwrap(),
@@ -76,9 +81,14 @@ pub async fn login(
     session: Session,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    ceremony: crate::passkeys::Ceremony,
     Form(form): Form<LoginForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
+    let here = ceremony.rp_id.is_some();
+    // The sign-in page's passkey options call stops counting: this attempt counts on its own
+    // (design 74, qa-passkeys-1 B-M3).
+    crate::passkeys::end_sign_in_attempt(&state.db, &session).await;
 
     // Earlier attempts count before this one runs, also those whose client hung up mid-verify
     // (their row stays: QA 22 M1).
@@ -86,7 +96,7 @@ pub async fn login(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_login(Some(BANNED_MESSAGE.to_string()), lang),
+            render_login(Some(BANNED_MESSAGE.to_string()), lang, here),
         )
             .into_response();
     }
@@ -139,8 +149,12 @@ pub async fn login(
 
     let Some(admin) = admin.filter(|_| valid) else {
         security::check_and_ban_ip_if_needed(&state.db, &ip).await;
-        return render_login(Some("Incorrect username or password.".to_string()), lang)
-            .into_response();
+        return render_login(
+            Some("Incorrect username or password.".to_string()),
+            lang,
+            here,
+        )
+        .into_response();
     };
 
     take_back().await;
@@ -157,7 +171,7 @@ pub async fn login(
             )),
         )
         .await;
-        return render_login(Some(INVITE_EXPIRED.to_string()), lang).into_response();
+        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here).into_response();
     }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
@@ -168,10 +182,14 @@ pub async fn login(
             Some(security::Detail::words("security.detail.login_locked", &[])),
         )
         .await;
-        return render_login(Some(locked_message(minutes)), lang).into_response();
+        return render_login(Some(locked_message(minutes)), lang, here).into_response();
     }
 
-    session.cycle_id().await.ok();
+    // A new id or no sign-in (qa-passkeys-1 A-N3: never the id the browser came with).
+    if let Err(err) = session.cycle_id().await {
+        tracing::error!(%err, "couldn't cycle the session id at sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if admin.totp_enabled {
         // Password is correct, but 2FA is enrolled - hold the login in a "pending" state
         // (deliberately NOT "admin_id") until a fresh TOTP code also passes, so every login
@@ -274,9 +292,11 @@ pub async fn verify_2fa(
     session: Session,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    ceremony: crate::passkeys::Ceremony,
     Form(form): Form<Verify2faForm>,
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
+    let here = ceremony.rp_id.is_some();
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -288,7 +308,7 @@ pub async fn verify_2fa(
 
     let Some(admin_id) = pending_admin(&session).await else {
         session.flush().await.ok();
-        return render_login(Some(PENDING_EXPIRED.to_string()), lang).into_response();
+        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here).into_response();
     };
 
     let admin = sqlx::query_as::<_, AdminUser>(
@@ -319,7 +339,7 @@ pub async fn verify_2fa(
                 .await
                 .unwrap_or(1);
             session.flush().await.ok();
-            return render_login(Some(locked_message(minutes)), lang).into_response();
+            return render_login(Some(locked_message(minutes)), lang, here).into_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't count the 2FA attempt");
@@ -352,7 +372,7 @@ pub async fn verify_2fa(
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
                 session.flush().await.ok();
-                return render_login(Some(locked_message(minutes)), lang).into_response();
+                return render_login(Some(locked_message(minutes)), lang, here).into_response();
             }
             return render_verify(Some("That code didn't match. Try again.".to_string()), lang)
                 .into_response();
@@ -376,7 +396,10 @@ pub async fn verify_2fa(
     )
     .await;
 
-    session.cycle_id().await.ok();
+    if let Err(err) = session.cycle_id().await {
+        tracing::error!(%err, "couldn't cycle the session id at sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     session.remove::<i64>(admin_auth::PENDING_ID_KEY).await.ok();
     session.remove::<u64>(admin_auth::PENDING_AT_KEY).await.ok();
     session.insert("admin_id", admin.id).await.ok();
@@ -767,6 +790,15 @@ struct AccountTemplate {
     otp: Option<OtpShown>,
     /// The Language select: the account's own language selected (never `?lang=`).
     languages: Vec<LanguageChoice>,
+    /// Design 74 §6.1: your passkeys' rows.
+    passkeys: Vec<crate::passkeys::Shown>,
+    /// This host can have passkeys (its RP ID, D4.1): "Add Passkey…" and the footer's host line.
+    passkey_host: Option<String>,
+    /// You have a passkey for this host: the re-auth fields offer "Confirm with passkey" (D1.6).
+    passkey_reauth: bool,
+    /// The add form's Name: prefilled from the browser (D1.1), or what a refused add sent.
+    passkey_name: String,
+    passkey_add_open: bool,
 }
 crate::i18n::words!(AccountTemplate);
 
@@ -791,6 +823,10 @@ impl AccountTemplate {
 
     fn parent_reset_error(&self, id: &i64) -> Option<&str> {
         self.error_for(&reset_field(*id))
+    }
+
+    fn passkey_remove_error(&self, id: &i64) -> Option<&str> {
+        self.error_for(&crate::handlers::passkeys::remove_field(*id))
     }
 }
 
@@ -826,12 +862,15 @@ pub(crate) struct AccountAnswer {
     pub add_open: bool,
     pub add_typed: (String, String),
     pub otp: Option<OtpShown>,
+    /// A refused passkey add: its form renders open (design 74 §6.1).
+    pub passkey_add_open: bool,
 }
 
 pub(crate) async fn render_account(
     state: &AppState,
     session: &Session,
     admin: &AdminUser,
+    ceremony: &crate::passkeys::Ceremony,
     status: StatusCode,
     answer: AccountAnswer,
     lang: Lang,
@@ -845,6 +884,20 @@ pub(crate) async fn render_account(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let (keys, rp_ids) = match (
+        crate::passkeys::of_admin(&state.db, admin.id).await,
+        crate::passkeys::rp_ids(&state.db).await,
+    ) {
+        (Ok(keys), Ok(rp_ids)) => (keys, rp_ids),
+        (Err(err), _) | (_, Err(err)) => {
+            tracing::error!(%err, "couldn't read the passkeys");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let passkey_reauth = ceremony
+        .rp_id
+        .as_deref()
+        .is_some_and(|rp| keys.iter().any(|key| key.rp_id == rp));
     let page = AccountTemplate {
         lang,
         title: t(lang, "account.title").to_string(),
@@ -864,6 +917,11 @@ pub(crate) async fn render_account(
         add_open: answer.add_open,
         add_typed: answer.add_typed,
         otp: answer.otp,
+        passkeys: crate::passkeys::shown(&keys, rp_ids > 1, &zone, now),
+        passkey_host: ceremony.rp_id.clone(),
+        passkey_reauth,
+        passkey_name: ceremony.device_name.unwrap_or_default().to_string(),
+        passkey_add_open: answer.passkey_add_open,
         languages: [Lang::Nb, Lang::En]
             .into_iter()
             .map(|choice| LanguageChoice {
@@ -905,6 +963,7 @@ pub async fn account_page(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -912,25 +971,47 @@ pub async fn account_page(
     let flash = match (
         query.get("changed").map(String::as_str),
         query.get("parents").map(String::as_str),
+        query.get("done").map(String::as_str),
     ) {
-        (Some("password"), _) => Some(Flash::done("password", t(lang, "account.password.changed"))),
-        (Some("name"), _) => Some(Flash::done("name", t(lang, "account.name.saved"))),
-        (_, Some("removed")) => Some(Flash::done("parents", t(lang, "account.parents.removed"))),
-        (_, Some("gone")) => Some(Flash::done("parents", t(lang, "account.parents.gone"))),
+        (Some("password"), _, _) => {
+            Some(Flash::done("password", t(lang, "account.password.changed")))
+        }
+        (Some("name"), _, _) => Some(Flash::done("name", t(lang, "account.name.saved"))),
+        (_, Some("removed"), _) => Some(Flash::done("parents", t(lang, "account.parents.removed"))),
+        (_, Some("gone"), _) => Some(Flash::done("parents", t(lang, "account.parents.gone"))),
+        // Design 74 §6.1: a passkey's add and removal land in their group.
+        (_, _, Some("passkey_added")) => Some(Flash::done("passkeys", t(lang, "passkeys.added"))),
+        (_, _, Some("passkey_removed")) => {
+            Some(Flash::done("passkeys", t(lang, "passkeys.removed")))
+        }
+        (_, _, Some("passkey_gone")) => Some(Flash::done("passkeys", t(lang, "passkeys.gone"))),
         _ => None,
     };
     let answer = AccountAnswer {
         flash,
         ..AccountAnswer::default()
     };
-    render_account(&state, &session, &admin, StatusCode::OK, answer, lang).await
+    render_account(
+        &state,
+        &session,
+        &admin,
+        &ceremony,
+        StatusCode::OK,
+        answer,
+        lang,
+    )
+    .await
 }
 
 #[derive(Deserialize)]
 pub struct UpdatePasswordForm {
+    #[serde(default)]
     current_password: String,
     new_password: String,
     confirm_password: String,
+    /// "Confirm with passkey" instead of the current password (design 74 D1.6).
+    #[serde(default)]
+    assertion: String,
 }
 
 /// Changes the password. A refusal (too short, the two differ, a wrong current password) writes
@@ -942,6 +1023,7 @@ pub async fn update_account_password(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<UpdatePasswordForm>,
 ) -> impl IntoResponse {
@@ -963,55 +1045,53 @@ pub async fn update_account_password(
             &state,
             &session,
             &admin,
+            &ceremony,
             StatusCode::BAD_REQUEST,
             answer,
             lang,
         )
         .await;
     }
-    let changed = match state
-        .passwords
-        .change(
-            &form.current_password,
-            &admin.password_hash,
-            &form.new_password,
-        )
-        .await
+    let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
+    let (reauth, changed) = match admin_auth::reauth_and_hash(
+        &state,
+        &session,
+        &admin,
+        proof,
+        &form.new_password,
+    )
+    .await
     {
-        Ok(changed) => changed,
+        Ok(answer) => answer,
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
     // Three wrong in a row end the session (design 59 §2.2's one re-auth rule); each wrong one is
     // in the security log (security review L7).
-    if changed.is_none() {
+    if reauth != admin_auth::Reauth::Right {
         security::record_security_event(
             &state.db,
             "password_change_refused",
             Some(&admin.username),
             None,
-            Some(security::Detail::words(
-                "security.detail.wrong_current_password",
-                &[],
-            )),
+            Some(security::Detail::words(proof.refused_detail(), &[])),
         )
         .await;
     }
-    let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
     let new_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left }, _) => {
-            let answer = refuse(
-                "current_password",
-                if left == 1 {
-                    "account.password.wrong_last"
-                } else {
-                    "account.password.wrong"
-                },
-            );
+            let key = match (proof.is_passkey(), left == 1) {
+                (true, false) => "passkeys.reauth.failed",
+                (true, true) => "passkeys.reauth.failed_last",
+                (false, true) => "account.password.wrong_last",
+                (false, false) => "account.password.wrong",
+            };
+            let answer = refuse("current_password", key);
             return render_account(
                 &state,
                 &session,
                 &admin,
+                &ceremony,
                 StatusCode::BAD_REQUEST,
                 answer,
                 lang,
@@ -1078,6 +1158,9 @@ pub async fn update_account_password(
 pub struct ResetTotpForm {
     #[serde(default)]
     current_password: String,
+    /// "Confirm with passkey" (design 74 D1.6).
+    #[serde(default)]
+    assertion: String,
 }
 
 /// Clears the stored TOTP secret and drops `totp_enabled`, which sends the
@@ -1095,11 +1178,13 @@ pub async fn reset_totp(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
+    ceremony: crate::passkeys::Ceremony,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ResetTotpForm>,
 ) -> axum::response::Response {
     // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
-    let reauth = admin_auth::reauth(&state, &session, &admin, &form.current_password).await;
+    let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
+    let reauth = admin_auth::reauth(&state, &session, &admin, proof).await;
     if reauth == admin_auth::Reauth::Busy {
         return admin_auth::busy_response();
     }
@@ -1109,15 +1194,14 @@ pub async fn reset_totp(
             "totp_reset_refused",
             Some(&admin.username),
             None,
-            Some(security::Detail::words(
-                "security.detail.wrong_current_password",
-                &[],
-            )),
+            Some(security::Detail::words(proof.refused_detail(), &[])),
         )
         .await;
-        let reset_error = match reauth {
-            admin_auth::Reauth::Wrong { left: 1 } => "account.totp.wrong_last",
-            admin_auth::Reauth::Wrong { .. } => "account.totp.wrong",
+        let reset_error = match (reauth, proof.is_passkey()) {
+            (admin_auth::Reauth::Wrong { left: 1 }, true) => "passkeys.reauth.failed_last",
+            (admin_auth::Reauth::Wrong { .. }, true) => "passkeys.reauth.failed",
+            (admin_auth::Reauth::Wrong { left: 1 }, false) => "account.totp.wrong_last",
+            (admin_auth::Reauth::Wrong { .. }, false) => "account.totp.wrong",
             _ => return admin_auth::signed_out_response(),
         };
         let answer = AccountAnswer {
@@ -1128,6 +1212,7 @@ pub async fn reset_totp(
             &state,
             &session,
             &admin,
+            &ceremony,
             StatusCode::BAD_REQUEST,
             answer,
             lang,

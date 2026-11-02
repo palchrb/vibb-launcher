@@ -21,12 +21,13 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 /**
  * The contact sheet (mockup ContactCard.dc.html): photo, name, missed calls, Call, Message (only
  * when [resolveMessageButton] finds an app that can work, with "Message opens in <app>") and
- * Close. Opening it marks the contact's missed calls as seen; [onDone] runs when it closes.
+ * Close. Opening it marks the contact's missed calls as seen - the phone's own and, since round L5, the missed
+ * Element X calls ([elementMissedSummaries] counts after the same mark); [onDone] runs when it closes.
  */
 object ContactSheet {
 
     /** Returns the sheet (Home dismisses it when the lock engages - design 16c). */
-    fun show(activity: Activity, contact: RuleContact, missed: MissedSummary?, onDone: () -> Unit): Dialog {
+    fun show(activity: Activity, contact: RuleContact, missed: ContactMissed?, onDone: () -> Unit): Dialog {
         MissedCallsRepo.markSeen(activity, contact.number)
         // Any contact sheet deals with the missed-call notification (design 12, QA #3).
         MissedCallNotifier.dismiss(activity)

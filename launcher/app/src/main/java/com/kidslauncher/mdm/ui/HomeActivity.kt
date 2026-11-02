@@ -42,9 +42,10 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.ContactPhotos
+import com.kidslauncher.mdm.calls.ContactMissed
 import com.kidslauncher.mdm.calls.ContactSheet
+import com.kidslauncher.mdm.calls.ElementMissedCallStore
 import com.kidslauncher.mdm.calls.MissedCallsRepo
-import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
 import com.kidslauncher.mdm.calls.phoneBookView
 import com.kidslauncher.mdm.calls.rolePromptFor
@@ -192,7 +193,9 @@ class HomeActivity : UIObjectActivity() {
     private var gridData = GridData(emptyList(), emptyMap(), emptyMap(), gridMetrics(MOCKUP_CONTENT_DP, 3), 3)
     private var showPhoneBook = false
     private var appsJob: Job? = null
-    private var missed: Map<String, MissedSummary> = emptyMap()
+    private var missed: Map<String, ContactMissed> = emptyMap()
+    /** Round L5: a missed Element X call came or went. */
+    private val elementMissedListener: () -> Unit = { loadMissedCalls() }
     private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) = loadMissedCalls()
     }
@@ -449,6 +452,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
+        ElementMissedCallStore.addListener(elementMissedListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -664,6 +668,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
+        ElementMissedCallStore.removeListener(elementMissedListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -696,12 +701,12 @@ class HomeActivity : UIObjectActivity() {
         super.onDestroy()
     }
 
-    /** Missed calls per contact, from the call log on a background thread. */
+    /** Missed calls per contact, from the call log on a background thread, and the missed Element X calls (round L5). */
     private fun loadMissedCalls() {
         if (!contentShown) return
         val state = CallPolicyStore.state
         CoroutineScope(Dispatchers.Main).launch {
-            val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@HomeActivity, state) }
+            val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@HomeActivity, state) }
             if (result != missed && !isDestroyed && contentShown) {
                 missed = result
                 renderCallParts()

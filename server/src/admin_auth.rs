@@ -112,6 +112,13 @@ impl PasswordGate {
         .await
     }
 
+    /// Hashes `new` - a gated job: a form whose re-auth was a passkey still makes its new secret's
+    /// hash behind the gate (design 74 D1.6).
+    pub async fn hash(&self, new: &str) -> Result<String, Busy> {
+        let new = new.to_string();
+        self.run(move || crate::security::hash_password(&new)).await
+    }
+
     /// Checks `current` against `hash` and, when it matches, hashes `new` - one gated job.
     pub async fn change(
         &self,
@@ -155,22 +162,131 @@ pub enum Reauth {
     Busy,
 }
 
+/// What a re-auth form sent (design 74 D1.6): the password, or - "Confirm with passkey" - a
+/// passkey's assertion for a `reauth` challenge bound to the form's route.
+#[derive(Clone, Copy)]
+pub enum Proof<'a> {
+    Password(&'a str),
+    Passkey {
+        assertion: &'a str,
+        ceremony: &'a crate::passkeys::Ceremony,
+    },
+}
+
+impl<'a> Proof<'a> {
+    /// The form's fields: a non-empty `assertion` is the passkey's, else the password.
+    pub fn of(
+        password: &'a str,
+        assertion: &'a str,
+        ceremony: &'a crate::passkeys::Ceremony,
+    ) -> Proof<'a> {
+        if assertion.trim().is_empty() {
+            Proof::Password(password)
+        } else {
+            Proof::Passkey {
+                assertion,
+                ceremony,
+            }
+        }
+    }
+
+    pub fn is_passkey(&self) -> bool {
+        matches!(self, Proof::Passkey { .. })
+    }
+
+    /// The security log's words for a refused one (`security.detail.*`).
+    pub fn refused_detail(&self) -> &'static str {
+        match self {
+            Proof::Password(_) => "security.detail.wrong_current_password",
+            Proof::Passkey { .. } => "security.detail.passkey_failed",
+        }
+    }
+}
+
 /// The one re-auth check (design 59 §2.2, qa-59-design Q59-11) for every form that asks a
-/// signed-in parent for the password again - Show Child PIN, the password change (both forms)
-/// and the 2FA reset: the gated Argon2, then [record_reauth].
+/// signed-in parent for the password again - Show Child PIN, the password change (both forms), the
+/// 2FA reset, Withdraw/Remove, a passkey's add and removal: the gated Argon2, or a passkey's
+/// assertion (design 74 D1.6, `passkeys::reauth`; a bad one is logged and counts as a wrong
+/// password), then [record_reauth].
 pub async fn reauth(
     state: &AppState,
     session: &tower_sessions::Session,
     admin: &crate::models::AdminUser,
-    password: &str,
+    proof: Proof<'_>,
 ) -> Reauth {
-    match state
-        .passwords
-        .verify(password, Some(&admin.password_hash))
-        .await
-    {
-        Ok(right) => record_reauth(&state.db, session, admin, right).await,
-        Err(Busy) => Reauth::Busy,
+    let right = match proof {
+        Proof::Password(password) => match state
+            .passwords
+            .verify(password, Some(&admin.password_hash))
+            .await
+        {
+            Ok(right) => right,
+            Err(Busy) => return Reauth::Busy,
+        },
+        Proof::Passkey {
+            assertion,
+            ceremony,
+        } => passkey_proves(state, session, admin, assertion, ceremony).await,
+    };
+    record_reauth(&state.db, session, admin, right).await
+}
+
+/// Whether `assertion` proves the signed-in parent; a refusal is logged.
+async fn passkey_proves(
+    state: &AppState,
+    session: &tower_sessions::Session,
+    admin: &crate::models::AdminUser,
+    assertion: &str,
+    ceremony: &crate::passkeys::Ceremony,
+) -> bool {
+    match crate::passkeys::reauth(state, session, ceremony, admin, assertion).await {
+        Ok(_) => true,
+        Err(why) => {
+            crate::passkeys::log_refused(
+                &state.db,
+                why,
+                "security.detail.passkey.reauth",
+                Some(&admin.username),
+                None,
+            )
+            .await;
+            false
+        }
+    }
+}
+
+/// [reauth] for a form that also makes a new secret's hash (the password change, Add Parent's and
+/// Reset's one-time password): with the password, the one gated job [PasswordGate::change];
+/// with a passkey, the assertion, then [PasswordGate::hash]. The hash is `Some` only with
+/// [Reauth::Right].
+pub async fn reauth_and_hash(
+    state: &AppState,
+    session: &tower_sessions::Session,
+    admin: &crate::models::AdminUser,
+    proof: Proof<'_>,
+    new: &str,
+) -> Result<(Reauth, Option<String>), Busy> {
+    match proof {
+        Proof::Password(current) => {
+            let changed = state
+                .passwords
+                .change(current, &admin.password_hash, new)
+                .await?;
+            let reauth = record_reauth(&state.db, session, admin, changed.is_some()).await;
+            Ok((reauth, changed))
+        }
+        Proof::Passkey {
+            assertion,
+            ceremony,
+        } => {
+            let right = passkey_proves(state, session, admin, assertion, ceremony).await;
+            let reauth = record_reauth(&state.db, session, admin, right).await;
+            if reauth != Reauth::Right {
+                return Ok((reauth, None));
+            }
+            let hash = state.passwords.hash(new).await?;
+            Ok((reauth, Some(hash)))
+        }
     }
 }
 
@@ -364,6 +480,21 @@ pub async fn reset_after_login(db: &sqlx::SqlitePool, admin_id: i64) {
     .ok();
 }
 
+/// After a passkey sign-in (design 74 D1.5): the re-auth forms' count starts over; the TOTP
+/// failures, a running lock and its doubling stay while any lock was taken (they guard the TOTP
+/// step, which a passkey doesn't take - qa-passkeys-1 B-L1), else the failure count starts over.
+pub async fn reset_after_passkey(db: &sqlx::SqlitePool, admin_id: i64) {
+    sqlx::query(
+        "UPDATE admin_users SET reauth_wrong = 0, failed_login_attempts = CASE \
+           WHEN lock_count > 0 OR locked_until > datetime('now') THEN failed_login_attempts ELSE 0 END \
+         WHERE id = ?",
+    )
+    .bind(admin_id)
+    .execute(db)
+    .await
+    .ok();
+}
+
 /// Minutes left on the account's lock, if it is locked.
 pub async fn lock_minutes_left(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
     sqlx::query_scalar::<_, Option<i64>>(
@@ -503,7 +634,9 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 /// exists for someone who knows the password keeping the account locked; keeping the password
 /// would hand the account to whoever signs in first and sets up an authenticator (QA 22 M4).
 /// It also clears a one-time password's expiry, and restores a removed account (logged
-/// `parent_restored`): the shell is the way back for a parent the other one removed.
+/// `parent_restored`): the shell is the way back for a parent the other one removed. The account's
+/// passkeys are deleted in the same transaction (design 74 D1.3b: no way back leaves a lost
+/// phone's passkey working). `reset-sign-in <user>` is the same command (D2.4).
 /// Returns a line for the terminal.
 pub async fn reset_2fa(
     db: &sqlx::SqlitePool,
@@ -524,17 +657,23 @@ pub async fn reset_2fa(
     let hash = crate::security::hash_password(&password);
     // The shell is the root of trust (design 62 §2): a removed parent comes back with its
     // username, and no one-time password's expiry stays on the account.
-    sqlx::query(
-        "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
-         failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
-         password_hash = ?, must_change_password = 1, invite_expires_at = NULL, \
-         removed_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?",
-    )
-    .bind(&hash)
-    .bind(id)
-    .execute(db)
+    let passkeys = async {
+        let mut tx = db.begin().await?;
+        sqlx::query(
+            "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
+             failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
+             password_hash = ?, must_change_password = 1, invite_expires_at = NULL, \
+             removed_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?",
+        )
+        .bind(&hash)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        let passkeys = crate::passkeys::delete_all(&mut *tx, id).await?;
+        tx.commit().await.map(|()| passkeys)
+    }
     .await
-    .map_err(|err| format!("couldn't reset: {err}"))?;
+    .map_err(|err: sqlx::Error| format!("couldn't reset: {err}"))?;
     // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
     sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
         .bind(id)
@@ -578,8 +717,13 @@ pub async fn reset_2fa(
             ));
         }
     }
+    let passkeys = match passkeys {
+        0 => String::new(),
+        1 => "its passkey is deleted, ".to_string(),
+        n => format!("its {n} passkeys are deleted, "),
+    };
     Ok(format!(
-        "{}Two-factor login for {username} is reset, every session is signed out, notifications are \
+        "{}Two-factor login for {username} is reset, every session is signed out, {passkeys}notifications are \
          turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
         restored,

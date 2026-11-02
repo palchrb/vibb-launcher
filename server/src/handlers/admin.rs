@@ -149,7 +149,9 @@ pub async fn security_log(
 ) -> Response {
     let before = query.before;
     let events = sqlx::query_as::<_, SecurityEvent>(
-        "SELECT * FROM security_events WHERE (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+        // A signed-out passkey options call is a count for the ban, not an event (design 74 D1.4).
+        "SELECT * FROM security_events WHERE (? IS NULL OR id < ?) \
+         AND event_type != 'passkey_started' ORDER BY id DESC LIMIT ?",
     )
     .bind(before)
     .bind(before)

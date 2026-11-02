@@ -44,6 +44,7 @@ mod net;
 mod parent_events;
 mod parent_pin;
 mod parents;
+mod passkeys;
 mod phone;
 mod phone_status;
 mod photos;
@@ -62,6 +63,7 @@ mod tests;
 mod time_rules;
 mod time_state;
 mod wallpapers;
+mod webauthn;
 mod webpush;
 mod window_relock;
 mod zones;
@@ -166,6 +168,9 @@ pub struct AppState {
     pub enrollment: std::sync::Arc<enrollment::Enrollment>,
     /// argon2 off the async workers, one at a time with a short queue (`admin_auth`).
     pub passwords: std::sync::Arc<admin_auth::PasswordGate>,
+    /// Passkeys (design 74): `PASSKEY_RP_ID`/`PASSKEY_ORIGINS` as checked at start and the
+    /// ceremonies' challenges, in memory only (`passkeys::Passkeys`).
+    pub passkeys: std::sync::Arc<passkeys::Passkeys>,
     /// Web Push to the parents' devices (design 35 §4): the VAPID key (`None` = push is off),
     /// the transport (scripted in the tests) and the sender's wake-up (`push::Push`).
     pub push: std::sync::Arc<push::Push>,
@@ -245,6 +250,14 @@ async fn main() {
         );
         std::process::exit(2);
     }
+    // Design 74 D4.1/D4.2: a bad PASSKEY_RP_ID or PASSKEY_ORIGINS refuses to start, with the reason.
+    let passkey_config = match webauthn::PasskeyConfig::from_env() {
+        Ok(config) => config,
+        Err(reason) => {
+            tracing::error!("{reason}");
+            std::process::exit(2);
+        }
+    };
     if net_config.device_bind_addr.as_deref() == Some(net_config.bind_addr.as_str()) {
         tracing::error!(
             "BIND_ADDR and DEVICE_BIND_ADDR are both {} - give the phone listener its own port",
@@ -485,6 +498,7 @@ async fn main() {
         tokens: Default::default(),
         enrollment: Default::default(),
         passwords: Default::default(),
+        passkeys: std::sync::Arc::new(passkeys::Passkeys::new(passkey_config)),
         push: std::sync::Arc::new(
             push::Push::new(
                 push_key,
@@ -556,6 +570,12 @@ async fn main() {
 }
 
 /// `kid_phone_server <command>`; the exit code.
+/// The shell's way back for an account (`admin_auth::reset_2fa`): `reset-2fa`, or `reset-sign-in`,
+/// the clearer name of the same command now that a sign-in can be a passkey (design 74 D2.4).
+fn is_reset_command(command: &str) -> bool {
+    matches!(command, "reset-2fa" | "reset-sign-in")
+}
+
 async fn run_command(command: &str, args: &[String]) -> i32 {
     match (command, args) {
         ("healthcheck", []) => {
@@ -582,7 +602,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                 }
             }
         }
-        ("reset-2fa", [username]) => {
+        (command, [username]) if is_reset_command(command) => {
             let _ = rustls::crypto::ring::default_provider().install_default();
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
@@ -590,7 +610,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                 && !path.exists()
             {
                 eprintln!(
-                    "reset-2fa: no database at {} - run this in the server's directory \
+                    "{command}: no database at {} - run this in the server's directory \
                      (/opt/kid-phone-server, or /app in the container)",
                     path.display()
                 );
@@ -603,14 +623,15 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                     0
                 }
                 Err(message) => {
-                    eprintln!("reset-2fa: {message}");
+                    eprintln!("{command}: {message}");
                     1
                 }
             }
         }
         _ => {
             eprintln!(
-                "usage: kid_phone_server [reset-2fa <user> | healthcheck | selftest-tls]\n\
+                "usage: kid_phone_server [reset-2fa <user> | reset-sign-in <user> | healthcheck | \
+                 selftest-tls]\n\
                  With no arguments it runs the server."
             );
             2
@@ -624,6 +645,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
 async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) {
     let net = state.net.clone();
     tracing::info!("{}", net.exposure_line());
+    tracing::info!("{}", state.passkeys.config.startup_line());
     for warning in net.startup_warnings() {
         tracing::warn!("{warning}");
     }
@@ -774,8 +796,11 @@ pub fn build_device_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// The body limit of the forms reachable without a session (`/login`, `/auth/verify-2fa`).
+/// The body limit of the forms reachable without a session (`/login`, `/auth/verify-2fa`,
+/// `/auth/passkey`).
 const SIGNED_OUT_FORM_LIMIT: usize = 4096;
+/// A new passkey's form: the browser's credential as JSON (design 74 D1.2).
+const PASSKEY_FORM_LIMIT: usize = 8192;
 
 /// The admin listener (`BIND_ADDR`): every admin route, middleware and the session layer, given
 /// ready-made state, plus the device API unless `ADMIN_DEVICE_API=off`, behind the admin gate
@@ -802,6 +827,18 @@ pub fn build_admin_router(
             get(handlers::auth::verify_2fa_form)
                 .post(handlers::auth::verify_2fa)
                 .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
+        )
+        // Design 74 D1.4: a passkey sign-in - a `login` challenge for this session (counted in the
+        // per-IP ban, a banned key gets 429), then the assertion, both factors at once.
+        // A POST (qa-passkeys-1 B-M2): it writes a counted row, so csrf_guard must see it.
+        .route(
+            "/auth/passkey/options",
+            post(handlers::passkeys::login_options)
+                .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
+        )
+        .route(
+            "/auth/passkey",
+            post(handlers::passkeys::login).layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route("/sw.js", get(handlers::sw::serve_sw))
         // Is this request's session signed in? 204 / 401, no body (2026-10-25: the sign-in page
@@ -1577,6 +1614,24 @@ pub fn build_admin_router(
         .route(
             "/account/parents/{id}/remove",
             post(handlers::parents::remove),
+        )
+        // Design 74: your passkeys - a re-auth challenge for a form's route, a new passkey's
+        // options (behind the re-auth) and the browser's answer (8 KiB), and a removal.
+        .route(
+            "/account/passkeys/reauth-options",
+            post(handlers::passkeys::reauth_options),
+        )
+        .route(
+            "/account/passkeys/options",
+            post(handlers::passkeys::add_options),
+        )
+        .route(
+            "/account/passkeys",
+            post(handlers::passkeys::add).layer(DefaultBodyLimit::max(PASSKEY_FORM_LIMIT)),
+        )
+        .route(
+            "/account/passkeys/{id}/remove",
+            post(handlers::passkeys::remove),
         )
         // A tapped notification's `?push=<delivery>` (server round 5 §1). Added before
         // `require_full_auth` so it runs inside it (a later layer runs earlier) and sees
