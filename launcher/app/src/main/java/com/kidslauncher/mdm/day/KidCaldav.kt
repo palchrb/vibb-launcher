@@ -153,7 +153,7 @@ fun canonicalJson(v: KidVersion): String =
     "{\"summary\":${jsonString(v.summary)},\"location\":${jsonString(v.location)},\"description\":${jsonString(v.description)}," +
         "\"start\":${jsonString(v.start)},\"end\":${jsonString(v.end)},\"all_day\":${v.allDay}}"
 
-private fun hex16(text: String): String =
+internal fun hex16(text: String): String =
     MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
 /** 16 hex of SHA-256 over the canonical JSON (the zone and the bytes never count). */
@@ -243,7 +243,8 @@ fun kidSnapshot(
     maxRows: Int = KID_SET_ROWS,
     maxBytes: Int = KID_SET_BYTES,
 ): KidSnapshot {
-    val mine = rows.filter { kidSetRow(it, ownPackage, phoneTag) }
+    // Two live rows with one UID (the provider doesn't keep them unique) would make every set a 400: the first by id.
+    val mine = rows.filter { kidSetRow(it, ownPackage, phoneTag) }.sortedBy { it.id }.distinctBy { it.uid }
     val coming = mine.filter { it.endMs > nowMs }.sortedWith(compareBy<KidRow>({ it.dtstart }, { it.uid }))
     val kept = ArrayList<KidSetEvent>()
     val left = ArrayList<Pair<KidRow, KidSetEvent>>()
@@ -381,7 +382,8 @@ fun backOps(back: List<KidBack>, rows: List<KidRow>, ownPackage: String, phoneTa
                 dtstart = kidTimeMs(version.start, version.allDay)!!,
                 dtend = kidTimeMs(version.end, version.allDay)!!,
                 allDay = version.allDay,
-                tz = if (version.allDay) "UTC" else row?.tz ?: phoneZone,
+                // A row that was all-day (UTC) gets the phone's zone for a timed version (launcher QA L5).
+                tz = if (version.allDay) "UTC" else row?.takeIf { !it.allDay }?.tz ?: phoneZone,
             )
             if (row != null) KidBackOp.Update(b.id, row.id, values) else KidBackOp.Insert(b.id, b.uid, values)
         }
@@ -392,12 +394,40 @@ fun backOps(back: List<KidBack>, rows: List<KidRow>, ownPackage: String, phoneTa
 
 /** What the phone remembers of its posts: the last set's rev and uids, and every uid posted since the server last
  * showed that rev accepted with nothing pending. */
-data class PostedUnion(val rev: String? = null, val uids: Set<String> = emptySet(), val union: Set<String> = emptySet()) {
+data class PostedUnion(
+    val rev: String? = null,
+    val uids: Set<String> = emptySet(),
+    val union: Set<String> = emptySet(),
+    /** The last posted set's cut, `cut|cut_from|cut_uids` (code QA N5): a change there is posted too. */
+    val cut: String? = null,
+) {
     override fun toString() = "PostedUnion(${union.size})"
 }
 
+fun cutKey(snapshot: KidSnapshot): String =
+    "${snapshot.cut}|${snapshot.cutFrom.orEmpty()}|${snapshot.cutUids?.let { hex16(it.joinToString(",")) } ?: "null"}"
+
 fun afterPost(state: PostedUnion, snapshot: KidSnapshot): PostedUnion =
-    PostedUnion(snapshot.rev, snapshot.uids, state.union + snapshot.uids)
+    PostedUnion(snapshot.rev, snapshot.uids, state.union + snapshot.uids, cutKey(snapshot))
+
+/** A hand-back delete applied (or left, deliberately): the event is the parent's or gone, and the server never deletes
+ * it again - it leaves the skip set, so a released series shows from the feed at once (D3.2, launcher QA M2). */
+fun afterBackDeletes(state: PostedUnion, uids: Set<String>): PostedUnion =
+    state.copy(uids = state.uids - uids, union = state.union - uids)
+
+/** Whether the set goes to the server (D1.2): it differs from the last one the server took or from the last one
+ * posted (a held set undone, code QA L3), its cut changed (N5), hand-backs wait, or acknowledgements do. */
+fun shouldPost(snapshot: KidSnapshot, policy: KidCaldavPolicy, applied: List<String>, posted: PostedUnion): Boolean =
+    snapshot.rev != policy.accepted ||
+        policy.back > 0 ||
+        applied.isNotEmpty() ||
+        (posted.rev != null && posted.rev != snapshot.rev) ||
+        (posted.cut != null && posted.cut != cutKey(snapshot))
+
+/** The acknowledgements kept after a 200: those not sent this time, and the ones just applied (at most
+ * [KID_APPLIED]). */
+fun nextApplied(stored: List<String>, sent: List<String>, acked: List<String>): List<String> =
+    ((stored - sent.toSet()) + acked).distinct().takeLast(KID_APPLIED)
 
 /** A 200 or a policy that shows the last posted rev accepted and `pending` 0: the union is the current set's uids. */
 fun afterAnswer(state: PostedUnion, accepted: String?, pending: Int): PostedUnion =
@@ -431,7 +461,13 @@ fun skippedText(uids: List<String>): String = uids.joinToString(",", "[", "]") {
  * GET); one that left it makes the set fetched again without `If-None-Match` (QA N3). */
 data class SkipChange(val joined: Set<String>, val left: Set<String>)
 
-fun skipChange(stored: Set<String>, now: Set<String>): SkipChange {
-    val kept = skipKept(now).toSet()
-    return SkipChange(joined = kept - stored, left = stored - kept)
-}
+fun skipChange(stored: Set<String>, now: Set<String>): SkipChange = SkipChange(joined = now - stored, left = stored - now)
+
+/** A feed's set without the kid's own events (D3.2): a series or a lone override (`uid#…`) of a skipped uid out. */
+fun skipFeedEvents(events: List<FeedEvent>, skip: Set<String>): List<FeedEvent> =
+    events.filter { it.uid.substringBefore('#') !in skip }
+
+/** What a feed calendar keeps in `CAL_SYNC6` after a pass (code QA L2): only the uids it actually skipped - those in
+ * its set - so the list stays small and a uid leaving it means something for this calendar. */
+fun feedSkipped(events: List<FeedEvent>, skip: Set<String>): List<String> =
+    skipKept(events.map { it.uid.substringBefore('#') }.filter { it in skip }.toSet())

@@ -239,6 +239,49 @@ class KidCaldavTest {
     }
 
     @Test
+    fun `an applied hand-back reads back to its own version - no echo`() {
+        val back = kidAnswer(answer("accepted").getValue("body"))!!.back
+        for (op in backOps(back, rows, own, tag, "Europe/Oslo")) {
+            val b = back.first { it.id == op.backId }
+            val values = when (op) {
+                is KidBackOp.Update -> op.values
+                is KidBackOp.Insert -> op.values
+                else -> continue
+            }
+            val row = KidRow(1, b.uid, values.title, values.location, values.description, values.dtstart, values.dtend, null, values.allDay, values.tz, null, null, false, own)
+            assertEquals(kidHash(b.version!!), kidHash(row.version()))
+        }
+    }
+
+    @Test
+    fun `the post decision, the acknowledgements kept, a delete leaving the skip set`() {
+        val snapshot = kidSnapshot(rows, own, tag, now, emptyList())
+        val taken = KidCaldavPolicy(calendar, snapshot.rev, 0, 0)
+        val posted = afterPost(PostedUnion(), snapshot)
+        assertTrue(!shouldPost(snapshot, taken, emptyList(), posted))
+        assertTrue(shouldPost(snapshot, taken.copy(back = 1), emptyList(), posted))
+        assertTrue(shouldPost(snapshot, taken, listOf("0123456789abcdef"), posted))
+        assertTrue(shouldPost(snapshot, taken.copy(accepted = null), emptyList(), posted))
+        // A held set the phone undid (code QA L3): the server keeps the last posted one, so it goes again.
+        val held = posted.copy(rev = "ffffffffffffffff")
+        assertTrue(shouldPost(snapshot, taken, emptyList(), held))
+        // Only the cut moved (N5).
+        assertTrue(shouldPost(snapshot, taken, emptyList(), posted.copy(cut = "9|x|null")))
+        assertEquals(listOf("b", "c"), nextApplied(listOf("a", "b"), listOf("a"), listOf("c")))
+        assertEquals(KID_APPLIED, nextApplied((1..400).map { "$it" }, emptyList(), emptyList()).size)
+        // An acknowledged hand-back delete takes the uid out of the union at once (launcher QA M2).
+        val kino = rows.first { it.id == 1L }.uid!!
+        assertTrue(kino !in afterBackDeletes(posted, setOf(kino)).union)
+        // Two live rows with one UID: one row in the set (N3).
+        val twice = rows + rows.first { it.id == 1L }.copy(id = 99)
+        assertEquals(snapshot.events.size, kidSnapshot(twice, own, tag, now, emptyList()).events.size)
+        // A timed hand-back on a row that was all-day takes the phone's zone (L5).
+        val skidag = rows.first { it.id == 3L }
+        val timed = KidBack("6123456789abcdef", skidag.uid!!, KidVersion("Skidag", "", "", "20261110T080000Z", "20261110T150000Z", false))
+        assertEquals("Europe/Berlin", (backOps(listOf(timed), rows, own, tag, "Europe/Berlin")[0] as KidBackOp.Update).values.tz)
+    }
+
+    @Test
     fun `canonical text is cut by code point and keeps the rest`() {
         assertEquals("a\nb\tc  d", canonicalText("a\r\nb\tc\u0007  d", 100))
         assertEquals("x\n\ny", canonicalText("x\r\ry", 100))

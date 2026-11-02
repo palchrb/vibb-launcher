@@ -116,14 +116,18 @@ class FeedPlanTest {
         // Live in "Min kalender": skipped. Just deleted but still in the feed: the posted union skips it. An event this
         // phone once wrote through DAVx5 (its tag, not in "Min kalender") is shown.
         val skip = skipSet(listOf(mine), setOf(deleted))
-        val shown = doc.filter { it.uid.substringBefore('#') !in skip }.mapNotNull { seriesRows(it, oslo) }.map { it.uid }
-        assertEquals(listOf(davx5Era, "parent-1"), shown)
+        val kept = skipFeedEvents(doc, skip)
+        assertEquals(listOf(davx5Era, "parent-1"), kept.mapNotNull { seriesRows(it, oslo) }.map { it.uid })
+        // The calendar keeps only the uids it actually skipped (code QA L2).
+        assertEquals(listOf(mine, deleted).sorted(), feedSkipped(doc, skip))
         // A newly skipped uid is deleted locally with no GET; a released one (left the set) fetched again.
         assertEquals(SkipChange(joined = setOf(deleted, mine), left = emptySet()), skipChange(setOf(), skip))
         assertEquals(SkipChange(joined = emptySet(), left = setOf(deleted)), skipChange(skip, setOf(mine)))
-        val stored = listOf(StoredRow(1, mine, null, "r", null), StoredRow(2, "parent-1", null, "r", null))
-        val plan = feedPlan(doc.filter { it.uid !in skip }.mapNotNull { seriesRows(it, oslo) }.filter { it.uid != "$mine#20261110T160000" }, stored, "Europe/Oslo", true)
+        // The kid's own rows already in the feed calendar go with the plan of the skipped set.
+        val stored = listOf(StoredRow(1, mine, null, "r", null), StoredRow(2, "parent-1", null, "r-parent-1", null))
+        val plan = feedPlan(kept.mapNotNull { seriesRows(it, oslo) }, stored, "Europe/Oslo", true)
         assertTrue(1L in plan.deletes)
+        assertTrue(2L !in plan.deletes)
     }
 
     @Test

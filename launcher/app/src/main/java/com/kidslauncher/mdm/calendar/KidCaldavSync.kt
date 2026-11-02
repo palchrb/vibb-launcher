@@ -5,15 +5,17 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.kidslauncher.mdm.day.KidAnswer
-import com.kidslauncher.mdm.day.KID_APPLIED
 import com.kidslauncher.mdm.day.PostedUnion
 import com.kidslauncher.mdm.day.afterAnswer
+import com.kidslauncher.mdm.day.afterBackDeletes
 import com.kidslauncher.mdm.day.afterPost
 import com.kidslauncher.mdm.day.backOps
 import com.kidslauncher.mdm.day.calendarPolicy
 import com.kidslauncher.mdm.day.kidAnswer
 import com.kidslauncher.mdm.day.kidCaldavPolicy
 import com.kidslauncher.mdm.day.kidSnapshot
+import com.kidslauncher.mdm.day.nextApplied
+import com.kidslauncher.mdm.day.shouldPost
 import com.kidslauncher.mdm.server.CommandListenerService
 import com.kidslauncher.mdm.server.MdmApi
 import com.kidslauncher.mdm.server.ServerJson
@@ -40,6 +42,7 @@ object KidCaldavSync {
     private const val KEY_POSTED_REV = "posted_rev"
     private const val KEY_POSTED_UIDS = "posted_uids"
     private const val KEY_UNION = "union"
+    private const val KEY_POSTED_CUT = "posted_cut"
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -56,6 +59,7 @@ object KidCaldavSync {
         rev = prefs(context).getString(KEY_POSTED_REV, null),
         uids = list(context, KEY_POSTED_UIDS).toSet(),
         union = list(context, KEY_UNION).toSet(),
+        cut = prefs(context).getString(KEY_POSTED_CUT, null),
     )
 
     private fun save(context: Context, state: PostedUnion) {
@@ -63,6 +67,7 @@ object KidCaldavSync {
             .putString(KEY_POSTED_REV, state.rev)
             .putString(KEY_POSTED_UIDS, state.uids.sorted().joinToString(","))
             .putString(KEY_UNION, state.union.sorted().joinToString(","))
+            .putString(KEY_POSTED_CUT, state.cut)
             .commit()
     }
 
@@ -89,8 +94,10 @@ object KidCaldavSync {
         val prefs = prefs(app)
         if (policy == null || prefs.getString(KEY_CALENDAR, null) != policy.id) {
             // No calendar marked, or another one: nothing posted counts any more (the calendar holds what it holds).
-            prefs.edit().clear().putString(KEY_CALENDAR, policy?.id).commit()
+            // Written only when something is stored (launcher QA N1: no disk write at every sync of an unmarked phone).
+            if (prefs.all.isNotEmpty()) prefs.edit().clear().commit()
             if (policy == null) return
+            prefs.edit().putString(KEY_CALENDAR, policy.id).commit()
         }
         if (!calendarPolicy(calendar).usable || !CalendarStore.canWrite(app)) return
         // A full read only (D1.3): the provider readable and "Min kalender" there.
@@ -99,7 +106,7 @@ object KidCaldavSync {
         val tag = CalendarStore.phoneTag(app)
         val snapshot = kidSnapshot(rows, app.packageName, tag, System.currentTimeMillis(), applied)
         var state = union(app)
-        if (snapshot.rev == policy.accepted && policy.back == 0 && applied.isEmpty()) {
+        if (!shouldPost(snapshot, policy, applied, state)) {
             save(app, afterAnswer(state, policy.accepted, policy.pending))
             return
         }
@@ -123,11 +130,15 @@ object KidCaldavSync {
             Log.w(LOG_TAG, "The kid's events' answer doesn't read")
             return
         }
-        save(app, afterAnswer(state, answer.accepted, answer.pending))
+        state = afterAnswer(state, answer.accepted, answer.pending)
         val ops = backOps(answer.back, rows, app.packageName, tag, ZoneId.systemDefault().id)
         val acked = if (ops.isEmpty()) emptyList() else onWorker { CalendarStore.applyKidBackBlocking(app, ops) }
-        val left = list(app, KEY_APPLIED) - snapshot.applied.toSet()
-        prefs.edit().putString(KEY_APPLIED, (left + acked).distinct().takeLast(KID_APPLIED).joinToString(",")).commit()
+        // A delete applied (or left) takes its uid out of the skip set at once (launcher QA M2).
+        val deletesDone = answer.back.filter { it.delete && it.id in acked }.mapTo(HashSet()) { it.uid }
+        save(app, afterBackDeletes(state, deletesDone))
+        prefs.edit().putString(KEY_APPLIED, nextApplied(list(app, KEY_APPLIED), snapshot.applied, acked).joinToString(",")).commit()
+        // The acknowledgements go soon (N7): one more sync, after the server's 10 s gap.
+        if (acked.isNotEmpty()) main.postDelayed({ CommandListenerService.requestSync(app, "kid_event_ack") }, 11_000)
         Log.i(LOG_TAG, "Handed over ${snapshot.events.size} events (cut ${snapshot.cut}); ${acked.size} of ${answer.back.size} hand-backs applied")
     }
 }

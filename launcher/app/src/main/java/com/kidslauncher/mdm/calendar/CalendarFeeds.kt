@@ -13,7 +13,9 @@ import com.kidslauncher.mdm.day.feedFetch
 import com.kidslauncher.mdm.day.feedPlan
 import com.kidslauncher.mdm.day.runPass
 import com.kidslauncher.mdm.day.seriesRows
+import com.kidslauncher.mdm.day.feedSkipped
 import com.kidslauncher.mdm.day.skipChange
+import com.kidslauncher.mdm.day.skipFeedEvents
 import com.kidslauncher.mdm.day.skipKept
 import com.kidslauncher.mdm.day.skipSet
 import com.kidslauncher.mdm.server.MdmApi
@@ -48,13 +50,17 @@ object CalendarFeeds {
             if (!policy.usable || !CalendarStore.canWrite(app)) return
             val zone = ZoneId.systemDefault()
             val calendars = onWorker { gone(app, policy, CalendarStore.feedCalendarsBlocking(app)) } ?: return
+            if (policy.feeds.isEmpty()) return
             // Design 72b D3.2: the kid's own events - "Min kalender"'s live rows and the uids posted but not yet shown
-            // taken - are never shown again from a feed (always, marked or not).
-            val live = onWorker { CalendarStore.kidEventsBlocking(app) }.orEmpty().filter { !it.deleted }.mapNotNull { it.uid }
-            val skip = skipSet(live, KidCaldavSync.postedUnion(app))
+            // taken - are never shown again from a feed (always, marked or not). An unreadable "Min kalender" keeps
+            // each calendar's own skipped uids (launcher QA L1).
+            val live = onWorker { CalendarStore.kidLiveUidsBlocking(app) }
+            val union = KidCaldavSync.postedUnion(app)
             var changed = false
             for (feed in policy.feeds) {
-                changed = refreshOne(app, api, feed, calendars[feed.id], zone, skip) || changed
+                val existing = calendars[feed.id]
+                val skip = skipSet(live ?: existing?.skipped.orEmpty(), union)
+                changed = refreshOne(app, api, feed, existing, zone, skip) || changed
             }
             if (changed) CalendarStore.invalidate()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -91,10 +97,14 @@ object CalendarFeeds {
         val calendarId = onWorker { CalendarStore.ensureFeedCalendarBlocking(context, feed, existing) } ?: return false
         var renamed = existing == null || existing.displayName != feed.name
         if (existing != null && change.joined.isNotEmpty()) {
-            // A uid that joined the skip set loses its rows here at once, with no GET (D3.2); the uids that left stay
+            // A uid that joined the skip set loses its rows here at once, with no GET (D3.2): only those this calendar
+            // had are remembered (launcher QA L2), and only once the delete went (N4); the uids that left stay
             // remembered until a pass applied the set again.
-            renamed = onWorker { CalendarStore.deleteFeedUidsBlocking(context, calendarId, change.joined) } || renamed
-            onWorker { CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(existing.skipped + change.joined)) }
+            val hit = onWorker { CalendarStore.deleteFeedUidsBlocking(context, calendarId, change.joined) }
+            if (!hit.isNullOrEmpty()) {
+                onWorker { CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(existing.skipped + hit)) }
+                renamed = true
+            }
         }
         need ?: return renamed
         val answer = try {
@@ -114,7 +124,7 @@ object CalendarFeeds {
             Log.w(LOG_TAG, "A calendar link's set doesn't read")
             return renamed
         }
-        val series = doc.events.filter { it.uid.substringBefore('#') !in skip }.mapNotNull { seriesRows(it, zone) }
+        val series = skipFeedEvents(doc.events, skip).mapNotNull { seriesRows(it, zone) }
         val unknown = series.count { it.unknownZone }
         val floating = if (series.any { it.floating }) zone.id else ""
         onWorker {
@@ -133,7 +143,7 @@ object CalendarFeeds {
                 return@onWorker
             }
             CalendarStore.markFeedAppliedBlocking(context, calendarId, doc.rev, result.refused, unknown, floating)
-            CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(skip))
+            CalendarStore.markFeedSkippedBlocking(context, calendarId, feedSkipped(doc.events, skip))
             Log.i(LOG_TAG, "Applied a calendar link: ${plan.deletes.size} rows deleted, ${plan.inserts.size} series written")
         }
         return true

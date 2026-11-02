@@ -13,6 +13,7 @@ import com.kidslauncher.mdm.calendar.KidCaldavSync
 import com.kidslauncher.mdm.databinding.ActivityEventEditBinding
 import com.kidslauncher.mdm.day.KID_EVENT_DEFAULT_MINUTES
 import com.kidslauncher.mdm.day.KID_EVENT_MINUTES
+import com.kidslauncher.mdm.day.KidEventTimes
 import com.kidslauncher.mdm.day.kidEventDefaultStart
 import com.kidslauncher.mdm.day.kidEventInput
 import com.kidslauncher.mdm.day.kidEventMinutes
@@ -41,6 +42,9 @@ class EventEditActivity : UIObjectActivity() {
      * same is left as the row has it - a parent's longer title is never cut by the field's 100. */
     private var titleShown: String? = null
     private var placeShown: String? = null
+
+    /** The day, start and length as loaded (launcher QA M1): unchanged, the row's times stay as they are. */
+    private var timesShown: KidEventTimes? = null
     private var day: LocalDate = LocalDate.now()
     private var start: LocalTime = LocalTime.NOON
     private var minutes = KID_EVENT_DEFAULT_MINUTES
@@ -63,6 +67,13 @@ class EventEditActivity : UIObjectActivity() {
             minutes = it.getInt(STATE_MINUTES)
             titleShown = it.getString(STATE_TITLE_SHOWN)
             placeShown = it.getString(STATE_PLACE_SHOWN)
+            if (it.containsKey(STATE_TIMES_DAY)) {
+                timesShown = KidEventTimes(
+                    LocalDate.ofEpochDay(it.getLong(STATE_TIMES_DAY)),
+                    LocalTime.ofSecondOfDay(it.getLong(STATE_TIMES_START)),
+                    it.getInt(STATE_TIMES_MINUTES),
+                )
+            }
         }
         KidHeader.bind(this, binding.eventEditHeader, getString(if (eventId == null) R.string.event_new_title else R.string.event_edit_title), null, null, null)
         binding.eventEditDay.setOnClickListener { pickDay() }
@@ -92,6 +103,11 @@ class EventEditActivity : UIObjectActivity() {
         outState.putInt(STATE_MINUTES, minutes)
         outState.putString(STATE_TITLE_SHOWN, titleShown)
         outState.putString(STATE_PLACE_SHOWN, placeShown)
+        timesShown?.let {
+            outState.putLong(STATE_TIMES_DAY, it.day.toEpochDay())
+            outState.putLong(STATE_TIMES_START, it.start.toSecondOfDay().toLong())
+            outState.putInt(STATE_TIMES_MINUTES, it.minutes)
+        }
     }
 
     private class Own(val detail: CalendarStore.EventDetail?, val mine: Boolean)
@@ -111,6 +127,7 @@ class EventEditActivity : UIObjectActivity() {
             day = at.toLocalDate()
             start = at.toLocalTime().withSecond(0).withNano(0)
             minutes = kidEventMinutes(detail.end - detail.begin)
+            timesShown = KidEventTimes(day, start, minutes)
             binding.eventEditWhat.setText(detail.title.orEmpty())
             binding.eventEditWhere.setText(detail.location.orEmpty())
             titleShown = binding.eventEditWhat.text.toString()
@@ -167,6 +184,7 @@ class EventEditActivity : UIObjectActivity() {
             binding.eventEditWhat.text.toString(), binding.eventEditWhere.text.toString(), day, start, minutes, ZoneId.systemDefault(),
             titleShown = titleShown.takeIf { eventId != null },
             placeShown = placeShown.takeIf { eventId != null },
+            timesShown = timesShown.takeIf { eventId != null },
         )
         if (input == null) {
             showError(R.string.event_what_missing)
@@ -179,10 +197,11 @@ class EventEditActivity : UIObjectActivity() {
             Saved(if (id == null) CalendarStore.insertKidEventBlocking(app, input) != null else CalendarStore.updateKidEventBlocking(app, id, input))
         }) { saved ->
             saving = false
+            // Design 72b D1.5: the set goes to the server soon after the save while a CalDAV calendar is marked - also
+            // when the kid already left the form.
+            if (saved.ok) KidCaldavSync.requestSoon(app)
             if (isDestroyed) return@run
             if (saved.ok) {
-                // Design 72b D1.5: the set goes to the server soon after the save while a CalDAV calendar is marked.
-                KidCaldavSync.requestSoon(app)
                 finish()
             } else {
                 showError(R.string.event_save_failed)
@@ -202,6 +221,9 @@ class EventEditActivity : UIObjectActivity() {
         private const val STATE_MINUTES = "minutes"
         private const val STATE_TITLE_SHOWN = "title_shown"
         private const val STATE_PLACE_SHOWN = "place_shown"
+        private const val STATE_TIMES_DAY = "times_day"
+        private const val STATE_TIMES_START = "times_start"
+        private const val STATE_TIMES_MINUTES = "times_minutes"
 
         fun newIntent(context: Context, day: LocalDate): Intent =
             Intent(context, EventEditActivity::class.java).putExtra(DayActivity.EXTRA_DAY, day.toEpochDay())

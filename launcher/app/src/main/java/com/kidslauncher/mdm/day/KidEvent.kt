@@ -25,6 +25,8 @@ data class KidEventInput(
     val endMs: Long,
     val titleChanged: Boolean = true,
     val placeChanged: Boolean = true,
+    /** The kid changed the day, the start or the length (launcher QA M1): only then are the times written. */
+    val timesChanged: Boolean = true,
 ) {
     override fun toString() = "KidEventInput"
 }
@@ -41,6 +43,7 @@ fun kidEventInput(
     zone: ZoneId,
     titleShown: String? = null,
     placeShown: String? = null,
+    timesShown: KidEventTimes? = null,
 ): KidEventInput? {
     val t = TitleRules.clean(title, KID_EVENT_TITLE_MAX)
     if (t.isEmpty() || minutes !in KID_EVENT_MINUTES) return null
@@ -52,19 +55,26 @@ fun kidEventInput(
         begin + minutes * 60_000L,
         titleChanged = titleShown == null || title != titleShown,
         placeChanged = placeShown == null || place != placeShown,
+        timesChanged = timesShown == null || timesShown != KidEventTimes(day, start, minutes),
     )
 }
 
-/** The columns a change of the kid's event writes (design 72b): the title and the place only when changed - a field
- * the kid left alone keeps exactly what the row has, a parent's longer title included (R-L5) -, the times, `ALL_DAY`
- * 0 and the zone always (QA L6: a handed-back all-day event changed in the form is a timed one). */
+/** The form's day, start and length as it showed them after loading an event. */
+data class KidEventTimes(val day: LocalDate, val start: LocalTime, val minutes: Int)
+
+/** The columns a change of the kid's event writes (design 72b): each field only when the kid changed it - a title or
+ * place left alone keeps exactly what the row has, a parent's longer title included (R-L5), and times left alone keep
+ * a parent's all-day day, odd length or later move (launcher QA M1). Changed times are written whole: the start, the
+ * end, `ALL_DAY` 0 and the zone (QA L6: a handed-back all-day event retimed in the form is a timed one). */
 fun kidEventUpdateColumns(input: KidEventInput, zone: String): Map<String, Any> = buildMap {
     if (input.titleChanged) put(FeedColumns.TITLE, input.title)
     if (input.placeChanged) put(FeedColumns.LOCATION, input.place)
-    put(FeedColumns.DTSTART, input.beginMs)
-    put(FeedColumns.DTEND, input.endMs)
-    put(FeedColumns.ALL_DAY, 0)
-    put(FeedColumns.TIMEZONE, zone)
+    if (input.timesChanged) {
+        put(FeedColumns.DTSTART, input.beginMs)
+        put(FeedColumns.DTEND, input.endMs)
+        put(FeedColumns.ALL_DAY, 0)
+        put(FeedColumns.TIMEZONE, zone)
+    }
 }
 
 /** The kid's calendar among [calendars]: the parent's pick when the phone has it and may write to it (access at least

@@ -541,9 +541,11 @@ object CalendarStore {
      * kept as it is), `ALL_DAY` 0 and the zone always (QA L6: a handed-back all-day event becomes a timed one). */
     fun updateKidEventBlocking(context: Context, eventId: Long, input: com.kidslauncher.mdm.day.KidEventInput): Boolean {
         if (!canWrite(context) || !kidMayEditBlocking(context, eventId)) return false
+        val columns = com.kidslauncher.mdm.day.kidEventUpdateColumns(input, ZoneId.systemDefault().id)
+        if (columns.isEmpty()) return true
         return try {
             val values = ContentValues().apply {
-                for ((key, value) in com.kidslauncher.mdm.day.kidEventUpdateColumns(input, ZoneId.systemDefault().id)) {
+                for ((key, value) in columns) {
                     when (value) {
                         is String -> put(key, value)
                         is Long -> put(key, value)
@@ -572,6 +574,16 @@ object CalendarStore {
     }
 
     // ---- the kid's events written to a CalDAV calendar (design 72b, [KidCaldavSync]; on the worker) ---------------
+
+    /** The UIDs of "Min kalender"'s live rows for the feeds' skip set: empty when there is no "Min kalender", `null`
+     * when the provider can't be read (launcher QA L1: an unreadable provider is not "no events of the kid's"). */
+    internal fun kidLiveUidsBlocking(context: Context): List<String>? {
+        if (!canRead(context)) return null
+        val current = readCalendars(context)
+        if (!current.readable) return null
+        if (current.calendars.none { it.vibbLocal }) return emptyList()
+        return kidEventsBlocking(context)?.filter { !it.deleted }?.mapNotNull { it.uid }
+    }
 
     /** "Min kalender"'s rows (DELETED ones included - the pure code leaves them out), `null` unless it is a full read:
      * the provider readable and the calendar there (D1.3) - an unreadable provider or a missing calendar sends
@@ -846,13 +858,12 @@ object CalendarStore {
 
     /** The rows of [uids] (a master by `_SYNC_ID`, its overrides by `ORIGINAL_SYNC_ID`, a lone override `uid#…`) deleted
      * from a link calendar (design 72b D3.2: a kid's own event never shows twice). `true` when any went. */
-    internal fun deleteFeedUidsBlocking(context: Context, calendarId: Long, uids: Set<String>): Boolean {
-        val rows = feedRowsBlocking(context, calendarId) ?: return false
-        val doomed = rows.filter { r ->
-            (r.syncId?.substringBefore('#') in uids) || (r.originalSyncId in uids)
-        }.map { it.id }
-        if (doomed.isEmpty()) return false
-        return deleteFeedRowsBlocking(context, doomed) == BatchResult.OK
+    internal fun deleteFeedUidsBlocking(context: Context, calendarId: Long, uids: Set<String>): Set<String>? {
+        val rows = feedRowsBlocking(context, calendarId) ?: return null
+        val doomed = rows.filter { r -> (r.syncId?.substringBefore('#') in uids) || (r.originalSyncId in uids) }
+        if (doomed.isEmpty()) return emptySet()
+        if (deleteFeedRowsBlocking(context, doomed.map { it.id }) != BatchResult.OK) return null
+        return doomed.mapNotNullTo(HashSet()) { it.originalSyncId ?: it.syncId?.substringBefore('#') }
     }
 
     /** The kid's events this link calendar skips now (design 72b D3.2, `CAL_SYNC6`). */

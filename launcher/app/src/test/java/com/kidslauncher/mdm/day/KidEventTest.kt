@@ -42,6 +42,7 @@ class KidEventTest {
         val moved = kidEventInput(shown, "Skolen", day, LocalTime.of(18, 0), 60, oslo, titleShown = shown, placeShown = "Skolen")!!
         val columns = kidEventUpdateColumns(moved, "Europe/Oslo")
         assertFalse(FeedColumns.TITLE in columns)
+        assertTrue(moved.timesChanged)
         assertFalse(FeedColumns.LOCATION in columns)
         assertEquals(moved.beginMs, columns[FeedColumns.DTSTART])
         // A handed-back all-day event changed in the form becomes a timed one, in the phone's zone.
@@ -53,7 +54,16 @@ class KidEventTest {
         assertFalse(FeedColumns.LOCATION in kidEventUpdateColumns(renamed, "Europe/Oslo"))
         // A new event writes both.
         val fresh = kidEventInput("Tur", "", day, LocalTime.NOON, 60, oslo)!!
-        assertTrue(fresh.titleChanged && fresh.placeChanged)
+        assertTrue(fresh.titleChanged && fresh.placeChanged && fresh.timesChanged)
+        // A handed-back all-day event whose place alone changed keeps its day: no time column (launcher QA M1).
+        val shownTimes = KidEventTimes(day, LocalTime.of(1, 0), 180)
+        val place = kidEventInput("Skidag", "Tryvann", day, LocalTime.of(1, 0), 180, oslo, titleShown = "Skidag", placeShown = "", timesShown = shownTimes)!!
+        assertEquals(setOf(FeedColumns.LOCATION), kidEventUpdateColumns(place, "Europe/Oslo").keys)
+        // The kid moves it: the times go in whole, timed.
+        val later = kidEventInput("Skidag", "", day, LocalTime.of(9, 0), 180, oslo, titleShown = "Skidag", placeShown = "", timesShown = shownTimes)!!
+        assertEquals(setOf(FeedColumns.DTSTART, FeedColumns.DTEND, FeedColumns.ALL_DAY, FeedColumns.TIMEZONE), kidEventUpdateColumns(later, "Europe/Oslo").keys)
+        // Nothing changed: nothing written.
+        assertTrue(kidEventUpdateColumns(kidEventInput("Skidag", "", day, LocalTime.of(1, 0), 180, oslo, "Skidag", "", shownTimes)!!, "Europe/Oslo").isEmpty())
     }
 
     @Test
