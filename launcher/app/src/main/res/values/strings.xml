@@ -460,8 +460,8 @@
     <string name="re_enrol_unreachable">Couldn\'t reach the server. Check the connection and try again.</string>
     <string name="re_enrol_done">The phone is connected again. Try the parent code once it has synced.</string>
     <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
-    <!-- Dagen (design 69): the kid's day. -->
-    <string name="day_title">Dagen</string>
+    <!-- Dagen (design 69): the kid's day; its user-facing name since 2026-11-02 is "Calendar" (nb "Kalender"). -->
+    <string name="day_title">Calendar</string>
     <string name="day_jump_back">← Today</string>
     <string name="day_jump_forward">Today →</string>
     <string name="day_all_day">All day</string>
@@ -487,7 +487,7 @@
     <string name="glance_reminder_now">%1$s now</string>
     <string name="glance_reminder_now_spoken">now</string>
     <string name="glance_reminder_spoken">Reminder: %1$s, %2$s, %3$s</string>
-    <string name="glance_reminder_action">Unlock and open Dagen</string>
+    <string name="glance_reminder_action">Unlock and open Calendar</string>
     <plurals name="glance_reminder_minutes">
         <item quantity="one">in %d minute</item>
         <item quantity="other">in %d minutes</item>

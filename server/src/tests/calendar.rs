@@ -957,7 +957,7 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
     let html = page_nb(&app, &page, &cookie).await;
     // One "i" per group, its text in the panel; the old footers' long sentences and the select's words gone.
     for (label, text) in [
-        ("Om Dagen", "Barnet sveiper fra dag til dag."),
+        ("Om Kalender-appen", "Barnet sveiper fra dag til dag."),
         ("Om låseskjermen", "En tittel kan nevne et sted."),
         ("Om påminnelsene", "uansett hva du velger her."),
     ] {
