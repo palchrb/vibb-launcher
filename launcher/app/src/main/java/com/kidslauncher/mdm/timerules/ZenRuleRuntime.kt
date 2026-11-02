@@ -236,8 +236,8 @@ object ZenRuleRuntime {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
             return AutomaticZenRule.Builder(name, uri)
                 .setConfigurationActivity(config)
+                // The builder's interruption filter is priority-only already, the one a ZenPolicy works with.
                 .setZenPolicy(policy)
-                .setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
                 .setType(if (managedType) AutomaticZenRule.TYPE_MANAGED else AutomaticZenRule.TYPE_SCHEDULE_TIME)
                 .setTriggerDescription(context.getString(R.string.rule_silence_trigger))
                 .setManualInvocationAllowed(false)
