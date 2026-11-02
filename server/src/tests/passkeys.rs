@@ -9,13 +9,13 @@ use super::{LOOPBACK_PEER, TestApp, TestResponse};
 use crate::webauthn::fake::FakeAuthenticator;
 use crate::webauthn::{Refused, b64url};
 
-const HOST: &str = "handy.example.com";
-const ORIGIN: &str = "https://handy.example.com";
+pub(super) const HOST: &str = "handy.example.com";
+pub(super) const ORIGIN: &str = "https://handy.example.com";
 /// The password `TestApp::admin_cookie` gives every account it makes.
-const PASSWORD: &str = "correct horse battery staple";
+pub(super) const PASSWORD: &str = "correct horse battery staple";
 
 /// A browser's request at `host`: Host, Sec-Fetch-Site, the cookie, a urlencoded body for a POST.
-async fn send(
+pub(super) async fn send(
     app: &TestApp,
     method: Method,
     uri: &str,
@@ -45,7 +45,7 @@ async fn send(
         .await
 }
 
-fn challenge_of(res: &TestResponse) -> Vec<u8> {
+pub(super) fn challenge_of(res: &TestResponse) -> Vec<u8> {
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     let json = res.json();
     base64::Engine::decode(
@@ -61,7 +61,12 @@ fn unb64(text: &str) -> Vec<u8> {
 
 /// Adds a passkey for the signed-in parent of `cookie` through the real forms: the options behind the password,
 /// then the fake's registration. Returns the new row's id.
-async fn add_passkey(app: &TestApp, cookie: &str, fake: &mut FakeAuthenticator, name: &str) -> i64 {
+pub(super) async fn add_passkey(
+    app: &TestApp,
+    cookie: &str,
+    fake: &mut FakeAuthenticator,
+    name: &str,
+) -> i64 {
     add_passkey_at(
         app,
         cookie,
@@ -75,7 +80,7 @@ async fn add_passkey(app: &TestApp, cookie: &str, fake: &mut FakeAuthenticator, 
 }
 
 /// [add_passkey] at `host`, made at `origin`, with the re-auth `proof` (the password or an `assertion`).
-async fn add_passkey_at(
+pub(super) async fn add_passkey_at(
     app: &TestApp,
     cookie: &str,
     fake: &mut FakeAuthenticator,
@@ -127,7 +132,7 @@ async fn add_passkey_at(
 }
 
 /// A re-auth assertion by `fake` for the form at `route` (D1.6), without the user handle.
-async fn reauth_assertion(
+pub(super) async fn reauth_assertion(
     app: &TestApp,
     cookie: &str,
     fake: &mut FakeAuthenticator,
@@ -147,7 +152,7 @@ async fn reauth_assertion(
 
 /// A passkey sign-in at `host` with the fake's assertion (made at `origin`): the options, then the POST. Returns
 /// the POST's answer and the cookie it was sent with.
-async fn sign_in_at(
+pub(super) async fn sign_in_at(
     app: &TestApp,
     fake: &mut FakeAuthenticator,
     host: &str,
@@ -174,12 +179,12 @@ async fn sign_in_at(
     (res, cookie)
 }
 
-async fn sign_in(app: &TestApp, fake: &mut FakeAuthenticator) -> (TestResponse, String) {
+pub(super) async fn sign_in(app: &TestApp, fake: &mut FakeAuthenticator) -> (TestResponse, String) {
     sign_in_at(app, fake, HOST, ORIGIN, true).await
 }
 
 /// The signed-in page `/devices` answers 200 with the cookie a sign-in left.
-async fn signed_in(app: &TestApp, res: &TestResponse, cookie: &str) -> bool {
+pub(super) async fn signed_in(app: &TestApp, res: &TestResponse, cookie: &str) -> bool {
     let cookie = super::session_cookie(res).unwrap_or_else(|| cookie.to_string());
     send(app, Method::GET, "/devices", HOST, Some(&cookie), &[])
         .await
@@ -187,11 +192,11 @@ async fn signed_in(app: &TestApp, res: &TestResponse, cookie: &str) -> bool {
         == StatusCode::OK
 }
 
-async fn scalar(app: &TestApp, sql: &str) -> i64 {
+pub(super) async fn scalar(app: &TestApp, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
 }
 
-async fn count_passkeys(app: &TestApp, username: &str) -> i64 {
+pub(super) async fn count_passkeys(app: &TestApp, username: &str) -> i64 {
     sqlx::query_scalar(
         "SELECT COUNT(*) FROM admin_passkeys p JOIN admin_users a ON a.id = p.admin_id WHERE a.username = ?",
     )
@@ -1378,12 +1383,16 @@ async fn a_flood_of_sign_ins_leaves_room_for_the_rest() {
             rp_id: HOST.to_string(),
             route: crate::passkeys::SIGN_IN_ROUTE.to_string(),
         };
-        let client = format!("2001:db8:{i:x}::/64");
+        let client = format!("2001:db8:{i:x}::/56");
+        let asker = crate::passkeys::Asker {
+            client: &client,
+            crowd: &client,
+        };
         assert!(
             app.state
                 .passkeys
                 .challenges
-                .issue(bound, &client, Default::default())
+                .issue(bound, asker, Default::default())
                 .is_some()
         );
     }

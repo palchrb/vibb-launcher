@@ -246,6 +246,13 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   signs out your other sessions. A Reset by another parent, a Remove and `reset-2fa` delete the account's passkeys.
 - `reset-sign-in <user>` is the same command as `reset-2fa <user>` (a clearer name now that a sign-in can be a
   passkey).
+- **Passkey Only** (server with design 74 step 2): Account › Passkeys › "Passkey Only" deletes your password and 2FA;
+  you then sign in only with a passkey (one is enough; two are recommended). Turn the password on again on Account
+  ("Turn the Password On Again…": a passkey, a new password and a new authenticator). **Lost every passkey?** Another
+  parent's Reset… gives you a one-time password; with no other parent, `reset-sign-in <user>` (as above, `docker
+  compose exec handy /app/kid_phone_server reset-sign-in <user>` in Docker) turns Passkey Only off, deletes the
+  passkeys and writes a new password to `data/initial-admin-password-<id>`. Neither needs the old password. When every
+  parent is on Passkey Only, the sign-in page shows only "Sign In with Passkey".
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
   iPhone and sign in again), and enrollment codes that were open stop working: make a new one (the phone's Advanced › New Setup Code).
 
@@ -320,7 +327,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
 - Settings › Software Updates has no OS, Tailscale or restart controls in the container, and Backups no external drive:
   copy `data/backups` off the host yourself.
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
-  see "Signing in and recovery").
+  and turns Passkey Only off; see "Signing in and recovery").
 
 **Bridge network instead**: inside the container set `BIND_ADDR=0.0.0.0:3100` (and `DEVICE_BIND_ADDR=0.0.0.0:3101`),
 and publish them only on the host's loopback (`ports: ["127.0.0.1:3100:3100", "127.0.0.1:3101:3101"]` - Docker's

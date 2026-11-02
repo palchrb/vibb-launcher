@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.calendar.CalendarStore
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.ButtonRole
@@ -137,8 +138,13 @@ class LockActivity : UIObjectActivity() {
         }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
+        // The Kalender row follows Home's tile (the calendars read, the policy's switches).
+        CalendarStore.addListener(calendarListener)
         render()
     }
+
+    /** The calendars or Dagen's policy changed: the Kalender row may come or go. */
+    private val calendarListener: () -> Unit = { if (!isFinishing) render() }
 
     /** A redirect brought this instance back ([start]'s SINGLE_TOP, E6's L5): already resumed, onStart doesn't run, so
      * a moved end or budget is drawn here. */
@@ -150,10 +156,18 @@ class LockActivity : UIObjectActivity() {
 
     /** Design 25 (QA Q1): a glance row the kid tapped on the PIN lock under this rule, handed over
      * by the unlock - its conversation (or the phone book) opens over this screen if the rule
-     * leaves it usable, so Back returns here. */
+     * leaves it usable, so Back returns here. Else, right after an unlock (its one-shot mark,
+     * [markUnlock]), the card's only row opens over this screen as its tap would (PLAN 2026-11-02,
+     * [unlockOpenRow]) - Back returns here, and no later resume (Back, Home) opens it again. */
     override fun onResume() {
         super.onResume()
+        val handedOver = com.kidslauncher.mdm.lock.GlanceOpener.handOverPending()
         com.kidslauncher.mdm.lock.GlanceOpener.openHandedOver(this)
+        val marked = takeUnlockMark() && PinLockRuntime.mode != com.kidslauncher.mdm.lock.LockMode.LOCKED
+        if (isFinishing) return
+        val only = unlockOpenRow(marked, handedOver, shownRows) ?: return
+        Log.i("LockActivity", "One thing usable: opened after the unlock (${only.javaClass.simpleName})")
+        open(only)
     }
 
     override fun onStop() {
@@ -167,6 +181,7 @@ class LockActivity : UIObjectActivity() {
             // Never registered.
         }
         WallpaperStore.removeListener(wallpaperListener)
+        CalendarStore.removeListener(calendarListener)
         icons.cancel()
         super.onStop()
     }
@@ -229,7 +244,33 @@ class LockActivity : UIObjectActivity() {
             this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind)), labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty())),
             end, sentences.joinToString(" ").takeIf { it.isNotEmpty() },
         )
-        renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty())))
+        // Kalender (PLAN 2026-11-02): when every rule in force allows it and Home shows its tile (code QA L2: a phone
+        // with no calendar set up gets no row, nor an empty Kalender after every unlock).
+        val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
+        renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty()), calendar))
+    }
+
+    /** The rows of the last [renderRows], for the open after an unlock. */
+    private var shownRows: List<LockRow> = emptyList()
+
+    /** A row's tap: the phone book or Kalender over this screen, an app in its own task. */
+    private fun open(row: LockRow) {
+        when (row) {
+            // Calls aren't part of the lock unless the rule says so (school): every other app is suspended, but the
+            // phone book (our own package) still calls the allowed contacts. With calls unmanaged only Emergency call
+            // remains.
+            is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this))
+            // Its own task (`DayActivity.intent`); Back from it comes back here.
+            is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))
+            is LockRow.App -> {
+                val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return
+                try {
+                    startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                    Log.w("LockActivity", "Couldn't open ${row.packageName}", e)
+                }
+            }
+        }
     }
 
     /** The usable apps that can actually be opened (installed, launchable, not suspended - the
@@ -255,32 +296,22 @@ class LockActivity : UIObjectActivity() {
         container.removeAllViews()
         container.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
         rowIcons.clear()
+        shownRows = rows
         for (row in rows) {
             val view = ItemLockRowBinding.inflate(LayoutInflater.from(this), container, false)
             view.lockRowLabel.text = row.label
             view.root.contentDescription = row.label
             view.root.accessibilityDelegate = ButtonRole
             when (row) {
-                is LockRow.PhoneBook -> {
-                    glyphIcon(view.lockRowIcon, R.color.kid_phone_book, R.drawable.ic_kid_phone_book)
-                    // Calls aren't part of the lock unless the rule says so (school): every other
-                    // app is suspended, but the phone book (our own package) still calls the
-                    // allowed contacts. With calls unmanaged only Emergency call remains.
-                    view.root.setOnClickListener { startActivity(PhoneBookActivity.intent(this)) }
-                }
+                is LockRow.PhoneBook -> glyphIcon(view.lockRowIcon, R.color.kid_phone_book, R.drawable.ic_kid_phone_book)
+                // Home's Kalender tile: the calendar glyph on its colour.
+                is LockRow.Calendar -> glyphIcon(view.lockRowIcon, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month)
                 is LockRow.App -> {
                     rowIcons[row.packageName] = view.lockRowIcon
                     showAppIcon(view.lockRowIcon, icons.cached(row.packageName))
-                    view.root.setOnClickListener {
-                        val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return@setOnClickListener
-                        try {
-                            startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        } catch (e: Exception) {
-                            Log.w("LockActivity", "Couldn't open ${row.packageName}", e)
-                        }
-                    }
                 }
             }
+            view.root.setOnClickListener { open(row) }
             container.addView(view.root)
         }
         icons.load(::iconsDrawn)
@@ -345,6 +376,22 @@ class LockActivity : UIObjectActivity() {
             LockGlyph.MOON -> R.drawable.lock_glyph_bedtime
             LockGlyph.BOOK -> R.drawable.lock_glyph_school
             LockGlyph.DOT -> R.drawable.lock_glyph_dot
+        }
+
+        /** When the last unlock marked the time-rule screen's coming up (elapsed realtime; 0 = none, main thread). */
+        private var unlockMarkAt = 0L
+
+        /** The kid unlocked under a time rule and this screen is about to come up ([PinLockRuntime]'s after-unlock,
+         * own mode and every Android-mode unlock): its next resume may open the only usable thing (PLAN 2026-11-02). */
+        fun markUnlock() {
+            unlockMarkAt = android.os.SystemClock.elapsedRealtime()
+        }
+
+        /** The mark, once: fresh ([unlockMarkFresh]) or not, it is gone after this. */
+        private fun takeUnlockMark(): Boolean {
+            val at = unlockMarkAt
+            unlockMarkAt = 0L
+            return unlockMarkFresh(at, android.os.SystemClock.elapsedRealtime())
         }
 
         /** Starts the time-rule screen. It is never held back by handy's PIN lock (QA 10 #4): while

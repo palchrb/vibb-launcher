@@ -573,15 +573,17 @@ class LockGlanceTest {
         }
     }
 
-    /** Design 69 §2.2: the reminder row's target - Dagen through the keypad, never under a time rule that locks; the
-     * open starts Dagen. */
+    /** Design 69 §2.2: the reminder row's target - Dagen through the keypad, under a time rule only when every rule in
+     * force allows Kalender (PLAN 2026-11-02); the open starts Dagen. */
     @Test
-    fun `Dagen's target - the keypad's prompt, no target under a time rule, the open (design 69 §2_2)`() {
+    fun `Dagen's target - the keypad's prompt, under a time rule only when it allows Kalender, the open (design 69 §2_2)`() {
         val day = GlanceTarget.Day(20_752)
         assertEquals(null, day.appPackage)
         assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, day, androidFace = false))
         val locked = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = true)
         assertFalse(glanceUsableUnderLock(locked, day, callsManaged = true))
+        assertTrue(glanceUsableUnderLock(locked.copy(calendarUsable = true), day, callsManaged = false))
+        assertFalse("a conversation still needs its app", glanceUsableUnderLock(locked.copy(calendarUsable = true), conversation, callsManaged = true))
         assertTrue(glanceUsableUnderLock(com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.NONE), day, callsManaged = true))
         assertEquals(GlanceOpen.DAY, glanceOpenStep(app.copy(day = true, installed = false, hasIntent = false)).open)
         assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(day = true, timeRule = true)).open)

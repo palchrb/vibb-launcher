@@ -53,6 +53,9 @@ pub struct PolicyTimeRule {
     pub kind: String,
     pub calls_allowed: bool,
     pub exempt_apps: Vec<String>,
+    /// Kalender (the launcher's own day view, "Vibb-kalender" in the PWA) stays usable while the
+    /// rule runs (migration 0119); a launcher without it keeps Kalender closed under every rule.
+    pub calendar_allowed: bool,
     pub days: Vec<Option<DayWindow>>,
 }
 
@@ -97,6 +100,8 @@ pub struct TimeRuleRow {
     pub sort_order: i64,
     /// The phone's Bedtime (design 66): one per phone, never in a rule set.
     pub bedtime: bool,
+    /// Kalender usable during the rule (0119, "Vibb-kalender" under Exceptions).
+    pub calendar_allowed: bool,
 }
 
 impl TimeRuleRow {
@@ -118,6 +123,7 @@ impl TimeRuleRow {
             calls_allowed: self.calls_allowed,
             exempt_apps: parse_exempt_apps(&self.exempt_apps_json)
                 .map_err(|e| format!("rule {}: {e}", self.id))?,
+            calendar_allowed: self.calendar_allowed,
             days: served_days(
                 &parse_days(&self.days_json).map_err(|e| format!("rule {}: {e}", self.id))?,
             ),
@@ -658,13 +664,14 @@ async fn split_rule(
         .await?;
     let morning_id: i64 = sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+         calendar_allowed, days_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(row.device_id)
     .bind(morning_name(&row.name))
     .bind(&row.kind)
     .bind(row.calls_allowed)
     .bind(&row.exempt_apps_json)
+    .bind(row.calendar_allowed)
     .bind(serde_json::to_string(&morning).expect("windows serialize"))
     .bind(row.sort_order)
     .fetch_one(&mut *conn)
@@ -812,8 +819,8 @@ async fn copy_as_bedtime(
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-         days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, exempt_apps_json, \
-         days_json, 1 FROM time_rules WHERE id = ? \
+         calendar_allowed, days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, \
+         exempt_apps_json, calendar_allowed, days_json, 1 FROM time_rules WHERE id = ? \
          AND NOT EXISTS (SELECT 1 FROM time_rules WHERE device_id = ? AND bedtime = 1) \
          RETURNING id",
     )

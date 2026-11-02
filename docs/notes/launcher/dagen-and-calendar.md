@@ -57,7 +57,8 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   saved state that old) and it opens on today again, unless a day is asked for (the reminder row); the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
   also `CLEAR_TOP`, so the reminder row lands on the day view - from the lock's task it died with the lock, E5's H1)
   serves Home's tile and the glance, and the three screens redirect to the time-rule screen on resume while a lock
-  reason is set (Kid Settings' rule), since Recents can bring the task over it; `DayTaskTest`), `DayListAdapter` (the
+  reason is set (Kid Settings' rule), since Recents can bring the task over it - unless every rule in force allows
+  Kalender (2026-11-02; then they stay, "Ny avtale" too, and watch the lock while in front); `DayTaskTest`), `DayListAdapter` (the
   calendar's 8 dp dot in its own 14 dp column before the time - `day_event_dot`, `bg_day_dot` tinted `CalendarColor`,
   invisible, never gone, without one, so every row's start and end time share one left edge (the user's one change to
   mockup §6 B); two lines of title and second line - the kid's own event's second
@@ -80,7 +81,8 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc - since 2026-10-27 the calendar's 16 dp
   dot in the disc instead when it has a colour, `bg_glance_dot`, the row's `color` from the reminder's row -, "Fotball
   om 15 min" / "… nå", the start; never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
-  tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, none under a time rule).
+  tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, under a time rule only when every rule
+  in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`).
   A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
   row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out.
 - **Enforcement and Home**: `CALENDAR_SYNC_APPS` (ICSx5, DAVx5) are never suspended by a time rule while allowed

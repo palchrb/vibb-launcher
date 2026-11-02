@@ -24,6 +24,12 @@ pub struct AdminUser {
     /// its `Accept-Language`, then the parent's choice on Account. Read through `Lang::from_code` (an unknown value
     /// is none).
     pub lang: Option<String>,
+    /// "Kun passkey" (design 74 D2.2, migration 0118): no password (`'!passkey'`), no TOTP, signs in only with a
+    /// passkey, and always keeps at least one (D2.3).
+    pub passkey_only: bool,
+    /// The account's passkeys, counted by [admin_select]'s subquery (not a column): [AdminUser::ready]'s
+    /// passkey-only arm reads it.
+    pub passkey_count: i64,
 }
 
 impl AdminUser {
@@ -33,12 +39,18 @@ impl AdminUser {
     }
 
     /// Ready - design 74 D2.2's one readiness predicate (design 62 §1 before it): not removed (filtered in
-    /// SQL before a row gets here), no one-time password's or forced change's state, and its own
-    /// password with two-factor login on. [ready_sql] is its twin for the statements' conditions;
-    /// `require_full_auth`, the passkey sign-in, Add's and Reset's actor condition and the count of
-    /// another ready parent all use one of the two.
+    /// SQL before a row gets here), no one-time password's or forced change's state, and either its own
+    /// password with two-factor login on, or "Kun passkey" with at least one passkey. [ready_sql] is its twin for
+    /// the statements' conditions; `require_full_auth`, the passkey sign-in, Add's and Reset's actor condition and
+    /// the count of another ready parent all use one of the two.
     pub fn ready(&self) -> bool {
-        !self.must_change_password && self.totp_enabled && self.invite_expires_at.is_none()
+        !self.must_change_password
+            && self.invite_expires_at.is_none()
+            && if self.passkey_only {
+                self.passkey_count >= 1
+            } else {
+                self.totp_enabled
+            }
     }
 }
 
@@ -47,8 +59,19 @@ impl AdminUser {
 #[macro_export]
 macro_rules! ready_sql {
     () => {
-        "(removed_at IS NULL AND must_change_password = 0 AND totp_enabled = 1 \
-          AND invite_expires_at IS NULL)"
+        "(removed_at IS NULL AND must_change_password = 0 AND invite_expires_at IS NULL \
+          AND ((passkey_only = 0 AND totp_enabled = 1) OR (passkey_only = 1 AND EXISTS \
+          (SELECT 1 FROM admin_passkeys WHERE admin_passkeys.admin_id = admin_users.id))))"
+    };
+}
+
+/// `SELECT` of a whole [AdminUser] row: every column and [AdminUser::passkey_count]. Every query that reads an
+/// [AdminUser] starts with it (a plain `SELECT *` lacks the count and fails to decode).
+#[macro_export]
+macro_rules! admin_select {
+    () => {
+        "SELECT *, (SELECT COUNT(*) FROM admin_passkeys WHERE admin_passkeys.admin_id = admin_users.id) \
+         AS passkey_count FROM admin_users"
     };
 }
 

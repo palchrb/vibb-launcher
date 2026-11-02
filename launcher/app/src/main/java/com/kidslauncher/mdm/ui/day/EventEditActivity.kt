@@ -80,6 +80,10 @@ class EventEditActivity : UIObjectActivity() {
         binding.eventEditFrom.setOnClickListener { pickStart() }
         binding.eventEditLength.setOnClickListener { pickLength() }
         binding.eventEditSave.setOnClickListener { save() }
+        // Code QA M1: under a rule that allows Kalender this form is in reach - its fields start nothing (no selection,
+        // share, "process text" or smart-action menu).
+        com.kidslauncher.mdm.ui.NoTextActions.apply(binding.eventEditWhat)
+        com.kidslauncher.mdm.ui.NoTextActions.apply(binding.eventEditWhere)
         render()
         val id = eventId
         if (id != null && savedInstanceState == null) loadOwn(id)
@@ -92,9 +96,18 @@ class EventEditActivity : UIObjectActivity() {
             finish()
             return
         }
-        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27).
-        DayActivity.redirectIfLocked(this)
+        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27) -
+        // unless every rule in force allows Kalender, "Ny avtale" included (the user, 2026-11-02).
+        if (!DayActivity.redirectIfLocked(this)) lockWatch.start()
     }
+
+    override fun onPause() {
+        lockWatch.stop()
+        super.onPause()
+    }
+
+    /** A rule that doesn't allow Kalender beginning while the form is open: the time-rule screen. */
+    private val lockWatch = LockWatch(this)
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)

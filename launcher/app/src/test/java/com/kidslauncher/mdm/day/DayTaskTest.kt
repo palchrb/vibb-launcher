@@ -48,6 +48,12 @@ class DayTaskTest {
         val guard = day.substringAfter("internal fun redirectIfLocked(").substringBefore("\n        }\n")
         assertTrue(guard.contains("if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false"))
         assertTrue(guard.substringAfter("return false").contains("LockActivity.start(activity)"))
+        // PLAN 2026-11-02: a rule set that allows Kalender lets the pages through, read from the lock in force (an
+        // error is no).
+        assertTrue(guard.indexOf("if (calendarUsableNow(activity)) return false") in 0 until guard.indexOf("LockActivity.start(activity)"))
+        val usable = day.substringAfter("internal fun calendarUsableNow(").substringBefore("\n        }\n")
+        assertTrue(usable.contains("calendarUsableUnder("))
+        assertTrue(usable.substringAfter("catch (e: Exception)").contains("false"))
         val intent = day.substringAfter("fun intent(context: Context, day: LocalDate? = null): Intent =").substringBefore("\n            }\n")
         assertTrue(intent.contains("Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(intent.substringAfter("if (day != null) {").contains("addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)"))
@@ -57,6 +63,26 @@ class DayTaskTest {
             val code = file("java/com/kidslauncher/mdm/ui/day/$name.kt").readText()
             val onResume = code.substringAfter("override fun onResume()").substringBefore("\n    }\n")
             assertTrue(name, onResume.contains("redirectIfLocked(this)"))
+            // Let through, the page watches the lock (a rule without Kalender beginning), and stops in onPause.
+            assertTrue(name, onResume.contains("lockWatch.start()"))
+            assertTrue(name, code.substringAfter("override fun onPause()").substringBefore("\n    }\n").contains("lockWatch.stop()"))
+        }
+        // Code QA M1: "Ny avtale"'s two fields start nothing (no selection, share, "process text" or smart-action menu),
+        // like the re-enrol code field - always, not only under a rule.
+        val layout = file("res/layout/activity_event_edit.xml").readText()
+        assertEquals(2, Regex("""<EditText\b""").findAll(layout).count())
+        val edit = file("java/com/kidslauncher/mdm/ui/day/EventEditActivity.kt").readText()
+        for (field in listOf("eventEditWhat", "eventEditWhere")) {
+            assertTrue(field, edit.contains("com.kidslauncher.mdm.ui.NoTextActions.apply(binding.$field)"))
+        }
+        assertTrue(file("java/com/kidslauncher/mdm/ui/ReEnrolDialog.kt").readText().contains("NoTextActions.apply(field)"))
+        val helper = file("java/com/kidslauncher/mdm/ui/NoTextActions.kt").readText()
+        for (part in listOf(
+            "field.customSelectionActionModeCallback = none", "field.customInsertionActionModeCallback = none",
+            "field.isLongClickable = false", "field.setTextClassifier(TextClassifier.NO_OP)",
+            "override fun onCreateActionMode(mode: ActionMode, menu: Menu) = false",
+        )) {
+            assertTrue(part, helper.contains(part))
         }
     }
 }

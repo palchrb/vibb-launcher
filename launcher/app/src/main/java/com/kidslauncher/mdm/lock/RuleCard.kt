@@ -74,7 +74,7 @@ fun ruleCard(reason: LockReason, lock: TimeLock, end: LocalDateTime?): RuleCard?
  *   budget of `until`'s own day: today's [budget] when `until.toLocalDate() == ledgerDay`, else a fresh day's
  *   (`budgetMinutesFor`; a budget lift applies to the day the phone first sees it, so the next day starts with none);
  * - the budget can't run out before it (qa-r13-rule-card-code Q-6): when the end is the ledger's day and the rule
- *   leaves apps usable - their time counts -, today's time left must last until the end.
+ *   leaves apps or Kalender usable - their time counts -, today's time left must last until the end.
  * Null for SCREEN_TIME (the parent may add time; midnight is no promise either).
  */
 fun lockEnd(
@@ -91,7 +91,7 @@ fun lockEnd(
     if (zone.rules.getValidOffsets(until).size != 1) return null
     val day = until.toLocalDate()
     val remaining = budget?.remainingMs
-    if (day == ledgerDay && lock.usableApps.isNotEmpty() && remaining != null &&
+    if (day == ledgerDay && (lock.usableApps.isNotEmpty() || lock.calendarUsable) && remaining != null &&
         remaining < java.time.Duration.between(at, until).toMillis()
     ) {
         return null

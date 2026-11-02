@@ -166,8 +166,10 @@ class DayActivity : UIObjectActivity() {
             return
         }
         // In its own task Dagen outlives Home's clearTaskOnLaunch, so Recents can bring it over the time-rule
-        // screen (which lives in Home's task): under a time rule that screen comes back on top, as Kid Settings does.
+        // screen (which lives in Home's task): under a time rule that screen comes back on top, as Kid Settings does -
+        // unless every rule in force allows Kalender (PLAN 2026-11-02).
         if (redirectIfLocked(this)) return
+        lockWatch.start()
         CalendarStore.requestSyncIfDue()
         adapter.refreshBound()
         renderReminder()
@@ -178,8 +180,12 @@ class DayActivity : UIObjectActivity() {
 
     override fun onPause() {
         tick.removeCallbacks(minute)
+        lockWatch.stop()
         super.onPause()
     }
+
+    /** A rule that doesn't allow Kalender beginning while it is in front sends it to the time-rule screen. */
+    private val lockWatch = LockWatch(this)
 
     override fun onStop() {
         stoppedAt = android.os.SystemClock.elapsedRealtime()
@@ -263,11 +269,24 @@ class DayActivity : UIObjectActivity() {
                 }
             }
 
-        /** Under a time rule the time-rule screen comes back on top (Kid Settings' rule); true when it did. */
+        /** Under a time rule the time-rule screen comes back on top (Kid Settings' rule); true when it did. A rule
+         * set that allows Kalender (every rule in force, `calendar_allowed`, PLAN 2026-11-02) lets the three pages
+         * through - "Ny avtale" too; an error reading the rules is no (the time-rule screen). */
         internal fun redirectIfLocked(activity: android.app.Activity): Boolean {
             if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
+            if (calendarUsableNow(activity)) return false
             LockActivity.start(activity)
             return true
+        }
+
+        /** The time lock in force now leaves Kalender usable ([calendarUsableUnder]). */
+        internal fun calendarUsableNow(context: Context): Boolean = try {
+            com.kidslauncher.mdm.timerules.calendarUsableUnder(
+                com.kidslauncher.mdm.timerules.TimeRulesRuntime.snapshot(context, com.kidslauncher.mdm.server.currentPolicyDecision().policy).lock,
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("DayActivity", "Couldn't read the time rules: ${e.javaClass.simpleName}")
+            false
         }
 
         /** The day on one line ("Tuesday, October 27" / "Tirsdag 27. oktober"; with the year when it isn't this
@@ -336,5 +355,33 @@ class DayPagerAdapter(
     /** The provider changed or a minute passed: every bound page reads its day again. */
     fun refreshBound() {
         for (page in bound.toList()) page.day?.let { load(page, it) }
+    }
+}
+
+/**
+ * While one of Kalender's pages is in front under a rule that allows it: a change of the lock (another rule begins - its
+ * reason may stay, its key moves - or the rule's Kalender switch goes off) asks [DayActivity.redirectIfLocked] again,
+ * so a rule that doesn't allow Kalender never finds the kid there (a rule's start brings the time-rule screen anyway).
+ * Started in `onResume` once the page is let through, stopped in `onPause`; the page holds it (SharedPreferences keeps
+ * its listeners weakly).
+ */
+internal class LockWatch(private val activity: android.app.Activity) : android.content.SharedPreferences.OnSharedPreferenceChangeListener {
+    private var on = false
+
+    fun start() {
+        if (on) return
+        on = true
+        LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(this)
+    }
+
+    fun stop() {
+        if (!on) return
+        on = false
+        LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(this)
+    }
+
+    override fun onSharedPreferenceChanged(prefs: android.content.SharedPreferences?, key: String?) {
+        val keys = LauncherPreferences.mdm().keys()
+        if (on && (key == keys.lockReason() || key == keys.lockKey())) DayActivity.redirectIfLocked(activity)
     }
 }
