@@ -6,9 +6,11 @@ Naming (the user, 2026-11-02): the kid-facing app is **Kalender** (en **Calendar
 
 The kid's day view lives in Vibb One (`launcher/CLAUDE.md`, "Dagen"); the calendar lives in the parent's tools (a school's
 ICS feed through ICSx5, a family Nextcloud through DAVx5) - or, since design 72, a link pasted on the phone's Calendar
-page, which the server fetches itself ("Calendar links" below). **No event ever leaves the phone**: the server keeps the
-parent's choices and the title rules, sends them as `PolicyResponse.calendar`, and stores which calendars the phone has;
-a calendar link's events are the only ones it holds (while the link exists, sent only to the phones with it).
+page, which the server fetches itself ("Calendar links" below). **The kid's coming events leave the phone only to the
+calendar the parent picked** (design 72b, "CalDAV write-back" below; before it: no event ever left the phone): the server
+keeps the parent's choices and the title rules, sends them as `PolicyResponse.calendar`, and stores which calendars the
+phone has; a calendar link's events are the ones it holds (while the link exists, sent only to the phones with it), and
+while a CalDAV calendar is marked for the kid's events, the kid's latest set of coming events.
 
 ## The policy's `calendar` (`calendar::policy_calendar`, always sent)
 
@@ -266,8 +268,8 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   (`caldav_accounts_used` clears it), and `caldav::sweep` (each scheduler pass) deletes an account no phone has a
   calendar of a day after both that and its last Test - one switch flipped by mistake never loses the login. A source's uid = 32 hex of SHA-256 over `vibb-caldav:` + server address NUL username NUL
   collection address - the account's identity, not its row id, so an account removed and signed in again gives each
-  calendar its key (settings, rules) back, as a link does. Step 3's "the kid's own CalDAV calendar" flag would go on
-  the phone's `device_calendar_feeds` row (nothing built).
+  calendar its key (settings, rules) back, as a link does. Step 3's "the kid's own CalDAV calendar" flag is on the
+  phone's `device_calendar_feeds` row (`kid_writes`, design 72b, below).
 - **Test** (`caldav::test_new` / `test_again`, `discover`): the server field takes an address (https unless written
   http, no userinfo, no query) or an e-mail - its domain tried, `icloud.com`/`me.com`/`mac.com` →
   `caldav.icloud.com`, `fastmail.com`/`.fm` → `caldav.fastmail.com` (`KNOWN_DOMAINS`); an empty username is the
@@ -348,9 +350,89 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
   the page its form is on, at its group (`#name`, `#fetch`, `#calendars`, `#test`; a removal to the Calendar page's
   `#sources`), so a save never jumps to the top; a source or account gone since the page loaded is a 303 to
   `#sources`. Without JS: the name and the switches have their `<noscript>` Save, the choice and the disclosures work
-  as they are. Room is left on the account's page for design 72 step 3's "the kid's own calendar" (nothing built).
+  as they are. The account's page says on the marked calendar's row "Barnets avtaler skrives hit" (design 72b).
 - Tests: `tests::calendar_feeds::add_calendar_picks_its_kind_and_a_gone_source_goes_back`, the rows and pages in
   `the_page_shows_a_link_and_waits_for_the_phone` and `tests::caldav::test_lists_the_calendars_and_where_the_password_goes`,
   the refusals' kind and field in `a_refused_add_renders_the_form_as_typed` and
   `a_refused_test_renders_the_form_as_typed_and_never_the_password`, the three GETs in
   `every_calendar_route_needs_a_session` and `shell::every_form_on_every_page_lands_on_its_own_group`.
+
+## CalDAV write-back of the kid's own events (design 72b, `docs/design/72b-caldav-write-back.md`, branch `caldav-write`)
+
+The parent marks one CalDAV calendar ticked for the phone as the kid's (Kalender's select "Barnets avtaler", value
+`caldav:<source uid>`, "{name} · {server} (skrives av serveren)"); the kid keeps writing in the phone's own "Min
+kalender", the phone posts the whole set of the kid's coming events, and the server writes each to
+`<collection>/<uid>.ics` with the account's app password (never on the phone). The parent's edits and deletes there
+come back to the phone, acknowledged; the calendar wins a clash. What was written stays in the calendar when the mark
+ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way back), the requests in `caldav.rs`
+(`DavRequest`, `WriteLogin`), the resource writer and reader in `ics.rs` (`write_event`, `read_kid_resource`).
+
+- **Model** (migration `0117_calendar_kid_writes.sql`; 0116 is passkeys step 1 on its own branch - renumber at merge if
+  needed): `device_calendar_feeds.kid_writes` (one per phone, `idx_device_calendar_feeds_kid`; only a `caldav` source,
+  checked in `save_dagen`), `device_kid_events` (the last set - its text, replaced at each POST -, `accepted`, the
+  `from`/`cut`/`cut_from`/`cut_uids`/`ended` it came with, the last 400's code, the phone's stop, the two holds),
+  `kid_caldav_events` (per uid: `href`, `etag`, `sent_hash`/`remote_hash`/`attempted_hash` - up to three unconfirmed
+  versions -, `start_at`/`end_at` from every remote read, `state` pending/deleting/ok/refused/released/past/gone,
+  backoff, `fetch_wait`, the waiting hand-back `back_id`/`back_json`/`back_after`), `kid_caldav_tags` (a phone tag
+  and the device that first posted it). Both event tables hang off `(device_id, source_id)` of `device_calendar_feeds`
+  ON DELETE CASCADE: unticking, removing the account, deleting the phone take them; another pick deletes them in the
+  same transaction (`calendar_kid_events::unmark`); the same pick again (an autosave) keeps everything.
+- **The endpoint** `POST /api/devices/calendar/kid-events` (bearer, `calendar_kid_events::post`): 409 `not_marked`
+  (none marked, another calendar, no `calendar_kid_caldav_v1`), 429 + `Retry-After` (one per 10 s), 413 `too_big`
+  (events over 512 KB; said on the page), 400 `bad_set` / `tag_pinned` - the whole set: every key read explicitly,
+  D4.9's UID pattern, a tag another device holds. A 200 `{accepted, pending, back}` answers at once after the
+  acknowledgements (`applied`: only the uid's current `back_id` clears it, `sent_hash` := that version; an acked delete
+  drops the row, a released tombstone stays) and the plan stored; the job is woken (`KidWrites::wake`).
+- **The plan** (`plan`/`apply_plan`, D2.5/D2.6): a uid is written only with no hand-back waiting and a version that
+  differs from `sent_hash` and from `remote_hash`; a missing uid is deleted only when its row is written and `ok`, not
+  in `ended`, ends after max(`from`, now), lies before `cut_from` and outside `cut_uids` when cut (`cut_uids` null:
+  nothing), the phone's clock within a day; else an ended one becomes `past` (never deleted, dropped 60 days after its
+  end). The kid's mass delete (5 or more and more than half of the written ones) waits 24 h by time - once held every
+  delete waits out the day - with "Legg dem tilbake på telefonen" (`POST /devices/{id}/calendar/dagen/restore`,
+  `restore_held`: each read from the calendar and handed back; back to `#dagen`); `accepted` stays the old rev while
+  held.
+- **The job** (`work`, under the account's `write_claimed_at`; `run` woken by a POST, else each minute; and every
+  marked calendar's scheduled fetch first, `before_fetch`): no request while the account isn't `ok` or its password
+  can't be opened, nor for a calendar the last Test no longer lists or says can't be written; one request at a time
+  through `music_fetch`, 60 writes a minute per account, a 429/503 backs the account off (`Retry-After`, else
+  `music_sweep::backoff`). Create `PUT … If-None-Match: *`, update `PUT … If-Match`, delete `DELETE … If-Match` - never a
+  write without a condition, never one that follows a redirect (`DavRequest`: a write's 3xx is its answer). **Never a
+  PUT over content not read**: a 412, a create's 404 or `no-uid-conflict` (adopted only at a direct child of the
+  collection on a confirmed host) GETs the resource and compares by content - the phone's version or one of our
+  unconfirmed attempts is ours (its ETag learned), the base unchanged lets the phone's version go over the read ETag, a
+  series or ATTENDEE/ORGANIZER releases it (a tombstone until absent from the sets 60 days), anything else is handed
+  back (the calendar wins). A create whose GET is 404 too is a `status` error (RN3). A 403 by its body: another CalDAV
+  precondition refuses that event, `need-privileges` or none stops this phone's writes (`write_refused`) - never the
+  account's `login_refused`, which only a 401 is. 409/400/415 refuse the event, 507 is `full`, no strong ETag `no_etag`
+  (the stops clear when the account's Test passes, `account_tested`). A PUT's ETag from its answer, else a GET with the
+  body compared (QA M1).
+- **The way back** (`after_fetch`, from `calendar_feeds::refresh` after a stored set of a marked calendar): the writes
+  made before the fetch began stop counting as `pending` (R-L2; a write since the last stored fetch makes the next fetch
+  read the REPORT whatever the ctag; an empty answer held by design 72's QA M1 stores nothing and so leaves `pending`);
+  each REPORT resource is matched to its uid by the VEVENT's UID (never the href); another ETag with the same content
+  hash only stores the ETag, another hash is the parent's edit (handed back, the stored times updated); a uid missing
+  from a REPORT that covers its dates is confirmed by its own GET (404 = the parent's delete, a 200 a move past the
+  window, handed back). The calendar's mass delete is held 24 h too (`back_after`; a resource back in the REPORT
+  before then cancels its delete). A parent's change to an event more than about 13 months ahead reaches the phone
+  late: the REPORT spans −60 .. +401 days, so it is seen at the kid's next change of it (a 412) or once it comes within
+  the window.
+- **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark or
+  without the capability; `policy_json_keys_snapshot`); the nudge only when `pending` reaches 0, `back` goes above 0 or
+  a stop is new.
+- **The PWA**: the select's CalDAV options (not one `writable: false` at the last Test; disabled with "Oppdater Vibb One
+  …" for an older launcher, a saved pick kept), the status under it (`calendar.kid_caldav.status.*`, counts only:
+  "Skrevet 15:12 · 12 avtaler", waiting, hand-backs waiting, cut, too big; orange: the stops, the account's stop with a
+  link to its page, the clock, refused events, a refused set naming the old phone for a pinned tag, the two holds),
+  the account page's "Barnets avtaler skrives hit", the untick's notice (`?notice=kid_caldav_ended&cal=<id>` on the
+  account page) and the removal's (`#sources`, without the calendar's name: the account is gone), Kalender's ⓘ
+  (`calendar.kid_caldav.info`, `info_tag`), the footers' "- med mindre barnets avtaler skrives til en CalDAV-kalender".
+  `PROPFIND_LIST` asks for `current-user-privilege-set`; `calendars_json` rows carry `writable`
+  (`caldav::writable_of`; `null` until the account's next Test).
+- **Privacy**: no event text in any log, page, error or settings-log row; the set and row types have no `Debug`. The
+  UID's 8-hex phone tag is a stable pseudonym, visible in the calendar.
+- Tests: `calendar_kid_events::tests` (the contract `testdata/calendar_kid_events.json` and the `.ics` bodies, the
+  canonical rows, the writer's folding and escaping, the hrefs, every guard against the stateful fake
+  `tests::fake_dav` - conditions, no redirects, H1/H2/R-M2/R-L1/R-L2's paths, the rewrite switch, cut, ended, the
+  clock, the holds, the confirm, the 403 bodies, 401/507/400/409, weak and missing ETags, the claim, the backoff and the
+  pace, the nudge, the select, the untick, an older launcher, the cascades). **Not verified against a real server**
+  (design 72b §10): the emulator's §6z with Radicale and one real account (iCloud preferred).
