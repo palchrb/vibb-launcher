@@ -143,7 +143,7 @@ pub(crate) async fn rows(
     });
     Ok(Activity {
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
-        flash: cancel_flash(cancel),
+        flash: cancel_flash(zone.lang(), cancel),
     })
 }
 

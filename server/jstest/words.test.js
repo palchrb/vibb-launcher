@@ -29,6 +29,12 @@ const MOVED = {
     // 3b: Apps (install-now.js's sub-lines come worded in its JSON).
     "app-display.js": [],
     "install-now.js": [],
+    // 3c: Locate (locate-result.json's text comes worded): a key's name, and OpenStreetMap's attribution - its
+    // licence's credit line, HTML Leaflet renders as given.
+    "locate.js": [
+        "Enter",
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    ],
 };
 
 /** Every string literal outside comments, in order. */

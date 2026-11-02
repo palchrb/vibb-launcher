@@ -43,6 +43,16 @@ function fakeLeaflet() {
     return L;
 }
 
+// The Locations count's words, as device_locate.html gives them (data-w-*, design 70 §5.3).
+const COUNT_WORDS = {
+    "data-w-none": "None yet",
+    "data-w-kept": "{count} kept",
+    "data-w-in-12": "{count} in the last 12 hours",
+    "data-w-in-24": "{count} in the last 24 hours",
+    "data-w-in-168": "{count} in the last 7 days",
+    "data-w-newest": "newest {age}",
+};
+
 function fakeAttrs(attrs) {
     return {
         attrs,
@@ -62,7 +72,7 @@ function fakePage({ box = {}, search = "", stored = null, answers = {}, fixes = 
     const fetched = [];
     const store = new Map();
     if (stored !== null) store.set(SPAN_KEY, stored);
-    const mapBox = fakeAttrs({ "data-locate": "3", "data-shown": "2026-10-20T10:00:00.000Z", "data-shown-text": "10 min ago · within 40 m", "data-newest-age": "3 days ago", "data-span": "12", ...box });
+    const mapBox = fakeAttrs({ "data-locate": "3", "data-shown": "2026-10-20T10:00:00.000Z", "data-shown-text": "10 min ago · within 40 m", "data-newest-age": "3 days ago", "data-span": "12", "data-w-newest": "Newest location", ...box });
     const scrolled = [];
     mapBox.scrollIntoView = (options) => scrolled.push(options);
     mapBox.querySelector = () => ({ id: "map" });
@@ -73,7 +83,7 @@ function fakePage({ box = {}, search = "", stored = null, answers = {}, fixes = 
     });
     const pick = fakeAttrs({ "data-span-pick": "" });
     pick.querySelectorAll = () => links;
-    const count = { textContent: "server's" };
+    const count = Object.assign(fakeAttrs({ ...COUNT_WORDS }), { textContent: "server's" });
     const row = fakeAttrs({ "data-row": "locations", href: "/devices/3/locations?span=12" });
     const fixRows = fixes.map((f) => fakeAttrs({ "data-fix": "", "data-lat": f[0], "data-lng": f[1], "data-text": f[2] }));
     const replaced = [];
@@ -111,11 +121,17 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 test("the count is worded as the server words it; the newest outside the span isn't counted", () => {
     const two = [point(1, "a"), point(2, "b")];
-    assert.strictEqual(countText(two, "12", "x"), "2 in the last 12 hours");
-    assert.strictEqual(countText(two, "168", "x"), "2 in the last 7 days");
-    assert.strictEqual(countText(two, "0", "x"), "2 kept");
-    assert.strictEqual(countText([point(1, "a", true)], "24", "3 days ago"), "0 in the last 24 hours · newest 3 days ago");
-    assert.strictEqual(countText([], "12", ""), "None yet");
+    const el = fakeAttrs({ ...COUNT_WORDS });
+    assert.strictEqual(countText(two, "12", "x", el), "2 in the last 12 hours");
+    assert.strictEqual(countText(two, "168", "x", el), "2 in the last 7 days");
+    assert.strictEqual(countText(two, "0", "x", el), "2 kept");
+    assert.strictEqual(countText([point(1, "a", true)], "24", "3 days ago", el), "0 in the last 24 hours · newest 3 days ago");
+    assert.strictEqual(countText([], "12", "", el), "None yet");
+    // The page's words, whatever the language; a missing word shows its name.
+    const nb = fakeAttrs({ "data-w-in-168": "{count} de siste 7 dagene", "data-w-none": "Ingen ennå" });
+    assert.strictEqual(countText(two, "168", "x", nb), "2 de siste 7 dagene");
+    assert.strictEqual(countText([], "12", "", nb), "Ingen ennå");
+    assert.strictEqual(countText(two, "0", "x", nb), "kept");
 });
 
 test("the remembered span reads back only when it is one of the four", () => {
@@ -337,4 +353,39 @@ test("a span without points shows the zones, never the world, in either order of
     await settle();
     const later = L.calls.filter((c) => c[0] === "setView");
     assert.deepStrictEqual(later[later.length - 1], ["setView", [59.9, 10.7], 15]);
+});
+
+test("the wait asks for the answer in the page's language and words it with the page's words", async () => {
+    const answers = {
+        "/devices/3/locate-result.json?lang=nb": { id: 7, result: "location is off for this device", text: "Posisjon er av på telefonen" },
+    };
+    const page = fakePage({ box: { "data-waiting": "", "data-lang": "nb" }, answers });
+    const wait = fakeAttrs({
+        "data-w-answered": "Telefonen svarte: {answer}",
+        "data-w-no-answer": "Ikke noe svar ennå.",
+    });
+    wait.textContent = "Venter på en ny posisjon…";
+    page.win.document.getElementById = (id) => (id === "fix_wait" ? wait : null);
+    let tick = null;
+    let cleared = 0;
+    page.win.setInterval = (fn) => { tick = fn; return 1; };
+    page.win.clearInterval = () => { cleared += 1; };
+    install(page.win, fakeLeaflet());
+    await settle();
+    tick();
+    await settle();
+    assert.ok(page.fetched.includes("/devices/3/locate-result.json?lang=nb"), page.fetched.join(" "));
+    assert.strictEqual(wait.textContent, "Telefonen svarte: Posisjon er av på telefonen");
+    assert.ok(cleared >= 1, "a failure ends the wait");
+    // No answer within the minute: the page's own words.
+    const silent = fakePage({ box: { "data-waiting": "" } });
+    const line = fakeAttrs({ "data-w-no-answer": "No answer yet." });
+    silent.win.document.getElementById = () => line;
+    let tickSilent = null;
+    silent.win.setInterval = (fn) => { tickSilent = fn; return 1; };
+    install(silent.win, fakeLeaflet());
+    for (let i = 0; i < 12; i++) tickSilent();
+    await settle();
+    assert.ok(silent.fetched.includes("/devices/3/locate-result.json"), "no data-lang: no ?lang=");
+    assert.strictEqual(line.textContent, "No answer yet.");
 });

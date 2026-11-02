@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
@@ -8,27 +8,27 @@
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Locate</a>
-    <h1 class="page-title">Locations</h1>
+    <a class="nav-back" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.locate") }}</a>
+    <h1 class="page-title">{{ self.t("locate.locations.title") }}</h1>
 
     {#- Design 44 §1.4: the map for the span, then every kept fix of it. Nothing posts here. The pick
         opens the page again with its span (static/locate.js remembers it); a row's tap brings the
         map into view and shows that fix on it. -#}
-    <section id="map-view" aria-label="Map">
-        <div class="phone-switch span-pick" role="radiogroup" aria-label="Show" data-span-pick>
+    <section id="map-view" aria-label="{{ self.t("locate.map_aria") }}">
+        <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
             {% for (hours, words) in crate::handlers::locate::SPANS %}
-            <a role="radio" href="/devices/{{ device.id }}/locations?span={{ hours }}" data-span="{{ hours }}" aria-checked="{% if hours == span %}true{% else %}false{% endif %}">{{ words }}</a>
+            <a role="radio" href="/devices/{{ device.id }}/locations?span={{ hours }}" data-span="{{ hours }}" aria-checked="{% if hours == span %}true{% else %}false{% endif %}">{{ self.t(words) }}</a>
             {% endfor %}
         </div>
-        <div class="map-box" data-locate="{{ map.device_id }}" data-shown="{{ map.shown }}" data-shown-text="{{ map.shown_text }}" data-newest-age="{{ map.newest_age }}" data-span="{{ map.span }}" data-list><div id="map"></div></div>
+        <div class="map-box" data-locate="{{ map.device_id }}" data-shown="{{ map.shown }}" data-shown-text="{{ map.shown_text }}" data-newest-age="{{ map.newest_age }}" data-span="{{ map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}" data-list><div id="map"></div></div>
     </section>
 
     <section id="fixes" aria-labelledby="fixes-title">
-        <h2 class="group-header" id="fixes-title">{{ device.name }}'s Locations</h2>
+        <h2 class="group-header" id="fixes-title">{{ self.tp("locate.locations.heading", [("name", device.name.as_str())]) }}</h2>
         <div class="group">
             {% if paged %}
             <a class="row" href="/devices/{{ device.id }}/locations?span={{ span }}#fixes" data-row="newest">
-                <span class="row-label">Newest</span>
+                <span class="row-label">{{ self.t("locate.locations.newest_link") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
@@ -37,20 +37,20 @@
                 <span class="row-label"><span title="{{ f.exact }}">{{ f.when }}</span><span class="row-sub">{{ f.accuracy }}</span></span>
             </div>
             {% else %}
-            <p class="row row-note">None in this span.{% if !map.shown.is_empty() %} The newest is {{ map.newest_age }}.{% endif %}</p>
+            <p class="row row-note">{{ self.t("locate.locations.none_in_span") }}{% if !map.shown.is_empty() %} {{ self.tp("locate.locations.newest_is", [("age", map.newest_age.as_str())]) }}{% endif %}</p>
             {% endfor %}
             {% if let Some(key) = older %}
             <a class="row" href="/devices/{{ device.id }}/locations?span={{ span }}&amp;before={{ key }}#fixes" data-row="older">
-                <span class="row-label">Show older</span>
+                <span class="row-label">{{ self.t("locate.locations.older") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
         </div>
-        <p class="group-footer">Newest first. Keep history for, under Location Settings on Locate, decides how long they are kept; the newest is always kept.</p>
+        <p class="group-footer">{{ self.t("locate.locations.footer") }}</p>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=4"></script>
+    <script src="/static/locate.js?v=5"></script>
 </main>
 </body>
 </html>

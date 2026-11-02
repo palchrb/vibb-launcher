@@ -235,7 +235,7 @@ pub async fn install(
             crate::i18n::error(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "error.install_send",
+                "error.command_send",
             )
         }
     }

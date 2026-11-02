@@ -6,7 +6,7 @@
 // `data-span`, `data-list` on the Locations page, `data-waiting` after Update Location); a phone's
 // values reach the page only as text (textContent; security review H2).
 //
-// The span pick ("12 hours · 24 hours · 7 days · All kept") is a view choice, remembered per
+// The span pick (12 hours · 24 hours · 7 days · all kept) is a view choice, remembered per
 // browser in localStorage (`handy-locate-span`): on the Locate page it redraws the trail and the
 // Locations row's count in place; on the Locations page its link opens the page with that span
 // (the server words and pages the list). Without JS the links do the same with the server's
@@ -14,20 +14,37 @@
 // Update Location the page asks every 5 s, for a minute, for a fix newer than the one shown and
 // for the phone's answer. The phone's zones (design 64, `zones.json`, no-store; `data-zones` on
 // the box while it has any) are circles in
-// `--map-zone` with their names as tooltips (text nodes). ES5. Run its tests:
-// node --test jstest/locate.test.js
+// `--map-zone` with their names as tooltips (text nodes). Its words come from the page (design 70
+// §5.3): the Locations count's `data-w-*`, the map box's `data-w-newest`, the wait line's
+// `data-w-answered`/`data-w-no-answer`, set with textContent; `locate-result.json` is asked in the
+// page's language (`data-lang`). ES5. Run its tests: node --test jstest/locate.test.js
 (function (root) {
     "use strict";
 
     var SPAN_KEY = "handy-locate-span";
-    // Hours (0 = everything kept) and their words, as the server's locate::SPANS.
-    var SPANS = { "12": "12 hours", "24": "24 hours", "168": "7 days", "0": "All kept" };
+    // Hours (0 = everything kept), as the server's locate::SPANS.
+    var SPANS = { "12": true, "24": true, "168": true, "0": true };
     // The trail's colour when the page names none: vibb's dark peach.
     var TRAIL = "#A64B25";
     // A zone's circle when the page names none (`--map-zone`).
     var ZONE = "#2F6F62";
     var WAIT_EVERY_MS = 5000;
     var WAIT_TRIES = 12;
+
+    // A word the page gives an element (`data-w-<name>`); a missing one shows its name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
+
+    // `text` with each `{name}` replaced once by its value.
+    function fill(text, values) {
+        for (var name in values) {
+            if (Object.prototype.hasOwnProperty.call(values, name)) {
+                text = text.split("{" + name + "}").join(String(values[name]));
+            }
+        }
+        return text;
+    }
 
     function readSpan(storage, fallback) {
         try {
@@ -45,15 +62,17 @@
 
     /**
      * The Locations row's value for `points` (locations.json's answer for `span`), as the server
-     * words it: "14 in the last 12 hours", "3 kept", "None yet", "0 in the last 12 hours · newest
-     * 3 days ago". The newest point flagged `newest` lies outside the span and isn't counted.
+     * words it, in the words `el` (the count) carries: "14 in the last 12 hours", "3 kept", "None
+     * yet", "0 in the last 12 hours · newest 3 days ago". The newest point flagged `newest` lies
+     * outside the span and isn't counted.
      */
-    function countText(points, span, newestAge) {
-        if (!points.length) return "None yet";
+    function countText(points, span, newestAge, el) {
+        if (!points.length) return w(el, "none");
         var count = points.length - (points[points.length - 1].newest ? 1 : 0);
-        if (span === "0") return count + " kept";
-        if (count === 0) return "0 in the last " + SPANS[span] + " · newest " + newestAge;
-        return count + " in the last " + SPANS[span];
+        if (span === "0") return fill(w(el, "kept"), { count: count });
+        var inSpan = fill(w(el, "in-" + span), { count: count });
+        if (count === 0) return inSpan + " · " + fill(w(el, "newest"), { age: newestAge });
+        return inSpan;
     }
 
     // The trail in the page's accent, `--map-trail` (style.css): the tiles are light in both
@@ -99,6 +118,7 @@
         var newestAge = box.getAttribute("data-newest-age") || "";
         var listPage = box.hasAttribute("data-list");
         var rendered = box.getAttribute("data-span") || "12";
+        var lang = box.getAttribute("data-lang") || "";
         var storage = null;
         try {
             storage = win.localStorage;
@@ -179,7 +199,7 @@
             // A DOM node with textContent: the phone's values are never HTML (review H2). The
             // server's words for the fix shown on the page, else (a newer one came since) none.
             var popup = doc.createElement("span");
-            popup.textContent = last.captured_at === shown ? shownText : "Newest location";
+            popup.textContent = last.captured_at === shown ? shownText : w(box, "newest");
             var marker = L.marker([last.latitude, last.longitude]).addTo(layer).bindPopup(popup);
             map.fitBounds(all, { maxZoom: 16, padding: [30, 30] });
             // After the view is set: a map without one opens no popup.
@@ -192,11 +212,11 @@
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (points) {
                     if (mine !== asked) return;
-                    if (!points) throw new Error("no points");
+                    if (!points) throw new Error("points");
                     drawn = true;
                     draw(points);
                     var count = doc.querySelector("[data-locations-count]");
-                    if (count) count.textContent = countText(points, span, newestAge);
+                    if (count) count.textContent = countText(points, span, newestAge, count);
                 })
                 .catch(function () {
                     if (mine === asked && !drawn) map.setView([20, 0], 2);
@@ -273,7 +293,9 @@
         // phone's own answer, in the server's words ("Location is off on the phone"), shows.
         function waitForFix() {
             var tries = 0;
+            var answered = false;
             var line = function () { return doc.getElementById("fix_wait"); };
+            var result = "/devices/" + id + "/locate-result.json" + (lang ? "?lang=" + encodeURIComponent(lang) : "");
             var timer = win.setInterval(function () {
                 tries += 1;
                 win.fetch("/devices/" + id + "/locations.json?since=1", { credentials: "same-origin" })
@@ -286,12 +308,13 @@
                         }
                     })
                     .catch(function () {});
-                win.fetch("/devices/" + id + "/locate-result.json", { credentials: "same-origin" })
+                win.fetch(result, { credentials: "same-origin" })
                     .then(function (r) { return r.json(); })
                     .then(function (cmd) {
                         if (cmd && cmd.text) {
                             var el = line();
-                            if (el) el.textContent = "The phone answered: " + cmd.text;
+                            answered = true;
+                            if (el) el.textContent = fill(w(el, "answered"), { answer: cmd.text });
                             if (String(cmd.result).indexOf("fix") !== 0) win.clearInterval(timer);
                         }
                     })
@@ -299,9 +322,7 @@
                 if (tries >= WAIT_TRIES) {
                     win.clearInterval(timer);
                     var el = line();
-                    if (el && el.textContent.indexOf("The phone answered") !== 0) {
-                        el.textContent = "No answer yet. The phone may be offline; it gets the request if it is back within an hour.";
-                    }
+                    if (el && !answered) el.textContent = w(el, "no-answer");
                 }
             }, WAIT_EVERY_MS);
         }

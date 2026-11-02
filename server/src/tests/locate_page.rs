@@ -211,7 +211,8 @@ async fn a_wrong_name_opens_the_erase_confirm_with_the_refusal() {
         confirm.find("<form").is_some_and(|f| f > summary_end),
         "the form is inside the confirm, after its summary"
     );
-    assert!(confirm.contains("Erase Anna's phone</button>"));
+    // Askama escapes the word's apostrophe (the name is a parameter, design 70 §2).
+    assert!(confirm.contains("Erase Anna&#39;s phone</button>"));
 
     for name in ["anna", "", "Ann"] {
         let res = app
@@ -895,9 +896,11 @@ async fn the_locations_row_counts_the_span() {
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
     let value = |html: &str| {
-        html.split("data-locations-count>")
+        // The count carries locate.js's words (`data-w-*`, design 70 §5.3) before its text.
+        html.split("data-locations-count")
             .nth(1)
-            .and_then(|rest| rest.split('<').next())
+            .and_then(|rest| rest.split_once('>'))
+            .and_then(|(_, rest)| rest.split('<').next())
             .unwrap()
             .to_string()
     };
@@ -1064,4 +1067,87 @@ async fn the_list_says_no_contact_and_last_heard_in_the_readers_language() {
         html.contains("aria-label=\"Frida, ingen kontakt\""),
         "{html}"
     );
+}
+
+/// Design 70 §5.1, slice 3c: the Locate tab in Norwegian - the page, its zone page and the
+/// Locations page under `lang="nb"`, Requests and the Locations row worded by the server,
+/// `locate-result.json`'s answer and an error body in the reader's language, and the words
+/// `locate.js` reads come with the page (`data-w-*`, its `?lang=`).
+#[tokio::test]
+async fn the_locate_tab_speaks_norwegian() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    fix(&app, id, 59.9, 3 * 24 * 60).await;
+    let ring = waiting(&app, id, "ring", "datetime('now', '-1 minute')").await;
+    let locate = waiting(&app, id, "locate", "datetime('now', '-2 minutes')").await;
+    sqlx::query(
+        "UPDATE device_commands SET delivered_at = datetime('now'), \
+         acknowledged_at = datetime('now'), result = 'location is off for this device', \
+         succeeded = 0 WHERE id = ?",
+    )
+    .bind(locate)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let html = locate_page(&app, &cookie, &format!("?device={id}&lang=nb")).await;
+    assert!(html.contains(r#"<html lang="nb">"#));
+    for words in [
+        "<h1 class=\"page-title\">Finn</h1>",
+        "Posisjonsinnstillinger",
+        "Oppdater posisjon</button>",
+        "Forespørsler",
+        "0 de siste 12 timene · nyeste ",
+        "data-w-in-24=\"{count} de siste 24 timene\"",
+        "data-w-newest=\"Nyeste posisjon\"",
+        "data-lang=\"nb\"",
+        "Posisjon er av på telefonen",
+        "<option value=\"interval\">Jevnlig</option>",
+    ] {
+        assert!(html.contains(words), "{words}");
+    }
+    let row = recent_row(&html, "ring");
+    assert!(row.contains(">Ring<") && row.contains("Venter"), "{row}");
+    assert!(!html.contains("Location Settings") && !html.contains("Requests"));
+    let _ = ring;
+
+    // English stays as it was.
+    let en = locate_page(&app, &cookie, &format!("?device={id}&lang=en")).await;
+    assert!(en.contains("Location Settings") && en.contains("0 in the last 12 hours · newest "));
+
+    let answer = app
+        .get_page(
+            &format!("/devices/{id}/locate-result.json?lang=nb"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        answer.contains("\"text\":\"Posisjon er av på telefonen\""),
+        "{answer}"
+    );
+
+    let zone = app
+        .get_page(&format!("/devices/{id}/zones/new?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(zone.contains(r#"<html lang="nb">"#) && zone.contains("Ny sone"));
+    assert!(zone.contains("Varsle når de kommer"));
+
+    let locations = app
+        .get_page(&format!("/devices/{id}/locations?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(locations.contains(r#"<html lang="nb">"#));
+    assert!(
+        locations.contains("Posisjonene til Anna")
+            && locations.contains("Ingen i dette tidsrommet.")
+    );
+
+    let missing = app
+        .get_page("/devices/999/locations?lang=nb", &cookie)
+        .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    assert_eq!(missing.text(), "Fant ikke enheten");
 }

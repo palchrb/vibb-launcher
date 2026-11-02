@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
@@ -12,17 +12,17 @@
     <div class="title-bar">
         {% include "partials/bell.html" %}
     </div>
-    <h1 class="page-title">Locate</h1>
+    <h1 class="page-title">{{ self.t("nav.locate") }}</h1>
 
     {%- if phones.is_empty() %}
-    <p class="empty-state">No phones yet.</p>
+    <p class="empty-state">{{ self.t("devices.list.empty") }}</p>
     <div class="group">
-        <a class="row row-button" href="/devices/new">Add Phone</a>
+        <a class="row row-button" href="/devices/new">{{ self.t("devices.list.add") }}</a>
     </div>
     {%- else if let Some(view) = selected %}
 
     {#- The phone switcher (§3.6): plain links, the state as a dot and in the aria-label. -#}
-    <nav class="phone-switch" aria-label="Phones">
+    <nav class="phone-switch" aria-label="{{ self.t("devices.list.phones") }}">
         {% for p in phones %}
         <a href="/devices/locate?device={{ p.id }}" aria-label="{{ p.aria }}"{% if p.current %} aria-current="true"{% endif %}><span class="dot dot-{{ p.dot }}" aria-hidden="true"></span><span class="phone-switch-name">{{ p.name }}</span></a>
         {% endfor %}
@@ -32,20 +32,20 @@
         Location. Update Location returns here (#location), so the map and the waiting line are in
         view. The pick is a view choice (design 44 §1.5): static/locate.js redraws in place and
         remembers it; without JS the links show the span here. -#}
-    <section id="location" aria-label="Location">
-        <div class="phone-switch span-pick" role="radiogroup" aria-label="Show" data-span-pick>
+    <section id="location" aria-label="{{ self.t("locate.location_aria") }}">
+        <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
             {% for (hours, words) in crate::handlers::locate::SPANS %}
-            <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ words }}</a>
+            <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ self.t(words) }}</a>
             {% endfor %}
         </div>
-        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}"{% if view.waiting_for_fix %} data-waiting{% endif %}{% if !view.zones.rows.is_empty() %} data-zones{% endif %}><div id="map"></div></div>
+        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}"{% if view.waiting_for_fix %} data-waiting{% endif %}{% if !view.zones.rows.is_empty() %} data-zones{% endif %}><div id="map"></div></div>
         <div class="group">
             {% if let Some(fix) = view.fix %}
             <div class="row" data-row="fix">
-                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>Last position before the phone went off</span>{% endif %}</span>
+                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>{{ self.t("locate.fix.before_off") }}</span>{% endif %}</span>
             </div>
             {% else %}
-            <p class="row row-note" data-row="fix">{% if view.location_off %}No position kept while location is off.{% else %}No position yet.{% endif %}</p>
+            <p class="row row-note" data-row="fix">{% if view.location_off %}{{ self.t("locate.fix.none_off") }}{% else %}{{ self.t("locate.fix.none") }}{% endif %}</p>
             {% endif %}
             {% if let Some(a) = view.answer %}
             {#- 2026-10-25: only while asked, 10 min after a found answer, a failure until the next fix (locate::answer_state). -#}
@@ -55,43 +55,43 @@
             </div>
             {% endif %}
             {% if view.waiting_for_fix %}
-            <p id="fix_wait" class="row row-note" role="status">Waiting for a fresh fix&hellip;</p>
+            <p id="fix_wait" class="row row-note" role="status" data-w-answered="{{ self.t("locate.wait.answered") }}" data-w-no-answer="{{ self.t("locate.wait.no_answer") }}">{{ self.t("locate.wait") }}&hellip;</p>
             {% endif %}
             {#- Design 64 step 2 (decision 14): a release launcher ignores a mock fix and counts it. -#}
             {% if let Some(mock) = view.mock_ignored %}
             <div class="row" data-row="mock-ignored">
-                <span class="row-label">{{ mock }}<span class="row-sub">An app on the phone pretended it was somewhere else. Vibb One kept those out of the map and the zones.</span></span>
+                <span class="row-label">{{ mock }}<span class="row-sub">{{ self.t("locate.mock.sub") }}</span></span>
             </div>
             {% endif %}
             <form method="post" action="/devices/{{ view.device.id }}/command/locate#location" class="cell">
-                <button type="submit" class="row row-button">Update Location</button>
+                <button type="submit" class="row row-button">{{ self.t("locate.command.locate") }}</button>
             </form>
         </div>
         {#- Every kept fix is a page of its own (design 44 §1.4), not noise here. -#}
         <div class="group">
             <a class="row" href="/devices/{{ view.device.id }}/locations?span={{ view.span }}" data-row="locations">
-                <span class="row-label">Locations</span>
-                <span class="row-value" data-locations-count>{{ view.locations_value }}</span>
+                <span class="row-label">{{ self.t("locate.locations.title") }}</span>
+                <span class="row-value" data-locations-count data-w-none="{{ self.t("locate.locations.none") }}" data-w-kept="{{ self.t("locate.locations.kept") }}" data-w-in-12="{{ self.t("locate.locations.in_12") }}" data-w-in-24="{{ self.t("locate.locations.in_24") }}" data-w-in-168="{{ self.t("locate.locations.in_168") }}" data-w-newest="{{ self.t("locate.locations.newest") }}">{{ view.locations_value }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <p class="group-footer">The map shows the span picked above. Keep history for, under Location Settings, decides how long locations are kept.</p>
+        <p class="group-footer">{{ self.t("locate.map_footer") }}</p>
     </section>
 
     {#- Design 64 §3.5: the phone's zones, each to its page; the map draws them (locate.js, from
         zones.json). A zone's save lands on its row (#zone-N) with its line, a delete and Locate
         Regularly here (#zones). What the location setting means for them is said here too. -#}
     <section id="zones" aria-labelledby="zones-title">
-        <h2 class="group-header" id="zones-title">Zones</h2>
+        <h2 class="group-header" id="zones-title">{{ self.t("locate.zones.title") }}</h2>
         {% if view.zones.needs_regularly %}
         <div class="attention attention-action" data-warning="zones-need-regularly">
-            <span class="attention-text">Zones need Regularly<span class="attention-sub">With Only when asked the phone reports a location only when you tap Update Location.</span></span>
+            <span class="attention-text">{{ self.t("locate.zones.need_regularly") }}<span class="attention-sub">{{ self.t("locate.zones.need_regularly_sub") }}</span></span>
         </div>
         <div class="group">
             <form method="post" action="/devices/{{ view.device.id }}/location-policy#zones" class="cell">
                 <input type="hidden" name="mode" value="interval">
                 <input type="hidden" name="back" value="zones">
-                <button type="submit" class="row row-button">Locate Regularly</button>
+                <button type="submit" class="row row-button">{{ self.t("locate.zones.locate_regularly") }}</button>
             </form>
         </div>
         {% endif %}
@@ -100,71 +100,71 @@
             {% for z in view.zones.rows %}
             <a class="row" id="zone-{{ z.id }}" href="/devices/{{ view.device.id }}/zones/{{ z.id }}" data-zone="{{ z.id }}">
                 <span class="row-label">{{ z.name }}<span class="row-sub">{{ z.sub }}</span></span>
-                {% if z.presence.here() %}<span class="row-value" data-here>Here now</span>{% else if let Some(seen) = z.presence.last_seen() %}<span class="row-value" data-last-seen>{{ seen }}</span>{% endif %}
+                {% if z.presence.here() %}<span class="row-value" data-here>{{ self.t("locate.zones.here") }}</span>{% else if let Some(seen) = z.presence.last_seen() %}<span class="row-value" data-last-seen>{{ seen }}</span>{% endif %}
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% if let Some(text) = z.flash %}<p class="flash" role="status" data-flash="zone">{{ text }}</p>{% endif %}
             {% endfor %}
             {% if view.zones.location_unlocked %}
             <a class="row" href="/devices/{{ view.device.id }}/advanced#restrictions" data-note="location-unlocked">
-                <span class="row-label">Your child can turn Location off on the phone; zones then see nothing.<span class="row-sub">Keep location on, under Advanced</span></span>
+                <span class="row-label">{{ self.t("locate.zones.unlocked") }}<span class="row-sub">{{ self.t("locate.zones.unlocked_sub") }}</span></span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
-            {% if view.zones.full %}
-            <p class="row row-note" data-row="zones-full">10 zones is the most</p>
+            {% if let Some(full) = view.zones.full %}
+            <p class="row row-note" data-row="zones-full">{{ full }}</p>
             {% else %}
-            <a class="row row-button" href="/devices/{{ view.device.id }}/zones/new" data-row="add-zone">Add Zone</a>
+            <a class="row row-button" href="/devices/{{ view.device.id }}/zones/new" data-row="add-zone">{{ self.t("locate.zones.add") }}</a>
             {% endif %}
         </div>
-        <p class="group-footer">{% if view.zones.rows.is_empty() %}A zone tells you when the phone arrives or leaves, like Home or School.{% else %}{{ view.zones.footer }}{% if let Some(within) = view.zones.confirm_within %} That is within about two intervals (here {{ within }}).{% endif %}{% if let Some(line) = view.zones.watch_line %} <span data-zone-watch>{{ line }}</span>{% endif %}{% endif %}</p>
+        <p class="group-footer">{% if view.zones.rows.is_empty() %}{{ self.t("locate.zones.footer_empty") }}{% else %}{{ view.zones.footer }}{% if let Some(within) = view.zones.confirm_within %} {{ self.tp("locate.zones.within", [("within", within.as_str())]) }}{% endif %}{% if let Some(line) = view.zones.watch_line %} <span data-zone-watch>{{ line }}</span>{% endif %}{% endif %}</p>
     </section>
 
     {% if view.location_off %}
     <div class="attention attention-action" data-warning="location-off">
-        <span class="attention-text">Location is off for this phone<span class="attention-sub">It takes no fix, even when asked.{% if !view.zones.rows.is_empty() %} Zones can't see where the phone is.{% endif %} Choose &ldquo;Only when asked&rdquo; under Location Settings.</span></span>
+        <span class="attention-text">{{ self.t("locate.off.title") }}<span class="attention-sub">{{ self.t("locate.off.sub") }}{% if !view.zones.rows.is_empty() %} {{ self.t("locate.off.zones") }}{% endif %} {{ self.t("locate.off.choose") }}</span></span>
     </div>
     {% endif %}
     {% if view.wipe_not_ready %}
     <div class="attention attention-action" data-warning="wipe-not-ready">
-        <span class="attention-text">Erasing works after the phone restarts once<span class="attention-sub">Until then Android refuses an erase. This can happen after a Vibb One update.</span></span>
+        <span class="attention-text">{{ self.t("locate.wipe_not_ready.title") }}<span class="attention-sub">{{ self.t("locate.wipe_not_ready.sub") }}</span></span>
     </div>
     {% endif %}
 
     {#- One tap each (§5.6: they protect the phone); each returns here (#actions), with Requests
         right under it. Erase Phone… is the type-the-name confirm. -#}
-    <section id="actions" aria-label="Actions">
+    <section id="actions" aria-label="{{ self.t("locate.actions_aria") }}">
         <div class="act-grid">
             <form method="post" action="/devices/{{ view.device.id }}/command/ring#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Ring</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("locate.command.ring") }}</button>
             </form>
             <form method="post" action="/devices/{{ view.device.id }}/command/stop-ring#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Stop Ringing</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("locate.command.stop_ring") }}</button>
             </form>
             <form method="post" action="/devices/{{ view.device.id }}/command/lock#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Lock</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>{{ self.t("locate.command.lock") }}</button>
             </form>
         </div>
         <div class="group">
             <details class="confirm cell" id="erase"{% if view.erase_refused %} open{% endif %}>
-                <summary class="row">Erase Phone&hellip;</summary>
+                <summary class="row">{{ self.t("locate.command.wipe") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ view.device.id }}/command/wipe#erase" class="confirm-body">
-                    <p>Erase everything on {{ view.device.name }}'s phone? This can't be undone, and an erased phone stops reporting.</p>
-                    <label class="field-label" for="confirm_wipe">Type {{ view.device.name }} to confirm</label>
+                    <p>{{ self.tp("locate.erase.question", [("name", view.device.name.as_str())]) }}</p>
+                    <label class="field-label" for="confirm_wipe">{{ self.tp("locate.erase.type", [("name", view.device.name.as_str())]) }}</label>
                     <input type="text" id="confirm_wipe" name="confirm_name" autocomplete="off" required{% if view.erase_refused %} aria-invalid="true" aria-describedby="confirm_wipe-error"{% endif %}>
-                    {% if view.erase_refused %}<p class="field-error" id="confirm_wipe-error" data-flash="erase">That isn't the phone's name. Nothing was erased.</p>{% endif %}
-                    <button type="submit" class="button-destructive">Erase {{ view.device.name }}'s phone</button>
+                    {% if view.erase_refused %}<p class="field-error" id="confirm_wipe-error" data-flash="erase">{{ self.t("locate.erase.refused") }}</p>{% endif %}
+                    <button type="submit" class="button-destructive">{{ self.tp("locate.erase.button", [("name", view.device.name.as_str())]) }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
         </div>
-        <div class="group-footer">An offline phone gets Ring and Locate within an hour, Lock and Erase whenever it's back.
+        <div class="group-footer">{{ self.t("locate.actions.footer") }}
             <details class="info">
-                <summary aria-label="About Lock"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("locate.lock_info.aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Without a Child PIN, Lock only turns the screen off.</p>
+                    <p>{{ self.t("locate.lock_info.no_pin") }}</p>
                     {% if view.android_lock %}
-                    <p data-note="android-lock">After a restart, Locate, Ring and Erase wait until the Child PIN is typed on the phone.</p>
+                    <p data-note="android-lock">{{ self.t("locate.lock_info.android") }}</p>
                     {% endif %}
                 </div>
             </details>
@@ -173,18 +173,18 @@
 
     {#- This page's requests in flight or just gone wrong (design 48 §1.4); every command of the
         phone is in its summary's Activity. -#}
-    {% call recent_group::show(view.recent, "Requests") %}{% endcall %}
+    {% call recent_group::show(view.recent, self.t("locate.requests")) %}{% endcall %}
 
     {#- The pickers save on change (autosave.js) and return to this group (#location-settings):
         the last one on a long page, so a <noscript> Save (or a save after a refused erase, whose page
         is at another path) doesn't land at the top. Mode and interval are one
         form: location-policy needs the mode on every post (§5.6, H1). -#}
     <section id="location-settings" aria-labelledby="location-settings-title">
-        <h2 class="group-header" id="location-settings-title">Location Settings</h2>
+        <h2 class="group-header" id="location-settings-title">{{ self.t("locate.settings.title") }}</h2>
         <div class="group">
             <form method="post" action="/devices/{{ view.device.id }}/location-policy#location-settings" class="cell">
                 <label class="row">
-                    <span class="row-label">When to locate</span>
+                    <span class="row-label">{{ self.t("locate.settings.mode") }}</span>
                     <select class="pick" name="mode" data-autosave>
                         {% for (value, label) in view.modes %}
                         <option value="{{ value }}"{% if *value == view.location_mode %} selected{% endif %}>{{ label }}</option>
@@ -193,7 +193,7 @@
                 </label>
                 {% if view.location_mode == "interval" %}
                 <label class="row">
-                    <span class="row-label">Every{% if let Some(note) = view.interval_note %}<span class="row-sub" data-interval-note>{{ note }}</span>{% endif %}</span>
+                    <span class="row-label">{{ self.t("locate.settings.every") }}{% if let Some(note) = view.interval_note %}<span class="row-sub" data-interval-note>{{ note }}</span>{% endif %}</span>
                     <select class="pick" name="interval_minutes" data-autosave>
                         {% for (minutes, label) in view.intervals %}
                         <option value="{{ minutes }}"{% if *minutes == view.location_interval %} selected{% endif %}>{{ label }}</option>
@@ -201,25 +201,25 @@
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
                 {% endif %}
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             <form method="post" action="/devices/{{ view.device.id }}/location-retention#location-settings" class="cell">
                 <label class="row">
-                    <span class="row-label">Keep history for</span>
+                    <span class="row-label">{{ self.t("locate.settings.keep") }}</span>
                     <select class="pick" name="days" data-autosave>
                         {% for (days, label) in view.retention_choices %}
                         <option value="{{ days }}"{% if *days == view.location_retention %} selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save History</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("locate.settings.save_history") }}</button></noscript>
             </form>
         </div>
-        <p class="group-footer">Each fix uses some battery; the newest location is kept until a newer one comes. Off turns location off on the phone and erases its locations. <span data-note="last-position">A phone that shuts down or runs low on battery sends a last position, but a sudden power loss or airplane mode leaves nothing.</span></p>
+        <p class="group-footer">{{ self.t("locate.settings.footer") }} <span data-note="last-position">{{ self.t("locate.settings.last_position") }}</span></p>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=4"></script>
+    <script src="/static/locate.js?v=5"></script>
     {%- else %}
     {#- Several phones, none chosen: each with its state, as on Devices. -#}
     <div class="group group-avatars" data-group="phones">
