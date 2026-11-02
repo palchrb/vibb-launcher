@@ -400,7 +400,8 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
 
 ## 8. Open for the user
 
-1. The lock's times: Av / 1 / 5 / 15 / 60 min - also "Med en gang" (every time the app has been away)?
+1. The lock's times: Av / 1 / 5 / 15 / 60 min - also "Med en gang" (every time the app has been away)? **Answered
+   2026-11-02: no "Med en gang"** (the user: "Med en gang er unødvendig"); D3.1's list stands.
 2. The lock per device (this phone remembers it) - or follow the account to every device?
 3. Kun passkey needs 2 passkeys, or 1 and another parent - or is 1 synced iCloud passkey enough?
 4. The Norwegian word: "passkey" (yours), "passnøkkel" (Apple) or "tilgangsnøkkel" (Google)?
