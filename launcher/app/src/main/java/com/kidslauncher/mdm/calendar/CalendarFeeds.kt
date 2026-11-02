@@ -16,6 +16,8 @@ import com.kidslauncher.mdm.day.seriesRows
 import com.kidslauncher.mdm.day.feedSkipped
 import com.kidslauncher.mdm.day.skipChange
 import com.kidslauncher.mdm.day.skipFeedEvents
+import com.kidslauncher.mdm.day.skipHash
+import com.kidslauncher.mdm.day.skipPassDue
 import com.kidslauncher.mdm.day.skipKept
 import com.kidslauncher.mdm.day.skipSet
 import com.kidslauncher.mdm.server.MdmApi
@@ -31,7 +33,8 @@ import java.time.ZoneId
  * pass) and [CalendarStore]'s feed writes (the provider's only writer); a link gone from a fully readable
  * `calendar.feeds` takes its calendar with it. The calendar's sync columns: `CAL_SYNC1` the set's rev written last,
  * `CAL_SYNC2` [FEED_MAPPING], `CAL_SYNC3` the series refused at the last pass, `CAL_SYNC4` the series whose zone this
- * phone doesn't know, `CAL_SYNC5` the zone floating series were written in. Provider work runs on the store's worker;
+ * phone doesn't know, `CAL_SYNC5` the zone floating series were written in, `CAL_SYNC6` the kid's events it skipped and
+ * `CAL_SYNC7` the skip set's fingerprint at its last pass (design 72b). Provider work runs on the store's worker;
  * nothing read here is logged beyond counts, indexes and exception classes.
  */
 object CalendarFeeds {
@@ -96,14 +99,15 @@ object CalendarFeeds {
         )
         val calendarId = onWorker { CalendarStore.ensureFeedCalendarBlocking(context, feed, existing) } ?: return false
         var renamed = existing == null || existing.displayName != feed.name
-        if (existing != null && change.joined.isNotEmpty()) {
+        if (existing != null && skipPassDue(change, existing.skipHash, skip)) {
             // A uid that joined the skip set loses its rows here at once, with no GET (D3.2): only those this calendar
             // had are remembered (launcher QA L2), and only once the delete went (N4); the uids that left stay
-            // remembered until a pass applied the set again.
+            // remembered until a pass applied the set again. The rows are read only when the skip set moved since this
+            // calendar's last pass (revision R-L1).
             val hit = onWorker { CalendarStore.deleteFeedUidsBlocking(context, calendarId, change.joined) }
-            if (!hit.isNullOrEmpty()) {
-                onWorker { CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(existing.skipped + hit)) }
-                renamed = true
+            if (hit != null) {
+                onWorker { CalendarStore.markFeedSkippedBlocking(context, calendarId, skipKept(existing.skipped + hit), skipHash(skip)) }
+                renamed = renamed || hit.isNotEmpty()
             }
         }
         need ?: return renamed
@@ -143,7 +147,7 @@ object CalendarFeeds {
                 return@onWorker
             }
             CalendarStore.markFeedAppliedBlocking(context, calendarId, doc.rev, result.refused, unknown, floating)
-            CalendarStore.markFeedSkippedBlocking(context, calendarId, feedSkipped(doc.events, skip))
+            CalendarStore.markFeedSkippedBlocking(context, calendarId, feedSkipped(doc.events, skip), skipHash(skip))
             Log.i(LOG_TAG, "Applied a calendar link: ${plan.deletes.size} rows deleted, ${plan.inserts.size} series written")
         }
         return true

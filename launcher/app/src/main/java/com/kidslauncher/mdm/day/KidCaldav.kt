@@ -367,8 +367,9 @@ sealed interface KidBackOp {
 /** The hand-backs as provider writes (D2.3): by the live row with the UID - `DELETED=1` rows are ignored everywhere,
  * and a UID [ownedByVibb] refuses is never touched. */
 fun backOps(back: List<KidBack>, rows: List<KidRow>, ownPackage: String, phoneTag: String, phoneZone: String): List<KidBackOp> = back.map { b ->
+    // The row the snapshot sends for the uid (revision RN2): this phone's rows first, the lowest id.
     val live = rows.filter { !it.deleted && it.uid == b.uid }
-    val row = live.firstOrNull()
+    val row = live.filter { kidSetRow(it, ownPackage, phoneTag) }.minByOrNull { it.id } ?: live.minByOrNull { it.id }
     val ours = row != null && ownedByVibb(row.uid, row.customApp, ownPackage, phoneTag)
     val version = b.version
     when {
@@ -462,6 +463,14 @@ fun skippedText(uids: List<String>): String = uids.joinToString(",", "[", "]") {
 data class SkipChange(val joined: Set<String>, val left: Set<String>)
 
 fun skipChange(stored: Set<String>, now: Set<String>): SkipChange = SkipChange(joined = now - stored, left = stored - now)
+
+/** The skip set's fingerprint a feed calendar keeps beside `CAL_SYNC6` (`CAL_SYNC7`, revision R-L1): unchanged since
+ * that calendar's last pass, its rows aren't read again for newly skipped uids. */
+fun skipHash(skip: Set<String>): String = hex16(skip.sorted().joinToString(","))
+
+/** Whether a feed calendar's rows must be looked through for the uids that joined the skip set. */
+fun skipPassDue(change: SkipChange, storedHash: String?, skip: Set<String>): Boolean =
+    change.joined.isNotEmpty() && storedHash != skipHash(skip)
 
 /** A feed's set without the kid's own events (D3.2): a series or a lone override (`uid#…`) of a skipped uid out. */
 fun skipFeedEvents(events: List<FeedEvent>, skip: Set<String>): List<FeedEvent> =

@@ -62,6 +62,12 @@ class KidEventTest {
         // The kid moves it: the times go in whole, timed.
         val later = kidEventInput("Skidag", "", day, LocalTime.of(9, 0), 180, oslo, titleShown = "Skidag", placeShown = "", timesShown = shownTimes)!!
         assertEquals(setOf(FeedColumns.DTSTART, FeedColumns.DTEND, FeedColumns.ALL_DAY, FeedColumns.TIMEZONE), kidEventUpdateColumns(later, "Europe/Oslo").keys)
+        // A parent's 2 h 20 min event moved to another start keeps its length; a new length is the kid's (revision RN1).
+        val odd = KidEventTimes(day, LocalTime.of(17, 0), 120, 140 * 60_000L)
+        val moved2 = kidEventInput("Kino", "", day, LocalTime.of(18, 0), 120, oslo, "Kino", "", odd)!!
+        assertEquals(140 * 60_000L, moved2.endMs - moved2.beginMs)
+        val longer = kidEventInput("Kino", "", day, LocalTime.of(18, 0), 180, oslo, "Kino", "", odd)!!
+        assertEquals(180 * 60_000L, longer.endMs - longer.beginMs)
         // Nothing changed: nothing written.
         assertTrue(kidEventUpdateColumns(kidEventInput("Skidag", "", day, LocalTime.of(1, 0), 180, oslo, "Skidag", "", shownTimes)!!, "Europe/Oslo").isEmpty())
     }

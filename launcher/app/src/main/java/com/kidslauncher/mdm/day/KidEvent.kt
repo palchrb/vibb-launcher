@@ -48,19 +48,24 @@ fun kidEventInput(
     val t = TitleRules.clean(title, KID_EVENT_TITLE_MAX)
     if (t.isEmpty() || minutes !in KID_EVENT_MINUTES) return null
     val begin = day.atTime(start).atZone(zone).toInstant().toEpochMilli()
+    // A move of the day or the start keeps the event's own length (a parent's 2 h 20 min) unless the kid chose another
+    // (revision RN1).
+    val length = timesShown?.durationMs?.takeIf { minutes == timesShown.minutes && it > 0 } ?: (minutes * 60_000L)
     return KidEventInput(
         t,
         TitleRules.clean(place, KID_EVENT_PLACE_MAX),
         begin,
-        begin + minutes * 60_000L,
+        begin + length,
         titleChanged = titleShown == null || title != titleShown,
         placeChanged = placeShown == null || place != placeShown,
-        timesChanged = timesShown == null || timesShown != KidEventTimes(day, start, minutes),
+        timesChanged = timesShown == null || !timesShown.sameAs(day, start, minutes),
     )
 }
 
 /** The form's day, start and length as it showed them after loading an event. */
-data class KidEventTimes(val day: LocalDate, val start: LocalTime, val minutes: Int)
+data class KidEventTimes(val day: LocalDate, val start: LocalTime, val minutes: Int, val durationMs: Long? = null) {
+    fun sameAs(day: LocalDate, start: LocalTime, minutes: Int) = this.day == day && this.start == start && this.minutes == minutes
+}
 
 /** The columns a change of the kid's event writes (design 72b): each field only when the kid changed it - a title or
  * place left alone keeps exactly what the row has, a parent's longer title included (R-L5), and times left alone keep

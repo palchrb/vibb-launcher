@@ -282,6 +282,23 @@ class KidCaldavTest {
     }
 
     @Test
+    fun `revision - the skip pass only when the set moved, one row per uid on both sides`() {
+        val skip = setOf("a", "b")
+        val change = skipChange(emptySet(), skip)
+        assertTrue(skipPassDue(change, null, skip))
+        assertTrue(!skipPassDue(change, skipHash(skip), skip))
+        assertTrue(skipPassDue(change, skipHash(setOf("a")), skip))
+        assertTrue(!skipPassDue(SkipChange(emptySet(), setOf("c")), null, skip))
+        // Two live rows with one UID: the snapshot and the hand-back take the same one (the lowest id).
+        val kino = rows.first { it.id == 1L }
+        val twice = rows.filter { it.id != 1L } + kino.copy(id = 50) + kino.copy(id = 60, title = "Annen")
+        val sent = kidSnapshot(twice, own, tag, now, emptyList()).events.first { it.uid == kino.uid }
+        assertEquals("Kino", sent.version.summary)
+        val op = backOps(listOf(KidBack("7123456789abcdef", kino.uid!!, null)), twice, own, tag, "Europe/Oslo")[0]
+        assertEquals(KidBackOp.Delete("7123456789abcdef", 50L), op)
+    }
+
+    @Test
     fun `canonical text is cut by code point and keeps the rest`() {
         assertEquals("a\nb\tc  d", canonicalText("a\r\nb\tc\u0007  d", 100))
         assertEquals("x\n\ny", canonicalText("x\r\ry", 100))

@@ -749,6 +749,8 @@ object CalendarStore {
         val floatingZone: String?,
         /** The kid's events skipped from this calendar's set (design 72b D3.2, `CAL_SYNC6`). */
         val skipped: Set<String> = emptySet(),
+        /** The skip set's fingerprint at its last pass (`CAL_SYNC7`). */
+        val skipHash: String? = null,
     ) {
         override fun toString() = "FeedCalendar($id)"
     }
@@ -769,6 +771,7 @@ object CalendarStore {
                 arrayOf(
                     Calendars._ID, Calendars.NAME, Calendars.CALENDAR_DISPLAY_NAME, Calendars.CAL_SYNC1,
                     Calendars.CAL_SYNC2, Calendars.CAL_SYNC3, Calendars.CAL_SYNC4, Calendars.CAL_SYNC5, Calendars.CAL_SYNC6,
+                    Calendars.CAL_SYNC7,
                 ),
                 "${Calendars.ACCOUNT_TYPE} = ? AND ${Calendars.ACCOUNT_NAME} = ?",
                 arrayOf(CalendarContract.ACCOUNT_TYPE_LOCAL, FEED_ACCOUNT),
@@ -786,6 +789,7 @@ object CalendarStore {
                         unknownZone = c.getString(6)?.toIntOrNull() ?: 0,
                         floatingZone = c.getString(7),
                         skipped = com.kidslauncher.mdm.day.skippedOf(c.getString(8)),
+                        skipHash = c.getString(9),
                     )
                 }
             }
@@ -867,8 +871,15 @@ object CalendarStore {
     }
 
     /** The kid's events this link calendar skips now (design 72b D3.2, `CAL_SYNC6`). */
-    internal fun markFeedSkippedBlocking(context: Context, id: Long, skipped: List<String>) =
-        updateFeedCalendar(context, id, ContentValues().apply { put(Calendars.CAL_SYNC6, com.kidslauncher.mdm.day.skippedText(skipped)) })
+    internal fun markFeedSkippedBlocking(context: Context, id: Long, skipped: List<String>, skipHash: String) =
+        updateFeedCalendar(
+            context,
+            id,
+            ContentValues().apply {
+                put(Calendars.CAL_SYNC6, com.kidslauncher.mdm.day.skippedText(skipped))
+                put(Calendars.CAL_SYNC7, skipHash)
+            },
+        )
 
     /** A link calendar's rows; `null` when the provider can't be read. */
     internal fun feedRowsBlocking(context: Context, calendarId: Long): List<StoredRow>? = try {

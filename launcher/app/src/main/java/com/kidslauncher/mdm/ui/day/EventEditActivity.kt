@@ -72,6 +72,7 @@ class EventEditActivity : UIObjectActivity() {
                     LocalDate.ofEpochDay(it.getLong(STATE_TIMES_DAY)),
                     LocalTime.ofSecondOfDay(it.getLong(STATE_TIMES_START)),
                     it.getInt(STATE_TIMES_MINUTES),
+                    it.getLong(STATE_TIMES_LENGTH).takeIf { length -> length > 0 },
                 )
             }
         }
@@ -120,6 +121,7 @@ class EventEditActivity : UIObjectActivity() {
             outState.putLong(STATE_TIMES_DAY, it.day.toEpochDay())
             outState.putLong(STATE_TIMES_START, it.start.toSecondOfDay().toLong())
             outState.putInt(STATE_TIMES_MINUTES, it.minutes)
+            outState.putLong(STATE_TIMES_LENGTH, it.durationMs ?: 0L)
         }
     }
 
@@ -140,7 +142,7 @@ class EventEditActivity : UIObjectActivity() {
             day = at.toLocalDate()
             start = at.toLocalTime().withSecond(0).withNano(0)
             minutes = kidEventMinutes(detail.end - detail.begin)
-            timesShown = KidEventTimes(day, start, minutes)
+            timesShown = KidEventTimes(day, start, minutes, detail.end - detail.begin)
             binding.eventEditWhat.setText(detail.title.orEmpty())
             binding.eventEditWhere.setText(detail.location.orEmpty())
             titleShown = binding.eventEditWhat.text.toString()
@@ -237,6 +239,7 @@ class EventEditActivity : UIObjectActivity() {
         private const val STATE_TIMES_DAY = "times_day"
         private const val STATE_TIMES_START = "times_start"
         private const val STATE_TIMES_MINUTES = "times_minutes"
+        private const val STATE_TIMES_LENGTH = "times_length"
 
         fun newIntent(context: Context, day: LocalDate): Intent =
             Intent(context, EventEditActivity::class.java).putExtra(DayActivity.EXTRA_DAY, day.toEpochDay())
