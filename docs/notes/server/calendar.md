@@ -429,6 +429,12 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   before then cancels its never-sent delete, and the hold's start goes with its last held row). A parent's change to an event more than about 13 months ahead reaches the phone
   late: the REPORT spans −60 .. +401 days, so it is seen at the kid's next change of it (a 412) or once it comes within
   the window.
+- **`pending` stays at 1 after the kid deletes the calendar's last event** (known, safe): the REPORT then comes back
+  empty, design 72's empty-answer hold stores nothing, and the delete keeps counting until the third empty answer or
+  24 h later - the status line says "1 venter på å bli skrevet" meanwhile, and the phone keeps the uid skipped.
+- **The rows the write path reads or writes are stamped** with the answer's instant (`fetch_wait`: a write, a 412's or
+  404's hand-back, a release), so a REPORT sent before it never judges them; the hold's count is each plan's own,
+  never a running maximum.
 - **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark or
   without the capability; `policy_json_keys_snapshot`); the nudge only when `pending` reaches 0, `back` goes above 0 or
   a stop is new.

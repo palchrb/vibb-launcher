@@ -193,7 +193,10 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   feed calendar keeps the UIDs it actually skipped in `CAL_SYNC6` (`feedSkipped`: those in its set, a JSON array, at
   most 300) - one that joins loses its rows locally with no GET (remembered once the delete went), one that leaves
   makes `feedFetch` fetch the set again without `If-None-Match` (QA N3). An unreadable "Min kalender" keeps each
-  calendar's stored uids as its skip set (`kidLiveUidsBlocking`: `null` vs no calendar). Events
+  calendar's stored uids as its skip set (`kidLiveUidsBlocking`: `null` vs no calendar). `CAL_SYNC7` holds the skip
+  set's fingerprint at the calendar's last pass (`skipHash`): its rows are read for newly skipped uids only when the
+  set moved (`skipPassDue`). A move of an event's day or start keeps its own length (a parent's 2 h 20 min) unless the
+  kid chose another; a hand-back takes the same row as the snapshot when two live rows share a UID. Events
   this phone once wrote through DAVx5 (its tag, not in "Min kalender") show from the feed, read-only.
 - Tests: `KidCaldavTest` (the shared `calendar_kid_events.json`: `provider` to exactly `snapshot` and `cut_variant`,
   `canonical`, the policy and the answers, `back_provider`, the ids, both copies), `FeedPlanTest` (the skip set,
