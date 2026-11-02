@@ -187,12 +187,41 @@ class ElementMissedCallsTest {
         assertEquals(0, badge())
     }
 
+    @Test
+    fun `a change of the Element contacts judges the active notifications again`() {
+        assertFalse("the same rules", elementMissedRejudgeDue(managed, CallPolicyState.Managed(rules.copy(smsEnabled = true))))
+        // A new name or number for Pappa: the summaries look him up when they are read.
+        assertFalse(elementMissedRejudgeDue(managed, CallPolicyState.Managed(rules.copy(contacts = contacts.map { if (it.id == 2L) it.copy(name = "Far", number = "+4790000009") else it }))))
+        val withoutPappa = CallPolicyState.Managed(rules.copy(contacts = contacts.filterNot { it.id == 2L }))
+        assertTrue("Pappa added after the call", elementMissedRejudgeDue(withoutPappa, managed))
+        assertTrue("Pappa left", elementMissedRejudgeDue(managed, withoutPappa))
+        assertTrue("Bestemor moved to Element X", elementMissedRejudgeDue(managed, CallPolicyState.Managed(rules.copy(contacts = contacts.map { if (it.id == 3L) it.copy(messageApp = "element", messageAddress = "@bestemor:example.org") else it }))))
+        assertTrue("another MXID", elementMissedRejudgeDue(managed, CallPolicyState.Managed(rules.copy(contacts = contacts.map { if (it.id == 2L) it.copy(messageAddress = "@pappa2:example.org") else it }))))
+        assertTrue("the rules read at last", elementMissedRejudgeDue(CallPolicyState.UnknownFailClosed, managed))
+        assertTrue("unmanaged", elementMissedRejudgeDue(managed, CallPolicyState.Unmanaged))
+        assertFalse(elementMissedRejudgeDue(CallPolicyState.UnknownFailClosed, CallPolicyState.Unmanaged))
+        // What the sweep then does with a post the old rules judged as nobody's: a mark from the post's time.
+        val judgedBefore = afterElementPost(emptyMap(), ElementPost(key, contactOf(dmNotification(), withoutPappa), 1_000))
+        assertTrue(judgedBefore.isEmpty())
+        assertEquals(mapOf(key to ElementMissedCall(pappa, 1_000)), afterElementSweep(judgedBefore, listOf(ElementPost(key, contactOf(dmNotification(), managed), 1_000))))
+    }
+
+    @Test
+    fun `the redacted strings name no MXID and no room`() {
+        assertEquals("ElementMissedCall(sinceMs=1000)", ElementMissedCall(pappa, 1_000).toString())
+        val post = ElementPost(key, pappa, 2_000).toString()
+        assertEquals("ElementPost(contact=true, postTimeMs=2000)", post)
+        assertFalse(pappaRoom in post || pappa in post)
+    }
+
     // ---- privacy -------------------------------------------------------------------------------------------------------
 
     private val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
 
-    private fun code(name: String): String = sources.walkTopDown().first { it.name == name }.readText()
-        .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("""//[^\n]*"""), "")
+    private fun code(name: String): String = withoutComments(sources.walkTopDown().first { it.name == name }.readText())
+
+    private fun withoutComments(source: String): String =
+        source.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("""//[^\n]*"""), "")
 
     @Test
     fun `missed Element X calls stay in memory - never stored, logged or sent`() {
@@ -203,10 +232,13 @@ class ElementMissedCallsTest {
                 assertFalse("$file: $shape", shape in code)
             }
         }
+        // Every main source file: only these touch the calls' MXIDs (the rest only listen to the store or ask it to
+        // judge again - nothing reaches the sync, the API or a report).
+        val allowed = setOf("ElementMissedCalls.kt", "ElementMissedCallStore.kt", "MissedCallsRepo.kt", "BadgeListenerService.kt", "ElementDmReader.kt")
+        val carriers = Regex("""\bElementMissedCall\b|\bElementPost\b|ElementMissedCallStore\.calls\b|\belementMissedSummaries\b|\belementMissedCallContact\b|ElementDmReader\.missedCallContact\b|\bafterElement[A-Za-z]+\b""")
         val offenders = sources.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .filter { "/mdm/server/" in it.invariantSeparatorsPath || "/mdm/push/" in it.invariantSeparatorsPath || it.name == "CallStateReport.kt" }
-            .filter { file -> listOf("ElementMissedCall", "ElementPost", "elementMissed").any { it in file.readText() } }
+            .filter { it.isFile && it.extension == "kt" && it.name !in allowed }
+            .filter { carriers.containsMatchIn(withoutComments(it.readText())) }
             .map { it.name }
             .toList()
         assertTrue("Found in $offenders", offenders.isEmpty())

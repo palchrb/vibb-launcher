@@ -32,6 +32,7 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         NotificationRuleRuntime.attach(this)
+        ElementMissedCallStore.attach(elementSweep)
         ClockReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
@@ -39,6 +40,7 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         NotificationRuleRuntime.detach(this)
+        ElementMissedCallStore.detach(elementSweep)
         BadgeStore.update(emptyMap())
         ElementMissedCallStore.cleared()
         VoipCallReader.disconnected(this)
@@ -48,6 +50,7 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onDestroy() {
         NotificationRuleRuntime.detach(this)
+        ElementMissedCallStore.detach(elementSweep)
         // The clock reader's lookup holds this instance: a destroy without the disconnect drops it too.
         ClockReader.disconnected()
         super.onDestroy()
@@ -156,6 +159,11 @@ class BadgeListenerService : NotificationListenerService() {
             // under the filter's one tag (qa-nf-keep-log-code Q-4).
             NotificationRuleRuntime.removeFailed(facts, e)
         }
+    }
+
+    /** Round L5: the call rules changed the Element contacts - every active notification judged again. */
+    private val elementSweep: () -> Unit = {
+        activeOrNull()?.let { active -> ElementMissedCallStore.swept(active.map { elementPost(it) }) }
     }
 
     /** Round L5: the key, the missed call's contact (null for every other notification) and the post time - memory only. */

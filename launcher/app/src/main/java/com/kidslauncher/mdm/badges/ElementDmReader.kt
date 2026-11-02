@@ -69,6 +69,8 @@ object ElementDmReader {
     fun missedCallContact(context: Context, sbn: StatusBarNotification): String? {
         if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
         return try {
+            // Most posts are plain messages: no facts parsed, no learned rooms read for them.
+            if (!glanceMissedCall(sbn.notification.category)) return null
             elementMissedCallContact(sbn.notification.category, facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
         } catch (e: Exception) {
             null

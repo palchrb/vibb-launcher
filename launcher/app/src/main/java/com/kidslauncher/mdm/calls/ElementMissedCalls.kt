@@ -47,11 +47,17 @@ fun elementMissedCallContact(category: String?, facts: ElementDmFacts, state: Ca
 }
 
 /** One room's missed Element X call: the contact's MXID and when its notification turned into a missed call. */
-data class ElementMissedCall(val mxid: String, val sinceMs: Long)
+data class ElementMissedCall(val mxid: String, val sinceMs: Long) {
+    /** Never the MXID (a stray log or crash report). */
+    override fun toString() = "ElementMissedCall(sinceMs=$sinceMs)"
+}
 
 /** One Element X notification as the listener saw it: its key, the contact a missed call stands for
  * ([elementMissedCallContact], null when it is no missed call of a contact) and its post time. */
-data class ElementPost(val key: String, val mxid: String?, val postTimeMs: Long)
+data class ElementPost(val key: String, val mxid: String?, val postTimeMs: Long) {
+    /** Never the key (it holds the room ID) or the MXID. */
+    override fun toString() = "ElementPost(contact=${mxid != null}, postTimeMs=$postTimeMs)"
+}
 
 /**
  * The missed calls after one post: no contact (another app, a group, a stranger, the category back at `message`)
@@ -64,6 +70,17 @@ fun afterElementPost(current: Map<String, ElementMissedCall>, post: ElementPost)
     if (kept != null && kept.mxid == mxid) return current
     return current + (post.key to ElementMissedCall(mxid, post.postTimeMs))
 }
+
+/**
+ * Whether a change of the call rules ([CallPolicyStore.refresh]) must judge the active notifications again: the set
+ * of phone-book Element contacts ([elementContactIds]; none unless managed) changed - a contact added, moved to
+ * Element X or given another MXID after the call still gets its mark, and one that left loses it at once.
+ */
+fun elementMissedRejudgeDue(before: CallPolicyState, after: CallPolicyState): Boolean =
+    elementContactsOf(before) != elementContactsOf(after)
+
+private fun elementContactsOf(state: CallPolicyState): Set<String> =
+    (state as? CallPolicyState.Managed)?.rules?.let(::elementContactIds).orEmpty()
 
 /** The missed calls after the notification of [key] went away (the kid opened the room, or swiped it). */
 fun afterElementRemoval(current: Map<String, ElementMissedCall>, key: String): Map<String, ElementMissedCall> =

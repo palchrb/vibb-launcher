@@ -282,7 +282,7 @@ class ElementRoomsTest {
         // 2026-10-25: the glance's contact from the same facts (design 15's link, a group's newest sender)
         "glanceContact", "elementGlanceContact", "rooms", "Long",
         // round L5 (2026-11-02): a missed Element X call's contact - the same facts and the notification's category
-        "missedCallContact", "elementMissedCallContact", "category", "String",
+        "missedCallContact", "elementMissedCallContact", "category", "String", "glanceMissedCall",
         // the platform: only these members
         "StatusBarNotification", "packageName", "user", "notification", "Process", "myUserHandle",
         "Notification", "EXTRA_MESSAGES", "EXTRA_MESSAGING_PERSON", "EXTRA_IS_GROUP_CONVERSATION",

@@ -33,6 +33,32 @@ object ElementMissedCallStore {
     @Synchronized
     fun swept(active: List<ElementPost>) = set(afterElementSweep(current, active))
 
+    /** The listener's sweep of Element X's active notifications, while it is connected ([attach]). */
+    @Volatile
+    private var resweep: (() -> Unit)? = null
+
+    fun attach(sweep: () -> Unit) {
+        resweep = sweep
+    }
+
+    fun detach(sweep: () -> Unit) {
+        if (resweep === sweep) resweep = null
+    }
+
+    /**
+     * The call rules changed the phone-book Element contacts ([elementMissedRejudgeDue]): the listener judges every
+     * active notification again on the main thread. From any thread; never throws.
+     */
+    fun rejudge() {
+        main.post {
+            try {
+                resweep?.invoke()
+            } catch (e: Exception) {
+                // Unbound in between: the next connect sweeps anyway.
+            }
+        }
+    }
+
     /** The listener lost its access or was unbound: it can't tell when one goes away, so nothing is shown. */
     @Synchronized
     fun cleared() = set(emptyMap())

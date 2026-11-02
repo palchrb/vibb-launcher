@@ -150,7 +150,7 @@ object KidAvatars {
         val lines = listOfNotNull(
             missed.phone?.takeIf { it.count > 0 }?.let { MissedCallText.describe(context, it) },
             missed.element?.takeIf { it.count > 0 }?.let {
-                MissedCallText.describeIn(context, it, com.kidslauncher.mdm.appdisplay.AppDisplay.shownLabel(context, MessagePackages.ELEMENT_X))
+                MissedCallText.describeIn(context, it, AppDisplay.shownLabel(context, MessagePackages.ELEMENT_X))
             },
         )
         return lines.takeIf { it.isNotEmpty() }?.joinToString("\n")
