@@ -159,7 +159,7 @@
                     <span class="row-label">{{ self.t("passkeys.add.open") }}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
-                <form method="post" action="/account/passkeys#add-passkey" class="edit-body" data-passkey-add data-w-failed="{{ self.t("passkeys.add.failed") }}" data-w-exists="{{ self.t("passkeys.add.exists") }}">
+                <form method="post" action="/account/passkeys#add-passkey" class="edit-body" data-passkey-add data-reauth-route="/account/passkeys/options" data-w-failed="{{ self.t("passkeys.add.failed") }}" data-w-exists="{{ self.t("passkeys.add.exists") }}">
                     <label class="field-label" for="passkey_name">{{ self.t("passkeys.add.name") }}</label>
                     <input type="text" id="passkey_name" name="name" value="{{ passkey_name }}" maxlength="32" autocomplete="off"{% if let Some(why) = self.error_for("passkey_name") %} aria-invalid="true" aria-describedby="passkey_name-error" autofocus>
                     <p class="field-error" id="passkey_name-error">{{ why }}</p>{% else %} aria-describedby="passkey_name-hint">
@@ -226,7 +226,8 @@
             <details class="confirm cell" id="reset-{{ p.id }}"{% if self.parent_reset_error(p.id).is_some() %} open{% endif %}>
                 <summary class="row">{% if p.waiting %}{{ self.t("account.parents.new_otp_open") }}{% else %}{{ self.t("account.parents.reset_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body">
-                    {% if p.waiting %}<p>{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>{% endif %}
+                    {#- Design 74 §6.3: the passkeys go with every Reset, a waiting row's too (qa-passkeys-1 B-L4). -#}
+                    <p>{% if p.waiting %}{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}{% else %}{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}{% endif %}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
                     {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="reset_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>
@@ -239,7 +240,7 @@
             <details class="confirm cell" id="remove-{{ p.id }}"{% if self.remove_error(p.id).is_some() %} open{% endif %}>
                 <summary class="row">{% if p.waiting %}{{ self.t("account.parents.withdraw_open") }}{% else %}{{ self.t("account.parents.remove_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
-                    {% if p.waiting %}<p>{{ self.tp("account.parents.withdraw_confirm", [("name", p.name.as_str()), ("username", p.username.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.remove_confirm", [("name", p.name.as_str())]) }}</p>{% endif %}
+                    <p>{% if p.waiting %}{{ self.tp("account.parents.withdraw_confirm", [("name", p.name.as_str()), ("username", p.username.as_str())]) }}{% else %}{{ self.tp("account.parents.remove_confirm", [("name", p.name.as_str())]) }}{% endif %}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
                     {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="remove_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>

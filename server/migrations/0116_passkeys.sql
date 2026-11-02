@@ -18,3 +18,4 @@ CREATE TABLE admin_passkeys (
 );
 CREATE INDEX admin_passkeys_admin ON admin_passkeys(admin_id);
 ALTER TABLE admin_users ADD COLUMN webauthn_user_id BLOB;
+CREATE UNIQUE INDEX admin_users_webauthn_user_id ON admin_users(webauthn_user_id);

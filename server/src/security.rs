@@ -584,27 +584,60 @@ pub async fn is_ip_banned(db: &sqlx::SqlitePool, ip: &str) -> bool {
     .unwrap_or(false)
 }
 
-/// The security events that count toward an address's ban: a wrong password or code, a refused
-/// passkey sign-in, and each signed-out passkey options call (design 74 D1.4: `passkey_started`,
-/// taken back when its sign-in succeeds - so the challenge store can't be flooded).
-pub const BAN_COUNTED: &str =
-    "('login_failed', 'totp_failed', 'passkey_refused', 'passkey_cloned', 'passkey_started')";
+/// The security events that count toward an address's ban as failures: a wrong password or code,
+/// a refused passkey sign-in.
+pub const BAN_FAILURES: &str =
+    "('login_failed', 'totp_failed', 'passkey_refused', 'passkey_cloned')";
 
-/// Counts recent failed attempts from this IP and bans it if over threshold.
+/// Counts recent failed attempts from this IP and bans it if over threshold. A passkey sign-in
+/// started and not ended (`passkey_started`, design 74 D1.4: one per signed-out session's options,
+/// taken back when its ceremony ends) counts too, so the challenge store can't be flooded - and the
+/// ban's words say how many of each (qa-passkeys-1 B-M3: never "16 failed sign-ins" for page loads).
 /// Call after recording a failed-login-type security event.
 pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
-    let recent_failures: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM security_events \
-         WHERE ip_address = ? AND event_type IN {BAN_COUNTED} \
+    let (failures, started): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT COALESCE(SUM(event_type IN {BAN_FAILURES}), 0), \
+                COALESCE(SUM(event_type = 'passkey_started'), 0) \
+         FROM security_events \
+         WHERE ip_address = ? AND (event_type IN {BAN_FAILURES} OR event_type = 'passkey_started') \
          AND created_at > datetime('now', ?)"
     ))
     .bind(ip)
     .bind(format!("-{IP_FAILURE_WINDOW_MINUTES} minutes"))
     .fetch_one(db)
     .await
-    .unwrap_or(0);
+    .unwrap_or((0, 0));
 
-    if recent_failures >= MAX_FAILED_PER_IP {
+    if failures + started >= MAX_FAILED_PER_IP {
+        let (count, started_text, minutes) = (
+            failures.to_string(),
+            started.to_string(),
+            IP_FAILURE_WINDOW_MINUTES.to_string(),
+        );
+        let (reason, line) = if started == 0 {
+            (
+                Detail::words(
+                    "security.detail.ban.failed_logins",
+                    &[("count", &count), ("minutes", &minutes)],
+                ),
+                Detail::words("security.detail.ip_banned", &[("count", &count)]),
+            )
+        } else {
+            (
+                Detail::words(
+                    "security.detail.ban.failed_and_started",
+                    &[
+                        ("count", &count),
+                        ("started", &started_text),
+                        ("minutes", &minutes),
+                    ],
+                ),
+                Detail::words(
+                    "security.detail.ip_banned_started",
+                    &[("count", &count), ("started", &started_text)],
+                ),
+            )
+        };
         sqlx::query(
             "INSERT INTO banned_ips (ip_address, banned_until, reason) VALUES (?, datetime('now', ?), ?) \
              ON CONFLICT(ip_address) DO UPDATE SET banned_until = excluded.banned_until, reason = excluded.reason",
@@ -613,32 +646,12 @@ pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
         .bind(format!("+{IP_BAN_HOURS} hours"))
         // The reason as words (design 70 §4): a sentence's JSON, worded when Blocked Addresses is
         // read; a reason from before is prose, shown as stored.
-        .bind(
-            Detail::words(
-                "security.detail.ban.failed_logins",
-                &[
-                    ("count", &recent_failures.to_string()),
-                    ("minutes", &IP_FAILURE_WINDOW_MINUTES.to_string()),
-                ],
-            )
-            .columns()
-            .1,
-        )
+        .bind(reason.columns().1)
         .execute(db)
         .await
         .ok();
 
-        record_security_event(
-            db,
-            "ip_banned",
-            None,
-            Some(ip),
-            Some(Detail::words(
-                "security.detail.ip_banned",
-                &[("count", &recent_failures.to_string())],
-            )),
-        )
-        .await;
+        record_security_event(db, "ip_banned", None, Some(ip), Some(line)).await;
     }
 }
 

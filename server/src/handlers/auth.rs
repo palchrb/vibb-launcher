@@ -86,6 +86,9 @@ pub async fn login(
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
     let here = ceremony.rp_id.is_some();
+    // The sign-in page's passkey options call stops counting: this attempt counts on its own
+    // (design 74, qa-passkeys-1 B-M3).
+    crate::passkeys::end_sign_in_attempt(&state.db, &session).await;
 
     // Earlier attempts count before this one runs, also those whose client hung up mid-verify
     // (their row stays: QA 22 M1).
@@ -182,7 +185,11 @@ pub async fn login(
         return render_login(Some(locked_message(minutes)), lang, here).into_response();
     }
 
-    session.cycle_id().await.ok();
+    // A new id or no sign-in (qa-passkeys-1 A-N3: never the id the browser came with).
+    if let Err(err) = session.cycle_id().await {
+        tracing::error!(%err, "couldn't cycle the session id at sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if admin.totp_enabled {
         // Password is correct, but 2FA is enrolled - hold the login in a "pending" state
         // (deliberately NOT "admin_id") until a fresh TOTP code also passes, so every login
@@ -389,7 +396,10 @@ pub async fn verify_2fa(
     )
     .await;
 
-    session.cycle_id().await.ok();
+    if let Err(err) = session.cycle_id().await {
+        tracing::error!(%err, "couldn't cycle the session id at sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     session.remove::<i64>(admin_auth::PENDING_ID_KEY).await.ok();
     session.remove::<u64>(admin_auth::PENDING_AT_KEY).await.ok();
     session.insert("admin_id", admin.id).await.ok();

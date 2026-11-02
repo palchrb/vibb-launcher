@@ -563,6 +563,12 @@ async fn main() {
 }
 
 /// `kid_phone_server <command>`; the exit code.
+/// The shell's way back for an account (`admin_auth::reset_2fa`): `reset-2fa`, or `reset-sign-in`,
+/// the clearer name of the same command now that a sign-in can be a passkey (design 74 D2.4).
+fn is_reset_command(command: &str) -> bool {
+    matches!(command, "reset-2fa" | "reset-sign-in")
+}
+
 async fn run_command(command: &str, args: &[String]) -> i32 {
     match (command, args) {
         ("healthcheck", []) => {
@@ -589,8 +595,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                 }
             }
         }
-        // `reset-sign-in` is the clearer name of the same way back (design 74 D2.4).
-        ("reset-2fa" | "reset-sign-in", [username]) => {
+        (command, [username]) if is_reset_command(command) => {
             let _ = rustls::crypto::ring::default_provider().install_default();
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
@@ -818,9 +823,11 @@ pub fn build_admin_router(
         )
         // Design 74 D1.4: a passkey sign-in - a `login` challenge for this session (counted in the
         // per-IP ban, a banned key gets 429), then the assertion, both factors at once.
+        // A POST (qa-passkeys-1 B-M2): it writes a counted row, so csrf_guard must see it.
         .route(
             "/auth/passkey/options",
-            get(handlers::passkeys::login_options),
+            post(handlers::passkeys::login_options)
+                .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route(
             "/auth/passkey",

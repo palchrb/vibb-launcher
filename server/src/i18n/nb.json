@@ -1869,5 +1869,8 @@
   "security.detail.passkey_failed": "Passkeyen beviste ikke at det er deg",
   "security.detail.login.passkey": "passkey · {name}",
   "events.passkey_added.inbox.title": "{name} la til en passkey «{passkey}»",
-  "events.passkey_added.push.title": "{name}: ny passkey «{passkey}»"
+  "events.passkey_added.push.title": "{name}: ny passkey «{passkey}»",
+  "security.detail.ban.failed_and_started": "{count} mislykkede innlogginger og {started} påbegynte passkeyinnlogginger på {minutes} minutter",
+  "security.detail.ip_banned_started": "{count} mislykkede forsøk og {started} påbegynte passkeyinnlogginger",
+  "security.event.passkey_change_refused": "Passkeyendring avvist"
 }

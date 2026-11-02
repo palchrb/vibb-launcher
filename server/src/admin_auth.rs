@@ -480,6 +480,21 @@ pub async fn reset_after_login(db: &sqlx::SqlitePool, admin_id: i64) {
     .ok();
 }
 
+/// After a passkey sign-in (design 74 D1.5): the re-auth forms' count starts over; the TOTP
+/// failures, a running lock and its doubling stay while any lock was taken (they guard the TOTP
+/// step, which a passkey doesn't take - qa-passkeys-1 B-L1), else the failure count starts over.
+pub async fn reset_after_passkey(db: &sqlx::SqlitePool, admin_id: i64) {
+    sqlx::query(
+        "UPDATE admin_users SET reauth_wrong = 0, failed_login_attempts = CASE \
+           WHEN lock_count > 0 OR locked_until > datetime('now') THEN failed_login_attempts ELSE 0 END \
+         WHERE id = ?",
+    )
+    .bind(admin_id)
+    .execute(db)
+    .await
+    .ok();
+}
+
 /// Minutes left on the account's lock, if it is locked.
 pub async fn lock_minutes_left(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
     sqlx::query_scalar::<_, Option<i64>>(

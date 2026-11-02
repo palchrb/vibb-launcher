@@ -89,7 +89,7 @@ test("a registration and an assertion as the server reads them", () => {
 
 test("a form's route is its action's path; fields are urlencoded", () => {
     const win = { URL, location: { href: "https://handy.example.com/account" } };
-    const form = { getAttribute: () => "/account/parents/3/reset#parents" };
+    const form = { getAttribute: (n) => (n === "action" ? "/account/parents/3/reset#parents" : null) };
     assert.strictEqual(passkey.routeOf(win, form), "/account/parents/3/reset");
     assert.strictEqual(passkey.encode({ route: "/a b", x: null }), "route=%2Fa%20b&x=");
 });
@@ -235,4 +235,131 @@ test("a re-auth fills assertion, empties the password and sends the form", async
     assert.strictEqual(JSON.parse(assertion.value).id, "AQI");
     assert.strictEqual(fetched[0][0], "/account/passkeys/reauth-options");
     assert.strictEqual(fetched[0][1].body, "route=%2Faccount%2Freset-2fa");
+});
+
+test("Add Passkey's re-auth is bound to its options call (qa-passkeys-1 B-M1)", () => {
+    const win = { URL, location: { href: "https://handy.example.com/account" } };
+    const attrs = { action: "/account/passkeys#add-passkey", "data-reauth-route": "/account/passkeys/options" };
+    const form = { getAttribute: (n) => (n in attrs ? attrs[n] : null) };
+    assert.strictEqual(passkey.routeOf(win, form), "/account/passkeys/options");
+});
+
+/** The add form with its fields; `answers` is what fetch answers per URL, `created` what create() gives. */
+function addPage(answers, create) {
+    const fields = {
+        name: { value: "MacBook" },
+        current_password: { value: "pw", required: true },
+        assertion: { value: "" },
+        credential: { value: "" },
+    };
+    const errors = { name: element(), password: element() };
+    let submitted = 0;
+    const form = element({ action: "/account/passkeys#add-passkey", "data-passkey-add": "", "data-w-failed": "failed", "data-w-exists": "exists" });
+    form.querySelector = (s) => {
+        const m = /name="(\w+)"/.exec(s);
+        if (m) return fields[m[1]] || (s.indexOf("current_password") >= 0 ? fields.current_password : null);
+        const e = /data-passkey-field-error="(\w+)"/.exec(s);
+        return e ? errors[e[1]] : null;
+    };
+    form.submit = () => { submitted++; };
+    const fetched = [];
+    const win = fakePage({
+        isSecureContext: true,
+        PublicKeyCredential: function () {},
+        Promise,
+        URL,
+        location: { href: "https://handy.example.com/account", assign: (to) => fetched.push(["assign", to]) },
+        navigator: { credentials: { create, get: () => Promise.resolve(null) } },
+        fetch: (url, init) => {
+            fetched.push([url, init]);
+            const a = answers[url];
+            return Promise.resolve({ ok: a.ok !== false, status: 200, redirected: !!a.redirected, headers: { get: () => (a.html ? "text/html" : "application/json") }, json: () => (a.html ? Promise.reject(new Error("html")) : Promise.resolve(a)) });
+        },
+    }, { "[data-passkey-add]": [form] });
+    return { win, form, fields, errors, fetched, submitted: () => submitted };
+}
+
+const CREATION = {
+    challenge: "AQID",
+    rp: { id: "handy.example.com", name: "Vibb" },
+    user: { id: "CQk", name: "mamma", displayName: "Mamma" },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+    excludeCredentials: [],
+};
+const REGISTRATION = {
+    id: "AQI",
+    rawId: bytes(1, 2),
+    type: "public-key",
+    response: { clientDataJSON: bytes(7), attestationObject: bytes(8), getTransports: () => ["internal"] },
+};
+
+test("the add flow: options behind the password, create, the credential posted", async () => {
+    let created = null;
+    const page = addPage({ "/account/passkeys/options": CREATION }, (o) => { created = o; return Promise.resolve(REGISTRATION); });
+    passkey.install(page.win);
+    let prevented = false;
+    page.form.listeners.submit({ preventDefault: () => { prevented = true; } });
+    await flush();
+    await flush();
+    assert.ok(prevented);
+    assert.strictEqual(page.fetched[0][1].body, "name=MacBook&current_password=pw&assertion=");
+    assert.strictEqual(page.fields.current_password.value, "", "the password is sent once");
+    assert.deepStrictEqual(new Uint8Array(created.publicKey.user.id), new Uint8Array([9, 9]));
+    assert.strictEqual(page.submitted(), 1);
+    assert.strictEqual(JSON.parse(page.fields.credential.value).response.attestationObject, "CA");
+});
+
+test("a device that has a passkey already says so; a signed-out session goes to sign in", async () => {
+    const page = addPage({ "/account/passkeys/options": CREATION }, () => Promise.reject({ name: "InvalidStateError" }));
+    passkey.install(page.win);
+    page.form.listeners.submit({ preventDefault: () => {} });
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(page.errors.password.textContent, "exists");
+    assert.strictEqual(page.submitted(), 0);
+    const out = addPage({ "/account/passkeys/options": { html: true, redirected: true } }, () => Promise.resolve(REGISTRATION));
+    passkey.install(out.win);
+    out.form.listeners.submit({ preventDefault: () => {} });
+    await flush();
+    await flush();
+    assert.deepStrictEqual(out.fetched[out.fetched.length - 1], ["assign", "/login"]);
+});
+
+test("the button aborts the autofill's get and asks with the same challenge", async () => {
+    const field = { value: "" };
+    const button = element();
+    const form = element({ "data-w-failed": "failed" });
+    form.querySelector = (s) => (s === "[data-passkey-login]" ? button : s === "input[name=\"assertion\"]" ? field : null);
+    let submitted = 0;
+    form.submit = () => { submitted++; };
+    const calls = [];
+    const aborted = [];
+    const { win, fetched } = browser({ "#passkey-sign-in": [form] }, ASSERTION, {
+        "/auth/passkey/options": { challenge: "AQID", allowCredentials: [] },
+    });
+    win.PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(true);
+    win.AbortController = function () {
+        const signal = { aborted: false };
+        this.signal = signal;
+        this.abort = () => { signal.aborted = true; aborted.push(true); };
+    };
+    win.navigator.credentials.get = (o) => {
+        calls.push(o);
+        if (o.mediation === "conditional") return new Promise(() => {});
+        return Promise.resolve(ASSERTION);
+    };
+    passkey.install(win);
+    await flush();
+    await flush();
+    assert.strictEqual(calls[0].mediation, "conditional");
+    button.listeners.click();
+    await flush();
+    await flush();
+    assert.deepStrictEqual(aborted, [true]);
+    assert.strictEqual(calls[1].mediation, undefined);
+    assert.deepStrictEqual(new Uint8Array(calls[1].publicKey.challenge), new Uint8Array([1, 2, 3]));
+    assert.strictEqual(fetched.filter((f) => f[0] === "/auth/passkey/options").length, 1);
+    assert.strictEqual(fetched[0][1].method, "POST");
+    assert.strictEqual(submitted, 1);
 });

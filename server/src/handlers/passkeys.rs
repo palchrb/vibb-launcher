@@ -2,10 +2,10 @@
 //! `crate::passkeys`). `static/passkey.js` drives them; without JS (or without passkeys in the
 //! browser, D4.4) nothing here is reached and the password stays the way in.
 //!
-//! - `GET /auth/passkey/options` (signed out, behind the admin gate and the per-IP ban): a `login`
-//!   challenge for this session, `allowCredentials: []` (D1.4). Each call is a `passkey_started`
-//!   row that counts in the ban (taken back by its sign-in), so the store can't be flooded; a
-//!   banned key gets 429.
+//! - `POST /auth/passkey/options` (signed out, through `csrf_guard`, behind the admin gate and the
+//!   per-IP ban): a `login` challenge for this session, `allowCredentials: []` (D1.4). A session's
+//!   first call is a `passkey_started` row that counts in the ban until its ceremony ends; later
+//!   calls get its live challenge back. A banned key gets 429.
 //! - `POST /auth/passkey` (form `assertion`, 4 KiB): the sign-in, both factors (D1.5) - the same
 //!   completion as `verify_2fa`, no TOTP page. A refusal is one red line and counts in the ban.
 //! - `POST /account/passkeys/reauth-options` (form `route`): a `reauth` challenge bound to the
@@ -38,8 +38,6 @@ use crate::webauthn::{Refused, Registration};
 /// A signed-out session made for a passkey sign-in lives this long (its challenge is 5 minutes);
 /// the sign-in gives it the usual lifetime.
 const PRE_SIGN_IN_MINUTES: i64 = 10;
-/// The session's marker that it was made for a passkey sign-in.
-const PRE_SIGN_IN_KEY: &str = "passkey_sign_in";
 
 fn json(status: StatusCode, body: serde_json::Value) -> Response {
     (
@@ -68,7 +66,12 @@ fn signed_out_json() -> Response {
 // ---------------------------------------------------------------------------------------------
 // Sign-in
 
-/// `GET /auth/passkey/options` (D1.4).
+/// `POST /auth/passkey/options` (D1.4): a POST, so `csrf_guard` refuses a cross-site call - it
+/// writes a counted row (qa-passkeys-1 B-M2). A session counts once: it gets its live challenge
+/// again (a reload, the conditional get and the button share one), and its row is taken back by
+/// whatever ends the ceremony - a passkey sign-in (which counts its own refusal) or a password
+/// sign-in's POST (B-M3, `passkeys::end_sign_in_attempt`). An abandoned one counts in the ban's
+/// window: that, the per-client cap and the sign-in pool's own room keep the store from flooding.
 pub async fn login_options(
     State(state): State<AppState>,
     lang: Lang,
@@ -91,7 +94,18 @@ pub async fn login_options(
             None,
         );
     };
-    // Counted before anything is issued (and taken back by the sign-in it starts).
+    // Loads the record first: a cookie whose session is gone gets a new id (qa-passkeys-1 B-N6).
+    let fresh = session.is_empty().await || session.id().is_none();
+    if !fresh
+        && let Some(session_id) = passkeys::session_id(&session)
+        && let Some(challenge) = state.passkeys.challenges.live_sign_in(&session_id, &rp_id)
+    {
+        return json(
+            StatusCode::OK,
+            passkeys::request_options(&challenge, &rp_id, &[]),
+        );
+    }
+    // Counted before anything is issued.
     let attempt: Option<i64> = sqlx::query_scalar(
         "INSERT INTO security_events (event_type, ip_address) VALUES ('passkey_started', ?) \
          RETURNING id",
@@ -100,16 +114,21 @@ pub async fn login_options(
     .fetch_one(&state.db)
     .await
     .ok();
+    if let Some(attempt) = attempt {
+        session
+            .insert(passkeys::PRE_SIGN_IN_KEY, attempt)
+            .await
+            .ok();
+    }
     // The challenge is bound to this session: a browser without one gets a short-lived one.
     if session.id().is_none() {
-        session.insert(PRE_SIGN_IN_KEY, true).await.ok();
         session.set_expiry(Some(tower_sessions::Expiry::OnInactivity(
             tower_sessions::cookie::time::Duration::minutes(PRE_SIGN_IN_MINUTES),
         )));
-        if let Err(err) = session.save().await {
-            tracing::error!(%err, "couldn't save the session for a passkey sign-in");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+    }
+    if let Err(err) = session.save().await {
+        tracing::error!(%err, "couldn't save the session for a passkey sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let Some(session_id) = passkeys::session_id(&session) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -121,16 +140,13 @@ pub async fn login_options(
         rp_id: rp_id.clone(),
         route: passkeys::SIGN_IN_ROUTE.to_string(),
     };
-    let taken = Taken {
-        label: None,
-        attempt,
-    };
-    let Some(challenge) = state.passkeys.challenges.issue(bound, taken) else {
-        return json_refused(
-            StatusCode::SERVICE_UNAVAILABLE,
-            t(lang, "passkeys.sign_in.failed"),
-            None,
-        );
+    // The sign-in pool makes room for it (its oldest go): never refused.
+    let Some(challenge) = state
+        .passkeys
+        .challenges
+        .issue(bound, &ip, Taken::default())
+    else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     json(
         StatusCode::OK,
@@ -153,6 +169,8 @@ pub async fn login(
     Form(form): Form<SignInForm>,
 ) -> Response {
     let ip = ceremony.client_key.clone();
+    // The options' count ends here whatever comes: a refusal counts on its own (B-M3).
+    passkeys::end_sign_in_attempt(&state.db, &session).await;
     security::check_and_ban_ip_if_needed(&state.db, &ip).await;
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -194,20 +212,19 @@ pub async fn login(
         }
     };
     let admin = signed_in.admin;
-    if let Some(attempt) = signed_in.taken.attempt {
-        sqlx::query("DELETE FROM security_events WHERE id = ? AND event_type = 'passkey_started'")
-            .bind(attempt)
-            .execute(&state.db)
-            .await
-            .ok();
+    // A fresh session id first (qa-passkeys-1 A-N3): on a store error nothing is signed in.
+    if let Err(err) = session.cycle_id().await {
+        tracing::error!(%err, "couldn't cycle the session id at a passkey sign-in");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    // The same completion as `verify_2fa`: the counters start over, the sign-in is logged, the
-    // session id is cycled and the session stores the account, its epoch and the sign-in's time.
-    // Wrong two-factor codes since the last complete sign-in are told as after `verify_2fa`: whoever typed them
-    // knew the password, and this sign-in resets their count.
+    // The same completion as `verify_2fa`: the sign-in is logged and the session stores the
+    // account, its epoch and the sign-in's time. Wrong two-factor codes since the last complete
+    // sign-in are told as after `verify_2fa` (whoever typed them knew the password); a running
+    // TOTP lock and its doubling stay (qa-passkeys-1 B-L1: they guard the TOTP step, which this
+    // sign-in didn't take).
     let warning =
         admin_auth::login_warning(&state.db, &admin.username, admin.failed_login_attempts).await;
-    admin_auth::reset_after_login(&state.db, admin.id).await;
+    admin_auth::reset_after_passkey(&state.db, admin.id).await;
     security::record_security_event(
         &state.db,
         "login_success",
@@ -219,8 +236,6 @@ pub async fn login(
         )),
     )
     .await;
-    session.cycle_id().await.ok();
-    session.remove::<bool>(PRE_SIGN_IN_KEY).await.ok();
     session.remove::<i64>(admin_auth::PENDING_ID_KEY).await.ok();
     session.remove::<u64>(admin_auth::PENDING_AT_KEY).await.ok();
     session.set_expiry(Some(tower_sessions::Expiry::OnInactivity(
@@ -299,7 +314,12 @@ pub async fn reauth_options(
         rp_id: rp_id.clone(),
         route: form.route,
     };
-    let Some(challenge) = state.passkeys.challenges.issue(bound, Taken::default()) else {
+    let Some(challenge) =
+        state
+            .passkeys
+            .challenges
+            .issue(bound, &ceremony.client_key, Taken::default())
+    else {
         return json_refused(
             StatusCode::SERVICE_UNAVAILABLE,
             t(lang, "passkeys.reauth.failed"),
@@ -330,8 +350,9 @@ pub(crate) fn wrong_words(
     t(lang, key).to_string()
 }
 
-/// A wrong password at a passkey's add or removal in the log (`passkey_refused`, what it was for); a
-/// passkey that didn't prove the parent was logged by `admin_auth::reauth` already.
+/// A wrong password at a passkey's add or removal in the log: `passkey_change_refused` (what it was
+/// for, "wrong current password"; qa-passkeys-1 B-L5 - no passkey was tried); a passkey that didn't
+/// prove the parent was logged `passkey_refused` by `admin_auth::reauth` already.
 async fn log_wrong(
     state: &AppState,
     admin: &crate::models::AdminUser,
@@ -343,7 +364,7 @@ async fn log_wrong(
     }
     security::record_security_event(
         &state.db,
-        "passkey_refused",
+        "passkey_change_refused",
         Some(&admin.username),
         None,
         Some(security::Detail::words(what, &[]).and(proof.refused_detail(), &[])),
@@ -447,11 +468,12 @@ pub async fn add_options(
         rp_id: rp_id.clone(),
         route: passkeys::REGISTER_ROUTE.to_string(),
     };
-    let taken = Taken {
-        label: Some(name),
-        attempt: None,
-    };
-    let Some(challenge) = state.passkeys.challenges.issue(bound, taken) else {
+    let taken = Taken { label: Some(name) };
+    let Some(challenge) = state
+        .passkeys
+        .challenges
+        .issue(bound, &ceremony.client_key, taken)
+    else {
         return json_refused(
             StatusCode::SERVICE_UNAVAILABLE,
             t(lang, "passkeys.add.failed"),

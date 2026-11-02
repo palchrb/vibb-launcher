@@ -28,8 +28,14 @@ use crate::webauthn::{self, Asserted, Assertion, NewCredential, PasskeyConfig, R
 
 /// Passkeys per parent (D1.1).
 pub const MAX_PASSKEYS: i64 = 10;
-/// Live challenges at most (D1.7).
-pub const MAX_CHALLENGES: usize = 1000;
+/// Live sign-in (`login`) challenges at most: signed-out clients can make them, so when the pool
+/// is full the oldest one goes (qa-passkeys-1 A-M2) - they can never refuse anyone else's.
+pub const MAX_SIGN_IN: usize = 500;
+/// Live signed-in challenges (re-auth, add) at most: a separate pool, so signed-out traffic can
+/// never refuse them; only valid sessions fill it, [PER_SESSION] each.
+pub const MAX_SIGNED_IN: usize = 500;
+/// Live sign-in challenges per client (`net::limit_key`): a fourth drops that client's oldest.
+pub const SIGN_IN_PER_CLIENT: usize = 3;
 /// Live challenges per session: a session asking for more drops its oldest, so one signed-in
 /// browser can't fill the store.
 pub const PER_SESSION: usize = 8;
@@ -40,6 +46,23 @@ pub const TIMEOUT_MS: u64 = 300_000;
 pub const SIGN_IN_ROUTE: &str = "/auth/passkey";
 /// The route a registration's credential is posted to.
 pub const REGISTER_ROUTE: &str = "/account/passkeys";
+
+/// The pre-session's counted `passkey_started` row (its id): taken back when the ceremony ends.
+pub const PRE_SIGN_IN_KEY: &str = "passkey_sign_in";
+
+/// Ends a signed-out session's passkey count (qa-passkeys-1 B-M3): its `passkey_started` row goes,
+/// at a passkey sign-in's POST (whose refusal counts on its own) and at a password sign-in's - so
+/// opening the sign-in page costs nothing once the parent does sign in, and a wrong password
+/// costs what it cost before passkeys.
+pub async fn end_sign_in_attempt(db: &sqlx::SqlitePool, session: &tower_sessions::Session) {
+    if let Ok(Some(id)) = session.remove::<i64>(PRE_SIGN_IN_KEY).await {
+        sqlx::query("DELETE FROM security_events WHERE id = ? AND event_type = 'passkey_started'")
+            .bind(id)
+            .execute(db)
+            .await
+            .ok();
+    }
+}
 
 /// What a challenge is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +87,8 @@ struct Entry {
     bound: Bound,
     made: Instant,
     taken: Taken,
+    /// The client's limit key, for [SIGN_IN_PER_CLIENT].
+    client: String,
 }
 
 /// What the issuer kept with a challenge.
@@ -71,37 +96,52 @@ struct Entry {
 pub struct Taken {
     /// A registration's name (D1.2: given with the options, never sent again).
     pub label: Option<String>,
-    /// A sign-in's `passkey_started` row (the per-IP count), taken back on success.
-    pub attempt: Option<i64>,
 }
 
-/// The in-memory challenge store (D1.7).
+/// The in-memory challenge store (D1.7): two pools, sign-in and signed-in.
 #[derive(Default)]
 pub struct Challenges {
     map: Mutex<HashMap<[u8; 32], Entry>>,
 }
 
+/// Removes the oldest entries `which` picks until fewer than `cap` are left.
+fn make_room(map: &mut HashMap<[u8; 32], Entry>, cap: usize, which: impl Fn(&Entry) -> bool) {
+    let mut picked: Vec<([u8; 32], Instant)> = map
+        .iter()
+        .filter(|(_, entry)| which(entry))
+        .map(|(key, entry)| (*key, entry.made))
+        .collect();
+    if picked.len() < cap {
+        return;
+    }
+    picked.sort_by_key(|(_, made)| *made);
+    for (key, _) in &picked[..=picked.len() - cap] {
+        map.remove(key);
+    }
+}
+
 impl Challenges {
-    /// A new challenge bound to `bound`, or `None` when the store is full.
-    pub fn issue(&self, bound: Bound, taken: Taken) -> Option<[u8; 32]> {
-        self.issue_at(Instant::now(), bound, taken)
+    /// A new challenge bound to `bound` for `client`; `None` only when the signed-in pool is full
+    /// (a sign-in's pool drops its oldest instead).
+    pub fn issue(&self, bound: Bound, client: &str, taken: Taken) -> Option<[u8; 32]> {
+        self.issue_at(Instant::now(), bound, client, taken)
     }
 
-    fn issue_at(&self, now: Instant, bound: Bound, taken: Taken) -> Option<[u8; 32]> {
+    fn issue_at(&self, now: Instant, bound: Bound, client: &str, taken: Taken) -> Option<[u8; 32]> {
         let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         map.retain(|_, entry| now.saturating_duration_since(entry.made) < CHALLENGE_TTL);
-        let mut mine: Vec<([u8; 32], Instant)> = map
-            .iter()
-            .filter(|(_, entry)| entry.bound.session == bound.session)
-            .map(|(key, entry)| (*key, entry.made))
-            .collect();
-        if mine.len() >= PER_SESSION {
-            mine.sort_by_key(|(_, made)| *made);
-            for (key, _) in &mine[..=mine.len() - PER_SESSION] {
-                map.remove(key);
-            }
-        }
-        if map.len() >= MAX_CHALLENGES {
+        let sign_in = bound.kind == Kind::Login;
+        let same_pool = |entry: &Entry| (entry.bound.kind == Kind::Login) == sign_in;
+        // A session at its cap swaps its oldest for this one: the pool's count doesn't grow.
+        make_room(&mut map, PER_SESSION, |entry| {
+            same_pool(entry) && entry.bound.session == bound.session
+        });
+        if sign_in {
+            make_room(&mut map, SIGN_IN_PER_CLIENT, |entry| {
+                same_pool(entry) && entry.client == client
+            });
+            make_room(&mut map, MAX_SIGN_IN, same_pool);
+        } else if map.values().filter(|entry| same_pool(entry)).count() >= MAX_SIGNED_IN {
             return None;
         }
         let mut challenge = [0u8; 32];
@@ -112,9 +152,26 @@ impl Challenges {
                 bound,
                 made: now,
                 taken,
+                client: client.to_string(),
             },
         );
         Some(challenge)
+    }
+
+    /// The session's live sign-in challenge at `rp_id`, when it has one: a reload of the sign-in
+    /// page, or the button after the conditional get, gets it again (qa-passkeys-1 B-M3).
+    pub fn live_sign_in(&self, session: &str, rp_id: &str) -> Option<[u8; 32]> {
+        let now = Instant::now();
+        let map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        map.iter()
+            .filter(|(_, entry)| {
+                entry.bound.kind == Kind::Login
+                    && entry.bound.session == session
+                    && entry.bound.rp_id == rp_id
+                    && now.saturating_duration_since(entry.made) < CHALLENGE_TTL
+            })
+            .max_by_key(|(_, entry)| entry.made)
+            .map(|(key, _)| *key)
     }
 
     /// Removes `challenge` and answers what was kept with it only when it is fresh and bound to
@@ -470,7 +527,7 @@ pub async fn delete_all<'e, E: sqlx::SqliteExecutor<'e>>(
         .rows_affected())
 }
 
-/// Stores a verified use (D5.3): the counter only forward (a 0 keeps what is stored), BS as it
+/// Stores a verified use (D5.3): the counter only forward (0 stays 0 only while it was 0), BS as it
 /// is now, when and from where. `false` when a parallel use stored as high a counter first - the
 /// same refusal as a copy, so two replays of one assertion can't both pass.
 pub async fn store_use(
@@ -482,9 +539,9 @@ pub async fn store_use(
     let count = i64::from(asserted.sign_count);
     let done = sqlx::query(
         "UPDATE admin_passkeys SET \
-         sign_count = CASE WHEN ?1 = 0 THEN sign_count ELSE ?1 END, backed_up = ?2, \
+         sign_count = ?1, backed_up = ?2, \
          last_used_at = datetime('now'), last_used_from = NULLIF(?3, '') \
-         WHERE id = ?4 AND (?1 = 0 OR sign_count < ?1)",
+         WHERE id = ?4 AND ((sign_count = 0 AND ?1 = 0) OR sign_count < ?1)",
     )
     .bind(count)
     .bind(asserted.backed_up)
@@ -539,7 +596,6 @@ async fn finish(
 pub struct SignedIn {
     pub admin: AdminUser,
     pub passkey: PasskeyRow,
-    pub taken: Taken,
 }
 
 /// A refusal, with the account when one was found (for the log line's name).
@@ -572,7 +628,7 @@ pub async fn sign_in(
         rp_id: rp_id.clone(),
         route: SIGN_IN_ROUTE.to_string(),
     };
-    let taken = state
+    state
         .passkeys
         .challenges
         .take(&assertion.client.challenge, &bound)
@@ -594,17 +650,25 @@ pub async fn sign_in(
     let (admin, row) = match (admin, row) {
         (Some(admin), Some(row)) if row.admin_id == admin.id => (admin, row),
         (None, Some(row)) => {
-            // The credential is known but its account isn't ready (removed, invited, reset).
-            let username: Option<String> =
-                sqlx::query_scalar("SELECT username FROM admin_users WHERE id = ?")
-                    .bind(row.admin_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten();
+            // The credential is known: its account isn't ready (removed, invited, reset), or the
+            // handle names no ready account while the credential's account is (qa-passkeys-1 B-N4).
+            let owner: Option<(String, bool)> = sqlx::query_as(concat!(
+                "SELECT username, ",
+                crate::ready_sql!(),
+                " FROM admin_users WHERE id = ?"
+            ))
+            .bind(row.admin_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+            let why = match owner {
+                Some((_, true)) => Refused::UserHandle,
+                _ => Refused::NotReady,
+            };
             return Err(NotSignedIn {
-                why: Refused::NotReady,
-                username,
+                why,
+                username: owner.map(|(username, _)| username),
             });
         }
         (Some(admin), Some(_)) => {
@@ -625,7 +689,6 @@ pub async fn sign_in(
     Ok(SignedIn {
         admin,
         passkey: row,
-        taken,
     })
 }
 
@@ -843,7 +906,7 @@ mod tests {
     #[test]
     fn a_challenge_is_taken_once_and_only_as_bound() {
         let store = Challenges::default();
-        let c = store.issue(bound("s1"), Taken::default()).unwrap();
+        let c = store.issue(bound("s1"), "c", Taken::default()).unwrap();
         assert!(store.take(&c, &bound("s1")).is_some());
         assert!(store.take(&c, &bound("s1")).is_none(), "used twice");
         let wrong = [
@@ -873,7 +936,7 @@ mod tests {
             },
         ];
         for other in wrong {
-            let c = store.issue(bound("s1"), Taken::default()).unwrap();
+            let c = store.issue(bound("s1"), "c", Taken::default()).unwrap();
             assert!(store.take(&c, &other).is_none(), "{other:?}");
             assert!(
                 store.take(&c, &bound("s1")).is_none(),
@@ -881,7 +944,9 @@ mod tests {
             );
         }
         let now = Instant::now();
-        let c = store.issue_at(now, bound("s1"), Taken::default()).unwrap();
+        let c = store
+            .issue_at(now, bound("s1"), "c", Taken::default())
+            .unwrap();
         assert!(
             store
                 .take_at(now + CHALLENGE_TTL, &c, &bound("s1"))
@@ -890,36 +955,97 @@ mod tests {
         assert!(store.take(&[1, 2, 3], &bound("s1")).is_none());
     }
 
+    fn sign_in(session: &str) -> Bound {
+        Bound {
+            kind: Kind::Login,
+            admin: None,
+            route: SIGN_IN_ROUTE.to_string(),
+            ..bound(session)
+        }
+    }
+
     #[test]
     fn the_store_keeps_its_bounds() {
         let store = Challenges::default();
         // One session keeps its newest few.
-        let first = store.issue(bound("one"), Taken::default()).unwrap();
+        let first = store.issue(bound("one"), "c", Taken::default()).unwrap();
         for _ in 0..PER_SESSION {
-            store.issue(bound("one"), Taken::default()).unwrap();
+            store.issue(bound("one"), "c", Taken::default()).unwrap();
         }
         assert_eq!(store.len(), PER_SESSION);
         assert!(
             store.take(&first, &bound("one")).is_none(),
             "the oldest went"
         );
-        // Full: refused, until the old ones are swept.
-        let now = Instant::now();
-        for i in 0..MAX_CHALLENGES {
-            store.issue_at(now, bound(&format!("s{i}")), Taken::default());
+        // A client's sign-ins: its newest three.
+        let store = Challenges::default();
+        let oldest = store.issue(sign_in("a"), "c", Taken::default()).unwrap();
+        for s in ["b", "c", "d"] {
+            store.issue(sign_in(s), "c", Taken::default()).unwrap();
         }
-        assert_eq!(store.len(), MAX_CHALLENGES);
+        assert_eq!(store.len(), SIGN_IN_PER_CLIENT);
+        assert!(store.take(&oldest, &sign_in("a")).is_none());
+        assert!(store.live_sign_in("d", "handy.example.com").is_some());
+        assert!(store.live_sign_in("d", "example.com").is_none());
+    }
+
+    /// qa-passkeys-1 A-M2: signed-out clients fill only the sign-in pool, which drops its oldest;
+    /// a signed-in ceremony is still issued, and a signed-in pool that is full refuses.
+    #[test]
+    fn sign_ins_never_crowd_out_signed_in_ceremonies() {
+        let store = Challenges::default();
+        let now = Instant::now();
+        let first = store
+            .issue_at(now, sign_in("s0"), "k0", Taken::default())
+            .unwrap();
+        for i in 1..MAX_SIGN_IN + 50 {
+            let at = now + Duration::from_millis(i as u64);
+            assert!(
+                store
+                    .issue_at(
+                        at,
+                        sign_in(&format!("s{i}")),
+                        &format!("k{i}"),
+                        Taken::default()
+                    )
+                    .is_some()
+            );
+        }
+        assert_eq!(store.len(), MAX_SIGN_IN);
+        assert!(
+            store.take(&first, &sign_in("s0")).is_none(),
+            "the oldest went"
+        );
+        let later = now + Duration::from_secs(1);
+        for i in 0..MAX_SIGNED_IN {
+            assert!(
+                store
+                    .issue_at(later, bound(&format!("p{i}")), "k", Taken::default())
+                    .is_some(),
+                "{i}"
+            );
+        }
         assert!(
             store
-                .issue_at(now, bound("late"), Taken::default())
+                .issue_at(later, bound("full"), "k", Taken::default())
                 .is_none()
         );
+        // The sign-in pool still issues while the signed-in one is full, and that one frees with time.
         assert!(
             store
-                .issue_at(now + CHALLENGE_TTL, bound("late"), Taken::default())
+                .issue_at(later, sign_in("x"), "kx", Taken::default())
                 .is_some()
         );
-        assert_eq!(store.len(), 1);
+        assert!(
+            store
+                .issue_at(
+                    now + CHALLENGE_TTL + Duration::from_secs(2),
+                    bound("full"),
+                    "k",
+                    Taken::default()
+                )
+                .is_some()
+        );
     }
 
     #[test]

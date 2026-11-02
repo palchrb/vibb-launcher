@@ -2,8 +2,9 @@
 //! `attestation: "none"` - no attestation statement is read or trusted.
 //!
 //! - [Cbor]: a bounded CBOR reader (definite lengths only, at most [MAX_DEPTH] containers deep,
-//!   unsigned and negative integers, byte and text strings, arrays and maps; any other major type,
-//!   an indefinite length, a duplicate map key or trailing bytes is a refusal).
+//!   unsigned and negative integers, byte and text strings, arrays and maps - and `true`/`false`
+//!   inside the dropped extensions map only; any other major type, an indefinite length, a
+//!   duplicate map key or trailing bytes is a refusal).
 //! - [CoseKey]: ES256 (P-256, the point checked on the curve), EdDSA (Ed25519) and RS256 (a
 //!   2048-8192 bit modulus), its `alg`, `kty` and `crv` agreeing; stored as the COSE bytes.
 //! - [Registration::verify] and [Assertion::verify]: the client data's `type`, its origin (exactly
@@ -29,7 +30,11 @@ pub const ALGS: [i64; 3] = [ES256, EDDSA, RS256];
 pub const MAX_DEPTH: usize = 4;
 /// A credential id's length in bytes (D5.1).
 pub const MIN_CREDENTIAL_ID: usize = 16;
-pub const MAX_CREDENTIAL_ID: usize = 1023;
+/// At most 512 at registration (WebAuthn allows 1023): with an RSA-4096 signature an assertion
+/// then always fits `/auth/passkey`'s 4 KiB body (qa-passkeys-1 B-L7).
+pub const MAX_CREDENTIAL_ID: usize = 512;
+/// An RS256 key's modulus in bits (ring verifies 2048-8192; 4096 keeps the assertion in 4 KiB).
+pub const RSA_BITS: std::ops::RangeInclusive<usize> = 2048..=4096;
 
 /// authenticatorData's flags.
 pub const FLAG_UP: u8 = 0x01;
@@ -68,7 +73,7 @@ pub enum Refused {
     Extensions,
     /// authData's credential id differs from `rawId`.
     CredentialId,
-    /// The credential id's length is outside 16-1023 bytes.
+    /// The credential id's length is outside 16-512 bytes.
     CredentialIdLength,
     Cbor,
     /// The COSE key doesn't read, or its alg, kty and crv disagree.
@@ -134,6 +139,8 @@ pub enum Cbor {
     Text(String),
     Array(Vec<Cbor>),
     Map(Vec<(Cbor, Cbor)>),
+    /// `true`/`false`: only inside an extensions map (`hmac-secret: true`; qa-passkeys-1 A-N1).
+    Bool(bool),
 }
 
 impl Cbor {
@@ -171,7 +178,14 @@ fn by_text<'a>(map: &'a [(Cbor, Cbor)], key: &str) -> Option<&'a Cbor> {
 /// Reads one item from the start of `input`: the item and the bytes it took.
 pub fn cbor_item(input: &[u8]) -> Result<(Cbor, usize), Refused> {
     let mut pos = 0;
-    let item = read_item(input, &mut pos, 0)?;
+    let item = read_item(input, &mut pos, 0, false)?;
+    Ok((item, pos))
+}
+
+/// [cbor_item] that also reads `true` and `false`: the extensions map, dropped unread.
+fn cbor_item_with_bools(input: &[u8]) -> Result<(Cbor, usize), Refused> {
+    let mut pos = 0;
+    let item = read_item(input, &mut pos, 0, true)?;
     Ok((item, pos))
 }
 
@@ -212,7 +226,7 @@ fn bounded(n: u64, input: &[u8], pos: usize, per_item: usize) -> Result<usize, R
     Ok(n)
 }
 
-fn read_item(input: &[u8], pos: &mut usize, depth: usize) -> Result<Cbor, Refused> {
+fn read_item(input: &[u8], pos: &mut usize, depth: usize, bools: bool) -> Result<Cbor, Refused> {
     let head = *input.get(*pos).ok_or(Refused::Cbor)?;
     *pos += 1;
     let (major, info) = (head >> 5, head & 0x1f);
@@ -240,15 +254,15 @@ fn read_item(input: &[u8], pos: &mut usize, depth: usize) -> Result<Cbor, Refuse
                 let count = bounded(argument, input, *pos, 1)?;
                 let mut items = Vec::with_capacity(count);
                 for _ in 0..count {
-                    items.push(read_item(input, pos, depth + 1)?);
+                    items.push(read_item(input, pos, depth + 1, bools)?);
                 }
                 Ok(Cbor::Array(items))
             } else {
                 let count = bounded(argument, input, *pos, 2)?;
                 let mut entries: Vec<(Cbor, Cbor)> = Vec::with_capacity(count);
                 for _ in 0..count {
-                    let key = read_item(input, pos, depth + 1)?;
-                    let value = read_item(input, pos, depth + 1)?;
+                    let key = read_item(input, pos, depth + 1, bools)?;
+                    let value = read_item(input, pos, depth + 1, bools)?;
                     if entries.iter().any(|(k, _)| *k == key) {
                         return Err(Refused::Cbor);
                     }
@@ -257,7 +271,10 @@ fn read_item(input: &[u8], pos: &mut usize, depth: usize) -> Result<Cbor, Refuse
                 Ok(Cbor::Map(entries))
             }
         }
-        // Tags, floats and simple values: nothing WebAuthn sends us needs them.
+        7 if bools && (argument == 20 || argument == 21) && info < 24 => {
+            Ok(Cbor::Bool(argument == 21))
+        }
+        // Tags, floats and other simple values: nothing WebAuthn sends us needs them.
         _ => Err(Refused::Cbor),
     }
 }
@@ -358,7 +375,16 @@ impl CoseKey {
                 let (Some(n), Some(e)) = (n, e) else {
                     return Err(Refused::CoseKey);
                 };
-                if !(2048..=8192).contains(&bit_length(n)) || e.is_empty() || e.len() > 8 {
+                // What ring's RsaPublicKeyComponents takes (qa-passkeys-1 A-L3): no leading zero
+                // byte, an odd exponent of 3 to 2^33-1 - else the key could never sign in.
+                let exponent = e.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b));
+                let ok = n.first().is_some_and(|b| *b != 0)
+                    && RSA_BITS.contains(&bit_length(n))
+                    && e.first().is_some_and(|b| *b != 0)
+                    && e.len() <= 5
+                    && exponent % 2 == 1
+                    && (3..=(1u64 << 33) - 1).contains(&exponent);
+                if !ok {
                     return Err(Refused::Key);
                 }
                 KeyMaterial::Rsa {
@@ -536,7 +562,8 @@ impl AuthData {
             None
         };
         if flags & FLAG_ED != 0 {
-            let (extensions, used) = cbor_item(&raw[pos..]).map_err(|_| Refused::Extensions)?;
+            let (extensions, used) =
+                cbor_item_with_bools(&raw[pos..]).map_err(|_| Refused::Extensions)?;
             if !matches!(extensions, Cbor::Map(_)) {
                 return Err(Refused::Extensions);
             }
@@ -629,7 +656,7 @@ impl Registration {
     }
 
     /// Everything but the challenge (taken before): the type, the origin, the RP ID's hash, the
-    /// flags, the credential id (equal to `rawId`, 16-1023 bytes) and the COSE key.
+    /// flags, the credential id (equal to `rawId`, 16-512 bytes) and the COSE key.
     pub fn verify(&self, rp_id: &str, origins: &[String]) -> Result<NewCredential, Refused> {
         self.client.check("webauthn.create", origins, rp_id)?;
         let Cbor::Map(object) = cbor_exact(&self.attestation_object)? else {
@@ -754,10 +781,9 @@ impl Assertion {
         if !key.verify(&signed, &self.signature) {
             return Err(Refused::Signature);
         }
-        if stored.sign_count != 0
-            && data.sign_count != 0
-            && i64::from(data.sign_count) <= stored.sign_count
-        {
+        // D5.3 (WebAuthn L3 §7.2 step 22, qa-passkeys-1 A-L2): once a counter was stored, every
+        // use must be higher - a 0 after it is a copy's signal too. Two 0s are a synced passkey's.
+        if stored.sign_count != 0 && i64::from(data.sign_count) <= stored.sign_count {
             return Err(Refused::Counter);
         }
         Ok(Asserted {
@@ -893,7 +919,9 @@ fn origin_host(origin: &str, insecure: bool) -> Option<String> {
         Some((host, port)) => (host, Some(port)),
         None => (rest, None),
     };
-    let port_ok = port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p != 0));
+    // A default port is never in a browser's origin (qa-passkeys-1 A-N5): refused, not normalized.
+    let default = if scheme == "https" { 443 } else { 80 };
+    let port_ok = port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p != 0 && p != default));
     let ok = port_ok
         && valid_name(host)
         && match scheme {
@@ -955,7 +983,7 @@ impl PasskeyConfig {
                 if !fits {
                     return Err(format!(
                         "PASSKEY_ORIGINS: {origin:?} is not an https origin (scheme and host, \
-                         lower case, no path) under PASSKEY_RP_ID={rp}"
+                         lower case, no path, no default port) under PASSKEY_RP_ID={rp}"
                     ));
                 }
                 if !origins.iter().any(|o| o == origin) {
@@ -975,21 +1003,35 @@ impl PasskeyConfig {
     /// passkey UI - unless `PASSKEY_ORIGINS` is set: then the proxy's outside name isn't what
     /// reaches the server, and only the allowlist can pass an origin.
     pub fn rp_id_for(&self, host: Option<&str>) -> Option<String> {
-        match (&self.rp_id, host) {
-            (Some(rp), Some(host)) if under(host, rp) => Some(rp.clone()),
-            (Some(rp), _) if !self.origins.is_empty() => Some(rp.clone()),
-            (Some(_), _) => None,
-            (None, host) => host.map(str::to_string),
+        let Some(rp) = &self.rp_id else {
+            return host.map(str::to_string);
+        };
+        match host {
+            Some(host) if host == rp => Some(rp.clone()),
+            // Another name under the RP ID only when PASSKEY_ORIGINS lists it (qa-passkeys-1 A-M1).
+            Some(host) if under(host, rp) => self.lists(host).then(|| rp.clone()),
+            // A proxy's other name (not an IP: no passkey UI there, A-N4).
+            Some(_) if !self.origins.is_empty() => Some(rp.clone()),
+            _ => None,
         }
     }
 
-    /// The origins a ceremony at `host:port` may come from (D4.2): exactly this request's -
-    /// `https://` + the host + its port when not 443 - when the host is under `rp_id`,
-    /// `http://localhost[:port]` only with `INSECURE_COOKIES`, and `PASSKEY_ORIGINS`.
+    /// `PASSKEY_ORIGINS` has an origin at `host`.
+    fn lists(&self, host: &str) -> bool {
+        self.origins
+            .iter()
+            .any(|origin| origin_host(origin, self.insecure_localhost).as_deref() == Some(host))
+    }
+
+    /// The origins a ceremony at `host:port` may come from (D4.2): `https://` + the RP ID itself
+    /// (+ its port when not 443) when the request's host is the RP ID, `http://localhost[:port]`
+    /// only with `INSECURE_COOKIES`, and `PASSKEY_ORIGINS`. Never an origin built from another host
+    /// name (qa-passkeys-1 A-M1): under a shared `PASSKEY_RP_ID` a client that forges `Host` could
+    /// make a sibling subdomain's origin "this request's" - every other name must be listed.
     pub fn origins_for(&self, host: Option<(&str, Option<u16>)>, rp_id: &str) -> Vec<String> {
         let mut origins = Vec::new();
         if let Some((host, port)) = host
-            && under(host, rp_id)
+            && host == rp_id
         {
             origins.push(match port {
                 None | Some(443) => format!("https://{host}"),
@@ -1014,7 +1056,8 @@ impl PasskeyConfig {
     pub fn startup_line(&self) -> String {
         match &self.rp_id {
             Some(rp) if self.origins.is_empty() => format!(
-                "passkeys: RP ID {rp} (PASSKEY_RP_ID) - a host outside it shows no passkey sign-in"
+                "passkeys: RP ID {rp} (PASSKEY_RP_ID), at https://{rp} only - another name under it \
+                 needs PASSKEY_ORIGINS"
             ),
             Some(rp) => format!(
                 "passkeys: RP ID {rp} (PASSKEY_RP_ID), origins {} (PASSKEY_ORIGINS)",
@@ -1081,6 +1124,7 @@ pub mod fake {
                     enc(v, out);
                 }
             }
+            Cbor::Bool(b) => out.push(if *b { 0xf5 } else { 0xf4 }),
         }
     }
 
@@ -1445,6 +1489,14 @@ mod tests {
         ]));
         let auth = fake.auth_data(RP, true, Some(&extensions));
         assert_eq!(register_with(&fake, &auth).unwrap().alg, ES256);
+        // A boolean output (hmac-secret) reads in the extensions map (A-N1), nowhere else.
+        let bools = encoded(&Cbor::Map(vec![(
+            Cbor::Text("hmac-secret".into()),
+            Cbor::Bool(true),
+        )]));
+        let auth = fake.auth_data(RP, true, Some(&bools));
+        assert_eq!(register_with(&fake, &auth).unwrap().alg, ES256);
+        assert_eq!(cbor_exact(&bools), Err(Refused::Cbor));
         // ED set with nothing after the key.
         let mut no_map = fake.auth_data(RP, true, None);
         no_map[32] |= FLAG_ED;
@@ -1586,15 +1638,33 @@ mod tests {
             (int(-2), Cbor::Bytes(vec![1; 31])),
         ]);
         assert_eq!(CoseKey::parse(&ed), Err(Refused::Key));
-        let mut n = vec![0xff; 128];
-        n.insert(0, 0);
-        let rsa = cose(vec![
-            (int(1), int(3)),
-            (int(3), int(RS256)),
-            (int(-1), Cbor::Bytes(n)),
-            (int(-2), Cbor::Bytes(vec![1, 0, 1])),
-        ]);
-        assert_eq!(CoseKey::parse(&rsa), Err(Refused::Key));
+        let rsa = |n: Vec<u8>, e: Vec<u8>| {
+            cose(vec![
+                (int(1), int(3)),
+                (int(3), int(RS256)),
+                (int(-1), Cbor::Bytes(n)),
+                (int(-2), Cbor::Bytes(e)),
+            ])
+        };
+        let e = vec![1, 0, 1];
+        assert!(CoseKey::parse(&rsa(vec![0xc5; 256], e.clone())).is_ok());
+        // 1024 bits; 8192 (past the 4096 that keeps an assertion in 4 KiB); a leading zero byte
+        // (ring refuses it, A-L3); an even exponent, 1, past 2^33-1, a leading zero.
+        for (n, e) in [
+            (vec![0xff; 128], e.clone()),
+            (vec![0xff; 1024], e.clone()),
+            ([vec![0], vec![0xff; 256]].concat(), e.clone()),
+            (vec![0xc5; 256], vec![1, 0, 0]),
+            (vec![0xc5; 256], vec![1]),
+            (vec![0xc5; 256], vec![2, 0, 0, 0, 1]),
+            (vec![0xc5; 256], vec![0, 1, 0, 1]),
+        ] {
+            assert_eq!(
+                CoseKey::parse(&rsa(n, e.clone())),
+                Err(Refused::Key),
+                "{e:?}"
+            );
+        }
         assert_eq!(bit_length(&[0, 0x01, 0]), 9);
     }
 
@@ -1664,9 +1734,10 @@ mod tests {
         assert_eq!(verify_assertion(&json, &stored, 5).unwrap().sign_count, 6);
         assert_eq!(verify_assertion(&json, &stored, 6), Err(Refused::Counter));
         assert_eq!(verify_assertion(&json, &stored, 9), Err(Refused::Counter));
-        // A synced passkey's 0 passes whatever is stored.
+        // A 0 after a stored counter is a copy's signal too (A-L2); two 0s are a synced passkey's.
         fake.counter = 0;
         let json = fake.assert(&CHALLENGE, ORIGIN, RP, false);
+        assert_eq!(verify_assertion(&json, &stored, 5), Err(Refused::Counter));
         assert!(verify_assertion(&json, &stored, 0).is_ok());
     }
 
@@ -1723,24 +1794,51 @@ mod tests {
             insecure.origins_for(Some(("localhost", Some(3100))), "localhost"),
             ["https://localhost:3100", "http://localhost:3100"]
         );
-        // A shared RP ID: a host under it uses it, a host outside gets none; the origin is the host's.
+        // A shared RP ID (A-M1): the RP ID's own host is its origin; another name under it is
+        // offered only when PASSKEY_ORIGINS lists it, and never gets an origin from its Host.
         let shared = PasskeyConfig {
             rp_id: Some("example.com".into()),
             ..PasskeyConfig::default()
         };
         assert_eq!(
-            shared.rp_id_for(Some("handy.example.com")).as_deref(),
+            shared.rp_id_for(Some("example.com")).as_deref(),
             Some("example.com")
         );
+        assert_eq!(shared.rp_id_for(Some("handy.example.com")), None);
         assert_eq!(shared.rp_id_for(Some("pi.tail1.ts.net")), None);
         assert_eq!(
-            shared.origins_for(Some(("handy.example.com", None)), "example.com"),
-            ["https://handy.example.com"]
+            shared.origins_for(Some(("example.com", None)), "example.com"),
+            ["https://example.com"]
+        );
+        assert!(
+            shared
+                .origins_for(Some(("wiki.example.com", None)), "example.com")
+                .is_empty()
         );
         assert!(
             shared
                 .origins_for(Some(("evil.test", None)), "example.com")
                 .is_empty()
+        );
+        let listed = PasskeyConfig {
+            rp_id: Some("example.com".into()),
+            origins: vec!["https://handy.example.com".into()],
+            ..PasskeyConfig::default()
+        };
+        assert_eq!(
+            listed.rp_id_for(Some("handy.example.com")).as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(listed.rp_id_for(Some("wiki.example.com")), None);
+        // A proxy's other name gets the RP ID (only the list passes); an IP or no host none (A-N4).
+        assert_eq!(
+            listed.rp_id_for(Some("backend.internal.lan")).as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(listed.rp_id_for(None), None);
+        assert_eq!(
+            listed.origins_for(Some(("wiki.example.com", None)), "example.com"),
+            ["https://handy.example.com"]
         );
     }
 
@@ -1790,6 +1888,7 @@ mod tests {
         );
         for bad in [
             "https://evil.test",
+            "https://handy.example.com:443",
             "http://handy.example.com",
             "https://handy.example.com/path",
             "https://Handy.example.com",

@@ -1869,5 +1869,8 @@
   "security.detail.passkey_failed": "The passkey didn't prove it's you",
   "security.detail.login.passkey": "passkey · {name}",
   "events.passkey_added.inbox.title": "{name} added a passkey “{passkey}”",
-  "events.passkey_added.push.title": "{name}: new passkey “{passkey}”"
+  "events.passkey_added.push.title": "{name}: new passkey “{passkey}”",
+  "security.detail.ban.failed_and_started": "{count} failed login attempts and {started} passkey sign-ins started within {minutes} minutes",
+  "security.detail.ip_banned_started": "{count} failed attempts and {started} passkey sign-ins started",
+  "security.event.passkey_change_refused": "Passkey change refused"
 }
