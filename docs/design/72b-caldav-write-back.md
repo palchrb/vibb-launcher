@@ -2,7 +2,7 @@
 
 Status: design note, architect 2026-11-02, on `main` at dac8a52a. Revised the same day after the design QA
 (`qa-72b-design.md`: 2 High, 8 Medium, 13 Low, 8 Nits). Every High and Medium is taken, and so are the Lows and Nits
-(§14 maps each one). The user answered the five questions the same day (§12), and the decisions follow those answers.
+(§14 maps each one). The revision check of 89aca7a6 (2 Medium, 5 Low, 4 Nits) is folded in too. The user answered the five questions the same day (§12), and the decisions follow those answers.
 This is design 72 step 3 (§7 sketched it as "not planned"). PLAN entry: "CalDAV write-back - the kid's own Dagen
 events to the parent-marked CalDAV calendar". It touches both directories and adds one shared contract file.
 
@@ -59,7 +59,7 @@ Each decision gives **the recommendation**, then the alternatives in one line.
 the kid saves in Kalender ──► Min kalender (unchanged; offline fine)
         │ sync (soon after the save)
         ▼
-POST /api/devices/calendar/kid-events  {calendar, rev, from, cut, cut_from, applied[], events[]}
+POST /api/devices/calendar/kid-events  {calendar, rev, from, cut, cut_from, cut_uids[], ended[], applied[], events[]}
         │ answer: {accepted, pending, back[]}     ◄── the parent's edits and deletes, until acknowledged
         ▼
 server: diff against kid_caldav_events ─► PUT/DELETE <collection>/<uid>.ics (If-None-Match / If-Match)
@@ -107,9 +107,18 @@ The status report goes at every sync, stays small, and holds "never an event" (d
 **What is never in the set:**
 - **Past events**, at the pick or later. An event that ends while it is written stays on the calendar as it is (D2.6).
 
-**The limits:** at most **300 rows and 512 KB**. Past either, the farthest from now are left out. The set then says
-`cut` (how many) and `cut_from` (the start of the first left out). These are a safety limit only, never a reason to
-delete (D2.6), and the PWA shows them (D5.2).
+**The limits:** at most **300 rows and 512 KB**. Past either, the farthest from now are left out. The set then says:
+- `cut` - how many rows were left out;
+- `cut_from` - the **earliest start among all rows left out**, whatever dropped them (the row count or the bytes);
+- `cut_uids` - the uids left out, at most 2000. Past 2000 the list is dropped, `cut_uids` is `null`, and the server
+  deletes nothing for that set (R-L3).
+
+These limits are a safety net only, never a reason to delete (D2.6). The PWA shows them (D5.2).
+
+**`ended`** - the uids only, no text: this phone's rows in "Min kalender" (picked by the same test) that ended within
+the last 60 days, at most 300. The server never deletes a uid in `ended` (D2.6). This covers the kid who moves "Kino"
+from tomorrow to yesterday: the event leaves the set because it has ended, and it must not be deleted from the family
+calendar (R-M1). No text leaves the phone, so the privacy line doesn't change.
 
 **Fields** - each value raw from the provider, through D2.7's canonical function only:
 - `uid`;
@@ -197,6 +206,11 @@ kid changed the same event meanwhile, the kid's change is dropped.
 The parent manages the family's calendar, and the server and the parent own the rules. A kid's event the parent moved
 must not move back silently.
 
+"The calendar wins" applies only when the calendar actually changed against the last version the server knows: the
+**base** (`remote_hash`, D4.4). With no base, the calendar's version wins outright. That happens on a re-pick after an
+unmark, which deletes the rows. So a re-pick reverts any edits the kid made while unmarked to the calendar's version.
+This is an accepted consequence (R-L1).
+
 *Alt (not chosen): the phone wins; or one-way.*
 
 ### D2.2 - Detection on the server, by content
@@ -233,9 +247,15 @@ everywhere (QA L6).
 300). The next POST sends them as `applied`, and the phone clears them on a 200. A row the provider refused is not
 acknowledged and is applied again from the next answer.
 
-**On the server:**
+**On the server** (R-M2):
+- **The id** = 16 hex of SHA-256 over the uid + the handed-back version's hash. A delete's version hash is the fixed
+  string `delete`. A second parent edit is therefore a new id, which replaces `back_id`/`back_json`.
 - A uid with a waiting hand-back is **never written**.
-- On the acknowledgement, `sent_hash := remote_hash`. A kid's change after that is an ordinary write.
+- An `applied` id clears the wait **only when it equals the uid's current `back_id`**. An unknown or stale id is
+  ignored, and the current hand-back is sent again.
+- On a match, `sent_hash :=` the hash of **the version that was acknowledged** - never whatever `remote_hash` has
+  moved to since. An acknowledged `delete` drops the row.
+- A kid's change after that is an ordinary write.
 - A hand-back that isn't acknowledged is re-sent in every 200 until it is. There is **no expiry**. The policy's `back`
   makes the phone post at each sync meanwhile, and a phone offline for a fortnight gets it when it is back.
 
@@ -276,14 +296,21 @@ Three rules, all on D2.7's hashes:
 
 **The past is left alone** (the user's answer 2):
 - An event whose end has passed leaves the set and is **never deleted on the calendar**.
-- Its row becomes `past`: no write, no hand-back.
+- A row becomes `past` when its uid is missing from the set and either its stored end is at or before
+  max(`from`, the server's now), or the uid is in `ended` (RN1, R-M1). From then on: no write, no hand-back, and no
+  new version stored. The row keeps its hashes (D4.1).
 - The row is dropped 60 days after the event's end.
-- If the kid later moves it into the future, it is in the set again and D4.4's GET-first rule writes it safely.
+- If the kid later moves it into the future, it is in the set again and D4.4's base rule writes it.
 
 **A delete has to pass every test.** A uid missing from a set is deleted on the calendar only when its stored row:
 - is `ok` (not `released`, not `past`, no hand-back waiting);
+- is **not in `ended`**;
 - ends after max(`from`, the server's now) (QA M3);
-- and, when the set is `cut`, starts before `cut_from`.
+- and, when the set is `cut`, has a stored start before `cut_from` and is not in `cut_uids`. If `cut_uids` is
+  `null`, nothing is deleted.
+
+The stored `start_at` and `end_at` are updated from every remote read - a hand-back, a GET, the fetch (RN2) - so a
+parent's move is judged by where the event is now.
 
 A `from` more than a day from the server's clock freezes every delete for that set ("Telefonens klokke går feil"),
 while its writes go through.
@@ -323,8 +350,9 @@ One function, the same on both sides, pinned row by row in the contract (§8).
 **The hash** = 16 hex of SHA-256 over the canonical JSON `{summary, location, description, start, end, all_day}`,
 taken **after** the cuts. The zone and the bytes never count: iCloud rewrites both.
 
-The form still cuts what the kid types to 100 (`KID_EVENT_TITLE_MAX`). Its save of a longer title the parent wrote is
-the kid's edit, and it is written as such.
+The form still cuts what the kid types to 100 (`KID_EVENT_TITLE_MAX`) and runs `TitleRules.clean`, but only on a
+field the kid actually changed. A title or place the kid left alone is saved exactly as it was (R-L5). So a kid who
+only moves the time never cuts or folds a parent's longer title.
 
 ## 4. Read back without duplicates
 
@@ -343,6 +371,8 @@ Before `feedPlan`, `CalendarFeeds` drops from every feed document each series wh
 - the UIDs of the live rows in "Min kalender"; plus
 - **every UID posted since the server last showed `accepted` = the last posted rev with `pending` = 0**. The phone
   keeps this union in prefs and resets it to the current set's UIDs when a 200 or a policy shows both.
+- `pending` counts a write **until the fetch after it has stored the new set** (R-L2). So the union is never reset
+  while the feed may still hold a deleted event.
 
 This way an event the kid just deleted is not shown back from a feed that still holds it - in the same sync (the
 policy's `pending` was read before this POST) or while a DELETE is stuck (`write_refused`, `login_refused`).
@@ -375,7 +405,9 @@ idx_device_calendar_feeds_kid ON device_calendar_feeds(device_id) WHERE kid_writ
 **`device_kid_events`** - `device_id` is the PK.
 - `source_id`, with FK `(device_id, source_id)` → `device_calendar_feeds` ON DELETE CASCADE. An unticked calendar, a
   removed account or a deleted phone takes it all.
-- `rev`; `events_json` (the last set, replaced at each POST); `from_at`, `cut`, `cut_from`.
+- `rev`; `events_json` (the last set, replaced at each POST); `from_at`, `cut`, `cut_from`, `cut_uids`, `ended`
+  (uids only).
+- `rejected` - the code of the last set refused with a 400, and when (R-L4).
 - `received_at`, `written_at`, `posted_at` (the 10 s gap).
 - `error` (a code) and `error_at`.
 - `held_since` and `held_kind` (`kid`/`calendar`, D2.6).
@@ -390,8 +422,11 @@ idx_device_calendar_feeds_kid ON device_calendar_feeds(device_id) WHERE kid_writ
 - `back_id` and `back_json` (the hand-back while it waits).
 - `released_absent_since`.
 
+`past` and `released` rows keep their hashes (`sent_hash`, `remote_hash`) and no text. A hash is not text, so this is
+within D4.8. These hashes are the base that D4.4 needs when such an event comes back (R-L1).
+
 **`kid_caldav_tags`** - `tag` is the PK; plus `device_id` (cascade). It holds each phone tag and the device that
-first posted it (D4.9).
+first posted it (D4.9). It holds no text, and it is deleted with the device by cascade (RN4).
 
 Unmarking deletes the phone's rows in the two event tables in the same transaction that clears the flag. The tags
 stay.
@@ -419,7 +454,7 @@ account's stop is design 72 QA M5's, unchanged.
 fetch runs its pending writes first.
 
 **The nudge** (`command_notify`) goes only when one of these happens (QA L5):
-- `pending` reaches 0, after that fetch;
+- `pending` reaches 0. A write counts in `pending` until the fetch after it has stored the new set (R-L2);
 - `back` goes above 0;
 - a new stop.
 
@@ -459,11 +494,20 @@ It writes a `VCALENDAR` (`VERSION:2.0`, `PRODID:-//Vibb//Vibb One//EN`) with one
 
 **201/204** → `ok`. `remote_hash` = the hash written, and the ETag is taken per D2.5.2.
 
-**412, or a 404, on a create (`If-None-Match: *`).** The resource exists: a re-pick, a lost answer, or a sibling's UID
-claimed by a tampered phone. The server `GET`s it, parses it, then:
-- the hash equals the phone's version → store its ETag, `ok`;
+**412, or a 404, on a create (`If-None-Match: *`).** The resource exists: a re-pick, a lost answer, a `past` event
+moved back into the future, or a sibling's UID claimed by a tampered phone. The server `GET`s it, parses it, and
+compares the GET's hash in this order:
+- equal to the phone's version → store its ETag, `ok`;
+- equal to `attempted_hash` → our own create whose answer was lost (R-L1a). Store the ETag, then do an ordinary update
+  with `If-Match` if the phone's version has moved on since;
+- equal to the stored base (`remote_hash` of a `past` or earlier row) → the parent changed nothing (R-L1b). PUT the
+  phone's version with the GET's ETag;
 - recurring, or with `ATTENDEE`/`ORGANIZER` → released (D2.4);
-- otherwise → a hand-back upsert of the calendar's version (the calendar wins), `remote_hash` = what was read.
+- otherwise - it differs from the base, or there is no base → a hand-back upsert of the calendar's version (the
+  calendar wins), `remote_hash` = what was read.
+
+A create answered 404 whose GET also answers 404 (the collection gone, a server quirk) is that event's `status`
+error, not an adopt (RN3).
 
 **412 on an update or delete.** The server `GET`s the href:
 - a 404 → the parent deleted it. An update becomes a hand-back delete; a delete is done. (With `If-Match`, a missing
@@ -514,8 +558,13 @@ For a source some phone writes to, the REPORT's resources are also read one by o
 An unchanged ctag skips all this, as the fetch does. The feed set is built exactly as today.
 
 The REPORT spans −60 d .. +401 d. A parent's edit to a kid event further ahead (the set has no forward horizon, D1.3)
-is seen at the kid's next change of it (a 412) or when it comes within 400 days. That is acceptable: such events are
-rare. A per-resource PROPFIND for each far event at every fetch would cost more than it gives.
+is seen at the kid's next change of it (a 412) or when it comes within 400 days. A parent's delete of such an event
+reaches the phone once it comes within the window: the REPORT misses it, the confirming GET answers 404, and a
+hand-back delete goes. That is slow but loses nothing.
+
+This is acceptable: such events are rare. A per-resource PROPFIND for each far event at every fetch would cost more
+than it gives. `calendar.md` gets one line on it: a parent's change to an event more than about 13 months ahead
+reaches the phone late.
 
 ### D4.7 - Only writable calendars are offered (QA L3)
 
@@ -606,6 +655,12 @@ In orange:
 | The account's stop | in its own words, with a link to the account's page ("Passordet ble avvist - test på nytt") | likewise |
 | The clock (D2.6) | "Telefonens klokke går feil - ingen sletting" | "The phone's clock is wrong - nothing deleted" |
 | `refused` | "2 avtaler ble ikke tatt imot" | "2 events weren't accepted" |
+| A rejected set (R-L4) | "Telefonens avtaler ble ikke tatt imot - {why}" | "The phone's events weren't accepted - {why}" |
+
+**{why} for a rejected set.** It names the code of the last 400.
+- For a tag pinned by another device - typically the same phone enrolled again as a new device while its old row
+  still exists - the line names the other phone and adds: "Slett den gamle telefonen {name} under Enheter" / "Delete
+  the old phone {name} under Devices". Deleting it frees the tag by cascade.
 
 **The holds** (D2.6), in orange:
 - "Telefonen sendte 14 færre avtaler - de slettes i kalenderen i morgen kl. 15:12", with the button **"Legg dem
@@ -677,7 +732,8 @@ keeps `applied` and the posted union in prefs.
 **`CalendarStore` stays the provider's only writer.** It gains `kidEventsBlocking` (the read) and
 `applyKidBackBlocking` (the guarded writes, each re-checking `ownedByVibb` and the calendar, live rows only).
 `updateKidEventBlocking` now writes `ALL_DAY = 0` and `EVENT_TIMEZONE` explicitly, so a handed-back all-day event can
-be changed by the kid's form (QA L6).
+be changed by the kid's form (QA L6). The form puts a title or place into the update only when the kid changed that
+field (R-L5).
 
 **Other changes:**
 - `MdmApi.kidEvents(body)`.
@@ -703,13 +759,19 @@ in one commit, first.
 - `provider` - the "Min kalender" rows the phone reads, including rows that must be left out: a foreign UID, a row
   outside the pattern, a recurring row, an ended row, a `DELETED=1` row. It also has an own-package row with an older
   tag, a non-ASCII title, and an empty place.
-- `snapshot` - the exact POST body for them, with `from`, `cut` and `applied`. A second variant passes the limit
-  (`cut`, `cut_from`).
+- `snapshot` - the exact POST body for them, with `from`, `cut`, `ended` and `applied`. A second variant passes the
+  limit: `cut`, `cut_from` as the earliest start left out, and `cut_uids`. An ended row of `provider` (ended within
+  60 days) appears in `ended`.
 - `canonical` - input rows with their exact canonical form and hash: a 250-code-point title, a 3000-character
   description with CRLF and a C0 control, double spaces, emoji with ZWJ, a `DURATION`, an all-day row without
   `DTEND`, a floating time with a `tz`.
-- `answers` - `accepted` with an upsert and a delete hand-back, an all-day upsert, an acknowledgement clearing a
-  hand-back, a held set (the old `accepted`), `not_marked`, `limited`, `too_big`, `bad_set`.
+- `answers`:
+  - `accepted` with an upsert and a delete hand-back, and an all-day upsert;
+  - an acknowledgement clearing a hand-back; a stale id that clears nothing and re-sends the current one;
+  - a held set (the old `accepted`);
+  - `not_marked`, `limited`, `too_big`;
+  - `bad_set`, and `tag_pinned`.
+- The `id`s in `answers` follow R-M2's rule: SHA-256 over uid + version hash. Both sides recompute them.
 - `back_provider` - the provider values each hand-back writes.
 
 **The server's test**, `calendar_kid_events::tests::the_contract`:
@@ -799,9 +861,18 @@ of resources with ETags that:
 - H2's: a kid's edit after an acknowledged hand-back is written once and not handed back again; an edit while a
   hand-back waits is not written; a hand-back is re-sent until acknowledged;
 - M1's rewrite switch gives no false edit;
+- R-M2's: two parent edits, then the first acknowledged, gives no write and the second re-sent; an acknowledged
+  delete drops the row;
 - the canonical rows;
-- `cut` and `cut_from` delete nothing past the cut;
-- an ended event is never deleted and becomes `past`;
+- `cut` deletes nothing at or after `cut_from` and nothing in `cut_uids`; a near event moved into the cut region is
+  not deleted; with `cut_uids` `null` nothing is deleted;
+- an ended event is never deleted and becomes `past`; **an event the kid moved into the past (in `ended`) is not
+  deleted and becomes `past`** (R-M1);
+- R-L1's: a lost-answer create followed by a kid's edit is written, not handed back; a `past` event moved back into
+  the future with an unchanged calendar is written, not reverted; a re-pick after an unmark hands back;
+- `pending` stays above 0 until the fetch after the write has stored the set (R-L2);
+- a rejected set and a pinned tag show their status line (R-L4);
+- a 404 create whose GET answers 404 is a `status` error (RN3);
 - a `from` a day off freezes deletes;
 - a malformed row is a 400 for the whole set;
 - the kid's mass delete is held 24 h by time, with "Legg dem tilbake"; the calendar's mass delete is held too;
@@ -830,7 +901,9 @@ of resources with ETags that:
   - a released event is shown, and its document fetched again without `If-None-Match`;
   - a newly skipped event is deleted locally with no GET;
   - DAVx5-era own events are shown.
-- `KidEventTest`: the form's change of an all-day event.
+- `KidEventTest`: the form's change of an all-day event; a time-only change keeps a parent's 150-character title
+  untouched (R-L5).
+- `KidCaldavTest`: `ended` and `cut_uids`; `cut_from` = the earliest start left out when bytes drop a nearer row.
 - `PolicyResponseCompatTest`.
 
 ### Emulator §6z
@@ -887,6 +960,14 @@ Total: server **L**, launcher **M** (the review's sizes, agreed).
 `past` for ended ones.
 
 **QA H2:** `applied` in the POST; no write while a hand-back waits; no expiry. In the contract commit, first.
+
+**The revision check:**
+- R-M1: `ended` - a uid in it is never deleted.
+- R-M2: the hand-back id = SHA-256 over uid + version hash. Only an ack of the current id clears the wait, and it sets
+  `sent_hash` to the acknowledged version.
+- R-L1: the base compare on the create path.
+- R-L2: `pending` counts a write until the fetch after it.
+- R-L3: `cut_uids`.
 
 **QA M1–M8:**
 - M1: ETag **and** hash; a GET with the body after a PUT without an ETag.
@@ -954,6 +1035,24 @@ Total: server **L**, launcher **M** (the review's sizes, agreed).
 | N6 | D1.5 |
 | N7 | D5.4, §9 |
 | N8 | D1.3, D5.2 |
+
+### The revision check (head 89aca7a6)
+
+| Finding | Where it went |
+|---|---|
+| R-M1 | D1.3 (`ended`), D2.6, §8, §10 |
+| R-M2 | D2.3 (the id, the matching ack, `sent_hash` = the acknowledged version, an acked delete drops the row), §8, §10 |
+| R-L1 | D2.1 (a re-pick reverts), D4.1 (hashes kept on `past`/`released`), D4.4 (`attempted_hash` and the base on create) |
+| R-L2 | D3.2, D4.2 |
+| R-L3 | D1.3 (`cut_uids`), D2.6 |
+| R-L4 | D4.1 (`rejected`), D5.2 |
+| R-L5 | D2.7, D6.2, §10 |
+| `cut_from` earliest | D1.3, D2.6 (the stored start) |
+| RN1 | D2.6 |
+| RN2 | D2.6 |
+| RN3 | D4.4 |
+| RN4 | D4.1 |
+| The 400-day window | D4.6 (and a line for `calendar.md`) |
 
 Rejected: none. One finding is narrowed. M3 says the server never deletes while `cut > 0`; instead it deletes
 nothing that starts at or after `cut_from`. A kid's delete of a near event still goes through while far events are
