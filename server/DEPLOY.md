@@ -42,6 +42,8 @@ pages and the phones' API can be exposed differently:
 | `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
 | `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
 | `SESSION_MAX_DAYS` | `90` | How long an admin session lasts after its sign-in, however often it is used (1-3650): the installed PWA signs in again once in that time. |
+| `PASSKEY_RP_ID` | unset | The domain parents' passkeys belong to (server with design 74). Unset: the address the PWA is opened at (an IP address gets no passkeys). **Recommended: the PWA's own name, e.g. `handy.example.com`** - other services on `example.com` then never see the passkey offered, and another address (the tailnet name) signs in with the password. A parent domain (`example.com`) makes one passkey work at every name under it. Checked at start: lower case, a name with a dot (or `localhost`), not an IP, not a public suffix (`com`, `co.uk`, `ts.net`...) - a bad value refuses to start and says why. Changing it later makes the passkeys made before stop working (each keeps the domain it was made for). |
+| `PASSKEY_ORIGINS` | unset | Only when your proxy hands the server another host name than the one in the browser (and doesn't pass `X-Forwarded-Host` from a `TRUSTED_PROXIES` address): the full origins the PWA is opened at, comma-separated, e.g. `https://handy.example.com,https://handy.example.com:8443`. Each must be `https://` and under `PASSKEY_RP_ID`, which it needs. |
 
 The admin gate is on by default: a proxy rule meant for the phones, or a typo in a Caddyfile, can't put the PWA on the
 internet - it answers 403 to anything that isn't loopback or tailnet. `/healthz` (says `ok`) always answers.
@@ -236,6 +238,14 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   then a new authenticator. Replacing the password matters: the lock you are recovering from means someone else
   knows the old one. It also brings back an account another parent removed, with its username, and clears an
   expired one-time password.
+- **Passkeys** (server with design 74): Settings › Account & Parents › Passkeys › "Add Passkey…" (your password
+  first) makes a passkey on the phone or computer you are on - Face ID, a fingerprint, the phone's code or a security
+  key with a PIN. The sign-in page then has "Sign In with Passkey": one tap, no 2FA code (the passkey is both
+  factors). Every parent gets a notification when a passkey is added. Passkeys need https and a host name (not
+  `http://` on the LAN, not an IP address); see `PASSKEY_RP_ID` above for which addresses they work at. Removing one
+  signs out your other sessions. A Reset by another parent, a Remove and `reset-2fa` delete the account's passkeys.
+- `reset-sign-in <user>` is the same command as `reset-2fa <user>` (a clearer name now that a sign-in can be a
+  passkey).
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
   iPhone and sign in again), and enrollment codes that were open stop working: make a new one (the phone's Advanced › New Setup Code).
 

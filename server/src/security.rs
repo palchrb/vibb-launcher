@@ -584,14 +584,20 @@ pub async fn is_ip_banned(db: &sqlx::SqlitePool, ip: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// The security events that count toward an address's ban: a wrong password or code, a refused
+/// passkey sign-in, and each signed-out passkey options call (design 74 D1.4: `passkey_started`,
+/// taken back when its sign-in succeeds - so the challenge store can't be flooded).
+pub const BAN_COUNTED: &str =
+    "('login_failed', 'totp_failed', 'passkey_refused', 'passkey_cloned', 'passkey_started')";
+
 /// Counts recent failed attempts from this IP and bans it if over threshold.
 /// Call after recording a failed-login-type security event.
 pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
-    let recent_failures: i64 = sqlx::query_scalar(
+    let recent_failures: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM security_events \
-         WHERE ip_address = ? AND event_type IN ('login_failed', 'totp_failed') \
-         AND created_at > datetime('now', ?)",
-    )
+         WHERE ip_address = ? AND event_type IN {BAN_COUNTED} \
+         AND created_at > datetime('now', ?)"
+    ))
     .bind(ip)
     .bind(format!("-{IP_FAILURE_WINDOW_MINUTES} minutes"))
     .fetch_one(db)
@@ -1110,9 +1116,7 @@ pub async fn session_check(
     let cookie = has_session_cookie(&headers, state.session_cookie);
     let site = header_for_log(&headers, "sec-fetch-site");
     let (status, reason) = match admin_or_why(&state, &session, &headers).await {
-        Ok(admin) if !admin.must_change_password && admin.totp_enabled => {
-            (axum::http::StatusCode::NO_CONTENT, "signed in")
-        }
+        Ok(admin) if admin.ready() => (axum::http::StatusCode::NO_CONTENT, "signed in"),
         Ok(_) => (
             axum::http::StatusCode::UNAUTHORIZED,
             "the account's onboarding isn't finished",
@@ -1185,6 +1189,12 @@ pub async fn require_full_auth(
             Redirect::to("/auth/change-password").into_response()
         }
         Ok(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
+        // Design 74 D2.2's one predicate: anything else that isn't ready (a one-time password's state on an account
+        // that looks onboarded - no statement leaves one) is no session.
+        Ok(admin) if !admin.ready() => {
+            session.flush().await.ok();
+            sign_in_redirect(SignInWhy::AccountGone)
+        }
         Ok(mut admin) => {
             if admin.lang.is_none() {
                 admin.lang = store_first_lang(

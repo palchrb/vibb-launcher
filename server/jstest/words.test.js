@@ -29,6 +29,15 @@ const MOVED = {
     // 3b: Apps (install-now.js's sub-lines come worded in its JSON).
     "app-display.js": [],
     "install-now.js": [],
+    // Design 74: DOM exception names, a header and selectors.
+    "passkey.js": [
+        "NotAllowedError",
+        "AbortError",
+        "InvalidStateError",
+        "Content-Type",
+        "input[name=\"current_password\"], input[name=\"password\"]",
+        "input[required], select[required], textarea[required]",
+    ],
 };
 
 /** Every string literal outside comments, in order. */

@@ -946,15 +946,20 @@ struct LockTemplate {
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
+    /// The parent has a passkey for this host: Show Child PIN offers "Confirm with passkey"
+    /// (design 74 D1.6).
+    passkey_reauth: bool,
 }
 crate::i18n::words!(LockTemplate);
 
 /// "Show Child PIN…"'s answer (design 59 §2.2): rendered into the page the POST came from, never
 /// a redirect, so the PIN is in no address, session or log.
 pub(crate) enum Reveal {
-    /// A wrong password; `left` more before the session ends.
+    /// A wrong password (or a passkey that didn't prove the parent, design 74 D1.6); `left` more
+    /// before the session ends.
     Wrong {
         left: i64,
+        passkey: bool,
     },
     Shown(crate::kid_lock::ShownPin),
 }
@@ -986,12 +991,14 @@ impl RevealView {
             error: None,
         };
         match reveal {
-            Reveal::Wrong { left } => {
+            Reveal::Wrong { left, passkey } => {
                 view.error = Some(
                     t(
                         lang,
-                        match left {
-                            1 => "device.lock.wrong_last",
+                        match (left, passkey) {
+                            (1, true) => "passkeys.reauth.failed_last",
+                            (_, true) => "passkeys.reauth.failed",
+                            (1, false) => "device.lock.wrong_last",
                             _ => "device.lock.wrong",
                         },
                     )
@@ -1041,10 +1048,15 @@ pub async fn view_lock(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    ceremony: crate::passkeys::Ceremony,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let notice = query.get("notice").map(String::as_str);
-    render_lock(&state, id, notice, None, lang).await
+    let passkey = crate::passkeys::has_here(&state.db, admin.id, &ceremony).await;
+    render_lock(&state, id, notice, None, passkey, lang).await
 }
 
 /// POST `/devices/{id}/lock`, `action=reveal_kid_pin` (design 59 §2.2, qa-59-design Q59-11): the
@@ -1057,6 +1069,7 @@ pub async fn lock_action(
     lang: Lang,
     Path(id): Path<i64>,
     session: tower_sessions::Session,
+    ceremony: crate::passkeys::Ceremony,
     axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
         crate::security::CurrentAdmin,
     >,
@@ -1070,6 +1083,11 @@ pub async fn lock_action(
         Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     let password = form.get("password").map(String::as_str).unwrap_or_default();
+    let assertion = form
+        .get("assertion")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let proof = crate::admin_auth::Proof::of(password, assertion, &ceremony);
     let log = |event: &'static str| {
         let (db, username) = (state.db.clone(), admin.username.clone());
         async move {
@@ -1083,7 +1101,7 @@ pub async fn lock_action(
             .await;
         }
     };
-    let reveal = match crate::admin_auth::reauth(&state, &session, &admin, password).await {
+    let reveal = match crate::admin_auth::reauth(&state, &session, &admin, proof).await {
         crate::admin_auth::Reauth::Busy => return crate::admin_auth::busy_response(),
         crate::admin_auth::Reauth::SignedOut => {
             log("kid_pin_reveal_refused").await;
@@ -1091,7 +1109,10 @@ pub async fn lock_action(
         }
         crate::admin_auth::Reauth::Wrong { left } => {
             log("kid_pin_reveal_refused").await;
-            Reveal::Wrong { left }
+            Reveal::Wrong {
+                left,
+                passkey: proof.is_passkey(),
+            }
         }
         crate::admin_auth::Reauth::Right => {
             let latest = match load_latest(&state, id).await {
@@ -1116,7 +1137,8 @@ pub async fn lock_action(
             Reveal::Shown(shown)
         }
     };
-    render_lock(&state, id, None, Some(reveal), lang).await
+    let passkey = crate::passkeys::has_here(&state.db, admin.id, &ceremony).await;
+    render_lock(&state, id, None, Some(reveal), passkey, lang).await
 }
 
 /// What the last report says about the lock ([crate::kid_lock::PhoneLock]).
@@ -1173,6 +1195,7 @@ async fn render_lock(
     id: i64,
     notice: Option<&str>,
     reveal: Option<Reveal>,
+    passkey_reauth: bool,
     lang: Lang,
 ) -> Response {
     let device = match load_device(state, id).await {
@@ -1278,6 +1301,7 @@ async fn render_lock(
     };
 
     let page = LockTemplate {
+        passkey_reauth,
         lang,
         title: format!("{} · {}", t(lang, "device.page.lock"), device.name),
         child_warnings,

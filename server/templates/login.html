@@ -12,12 +12,15 @@
     {% if let Some(e) = error %}
     <p class="flash flash-error auth-error" role="alert">{{ e }}</p>
     {% endif %}
+    {%- if passkeys_here %}
+    <p class="flash flash-error auth-error" role="alert" data-passkey-error hidden></p>
+    {%- endif %}
 
     <form method="post" action="/login">
         <div class="group form-group">
             <div class="field">
                 <label class="field-label" for="username">Username</label>
-                <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+                <input type="text" id="username" name="username" autocomplete="{% if passkeys_here %}username webauthn{% else %}username{% endif %}" autocapitalize="none" spellcheck="false" required autofocus>
             </div>
             <div class="field">
                 <label class="field-label" for="password">Password</label>
@@ -26,6 +29,16 @@
         </div>
         <button type="submit" class="button-wide">Sign In</button>
     </form>
+    {%- if passkeys_here %}
+    {#- Design 74 D1.4, §6.4: shown by static/passkey.js whenever the browser can use passkeys (D4.3) - never
+        depending on which hosts have any; a passkey sign-in goes straight in (no two-factor page). -#}
+    <form method="post" action="/auth/passkey" id="passkey-sign-in" data-passkey-ui hidden data-w-failed="{{ self.t("passkeys.sign_in.failed") }}">
+        <input type="hidden" name="assertion" value="">
+        <p class="or-divider">{{ self.t("passkeys.or") }}</p>
+        <button type="button" class="button-outline" data-passkey-login>{% include "partials/key_icon.html" %}{{ self.t("passkeys.sign_in.button") }}</button>
+    </form>
+    <script src="/static/passkey.js?v=1" defer></script>
+    {%- endif %}
 </main>
 </body>
 </html>

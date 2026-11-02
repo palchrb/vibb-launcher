@@ -58,10 +58,14 @@ pub enum Kind {
     /// per phone and version). Told from their parameters ([AppUpdateParams]).
     AppUpdateAvailable,
     AppUpdated,
+    /// Design 74 D1.2: a parent added a passkey (no phone). Pushed to every parent at once - no
+    /// switch - and in each inbox, so a passkey a held session planted is seen. Told from its
+    /// parameters ([PasskeyParams]).
+    PasskeyAdded,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 13] = [
+    pub const ALL: [Kind; 14] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -75,6 +79,7 @@ impl Kind {
         Kind::ExtraTimeRequest,
         Kind::AppUpdateAvailable,
         Kind::AppUpdated,
+        Kind::PasskeyAdded,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -92,6 +97,7 @@ impl Kind {
             Kind::ExtraTimeRequest => "extra_time_request",
             Kind::AppUpdateAvailable => "app_update_available",
             Kind::AppUpdated => "app_updated",
+            Kind::PasskeyAdded => "passkey_added",
         }
     }
 
@@ -129,7 +135,8 @@ impl Kind {
     /// `None` for the emergency call, which is always pushed.
     pub fn switch(self) -> Option<(&'static str, &'static str)> {
         match self {
-            Kind::EmergencyCall => None,
+            // A new way into the account is always told (design 74 D1.2).
+            Kind::EmergencyCall | Kind::PasskeyAdded => None,
             Kind::PinUsed => Some(("push_pin_used", "Parent PIN used")),
             Kind::PinLockout => Some(("push_pin_lockout", "Parent PIN locked")),
             Kind::ForeignAccess => Some(("push_foreign_access", "An app may read the PIN")),
@@ -1552,6 +1559,59 @@ fn app_update_told(
     (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
 }
 
+/// A passkey added (design 74 D1.2): the parent's name and the passkey's as they were, and when.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PasskeyParams {
+    pub parent: String,
+    pub passkey: String,
+    pub at: String,
+}
+
+/// A parent added a passkey: no phone, key = the passkey's row id, target the Parents group
+/// (where another parent can Reset them).
+pub fn passkey_added(id: i64, parent: &str, passkey: &str, at: DateTime<Utc>) -> NewEvent {
+    let params = PasskeyParams {
+        parent: parent.to_string(),
+        passkey: passkey.to_string(),
+        at: instant(at),
+    };
+    NewEvent {
+        device_id: None,
+        kind: Kind::PasskeyAdded,
+        dedup_key: id.to_string(),
+        title: String::new(),
+        summary: String::new(),
+        target: "/account#parents".to_string(),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push: Push::Now,
+    }
+}
+
+/// "Mamma added a passkey “iPhone”" / "14:02"; pushed "Mamma: new passkey “iPhone”".
+fn passkey_told(
+    form: Form,
+    p: &PasskeyParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let key = format!("events.passkey_added.{}.title", form.key());
+    let title = fit_name(&p.parent, TITLE_MAX, |name| {
+        t_params(
+            zone.lang(),
+            &key,
+            &[("name", name), ("passkey", &p.passkey)],
+        )
+    });
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), at)
+}
+
 /// How an event is worded: the inbox's long form (and Activity's), or the push's short one (the
 /// shorter push texts, 2026-10-25: "<name>: <fact>" / the time and at most one number).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1638,6 +1698,9 @@ pub fn told_as(
         Kind::ZoneArrived | Kind::ZoneLeft => params
             .and_then(|p| serde_json::from_str::<ZoneParams>(p).ok())
             .map(|p| zone_told(form, kind, &p, zone, now)),
+        Kind::PasskeyAdded => params
+            .and_then(|p| serde_json::from_str::<PasskeyParams>(p).ok())
+            .map(|p| passkey_told(form, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -2635,6 +2698,13 @@ mod tests {
                 "",
                 "/devices/3/apps",
             ),
+            // Design 74 D1.2: no phone, told from its parameters.
+            (
+                passkey_added(7, "Mamma", "iPhone", two),
+                "Mamma added a passkey “iPhone”",
+                "14:02",
+                "/account#parents",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -3389,6 +3459,7 @@ mod tests {
             ),
             app_update_available(9, "Signal", "v7.2.0@41", Some("7.1.4"), "7.2.0", two),
             app_updated(3, &phone.name, 1, "Vibb One", 360_009, None, "0.36.0", two),
+            passkey_added(7, &phone.name, "Security key", two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

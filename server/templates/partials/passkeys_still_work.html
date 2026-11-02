@@ -1,0 +1,5 @@
+{#- Design 74 D1.3b, §6.2: under the password change and Reset Two-Factor Login - neither ends a passkey, so the
+    parent sees which still work, each a link to its row. -#}
+{%- if !passkeys.is_empty() %}
+<p class="field-hint passkeys-still">{{ self.t("passkeys.still_work.lead") }} {% for k in passkeys %}<a href="#passkey-{{ k.id }}">{{ k.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %} – {{ self.t("passkeys.still_work.tail") }}</p>
+{%- endif %}
