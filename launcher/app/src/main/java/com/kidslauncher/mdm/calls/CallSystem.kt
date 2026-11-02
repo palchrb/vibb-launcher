@@ -9,7 +9,9 @@ import android.os.SystemClock
 import android.provider.CallLog
 import android.provider.Settings
 import android.provider.Telephony
+import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.widget.Toast
@@ -74,7 +76,10 @@ object CallSystem {
     /**
      * Places a call through Telecom (emergency numbers too - the platform's recommendation for a
      * default dialer). Our redirection and in-call services still check it. Returns false (and
-     * says so) if Telecom refuses, e.g. while outgoing calls are restricted.
+     * says so) if Telecom refuses, e.g. while outgoing calls are restricted. A number the platform
+     * confirms as an emergency number that Telecom took is recorded at once (E7's H1): Telecom may
+     * show the call in the system dialer, so our in-call service never sees it connect, and keep it
+     * out of the call log - this record is then all that opens the callback window.
      */
     fun placeCall(context: Context, number: String): Boolean = try {
         if (!secondCallAllowed(OngoingCalls.states, isEmergencyOutgoing(context, number))) {
@@ -82,13 +87,43 @@ object CallSystem {
             Toast.makeText(context, R.string.calls_busy, Toast.LENGTH_LONG).show()
             false
         } else {
+            // Before Telecom creates the call, so the in-call service's record of it keeps this
+            // instant (emergencyCallInstant).
+            val placedAtMs = System.currentTimeMillis()
             context.getSystemService(TelecomManager::class.java)
                 .placeCall(Uri.fromParts("tel", number, null), Bundle())
+            if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs)
             true
         }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "placeCall failed", e)
         Toast.makeText(context, R.string.calls_could_not_call, Toast.LENGTH_LONG).show()
+        false
+    }
+
+    /** Records the emergency call the launcher just placed and syncs at once, so the parent hears of
+     * it (as [EmergencyConnects] does for a call our in-call service sees; never before the first
+     * unlock - the sync isn't direct-boot-aware). Never throws: the call is placed, and a false
+     * [placeCall] would open the emergency dialer on top of it. */
+    private fun emergencyPlaced(context: Context, placedAtMs: Long) {
+        try {
+            CallPrefs.recordEmergencyCall(context, placedAtMs)
+            Log.i(LOG_TAG, "Emergency call placed: callback window open")
+            if (CallPolicyStore.userUnlocked(context)) com.kidslauncher.mdm.push.SyncRunner.request(context, EMERGENCY_SYNC_REASON)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Couldn't record the emergency call or request its sync: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Whether [handle] is a SIM subscription's account: Telephony maps only its own accounts to a
+     * subscription, and no other app can register one under its component. `false` when it can't
+     * tell (no READ_PHONE_STATE - calls unmanaged -, no telephony). See [emergencyCallbackAllowed]. */
+    fun simAccount(context: Context, handle: PhoneAccountHandle?): Boolean = handle != null && try {
+        context.getSystemService(TelephonyManager::class.java)
+            ?.getSubscriptionId(handle)
+            ?.let { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID } == true
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't look up the call's account: ${e.javaClass.simpleName}")
         false
     }
 
@@ -98,8 +133,8 @@ object CallSystem {
         readOutgoingCalls(context, sinceMs).orEmpty()
 
     /** Whether the call log can be read. If not, the callback window can only open from our own
-     * record, which we rarely have (the preloaded dialer shows emergency calls) - reported to the
-     * server as a warning (QA step 2 #7). */
+     * record (a call the launcher placed or our in-call service saw) or Telecom's own mark on the
+     * incoming call - reported to the server as a warning (QA step 2 #7). */
     fun callLogReadable(context: Context): Boolean =
         readOutgoingCalls(context, System.currentTimeMillis()) != null
 
@@ -200,17 +235,21 @@ object CallPrefs {
     }
 
     /**
-     * Records "a platform-confirmed emergency call is connected now": the callback window then
-     * lasts [CALLBACK_WINDOW_MS] by the wall clock AND by elapsed realtime in this boot
-     * ([timedWindowActive]), so a clock change or a reboot can't reopen it (QA step 2 #4).
-     * [connectedAtMs] is when that call connected (wall clock, the same for every record of one
-     * call - [EmergencyConnects]): the status report's `last_emergency_call_at` (design 35 step 3).
+     * Records "a platform-confirmed emergency call is connected now" (our in-call service) or "the
+     * launcher has just placed one" (H1): the callback window then lasts [CALLBACK_WINDOW_MS] by the
+     * wall clock AND by elapsed realtime in this boot ([timedWindowActive]), so a clock change or a
+     * reboot can't reopen it (QA step 2 #4). [atMs] is the call's instant (wall clock, the same for
+     * every record of one call - [EmergencyConnects], and [emergencyCallInstant] with Telecom's
+     * [createdAtMs] keeps the placing's): the status report's `last_emergency_call_at` (design 35
+     * step 3).
      */
-    fun recordEmergencyConnected(context: Context, connectedAtMs: Long) {
+    fun recordEmergencyCall(context: Context, atMs: Long, createdAtMs: Long = 0L) {
+        val prefs = bootPrefs(context)
         val (start, at) = emergencyRecord(
-            System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), connectedAtMs,
+            System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context),
+            emergencyCallInstant(prefs.getLong(EMERGENCY_CONNECTED_AT_MS, 0), createdAtMs, atMs),
         )
-        bootPrefs(context).edit()
+        prefs.edit()
             .putLong(EMERGENCY_UNTIL_WALL_MS, start.untilWallMs)
             .putLong(EMERGENCY_ELAPSED_START_MS, start.elapsedStartMs)
             .putInt(EMERGENCY_BOOT, start.bootCount)

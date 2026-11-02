@@ -55,6 +55,54 @@ class EmergencyConnectsTest {
         assertEquals(hangUp, reportedEmergencyAt(0, atHangUp.untilWallMs))
     }
 
+    /** E7's H1: the launcher records an emergency call when it places it (CallSystem.placeCall); when our in-call
+     * service sees the same call connect, the placing's instant stays, so the server announces one call. */
+    @Test
+    fun `the launcher's record of placing a call keeps its instant through the call`() {
+        val placed = 1_000_000L
+        val created = placed + 40 // Telecom creates the call just after
+        val connect = created + 6_000
+        assertEquals(placed, emergencyCallInstant(storedAtMs = placed, createdAtMs = created, atMs = connect))
+        // Telecom's creation time a little before our clock read, a slow device: still the same call.
+        assertEquals(placed, emergencyCallInstant(placed, placed + PLACED_BEFORE_CREATED_MS, connect + PLACED_BEFORE_CREATED_MS))
+        // An earlier emergency call's record, another call now: its own instant.
+        val later = placed + 20 * 60_000L
+        assertEquals(later + 5_000, emergencyCallInstant(placed, later, later + 5_000))
+        // Nothing stored, or no creation time: the call's own instant (as before H1).
+        assertEquals(connect, emergencyCallInstant(0, created, connect))
+        assertEquals(connect, emergencyCallInstant(placed, 0, connect))
+        // A stored instant after this call's own (a clock set back) is never kept.
+        assertEquals(connect, emergencyCallInstant(connect + 1, created, connect))
+    }
+
+    @Test
+    fun `the launcher records an emergency call it placed, only when Telecom took it and the platform confirms it`() {
+        val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val system = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
+        val place = system.substringAfter("fun placeCall(").substringBefore("\n    }\n")
+        val placedAt = place.indexOf("val placedAtMs = System.currentTimeMillis()")
+        val telecom = place.indexOf(".placeCall(Uri.fromParts(")
+        val record = place.indexOf("if (Emergency.platformConfirms(number, platformEmergency(context))) emergencyPlaced(context, placedAtMs)")
+        assertTrue(placedAt in 0 until telecom && telecom < record)
+        val placed = system.substringAfter("private fun emergencyPlaced(").substringBefore("\n    }\n")
+        assertTrue("CallPrefs.recordEmergencyCall(context, placedAtMs)" in placed)
+        assertTrue("if (CallPolicyStore.userUnlocked(context)) com.kidslauncher.mdm.push.SyncRunner.request(context, EMERGENCY_SYNC_REASON)" in placed)
+        // It never throws into placeCall: a false return would open the emergency dialer over the call.
+        assertTrue(placed.substringAfter("{\n").trimStart().startsWith("try {") && "catch (e: Exception)" in placed)
+    }
+
+    @Test
+    fun `both incoming checks take Telecom's emergency callback mark on a SIM account`() {
+        val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val verdict = sources.walkTopDown().first { it.name == "KidCallScreeningService.kt" }.readText()
+            .substringAfter("fun incomingVerdict(")
+        assertTrue("ecbm = details.hasProperty(Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE)" in verdict)
+        assertTrue("CallSystem.simAccount(context, details.accountHandle)" in verdict)
+        assertTrue("windowOpen = { CallSystem.callbackWindowUntil(context) != null }" in verdict)
+        val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
+        assertTrue("incomingVerdict(this, call.details) == Verdict.BLOCK" in service)
+    }
+
     @Test
     fun `another call syncs again, and a removed call starts over`() {
         val first = Any()
@@ -87,11 +135,11 @@ class EmergencyConnectsTest {
         val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
         val record = service.substringAfter("private fun recordEmergency(").substringBefore("\n    }\n")
         val prefs = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
-            .substringAfter("fun recordEmergencyConnected(").substringBefore("\n    }\n")
-        assertTrue("emergencyRecord(" in prefs && "System.currentTimeMillis()" in prefs)
+            .substringAfter("fun recordEmergencyCall(").substringBefore("\n    }\n")
+        assertTrue("emergencyRecord(" in prefs && "System.currentTimeMillis()" in prefs && "emergencyCallInstant(" in prefs)
         assertTrue("reportedEmergencyAt(" in sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText())
         assertTrue("emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis" in record)
-        assertTrue("CallPrefs.recordEmergencyConnected(this, it)" in record)
+        assertTrue("CallPrefs.recordEmergencyCall(this, it, details.creationTimeMillis)" in record)
         assertTrue("emergencyConnects.removed(call)" in service.substringAfter("override fun onCallRemoved("))
         assertTrue("unlocked = { CallPolicyStore.userUnlocked(this) }" in service)
         // Called directly and caught: a post could be dropped by onDestroy, a throw would reach the

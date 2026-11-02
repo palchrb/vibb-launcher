@@ -44,7 +44,10 @@ class KidCallScreeningService : CallScreeningService() {
     }
 }
 
-/** [decideIncoming] for a Telecom call; an unexpected error blocks unless calls are unmanaged. */
+/** [decideIncoming] for a Telecom call; an unexpected error blocks unless calls are unmanaged. The
+ * emergency callback passes by Telecom's own mark or our window ([emergencyCallbackAllowed]) - in
+ * Telecom's emergency callback mode it skips this screening service, so [KidInCallService]'s re-check
+ * is where that call is let through (E7's H1). */
 fun incomingVerdict(context: Context, details: Call.Details): Verdict {
     val state = CallPolicyStore.effectiveState()
     return try {
@@ -53,7 +56,16 @@ fun incomingVerdict(context: Context, details: Call.Details): Verdict {
             presentationAllowed = details.handlePresentation == TelecomManager.PRESENTATION_ALLOWED,
             verificationFailed = details.callerNumberVerificationStatus == Connection.VERIFICATION_STATUS_FAILED,
             state = state,
-        ) { CallSystem.callbackWindowUntil(context) != null }
+        ) {
+            emergencyCallbackAllowed(
+                ecbm = details.hasProperty(Call.Details.PROPERTY_EMERGENCY_CALLBACK_MODE),
+                simAccount = {
+                    CallSystem.simAccount(context, details.accountHandle)
+                        .also { Log.i(LOG_TAG, "Telecom marks an emergency callback (SIM account: $it)") }
+                },
+                windowOpen = { CallSystem.callbackWindowUntil(context) != null },
+            )
+        }
     } catch (e: Exception) {
         Log.e(LOG_TAG, "Incoming call check failed", e)
         if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK

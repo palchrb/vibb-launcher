@@ -150,6 +150,34 @@ class CallRulesTest {
         assertTrue(asked)
     }
 
+    // Telecom's own emergency callback mark (E7's H1)
+
+    @Test
+    fun `Telecom's emergency callback mark lets a stranger through a no-calls rule, on a SIM account only`() {
+        fun allowed(ecbm: Boolean, sim: Boolean, window: Boolean) = emergencyCallbackAllowed(ecbm, { sim }, { window })
+        for (state in listOf(managed, disabled, failClosed, withTimeRule(managed, callsBlocked = true))) {
+            fun verdict(ecbm: Boolean, sim: Boolean, window: Boolean = false) =
+                decideIncoming("+4799887766", true, false, state) { allowed(ecbm, sim, window) }
+            assertEquals(Verdict.ALLOW, verdict(ecbm = true, sim = true))
+            // A third-party connection service claiming the mark, or no mark: the rules (and our window) decide.
+            assertEquals(Verdict.BLOCK, verdict(ecbm = true, sim = false))
+            assertEquals(Verdict.BLOCK, verdict(ecbm = false, sim = true))
+            assertEquals(Verdict.ALLOW, verdict(ecbm = false, sim = false, window = true))
+        }
+    }
+
+    @Test
+    fun `the account and the call log are only read when needed`() {
+        val read = mutableListOf<String>()
+        val sim = { read += "sim"; true }
+        val window = { read += "window"; false }
+        assertTrue(emergencyCallbackAllowed(ecbm = true, simAccount = sim, windowOpen = window))
+        assertEquals(listOf("sim"), read)
+        read.clear()
+        assertFalse(emergencyCallbackAllowed(ecbm = false, simAccount = sim, windowOpen = window))
+        assertEquals(listOf("window"), read)
+    }
+
     // Callback window (QA blocker 2)
 
     private val now = 10_000_000_000L
