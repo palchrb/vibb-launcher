@@ -228,7 +228,7 @@ class AndroidLockFaceTest {
         assertEquals("own mode's rows", LockTaskEntry.START_HOME, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false))
         assertEquals(LockTaskEntry.NONE, lockTaskEntry(true, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
         val activity = code("$lock/PinLockActivity.kt")
-        assertTrue(activity.contains("voipCall = voipHeldLockTask, androidLocked = androidLocked))"))
+        assertTrue(activity.contains("voipCall = voipHeldLockTask, androidLocked = androidLocked, glanceRoot = startedLockTask))"))
         assertTrue(activity.contains("val androidLocked = AndroidLock.refrontHeld(this)"))
         // The policy edges' Home starts go through the face's queue; the relock's time-rule screen too (LockActivity.start).
         val main = "main/java/com/kidslauncher/mdm"

@@ -123,8 +123,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     RELOCK: a process start with the screen on (a crash, a self-update's restart), a remote lock (`lockNow` posts the
     show before `DPM.lockNow`), a late or missed `USER_PRESENT` - or one is left from a kiosk on -> off flip; with the
     kiosk off any running lock task is the lock's own (`lockLeave`'s kiosk-off row). Never during a VoIP call (its
-    PiP). After a kiosk flip Home may be the root: the glance's stop then only takes its own task out, and Home's ends
-    at the leave as before. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
+    PiP). Only when this lock instance started it (`glanceRoot` = `startedLockTask`, reset when nothing runs): E7b's
+    M-B1 - own mode's kiosk rooted by Home, then Android's lock and the kiosk off in one change - showed that
+    `stopLockTask` from a task that isn't the root takes that task out **and clears it** (AOSP `clearLockedTask` ->
+    `performClearTaskForReuse`): the glance was finished, Home's locked resume showed a new one, which joined the lock
+    task and stopped again - 142-266 resumes a minute with Android's keyguard un-occluded and no way to the pad. Another
+    root (Home's) now stays until the leave (the kiosk-off row, then Home's unlocked `reconcileKioskMode`); unknown
+    (an earlier instance or process rooted it) counts as another root - at worst R2's helper case at that leave. **A policy that turns the kiosk or the face on or off** re-runs a resumed LOCKED lock's entry
     check at once (`chromeEntryRecheckDue` on `EntryPolicy(kioskOn, face)`): `LockTaskChrome.applyPlan` tells the chrome
     listeners after its writes (`PinLockRuntime.chromePassLanded`; `AppEnforcer` sets the face just before it), so the
     kiosk turned on under the face's glance roots its lock task from the glance (59d A) whether Home is in front or not

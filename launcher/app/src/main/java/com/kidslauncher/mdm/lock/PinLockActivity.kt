@@ -858,9 +858,11 @@ class PinLockActivity : AppCompatActivity() {
         // call rings or lives (not while merely pinned).
         voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
         waitingForPin = !running && !permitted
+        // Nothing runs: this instance roots nothing (a lock task it started has ended) - STOP_OWN and the leave read it.
+        if (!running) startedLockTask = false
         val androidLocked = AndroidLock.refrontHeld(this)
         policySeen = entryPolicy()
-        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask, androidLocked = androidLocked)) {
+        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask, androidLocked = androidLocked, glanceRoot = startedLockTask)) {
             LockTaskEntry.NONE -> when {
                 !running && !permitted -> Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
                 !running && androidLocked && !voipHeldLockTask && !LockTaskChrome.kioskOn ->
