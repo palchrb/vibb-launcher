@@ -1133,7 +1133,7 @@
   "device.bedtime.calls_label": "Calls",
   "device.bedtime.calls": "Calls with contacts",
   "device.bedtime.calls_footer": "The phone is locked during bedtime. Emergency calls always work.",
-  "device.bedtime.silent_sub": "No sounds or notifications during bedtime. Alarms still ring, apps allowed at bedtime keep their sound, and calls bedtime allows ring.",
+  "device.bedtime.silent_sub": "No sounds or notifications during bedtime. Alarms still ring, apps allowed at bedtime keep their sound, and calls allowed at bedtime ring.",
   "device.bedtime.remove_label": "Remove bedtime",
   "device.bedtime.remove": "Remove Bedtime",
   "device.bedtime.remove_confirm": "Remove the bedtime? {name}'s phone is no longer locked at night.",

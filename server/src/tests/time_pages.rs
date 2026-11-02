@@ -1865,6 +1865,18 @@ async fn the_silent_switch_saves_serves_and_shows() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(input_checked(&res.text(), "silent", "on"), Some(true));
 
+    // A bedtime-kind day rule kept from before design 66 (a bedtime on the phone) gets the bedtime words.
+    sqlx::query("UPDATE time_rules SET kind = 'bedtime' WHERE id = ?")
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(">Silent<span class=\"row-sub\">No sounds or notifications during bedtime. Alarms still ring"));
+
     // Bedtime: a new one opens silent (alarms still ring, the sub-line says so); a save keeps what is sent.
     let page = format!("/devices/{anna}/bedtime");
     let html = app.get_page(&page, &cookie).await.text();

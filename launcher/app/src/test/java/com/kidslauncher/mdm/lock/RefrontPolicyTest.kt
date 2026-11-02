@@ -146,6 +146,10 @@ class RefrontPolicyTest {
         assertTrue(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = t, nowWallMs = t + 1))
         assertFalse(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = t, nowWallMs = t + ALARM_RING_MS))
         assertFalse(alarmRingingNow(noticeRinging = false, rememberedTriggerMs = null, nowWallMs = t))
+        // A silent time rule's Do Not Disturb silences alarms (server 0121, code QA H1): no ringing alarm for the lock -
+        // neither the notice nor the window; with it gone (the rule ended mid-ring) it rings again.
+        assertFalse(alarmRingingNow(noticeRinging = true, rememberedTriggerMs = t, nowWallMs = t + 1, alarmsSilenced = true))
+        assertTrue(alarmRingingNow(noticeRinging = true, rememberedTriggerMs = t, nowWallMs = t + 1, alarmsSilenced = false))
     }
 
     /** The gap closed 2026-11-02: power pressed while the alarm rings - the lock-up covers it; the resumed lock sends
@@ -212,6 +216,9 @@ class RefrontPolicyTest {
         assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = false, interactive = true, otherScreen = false))
         assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = true, otherScreen = true))
         assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = false, otherScreen = true))
+        // Code QA H1: a silenced alarm's screen is never brought up, screen on or off.
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false, alarmsSilenced = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = false, otherScreen = false, alarmsSilenced = true))
     }
 
     @Test

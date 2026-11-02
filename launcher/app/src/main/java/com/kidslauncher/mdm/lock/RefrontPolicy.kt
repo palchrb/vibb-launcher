@@ -407,17 +407,22 @@ fun alarmScreenStep(
     otherScreen: Boolean,
     typing: Boolean = false,
     coverWaits: Boolean = false,
+    /** A silent time rule's Do Not Disturb silences alarms (server 0121, [com.kidslauncher.mdm.timerules.silencesAlarms]):
+     * the silenced alarm's screen is never brought up. */
+    alarmsSilenced: Boolean = false,
 ): AlarmScreenStep = when {
-    key == null || !locked || otherScreen -> AlarmScreenStep.NONE
+    key == null || !locked || otherScreen || alarmsSilenced -> AlarmScreenStep.NONE
     !interactive -> AlarmScreenStep.SCREEN_ON
     typing || coverWaits -> AlarmScreenStep.LATER
     else -> AlarmScreenStep.SEND
 }
 
 /** The alarm's yield ([RefrontInputs.alarmRinging] and the other "an alarm rings" reads): a clock's ringing
- * notification ([AlarmNotices.ringingNow]) or, as before, the window after its time ([alarmLikelyRinging]). */
-fun alarmRingingNow(noticeRinging: Boolean, rememberedTriggerMs: Long?, nowWallMs: Long): Boolean =
-    noticeRinging || alarmLikelyRinging(rememberedTriggerMs, nowWallMs)
+ * notification ([AlarmNotices.ringingNow]) or, as before, the window after its time ([alarmLikelyRinging]) - never
+ * while a silent time rule's Do Not Disturb silences alarms ([alarmsSilenced], server 0121, code QA H1): nobody hears
+ * it, so nothing waits for it to be stopped. Read live, so a rule that ends mid-ring makes it ringing again. */
+fun alarmRingingNow(noticeRinging: Boolean, rememberedTriggerMs: Long?, nowWallMs: Long, alarmsSilenced: Boolean = false): Boolean =
+    !alarmsSilenced && (noticeRinging || alarmLikelyRinging(rememberedTriggerMs, nowWallMs))
 
 /*
  * Crash guard (design §2(b), QA 10 #14, qa-10-code #6): only real crashes of the lock count -

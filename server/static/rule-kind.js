@@ -1,7 +1,8 @@
 // The rule editor's Type pre-sets "Calls with contacts" (school: off, every other kind: on) and
-// "Silent" (school: on, every other kind: off - migration 0121); the switches can still be changed after. Without JS the parent sets the switch. Its own file, because
-// the admin CSP allows no inline script (security review L5, design 22 S7). Listens on the
-// document, so it works however late it loads. ES5. Tested with node (jstest/rule-kind.test.js).
+// "Silent" (school and bedtime: on, other: off - migration 0121); the switches can still be changed
+// after. Without JS the parent sets the switches. Its own file, because the admin CSP allows no
+// inline script (security review L5, design 22 S7). Listens on the document, so it works however
+// late it loads. ES5. Tested with node (jstest/rule-kind.test.js).
 (function (root) {
     "use strict";
 
@@ -13,7 +14,7 @@
             var calls = el.form.querySelector("[name=calls_allowed]");
             if (calls) calls.checked = !school;
             var silent = el.form.querySelector("[name=silent]");
-            if (silent) silent.checked = school;
+            if (silent) silent.checked = school || el.value === "bedtime";
         });
     }
 

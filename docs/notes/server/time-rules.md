@@ -33,9 +33,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`migrate_legacy`'s bedtime, `migrate_crossing`'s bedtime in place and copy), `split_rule` copies it. The rule
   editor's switch **"Silent"** ("Stille", sub-line "No sounds, notifications, music or alarms while the rule is on.
   Calls the rule allows still ring.") sits under Calls with contacts in the rule's first group; the Type select presets
-  it with the calls switch (`static/rule-kind.js` v2: school on, other off), and a new rule (school) opens with it on.
+  it with the calls switch (`static/rule-kind.js` v3: school and bedtime on, other off; a kept bedtime-kind day rule shows the bedtime sub-line), and a new rule (school) opens with it on.
   The Bedtime page's has the bedtime's sub-line ("No sounds or notifications during bedtime. Alarms still ring, apps
-  allowed at bedtime keep their sound, and calls bedtime allows ring."); a new bedtime opens with it on. Every save
+  allowed at bedtime keep their sound, and calls allowed at bedtime ring."); a new bedtime opens with it on. Every save
   writes it (absent = off). The lists end a silent rule's summary with "· silent" ("· stille";
   `schedules::silent_tag`; the "calls on/off" there are catalog words since: `settings.time_rules.calls_on|off`), the
   bedtime's too (`bedtime_summary`). The phone's side: `docs/notes/launcher/time-rules.md`, "A rule's Silent".

@@ -1319,6 +1319,7 @@ object PinLockRuntime {
         rememberAlarm(context)
         return alarmRingingNow(
             com.kidslauncher.mdm.badges.AlarmNoticeReader.ringing(clockPackages()), rememberedAlarmMs, System.currentTimeMillis(),
+            alarmsSilenced = com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms(),
         )
     }
 
@@ -1349,6 +1350,7 @@ object PinLockRuntime {
         val step = alarmScreenStep(
             key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),
             typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),
+            alarmsSilenced = com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms(),
         )
         if (step != AlarmScreenStep.SEND || key == null) return step
         noteOwnStart("the ringing alarm's screen")

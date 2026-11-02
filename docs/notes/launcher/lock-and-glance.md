@@ -263,7 +263,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   between (the screen came up and closed at once) spends that ring (`alarmSendSpentAtResume`). Revision R3: a ring
   already up at the process start was read before the clock set was known - once `systemClocks` is resolved, and when
   Fossify becomes verified, `AlarmNoticeReader.clocksKnown` asks the listener again for the clock apps' ringing keys
-  without a kept intent (`screensMissing`). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  without a kept intent (`screensMissing`). A silent time rule's Do Not Disturb that silences alarms (server 0121,
+  `ZenRuleRuntime.silencesAlarms`) makes none of this run: `alarmRingingNow` is false and `alarmScreenStep` NONE
+  while it holds, read live (`docs/notes/launcher/time-rules.md`, "A rule's Silent"). The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
   always shown while there is one, r11). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
   stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
   (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally

@@ -441,6 +441,8 @@ object LocateCommands {
             ringHandler.postDelayed(timeout, RING_DURATION_MS)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to ring device", e)
+            // Code QA M1: a ring that never started puts everything back - the volumes and the silent rule's hold.
+            stopRingAndRestore(context)
         }
     }
 

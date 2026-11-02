@@ -16,8 +16,6 @@ import android.service.notification.Condition
 import android.service.notification.ZenPolicy
 import android.util.Log
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.calls.CallPolicyStore
-import com.kidslauncher.mdm.calls.managed
 
 private const val LOG_TAG = "ZenRuleRuntime"
 
@@ -26,6 +24,9 @@ private const val REASSERT_DELAY_MS = 1_500L
 
 /** At most one off-and-on per this long; a later one waits for it, never dropped. */
 private const val REASSERT_SPACING_MS = 10_000L
+
+/** The condition id's first path segment; a replacement (code QA M2) adds a second, fresh one. */
+private const val SILENCE_PATH = "rule-silence"
 
 /**
  * A silent time rule's Do Not Disturb (the user, 2026-11-02; server migration 0121; the pure rules are
@@ -39,14 +40,19 @@ private const val REASSERT_SPACING_MS = 10_000L
  * device owner's, not fully editable by the phone's user).
  *
  * Followed from where the time lock is decided: [TimeRulesRuntime.recheck] (the boundary alarm, screen on, boot, every
- * accepted policy, process start) and `AppEnforcer.apply`. Lifted while Find My Device rings ([holdForRing]); put back
- * when the kid switches it off from Quick Settings during the rule ([silenceNeedsReassert]); removed when the app stops
- * being device owner ([release]).
+ * accepted policy, process start) and `AppEnforcer.apply`, the newer decision winning ([lockIsNewer]). Each apply's
+ * step is [zenStep]; after switching on it reads the rule back and replaces one Android keeps disabled
+ * ([zenRuleNeedsReplacing]). Lifted while Find My Device rings ([holdForRing]); put back when the kid switches it off
+ * during the rule ([silenceNeedsReassert]); removed when the app stops being device admin ([release]). The lock asks
+ * [silencesAlarms]: an alarm it silences is no ringing alarm there.
  */
 object ZenRuleRuntime {
     /** What the time lock asks for (the last [follow]). */
     @Volatile
     private var wanted: RuleSilence = NOT_SILENT
+
+    /** Elapsed realtime the last followed lock was decided at ([lockIsNewer]). */
+    private var lastDecidedAtMs = Long.MIN_VALUE
 
     /** Find My Device's ring is playing. */
     @Volatile
@@ -55,6 +61,10 @@ object ZenRuleRuntime {
     /** What was last put in force; `null` = not known (a new process, a failed call), so the next apply looks. */
     @Volatile
     private var applied: RuleSilence? = null
+
+    /** Android 15+: the rule whose last status broadcast said deactivated (cleared by its "activated"). */
+    @Volatile
+    private var deactivatedId: String? = null
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -80,6 +90,7 @@ object ZenRuleRuntime {
         try {
             app.registerReceiver(object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
+                    noteStatus(intent)
                     main.removeCallbacks(reassert)
                     main.postDelayed(reassert, REASSERT_DELAY_MS)
                 }
@@ -89,25 +100,47 @@ object ZenRuleRuntime {
         }
     }
 
-    /** The time lock in force now: our rule follows it. Never throws. */
-    fun follow(context: Context, lock: TimeLock) {
-        wanted = ruleSilenceFor(lock, callsScreened = CallPolicyStore.state.managed)
+    /** Android 15+'s activated/deactivated statuses of our rule (Android 14 sends only enabled/disabled/removed). */
+    private fun noteStatus(intent: Intent) {
+        if (intent.action != NotificationManager.ACTION_AUTOMATIC_ZEN_RULE_STATUS_CHANGED) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+        val id = intent.getStringExtra(NotificationManager.EXTRA_AUTOMATIC_ZEN_RULE_ID) ?: return
+        when (intent.getIntExtra(NotificationManager.EXTRA_AUTOMATIC_ZEN_RULE_STATUS, 0)) {
+            NotificationManager.AUTOMATIC_RULE_STATUS_DEACTIVATED -> deactivatedId = id
+            NotificationManager.AUTOMATIC_RULE_STATUS_ACTIVATED -> if (deactivatedId == id) deactivatedId = null
+        }
+    }
+
+    /** The time lock in force, decided at elapsed realtime [decidedAtMs]: our rule follows it, unless a newer decision
+     * already did (code QA L3). Never throws. */
+    @Synchronized
+    fun follow(context: Context, lock: TimeLock, decidedAtMs: Long) {
+        if (!lockIsNewer(decidedAtMs, lastDecidedAtMs)) return
+        lastDecidedAtMs = decidedAtMs
+        wanted = ruleSilenceFor(lock)
         apply(context.applicationContext, force = false)
     }
 
     /** Find My Device's ring starts ([held]) or ends: its alarm-stream ring must be heard, so our rule is off for it. */
+    @Synchronized
     fun holdForRing(context: Context, held: Boolean) {
         if (ringHeld == held) return
         ringHeld = held
         apply(context.applicationContext, force = false)
     }
 
-    /** Our rule is on and lets calls ring - the VoIP ring's question on Android < 16, where the notification policy it
-     * reads is the manual one and doesn't fold our rule in. */
-    fun letsCallsRing(): Boolean = applied?.let { it.on && it.calls } == true
+    /** Our rule is on - it lets calls from anyone ring: the VoIP ring's question on Android < 16, where the notification
+     * policy it reads is the manual one and doesn't fold our rule in. */
+    fun letsCallsRing(): Boolean = applied?.on == true
 
-    private fun silenceUri(context: Context): Uri =
-        Uri.Builder().scheme(Condition.SCHEME).authority(context.packageName).appendPath("rule-silence").build()
+    /** Our rule is on and silences alarms ([silencesAlarms]): the lock's "an alarm rings" is false then (code QA H1). */
+    fun silencesAlarms(): Boolean = silencesAlarms(applied)
+
+    private fun silenceUri(context: Context, fresh: Boolean = false): Uri {
+        val builder = Uri.Builder().scheme(Condition.SCHEME).authority(context.packageName).appendPath(SILENCE_PATH)
+        if (fresh) builder.appendPath(System.currentTimeMillis().toString())
+        return builder.build()
+    }
 
     private fun isDeviceOwner(context: Context): Boolean = try {
         context.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(context.packageName) == true
@@ -115,9 +148,13 @@ object ZenRuleRuntime {
         false
     }
 
-    /** Our rules (Android returns only the caller's). */
-    private fun ours(nm: NotificationManager, uri: Uri): Map<String, AutomaticZenRule> =
-        nm.automaticZenRules.orEmpty().filterValues { it.conditionId == uri }
+    /** Our rules (Android returns only the caller's), by id. */
+    private fun ours(nm: NotificationManager, context: Context): List<Pair<String, AutomaticZenRule>> =
+        nm.automaticZenRules.orEmpty().filterValues { rule ->
+            val id = rule.conditionId
+            id != null && id.scheme == Condition.SCHEME && id.authority == context.packageName &&
+                id.pathSegments.firstOrNull() == SILENCE_PATH
+        }.toList().sortedBy { it.first }
 
     @Synchronized
     private fun apply(context: Context, force: Boolean) {
@@ -130,40 +167,65 @@ object ZenRuleRuntime {
             return
         }
         try {
-            val uri = silenceUri(context)
-            val existing = ours(nm, uri)
+            val existing = ours(nm, context)
             // A second copy (a lost add's retry) goes; the first one stays.
-            existing.keys.drop(1).forEach { runCatching { nm.removeAutomaticZenRule(it) } }
-            val id = existing.keys.firstOrNull()
-            if (!target.on) {
-                if (id != null) {
-                    nm.setAutomaticZenRuleState(id, condition(context, uri, on = false))
+            existing.drop(1).forEach { (id, _) -> runCatching { nm.removeAutomaticZenRule(id) } }
+            val entry = existing.firstOrNull()
+            val step = zenStep(target, applied, force, entry?.let { ZenRuleSeen(it.second.isEnabled) })
+            when (step) {
+                ZenStep.SKIP -> return
+                ZenStep.RECORD -> {}
+                ZenStep.OFF -> {
+                    val (id, rule) = entry!!
+                    nm.setAutomaticZenRuleState(id, condition(context, rule.conditionId, on = false))
                     Log.i(LOG_TAG, "Silence off")
                 }
-                applied = target
-                return
-            }
-            val ruleId = when {
-                id == null -> addRule(nm, context, uri, target)
-                else -> {
-                    val current = existing.getValue(id)
-                    // Keeps the type it was added with (a plain one where Android refused the managed type).
-                    val managed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM &&
-                        current.type == AutomaticZenRule.TYPE_MANAGED
-                    val rule = buildRule(context, uri, target, managedType = managed)
-                    if (!current.isEnabled || current.zenPolicy != rule.zenPolicy || current.name != rule.name) {
-                        nm.updateAutomaticZenRule(id, rule)
-                    }
-                    id
+                ZenStep.ADD -> {
+                    val uri = silenceUri(context)
+                    val id = addRule(nm, context, uri, target)
+                    switchOn(nm, context, id, uri, target, offFirst = false)
+                }
+                ZenStep.ON, ZenStep.OFF_ON -> {
+                    val (id, current) = entry!!
+                    updateIfChanged(nm, context, id, current, target)
+                    switchOn(nm, context, id, current.conditionId, target, offFirst = step == ZenStep.OFF_ON)
                 }
             }
-            if (force) nm.setAutomaticZenRuleState(ruleId, condition(context, uri, on = false))
-            nm.setAutomaticZenRuleState(ruleId, condition(context, uri, on = true))
             applied = target
-            Log.i(LOG_TAG, "Silence on: alarms=${target.alarms} media=${target.media} calls=${target.calls}")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set the silent rule's Do Not Disturb: ${e.javaClass.simpleName}")
             applied = null
+        }
+    }
+
+    /** The rule's policy or name changed, or it is disabled: updated, keeping the type it was added with (a plain one
+     * where Android refused the managed type). */
+    private fun updateIfChanged(nm: NotificationManager, context: Context, id: String, current: AutomaticZenRule, target: RuleSilence) {
+        val managed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM &&
+            current.type == AutomaticZenRule.TYPE_MANAGED
+        val rule = buildRule(context, current.conditionId, target, managedType = managed)
+        if (!current.isEnabled || current.zenPolicy != rule.zenPolicy || current.name != rule.name) {
+            nm.updateAutomaticZenRule(id, rule)
+        }
+    }
+
+    /** On ([offFirst]: off, then on), then read back (code QA M2): a rule still disabled - Android 15+ keeps a user's
+     * disable - goes, and a new one under a fresh condition id takes its place (Android restores a deleted rule's user
+     * changes when the same condition id comes back). */
+    private fun switchOn(nm: NotificationManager, context: Context, id: String, uri: Uri, target: RuleSilence, offFirst: Boolean) {
+        if (offFirst) nm.setAutomaticZenRuleState(id, condition(context, uri, on = false))
+        nm.setAutomaticZenRuleState(id, condition(context, uri, on = true))
+        if (!zenRuleNeedsReplacing(nm.getAutomaticZenRule(id)?.isEnabled)) {
+            Log.i(LOG_TAG, "Silence on: alarms=${target.alarms} media=${target.media}")
+            return
+        }
+        Log.w(LOG_TAG, "The silent rule stays disabled - replaced by a new one")
+        runCatching { nm.removeAutomaticZenRule(id) }
+        val fresh = silenceUri(context, fresh = true)
+        val newId = addRule(nm, context, fresh, target)
+        nm.setAutomaticZenRuleState(newId, condition(context, fresh, on = true))
+        if (zenRuleNeedsReplacing(nm.getAutomaticZenRule(newId)?.isEnabled)) {
+            throw IllegalStateException("the new silent rule is disabled too")
         }
     }
 
@@ -177,41 +239,48 @@ object ZenRuleRuntime {
             nm.addAutomaticZenRule(buildRule(context, uri, target, managedType = false))
         }
 
-    /** After a status change: the kid switched it off (Quick Settings), removed or disabled it - put it back, off and
-     * on again (a rule the user switched off stays off for a mere "on" until it has been off). */
+    /** Whether our rule [id] is in force: Android 15+ says so (and its last status broadcast); Android 14 can't. */
+    private fun activeOf(nm: NotificationManager, id: String): Boolean? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return null
+        if (deactivatedId == id) return false
+        return nm.getAutomaticZenRuleState(id) == Condition.STATE_TRUE
+    }
+
+    /** After a status change: our rule should be on and isn't ([silenceNeedsReassert]) - switched off by the kid,
+     * removed or disabled: off and on again, at most once per [REASSERT_SPACING_MS]. */
     private fun reassertIfNeeded(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val inForce = silenceInForce(wanted, ringHeld)
+        if (!inForce.on) return
         val all = try {
             nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_ALL
         } catch (e: Exception) {
             false
         }
-        val gone = inForce.on && try {
-            ours(nm, silenceUri(context)).values.none { it.isEnabled }
+        val seen = try {
+            ours(nm, context).firstOrNull()?.let { (id, rule) -> ZenRuleSeen(rule.isEnabled, activeOf(nm, id)) }
         } catch (e: Exception) {
-            false
+            return
         }
-        if (silenceNeedsReassert(inForce, all) || gone) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val wait = lastReassertMs + REASSERT_SPACING_MS - now
-            if (wait > 0) {
-                main.removeCallbacks(reassert)
-                main.postDelayed(reassert, wait)
-                return
-            }
-            lastReassertMs = now
-            Log.i(LOG_TAG, "The silent rule was switched off during a silent time rule - on again")
-            apply(context, force = true)
+        if (!silenceNeedsReassert(inForce, seen, all)) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val wait = lastReassertMs + REASSERT_SPACING_MS - now
+        if (wait > 0) {
+            main.removeCallbacks(reassert)
+            main.postDelayed(reassert, wait)
+            return
         }
+        lastReassertMs = now
+        Log.i(LOG_TAG, "The silent rule isn't in force during a silent time rule - on again")
+        apply(context, force = true)
     }
 
-    /** The app stops being device owner: our rule goes (Android restores the phone's own state). */
+    /** The app stops being device admin: our rule goes (Android restores the phone's own state). */
     fun release(context: Context) {
         val app = context.applicationContext
         try {
             val nm = app.getSystemService(NotificationManager::class.java) ?: return
-            ours(nm, silenceUri(app)).keys.forEach { nm.removeAutomaticZenRule(it) }
+            ours(nm, app).forEach { (id, _) -> nm.removeAutomaticZenRule(id) }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't remove the silent rule: ${e.javaClass.simpleName}")
         }
@@ -258,8 +327,9 @@ object ZenRuleRuntime {
             .allowEvents(false)
             .allowMessages(ZenPolicy.PEOPLE_TYPE_NONE)
             .allowConversations(ZenPolicy.CONVERSATION_SENDERS_NONE)
-            .allowCalls(if (target.calls) ZenPolicy.PEOPLE_TYPE_ANYONE else ZenPolicy.PEOPLE_TYPE_NONE)
-            .allowRepeatCallers(target.calls)
+            // Who may call is the call rules' (code QA L6): with calls managed our screening turns the rest away.
+            .allowCalls(ZenPolicy.PEOPLE_TYPE_ANYONE)
+            .allowRepeatCallers(true)
             .showFullScreenIntent(false)
             .showLights(false)
             .showPeeking(false)

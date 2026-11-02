@@ -33,6 +33,11 @@ test("school turns the calls switch off and Silent on, another kind the other wa
     change(kind);
     assert.strictEqual(calls.checked, true);
     assert.strictEqual(silent.checked, false);
+    // A bedtime-kind day rule kept from before design 66 is silent too (0121), calls on.
+    kind.value = "bedtime";
+    change(kind);
+    assert.strictEqual(calls.checked, true);
+    assert.strictEqual(silent.checked, true);
 });
 
 test("another control's change leaves the switches alone", () => {
