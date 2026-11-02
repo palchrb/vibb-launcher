@@ -23,8 +23,11 @@
     <string name="anchor_time_used_up">Screen time is used up today</string>
     <string name="anchor_ask_more_time">Ask for more time</string>
     <string name="anchor_asked_at">Asked at %1$s</string>
-    <string name="lock_calls_emergency_only">Only emergency calls work now.</string>
+    <!-- E7's L7: about calls only - the card's rows (Calendar, an allowed app) still work beside it. -->
+    <string name="lock_calls_emergency_only">You can only call emergency numbers now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>
+    <!-- E7's M1: the time-rule screen's row while an allowed clock's alarm rings - it opens the clock's ringing screen. -->
+    <string name="lock_alarm_stop">Turn off the alarm</string>
     <!-- %1$s: today's allowance, budget + extra minutes, by durationText ("1 h 30 min"). -->
     <string name="lock_budget_allowance">You\'ve used today\'s %1$s.</string>
     <string name="lock_budget_none">There\'s no screen time today.</string>

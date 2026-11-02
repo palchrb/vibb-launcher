@@ -94,11 +94,15 @@ sealed interface LockRow {
     /** Kalender, our own day view ("Kalender"; PLAN 2026-11-02). */
     data class Calendar(override val label: String) : LockRow
 
+    /** E7's M1: an allowed clock's alarm rings - its ringing screen, with Stop and Snooze. */
+    data class Alarm(override val label: String) : LockRow
+
     data class App(val packageName: String, override val label: String) : LockRow
 }
 
 /**
- * The card's rows: the phone book first while calls are managed and the lock allows them (as
+ * The card's rows: a ringing alarm's row first while one rings ([alarmLabel], null = none; E7's M1 - whatever the
+ * rule, the kid can always reach its Stop), the phone book while calls are managed and the lock allows them (as
  * before P6, when it was its own button), then Kalender when every rule allows it and it is on for
  * the phone ([calendarLabel], null = no row; PLAN 2026-11-02), then every usable [apps] entry sorted
  * by its name (QA #6 of design 14) - the music app among them under a budget lock. Every app is a
@@ -110,8 +114,10 @@ fun timeLockRows(
     phoneBookLabel: String,
     apps: List<LockApp>,
     calendarLabel: String? = null,
+    alarmLabel: String? = null,
 ): List<LockRow> {
     val rows = mutableListOf<LockRow>()
+    if (alarmLabel != null) rows += LockRow.Alarm(alarmLabel)
     if (callsManaged && callsAllowed) rows += LockRow.PhoneBook(phoneBookLabel)
     if (calendarLabel != null) rows += LockRow.Calendar(calendarLabel)
     apps.sortedWith(compareBy({ it.label.lowercase() }, { it.packageName }))

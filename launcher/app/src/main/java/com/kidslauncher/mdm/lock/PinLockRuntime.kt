@@ -183,8 +183,8 @@ object PinLockRuntime {
     private var lastScreenOnElapsed: Long? = null
     private var sosFlowUntilElapsed = 0L
 
-    /** Design 59d N1: the mark was set at a pause and not logged yet - the pause's check logs it if it still holds
-     * ([sosPauseMarkLogDue]). Main thread. */
+    /** Design 59d N1, E7's L2: the mark was set and not logged yet - the next check logs it if it yields to it
+     * ([sosMarkLogDue]). Main thread. */
     private var sosMarkUnlogged = false
 
     /** Our resumed activities other than the lock (bug 25b-H). Main thread. */
@@ -967,6 +967,8 @@ object PinLockRuntime {
                     AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
                     if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()
+                    // E7's M1: the re-send cap is per screen-on - a power press always brings a ringing alarm's screen back.
+                    com.kidslauncher.mdm.badges.AlarmNoticeReader.screenOn()
                     // Gap closed 2026-11-02 (code QA L6): the resumed lock looks for a still-ringing alarm's screen now.
                     screenOnListeners.toList().forEach { listener -> runCatching { listener() } }
                     PlayRuntime.suspendStoreAtScreenOn(app)
@@ -1338,17 +1340,21 @@ object PinLockRuntime {
      * back over itself ([alarmScreenStep], [com.kidslauncher.mdm.badges.AlarmNoticeReader.screenKey]) - the kid pressed
      * power while it rang and the screen-off's lock-up covered it. Sent from [context], the visible lock; one of our own
      * starts for the face's loss rule. The screen that comes up is yielded to ([AlarmNotices.resent]); Stop or Snooze
-     * brings the lock back. [typing]: the keypad holds digits. Returns the step taken - [AlarmScreenStep.SEND] only
-     * when it went (the caller then runs [alarmScreenCheck] after [ALARM_SCREEN_CHECK_MS]). Main thread.
+     * brings the lock back. [typing]: the keypad holds digits. E7's M1: [timeRuleScreen] - the resumed time-rule screen
+     * asks, in charge while not LOCKED (after a PIN unlock the alarm may still ring); no yield there, so no check.
+     * Returns the step taken - [AlarmScreenStep.SEND] only when it went (the PIN lock then runs [alarmScreenCheck] after
+     * [ALARM_SCREEN_CHECK_MS]). Main thread.
      */
-    fun sendAlarmScreen(context: Context, typing: Boolean): AlarmScreenStep {
+    fun sendAlarmScreen(context: Context, typing: Boolean, timeRuleScreen: Boolean = false): AlarmScreenStep {
         val app = context.applicationContext
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
         val telecom = telecomInCall(app)
         val clocks = clockPackages()
         val key = reader.screenKey(clocks)
+        // The PIN lock while LOCKED, the time-rule screen while not (LOCKED, the PIN lock is above it).
+        val inCharge = if (timeRuleScreen) mode != LockMode.LOCKED else mode == LockMode.LOCKED
         val step = alarmScreenStep(
-            key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),
+            key, inCharge, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),
             typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),
             alarmsSilenced = com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms(),
         )
@@ -1356,8 +1362,24 @@ object PinLockRuntime {
         noteOwnStart("the ringing alarm's screen")
         val sent = reader.sendScreen(context, key, clocks)
         Log.i(LOG_TAG, if (sent) "The ringing alarm's screen sent again" else "The ringing alarm's screen couldn't be sent")
-        alarmScreenSentKey = key.takeIf { sent }
+        if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent }
         return if (sent) AlarmScreenStep.SEND else AlarmScreenStep.NONE
+    }
+
+    /** E7's M1: the time-rule screen's alarm row - an allowed clock's alarm rings, its screen kept, not silenced by a
+     * silent rule ([alarmRingingNow]'s rule: nobody hears it). Main thread. */
+    fun alarmToStop(): Boolean = !com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms() &&
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(clockPackages())
+
+    /** E7's M1: the kid tapped the alarm row - the ringing screen, uncapped (a tap can't loop), from [context], the
+     * visible time-rule screen. Main thread. */
+    fun openRingingAlarm(context: Context) {
+        val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
+        val clocks = clockPackages()
+        val key = reader.screenKey(clocks, capped = false) ?: return
+        noteOwnStart("the ringing alarm's screen")
+        val sent = reader.sendScreen(context, key, clocks)
+        Log.i(LOG_TAG, if (sent) "The ringing alarm's screen opened from its row" else "The ringing alarm's screen couldn't be sent")
     }
 
     /** [ALARM_SCREEN_CHECK_MS] after a re-send (code QA L2, as 17b's check): the lock still in front means nothing came
@@ -1768,7 +1790,7 @@ object PinLockRuntime {
         // one stops the glance only after ~1 s) is a probable SOS at once - never re-fronted over before its stop.
         val pausedNow = SystemClock.elapsedRealtime()
         val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)
-        if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow, logNow = false)
+        if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
@@ -1828,17 +1850,17 @@ object PinLockRuntime {
     /** The "sos" yield narrows lock task ([LockTaskChrome.sosYield]) - set on the main thread. */
     private var sosNarrowed = false
 
-    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? [logNow] false (the
-     * face's pause, design 59d N1): the line waits for the pause's check, so the wake's own pause/resume pair logs nothing. */
-    private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {
+    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? Marked silently: the
+     * line waits for a check that yields to it ([sosMarkLogDue] - design 59d N1, E7's L2), so neither the wake's own
+     * pause/resume pair nor an alarm's screen coming up just after a screen-on logs a probable SOS. */
+    private fun noteProbableSos(leftFrontAt: Long) {
         val app = appContext ?: return
         // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
         if (sosFlowUntilElapsed > 0L || !interactive(app)) return
         val now = SystemClock.elapsedRealtime()
         if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return
         sosFlowUntilElapsed = now + SOS_FLOW_MS
-        sosMarkUnlogged = !logNow
-        if (logNow) Log.i(LOG_TAG, SOS_MARK_LINE)
+        sosMarkUnlogged = true
     }
 
     /** The "sos" yield's narrowed lock task on or off (qa-25b-25f H1). Main thread. */
@@ -1879,10 +1901,10 @@ object PinLockRuntime {
             androidWaited = androidWaited,
         )
         androidLossPending = false
-        // Design 59d N1: a pause's mark is logged only when its check still finds it (no resume came in between).
-        if (sosPauseMarkLogDue(sosMarkUnlogged, sosFlowUntilElapsed > 0L)) Log.i(LOG_TAG, SOS_MARK_LINE)
-        sosMarkUnlogged = false
         val action = refrontAction(inputs, refrontAttempt)
+        // Design 59d N1, E7's L2: a mark is logged only by a check that yields to it (no resume, no alarm or call first).
+        if (sosMarkLogDue(sosMarkUnlogged, action)) Log.i(LOG_TAG, SOS_MARK_LINE)
+        sosMarkUnlogged = false
         // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
         // package, the helpers and the SOS app stay in lock task.
         val sos = sosMarkKept(action)

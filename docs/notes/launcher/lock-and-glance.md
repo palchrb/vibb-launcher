@@ -99,7 +99,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   - *The rc.2 run's fix round* (`docs/testing/2026-10-22-rc2-run.md`): as the face a pause of the glance in the SOS
     window, not ours, is the probable-SOS mark (`sosMarkAtPause`; R1 - own mode keeps its pause re-front for Recents;
     since 59d N1 that mark is set silently and `SOS_MARK_LINE` is logged by the pause's check only while the mark still
-    holds, `sosPauseMarkLogDue`),
+    holds; since E7's L2 a stop's mark too, and only by a check that yields to it, `sosMarkLogDue` - an alarm's screen
+    coming up just after a screen-on is logged as its "alarm" yield alone),
     and a queued start sent at once drops its queued copy (`KeyguardCover.dropWaiting`; R4: one time-rule screen).
     R2 (an unlock into a lock-task helper, kiosk off) waits for a decision; R3 is a label only.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
@@ -235,7 +236,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   category alarm with a full-screen intent - a snoozed/upcoming/missed one has none; not "ongoing", code QA H1: Fossify
   rings from `startForeground` without `setOngoing`; key, package, `when` and those facts only) holds it while posted,
   at most `ALARM_NOTICE_MAX_MS` (15 min, code QA L3: the yield steps aside for any front task while it lasts) from
-  first seen; else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
+  first seen or the last re-send that went (E7's M1: a ring past it is re-fronted over, and the resumed lock sends its
+  screen again - a new bounded yield); else, as before, `ALARM_RING_MS` (3 min) after the alarm's time (no listener access, another clock's
   shape, a denied `USE_FULL_SCREEN_INTENT` - API 34+ strips the intent then). The lock back in front after an "alarm"
   yield spends the ringing keys (`afterResume`, as `alarmAfterResume`); a snooze's re-post or a removal clears a key,
   and a post with a new `when` is a new ring (code QA L1: Fossify rings every alarm under one key), so it yields again.
@@ -247,8 +249,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   the platform's own launch of the full-screen intent, an unlock). `PinLockRuntime.sendAlarmScreen` - pure
   `alarmScreenStep` (LOCKED, screen on, no phone call or emergency flow; held for `LATER` while the keypad has digits,
   code QA N4, or the keyguard cover's keyguard must go first, `KeyguardCover.mustWait` as 17b, N3) and
-  `AlarmNotices.screenKey` (a clock app's, under 15 min, under `ALARM_SCREEN_MAX_SENDS` = 5 re-sends per ring, the
-  newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
+  `AlarmNotices.screenKey` (a clock app's, while it rings - no time bound since E7's M1 -, under
+  `ALARM_SCREEN_MAX_SENDS` = 5 re-sends per ring **per screen-on** - E7's M1: `AlarmNoticeReader.screenOn` at every
+  screen-on starts the count afresh, so a power press always brings it back and only a lock and a clock screen
+  bouncing within one screen-on stop; the newest; spent or not) after `AlarmNoticeReader.screenKey` asked the listener for exactly the kept keys (`reconciled`:
   Stop's removal makes it nothing; no listener answer, nothing) - sends that notification's full-screen intent (the
   reader keeps only that PendingIntent, only of the lock's clock apps, never extras, text or actions; sent only when it
   is an activity intent a clock app created, code QA N1/N2) from the visible lock with `VisibleSender.options()`, as one
@@ -256,7 +260,14 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   yielded to and Stop/Snooze brings the lock back; if the lock is still in front `ALARM_SCREEN_CHECK_MS` (1.5 s) later,
   nothing came up and that ring's yield closes again (`alarmScreenCheck` -> `spent`, code QA L2, as 17b's
   `VOIP_FSI_CHECK_MS`). The lock's own dialogs hold it (no retry until the next resume or screen-on). Both modes (own
-  and Android's face). **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
+  and Android's face). **After an unlock** (E7's M1: the time-rule screen didn't bring it back, the shade shut by the
+  kiosk, Recents empty - it rang until the clock gave up): `LockActivity`'s resume posts the same send after
+  `ALARM_SCREEN_SETTLE_MS` (`sendAlarmScreen(.., timeRuleScreen = true)`: in charge while not LOCKED, the same count,
+  no yield and so no check; a pause drops it), and while an allowed clock's alarm rings unsilenced
+  (`PinLockRuntime.alarmToStop`: `AlarmNoticeReader.openable`, not `silencesAlarms`) the card's first row is "Slå av
+  alarmen" (`LockRow.Alarm`, the alarm glyph), whose tap sends the ringing screen uncapped (`openRingingAlarm`,
+  `screenKey(.., capped = false)` after the listener's lookup - a tap can't loop); the reader tells its listeners when
+  the kept ringing screens change, so the row comes and goes live. The yield stays the PIN lock's alone. **Device check**: `dumpsys notification --noredact` while Fossify rings and while the Jelly
   Star's own clock rings (category, flags, `fullscreenIntent=`) - the shape must match both; and (revision R1) `when=`
   stays the same across two dumps of one ring on the Google/OEM clock (an update with a new `when` would read as a new
   ring: fresh bound, re-send count reset). Revision R2: a resume with a re-send outstanding and no "alarm" yield in

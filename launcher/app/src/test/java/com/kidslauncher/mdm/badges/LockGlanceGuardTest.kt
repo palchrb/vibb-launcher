@@ -541,11 +541,18 @@ class LockGlanceGuardTest {
         }
         val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(alarmReader).map { it.groupValues[1] }.toList()
         assertEquals(
-            listOf("attach", "connected", "disconnected", "posted", "removed", "ringing", "lockResumed", "clocksKnown", "sendCameToNothing", "screenKey", "sendScreen"),
+            listOf(
+                "addListener", "removeListener", "attach", "connected", "disconnected", "posted", "removed", "ringing", "lockResumed",
+                "clocksKnown", "sendCameToNothing", "screenOn", "openable", "screenKey", "sendScreen",
+            ),
             publicFuns,
         )
-        for (name in publicFuns - setOf("ringing", "screenKey", "sendScreen")) assertTrue(name, body(alarmReader, name).contains("= guarded {"))
-        for (name in listOf("ringing", "screenKey", "sendScreen")) assertTrue(name, body(alarmReader, name).contains("} catch (e: Throwable) {"))
+        val caught = setOf("ringing", "openable", "screenKey", "sendScreen")
+        for (name in publicFuns - caught - setOf("addListener", "removeListener")) assertTrue(name, body(alarmReader, name).contains("= guarded {"))
+        for (name in caught) assertTrue(name, body(alarmReader, name).contains("} catch (e: Throwable) {"))
+        // E7's M1: every change of the kept screens tells the listeners (the time-rule screen's alarm row), each caught.
+        for (name in listOf("connected", "disconnected", "posted", "removed", "screenKey")) assertTrue(name, body(alarmReader, name).contains("tellingChanges {"))
+        assertTrue(alarmReader.contains("if (screens.keys != before) listeners.toList().forEach { listener -> guarded { listener() } }"))
         val listener = code("BadgeListenerService.kt")
         for (call in listOf("AlarmNoticeReader.connected(active)", "AlarmNoticeReader.posted(it)", "AlarmNoticeReader.removed(it)")) {
             assertTrue(call, listener.contains(call))
@@ -562,7 +569,10 @@ class LockGlanceGuardTest {
         // sends it once per resume after the settle, from its visible window, and a pause drops it.
         val send = body(runtime, "sendAlarmScreen")
         assertTrue(send.contains("val clocks = clockPackages()") && send.contains("reader.screenKey(clocks)"))
-        assertTrue(send.contains("key, mode == LockMode.LOCKED, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),"))
+        assertTrue(send.contains("val inCharge = if (timeRuleScreen) mode != LockMode.LOCKED else mode == LockMode.LOCKED"))
+        assertTrue(send.contains("key, inCharge, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),"))
+        // The time-rule screen has no yield to check.
+        assertTrue(send.contains("if (!timeRuleScreen) alarmScreenSentKey = key.takeIf { sent }"))
         assertTrue(send.contains("typing = typing, coverWaits = key != null && KeyguardCover.mustWait(context),"))
         assertTrue(send.contains("reader.sendScreen(context, key, clocks)"))
         assertTrue(send.indexOf("noteOwnStart(") in 0 until send.indexOf("reader.sendScreen(context, key, clocks)"))
@@ -580,6 +590,24 @@ class LockGlanceGuardTest {
         assertTrue(activity.contains("AlarmScreenStep.SEND -> handler.postDelayed(alarmScreenCheck, ALARM_SCREEN_CHECK_MS)"))
         assertTrue(activity.contains("PinLockRuntime.addScreenOnListener(alarmScreenOn)") && activity.contains("PinLockRuntime.removeScreenOnListener(alarmScreenOn)"))
         assertTrue(activity.contains("if (!resumed || !openDialogs.isEmpty()) return"))
+        // E7's M1: the cap is per screen-on - every screen-on starts the count afresh, before the lock's looks.
+        val screenOn = runtime.indexOf("com.kidslauncher.mdm.badges.AlarmNoticeReader.screenOn()")
+        assertTrue(screenOn in 0 until runtime.indexOf("screenOnListeners.toList().forEach { listener -> runCatching { listener() } }"))
+        // E7's M1: the time-rule screen sends it once settled after each resume (a pause drops it), and its alarm row -
+        // shown only while an allowed clock's alarm rings unsilenced - sends it on a tap, uncapped.
+        val timeRule = code("LockActivity.kt")
+        assertTrue(timeRule.contains("PinLockRuntime.sendAlarmScreen(this@LockActivity, typing = false, timeRuleScreen = true)"))
+        assertTrue(body(timeRule, "onResume").contains("handler.postDelayed(alarmScreenSend, com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)"))
+        assertTrue(body(timeRule, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))
+        assertTrue(body(timeRule, "onStart").contains("AlarmNoticeReader.addListener(alarmListener)"))
+        assertTrue(body(timeRule, "onStop").contains("AlarmNoticeReader.removeListener(alarmListener)"))
+        assertTrue(timeRule.contains("is LockRow.Alarm -> PinLockRuntime.openRingingAlarm(this)"))
+        assertTrue(timeRule.contains("getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }"))
+        assertTrue(body(runtime, "alarmToStop").contains("!com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms() &&"))
+        assertTrue(body(runtime, "alarmToStop").contains("AlarmNoticeReader.openable(clockPackages())"))
+        val tap = body(runtime, "openRingingAlarm")
+        assertTrue(tap.contains("reader.screenKey(clocks, capped = false) ?: return"))
+        assertTrue(tap.indexOf("noteOwnStart(") in 0 until tap.indexOf("reader.sendScreen(context, key, clocks)"))
     }
 
     @Test

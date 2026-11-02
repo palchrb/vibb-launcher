@@ -153,45 +153,56 @@ class RefrontPolicyTest {
     }
 
     /** The gap closed 2026-11-02: power pressed while the alarm rings - the lock-up covers it; the resumed lock sends
-     * the still-ringing alarm's screen again, capped, and the screen that comes up is yielded to. */
+     * the still-ringing alarm's screen again, capped per screen-on, and the screen that comes up is yielded to. */
     @Test
-    fun `the resumed lock brings a still-ringing alarm's screen back, capped, only while posted`() {
+    fun `the resumed lock brings a still-ringing alarm's screen back, capped per screen-on, only while posted`() {
         val clocks = setOf("com.android.deskclock")
         val t = 2_000_000L
         fun post(key: String = "k", pkg: String = "com.android.deskclock", rings: Boolean = true, at: Long = 5L) = AlarmPost(key, pkg, rings, at)
         val ringing = AlarmNotices().posted(post(), t)
-        assertEquals("k", ringing.screenKey(clocks, t + 1))
+        assertEquals("k", ringing.screenKey(clocks))
         // Spent by the lock's resume after the yield - still the one to bring back (the settle's lookup tells Stop apart).
         val spent = ringing.afterResume("alarm")
-        assertEquals("k", spent.screenKey(clocks, t + 1))
+        assertEquals("k", spent.screenKey(clocks))
         // Stop: the listener no longer has it - nothing to send.
-        assertNull(spent.reconciled(emptySet()).screenKey(clocks, t + 1))
+        assertNull(spent.reconciled(emptySet()).screenKey(clocks))
         assertEquals(AlarmNotices(), spent.reconciled(emptySet()))
         assertEquals(spent, spent.reconciled(setOf("k")))
-        // Never another app's, never past the bound.
-        assertNull(AlarmNotices().posted(post("g", "com.example.game"), t).screenKey(clocks, t))
-        assertNull(ringing.screenKey(clocks, t + ALARM_NOTICE_MAX_MS))
+        // Never another app's.
+        assertNull(AlarmNotices().posted(post("g", "com.example.game"), t).screenKey(clocks))
         // A sent screen opens the yield again for it (the re-front check steps aside); a failed one doesn't.
-        val sent = spent.resent("k", sent = true)
+        val sent = spent.resent("k", sent = true, nowMs = t + 1)
         assertTrue(sent.ringingNow(clocks, t + 1))
-        assertFalse(spent.resent("k", sent = false).ringingNow(clocks, t + 1))
+        assertFalse(spent.resent("k", sent = false, nowMs = t + 1).ringingNow(clocks, t + 1))
         // Code QA L2: the lock still in front after the check - nothing came up, the yield closes again.
         assertFalse(sent.spent("k").ringingNow(clocks, t + 1))
         assertEquals(sent.sends, sent.spent("k").sends)
         assertEquals(sent, sent.spent("gone"))
-        // The cap: a clock screen that closes at once while its notification stays can't loop.
+        // E7's M1: an alarm still ringing past the yield's bound - the re-front covered it - gets its screen back, and
+        // the send opens a new bounded yield from then.
+        val late = t + ALARM_NOTICE_MAX_MS + 60_000L
+        assertFalse(ringing.ringingNow(clocks, late))
+        assertEquals("k", ringing.screenKey(clocks))
+        val lateSend = ringing.resent("k", sent = true, nowMs = late)
+        assertTrue(lateSend.ringingNow(clocks, late + ALARM_NOTICE_MAX_MS - 1))
+        assertFalse(lateSend.ringingNow(clocks, late + ALARM_NOTICE_MAX_MS))
+        // The cap: a clock screen that closes at once while its notification stays can't loop within one screen-on.
         var notices = ringing
         repeat(ALARM_SCREEN_MAX_SENDS) {
-            assertEquals("k", notices.screenKey(clocks, t + 1))
-            notices = notices.resent("k", sent = true)
+            assertEquals("k", notices.screenKey(clocks))
+            notices = notices.resent("k", sent = true, nowMs = t + 1)
         }
-        assertNull(notices.screenKey(clocks, t + 1))
+        assertNull(notices.screenKey(clocks))
+        // E7's M1: the kid's own tap (uncapped) still reaches it, and the next screen-on - a power press - starts afresh.
+        assertEquals("k", notices.screenKey(clocks, capped = false))
+        assertEquals("k", notices.screenOn().screenKey(clocks))
+        assertEquals(ringing, ringing.screenOn())
         // The newest of two; a snooze's re-post or a new ring clears the count, so the alarm is brought back again.
-        assertEquals("k2", notices.posted(post("k2"), t + 10).screenKey(clocks, t + 11))
+        assertEquals("k2", notices.posted(post("k2"), t + 10).screenKey(clocks))
         val rangAgain = notices.posted(post(rings = false), t + 20).posted(post(), t + 30)
-        assertEquals("k", rangAgain.screenKey(clocks, t + 31))
-        assertEquals("k", notices.posted(post(at = 6L), t + 30).screenKey(clocks, t + 31))
-        assertNull("an update of the same ring keeps the count", notices.posted(post(), t + 30).screenKey(clocks, t + 31))
+        assertEquals("k", rangAgain.screenKey(clocks))
+        assertEquals("k", notices.posted(post(at = 6L), t + 30).screenKey(clocks))
+        assertNull("an update of the same ring keeps the count", notices.posted(post(), t + 30).screenKey(clocks))
         // The sweep keeps the counts of the same rings still active.
         assertEquals(ALARM_SCREEN_MAX_SENDS, notices.swept(listOf(post()), t + 40).sends["k"])
 
@@ -206,19 +217,20 @@ class RefrontPolicyTest {
         assertEquals(emptySet<String>(), early.screensMissing(have = setOf("k"), clockPackages = clocks))
         assertEquals(emptySet<String>(), early.screensMissing(have = emptySet(), clockPackages = emptySet()))
 
-        // The step: only LOCKED, screen on, no call or emergency flow; dark waits for the screen-on; typing the PIN
-        // (code QA N4) and the cover's keyguard (N3) hold it for later.
-        assertEquals(AlarmScreenStep.SEND, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false))
-        assertEquals(AlarmScreenStep.SCREEN_ON, alarmScreenStep("k", locked = true, interactive = false, otherScreen = false))
-        assertEquals(AlarmScreenStep.LATER, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false, typing = true))
-        assertEquals(AlarmScreenStep.LATER, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false, coverWaits = true))
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep(null, locked = true, interactive = true, otherScreen = false, typing = true))
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = false, interactive = true, otherScreen = false))
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = true, otherScreen = true))
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = false, otherScreen = true))
+        // The step: only from the screen in charge (the PIN lock LOCKED, the time-rule screen not - E7's M1), screen
+        // on, no call or emergency flow; dark waits for the screen-on; typing the PIN (code QA N4) and the cover's
+        // keyguard (N3) hold it for later.
+        assertEquals(AlarmScreenStep.SEND, alarmScreenStep("k", inCharge = true, interactive = true, otherScreen = false))
+        assertEquals(AlarmScreenStep.SCREEN_ON, alarmScreenStep("k", inCharge = true, interactive = false, otherScreen = false))
+        assertEquals(AlarmScreenStep.LATER, alarmScreenStep("k", inCharge = true, interactive = true, otherScreen = false, typing = true))
+        assertEquals(AlarmScreenStep.LATER, alarmScreenStep("k", inCharge = true, interactive = true, otherScreen = false, coverWaits = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep(null, inCharge = true, interactive = true, otherScreen = false, typing = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", inCharge = false, interactive = true, otherScreen = false))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", inCharge = true, interactive = true, otherScreen = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", inCharge = true, interactive = false, otherScreen = true))
         // Code QA H1: a silenced alarm's screen is never brought up, screen on or off.
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = true, otherScreen = false, alarmsSilenced = true))
-        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", locked = true, interactive = false, otherScreen = false, alarmsSilenced = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", inCharge = true, interactive = true, otherScreen = false, alarmsSilenced = true))
+        assertEquals(AlarmScreenStep.NONE, alarmScreenStep("k", inCharge = true, interactive = false, otherScreen = false, alarmsSilenced = true))
     }
 
     @Test

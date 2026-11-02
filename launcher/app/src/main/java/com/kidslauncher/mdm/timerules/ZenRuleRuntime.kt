@@ -148,13 +148,15 @@ object ZenRuleRuntime {
         false
     }
 
-    /** Our rules (Android returns only the caller's), by id. */
-    private fun ours(nm: NotificationManager, context: Context): List<Pair<String, AutomaticZenRule>> =
-        nm.automaticZenRules.orEmpty().filterValues { rule ->
+    /** Our rules (Android returns only the caller's), the one to keep first ([zenRulesKeptFirst]). */
+    private fun ours(nm: NotificationManager, context: Context): List<Pair<String, AutomaticZenRule>> {
+        val found = nm.automaticZenRules.orEmpty().filterValues { rule ->
             val id = rule.conditionId
             id != null && id.scheme == Condition.SCHEME && id.authority == context.packageName &&
                 id.pathSegments.firstOrNull() == SILENCE_PATH
-        }.toList().sortedBy { it.first }
+        }
+        return zenRulesKeptFirst(found.mapValues { it.value.isEnabled }).map { id -> id to found.getValue(id) }
+    }
 
     @Synchronized
     private fun apply(context: Context, force: Boolean) {
@@ -168,7 +170,7 @@ object ZenRuleRuntime {
         }
         try {
             val existing = ours(nm, context)
-            // A second copy (a lost add's retry) goes; the first one stays.
+            // A second copy (a lost add's retry) goes; the first one - an enabled one if any (L-R1) - stays.
             existing.drop(1).forEach { (id, _) -> runCatching { nm.removeAutomaticZenRule(id) } }
             val entry = existing.firstOrNull()
             val step = zenStep(target, applied, force, entry?.let { ZenRuleSeen(it.second.isEnabled) })
@@ -215,6 +217,8 @@ object ZenRuleRuntime {
     private fun switchOn(nm: NotificationManager, context: Context, id: String, uri: Uri, target: RuleSilence, offFirst: Boolean) {
         if (offFirst) nm.setAutomaticZenRuleState(id, condition(context, uri, on = false))
         nm.setAutomaticZenRuleState(id, condition(context, uri, on = true))
+        // L-R2: switched on - a deactivation heard before no longer says it is off (its "activated" may never come).
+        deactivatedId = null
         if (!zenRuleNeedsReplacing(nm.getAutomaticZenRule(id)?.isEnabled)) {
             Log.i(LOG_TAG, "Silence on: alarms=${target.alarms} media=${target.media}")
             return

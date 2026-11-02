@@ -51,7 +51,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   nothing changed, off, add, on, or off-then-on (a forced re-assert, the first apply of a process - QA L2 - or a
   disabled rule: a user's switch-off stands until the condition has been false). After switching on it reads the
   rule back: one Android keeps disabled (Android 15+ ignores an app's re-enable of a user-disabled rule) is removed
-  and added again under a fresh condition id (`zenRuleNeedsReplacing`, QA M2). A failed call leaves "applied"
+  and added again under a fresh condition id (`zenRuleNeedsReplacing`, QA M2). Of duplicate rules (a lost add's
+  retry) an enabled one is kept, the rest removed (`zenRulesKeptFirst`, the revision check's L-R1), and a switch-on
+  clears a deactivation heard before (L-R2: its "activated" broadcast may never come). A failed call leaves "applied"
   unknown, retried at the next follow. **Alarms** (QA H1): `ZenRuleRuntime.silencesAlarms()` (our rule on, alarms
   not allowed) makes the lock's `alarmRingingNow` false and `alarmScreenStep` NONE - an alarm nobody hears is no
   ringing alarm for the lock: no yield, the VoIP ring not held back, the silenced alarm's screen never re-sent (the

@@ -86,6 +86,12 @@ fun zenStep(target: RuleSilence, applied: RuleSilence?, force: Boolean, ours: Ze
     else -> ZenStep.ON
 }
 
+/** The revision check's L-R1: of several rules of ours (a lost add's retry; [enabled] by id) the one kept - listed
+ * first, the rest removed - is an enabled one: keeping a disabled copy would throw away the copy Android still runs and
+ * replace the kept one under a fresh condition id. Ties by id, so every apply keeps the same one. */
+fun zenRulesKeptFirst(enabled: Map<String, Boolean>): List<String> =
+    enabled.entries.sortedWith(compareBy({ !it.value }, { it.key })).map { it.key }
+
 /** Code QA M2: read back after switching on - a rule still disabled (Android 15+ keeps a user's disable and ignores the
  * app's re-enable) or gone ([enabledAfter] `null`) is replaced by a new one under a fresh condition id. */
 fun zenRuleNeedsReplacing(enabledAfter: Boolean?): Boolean = enabledAfter != true

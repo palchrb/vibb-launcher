@@ -136,6 +136,13 @@ class TimeLockModelTest {
         assertEquals(listOf("Telefonbok", "Kalender", "Bøker", "meldinger", "Musikk"), withCalendar.map { it.label })
         assertEquals(LockRow.Calendar("Kalender"), withCalendar[1])
         assertEquals(listOf<LockRow>(LockRow.Calendar("Kalender")), timeLockRows(true, false, "Telefonbok", emptyList(), "Kalender"))
+        // E7's M1: a ringing alarm's row first, whatever else the rule leaves - also under a no-calls rule with nothing.
+        val ringing = timeLockRows(true, true, "Telefonbok", apps, calendarLabel = "Kalender", alarmLabel = "Slå av alarmen")
+        assertEquals(LockRow.Alarm("Slå av alarmen"), ringing.first())
+        assertEquals(withCalendar, ringing.drop(1))
+        assertEquals(listOf<LockRow>(LockRow.Alarm("Slå av alarmen")), timeLockRows(true, false, "Telefonbok", emptyList(), alarmLabel = "Slå av alarmen"))
+        // After an unlock its row alone opens it (the ringing screen); beside another row the screen's own send does.
+        assertEquals(LockRow.Alarm("Slå av alarmen"), unlockOpenRow(true, false, listOf(LockRow.Alarm("Slå av alarmen"))))
     }
 
     /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's
