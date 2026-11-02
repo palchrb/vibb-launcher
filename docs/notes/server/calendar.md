@@ -1,5 +1,9 @@
 # Dagen on the server (design 69)
 
+Naming (the user, 2026-11-02): the kid-facing app is **Kalender** (en **Calendar**); the parent page's group is "Kalender-appen" /
+"Calendar app" (so it doesn't repeat the page title). "Dagen" stays the design and code name: `#dagen`, `/calendar/dagen`,
+`calendar.dagen.*` keys, `save_dagen`.
+
 The kid's day view lives in Vibb One (`launcher/CLAUDE.md`, "Dagen"); the calendar lives in the parent's tools (a school's
 ICS feed through ICSx5, a family Nextcloud through DAVx5) - or, since design 72, a link pasted on the phone's Calendar
 page, which the server fetches itself ("Calendar links" below). **No event ever leaves the phone**: the server keeps the
@@ -90,7 +94,7 @@ unreadable provider - stays the selected choice, "The chosen calendar - not on t
 accounts, below "Device › Calendar's sources"), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
 was sent - a missing `remind_<key>` keeps it -, a saved calendar gone from the phone greyed with Remove, the setup
 steps without a report), Title rules (`#rules`: the list in order, up/down back to `#rule-<id>`, "Add a rule…").
-"This phone's Vibb One doesn't know Dagen yet" until the last report claims `calendar_v1`.
+"This phone's Vibb One doesn't have the Calendar app yet" until the last report claims `calendar_v1`.
 
 2026-10-27 polish (the user's iPhone look at the nb page): each of Dagen, On the lock screen and Calendars shown has one
 short footer line and the rest behind its ⓘ (`<details class="info">`, as About and Calls); the kid's calendar is a

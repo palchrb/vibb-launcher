@@ -2,6 +2,10 @@
 
 Moved from launcher/CLAUDE.md on 2026-11-01.
 
+Naming (the user, 2026-11-02): the kid sees the app as **Kalender** (en **Calendar**) - the Home tile, the Recents card, the lock
+glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "Dagen" stays the design and code name here (the
+`day/` package, `DayActivity`, `#dagen`, `calendar.dagen.*` keys).
+
 ## Dagen: the kid's day, the parent's title rules (design 69, `docs/design/69-dagen.md`, at the monorepo root)
 
 - **What**: a day view in Vibb One over Android's calendar provider, which ICSx5 (subscribed feeds) and DAVx5 (CalDAV)
@@ -47,7 +51,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `PAGER_PAD_DP` 13 dp, each page 3 dp, the root `clipToPadding=false` (E5's L1); a page shows nothing until its day is read; a date/time/zone
   change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
   events; since 2026-10-27 a task of its own - `taskAffinity` `${applicationId}.day` on the three Dagen activities, in
-  Recents with "Dagen" and the launcher's icon as its card (`setTaskDescription` on the root), so Home and Back get
+  Recents with "Kalender" (`day_title`) and the launcher's icon as its card (`setTaskDescription` on the root), so Home and Back get
   Android's task-close animation; a minute away (`DAY_BACK_TO_TODAY_MS`, pure `backToToday`: stopped that long, or its
   saved state that old) and it opens on today again, unless a day is asked for (the reminder row); the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
   also `CLEAR_TOP`, so the reminder row lands on the day view - from the lock's task it died with the lock, E5's H1)
