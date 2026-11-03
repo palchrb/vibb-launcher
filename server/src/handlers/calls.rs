@@ -96,6 +96,9 @@ struct ContactView {
     message_address: String,
     /// SHA-256 of the contact's photo (shown via `/contact-photos/{hash}`).
     photo: Option<String>,
+    /// Its kept original's SHA-256 and the view the square was cut at (migration 0123): "Adjust crop" opens
+    /// `/contact-photos/original/{hash}` there. `None` for a photo stored before it (the square is refined).
+    original: Option<(String, String)>,
     initial: String,
     /// The row's value: "Both ways · Home".
     summary: String,
@@ -366,6 +369,18 @@ async fn load_page(
             ),
             None => (false, String::new(), String::new(), None),
         };
+    let originals: HashMap<i64, (String, String)> = sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT c.id, c.photo_original_hash, c.photo_view FROM contacts c \
+         JOIN device_contacts dc ON dc.contact_id = c.id \
+         WHERE dc.device_id = ? AND c.photo_hash IS NOT NULL \
+         AND c.photo_original_hash IS NOT NULL AND c.photo_view IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|(contact, hash, view)| (contact, (hash, view)))
+    .collect();
     let contacts: Vec<ContactView> = device_contacts(state, id)
         .await?
         .into_iter()
@@ -386,6 +401,7 @@ async fn load_page(
                 ),
                 message_address: c.message_address.unwrap_or_default(),
                 photo: c.photo_hash,
+                original: originals.get(&c.contact_id).cloned(),
                 open: shown.open == Some(c.contact_id),
                 error: None,
             };
@@ -1455,20 +1471,31 @@ async fn devices_with_contact(state: &AppState, contact_id: i64) -> Result<Vec<i
         .await
 }
 
-/// Sets (or, with `None`, clears) a contact's photo, prunes files nobody uses any more and nudges
-/// every device that has the contact. The caller holds `photos::lock_files()` across its store
-/// and this commit ([`photos::prune`] takes it again afterwards).
+/// A contact's photo as committed: the square the phones get, and the kept original with the view it was cut at.
+struct PhotoCommit<'a> {
+    hash: &'a str,
+    original: &'a str,
+    view: &'a str,
+}
+
+/// Sets (or, with `None`, clears) a contact's photo with its original and view, prunes files nobody uses any more
+/// and nudges every device that has the contact. The caller holds `photos::lock_files()` across its store and this
+/// commit ([`photos::prune`] takes it again afterwards).
 async fn commit_photo(
     state: &AppState,
     contact_id: i64,
-    hash: Option<&str>,
+    photo: Option<PhotoCommit<'_>>,
 ) -> Result<Vec<i64>, sqlx::Error> {
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
-        .bind(hash)
-        .bind(contact_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE contacts SET photo_hash = ?, photo_original_hash = ?, photo_view = ? WHERE id = ?",
+    )
+    .bind(photo.as_ref().map(|p| p.hash))
+    .bind(photo.as_ref().map(|p| p.original))
+    .bind(photo.as_ref().map(|p| p.view))
+    .bind(contact_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     devices_with_contact(state, contact_id).await
 }
@@ -1492,11 +1519,29 @@ async fn photo_saved(
     }
 }
 
-/// Uploads a contact's photo (multipart field `photo`). The photo is decoded and re-encoded
-/// (`photos::process`: square JPEG, no metadata) before anything is stored; a file that isn't a
-/// JPEG/PNG/WebP photo, is too big or can't be decoded renders the page (400) with the contact
-/// open and the reason under its photo, and nothing changes. The photo belongs to the
-/// address-book contact, so every device that has it gets it. Back to the contact's row.
+/// A contact's kept original and the view its square was cut at, if it has one.
+async fn photo_original(
+    state: &AppState,
+    contact_id: i64,
+) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT photo_original_hash, photo_view FROM contacts WHERE id = ? AND photo_hash IS NOT NULL",
+    )
+    .bind(contact_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.and_then(|(hash, view)| hash.map(|hash| (hash, view))))
+}
+
+/// Uploads a contact's photo (multipart: the file `photo`, the crop `view` - `x,y,w,h`, `photos::View` - and, for
+/// "Adjust crop", `original`). A new file is decoded and kept as a downscaled original without metadata
+/// (`photos::process_contact`), and the square is cut from it at `view` (none: cover, centred - an upload without
+/// the cropper). No file but `original` (the hash the view was chosen on) re-cuts the square from the kept original
+/// (`photos::recut`): an adjust sends only the view. A file that isn't a JPEG/PNG/WebP photo, is too big or can't
+/// be decoded, a view outside the photo, not square or too small, or an `original` that is no longer the contact's
+/// renders the page (400) with the contact open and the reason under its photo, and nothing changes. The photo
+/// belongs to the address-book contact, so every device that has it gets it - only ever the square. Back to the
+/// contact's row.
 pub async fn upload_photo(
     State(state): State<AppState>,
     lang: Lang,
@@ -1525,38 +1570,156 @@ pub async fn upload_photo(
             render(&state, id, StatusCode::BAD_REQUEST, shown, lang).await
         }
     };
+    let refusal = |err: photos::ContactPhotoError| match err {
+        photos::ContactPhotoError::Photo(err) => err.text(lang),
+        photos::ContactPhotoError::View(err) => t(lang, err.key()).to_string(),
+    };
 
     let mut upload = None;
+    let mut view_text = String::new();
+    let mut original_text = String::new();
     loop {
         match multipart.next_field().await {
-            Ok(Some(field)) if field.name() == Some("photo") => match field.bytes().await {
-                Ok(bytes) => upload = Some(bytes),
-                Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
-            },
-            Ok(Some(_)) => {}
+            Ok(Some(field)) => {
+                let name = field.name().unwrap_or_default().to_string();
+                match name.as_str() {
+                    "photo" => match field.bytes().await {
+                        Ok(bytes) => upload = Some(bytes),
+                        Err(_) => {
+                            return photo_error(&photos::PhotoError::TooLarge.text(lang)).await;
+                        }
+                    },
+                    "view" | "original" => match field.text().await {
+                        // A hash or four numbers: anything longer is neither.
+                        Ok(text) if text.len() <= 128 => {
+                            let text = text.trim().to_string();
+                            if name == "view" {
+                                view_text = text;
+                            } else {
+                                original_text = text;
+                            }
+                        }
+                        _ => return photo_error(t(lang, photos::ViewError::Malformed.key())).await,
+                    },
+                    _ => {}
+                }
+            }
             Ok(None) => break,
-            Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
+            Err(_) => return photo_error(&photos::PhotoError::TooLarge.text(lang)).await,
         }
     }
-    let Some(bytes) = upload else {
-        return photo_error(photos::PhotoError::Empty.message()).await;
+    let view = match view_text.as_str() {
+        "" => None,
+        text => match photos::View::parse(text) {
+            Ok(view) => Some(view),
+            Err(err) => return photo_error(t(lang, err.key())).await,
+        },
     };
-    let processed = match photos::process_limited(bytes, photos::Shape::Square).await {
+    let upload = upload.filter(|bytes| !bytes.is_empty());
+
+    // "Adjust crop" on a kept original: only the view comes, the square is cut from the original again.
+    let Some(bytes) = upload else {
+        if original_text.is_empty() {
+            return photo_error(&photos::PhotoError::Empty.text(lang)).await;
+        }
+        let Some(view) = view else {
+            return photo_error(t(lang, photos::ViewError::Malformed.key())).await;
+        };
+        let changed = || photo_error(t(lang, "device.calls.crop.photo_changed"));
+        let (original, saved_view) = match photo_original(&state, contact_id).await {
+            Ok(Some((original, saved))) if original == original_text => (original, saved),
+            Ok(_) => return changed().await,
+            Err(err) => return db_error(lang, id, err),
+        };
+        let Some(path) = photos::path_for(&state.photo_original_dir, &original) else {
+            return changed().await;
+        };
+        let jpeg = match tokio::fs::read(&path).await {
+            Ok(jpeg) => jpeg,
+            Err(err) => {
+                // Lost while the server runs (startup's recovery would have caught it): forget it, as recovery
+                // does - the square stays and its adjust refines it again - and say so (QA photo-original L2).
+                tracing::warn!(%err, hash = original, "a contact photo's kept original is missing");
+                let forgot = {
+                    let _files = photos::lock_files().await;
+                    photos::CONTACT_ORIGINALS.forget(&state.db, &original).await
+                };
+                if let Err(err) = forgot {
+                    return db_error(lang, id, err);
+                }
+                return photo_error(t(lang, "device.calls.crop.original_lost")).await;
+            }
+        };
+        let cut = match photos::recut_limited(jpeg, view).await {
+            Ok(cut) => cut,
+            Err(err) => return photo_error(&refusal(err)).await,
+        };
+        // The square that is already stored (Save without a move): nothing to commit, no phone to send it to
+        // again (QA photo-original L1). Compared as the pixels cut, so the cropper's rounding doesn't count.
+        if saved_view.as_deref() == Some(cut.view.as_str()) {
+            return Redirect::to(&contact_row(id, contact_id)).into_response();
+        }
+        let result = {
+            let _files = photos::lock_files().await;
+            // Replaced or removed meanwhile (another tab): this view was chosen on another picture.
+            match photo_original(&state, contact_id).await {
+                Ok(Some((now, _))) if now == original => {
+                    if let Err(err) = photos::store(&state.photo_dir, &cut.square).await {
+                        tracing::error!(%err, "couldn't store a contact photo");
+                        return crate::i18n::error(
+                            lang,
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "error.save_photo",
+                        );
+                    }
+                    let commit = PhotoCommit {
+                        hash: &cut.square.hash,
+                        original: &original,
+                        view: &cut.view,
+                    };
+                    Some(commit_photo(&state, contact_id, Some(commit)).await)
+                }
+                Ok(_) => None,
+                Err(err) => Some(Err(err)),
+            }
+        };
+        let Some(result) = result else {
+            return changed().await;
+        };
+        return photo_saved(&state, id, contact_id, result, lang).await;
+    };
+
+    let processed = match photos::process_contact_limited(bytes, view).await {
         Ok(processed) => processed,
-        Err(err) => return photo_error(err.message()).await,
+        Err(err) => return photo_error(&refusal(err)).await,
     };
     let result = {
         let _files = photos::lock_files().await;
-        if let Err(err) = photos::store(&state.photo_dir, &processed).await {
-            tracing::error!(%err, "couldn't store a contact photo");
-            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_photo");
+        for (dir, photo) in [
+            (&state.photo_original_dir, &processed.original),
+            (&state.photo_dir, &processed.cut.square),
+        ] {
+            if let Err(err) = photos::store(dir, photo).await {
+                tracing::error!(%err, "couldn't store a contact photo");
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error.save_photo",
+                );
+            }
         }
-        commit_photo(&state, contact_id, Some(&processed.hash)).await
+        let commit = PhotoCommit {
+            hash: &processed.cut.square.hash,
+            original: &processed.original.hash,
+            view: &processed.cut.view,
+        };
+        commit_photo(&state, contact_id, Some(commit)).await
     };
     photo_saved(&state, id, contact_id, result, lang).await
 }
 
-/// Removes a contact's photo (for every device that has the contact). Back to the contact's row.
+/// Removes a contact's photo, its original and view (for every device that has the contact). Back to the
+/// contact's row.
 pub async fn remove_photo(
     State(state): State<AppState>,
     lang: Lang,
@@ -1582,14 +1745,42 @@ pub async fn view_photo(State(state): State<AppState>, Path(hash): Path<String>)
     let Some(path) = photos::path_for(&state.photo_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    match tokio::fs::read(&path).await {
+    jpeg_file(&path, "private, max-age=31536000, immutable").await
+}
+
+/// A contact photo's kept original for "Adjust crop" (migration 0123): behind the admin session like every page,
+/// and only while a contact with a photo names it (a hash nobody uses any more, waiting for its prune, is a 404).
+/// Never on the phones' routes: the device API serves only the square. Not kept in the browser's cache beyond the
+/// session: `private, no-store`.
+pub async fn view_photo_original(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Response {
+    let Some(path) = photos::path_for(&state.photo_original_dir, &hash) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let named: Result<bool, sqlx::Error> = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM contacts WHERE photo_original_hash = ? AND photo_hash IS NOT NULL)",
+    )
+    .bind(&hash)
+    .fetch_one(&state.db)
+    .await;
+    match named {
+        Ok(true) => jpeg_file(&path, "private, no-store").await,
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::warn!(%err, "couldn't check a contact photo's original");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn jpeg_file(path: &std::path::Path, cache: &'static str) -> Response {
+    match tokio::fs::read(path).await {
         Ok(bytes) => (
             [
                 (header::CONTENT_TYPE, "image/jpeg"),
-                (
-                    header::CACHE_CONTROL,
-                    "private, max-age=31536000, immutable",
-                ),
+                (header::CACHE_CONTROL, cache),
             ],
             bytes,
         )

@@ -115,7 +115,7 @@ pub async fn upload(
                         return page(
                             &state,
                             StatusCode::BAD_REQUEST,
-                            Some(PhotoError::TooLarge.message().into()),
+                            Some(PhotoError::TooLarge.text(lang)),
                             lang,
                         )
                         .await;
@@ -130,7 +130,7 @@ pub async fn upload(
                 return page(
                     &state,
                     StatusCode::BAD_REQUEST,
-                    Some(PhotoError::TooLarge.message().into()),
+                    Some(PhotoError::TooLarge.text(lang)),
                     lang,
                 )
                 .await;
@@ -148,7 +148,7 @@ pub async fn upload(
         return page(
             &state,
             StatusCode::BAD_REQUEST,
-            Some(PhotoError::Empty.message().into()),
+            Some(PhotoError::Empty.text(lang)),
             lang,
         )
         .await;
@@ -156,13 +156,7 @@ pub async fn upload(
     let processed = match photos::process_limited(bytes, Shape::Portrait).await {
         Ok(processed) => processed,
         Err(err) => {
-            return page(
-                &state,
-                StatusCode::BAD_REQUEST,
-                Some(err.message().into()),
-                lang,
-            )
-            .await;
+            return page(&state, StatusCode::BAD_REQUEST, Some(err.text(lang)), lang).await;
         }
     };
     let result = {

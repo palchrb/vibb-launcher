@@ -72,12 +72,35 @@ async fn upload(
     contact: i64,
     bytes: &[u8],
 ) -> TestResponse {
+    upload_with(app, cookie, device, contact, bytes, &[]).await
+}
+
+/// The photo form as the cropper sends it: the file (maybe empty) and its `view` / `original` fields.
+async fn upload_with(
+    app: &TestApp,
+    cookie: &str,
+    device: i64,
+    contact: i64,
+    bytes: &[u8],
+    fields: &[(&str, &str)],
+) -> TestResponse {
     const BOUNDARY: &str = "handy-test-boundary";
-    let mut body = format!(
-        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"p.jpg\"\r\n\
-         Content-Type: application/octet-stream\r\n\r\n"
-    )
-    .into_bytes();
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"p.jpg\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
     body.extend_from_slice(bytes);
     body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
     let request = Request::builder()
@@ -101,8 +124,25 @@ async fn photo_hash(app: &TestApp, contact: i64) -> Option<String> {
         .unwrap()
 }
 
+/// The contact's kept original and its view (migration 0123).
+async fn photo_original(app: &TestApp, contact: i64) -> (Option<String>, Option<String>) {
+    sqlx::query_as("SELECT photo_original_hash, photo_view FROM contacts WHERE id = ?")
+        .bind(contact)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
 fn stored_files(app: &TestApp) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(&*app.state.photo_dir)
+    files_in(&app.state.photo_dir)
+}
+
+fn stored_originals(app: &TestApp) -> Vec<String> {
+    files_in(&app.state.photo_original_dir)
+}
+
+fn files_in(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
         .map(|dir| {
             dir.filter_map(|e| e.ok())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -128,6 +168,21 @@ fn half_and_half() -> DynamicImage {
             Rgb([255, 255, 255])
         }
     }))
+}
+
+/// The kinds of a JPEG's segments before its first scan (SOS), each once, sorted.
+fn jpeg_markers(jpeg: &[u8]) -> Vec<u8> {
+    assert_eq!(&jpeg[..2], b"\xFF\xD8", "SOI");
+    let (mut at, mut kinds) = (2, Vec::new());
+    while jpeg[at] == 0xFF && jpeg[at + 1] != 0xDA {
+        let kind = jpeg[at + 1];
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+        at += 2 + usize::from(u16::from_be_bytes([jpeg[at + 2], jpeg[at + 3]]));
+    }
+    kinds.sort_unstable();
+    kinds
 }
 
 /// A JPEG with an EXIF segment right after SOI: orientation 6 (rotate 90° clockwise) and a fake
@@ -311,18 +366,26 @@ async fn photo_is_reencoded_and_reaches_the_device() {
     // The crop (static/photo-crop.js): "Adjust crop" on the stored photo, the dialog with the server's side and
     // limit, its words from the catalog.
     let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
+    let (original, view) = photo_original(&app, mamma).await;
+    let (original, view) = (original.unwrap(), view.unwrap());
     assert!(page.contains(&format!(
-        "data-photo-adjust=\"/contact-photos/{hash}\" hidden>{}</button>",
+        "data-photo-adjust=\"/contact-photos/original/{original}\" data-photo-original=\"{original}\" \
+         data-photo-view=\"{view}\" data-photo-square=\"/contact-photos/{hash}\" hidden>{}</button>",
         words("device.calls.adjust_crop")
     )));
-    assert!(page.contains("<script src=\"/static/photo-crop.js?v=1\" defer></script>"));
+    assert!(page.contains("<input type=\"hidden\" name=\"view\" value=\"\" data-photo-view>"));
+    assert!(page.contains("<script src=\"/static/photo-crop.js?v=3\" defer></script>"));
     assert!(page.contains(&format!(
         "data-side=\"{}\" data-max-bytes=\"{}\"",
         crate::photos::MAX_SIDE,
         crate::photos::MAX_UPLOAD_BYTES
     )));
-    for key in ["device.calls.crop.title", "device.calls.crop.zoom"] {
-        assert!(page.contains(words(key)), "{key}");
+    for key in [
+        "device.calls.crop.title",
+        "device.calls.crop.zoom",
+        "device.calls.photo_privacy",
+    ] {
+        assert!(page.replace("&#39;", "'").contains(words(key)), "{key}");
     }
     let res = app
         .get_page(&format!("/contact-photos/{hash}"), &cookie)
@@ -731,6 +794,255 @@ async fn admin_photo_route_needs_a_session() {
     assert!(res.status.is_redirection(), "{}", res.status);
 }
 
+/// Migration 0123: the upload is kept as a downscaled original (upright, no metadata) and the square is cut from it
+/// at the cropper's view - in the upright picture; "Adjust crop" sends only a new view and the square is cut again;
+/// a bad view or a stale original changes nothing; removing the photo clears the original and prunes it.
+#[tokio::test]
+async fn the_original_is_kept_and_the_square_cut_at_the_view() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mamma = contact(&app, id, "Mamma", "+4790000001").await;
+
+    // 200x100 black|white with EXIF orientation 6: upright it is 100x200, black on top. The bottom square is
+    // white only if the orientation was applied before the view.
+    let jpeg = jpeg_with_exif(&half_and_half());
+    let res = upload_with(&app, &cookie, id, mamma, &jpeg, &[("view", "0,0.5,1,0.5")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    let hash = photo_hash(&app, mamma).await.unwrap();
+    let (original, view) = photo_original(&app, mamma).await;
+    let original = original.expect("the original is kept");
+    assert_eq!(view.as_deref(), Some("0.000000,0.500000,1.000000,0.500000"));
+    assert_eq!(stored_originals(&app), [format!("{original}.jpg")]);
+    let square = image::load_from_memory(
+        &std::fs::read(app.state.photo_dir.join(format!("{hash}.jpg"))).unwrap(),
+    )
+    .unwrap()
+    .into_rgb8();
+    assert_eq!(square.dimensions(), (100, 100));
+    // Away from the edge the halves meet at (JPEG rings a little there).
+    let inner = |square: &RgbImage| -> Vec<u8> {
+        square
+            .enumerate_pixels()
+            .filter(|(_, y, _)| (8..92).contains(y))
+            .map(|(_, _, p)| p.0[0])
+            .collect()
+    };
+    assert!(
+        inner(&square).iter().all(|&red| red > 200),
+        "the bottom, white"
+    );
+    let kept = std::fs::read(app.state.photo_original_dir.join(format!("{original}.jpg"))).unwrap();
+    assert!(!kept.windows(4).any(|w| w == b"Exif"));
+    assert!(!kept.windows(6).any(|w| w == b"secret"));
+    // Before the scan only the JFIF header, tables and frame: no APPn (EXIF, XMP, ICC) and no comment (QA L6).
+    assert_eq!(jpeg_markers(&kept), [0xC0, 0xC4, 0xDB, 0xE0]);
+    let upright = image::load_from_memory(&kept).unwrap().into_rgb8();
+    assert_eq!(upright.dimensions(), (100, 200));
+    assert!(upright.get_pixel(50, 10).0[0] < 60, "upright: black on top");
+
+    // Adjust crop: only the view, with the original it was chosen on - the top square, black, cut again.
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = upload_with(
+        &app,
+        &cookie,
+        id,
+        mamma,
+        b"",
+        &[("view", "0,0,1,0.5"), ("original", &original)],
+    )
+    .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?open={mamma}"),
+        Some(&format!("contact-{mamma}")),
+    );
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    let recut = photo_hash(&app, mamma).await.unwrap();
+    assert_ne!(recut, hash);
+    assert_eq!(
+        photo_original(&app, mamma).await,
+        (
+            Some(original.clone()),
+            Some("0.000000,0.000000,1.000000,0.500000".into())
+        )
+    );
+    assert_eq!(
+        stored_files(&app),
+        [format!("{recut}.jpg")],
+        "the old square pruned"
+    );
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/api/devices/contact-photos/{recut}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    let square = image::load_from_memory(&res.body).unwrap().into_rgb8();
+    assert!(inner(&square).iter().all(|&red| red < 60), "the top, black");
+
+    // Save again without a move (the view as the cropper rounds it): nothing committed, no phone nudged (QA L1).
+    let res = upload_with(
+        &app,
+        &cookie,
+        id,
+        mamma,
+        b"",
+        &[("view", "0.000001,0,0.999999,0.5"), ("original", &original)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        photo_hash(&app, mamma).await.as_deref(),
+        Some(recut.as_str())
+    );
+    assert!(nudges.try_recv().is_err(), "no phone told again");
+
+    // Refused, nothing changed: a view that isn't a square (the reason under the photo), a view chosen on
+    // another original (another tab replaced the photo), an adjust without a view.
+    let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
+    let stale = "c".repeat(64);
+    for (bytes, fields, key) in [
+        (
+            jpeg.as_slice(),
+            vec![("view", "0,0,1,0.3")],
+            "device.calls.crop.not_square",
+        ),
+        (
+            b"".as_slice(),
+            vec![("view", "0,0,1,0.5"), ("original", stale.as_str())],
+            "device.calls.crop.photo_changed",
+        ),
+        (
+            b"".as_slice(),
+            vec![("original", original.as_str())],
+            "device.calls.crop.bad_view",
+        ),
+    ] {
+        let res = upload_with(&app, &cookie, id, mamma, bytes, &fields).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{key}");
+        let html = res.text().replace("&#39;", "'");
+        let error = format!("id=\"photo-{mamma}-error\">{}</p>", words(key));
+        assert!(html.contains(&error), "{key}: {html}");
+        assert_eq!(
+            photo_hash(&app, mamma).await.as_deref(),
+            Some(recut.as_str())
+        );
+    }
+    assert_eq!(stored_originals(&app), [format!("{original}.jpg")]);
+
+    // The original lost while the server runs (QA L2): its own line, the original and view forgotten, the square
+    // kept - the page offers the stored square's adjust again.
+    std::fs::remove_file(app.state.photo_original_dir.join(format!("{original}.jpg"))).unwrap();
+    let res = upload_with(
+        &app,
+        &cookie,
+        id,
+        mamma,
+        b"",
+        &[("view", "0,0,1,0.5"), ("original", &original)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    assert!(
+        html.contains(&format!(
+            "id=\"photo-{mamma}-error\">{}</p>",
+            words("device.calls.crop.original_lost")
+        )),
+        "{html}"
+    );
+    assert!(html.contains(&format!(
+        "data-photo-adjust=\"/contact-photos/{recut}\" hidden>"
+    )));
+    assert_eq!(
+        photo_hash(&app, mamma).await.as_deref(),
+        Some(recut.as_str())
+    );
+    assert_eq!(photo_original(&app, mamma).await, (None, None));
+
+    // Removed: the original and its view go with the square, and the files are pruned.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts/{mamma}/photo/remove"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(photo_hash(&app, mamma).await, None);
+    assert_eq!(photo_original(&app, mamma).await, (None, None));
+    assert!(stored_files(&app).is_empty());
+    assert!(stored_originals(&app).is_empty());
+}
+
+/// The original is the parent's alone: on the admin session, only while a contact names it, never to a phone.
+#[tokio::test]
+async fn an_original_is_never_served_to_a_device() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mamma = contact(&app, id, "Mamma", "+4790000001").await;
+    upload(
+        &app,
+        &cookie,
+        id,
+        mamma,
+        &encode(&half_and_half(), ImageFormat::Png),
+    )
+    .await;
+    let original = photo_original(&app, mamma).await.0.unwrap();
+
+    // Not in the policy, not on the device route, not on the admin route with the phone's token.
+    let policy = app.policy(&token).await.to_string();
+    assert!(!policy.contains(&original));
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/api/devices/contact-photos/{original}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/contact-photos/original/{original}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    assert!(!res.body.starts_with(b"\xFF\xD8"), "no JPEG");
+
+    // The parent gets it, not kept in the browser's cache; a hash no contact names is a 404.
+    let res = app
+        .get_page(&format!("/contact-photos/original/{original}"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.headers[header::CONTENT_TYPE], "image/jpeg");
+    assert_eq!(res.headers[header::CACHE_CONTROL], "private, no-store");
+    assert_eq!(hex::encode(Sha256::digest(&res.body)), original);
+    let stray = "d".repeat(64);
+    std::fs::write(
+        app.state.photo_original_dir.join(format!("{stray}.jpg")),
+        b"not referenced",
+    )
+    .unwrap();
+    let res = app
+        .get_page(&format!("/contact-photos/original/{stray}"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    // A prune keeps the referenced original and drops the stray one.
+    crate::photos::prune(&app.state).await;
+    assert_eq!(stored_originals(&app), [format!("{original}.jpg")]);
+}
+
 /// Two parents at once: uploads and removes on different contacts, each followed by a prune,
 /// never delete a photo another request just stored (QA step 5 #3).
 #[tokio::test]
@@ -817,19 +1129,66 @@ async fn backups_carry_photos_and_a_restore_gets_them_back() {
         db.to_str().unwrap(),
         zip_path.to_str().unwrap(),
         &app.state.photo_dir,
+        &app.state.photo_original_dir,
         &app.state.wallpaper_dir,
         &app.state.music_cover_dir,
         &app.state.avatar_dir,
     )
     .unwrap();
+    let original = photo_original(&app, mamma).await.0.unwrap();
     let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
     assert!(archive.by_name("kidphone.db").is_ok());
     assert!(archive.by_name(&crate::photos::zip_entry(&hash)).is_ok());
+    // The kept original too (migration 0123), stored as it is: a JPEG doesn't compress further.
+    assert_eq!(
+        archive
+            .by_name(&crate::photos::CONTACT_ORIGINALS.zip_entry(&original))
+            .unwrap()
+            .compression(),
+        zip::CompressionMethod::Stored
+    );
     drop(archive);
+
+    // Two photos in no backup (QA photo-original L6): Mormor's original is lost (her square stays, the original
+    // and view are forgotten), Morfar's square is lost (all three are cleared, though his original is still there).
+    let mormor = contact(&app, id, "Mormor", "+4790000003").await;
+    let morfar = contact(&app, id, "Morfar", "+4790000004").await;
+    for (who, shade) in [(mormor, 90), (morfar, 180)] {
+        let png = encode(
+            &DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 300, Rgb([shade, 40, 40]))),
+            ImageFormat::Png,
+        );
+        upload(&app, &cookie, id, who, &png).await;
+    }
+    let mormor_square = photo_hash(&app, mormor).await.unwrap();
+    let morfar_original = photo_original(&app, morfar).await.0.unwrap();
+    let kept_square =
+        std::fs::read(app.state.photo_dir.join(format!("{mormor_square}.jpg"))).unwrap();
+    let kept_original = std::fs::read(
+        app.state
+            .photo_original_dir
+            .join(format!("{morfar_original}.jpg")),
+    )
+    .unwrap();
 
     // "Restore": the database is back, the photo files are gone; Pappa names a photo that no
     // backup has (and a corrupt copy of it in a newer zip doesn't count).
     std::fs::remove_dir_all(&*app.state.photo_dir).unwrap();
+    std::fs::remove_dir_all(&*app.state.photo_original_dir).unwrap();
+    std::fs::create_dir_all(&*app.state.photo_dir).unwrap();
+    std::fs::create_dir_all(&*app.state.photo_original_dir).unwrap();
+    std::fs::write(
+        app.state.photo_dir.join(format!("{mormor_square}.jpg")),
+        &kept_square,
+    )
+    .unwrap();
+    std::fs::write(
+        app.state
+            .photo_original_dir
+            .join(format!("{morfar_original}.jpg")),
+        &kept_original,
+    )
+    .unwrap();
     let ghost = "b".repeat(64);
     sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
         .bind(&ghost)
@@ -852,9 +1211,19 @@ async fn backups_carry_photos_and_a_restore_gets_them_back() {
     }
 
     crate::photos::recover_missing(&app.state, backups.path()).await;
-    assert_eq!(stored_files(&app), [format!("{hash}.jpg")]);
+    let mut squares = vec![format!("{hash}.jpg"), format!("{mormor_square}.jpg")];
+    squares.sort();
+    assert_eq!(stored_files(&app), squares);
+    assert!(stored_originals(&app).contains(&format!("{original}.jpg")));
     assert_eq!(photo_hash(&app, mamma).await, Some(hash.clone()));
     assert_eq!(photo_hash(&app, pappa).await, None);
+    assert_eq!(
+        photo_hash(&app, mormor).await.as_deref(),
+        Some(mormor_square.as_str())
+    );
+    assert_eq!(photo_original(&app, mormor).await, (None, None));
+    assert_eq!(photo_hash(&app, morfar).await, None);
+    assert_eq!(photo_original(&app, morfar).await, (None, None));
     let res = app
         .request(
             Method::GET,

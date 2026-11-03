@@ -48,18 +48,18 @@ fn code_of(err: &PhotoError) -> &'static str {
     }
 }
 
-/// The reason under the picture for `?avatar=<code>`; `None` for anything else (never echoed).
-pub fn error_text(code: Option<&str>) -> Option<&'static str> {
+/// The reason under the picture for `?avatar=<code>`, in `lang`; `None` for anything else (never echoed).
+pub fn error_text(code: Option<&str>, lang: crate::i18n::Lang) -> Option<String> {
     let err = match code? {
         "empty" => PhotoError::Empty,
         "too_large" => PhotoError::TooLarge,
         "type" => PhotoError::UnsupportedType,
         "pixels" => PhotoError::TooManyPixels,
         "unreadable" => PhotoError::Undecodable,
-        "failed" => return Some("Couldn't save the picture - nothing was changed. Try again."),
+        "failed" => return Some(crate::i18n::t(lang, "photo.error.save_failed").to_string()),
         _ => return None,
     };
-    Some(err.message())
+    Some(err.text(lang))
 }
 
 /// Back to the picture: a `code` is a refusal (nothing changed, [crate::settings_log::Refused]).

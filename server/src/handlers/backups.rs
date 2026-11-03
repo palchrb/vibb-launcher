@@ -199,7 +199,8 @@ pub async fn prune_old_backups(dir: &std::path::Path, retention_count: usize) {
     }
 }
 
-/// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`), wallpaper image
+/// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`) and its kept original
+/// (`contact_photo_originals/<hash>.jpg`, migration 0123), wallpaper image
 /// (`wallpapers/<hash>.jpg`), music cover (`music_covers/<hash>.jpg`) and phone picture
 /// (`device_avatars/<hash>.jpg`, server round C). Never the parent's own
 /// music files (design 21: too big; a restore lists them as missing), nor episode art (design 27:
@@ -210,6 +211,7 @@ pub(crate) fn build_backup_zip(
     db_snapshot_path: &str,
     zip_path: &str,
     photo_dir: &std::path::Path,
+    photo_original_dir: &std::path::Path,
     wallpaper_dir: &std::path::Path,
     music_cover_dir: &std::path::Path,
     avatar_dir: &std::path::Path,
@@ -222,6 +224,7 @@ pub(crate) fn build_backup_zip(
     writer.start_file("kidphone.db", options)?;
     writer.write_all(&std::fs::read(db_snapshot_path)?)?;
     crate::photos::add_to_zip(&mut writer, photo_dir)?;
+    crate::photos::CONTACT_ORIGINALS.add_to_zip(&mut writer, photo_original_dir)?;
     crate::photos::WALLPAPERS.add_to_zip(&mut writer, wallpaper_dir)?;
     crate::photos::MUSIC_COVERS.add_to_zip(&mut writer, music_cover_dir)?;
     crate::photos::DEVICE_AVATARS.add_to_zip(&mut writer, avatar_dir)?;
@@ -338,6 +341,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
     let snapshot_path_for_zip = snapshot_path.clone();
     let zip_path_for_zip = zip_path.clone();
     let photo_dir = state.photo_dir.as_path().to_path_buf();
+    let photo_original_dir = state.photo_original_dir.as_path().to_path_buf();
     let wallpaper_dir = state.wallpaper_dir.as_path().to_path_buf();
     let music_cover_dir = state.music_cover_dir.as_path().to_path_buf();
     let avatar_dir = state.avatar_dir.as_path().to_path_buf();
@@ -346,6 +350,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
             &snapshot_path_for_zip,
             &zip_path_for_zip,
             &photo_dir,
+            &photo_original_dir,
             &wallpaper_dir,
             &music_cover_dir,
             &avatar_dir,

@@ -342,6 +342,7 @@ async fn the_backup_carries_the_picture_and_a_restore_gets_it_back() {
         db.to_str().unwrap(),
         zip_path.to_str().unwrap(),
         &app.state.photo_dir,
+        &app.state.photo_original_dir,
         &app.state.wallpaper_dir,
         &app.state.music_cover_dir,
         &app.state.avatar_dir,
