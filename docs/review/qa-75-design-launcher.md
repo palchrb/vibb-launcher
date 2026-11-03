@@ -184,3 +184,41 @@ clears the store at once, as the switch turning off does. Add it to the pure kee
 The design is calm: no frame, no colour field, a dim chevron, no fold animation, and `requestRectangleOnScreen` with no
 scroll animation. What breaks the calm is motion the kid didn't cause: M1's line hop, M2's late line and the long/short
 date flip. With those fixed, the page changes only when the kid taps or the screen comes on.
+
+## Revision check (689bb9cb)
+
+Read against the revised note (§5, D14-D15, §7.3, §11). **Every High and Medium is closed. Nothing blocks the brief;
+three new Lows.**
+
+- **H1, closed.** One `TouchDelegate` on `lock_glance_top` gives the visible mark a hit area 48 dp tall and 8 dp wider
+  at each side, set again whenever the mark moves (§5.5). It works as written: the clock, the date row, the alarm line
+  and "Neste" aren't clickable, so a touch in the widened area falls through to `lock_glance_top`'s `onTouchEvent`,
+  and the open card, a clickable child, still takes its own touches first. `LockGlanceLayoutTest` pins the hit
+  rectangle in both places.
+- **M1, closed.** The place is chosen only at a lock-up, a refit, a width change or the first bind, from the widest
+  words of the four entries, never less than the reference "Regn fra kl. 14". In between, a model that doesn't fit
+  drops its words; the mark never moves. The short date follows the switch (D14). The budget table is recomputed and
+  consistent with the ladder. **The user's Jelly Star answer holds:** at 269 dp the reference alone gives LINE_WORDS at
+  font 1.0 and 1.3 (beside 312 > 269) and LINE at 2.0, every day, with or without words.
+- **M2-M5, closed.**
+  - M2: 3 s timeout, a 1 s insert window, a generation counter and `rowsHeld` (pure `weatherNowShown`).
+  - M3: a catch-all, a 15 s call timeout, one in-flight guard, and the server answers within ~6.5 s.
+  - M4: any change of the location mode clears the kept answer and makes a pull due (pure `weatherKeep`).
+  - M5: whole sentences, plurals on `abs(temp)`.
+- **The two mark views, fine.** `lock_glance_weather` and `lock_glance_weather_line` are bound from one model, at most
+  one is visible, nothing is reparented, and the slot is in `extra` (now `List<View>`) at the date's start or centred.
+  `TalkBack` sees only the visible one; the hit area follows it.
+- **The Lows** are all taken (§11). L8's touchables test now follows `<include>`. "Oppdatert kl." stays, which is the
+  user's call.
+
+New, Low:
+
+1. **The hit area's two limits can conflict (§5.5).** "At least 48 dp tall" and "never taller than the gap to the
+   clock's ink above" contradict each other when the profile date sits in the clock's descent. Say what wins: cap the
+   top at the gap and take the rest below.
+2. **The line can appear after the screen comes on.** If the answer was more than 3 h old at the screen-on (the
+   morning, after Doze), the line is hidden at the lock-up and appears ~1 s later when the screen-on pull lands. On the
+   Jelly Star that adds the own line and moves the rows once. Decide one of two: accept it, or hold the slot's height
+   while the switch is on and a pull is in flight. The place itself is already known from the reference.
+3. **`weather_spoken_mm` in en.** `getQuantityString` takes an int, and CLDR reads "1.0" as `other`. Use `other`
+   whenever the shown value has a decimal, or always say "millimetres" in en.
