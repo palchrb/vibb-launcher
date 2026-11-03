@@ -2732,9 +2732,9 @@ html.veiled body > * { visibility: hidden !important; }
    is the Unlock button: `.lock-tap` covers the body (absolute in it, never the viewport - design 43), under Sign Out
    alone; the words show through it. On night: cream 16.2:1, the hint and Sign Out 8.4:1, the red line pale red 11.4:1.
    It takes over from the iPhone start-up splash with no jump (the user: "en fin overgang"): the mark at the splash's
-   size (--vibb-mark-size, from the splash's MARK_SHARE) on the screen's centre - the body's middle, the screen itself
-   in the installed app (100vh there, under the black-translucent status bar, viewport-fit=cover) -, its first frame
-   at rest as the splash draws it, the title below it never moving it; the title, then the hint and Sign Out fade
+   size (--vibb-mark-size, from the splash's MARK_SHARE) on the screen's centre - the middle of the visible height,
+   the screen itself in the installed app (100vh there, under the black-translucent status bar, viewport-fit=cover)
+   -, its first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
    in. */
 /* The Vibb mark's size: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. */
 :root { --vibb-mark-size: min(51.30vmin, 240px); }
@@ -2748,26 +2748,29 @@ html.veiled body > * { visibility: hidden !important; }
     padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
 }
 .lock-screen { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 420px; text-align: center; }
-.lock-form { flex: 1 0 auto; display: flex; flex-direction: column; justify-content: flex-end; width: 100%; }
+.lock-form { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; }
+/* In the flow (never over the foot): the space above the mark puts its centre on the screen's (the body's padding and
+   the status bar's inset taken off), so the foot comes after the title, scrolling if it must. */
 .lock-centre {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50vh;
-    top: 50dvh;
-    margin-top: calc(var(--vibb-mark-size) / -2);
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0 16px;
+    margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
+    margin-top: max(0px, calc(50dvh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
 }
 @media (display-mode: standalone) {
     .lock-page { min-height: 100vh; }
-    .lock-centre { top: 50vh; }
+    .lock-centre { margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px))); }
 }
 .lock-centre .vibb-breath { width: var(--vibb-mark-size); height: var(--vibb-mark-size); }
+/* No room for the splash's centre with the foot below it (a Safari tab on a small iPhone, any phone on its side - no
+   start-up splash there): the mark smaller at the top, the title and the foot after it. */
+@media (max-height: 540px) {
+    .lock-centre { margin-top: 0; }
+    .lock-centre .vibb-breath { width: min(var(--vibb-mark-size), 30vh); height: min(var(--vibb-mark-size), 30vh); }
+}
 .lock-title { margin: 6px 0 0; font-family: var(--font-display); font-size: 1.625rem; font-weight: 800; line-height: 1.2; letter-spacing: 0.01em; color: var(--night-text); }
-.lock-foot { width: 100%; }
+.lock-foot { width: 100%; margin-top: auto; padding-top: 20px; }
 .lock-error { margin: 0 auto 12px; max-width: 300px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-error); }
 .lock-hint { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }
 .lock-note { margin: 0 auto; max-width: 320px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }

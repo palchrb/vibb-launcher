@@ -129,7 +129,10 @@ test("without the server's mark nothing happens, but handyLock is there", () => 
 
 test("a page that is due when it loads locks at once, before anything shows", () => {
     const win = fakeWindow({ idle: 5 * MIN });
+    const images = [];
+    win.Image = function () { images.push(this); };
     win.install();
+    assert.deepStrictEqual(images.map((i) => i.src), ["/static/vibb-rest.svg"], "the locked page's night picture, fetched");
     assert.ok(win.classes.has("locked"));
     assert.deepStrictEqual(win.replaced, [LOCK]);
     assert.strictEqual(win.handyLock.due(), true);

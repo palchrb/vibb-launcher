@@ -719,6 +719,34 @@ test("the lock screen: a try that never settles gives way to the first tap after
     assert.strictEqual(gets(old).length, 2);
 });
 
+test("the lock screen: a replaced try's late refusal says nothing while the new prompt is open (QA L2b)", async () => {
+    let refuse;
+    let calls = 0;
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () =>
+        ++calls === 1 ? Promise.resolve(ASSERTION) : new Promise(() => {}),
+    );
+    const fetch = page.win.fetch;
+    page.win.fetch = (url, init) => {
+        if (url !== "/lock") return fetch(url, init);
+        page.fetched.push([url, init]);
+        return new Promise((resolve) => { refuse = resolve; });
+    };
+    passkey.install(page.win);
+    await flush();
+    page.button.listeners.click();
+    await flush();
+    assert.ok(refuse, "the first try is posting");
+    page.win.document.listeners.visibilitychange();
+    await flush();
+    page.button.listeners.click();
+    await flush();
+    assert.strictEqual(gets(page).length, 2);
+    refuse({ ok: false, status: 400, json: () => Promise.resolve({ error: "Couldn't unlock. Try again" }) });
+    await flush();
+    await flush();
+    assert.strictEqual(page.error.hidden, true);
+});
+
 test("the lock screen: a prompt that throws at once shows the red line, and the next tap asks again (QA L2)", async () => {
     let calls = 0;
     const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => {

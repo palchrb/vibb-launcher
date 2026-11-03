@@ -554,7 +554,8 @@
             prefetch();
         }
         // The prompt's credential: posted; done, the page goes on (refused, the red line shows).
-        function unlockWith(cred) {
+        // `running`: the try it belongs to - a replaced try's refusal says nothing (a newer prompt is open).
+        function unlockWith(cred, running) {
             if (!cred) return failed();
             var json = credentialJSON(cred);
             return post(win, "/lock", {
@@ -562,7 +563,10 @@
                 next: next ? next.value : "",
             }).then(function (answer) {
                 if (answer.signedOut) return toSignIn(win);
-                if (!answer.ok) return failed(answer.json.error);
+                if (!answer.ok) {
+                    if (open === running) failed(answer.json.error);
+                    return;
+                }
                 keepLastPasskey(win, json.rawId);
                 // The use starts now in this tab too (app-lock.js's record), so the page doesn't lock again.
                 try {
@@ -587,7 +591,7 @@
             }
             prompt.then(function (cred) {
                 if (open !== running) return;
-                return unlockWith(cred);
+                return unlockWith(cred, running);
             }).then(function () {
                 if (open === running) open = null;
             }, function (err) {
