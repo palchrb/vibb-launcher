@@ -1043,7 +1043,7 @@ async fn the_sign_in_pages_use_the_new_components() {
         .collect();
     let blocks = blocks.join(" ");
     assert_eq!(page.matches(blocks.as_str()).count(), 1, "the key once");
-    let panel = &page[page.find("Can't scan it?").unwrap()..];
+    let panel = &page[page.find("Can&#39;t scan it?").unwrap()..];
     assert!(panel[..panel.find("</details>").unwrap()].contains(&blocks));
     let res = app
         .request_form(
@@ -1082,6 +1082,154 @@ async fn the_sign_in_pages_use_the_new_components() {
     );
     assert!(page.contains("autocomplete=\"one-time-code\""));
     assert!(!page.contains("tab-bar"));
+}
+
+/// Design 70 §5, slice 3e: the sign-in pages in Norwegian before any session - from the browser's `Accept-Language`
+/// (signed out, no account to read) and from `PWA_DEFAULT_LANG` through the forced first steps (a new password, then
+/// two-factor login, then the code step). The English pages are [the_sign_in_pages_use_the_new_components]'s.
+#[tokio::test]
+async fn the_sign_in_pages_read_in_norwegian() {
+    let app = TestApp::new().await;
+    let in_nb = |method: Method, uri: &'static str, body: &'static str| {
+        let app = &app;
+        async move {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::ACCEPT_LANGUAGE, "nb-NO,nb;q=0.9,en;q=0.5")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap();
+            app.send(request).await.text()
+        }
+    };
+    let login = in_nb(Method::GET, "/login", "").await;
+    for needle in [
+        r#"<html lang="nb">"#,
+        "<title>Logg inn · Vibb Phone</title>",
+        "<p class=\"auth-sub\">Logg inn for å passe på familiens telefoner.</p>",
+        ">Brukernavn</label>",
+        ">Passord</label>",
+        "<button type=\"submit\" class=\"button-wide\">Logg inn</button>",
+    ] {
+        assert!(login.contains(needle), "{needle}: {login}");
+    }
+    let wrong = in_nb(Method::POST, "/login", "username=nobody&password=wrong").await;
+    assert!(
+        wrong.contains("role=\"alert\">Feil brukernavn eller passord.</p>"),
+        "{wrong}"
+    );
+
+    // The server's default language, through the first steps.
+    let app = TestApp::with_env(&[("PWA_DEFAULT_LANG", "nb")]).await;
+    const FIRST: &str = "generated first password";
+    sqlx::query(
+        "INSERT INTO admin_users (username, password_hash, must_change_password, totp_enabled) \
+         VALUES (?, ?, 1, 0)",
+    )
+    .bind(USER)
+    .bind(security::hash_password(FIRST))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (_, cookie) = password_step(&app, FIRST).await;
+    let cookie = cookie.unwrap();
+    let page = app.get_page("/auth/change-password", &cookie).await.text();
+    for needle in [
+        r#"<html lang="nb">"#,
+        "<title>Nytt passord · Vibb Phone</title>",
+        "<h1 class=\"auth-title\">Nytt passord</h1>",
+        "Du logget inn med et generert passord. Velg ditt eget for å fortsette.",
+        ">Nåværende passord</label>",
+        ">Nytt passord en gang til</label>",
+        ">Minst 12 tegn.</p>",
+        ">Bytt passord</button>",
+    ] {
+        assert!(page.contains(needle), "{needle}: {page}");
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/change-password",
+            Some(&cookie),
+            &[
+                ("current_password", FIRST),
+                ("new_password", "a brand new password"),
+                ("confirm_password", "a different new password"),
+            ],
+        )
+        .await;
+    assert!(
+        res.text()
+            .contains("role=\"alert\">De nye passordene er ikke like.</p>")
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/change-password",
+            Some(&cookie),
+            &[
+                ("current_password", FIRST),
+                ("new_password", "a brand new password"),
+                ("confirm_password", "a brand new password"),
+            ],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/"));
+    let page = app.get_page("/auth/setup-2fa", &cookie).await.text();
+    for needle in [
+        r#"<html lang="nb">"#,
+        "<h1 class=\"auth-title\">Tofaktorinnlogging</h1>",
+        "Skann koden med en autentiseringsapp",
+        r#"alt="QR-kode for autentiseringsappen""#,
+        ">Får du ikke skannet den?<",
+        r#"aria-label="Vis nøkkelen""#,
+        ">Kode</label>",
+        ">Slå på</button>",
+    ] {
+        assert!(page.contains(needle), "{needle}: {page}");
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/setup-2fa",
+            Some(&cookie),
+            &[("code", "000000")],
+        )
+        .await;
+    assert!(
+        res.text()
+            .contains("role=\"alert\">Koden stemte ikke. Prøv igjen.</p>")
+    );
+    let secret: String =
+        sqlx::query_scalar("SELECT totp_secret FROM admin_users WHERE username = ?")
+            .bind(USER)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let code = app.next_totp_code(USER, &secret).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/setup-2fa",
+            Some(&cookie),
+            &[("code", &code)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/"));
+    let (_, pending) = password_step(&app, "a brand new password").await;
+    let page = app
+        .get_page("/auth/verify-2fa", &pending.unwrap())
+        .await
+        .text();
+    for needle in [
+        r#"<html lang="nb">"#,
+        "<title>Tofaktorkode · Vibb Phone</title>",
+        "Skriv inn den sekssifrede koden fra autentiseringsappen.",
+        ">Logg inn</button>",
+    ] {
+        assert!(page.contains(needle), "{needle}: {page}");
+    }
 }
 
 /// A GET's raw answer (its extensions kept) with an optional cookie.

@@ -1004,6 +1004,9 @@ async fn add_calendar_picks_its_kind_and_a_gone_source_goes_back() {
         "Lenke (https eller webcal)",
         "CalDAV-konto",
         "Test og logg inn",
+        // The examples are the catalog's too (slice 3e).
+        r#"placeholder="webcal://…""#,
+        r#"placeholder="caldav.icloud.com""#,
     ] {
         assert!(nb.contains(words), "{words}");
     }

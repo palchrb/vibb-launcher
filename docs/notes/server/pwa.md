@@ -1462,7 +1462,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (qa-s-i18n-1-code L1), so a screen reader never reads English text with a Norwegian voice. A handler takes `lang: Lang` as an extractor and hands it to the helper that builds the page. Since
   slice 1 every template struct has it (`/sw.js` has no words, §4: its template is the one without); Device ›
   Calendar, its rule editor, its preview and the summary's Calendar row (`calendar.md`) and Settings › Account (with
-  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. Since slice 3a the
+  its Parents group, `parents::rows`) were worded first; since slice 3e every page is. Since slice 3a the
   "Wrong codes before this sign-in" banner is facts in the session (`admin_auth::LoginWarning`: the count and the
   addresses), worded by the page that shows it (`account.warning.login*`, the Devices list's row `devices.warning.*`);
   a session from before keeps an English sentence that no longer reads, so its banner is gone.
@@ -1535,6 +1535,21 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `backups::human_size` (the typed size of Format must match it), `photos::PhotoError::message` (an upload's
   refusal), a push failure's text (`push::Subscription::failure`) and the built-in wallpapers' and seeded lists'
   names (data).
+- **Slice 3e, part B (accounts and sign-in; the last templates)**: the sign-in pages (`login`,
+  `verify_2fa`, `change_password`, `setup_2fa`; `auth.*`), Settings › Security Log (`security_log.*`, `error.read_security_log`,
+  `error.unban`), Account's last examples (the server commands `account.totp.command_*`, the same in both catalogs),
+  "Turn the Password On Again", the passkey partials and Device › Calendar's add, link, CalDAV and rule pages (their
+  examples: `calendar.link.url_example`, `calendar.caldav.server_example`, `calendar.rule.pattern_example`/
+  `text_example`). The sign-in pages have no account: their language is `?lang=`, `PWA_DEFAULT_LANG`, then
+  `Accept-Language` (`tests::admin_auth::the_sign_in_pages_read_in_norwegian` walks login, the first password, the
+  two-factor setup and the code step in nb). The handlers word their refusals (`auth.login.wrong`, `auth.banned`,
+  `auth.invite_expired`, `auth.pending_expired`, `auth.code_wrong`, `auth.change_password.*`; the two-factor lock's
+  wait `auth.locked.text` with `auth.locked.hours`/`minutes` counted) and their 500s (`i18n::error`); a ban whose
+  end can't be read says "For a while" (`security_log.banned.a_while`). A field's error-or-hint is two `{% if %}`s
+  (one inside the `<input>` for `aria-describedby`, one after it), so the scan sees whole tags. `app-lock.js` and
+  `calendar-preview.js` join `words.test.js` (no words: the locked tab's title is the name). Since 3e `MOVED` is
+  every template. Left for slice 4: the words Rust builds in the helper modules (design 70 §6), the security log's
+  row for an id no catalog names (`admin::words_of`, the id as words), and the `SignInWhy` reasons (log only).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

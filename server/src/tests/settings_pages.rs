@@ -1280,6 +1280,20 @@ async fn the_security_log_reads_as_labelled_rows() {
     .await
     .unwrap();
     let page = app.get_page("/security?lang=nb", &cookie).await.text();
+    // The page's own words too (slice 3e).
+    for words in [
+        r#"<html lang="nb">"#,
+        "<title>Sikkerhetslogg · Vibb Phone</title>",
+        ">Innstillinger</a>",
+        ">Sperrede adresser</h2>",
+        r#"aria-label="Opphev sperren av 192.0.2.44">Opphev</button>"#,
+        "For mange feil passord sperrer en adresse en stund.",
+        ">Siste aktivitet</h2>",
+        "200 per side, nyeste først",
+    ] {
+        assert!(page.contains(words), "{words}");
+    }
+    assert!(part(&page, "id=\"banned\"", "</section>").contains(">Til "));
     assert!(
         page.contains("5 mislykkede innlogginger på 15 minutter"),
         "{}",
@@ -1310,6 +1324,11 @@ async fn the_security_log_reads_as_labelled_rows() {
         .await
         .text();
     assert!(part(&page, "<section id=\"banned\"", "</section>").contains("192.0.2.7 is unbanned."));
+    let page = app
+        .get_page("/security?unbanned=192.0.2.7&lang=nb", &cookie)
+        .await
+        .text();
+    assert!(page.contains("Sperren av 192.0.2.7 er opphevet."));
     // An address that wasn't blocked: back to the group, no message.
     let res = app
         .request_form(

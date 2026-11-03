@@ -1986,8 +1986,12 @@ async fn the_env_default_language_comes_before_the_browsers() {
         .await
         .unwrap();
     let nb = Some("nb-NO,nb;q=0.9");
-    // Before any account (the sign-in pages' language; the login template's own words aren't moved yet, so the
-    // CSRF refusal, which asks `Lang::of_request` with no account, shows it): English; `?lang=nb` still wins.
+    // Before any account (the sign-in pages' language, and the CSRF refusal's, which asks `Lang::of_request` with no
+    // account): English; `?lang=nb` still wins.
+    let login = get_in(&app, "/login", "", nb).await.text();
+    assert!(login.contains(r#"<html lang="en">"#) && login.contains(">Sign In</button>"));
+    let login = get_in(&app, "/login?lang=nb", "", nb).await.text();
+    assert!(login.contains(r#"<html lang="nb">"#) && login.contains(">Logg inn</button>"));
     let refused = |uri: &'static str| {
         let app = &app;
         async move {

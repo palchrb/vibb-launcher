@@ -48,6 +48,10 @@ const MOVED = {
         "input[name=\"current_password\"], input[name=\"password\"]",
         "input[required], select[required], textarea[required]",
     ],
+    // 3e-b: the app lock (the locked page's tab title is the name, design 74 §6.5) and the title rule preview (a
+    // header).
+    "app-lock.js": ["Vibb"],
+    "calendar-preview.js": ["Content-Type"],
 };
 
 /** Every string literal outside comments, in order. */

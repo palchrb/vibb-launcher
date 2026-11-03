@@ -41,7 +41,7 @@
                 </label>
                 <label class="row">
                     <span class="row-label">{{ self.t("calendar.rule.text_to_match") }}</span>
-                    <input type="text" class="row-input row-input-end" name="pattern" value="{{ form.pattern }}" maxlength="400" autocomplete="off" required placeholder="Gruppe 2-"{% if refusal.is_some() %} autofocus{% endif %}>
+                    <input type="text" class="row-input row-input-end" name="pattern" value="{{ form.pattern }}" maxlength="400" autocomplete="off" required placeholder="{{ self.t("calendar.rule.pattern_example") }}"{% if refusal.is_some() %} autofocus{% endif %}>
                 </label>
             </div>
             <p class="group-footer">{{ self.t("calendar.rule.match_footer") }}</p>
@@ -59,7 +59,7 @@
                 </label>
                 <label class="row">
                     <span class="row-label">{{ self.t("calendar.rule.text_to_show") }}</span>
-                    <input type="text" class="row-input row-input-end" name="text" value="{{ form.text }}" maxlength="200" autocomplete="off" placeholder="Skole:">
+                    <input type="text" class="row-input row-input-end" name="text" value="{{ form.text }}" maxlength="200" autocomplete="off" placeholder="{{ self.t("calendar.rule.text_example") }}">
                 </label>
                 <label class="row">
                     <span class="row-label">{{ self.t("calendar.rule.keep_rest") }}</span>
