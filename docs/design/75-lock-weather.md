@@ -3,7 +3,8 @@
 Status: design note, 2026-11-03, on `main` at 6539d573; to be built on branch `lock-weather` (PLAN queue: "Weather on
 the lock glance - APPROVED 2026-11-03"). Both directories. Revised the same day after the two design QAs
 (`docs/review/qa-75-design-server.md`, `docs/review/qa-75-design-launcher.md`) and the user's answers (§11 lists what
-changed). Approved mockup: v7, artifact QVvKwiZWkNFmpCTFxf7LYu (`yr-glance7`; its script holds the rule table). The
+changed). Changed again during step 1's build (2026-11-03, §12): step 3 dropped by the user, the PWA's rows on a
+page of their own (Device › Weather), the symbol script in step 1. Approved mockup: v7, artifact QVvKwiZWkNFmpCTFxf7LYu (`yr-glance7`; its script holds the rule table). The
 user, 2026-11-03: "la oss fokusere på lock screen implementasjonen først"; "La oss droppe påkledningsrådet og
 refleksrådene ... Barnet kan heller vurdere påkledning selv"; "Liker at det står når det blir mørkt"; "Jeg liker best
 den lille pilen"; "for mye med radaren synlig"; "OK vi kjører standard" (MET's User-Agent); "Egen linje under datoen"
@@ -27,8 +28,9 @@ fetched only past MET's `Expires`, conditionally. The words, the periods, the da
 computed on the server, in the phone's own time zone; the phone renders keys, MET's symbol codes and numbers. The
 place name comes once per cell from Kartverket's place-name API.
 
-**PWA.** Device › Lock Screen & PINs › Lock screen gets "Vær på låseskjermen" / "Weather on the lock screen", off by
-default (`launcher_ui.lock_weather`), and under it "Når posisjonen ikke er fersk, bruk: [sone ▾]" (none by default).
+**PWA.** A page of its own, Device › Vær / Weather (`/devices/{id}/weather`, a row on the phone's page beside Apps,
+Time and the others; §6): "Vær på låseskjermen" / "Weather on the lock screen", off by default
+(`launcher_ui.lock_weather`), and under it "Når posisjonen ikke er fersk, bruk: [sone ▾]" (none by default).
 
 **Out of scope** (decided with the user): clothing advice and reflex hints; radar bars or maps; a weather app and
 weather in Kalender (both on the longlist, PLAN "Asked for"); notifications; choosing other places beyond the
@@ -96,13 +98,13 @@ true (no gluing), at no cost in the rules.
 **D5 - Where the position comes from, in order.** The answer takes the first source that gives a cell:
 1. **The fresh stored fix** - the phone's newest `device_locations` row with `COALESCE(mock, 0) = 0`, `captured_at`
    at most 6 h old and not in the future, while its `location_mode` is `interval`.
-2. **The phone's last-known cell** - *pending the user's yes* (D18): only when the parent allowed it, the cell the
-   phone rounded itself and sent with its pull.
-3. **The weather zone** - the zone the parent chose for the weather (`device_policy.weather_zone_id`, one of the
+2. **The weather zone** - the zone the parent chose for the weather (`device_policy.weather_zone_id`, one of the
    phone's design-64 zones; none by default): its centre.
-4. **Nothing** - `no_position`, the weather hides.
+3. **Nothing** - `no_position`, the weather hides.
 
-*Why:* nothing new leaves the phone for sources 1 and 3 and the server learns nothing it doesn't hold already. "On
+(A source between these, the phone's own last-known cell, was designed as D18 / step 3 and dropped by the user, §12.)
+
+*Why:* nothing new leaves the phone and the server learns nothing it doesn't hold already. "On
 request" means the phone takes no fix unless the parent asks (an active fix lights Android's location indicator,
 `server/LocationPolicies.kt`), so its last fix may be days old - the wrong town's weather is worse than none; "Off" has
 no fixes at all; 6 h covers the longest interval (240 min) with one missed report. Design 64 has no special "home"
@@ -201,29 +203,9 @@ attribution; vectors stay sharp at every density (~350 KB of SVG in).
 (always sent; a launcher without the key reads off). The server answers `off` and fetches nothing for a phone with the
 switch off. *Why:* the parent decides what the lock shows; defense in depth if a phone asks anyway.
 
-**D18 - The phone's free last-known cell (pending the user's yes; step 3, cut without touching the rest).** A second
-switch under the weather switch, "Bruk telefonens siste kjente posisjon" / "Use the phone's last known position",
-default off (`device_policy.lock_weather_last_known`, its own migration 0123; `launcher_ui.lock_weather_last_known`).
-While it is on and the phone's Location is "On request" (in "Regularly" the server has fixes; in "Off" Android's
-Location is off and there is nothing to read), the phone, at each weather pull and never otherwise:
-- takes its own newest known fix (`LocateCommands.newestKnown()` - the kept or cached fix, no `LocationManager` call)
-  when it is at most 6 h old;
-- else Android's cached last-known location (`LocationManager.getLastKnownLocation` for the `fused`, `network` and
-  `passive` providers, the newest non-mock one at most 6 h old with an accuracy of 5 km or better), **no** GPS or
-  fresh request;
-- rounds it on the phone to the cell (D6's two integers) and sends only those (`?cell=2997,269`); the fix itself is
-  never kept, reported, stored as a fix or shown in Locate; the server validates the integers and uses the cell only as
-  D5's source 2, for this answer.
-
-**The indicator**: this repo found live that a `getLastKnownLocation` call that returns a fix lights Android's
-location-in-use indicator (`server/LocateCommands.kt`, the comment on `CACHED_LOCATION_PROVIDER`: "Android's
-location-in-use indicator fires on *any* LocationManager query that returns a fix - confirmed live, the passive
-getLastKnownLocation() fallback below was still triggering it"; Android 12+ notes every location access as an app op,
-which SystemUI's location indicator follows). So the second bullet is free in battery and radio, not in the indicator:
-it shows briefly at a pull that reads it (about hourly, while the phone's own fix is older than 6 h). Whether the
-passive feed (`zones/ZoneSensors.kt`) shows it is still an open device check (`docs/notes/launcher/zones-and-power.md`,
-the step 2 checklist). The PWA's sub-line says so (§6). *Why pending:* it makes "On request" mean a little less than it
-says, which only the user can weigh (§10).
+**D18 - Dropped (the user, 2026-11-03: "nei jeg angrer meg, jeg vil ikke ha den siste rute greia").** The phone's
+own last-known cell (a second switch, migration 0123, the phone rounding Android's cached fix and sending the cell) is
+not built. The source order is D5's: the fresh stored fix, the parent's chosen zone, nothing.
 
 ## 2. Outside sources (verified 2026-11-03)
 
@@ -321,8 +303,7 @@ CREATE TABLE weather_places (
 
 ### 3.2 `src/weather.rs` - pure
 
-- `Cell { lat_i, lon_i }`, `Cell::of(lat, lon)`, `Cell::parse("2997,269")` (the phone's, D18: integers in range or
-  `None`), `Cell::query()` → `"lat=59.94&lon=10.76"` (from the integers), `Cell::centre()` → (f64, f64) for the dusk
+- `Cell { lat_i, lon_i }`, `Cell::of(lat, lon)`, `Cell::query()` → `"lat=59.94&lon=10.76"` (from the integers), `Cell::centre()` → (f64, f64) for the dusk
   and Kartverket (`nord`/`ost`).
 - `Hour` (the cache's compact row): `{t, sym, sym6, temp, feels, mm, pop, gust}` - `t` the UTC hour, `sym`
   `next_1_hours.summary.symbol_code`, `sym6` `next_6_hours`'s, `temp`/`feels`/`gust` from `instant.details`
@@ -389,18 +370,16 @@ CREATE TABLE weather_places (
 
 ### 3.4 Routes (`src/handlers/weather.rs`, declared in `device_routes.rs`)
 
-`GET /api/devices/weather[?cell=<lat_i>,<lon_i>]` (bearer) - in order: the phone's `device_policy` (`lock_weather`,
-`location_mode`, `weather_zone_id`, and with step 3 `lock_weather_last_known`); off → `{"v":1,"status":"off"}`, no
-outside request; the cell by D5's order (the `cell` parameter only as source 2, only with step 3's switch on and the
-mode `on_request`, else ignored; a malformed one is ignored); none → `no_position`; else `forecast`, `place`, the zone
+`GET /api/devices/weather` (bearer) - in order: the phone's `device_policy` (`lock_weather`, `location_mode`,
+`weather_zone_id`); off → `{"v":1,"status":"off"}`, no outside request; the cell by D5's order; none → `no_position`; else `forecast`, `place`, the zone
 (`phone_zone`) and `weather::answer(...)`. No hours stored yet and the fetch failed or is still running →
 `unavailable`. DB error → 500 (the phone keeps what it has). 20 asks a rolling hour per phone (`music_net::PhoneAsks`)
 → 429 with `Retry-After`. `Cache-Control: no-store`, gzip. It answers within ~6.5 s.
 
 `GET /api/devices/weather/now` (bearer) - the same gates and source order (off, no position → `{"v":1,"status":
-"none"}`; the phone sends its `cell` here too when it sent one with its last pull), then `nowcast`; 60 asks a rolling
+"none"}`), then `nowcast`; 60 asks a rolling
 hour per phone → 429; it answers within ~3.5 s. Neither route reads or writes `device_locations` beyond D5's one
-SELECT, stores the phone's cell anywhere but as a cache key, or returns coordinates or the cell.
+SELECT, or returns coordinates or the cell.
 
 ### 3.5 The answers (the shapes of `testdata/weather.json`'s `answer` and `now_answers`)
 
@@ -445,7 +424,7 @@ SELECT, stores the phone's cell anywhere but as a cache key, or returns coordina
 ### 3.6 The policy
 
 `models::LauncherUi.lock_weather: bool` (always sent), from `device_policy.lock_weather` in `build_policy` beside
-`lock_wake_on_notification`; with step 3 `lock_weather_last_known` too. `policy_json_keys_snapshot` and the launcher's
+`lock_wake_on_notification`. `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest` gain each in the same commit. `weather_zone_id` is never sent (the phone needs no zone).
 Capability: the launcher reports `lock_weather_v1` (§6 reads it).
 
@@ -511,8 +490,7 @@ The mark's and the card's TalkBack text use `weather_symbol_<nn>` (the number wi
 - `weather/WeatherStore.kt` - main-thread memory plus one CE `SharedPreferences` file `weather` (`answer_json`,
   `pulled_at_ms`, `tried_at_ms`); listeners (`addListener`/`removeListener`); `clear()`.
 - `weather/WeatherPull.kt` - the two GETs through the existing device API client (`MdmApi`, `ResponseBody`, decoded by
-  `ServerJson` into `server/dto/WeatherAnswer.kt` / `WeatherNow.kt`); with step 3 the last-known cell
-  (`weather/WeatherCell.kt`, D18).
+  `ServerJson` into `server/dto/WeatherAnswer.kt` / `WeatherNow.kt`).
 - `lock/WeatherLockPanel.kt` - the glue under `GlancePanel` (as `MusicLockPanel`, `ClockLockPanel`): binds the marks
   and the card, owns the open state and the hit area.
 - `res/layout/view_lock_weather_mark.xml`, `view_lock_weather_card.xml`; `res/drawable/ic_weather_chevron.xml`.
@@ -546,7 +524,7 @@ fun weatherMm(mm: Double, locale: Locale): String?                     // "2,1" 
   (degrees alone); an unknown key/form pair → `words = null`; an unknown `card` date → no card (the mark still shows,
   without the chevron, and isn't a button then; launcher QA L12).
 - `weatherKeep` (launcher QA M4, L9): an `ok` answer replaces the kept one; `off` and `no_position` clear; the policy
-  switch turning off clears; **a change of the policy's location mode** (any change, and with step 3 its switch) clears
+  switch turning off clears; **a change of the policy's location mode** (any change) clears
   the kept answer at once and makes a pull due - so "Off" never leaves "Nydalen" on the lock, and a zone fallback
   answers from the next pull; `unavailable`, a 429, a 5xx, no network keep the old answer and stamp `tried_at_ms`.
 - `weatherHour` is keyed on the strings' catalog (nb for `values-nb`, en for every other locale; launcher QA L11):
@@ -611,8 +589,7 @@ fun weatherWordsFit(place: WeatherPlace, lineDp: Float, dateDp: Float, gapDp: Fl
   card never grows under a finger.
 - **Logs**: "Weather: pulled (ok, 4 hours, place yes)" / "Weather: pull failed (IOException)" - status, counts and
   exception classes; never the place, a temperature, a time of day or a cell. The answer's `toString()` is redacted.
-- **No location code** outside step 3's `WeatherCell.kt`: nothing else under `weather/` or in `WeatherLockPanel`
-  touches `android.location`, and nothing asks any host but our server's API client (`WeatherGuardTest`).
+- **No location code**: nothing under `weather/` or in `WeatherLockPanel` touches `android.location`, and nothing asks any host but our server's API client (`WeatherGuardTest`).
 
 ### 5.5 The glance
 
@@ -703,40 +680,42 @@ contract test (§7.3) checks every key/form pair the server can send has both st
 
 ## 6. The PWA
 
-- **Where**: Device › Lock Screen & PINs (`/devices/{id}/lock`, `templates/device_lock.html`), the "Lock screen"
-  group, right under "Wake the screen for a notification", three rows in the wake switch's markup and handler pattern,
-  each its own form with `data-autosave` and its own anchor:
-  1. `#lock-weather` - the switch (`POST /devices/{id}/lock-weather`, `handlers::lock_glance::save_weather`, as
-     `save_wake`: 404 unknown device, 500 with nothing written on a DB error, a `lock_weather_changed` security-log line
-     only when the value changed, the phone nudged).
-  2. `#lock-weather-zone` - shown while the switch is on: "Når posisjonen ikke er fersk, bruk:" with a select of
-     "Ingen" and the phone's zones by name (`POST /devices/{id}/lock-weather-zone`, the field `zone` = a zone id or
-     empty; a zone of another phone or an unknown id → 400 and nothing written; a `lock_weather_zone_changed` line
-     with the zone's name, never coordinates; nudged). With no zones, the row says so and links to Locate's zones.
-  3. `#lock-weather-last-known` - step 3 only (D18): the second switch, shown while the first is on.
-  Each save answers on its own anchor (`Redirect::to("/devices/{id}/lock#lock-weather-zone")` etc.; with JS
+- **Where** (the user, 2026-11-03: "Om det er flere settings så legger vi kanskje inn en egen Vær settings sammen med
+  app og time rules etc inne på en spesifikk device sin side?"): a page of its own, Device › Vær / Weather
+  (`GET /devices/{id}/weather`, `templates/device_weather.html`, `handlers::weather_page`), listed on the phone's page
+  among Apps, Time and the others with its value "På" / "Av" (the switch). Two rows, each its own form with
+  `data-autosave` and its own anchor, in the Lock Screen page's switch and select markup:
+  1. `#weather-lock` - the switch (`POST /devices/{id}/weather/lock`, as `save_wake`: 404 unknown device, 500 with
+     nothing written on a DB error, a `lock_weather_changed` security-log line only when the value changed, the phone
+     nudged).
+  2. `#weather-zone` - shown while the switch is on: "Når posisjonen ikke er fersk, bruk:" with a select of "Ingen"
+     and the phone's zones by name (`POST /devices/{id}/weather/zone`, the field `zone` = a zone id or empty; a zone
+     of another phone or an unknown id → 400 and nothing written; a `lock_weather_zone_changed` line with the zone's
+     name, never coordinates, only when it changed; nudged). With no zones, the row says so and links to Locate's
+     zones.
+  Each save answers on its own anchor (`Redirect::to("/devices/{id}/weather#weather-zone")`; with JS
   `scroll-restore.js` keeps the exact place). **A save never jumps to the top.**
-- **Notes under the rows**: `needs_position` while on, Location isn't "Regularly", no zone is chosen (and step 3's
-  switch is off): the lock shows no weather now; `needs_update` while on and the phone hasn't reported
-  `lock_weather_v1`.
+- **Notes under the rows**: `needs_position` while on, Location isn't "Regularly" and no zone is chosen: the lock shows
+  no weather now; `needs_update` while on and the phone hasn't reported `lock_weather_v1`.
 - **Words** (`src/i18n/en.json` + `nb.json`, through `self.t`; server QA L5):
 
 | Key | en | nb |
 |---|---|---|
-| `device.lock.weather` | Weather on the lock screen | Vær på låseskjermen |
-| `device.lock.weather_sub` | Yr's symbol and the temperature by the date; tap for the day. From MET Norway, for where the phone is (about 2 km). | Yr-symbol og temperatur ved datoen; trykk for dagen. Fra MET Norge, for der telefonen er (omtrent 2 km). |
-| `device.lock.weather_zone` | When the position isn't fresh, use | Når posisjonen ikke er fersk, bruk |
-| `device.lock.weather_zone_sub` | The phone's position is fresh while Location is Regularly. Otherwise the weather is for this zone. | Posisjonen er fersk når Posisjon står på Jevnlig. Ellers gjelder været for denne sonen. |
-| `device.lock.weather_zone_none` | None | Ingen |
-| `device.lock.weather_zone_empty` / `_empty_link` | This phone has no zones yet. / Add a zone | Telefonen har ingen soner ennå. / Legg til en sone |
-| `device.lock.weather_needs_position` / `_link` | No fresh position and no zone - the lock shows no weather now. / Location Settings | Ingen fersk posisjon og ingen sone - låseskjermen viser ikke vær nå. / Posisjonsinnstillinger |
-| `device.lock.weather_needs_update` | This phone's Vibb One doesn't show weather yet - it comes with its next update. | Vibb One på denne telefonen viser ikke vær ennå - det kommer med neste oppdatering. |
-| `device.lock.weather_last_known` / `_sub` (step 3) | Use the phone's last known position / With Location on request: the position Android already has (Wi-Fi, mobile network), about 2 km, sent to this server only, about once an hour. Android may show its location icon briefly. | Bruk telefonens siste kjente posisjon / Med Posisjon ved forespørsel: posisjonen Android allerede har (Wi-Fi, mobilnett), omtrent 2 km, bare til denne serveren, omtrent én gang i timen. Android kan vise posisjonsikonet kort. |
+| `device.page.weather` | Weather | Vær |
+| `device.weather.lock` | Weather on the lock screen | Vær på låseskjermen |
+| `device.weather.lock_sub` | Yr's symbol and the temperature by the date; tap for the day. From MET Norway, for where the phone is (about 2 km). | Yr-symbol og temperatur ved datoen; trykk for dagen. Fra MET Norge, for der telefonen er (omtrent 2 km). |
+| `device.weather.zone` | When the position isn't fresh, use | Når posisjonen ikke er fersk, bruk |
+| `device.weather.zone_sub` | The phone's position is fresh while Location is Regularly. Otherwise the weather is for this zone. | Posisjonen er fersk når Posisjon står på Jevnlig. Ellers gjelder været for denne sonen. |
+| `device.weather.zone_none` | None | Ingen |
+| `device.weather.zone_empty` / `_empty_link` | This phone has no zones yet. / Add a zone | Telefonen har ingen soner ennå. / Legg til en sone |
+| `device.weather.needs_position` / `_link` | No fresh position and no zone - the lock shows no weather now. / Location Settings | Ingen fersk posisjon og ingen sone - låseskjermen viser ikke vær nå. / Posisjonsinnstillinger |
+| `device.weather.needs_update` | This phone's Vibb One doesn't show weather yet - it comes with its next update. | Vibb One på denne telefonen viser ikke vær ennå - det kommer med neste oppdatering. |
 | `security.event.lock_weather_changed` / `_zone_changed` | Lock screen weather changed / Lock screen weather zone changed | Vær på låseskjermen endret / Sone for vær på låseskjermen endret |
 | `security.detail.lock_weather.on` / `.off` | phone {device}: weather on the lock screen: on / off | telefon {device}: vær på låseskjermen: på / av |
 | `security.detail.lock_weather_zone` / `_none` | phone {device}: lock screen weather zone: {zone} / none | telefon {device}: sone for vær på låseskjermen: {zone} / ingen |
 
-  The `i18n::tests` keep both catalogs equal. No other PWA page changes; the parent never sees the cell or the
+  The `i18n::tests` keep both catalogs equal and the page joins `MOVED`. No other PWA page changes but the phone's
+  page's row; the parent never sees the cell or the
   forecast in the PWA.
 
 ## 7. Tests (lean, contract-pinned)
@@ -762,7 +741,7 @@ contract test (§7.3) checks every key/form pair the server can send has both st
     in the `never`/`all_day` rows) and `civil_ref` a second reference's civil dusk (USNO's or timeanddate's, for Oslo
     and Tromsø); the test checks each within 2 min (server QA L1).
   - `cells`: `{lat, lon, cell, query}` - Oslo; a point on a 0.01° edge; a negative latitude and longitude; 179.99 →
-    −180.00; 89.999; and `Cell::parse` rejects.
+    −180.00; 89.999.
   - `nowcast`: the four lines and the three silences (no coverage, dry, `temporarily unavailable`), and one at `now`
     7 min after the first step (server QA M3).
   - `answer` (§3.5) and `now_answers`, with `answer_now_ms` and `answer_line` (the entry and words a phone shows at
@@ -792,9 +771,9 @@ contract test (§7.3) checks every key/form pair the server can send has both st
   `none`; the per-phone limits → 429; Location changed to Off empties `weather_cells` and `weather_places`, and the
   hourly prune with a phone already Off doesn't (server QA H1); retention drops a cell unasked for 48 h and a place
   past the location retention; a failed fetch logs no `lat=` (server QA L10).
-- PWA: the three saves land on their anchors, log once per change, nudge; an unauthenticated POST writes nothing; the
+- PWA: the two saves land on their anchors, log once per change, nudge; an unauthenticated POST writes nothing; the
   page shows each note in its case.
-- `policy_json_keys_snapshot` with `launcher_ui.lock_weather` (and step 3's key in step 3).
+- `policy_json_keys_snapshot` with `launcher_ui.lock_weather`.
 - **Mutations for the code QA** (~8): the window's start not moved to the current hour; `>=` → `>` at 18:00; rule 5's
   chance arm without the kind; the cell's longitude step 0.02; `next_fetch_at` from `Expires` alone (skew); the Off
   erase moved into prune; the source order with the zone before the fresh fix; the off switch still fetching.
@@ -816,7 +795,7 @@ contract test (§7.3) checks every key/form pair the server can send has both st
   unchanged with the row; the mark's 48 dp hit rectangle in both places.
 - `LockGlanceTest`'s touchables test follows `<include>` and lists the mark and the card as touchables that keep no
   touch, beside the timer tile and the "more" line - not in `swipeControls` (launcher QA L8).
-- `WeatherGuardTest` (§5.4): no `android.location` import outside `WeatherCell.kt` and no URL literal under
+- `WeatherGuardTest` (§5.4): no `android.location` import and no URL literal under
   `weather/` and in `WeatherLockPanel`.
 - Emulator (a new § in `docs/testing/emulator.md`: a canned server answer from the contract's `answer`): the line at
   320/360 dp and fonts 1.0/1.3/2.0 (the place held through an hour's turn); the card open/fold, folded after power
@@ -828,27 +807,26 @@ contract test (§7.3) checks every key/form pair the server can send has both st
 **Step 1 - server and the contract** (one commit for the API, as `api-both-dirs` asks): migration 0122; `weather.rs`,
 `weather_cache.rs`, the two routes, `Kind::Weather` and `SourceResponse.expires`/`date`,
 `AppState.weather_fetch`/`weather`, `ForkConfig.met_contact` (DEPLOY.md: the env var, its privacy sentence, backups),
-the Off erase in `update_location_policy` and the age prune; the PWA's switch and zone rows with their words; on the
+the Off erase in `update_location_policy` and the age prune; the PWA's Device › Weather page with its two rows and
+words; `scripts/yr-symbols.py` and its generated outputs (moved here from step 2 at the build); on the
 launcher side only the DTOs (`LauncherUi.lockWeather`, `WeatherAnswer`, `WeatherNow`), `PolicyResponseCompatTest`, the
 copy and `WeatherContractTest`'s decode and file checks; NOTICE.md; `net.rs`'s doc line; CLAUDE.md's contract list and
 both workflows' paths. A server alone with step 1 is harmless: no launcher asks.
 
-**Step 2 - the launcher**: `scripts/yr-symbols.py` and its outputs, `WeatherModel`, `WeatherWords`, `WeatherStore`,
+**Step 2 - the launcher**: `WeatherModel`, `WeatherWords`, `WeatherStore`,
 `WeatherPull` and its triggers and limits, the glance's row, slot, marks, hit area and card, `LockClockFace`'s
 `dateRow` and short date, `WeatherLockPanel`, the strings, the licences paragraph, the capability `lock_weather_v1`,
 the layout, touchables and guard tests, the emulator runbook. The notes: `docs/notes/launcher/lock-and-glance.md`
 ("Weather on the glance (design 75)") and `docs/notes/server/launcher-ui.md` ("Lock screen weather") get their
 sections; the cores stay as they are.
 
-**Step 3 - the phone's last-known cell (pending the user's yes; D18)**: migration 0123
-(`device_policy.lock_weather_last_known`), the policy key in both snapshots, the route's `cell` parameter as D5's
-source 2, the PWA's third row and its words; on the phone `WeatherCell.kt` and the parameter on both GETs. Cut: skip
-the step; nothing in steps 1-2 refers to it.
+**Step 3 - dropped** (the user, 2026-11-03: "nei jeg angrer meg, jeg vil ikke ha den siste rute greia"): no
+migration 0123, no second switch, no cell from the phone.
 
 Why this split: step 1 is all of the outside traffic and the contract, testable without a phone; step 2 is the
-glance's layout, where the risk is the face's placement; step 3 is the one piece the user hasn't said yes to. Sizes:
+glance's layout, where the risk is the face's placement. Sizes:
 step 1 ~650 lines of Rust (~250 of them pure rules and the solar function); step 2 ~650 lines of Kotlin and XML + ~300
-of Python + the generated files; step 3 ~150 lines.
+of Python + the generated files.
 
 ## 9. Risks
 
@@ -877,11 +855,7 @@ of Python + the generated files; step 3 ~150 lines.
 
 ## 10. Open questions for the user
 
-1. **The phone's last-known position (D18, step 3).** With Location "On request" and no fresh fix, the phone could use
-   the position Android already has (Wi-Fi, mobile network, other apps - no GPS, no new request), round it to the 2 km
-   cell on the phone and send only that, about hourly, with a second switch (off by default). This repo found that
-   reading it makes Android show its location icon briefly. Build step 3, or leave the source order at fresh fix →
-   chosen zone → nothing?
+None. The one open question (the phone's last-known position, D18) was answered no (§12).
 
 ## 11. The revision (2026-11-03, after the two design QAs and the user's answers)
 
@@ -908,3 +882,18 @@ of Python + the generated files; step 3 ~150 lines.
   yields to the own line; L14 the card's place explained in §0; L15 the converter's details and the multiply bake, the
   bright-wallpaper shot, the contract's `answer_now_ms`/`answer_line`.
 - **Not taken**: the launcher QA's suggestion to cut "Oppdatert kl." first - it is the user's ask and cheap (D11).
+
+## 12. Changes at step 1's build (2026-11-03)
+
+- **Step 3 dropped** (the user: "nei jeg angrer meg, jeg vil ikke ha den siste rute greia", after a first "Ja til
+  bryteren takk"): D5's source 2, D18, `Cell::parse`, migration 0123, the third PWA row and the phone's cell are gone;
+  the order is the fresh stored fix, the parent's chosen zone, nothing. The server QA's R3 (the cell in a header)
+  falls with it.
+- **Device › Weather** (the user's "egen Vær settings ... inne på en spesifikk device sin side"): the two rows move off
+  Lock Screen & PINs to a page of their own, a row on the phone's page with "På" / "Av"; the keys are `device.weather.*`
+  and `device.page.weather` (§6).
+- **The symbol script in step 1** (the brief): `scripts/yr-symbols.py` and its outputs come with the server and the
+  contract; step 2 keeps the code that uses them.
+- **The server QA's R1 and R2**: a zone's delete already nudges the phone (`handlers::zones::saved`), and the foreign
+  key clears `weather_zone_id` (a test pins both); 0122's comment and `docs/notes/server/zones.md` say that rebuilding
+  `device_zones` would clear every weather zone.
