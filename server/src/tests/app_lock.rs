@@ -600,6 +600,81 @@ async fn the_unlock_takes_the_parents_own_passkey() {
     assert_eq!(rows, vec![(Some("×2".to_string()),)]);
 }
 
+/// The user 2026-11-03 (the bank app's Face ID): the options' `hint` - the passkey this browser unlocked with last -
+/// narrows `allowCredentials` to that one only when it is one of this parent's passkeys here; another parent's, an
+/// unknown, a garbage or an oversized hint, and none, offer every passkey of the parent's. The narrowed challenge
+/// opens the lock as any other.
+#[tokio::test]
+async fn the_hint_narrows_the_unlock_to_the_parents_own_passkey() {
+    let app = TestApp::new().await;
+    let (cookie, _, _) = locked_parent(&app, "5").await;
+    let mut second = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &cookie, &mut second, "iPad").await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let mut theirs = FakeAuthenticator::es256(b"");
+    add_passkey(&app, &pappa, &mut theirs, "Pappa's phone").await;
+    unused_for(&app, &cookie, 7 * 60).await;
+
+    let offered = |hint: Option<String>| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            let fields: Vec<(&str, &str)> =
+                hint.as_deref().map(|h| ("hint", h)).into_iter().collect();
+            let res = send(
+                app,
+                Method::POST,
+                "/lock/options",
+                HOST,
+                Some(&cookie),
+                &fields,
+            )
+            .await;
+            assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+            let ids: Vec<String> = res.json()["allowCredentials"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["id"].as_str().unwrap().to_string())
+                .collect();
+            (ids, res)
+        }
+    };
+    let own = crate::webauthn::b64url(&second.credential_id);
+    let (ids, options) = offered(Some(own.clone())).await;
+    assert_eq!(ids, vec![own.clone()], "only the hinted passkey");
+    for hint in [
+        None,
+        Some(String::new()),
+        Some(crate::webauthn::b64url(&theirs.credential_id)),
+        Some(crate::webauthn::b64url(&[7u8; 32])),
+        Some("not base64 at all!".to_string()),
+        Some(format!("{own}=")),
+        Some("A".repeat(2048)),
+    ] {
+        let (ids, _) = offered(hint.clone()).await;
+        assert_eq!(ids.len(), 2, "every passkey of the parent's for {hint:?}");
+        assert!(ids.contains(&own), "{hint:?}");
+        assert!(
+            !ids.contains(&crate::webauthn::b64url(&theirs.credential_id)),
+            "never another parent's ({hint:?})"
+        );
+    }
+
+    let assertion = second.assert(&challenge_of(&options), ORIGIN, HOST, false);
+    let res = send(
+        &app,
+        Method::POST,
+        "/lock",
+        HOST,
+        Some(&cookie),
+        &[("assertion", &assertion), ("next", "/devices")],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json()["next"], "/devices");
+}
+
 /// D3.5: three bad unlocks in a row end every session (as the re-auth forms).
 #[tokio::test]
 async fn three_bad_unlocks_sign_out() {

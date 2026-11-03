@@ -397,7 +397,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The lock screen** (`GET /lock`, `templates/lock.html`; no tab bar, `no-store`, `<title>Vibb</title>`, nothing
   private): with the lock off it goes on to `next` or Devices; on, it shows whether the server already locks or the page
   locked first. `POST /lock/options` is an `unlock` challenge (`passkeys::Kind::Unlock`, bound to `/lock`) with the
-  signed-in parent's passkeys here; passkey.js fetches it at load so "Unlock" calls the prompt within the tap (iOS).
+  signed-in parent's passkeys here. Since 2026-11-03 (the user: as a bank app) passkey.js starts the prompt on its own
+  (modal) once per page load while visible (loaded hidden: at the first showing; again only back from the bfcache;
+  never with the red line showing), its options asked with `hint` = the passkey this browser unlocked with last
+  (localStorage `handy-lock-passkey`, its `rawId`, kept after an unlock): `handlers::lock::offered` narrows
+  `allowCredentials` to it only when it is one of the parent's passkeys here, else all (another parent's, unknown,
+  junk, over the route's 1 KiB). Refused (no gesture), cancelled or timed out, it stays quiet; "Unlock" then asks on a
+  tap with every passkey (fetched ahead, so the prompt opens within the tap - iOS), aborting an open automatic one.
+  The sign-in pages never start a prompt on their own.
   `POST /lock` (`assertion`, `next`): the parent's own credential only (`passkeys::unlock`); done: `record_reauth`
   right, `cycle_id`, `used_at` now, `app_unlocked` (one row per parent and hour, "×N"), answer `{next}` (a local path,
   `lock::local_next`: one leading `/`, printable ASCII, never `/lock`, `/login`, `/logout`, `/auth/…`; else `/`) and

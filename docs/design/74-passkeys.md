@@ -435,6 +435,10 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
    gets the server's last use (`data-lock-idle`, relative), the later of it and the stored input counting; the beacon
    always writes `used_at` (so the server's slack holds), a tap or a save only past 30 s; a locked form POST goes to
    `/lock` without `next`; the lock screen's Sign Out keeps `next` for the passkey sign-in (`/login?next=`).
+   *Changed 2026-11-03 (the user: "som min bank-app", for the lock screen alone - a sign-in on a new device keeps its
+   choice):* D3.5's "always waits for a tap" is gone - `/lock` starts the modal prompt on its own once per page load,
+   with the passkey this browser unlocked with last as `/lock/options`' `hint` (narrowed only within the parent's own
+   passkeys here); refused or cancelled, the button asks on a tap with every passkey (branch `lock-faceid`).
    `docs/notes/server/connectivity.md`, "The app lock".
 
 ## 8. Open for the user

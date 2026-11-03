@@ -1,6 +1,7 @@
 // Behaviour of static/passkey.js (design 74 step 1): base64url both ways, the server's JSON options as the browser's
 // options, a credential as the server reads it, the controls hidden without PublicKeyCredential (D4.4), the sign-in
-// button's assertion posted in its form, and a re-auth that fills `assertion` and sends the form.
+// button's assertion posted in its form, a re-auth that fills `assertion` and sends the form, and the lock screen's
+// prompt on its own (once per load, the kept passkey as its hint; the tap asks for every passkey).
 // Run: node --test jstest/passkey.test.js
 "use strict";
 const test = require("node:test");
@@ -554,7 +555,13 @@ function lockBrowser(nodes, answers, get) {
         replaced: [],
         stored: {},
         sessionStorage: { setItem(key, value) { win.stored[key] = value; } },
-        addEventListener: () => {},
+        local: {},
+        localStorage: {
+            getItem(key) { return key in win.local ? win.local[key] : null; },
+            setItem(key, value) { win.local[key] = String(value); },
+        },
+        listeners: {},
+        addEventListener: (type, fn) => { win.listeners[type] = fn; },
         location: {
             href: "https://handy.example.com/lock?next=%2Fdevices%2F3",
             pathname: "/lock",
@@ -570,7 +577,8 @@ function lockBrowser(nodes, answers, get) {
             return Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve(answer.json || {}) });
         },
     }, nodes);
-    win.document.addEventListener = () => {};
+    win.document.listeners = {};
+    win.document.addEventListener = (type, fn) => { win.document.listeners[type] = fn; };
     return { win, fetched };
 }
 
@@ -587,7 +595,11 @@ function unlockPage(answers, get) {
 
 const UNLOCK_OPTIONS = { json: { challenge: "AQID", rpId: "handy.example.com", allowCredentials: [{ id: "AQI" }] } };
 
-test("the lock screen: its challenge is fetched at load, a tap prompts at once, the unlock replaces the page", async () => {
+const optionsCalls = (page) => page.fetched.filter((f) => f[0] === "/lock/options");
+const gets = (page) => page.fetched.filter((f) => f[0] === "get");
+const cancel = () => Promise.reject({ name: "NotAllowedError" });
+
+test("the lock screen starts the prompt on its own at load, unlocks, and keeps the passkey it used", async () => {
     const page = unlockPage(
         { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
         () => Promise.resolve(ASSERTION),
@@ -595,12 +607,11 @@ test("the lock screen: its challenge is fetched at load, a tap prompts at once, 
     passkey.install(page.win);
     assert.strictEqual(page.button.hidden, false);
     assert.strictEqual(page.fetched[0][0], "/lock/options");
-    await flush();
-    page.button.listeners.click();
-    // Within the tap: the prompt before any fetch (iOS needs the gesture).
-    assert.strictEqual(page.fetched[1][0], "get");
+    assert.strictEqual(page.fetched[0][1].body, "", "nothing kept yet: every passkey");
     await flush();
     await flush();
+    assert.strictEqual(gets(page).length, 1, "no tap");
+    assert.strictEqual(gets(page)[0][1].mediation, undefined, "modal, not conditional");
     const post = page.fetched.find((f) => f[0] === "/lock");
     assert.ok(post, "posted");
     const body = new URLSearchParams(post[1].body);
@@ -608,18 +619,50 @@ test("the lock screen: its challenge is fetched at load, a tap prompts at once, 
     assert.strictEqual(body.get("next"), "/devices/3");
     assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
     assert.ok(page.win.stored["handy-used"], "the use starts now in this tab");
+    assert.strictEqual(page.win.local[passkey.LAST_PASSKEY_KEY], "AQI", "the passkey this device used");
 });
 
-test("the lock screen: a cancelled or refused try shows the red line and fetches a fresh challenge", async () => {
-    const cancelled = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => Promise.reject({ name: "NotAllowedError" }));
+test("the lock screen: the automatic try asks for the kept passkey; refused, it stays quiet and the tap asks for all", async () => {
+    let calls = 0;
+    const page = unlockPage(
+        { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
+        () => (++calls === 1 ? cancel() : Promise.resolve(ASSERTION)),
+    );
+    page.win.local[passkey.LAST_PASSKEY_KEY] = "AQI";
+    passkey.install(page.win);
+    assert.strictEqual(page.fetched[0][1].body, "hint=AQI");
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    // No gesture, a cancel or a timeout: no red line, the button's options fetched ahead - without the hint.
+    assert.strictEqual(page.error.hidden, true);
+    assert.strictEqual(optionsCalls(page).length, 2);
+    assert.strictEqual(optionsCalls(page)[1][1].body, "");
+    // Once per load: shown again, no second automatic try.
+    page.win.document.visibilityState = "visible";
+    page.win.document.listeners.visibilitychange();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    // The tap prompts within the gesture, with the options for every passkey.
+    page.button.listeners.click();
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "the prompt before any fetch (iOS)");
+    await flush();
+    await flush();
+    assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+});
+
+test("the lock screen: a cancelled tap or a refused unlock shows the red line and fetches a fresh challenge", async () => {
+    const cancelled = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, cancel);
     passkey.install(cancelled.win);
     await flush();
+    await flush();
+    assert.strictEqual(cancelled.error.hidden, true, "the automatic try's cancel says nothing");
     cancelled.button.listeners.click();
     await flush();
     await flush();
     assert.strictEqual(cancelled.error.hidden, false);
     assert.strictEqual(cancelled.error.textContent, "Couldn't unlock");
-    assert.strictEqual(cancelled.fetched.filter((f) => f[0] === "/lock/options").length, 2);
+    assert.strictEqual(optionsCalls(cancelled).length, 3);
     assert.deepStrictEqual(cancelled.win.replaced, []);
     const refused = unlockPage(
         { "/lock/options": UNLOCK_OPTIONS, "/lock": { status: 400, json: { error: "Couldn't unlock. Try again" } } },
@@ -627,12 +670,92 @@ test("the lock screen: a cancelled or refused try shows the red line and fetches
     );
     passkey.install(refused.win);
     await flush();
-    refused.button.listeners.click();
-    await flush();
     await flush();
     await flush();
     assert.strictEqual(refused.error.textContent, "Couldn't unlock. Try again");
     assert.deepStrictEqual(refused.win.replaced, []);
+    assert.strictEqual(refused.win.local[passkey.LAST_PASSKEY_KEY], undefined, "kept only after an unlock");
+    refused.button.listeners.click();
+    await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(refused).length, 2);
+    assert.strictEqual(refused.error.textContent, "Couldn't unlock. Try again");
+});
+
+test("the lock screen: loaded hidden, the automatic try waits for the first showing; back from the bfcache, one more", async () => {
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, cancel);
+    page.win.document.visibilityState = "hidden";
+    passkey.install(page.win);
+    await flush();
+    assert.strictEqual(gets(page).length, 0);
+    page.win.document.visibilityState = "visible";
+    page.win.document.listeners.visibilitychange();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    page.win.document.listeners.visibilitychange();
+    await flush();
+    assert.strictEqual(gets(page).length, 1, "at most once per load");
+    // A pageshow of a fresh load is no new try; one from the back-forward cache is.
+    page.win.listeners.pageshow({ persisted: false });
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    page.win.listeners.pageshow({ persisted: true });
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 2);
+});
+
+test("the lock screen: no automatic try with the red line already showing", async () => {
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => assert.fail("no prompt on its own"));
+    page.error.hidden = false;
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 0);
+    assert.strictEqual(optionsCalls(page).length, 1, "the button's options, ahead");
+});
+
+test("the lock screen: a tap while the automatic prompt is open aborts it and asks for every passkey", async () => {
+    const aborted = [];
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, (o) =>
+        o.signal
+            ? new Promise((resolve, reject) => o.signal.addEventListener("abort", () => { aborted.push(1); reject({ name: "AbortError" }); }))
+            : cancel(),
+    );
+    page.win.AbortController = AbortController;
+    page.win.local[passkey.LAST_PASSKEY_KEY] = "AQI";
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    page.button.listeners.click();
+    await flush();
+    await flush();
+    assert.deepStrictEqual(aborted, [1]);
+    assert.strictEqual(gets(page).length, 2);
+    assert.deepStrictEqual(optionsCalls(page).map((f) => f[1].body), ["hint=AQI", "", ""]);
+    assert.strictEqual(page.error.textContent, "Couldn't unlock", "the tap's own cancel only");
+});
+
+test("the lock screen: storage that throws or holds junk changes nothing but the hint", async () => {
+    for (const storage of [
+        { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } },
+        { getItem: () => "not an id!", setItem() { throw new Error("full"); } },
+        undefined,
+    ]) {
+        const page = unlockPage(
+            { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
+            () => Promise.resolve(ASSERTION),
+        );
+        page.win.localStorage = storage;
+        passkey.install(page.win);
+        assert.strictEqual(page.fetched[0][1].body, "", "no hint");
+        await flush();
+        await flush();
+        assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+    }
 });
 
 test("Account's lock: a change asks the passkey, then sends the form; a cancel puts the control back", async () => {
@@ -710,18 +833,21 @@ test("the lock screen fetches a fresh challenge every 3.5 minutes on screen, so 
     page.win.document.visibilityState = "visible";
     passkey.install(page.win);
     await flush();
+    await flush();
+    // The automatic try spent the load's challenge; the button's is fetched ahead.
+    assert.strictEqual(optionsCalls(page).length, 2);
     assert.strictEqual(timers.length, 1);
     assert.strictEqual(timers[0].ms, passkey.UNLOCK_REFRESH_MS);
     assert.ok(passkey.UNLOCK_REFRESH_MS < passkey.AHEAD_MS);
     timers.shift().fn();
     await flush();
-    assert.strictEqual(page.fetched.filter((f) => f[0] === "/lock/options").length, 2, "fetched again");
+    assert.strictEqual(optionsCalls(page).length, 3, "fetched again");
     assert.strictEqual(timers.length, 1, "and again later");
     // Hidden: no fetch (the page refetches when shown).
     page.win.document.visibilityState = "hidden";
     timers.shift().fn();
     await flush();
-    assert.strictEqual(page.fetched.filter((f) => f[0] === "/lock/options").length, 2);
+    assert.strictEqual(optionsCalls(page).length, 3);
     // The tap after the refresh prompts within the gesture.
     page.win.document.visibilityState = "visible";
     page.button.listeners.click();

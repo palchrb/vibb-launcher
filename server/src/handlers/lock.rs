@@ -2,9 +2,10 @@
 //!
 //! - `GET /lock?next=` (§6.5): the lock screen - no tab bar, `no-store`, nothing private (no name, no phone, no
 //!   count). With the lock off it goes on to `next` (a local path) or Devices.
-//! - `POST /lock/options`: an `unlock` challenge bound to `/lock`, `allowCredentials` = the signed-in parent's
-//!   passkeys for this RP ID (D3.5). `static/passkey.js` fetches it when the page loads, so "Lås opp" calls the
-//!   browser's prompt within the tap (iOS needs the gesture).
+//! - `POST /lock/options` (form `hint`, optional): an `unlock` challenge bound to `/lock`, `allowCredentials` = the
+//!   signed-in parent's passkeys for this RP ID (D3.5) - only the `hint`'s one when it names one of them (the passkey
+//!   this browser unlocked with last, so the prompt needs no pick; anything else is ignored). `static/passkey.js`
+//!   asks with the hint for the prompt it starts on its own when the page loads, and without it for "Lås opp".
 //! - `POST /lock` (form `assertion`, `next`): the parent's own credential only; done, the session's use moves, its
 //!   id is cycled (D3.7) and the answer is `{"next": <local path>}` (the page replaces itself with it, so Back never
 //!   returns to the lock); a bad assertion is `app_unlock_failed` and counts in `reauth_wrong` (3 end every session).
@@ -95,14 +96,38 @@ pub async fn page(
     }
 }
 
-/// `POST /lock/options` (D3.5): the signed-in parent's passkeys here, an `unlock` challenge bound to `/lock`.
+#[derive(Deserialize)]
+pub struct OptionsForm {
+    /// The credential id (base64url, as `rawId`) this browser unlocked with last.
+    #[serde(default)]
+    hint: String,
+}
+
+/// The passkeys an unlock's prompt offers: only the hint's one when it is one of `here` (the parent's own passkeys for
+/// this RP ID), else all of them - a hint narrows within the parent's set and never adds to it.
+fn offered(mut here: Vec<passkeys::PasskeyRow>, hint: &str) -> Vec<passkeys::PasskeyRow> {
+    let hint = hint.trim();
+    match here
+        .iter()
+        .position(|row| !hint.is_empty() && crate::webauthn::b64url(&row.credential_id) == hint)
+    {
+        Some(at) => vec![here.swap_remove(at)],
+        None => here,
+    }
+}
+
+/// `POST /lock/options` (D3.5): the signed-in parent's passkeys here (the hint's one alone when it names one), an
+/// `unlock` challenge bound to `/lock`.
 pub async fn options(
     State(state): State<AppState>,
     lang: Lang,
     session: Session,
     ceremony: Ceremony,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    form: Result<Form<OptionsForm>, axum::extract::rejection::FormRejection>,
 ) -> Response {
+    // The hint is a convenience: a form that can't be read asks with every passkey, as without one.
+    let hint = form.map(|Form(form)| form.hint).unwrap_or_default();
     let refused = |status| {
         json(
             status,
@@ -140,7 +165,12 @@ pub async fn options(
     };
     json(
         StatusCode::OK,
-        passkeys::request_options(&challenge, &rp_id, &here, passkeys::CHALLENGE_TTL),
+        passkeys::request_options(
+            &challenge,
+            &rp_id,
+            &offered(here, &hint),
+            passkeys::CHALLENGE_TTL,
+        ),
     )
 }
 

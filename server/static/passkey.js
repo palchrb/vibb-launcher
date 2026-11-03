@@ -17,10 +17,11 @@
 // - Step 2: the passkey-only sign-in page (`[data-passkey-only]`, §6.4) has only the button - no autofill, nothing
 //   on its own; the autofill's get starts again with fresh options once they are 4.5 minutes old; and only a 401 or
 //   a redirect that lands on /login counts as signed out (an HTML error page is an error, qa-passkeys-1 B-RN3).
-// - Step 3, the app lock: the lock screen's "Unlock" (`#unlock`, `[data-passkey-unlock]`, D3.5) - an `unlock` challenge
-//   fetched when the page loads (`POST /lock/options`), so the tap calls the browser's prompt at once (iOS needs the
-//   gesture), the assertion posted to `/lock`, the page replaced with the answer's `next`; a failed or cancelled try
-//   shows the red line. Account's "Lock with Face ID" (`[data-app-lock]`, D3.2): a change runs a re-auth assertion
+// - Step 3, the app lock: the lock screen (`#unlock`, `[data-passkey-unlock]`, D3.5) starts the prompt on its own once
+//   per page load (an `unlock` challenge from `POST /lock/options` with `hint` = the passkey this browser unlocked with
+//   last, localStorage `handy-lock-passkey`); refused or cancelled, "Unlock" asks on a tap with every passkey (its
+//   challenge fetched ahead, so the tap calls the prompt at once - iOS needs the gesture). The assertion is posted to
+//   `/lock`, the page replaced with the answer's `next`; a refused unlock or a cancelled tap shows the red line. Account's "Lock with Face ID" (`[data-app-lock]`, D3.2): a change runs a re-auth assertion
 //   for `/account/lock` first (its challenge fetched on the first touch of the control), then the form is sent; a
 //   cancel puts the control back. A 423 (the server's lock) goes to /lock and ends the flow there.
 // A cancelled prompt (`NotAllowedError`, `AbortError`) is the browser's and sends nothing (D1.5). The words come from
@@ -479,23 +480,61 @@
     }
 
     // The prompt for `challenge`'s options: at once when they are ready (within the tap), else after fetching them.
-    function promptWith(win, challenge) {
+    // `signal` (optional) aborts it.
+    function promptWith(win, challenge, signal) {
+        function get(json) {
+            var request = { publicKey: requestOptions(json) };
+            if (signal) request.signal = signal;
+            return win.navigator.credentials.get(request);
+        }
         var ready = challenge.ready();
         challenge.spend();
-        if (ready) return win.navigator.credentials.get({ publicKey: requestOptions(ready) });
+        if (ready) return get(ready);
         return challenge.fetch().then(function (json) {
             challenge.spend();
-            return win.navigator.credentials.get({ publicKey: requestOptions(json) });
+            if (signal && signal.aborted) throw { name: "AbortError" };
+            return get(json);
         });
     }
 
-    // The lock screen (§6.5, D3.5).
+    // The passkey this browser unlocked with last (its `rawId`, base64url), per origin = per device: the prompt the
+    // lock screen starts on its own asks for it alone (the server narrows to it only when it is the parent's).
+    var LAST_PASSKEY_KEY = "handy-lock-passkey";
+
+    function lastPasskey(win) {
+        try {
+            var id = win.localStorage.getItem(LAST_PASSKEY_KEY);
+            return id && id.length <= 1024 && /^[A-Za-z0-9_-]+$/.test(id) ? id : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function keepLastPasskey(win, id) {
+        try {
+            win.localStorage.setItem(LAST_PASSKEY_KEY, id);
+        } catch (e) {}
+    }
+
+    // The lock screen (§6.5, D3.5; the user 2026-11-03: as a bank app). The prompt starts on its own once per page
+    // load while the page is visible (else at the first time it is shown; again only when it comes back from the
+    // back-forward cache) - modal, with the passkey this browser used last as the only one when there is one. Refused
+    // (no gesture: iOS before 17.4 may), cancelled or timed out, it stays quiet and "Unlock" asks again on a tap, with
+    // every passkey of the parent's (one removed or lost never strands the parent); a refused unlock shows the red line.
     function installUnlock(win, form) {
         var button = form.querySelector("[data-passkey-unlock-button]");
         var error = form.querySelector("[data-passkey-error]");
         var next = form.querySelector("input[name=\"next\"]");
         if (!button) return;
         var challenge = ahead(win, "/lock/options", function () { return {}; });
+        var hint = lastPasskey(win);
+        var hinted = hint ? ahead(win, "/lock/options", function () { return { hint: hint }; }) : challenge;
+        // The automatic try: once per page load, never with the red line already showing.
+        var autoTried = !!(error && !error.hidden);
+        var autoRunning = null;
+        function visible() {
+            return win.document.visibilityState !== "hidden";
+        }
         function prefetch() {
             if (!challenge.ready()) challenge.fetch().then(null, function () {});
         }
@@ -504,43 +543,85 @@
             show(error, text || w(error, "failed"));
             prefetch();
         }
+        // The prompt's credential: posted; done, the page goes on (`false`: refused, the red line shows).
+        function unlockWith(cred) {
+            if (!cred) return failed();
+            var json = credentialJSON(cred);
+            return post(win, "/lock", {
+                assertion: JSON.stringify(json),
+                next: next ? next.value : "",
+            }).then(function (answer) {
+                if (answer.signedOut) return toSignIn(win);
+                if (!answer.ok) return failed(answer.json.error);
+                keepLastPasskey(win, json.rawId);
+                // The use starts now in this tab too (app-lock.js's record), so the page doesn't lock again.
+                try {
+                    win.sessionStorage.setItem("handy-used", String(win.Date ? win.Date.now() : Date.now()));
+                } catch (e) {}
+                win.location.replace(answer.json.next || "/");
+            });
+        }
+        function autoStart() {
+            if (autoTried || !visible()) return false;
+            autoTried = true;
+            var controller = win.AbortController ? new win.AbortController() : null;
+            var running = { controller: controller };
+            autoRunning = running;
+            promptWith(win, hinted, controller ? controller.signal : null).then(function (cred) {
+                if (autoRunning !== running) return;
+                autoRunning = null;
+                if (!cred) return prefetch();
+                return unlockWith(cred);
+            }, function (err) {
+                if (autoRunning !== running) return;
+                autoRunning = null;
+                // No gesture, a cancel or a timeout: quiet - the button is there.
+                if (cancelled(err)) prefetch();
+                else failed(err && err.name === "refused" ? err.message : "");
+            }).then(null, function () {
+                failed();
+            });
+            return true;
+        }
+        // The tap: the automatic try (if one is open) gives way, and every passkey is offered.
         button.addEventListener("click", function () {
             show(error, "");
-            promptWith(win, challenge).then(function (cred) {
-                if (!cred) return failed();
-                return post(win, "/lock", {
-                    assertion: JSON.stringify(credentialJSON(cred)),
-                    next: next ? next.value : "",
-                }).then(function (answer) {
-                    if (answer.signedOut) return toSignIn(win);
-                    if (!answer.ok) return failed(answer.json.error);
-                    // The use starts now in this tab too (app-lock.js's record), so the page doesn't lock again.
-                    try {
-                        win.sessionStorage.setItem("handy-used", String(win.Date ? win.Date.now() : Date.now()));
-                    } catch (e) {}
-                    win.location.replace(answer.json.next || "/");
-                });
-            }).then(null, function (err) {
+            if (autoRunning) {
+                if (autoRunning.controller) autoRunning.controller.abort();
+                autoRunning = null;
+            }
+            autoTried = true;
+            promptWith(win, challenge).then(unlockWith).then(null, function (err) {
                 failed(err && err.name === "refused" ? err.message : "");
             });
         });
-        prefetch();
+        if (!autoStart()) prefetch();
         // On screen for long (a tablet on a stand): fresh options before the ready ones age out.
         function refresh() {
-            if (win.document.visibilityState !== "hidden") {
+            if (visible()) {
                 challenge.spend();
                 prefetch();
             }
             if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
         }
         if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
-        // A page shown again (a phone holds a hidden one) or back from the back-forward cache: fresh options.
+        // A page shown again (a phone holds a hidden one): the automatic try when it has had none, else fresh options.
         if (win.document.addEventListener) {
             win.document.addEventListener("visibilitychange", function () {
-                if (win.document.visibilityState !== "hidden") prefetch();
+                if (visible() && !autoStart()) prefetch();
             });
         }
-        if (win.addEventListener) win.addEventListener("pageshow", prefetch);
+        // Back from the back-forward cache: a new showing - one automatic try again (the red line cleared).
+        if (win.addEventListener) {
+            win.addEventListener("pageshow", function (e) {
+                if (!e || !e.persisted) return;
+                if (!autoRunning) {
+                    show(error, "");
+                    autoTried = false;
+                }
+                if (!autoStart()) prefetch();
+            });
+        }
     }
 
     // Account's "Lock with Face ID" (§6.1, D3.2): every change behind a passkey that works here.
@@ -621,6 +702,7 @@
         encode: encode,
         AHEAD_MS: AHEAD_MS,
         UNLOCK_REFRESH_MS: UNLOCK_REFRESH_MS,
+        LAST_PASSKEY_KEY: LAST_PASSKEY_KEY,
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
