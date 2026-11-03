@@ -12,7 +12,7 @@
 //   page arrives without another tap; a navigation that is only slow is started again once, 12 s
 //   in, then left to come. A quiet "Try again" is offered only after 20 s. A save started meanwhile
 //   (a submit, a data-autosave change) ends the wait: its restart would cancel the save;
-// - when the page becomes visible after more than 10 minutes hidden, pings the server (the chip
+// - when the page becomes visible after more than a minute hidden (AWAY_MS), pings the server (the chip
 //   only if that takes over 3 s) and, answered, reloads the page in place keeping its scroll place
 //   (scroll-restore.js's record, as auto-reload.js leaves it - never the top: "Lagring i
 //   foreldre-PWAen skal aldri hoppe til toppen av siden"); a signed-out session lands on the
@@ -21,6 +21,11 @@
 //   <body data-post-answer>, `admin_auth::mark_post_answer`); then the page stays as it is. Before
 //   any reload the entry is made a GET of the address (`replaceState`), so a reload never resends
 //   a form;
+// - after more than 10 minutes hidden (HOME_AFTER, 2026-11-03) the same wait ends on Devices, `/`, instead of the
+//   reload in place (the PWA "opens" on its start page after a long time away), under exactly the rules above: a save
+//   on its way, an open <details>, a typed field and a POST's answer keep it where it is, and a page that is already
+//   `/` is only reloaded in place. A due lock after that long goes to /lock with `next=/` (after the passkey the parent
+//   lands on Devices); after a shorter time its `next` stays the page they were on;
 // - clears everything on `pageshow` (a page back from the back-forward cache is never left
 //   "loading");
 // - on the sign-in page (2026-10-25: after a Tailscale outage the return reload showed the login
@@ -43,6 +48,10 @@
     var STUCK_AFTER = 12000;
     // 1 minute (the user, 2026-10-24; 10 minutes until then): back from the background after that long = a reload in place.
     var AWAY_MS = 60 * 1000;
+    // Away that long (the user, 2026-11-03: "10 minutter er bra") = the PWA opens on Devices, `/` (the manifest's
+    // start_url), not on the page it was left on: through the same wait, and as the lock's `next`.
+    var HOME_AFTER = 10 * 60 * 1000;
+    var HOME_PATH = "/";
     var PING_URL = "/ping";
     // Is this request's session signed in? 204 / 401, no body (2026-10-25, security::session_check).
     var SESSION_URL = "/api/session";
@@ -616,7 +625,7 @@
                 if (wait !== w) return;
                 // The server's lock answered (design 74 D3.4): to the lock, then where the wait was going.
                 if (status === 423) {
-                    var next = w.href === null ? herePath(win) : pathOf(w.href, win.location.href);
+                    var next = w.home ? HOME_PATH : w.href === null ? herePath(win) : pathOf(w.href, win.location.href);
                     end();
                     toLock(win, next);
                     return;
@@ -633,7 +642,9 @@
                         end();
                         return;
                     }
-                    var reload = start("load", null, null);
+                    // Away over 10 minutes: Devices, unless this already is Devices (then the reload in place).
+                    var toHome = w.home && win.location.pathname !== HOME_PATH;
+                    var reload = toHome ? start("load", HOME_PATH, null) : start("load", null, null);
                     go(reload);
                     return;
                 }
@@ -685,12 +696,13 @@
          * A wait: "load" for a navigation on its way (`href` null = the reload in place), "return"
          * for the ping after being away (nothing shown unless it takes over 3 s).
          */
-        function start(kind, href, link) {
+        function start(kind, href, link, home) {
             end();
             var w = {
                 kind: kind,
                 href: href,
                 link: link,
+                home: !!home,
                 started: now(),
                 restarted: now(),
                 failed: false,
@@ -731,6 +743,7 @@
 
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
+            var home = hiddenAt !== null && now() - hiddenAt > HOME_AFTER;
             hiddenAt = null;
             // The lock screen is left alone on a return: its own showing asks for the passkey (passkey.js), and a
             // reload or the 423's way to the lock would replace the page under that prompt (qa-lock-auto M2). A dead
@@ -739,7 +752,7 @@
             // Back after the lock's time (design 74 D3.3): the lock, before any return reload.
             if (lockDue(win)) {
                 end();
-                toLock(win, herePath(win));
+                toLock(win, home ? HOME_PATH : herePath(win));
                 return;
             }
             checkSignIn();
@@ -747,7 +760,7 @@
                 if (!wait.timers.length) arm(wait);
                 check(wait);
             } else if (away && !saving && !postAnswer()) {
-                start("return", null, null);
+                start("return", null, null, home);
             }
         }
 
@@ -818,6 +831,7 @@
         OFFER_AFTER: OFFER_AFTER,
         STUCK_AFTER: STUCK_AFTER,
         AWAY_MS: AWAY_MS,
+        HOME_AFTER: HOME_AFTER,
         w: w
     };
     if (typeof module !== "undefined" && module.exports) {
