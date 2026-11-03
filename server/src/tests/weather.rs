@@ -483,6 +483,13 @@ async fn failures_back_off_and_keep_the_old_hours() {
     // A 200 we can't read waits at least until the `Expires` it came with (code QA M2), 45 min here.
     let t = at(&next);
     app.state.weather.set_now(t);
+    // Six hours on, the phone's fix is fresh again.
+    sqlx::query("UPDATE device_locations SET captured_at = ? WHERE device_id = ?")
+        .bind((t - Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Millis, true))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     app.fetch.canned_once(
         MET,
         Canned {
@@ -732,7 +739,7 @@ async fn a_failed_fetch_keeps_only_a_code() {
             // The whole call (code QA L4): its fields before the message, the message's own `{...}` captures and
             // any format arguments after it are what a log prints besides its fixed words.
             let call = &source[n..];
-            let call = &call[..call.find(");").unwrap_or(call.len())];
+            let call = &call[..call_end(call)];
             let (Some(first), Some(last)) = (call.find('"'), call.rfind('"')) else {
                 panic!("{file} at byte {n}: a log without a message: {call}");
             };
@@ -764,6 +771,27 @@ async fn a_failed_fetch_keeps_only_a_code() {
             );
         }
     }
+}
+
+/// Where a macro call that starts `text` ends: its closing parenthesis, counted past the ones in its strings.
+fn call_end(text: &str) -> usize {
+    let (mut depth, mut in_string, mut escaped) = (0, false, false);
+    for (i, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+    }
+    text.len()
 }
 
 /// Code QA L5: two phones of one cell asking at once make one MET request.
