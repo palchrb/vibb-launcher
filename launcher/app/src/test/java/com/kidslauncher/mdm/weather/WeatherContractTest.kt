@@ -102,6 +102,49 @@ class WeatherContractTest {
         assertTrue(from.words!!.atMs!! > from.atMs)
     }
 
+    /** Every key and form the server may send (`forms`, `now_keys`) has its words through [WeatherWords] in `values` and
+     * `values-nb`, with the placeholder it needs: the hour in a `from`, the minutes in an `_in`, nothing else (§5.6). */
+    @Test
+    fun `every pair the server may send has its words in both catalogs`() {
+        fun strings(dir: String): Map<String, String> {
+            val text = File("src/main/res/$dir/strings.xml").readText()
+            return Regex("""<string name="(weather_[a-z_]+)">([^<]*)</string>""").findAll(text).associate { it.groupValues[1] to it.groupValues[2] }
+        }
+        val en = strings("values")
+        val nb = strings("values-nb")
+        val names = Regex("""R\.string\.(weather_[a-z_]+)""").findAll(File("src/main/java/com/kidslauncher/mdm/weather/WeatherWords.kt").readText())
+            .map { it.groupValues[1] }.toSet()
+        // The table's names as the resources' ids say them (R is generated - the names are read from the table's source).
+        fun nameOf(key: String, form: String) = "weather_${key}_$form"
+        val forms = parsed.getValue("forms").jsonObject
+        for ((key, list) in forms) {
+            for (form in list.jsonArray.map { it.jsonPrimitive.content }) {
+                assertNotNull("$key/$form", WeatherWords.res(key, form))
+                val name = nameOf(key, form)
+                assertTrue("$name in WeatherWords", name in names)
+                for ((catalog, texts) in listOf("en" to en, "nb" to nb)) {
+                    val text = texts[name] ?: error("$catalog has no $name")
+                    assertEquals("$catalog $name", form == "from", "%1\$s" in text)
+                    assertFalse("$catalog $name", Regex("""%\d\$[a-z]""").findAll(text).any { it.value != "%1\$s" })
+                }
+            }
+        }
+        for (key in parsed.getValue("now_keys").jsonArray.map { it.jsonPrimitive.content }) {
+            assertNotNull(key, WeatherWords.nowRes(key))
+            for ((catalog, texts) in listOf("en" to en, "nb" to nb)) {
+                val text = texts["weather_now_$key"] ?: error("$catalog has no weather_now_$key")
+                assertEquals("$catalog $key", key.endsWith("_in"), "%1\$d" in text)
+            }
+        }
+        // The words the user wrote, as the user wrote them (design 75 D4, §5.6).
+        assertEquals("Regn fra kl. %1\$s", nb["weather_rain_from"])
+        assertEquals("Snør nå", nb["weather_snow_now"])
+        assertEquals("Opphold om ca. %1\$d min", nb["weather_now_dry_in"])
+        assertEquals("Mørkt kl. %1\$s", nb["weather_dark_at"])
+        // Launcher QA L3: the millimetres are always shown with a decimal, which English reads as plural.
+        assertEquals("%1\$s millimetres.", en["weather_spoken_mm"])
+    }
+
     /** The answer's codes all map; every English symbol name has its Norwegian one (lint doesn't stop the build, and
      * TalkBack would speak English). */
     @Test

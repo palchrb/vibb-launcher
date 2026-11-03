@@ -127,6 +127,15 @@ interface MdmApi {
      * 413 or 400) - see `calendar/KidCaldavSync`. */
     @POST("api/devices/calendar/kid-events")
     suspend fun kidEvents(@Body body: okhttp3.RequestBody): Response<ResponseBody>
+
+    /** The lock glance's weather (design 75 §3.4): the raw answer, decoded by `weather/WeatherPull` into
+     * [com.kidslauncher.mdm.server.dto.WeatherAnswer] (a 429 or a 5xx keeps the kept one). */
+    @GET("api/devices/weather")
+    suspend fun weather(): Response<ResponseBody>
+
+    /** The card's nowcast line (design 75 D9), asked when the card opens. */
+    @GET("api/devices/weather/now")
+    suspend fun weatherNow(): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

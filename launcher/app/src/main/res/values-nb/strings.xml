@@ -457,4 +457,74 @@
         <item quantity="one">%d time</item>
         <item quantity="other">%d timer</item>
     </plurals>
+    <!-- Design 75: været på låsens glance. Serveren sender en regelnøkkel og en form; hver streng er hel
+         (WeatherWords kobler parene). "%1$s" i en "from"-streng er timen (weatherHour). -->
+    <string name="weather_thunder_from">Torden fra kl. %1$s</string>
+    <string name="weather_thunder_today">Torden i dag</string>
+    <string name="weather_thunder_now">Torden nå</string>
+    <string name="weather_thunder_tomorrow">Torden i morgen</string>
+    <string name="weather_snow_from">Snø fra kl. %1$s</string>
+    <string name="weather_snow_today">Snø i dag</string>
+    <string name="weather_snow_now">Snør nå</string>
+    <string name="weather_snow_tomorrow">Snø i morgen</string>
+    <string name="weather_sleet_from">Sludd fra kl. %1$s</string>
+    <string name="weather_sleet_today">Sludd i dag</string>
+    <string name="weather_sleet_now">Sludd nå</string>
+    <string name="weather_sleet_tomorrow">Sludd i morgen</string>
+    <string name="weather_heavy_rain_from">Mye regn fra kl. %1$s</string>
+    <string name="weather_heavy_rain_today">Mye regn i dag</string>
+    <string name="weather_heavy_rain_now">Mye regn nå</string>
+    <string name="weather_heavy_rain_tomorrow">Mye regn i morgen</string>
+    <string name="weather_rain_from">Regn fra kl. %1$s</string>
+    <string name="weather_rain_today">Regn i dag</string>
+    <string name="weather_rain_now">Regn nå</string>
+    <string name="weather_rain_tomorrow">Regn i morgen</string>
+    <string name="weather_maybe_rain_today">Kanskje litt regn</string>
+    <string name="weather_maybe_rain_tomorrow">Kanskje litt regn i morgen</string>
+    <string name="weather_maybe_snow_today">Kanskje litt snø</string>
+    <string name="weather_maybe_snow_tomorrow">Kanskje litt snø i morgen</string>
+    <string name="weather_very_cold_today">Veldig kaldt</string>
+    <string name="weather_very_cold_tomorrow">Veldig kaldt i morgen</string>
+    <string name="weather_windy_today">Mye vind</string>
+    <string name="weather_windy_tomorrow">Mye vind i morgen</string>
+    <string name="weather_very_warm_today">Veldig varmt</string>
+    <string name="weather_very_warm_tomorrow">Veldig varmt i morgen</string>
+    <string name="weather_now_rain_in">Regn om ca. %1$d min</string>
+    <string name="weather_now_snow_in">Snø om ca. %1$d min</string>
+    <string name="weather_now_dry_in">Opphold om ca. %1$d min</string>
+    <string name="weather_now_rain_all">Regn de neste 90 minuttene</string>
+    <string name="weather_now_snow_all">Snø de neste 90 minuttene</string>
+    <string name="weather_part_morning">Morgen</string>
+    <string name="weather_part_afternoon">Ettermiddag</string>
+    <string name="weather_part_evening">Kveld</string>
+    <string name="weather_card_tomorrow">I morgen</string>
+    <string name="weather_dark_at">Mørkt kl. %1$s</string>
+    <string name="weather_dark_never">Lyst hele natta</string>
+    <string name="weather_dark_all_day">Mørkt hele dagen</string>
+    <string name="weather_updated">Oppdatert kl. %1$s</string>
+    <string name="weather_degrees">%1$s°</string>
+    <string name="weather_mm">%1$s mm</string>
+    <string name="weather_low_high">%1$s / %2$s</string>
+    <string name="weather_foot">%1$s · %2$s</string>
+    <string name="weather_spoken_now">Været nå: %1$s.</string>
+    <string name="weather_spoken_now_plain">Været nå.</string>
+    <plurals name="weather_spoken_degrees">
+        <item quantity="one">%1$s grad.</item>
+        <item quantity="other">%1$s grader.</item>
+    </plurals>
+    <string name="weather_spoken_period">%1$s:</string>
+    <string name="weather_spoken_mm">%1$s millimeter.</string>
+    <plurals name="weather_spoken_low">
+        <item quantity="one">Laveste %1$s grad.</item>
+        <item quantity="other">Laveste %1$s grader.</item>
+    </plurals>
+    <plurals name="weather_spoken_high">
+        <item quantity="one">Høyeste %1$s grad.</item>
+        <item quantity="other">Høyeste %1$s grader.</item>
+    </plurals>
+    <string name="weather_spoken_sentence">%1$s.</string>
+    <string name="weather_expanded">Utvidet</string>
+    <string name="weather_collapsed">Lukket</string>
+    <string name="weather_card_hint">Trykk for å se dagen</string>
+    <string name="weather_card_close">Lukk dagen</string>
 </resources>

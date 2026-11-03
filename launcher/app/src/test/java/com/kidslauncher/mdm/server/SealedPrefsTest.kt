@@ -268,6 +268,8 @@ class SealedPrefsTest {
                 "server/MdmSyncWorker.kt" to 1, "server/CommandListenerService.kt" to 1, "server/AppInstallReceiver.kt" to 1,
                 "server/AppDownloads.kt" to 1, "server/PowerEvents.kt" to 1, "music/MusicSync.kt" to 2,
                 "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 3,
+                // Design 75: the lock weather's pull.
+                "weather/WeatherPull.kt" to 1,
                 "server/SealedPrefs.kt" to 1,
             ),
             sites,
