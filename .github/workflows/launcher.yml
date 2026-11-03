@@ -10,7 +10,8 @@ name: Launcher
 #   secure-DNS hosts (server/testdata/doh_hosts.txt, design 67), Dagen's title-rule vectors and calendar
 #   report (server/testdata/calendar_*.json, design 69) and the calendar links' contract
 #   (server/testdata/calendar_feeds.json, design 72), the weather's contract (server/testdata/weather.json,
-#   design 75) and the weather symbols' converter (scripts/yr-symbols.py, whose --selftest it runs),
+#   design 75) and the weather symbols' converter (scripts/yr-symbols.py and its vendored 11.svg; its --selftest runs in
+#   the always-run changes job),
 #   music's Gradle wrapper and verification
 #   metadata and music.yml - BuildChainTest checks them, security review L9): build and test (debug, unsigned release, lint, unit
 #   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
@@ -77,7 +78,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$|scripts/yr-symbols\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$|scripts/yr-symbols(\.py|-11\.svg)$)'; then
           changed=true
         else
           changed=false
@@ -87,6 +88,10 @@ jobs:
     - name: The release versionCode rule's self-test
       # Cheap and always run, so the required launcher-ci check covers the script the tag build uses.
       run: scripts/release-version.sh --selftest
+    - name: The weather symbols converter's self-test
+      # Cheap and always run (code QA L1): scripts/yr-symbols.py (design 75 §4.1) made res/drawable/weather_*.xml;
+      # Python's standard library, no network; it also checks a vendored upstream symbol against its drawable.
+      run: python3 -I scripts/yr-symbols.py --selftest
 
   launcher-build:
     needs: launcher-changes
@@ -119,10 +124,6 @@ jobs:
       # build comes out unsigned.
       # Kotlin warnings fail this build (app/build.gradle.kts, warningsAsErrors).
       run: ./gradlew build -PrequireTsnet=true -PwarningsAsErrors=true
-    - name: The weather symbols converter's self-test
-      # scripts/yr-symbols.py (design 75 §4.1) made res/drawable/weather_*.xml: Python's standard library, no network.
-      working-directory: .
-      run: python3 -I scripts/yr-symbols.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:

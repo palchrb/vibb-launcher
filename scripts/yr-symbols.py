@@ -4,7 +4,8 @@
 
     python3 -I scripts/yr-symbols.py                  # download, check, convert, write everything below
     python3 -I scripts/yr-symbols.py --cache DIR      # the same, keeping the download in DIR (read from it next time)
-    python3 -I scripts/yr-symbols.py --selftest       # convert a built-in SVG with every handled feature (no network)
+    python3 -I scripts/yr-symbols.py --selftest       # convert a built-in SVG with every handled feature, and
+                                                      # scripts/yr-symbols-11.svg to the committed drawable (no network)
 
 Source: nrkno/yr-weather-symbols at COMMIT (package 14.0.0), through raw.githubusercontent.com:
 symbols/darkmode/<id>.svg (one per id of src/index.ts's `weatherSymbolKeys`, MET's symbol_code -> yr's id),
@@ -21,7 +22,8 @@ The conversion (each change reported per file on stdout):
   coordinates, anything else (skew, rotation, non-uniform scale) fails;
 - a clip path that is the whole viewBox (M0 0h100v100H0z) is dropped, any other one path -> <clip-path> at the start
   of a <group>; <g> with translate/scale/matrix -> a <group>;
-- **changed**: a group with a `filter` (upstream's soft drop shadows) is dropped; a `mix-blend-mode:multiply` path
+- **changed**: a group with a `filter` (upstream's soft blurred cloud shading: a faint multiply layer of one path,
+  blurred - nothing else is taken) is dropped; a `mix-blend-mode:multiply` path
   whose d repeats an earlier solid path's exactly is baked into that path - each of its stops becomes
   fill x stop, laid at the stop's alpha times the layer's opacity over the fill - so yr's cloud shading stays; any
   other blend layer is dropped;
@@ -32,7 +34,6 @@ Writes (run from anywhere; paths from the repository root):
   launcher/app/src/main/java/com/kidslauncher/mdm/weather/WeatherSymbols.kt   (symbol_code -> drawable and name)
   launcher/app/src/main/res/values/weather_symbols.xml          (weather_symbol_<nn>, English, from locales/en.json)
   launcher/app/src/main/res/values-nb/weather_symbols.xml       (the same in Norwegian, from locales/nb.json)
-  launcher/app/src/test/resources/weather_symbol_keys.json      (the mapping as read, for the launcher's own test)
   launcher/app/src/main/assets/licenses/CC-BY-4.0.txt           (upstream's LICENSE)
 
 Python 3, nothing else.
@@ -58,12 +59,16 @@ DRAWABLE = os.path.join(LAUNCHER, "main", "res", "drawable")
 KOTLIN = os.path.join(LAUNCHER, "main", "java", "com", "kidslauncher", "mdm", "weather", "WeatherSymbols.kt")
 VALUES = os.path.join(LAUNCHER, "main", "res", "values", "weather_symbols.xml")
 VALUES_NB = os.path.join(LAUNCHER, "main", "res", "values-nb", "weather_symbols.xml")
-KEYS_JSON = os.path.join(LAUNCHER, "test", "resources", "weather_symbol_keys.json")
 LICENSE_OUT = os.path.join(LAUNCHER, "main", "assets", "licenses", "CC-BY-4.0.txt")
+# Upstream's symbols/darkmode/11.svg at COMMIT, unchanged (CC BY 4.0, (c) Yr/NRK): the selftest's drift check.
+DRIFT_SVG = os.path.join(ROOT, "scripts", "yr-symbols-11.svg")
 
 SVG = "{http://www.w3.org/2000/svg}"
 WHOLE_VIEWBOX = "M0 0h100v100H0z"
-CODE_RE = re.compile(r"^\s*([a-z_]+): '([0-9]{2}[dnm]?)',\s*$", re.M)
+# A filter on the shading groups that are dropped is only ever these.
+SHADING_FILTER = {"feFlood", "feBlend", "feGaussianBlur"}
+BLOCK_RE = re.compile(r"export const weatherSymbolKeys = \{\n(.*?)\n\}", re.S)
+CODE_RE = re.compile(r"^\s*([a-z_]+): '([0-9]{2}[dnm]?)',?\s*$")
 
 
 class ConvertError(Exception):
@@ -207,17 +212,26 @@ def read_gradient(element):
         raise ConvertError(f"gradient {element.get('id')}: only spreadMethod pad")
     scale, dx, dy = uniform(transform(element.get("gradientTransform")), f"gradient {element.get('id')}")
     at = lambda x, y: (scale * x + dx, scale * y + dy)  # noqa: E731
+    def need(k):
+        # userSpaceOnUse's defaults are percentages of the viewport, which this script doesn't apply: x2, y2, cx, cy
+        # and r must be written out (x1 and y1 default to 0, which is right).
+        if element.get(k) is None:
+            raise ConvertError(f"gradient {element.get('id')}: no {k} (its default isn't converted)")
+        return num(element.get(k), f"gradient {element.get('id')} {k}")
     if kind == "linearGradient":
         get = lambda k: num(element.get(k, "0"), f"gradient {element.get('id')} {k}")  # noqa: E731
         x1, y1 = at(get("x1"), get("y1"))
-        x2, y2 = at(num(element.get("x2", "1"), "x2"), get("y2"))
+        x2, y2 = at(need("x2"), need("y2"))
         gradient = Gradient("linear", (x1, y1, x2, y2), [])
     else:
-        cx, cy = num(element.get("cx", "0.5"), "cx"), num(element.get("cy", "0.5"), "cy")
+        cx, cy = need("cx"), need("cy")
         if num(element.get("fx", str(cx)), "fx") != cx or num(element.get("fy", str(cy)), "fy") != cy:
             raise ConvertError(f"gradient {element.get('id')}: a focal point off the centre")
         x, y = at(cx, cy)
-        gradient = Gradient("radial", (x, y, scale * num(element.get("r", "0.5"), "r")), [])
+        radius = abs(scale) * need("r")
+        if radius <= 0:
+            raise ConvertError(f"gradient {element.get('id')}: a radius of {radius} (Android refuses it)")
+        gradient = Gradient("radial", (x, y, radius), [])
     last = 0.0
     for stop in element:
         if local(stop.tag) != "stop":
@@ -281,7 +295,7 @@ class Converter:
 
     def __init__(self, name, text):
         self.name = name
-        self.changes = {"shadow groups dropped": 0, "blend layers baked": 0, "blend layers dropped": 0,
+        self.changes = {"shading groups dropped": 0, "blend layers baked": 0, "blend layers dropped": 0,
                         "whole-viewBox clips dropped": 0}
         try:
             self.root = ET.fromstring(text)
@@ -326,7 +340,11 @@ class Converter:
             check_attrs(paths[0], {"d", "fill", "clip-rule", "fill-rule"})
             self.clips[item.get("id")] = (paths[0].get("d", "").strip(), paths[0].get("clip-rule") == "evenodd")
         elif kind == "filter":
-            # Only ever met on the groups that are dropped (a filter anywhere else fails there).
+            # Only ever met on the groups that are dropped, and only made of a blur's primitives (a filter anywhere
+            # else, or one that does more - a glow, an offset shadow - fails).
+            for primitive in item:
+                if local(primitive.tag) not in SHADING_FILTER:
+                    self.fail(f"filter {item.get('id')}: <{local(primitive.tag)}> isn't a blur's")
             self.filters.add(item.get("id"))
         else:
             self.fail(f"<{kind}> in <defs>")
@@ -366,7 +384,13 @@ class Converter:
         here, style = self.inherit(element, inherited)
         if element.get("filter") is not None:
             self.ref(element.get("filter"), {k: k for k in self.filters}, "filter")
-            self.changes["shadow groups dropped"] += 1
+            # Only upstream's soft shading: a faint multiply layer of one path, blurred. Anything else fails.
+            opacity = num(style.get("opacity", element.get("opacity", "1")), "opacity")
+            shapes = list(element)
+            if not (opacity < 1.0 and style.get("mix-blend-mode") == "multiply" and len(shapes) == 1
+                    and local(shapes[0].tag) == "path"):
+                self.fail("a filtered group that isn't the soft shading (a faint multiply layer of one path)")
+            self.changes["shading groups dropped"] += 1
             return
         if "mix-blend-mode" in style:
             self.changes["blend layers dropped"] += 1
@@ -410,7 +434,9 @@ class Converter:
         if blend is None:
             out.children.append(Path(d, fill, alpha, even_odd))
             return
-        base = next((p for p in reversed(out.children) if isinstance(p, Path) and p.d == d), None)
+        # Only the path right before: a shape drawn between a cloud and its multiply layer would lose its shading.
+        last = out.children[-1] if out.children else None
+        base = last if isinstance(last, Path) and last.d == d else None
         if blend == "multiply" and base is not None and base.solid() and base.even_odd == even_odd:
             self.bake(base, fill, alpha)
             self.changes["blend layers baked"] += 1
@@ -427,6 +453,12 @@ class Converter:
         else:
             base.fill = Gradient(layer.kind, layer.geometry,
                                  [(at, mix(rgb, a * opacity), 1.0) for at, rgb, a in layer.stops])
+
+
+def header_for(yr):
+    return (f"<!-- yr weather symbol {yr}: nrkno/yr-weather-symbols symbols/darkmode/{yr}.svg at {COMMIT}.\n"
+            "     © Yr/NRK, CC BY 4.0 (assets/licenses/CC-BY-4.0.txt), converted to a VectorDrawable; the soft blurred "
+            "cloud shading removed, blend layers merged.\n     Generated by scripts/yr-symbols.py - don't edit. -->")
 
 
 def drawable_xml(children, header):
@@ -465,7 +497,15 @@ def fetch(path, cache):
 
 
 def read_keys(index_ts):
-    keys = CODE_RE.findall(index_ts)
+    """`weatherSymbolKeys = { ... }`'s entries: every line of the block must be one (a trailing comma or none), so a
+    line this reader doesn't understand fails instead of losing a code."""
+    block = BLOCK_RE.search(index_ts)
+    if not block:
+        raise ConvertError("src/index.ts: no weatherSymbolKeys block")
+    lines = [line for line in block.group(1).split("\n") if line.strip() and not line.strip().startswith("//")]
+    keys = [found.groups() for found in map(CODE_RE.match, lines) if found]
+    if len(keys) != len(lines):
+        raise ConvertError(f"src/index.ts: {len(lines) - len(keys)} line(s) of weatherSymbolKeys this script doesn't read")
     if not keys or len({code for code, _ in keys}) != len(keys):
         raise ConvertError("src/index.ts: no weatherSymbolKeys, or a code twice")
     return keys
@@ -495,7 +535,6 @@ def names_xml(names, source):
 def kotlin(keys):
     drawables = "\n".join(f'        "{code}" -> R.drawable.weather_{yr}' for code, yr in keys)
     names = "\n".join(f'        "{code}" -> R.string.weather_symbol_{yr[:2]}' for code, yr in keys)
-    codes = "\n".join(f'        "{code}",' for code, _ in keys)
     return f"""// Generated by scripts/yr-symbols.py from nrkno/yr-weather-symbols src/index.ts at {COMMIT} - don't edit.
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.kidslauncher.mdm.weather
@@ -507,11 +546,6 @@ import com.kidslauncher.mdm.R
  * its name (`weather_symbol_<nn>`, design 75 §4.2). A code yr doesn't know has neither (the phone leaves the symbol out).
  */
 object WeatherSymbols {{
-    /** Every code, in upstream's order. */
-    val CODES: List<String> = listOf(
-{codes}
-    )
-
     /** The symbol's drawable, or null for a code yr doesn't know. */
     fun drawable(code: String): Int? = when (code) {{
 {drawables}
@@ -560,10 +594,7 @@ def run(cache):
             continue
         converter = Converter(f"{yr}.svg", files[f"symbols/darkmode/{yr}.svg"].decode("utf-8"))
         children = converter.convert()
-        header = (f"<!-- yr weather symbol {yr}: nrkno/yr-weather-symbols symbols/darkmode/{yr}.svg at {COMMIT}.\n"
-                  "     (c) Yr/NRK, CC BY 4.0 (assets/licenses/CC-BY-4.0.txt), converted to a VectorDrawable; shadows "
-                  "removed, blend layers merged.\n     Generated by scripts/yr-symbols.py - don't edit. -->")
-        drawables[yr] = drawable_xml(children, header.replace("(c)", "©"))
+        drawables[yr] = drawable_xml(children, header_for(yr))
         said = ", ".join(f"{n} {what}" for what, n in converter.changes.items() if n)
         print(f"{yr}: {said or 'converted as it is'}")
         for what, n in converter.changes.items():
@@ -578,8 +609,6 @@ def run(cache):
     write(KOTLIN, kotlin(keys))
     write(VALUES, names_xml({n: en[n] for n in numbers}, "locales/en.json"))
     write(VALUES_NB, names_xml({n: nb[n] for n in numbers}, "locales/nb.json"))
-    write(KEYS_JSON, json.dumps({"source": "nrkno/yr-weather-symbols src/index.ts weatherSymbolKeys",
-                                 "commit": COMMIT, "keys": dict(keys)}, indent=2, ensure_ascii=False) + "\n")
     write(LICENSE_OUT, files["LICENSE"].decode("utf-8"))
     print(f"{len(drawables)} symbols, {len(keys)} codes, {len(numbers)} names: "
           + ", ".join(f"{n} {what}" for what, n in totals.items()))
@@ -593,6 +622,7 @@ SELFTEST_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="100" height="10
     <path fill="#808080" d="M40 10h20v20H40z"/>
     <path fill="url(#shade)" d="M40 10h20v20H40z" opacity=".5" style="mix-blend-mode:multiply"/>
     <path fill="url(#sun)" opacity=".6" d="M70 10h20v20H70z"/>
+    <path fill="#000" d="M40 10h20v20H40z" opacity=".5" style="mix-blend-mode:multiply"/>
     <path fill="url(#lin)" fill-opacity=".5" d="M10 40h20v20H10z"/>
     <path fill="#00f" d="M1 1h2v2H1z" style="mix-blend-mode:multiply"/>
     <g filter="url(#shadow)" opacity=".3" style="mix-blend-mode:multiply"><path fill="#000" d="M0 0h1v1H0z"/></g>
@@ -668,12 +698,23 @@ SELFTEST_FAILS = {
     "use": '<use href="#p"/>',
     "a stroke": '<path stroke="#fff" d="M0 0h1v1H0z"/>',
     "a group's opacity": '<g opacity=".5"><path fill="#fff" d="M0 0h1v1H0z"/></g>',
-    "a skewed gradient": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><linearGradient id="g" '
+    "a skewed gradient": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><linearGradient id="g" x2="1" y2="0" '
                          'gradientTransform="matrix(1 0.5 0 1 0 0)" gradientUnits="userSpaceOnUse">'
                          '<stop stop-color="#fff"/></linearGradient></defs>',
-    "a non-uniform scale": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><radialGradient id="g" '
+    "a non-uniform scale": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><radialGradient id="g" cx="0" cy="0" r="1" '
                            'gradientTransform="scale(2 3)" gradientUnits="userSpaceOnUse">'
                            '<stop stop-color="#fff"/></radialGradient></defs>',
+    "a linear gradient without x2": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><linearGradient id="g" y2="1" '
+                                    'gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/></linearGradient></defs>',
+    "a radial gradient without r": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><radialGradient id="g" cx="5" cy="5" '
+                                   'gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/></radialGradient></defs>',
+    "a radius of 0": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><radialGradient id="g" cx="5" cy="5" r="0" '
+                     'gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/></radialGradient></defs>',
+    "a filter that isn't a blur": '<g filter="url(#f)" opacity=".3" style="mix-blend-mode:multiply">'
+                                  '<path fill="#000" d="M0 0h1v1H0z"/></g><defs><filter id="f">'
+                                  '<feOffset dx="2"/></filter></defs>',
+    "a filtered group that isn't the shading": '<g filter="url(#f)"><path fill="#fff" d="M0 0h1v1H0z"/></g>'
+                                               '<defs><filter id="f"><feGaussianBlur stdDeviation="2"/></filter></defs>',
     "objectBoundingBox": '<path fill="url(#g)" d="M0 0h1v1H0z"/><defs><linearGradient id="g">'
                          '<stop stop-color="#fff"/></linearGradient></defs>',
     "an unknown style": '<path fill="#fff" style="stroke-width:2" d="M0 0h1v1H0z"/>',
@@ -688,7 +729,7 @@ def selftest():
         sys.stderr.write(got)
         raise SystemExit("selftest: the conversion differs from the expected drawable (above)")
     ET.fromstring(got.split("\n", 1)[1])
-    want = {"shadow groups dropped": 1, "blend layers baked": 1, "blend layers dropped": 1,
+    want = {"shading groups dropped": 1, "blend layers baked": 1, "blend layers dropped": 2,
             "whole-viewBox clips dropped": 1}
     if converter.changes != want:
         raise SystemExit(f"selftest: changes {converter.changes}, expected {want}")
@@ -699,11 +740,23 @@ def selftest():
         except ConvertError:
             continue
         raise SystemExit(f"selftest: {what} was converted instead of failing")
-    keys = read_keys("export const weatherSymbolKeys = {\n  clearsky_day: '01d',\n  cloudy: '04',\n};\n")
+    keys = read_keys("export const weatherSymbolKeys = {\n  clearsky_day: '01d',\n  // a note\n  cloudy: '04'\n} as const;\n"
+                     "const other = {\n  fog: '15',\n};\n")
     if keys != [("clearsky_day", "01d"), ("cloudy", "04")]:
         raise SystemExit(f"selftest: read_keys gave {keys}")
+    try:
+        read_keys("export const weatherSymbolKeys = {\n  clearsky_day: '01d',\n  cloudy: \"04\",\n};\n")
+    except ConvertError:
+        pass
+    else:
+        raise SystemExit("selftest: read_keys skipped a line it doesn't read")
     if android_text("it's <b> & @x") != "it\\'s &lt;b&gt; &amp; @x" or android_text("@x") != "\\@x":
         raise SystemExit("selftest: Android string escaping")
+    # A real symbol (upstream's 11.svg at COMMIT, vendored: CC BY 4.0, (c) Yr/NRK) converts to exactly the committed
+    # drawable: a converter change that would change the real outputs fails here until they are made again.
+    with open(DRIFT_SVG, encoding="utf-8") as svg, open(os.path.join(DRAWABLE, "weather_11.xml"), encoding="utf-8") as xml:
+        if drawable_xml(Converter("11.svg", svg.read()).convert(), header_for("11")) != xml.read():
+            raise SystemExit("selftest: 11.svg no longer converts to the committed weather_11.xml - run the script")
     print("yr-symbols selftest: ok")
 
 
