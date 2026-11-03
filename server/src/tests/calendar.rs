@@ -947,6 +947,20 @@ async fn page_nb(app: &TestApp, page: &str, cookie: &str) -> String {
         .text()
 }
 
+/// Slice 3e: the title rule editor's examples in the reader's language.
+#[tokio::test]
+async fn the_rule_editors_examples_follow_the_language() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar/rules/new");
+    let nb = page_nb(&app, &page, &cookie).await;
+    assert!(nb.contains(r#"<html lang="nb">"#));
+    assert!(nb.contains(r#"placeholder="Gruppe 2-""#) && nb.contains(r#"placeholder="Skole:""#));
+    let en = app.get_page(&page, &cookie).await.text();
+    assert!(en.contains(r#"placeholder="Group 2-""#) && en.contains(r#"placeholder="School:""#));
+}
+
 /// The 2026-10-27 polish: each group's help behind its "i", the kid's calendar on a line of its own, and the lock
 /// screen's reminders named for what they are ("Reminders on the lock screen": Off / Quiet row - a select, as a third
 /// form is to come; the policy's words unchanged), back to `#lock`, round trip both ways.

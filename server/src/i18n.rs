@@ -550,8 +550,7 @@ mod tests {
     /// The templates whose words are in the catalogs (design 70 §5.2): each slice-3 PR adds its files, 3e every file
     /// in `templates/` and `templates/partials/`.
     const MOVED: &[&str] = &[
-        // Device › Calendar and Settings › Account (design 69, slice 1).
-        // (Their pages keep a few examples and a command: `device_calendar*.html` and `account.html` join in 3e.)
+        // Device › Calendar and Settings › Account (design 69, slice 1; their pages joined in 3e-b).
         "partials/calendar_preview.html",
         // 3a: Devices.
         "devices_list.html",
@@ -611,6 +610,23 @@ mod tests {
         "partials/spotify_setup.html",
         // Design 74 step 3: the lock screen.
         "lock.html",
+        // 3e-b: accounts, sign-in, security and Device › Calendar.
+        "account.html",
+        "change_password.html",
+        "login.html",
+        "password_sign_in.html",
+        "setup_2fa.html",
+        "verify_2fa.html",
+        "security.html",
+        "partials/key_icon.html",
+        "partials/passkey_confirm.html",
+        "partials/passkeys_still_work.html",
+        "partials/reauth_passkey.html",
+        "device_calendar.html",
+        "device_calendar_add.html",
+        "device_calendar_caldav.html",
+        "device_calendar_link.html",
+        "device_calendar_rule.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,

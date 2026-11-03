@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,35 +7,35 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Security Log</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("security_log.title") }}</h1>
 
     {#- Unban is one tap (§5.6): it can be blocked again. It comes back to this group (#banned). -#}
     <section id="banned" aria-labelledby="banned-title">
-        <h2 class="group-header" id="banned-title">Blocked Addresses</h2>
+        <h2 class="group-header" id="banned-title">{{ self.t("security_log.banned.title") }}</h2>
         <div class="group">
             {% for b in bans %}
             <div class="row" data-ban>
-                <span class="row-label">{{ b.ip }}<span class="row-sub"{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>Until {{ b.until }}{% if let Some(reason) = b.reason %} · {{ reason }}{% endif %}</span></span>
+                <span class="row-label">{{ b.ip }}<span class="row-sub"{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>{% if let Some(until) = b.until %}{{ self.tp("security_log.banned.until", [("time", until.as_str())]) }}{% else %}{{ self.t("security_log.banned.a_while") }}{% endif %}{% if let Some(reason) = b.reason %} · {{ reason }}{% endif %}</span></span>
                 <form method="post" action="/security/unban#banned" class="row-end">
                     <input type="hidden" name="ip" value="{{ b.ip }}">
-                    <button type="submit" class="row-action" aria-label="Unban {{ b.ip }}">Unban</button>
+                    <button type="submit" class="row-action" aria-label="{{ self.tp("security_log.banned.unban_label", [("ip", b.ip.as_str())]) }}">{{ self.t("security_log.banned.unban") }}</button>
                 </form>
             </div>
             {% else %}
-            <p class="row row-note">No addresses are blocked.</p>
+            <p class="row row-note">{{ self.t("security_log.banned.none") }}</p>
             {% endfor %}
-            {% if let Some(ip) = unbanned %}<p class="flash" data-flash="banned" role="status">{{ ip }} is unbanned.</p>{% endif %}
+            {% if let Some(ip) = unbanned %}<p class="flash" data-flash="banned" role="status">{{ self.tp("security_log.banned.unbanned", [("ip", ip.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">Too many wrong passwords block an address for a while.</p>
+        <p class="group-footer">{{ self.t("security_log.banned.footer") }}</p>
     </section>
 
     <section id="activity" aria-labelledby="activity-title">
-        <h2 class="group-header" id="activity-title">{% if paged %}Older Activity{% else %}Recent Activity{% endif %}</h2>
+        <h2 class="group-header" id="activity-title">{% if paged %}{{ self.t("security_log.activity.older_title") }}{% else %}{{ self.t("security_log.activity.recent_title") }}{% endif %}</h2>
         <div class="group">
             {% if paged %}
             <a class="row" href="/security#activity" data-row="newest">
-                <span class="row-label">Newest events</span>
+                <span class="row-label">{{ self.t("security_log.activity.newest") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
@@ -45,16 +45,16 @@
                 <span class="row-value row-value-keep">{{ e.when }}</span>
             </div>
             {% else %}
-            <p class="row row-note">Nothing logged yet.</p>
+            <p class="row row-note">{{ self.t("security_log.activity.none") }}</p>
             {% endfor %}
             {% if let Some(id) = older_than %}
             <a class="row" href="/security?before={{ id }}#activity" data-row="older">
-                <span class="row-label">Older events</span>
+                <span class="row-label">{{ self.t("security_log.activity.older") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
         </div>
-        <p class="group-footer">200 a page, newest first, kept 180 days; what a phone reported 30 days, its parent-PIN use 90, a wrong sign-in's typed name a day.</p>
+        <p class="group-footer">{{ self.t("security_log.activity.footer") }}</p>
     </section>
 </main>
 </body>

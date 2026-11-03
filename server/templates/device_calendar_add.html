@@ -34,7 +34,7 @@
                 <div class="group form-group">
                     <div class="field">
                         <label class="field-label" for="link-url">{{ self.t("calendar.links.url") }}</label>
-                        <input type="url" id="link-url" name="url" value="{{ link.url }}" maxlength="2100" placeholder="webcal://…" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if link.error.is_some() %} aria-invalid="true" aria-describedby="link-url-error" autofocus{% endif %}>
+                        <input type="url" id="link-url" name="url" value="{{ link.url }}" maxlength="2100" placeholder="{{ self.t("calendar.link.url_example") }}" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if link.error.is_some() %} aria-invalid="true" aria-describedby="link-url-error" autofocus{% endif %}>
                         {% if let Some(why) = link.error %}<p class="field-error" id="link-url-error" role="alert" data-flash="link-refused">{{ why }}</p>{% endif %}
                     </div>
                     <div class="field">
@@ -56,7 +56,7 @@
                 <div class="group form-group">
                     <div class="field">
                         <label class="field-label" for="caldav-server">{{ self.t("calendar.caldav.server") }}</label>
-                        <input type="text" id="caldav-server" name="server" value="{{ account.server }}" maxlength="500" placeholder="caldav.icloud.com" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if account.error_field == "server" %} aria-invalid="true" aria-describedby="caldav-server-error" autofocus{% endif %}>
+                        <input type="text" id="caldav-server" name="server" value="{{ account.server }}" maxlength="500" placeholder="{{ self.t("calendar.caldav.server_example") }}" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if account.error_field == "server" %} aria-invalid="true" aria-describedby="caldav-server-error" autofocus{% endif %}>
                         {% if account.error_field == "server" %}{% if let Some(why) = account.error %}<p class="field-error" id="caldav-server-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}{% endif %}
                     </div>
                     <div class="field">

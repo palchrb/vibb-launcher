@@ -36,9 +36,8 @@
             <form method="post" action="/account/name#name" class="cell form-group">
                 <div class="field">
                     <label class="field-label" for="display_name">{{ self.t("account.name.label") }}</label>
-                    <input type="text" id="display_name" name="display_name" value="{{ name_value }}" placeholder="{{ username }}" maxlength="64" autocomplete="nickname"{% if let Some(why) = self.error_for("display_name") %} aria-invalid="true" aria-describedby="display_name-error" autofocus>
-                    <p class="field-error" id="display_name-error">{{ why }}</p>{% else %} aria-describedby="display_name-hint">
-                    <p class="field-hint" id="display_name-hint">{{ self.tp("account.name.hint", [("username", username.as_str())]) }}</p>{% endif %}
+                    <input type="text" id="display_name" name="display_name" value="{{ name_value }}" placeholder="{{ username }}" maxlength="64" autocomplete="nickname"{% if self.error_for("display_name").is_some() %} aria-invalid="true" aria-describedby="display_name-error" autofocus{% else %} aria-describedby="display_name-hint"{% endif %}>
+                    {% if let Some(why) = self.error_for("display_name") %}<p class="field-error" id="display_name-error">{{ why }}</p>{% else %}<p class="field-hint" id="display_name-hint">{{ self.tp("account.name.hint", [("username", username.as_str())]) }}</p>{% endif %}
                 </div>
                 <button type="submit" class="button-wide">{{ self.t("account.name.save") }}</button>
             </form>
@@ -87,7 +86,7 @@
                 <summary aria-label="{{ self.t("account.totp.server_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("account.totp.server_run") }}</p>
-                    <pre><code>kid_phone_server reset-sign-in {{ username }}</code></pre>
+                    <pre><code>{{ self.tp("account.totp.command_reset_sign_in", [("username", username.as_str())]) }}</code></pre>
                     <p>{{ self.tp("account.totp.server_password", [("id", admin_id.to_string().as_str())]) }}</p>
                 </div>
             </details>
@@ -154,7 +153,7 @@
                 <summary aria-label="{{ self.t("account.totp.server_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("account.totp.server_run") }}</p>
-                    <pre><code>kid_phone_server reset-2fa {{ username }}</code></pre>
+                    <pre><code>{{ self.tp("account.totp.command_reset_2fa", [("username", username.as_str())]) }}</code></pre>
                     <p>{{ self.tp("account.totp.server_password", [("id", admin_id.to_string().as_str())]) }}</p>
                 </div>
             </details>
@@ -208,9 +207,8 @@
                 </summary>
                 <form method="post" action="/account/passkeys#add-passkey" class="edit-body" data-passkey-add data-reauth-route="/account/passkeys/options" data-w-failed="{{ self.t("passkeys.add.failed") }}" data-w-exists="{{ self.t("passkeys.add.exists") }}">
                     <label class="field-label" for="passkey_name">{{ self.t("passkeys.add.name") }}</label>
-                    <input type="text" id="passkey_name" name="name" value="{{ passkey_name }}" maxlength="32" autocomplete="off"{% if let Some(why) = self.error_for("passkey_name") %} aria-invalid="true" aria-describedby="passkey_name-error" autofocus>
-                    <p class="field-error" id="passkey_name-error">{{ why }}</p>{% else %} aria-describedby="passkey_name-hint">
-                    <p class="field-hint" id="passkey_name-hint">{{ self.t("passkeys.add.name_hint") }}</p>{% endif %}
+                    <input type="text" id="passkey_name" name="name" value="{{ passkey_name }}" maxlength="32" autocomplete="off"{% if self.error_for("passkey_name").is_some() %} aria-invalid="true" aria-describedby="passkey_name-error" autofocus{% else %} aria-describedby="passkey_name-hint"{% endif %}>
+                    {% if let Some(why) = self.error_for("passkey_name") %}<p class="field-error" id="passkey_name-error">{{ why }}</p>{% else %}<p class="field-hint" id="passkey_name-hint">{{ self.t("passkeys.add.name_hint") }}</p>{% endif %}
                     <p class="field-error" data-passkey-field-error="name" role="alert" hidden></p>
                     <p class="field-label">{{ self.t("passkeys.add.confirm") }}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
@@ -388,21 +386,18 @@
                 </summary>
                 <form method="post" action="/account/parents#parents" class="edit-body">
                     <label class="field-label" for="new_username">{{ self.t("account.add.username") }}</label>
-                    <input type="text" id="new_username" name="new_username" value="{{ add_typed.0 }}" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" required{% if let Some(why) = self.error_for("new_username") %} aria-invalid="true" aria-describedby="new_username-error" autofocus>
-                    <p class="field-error" id="new_username-error">{{ why }}</p>{% else %} aria-describedby="new_username-hint">
-                    <p class="field-hint" id="new_username-hint">{{ self.t("account.add.username_hint") }}</p>{% endif %}
+                    <input type="text" id="new_username" name="new_username" value="{{ add_typed.0 }}" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" required{% if self.error_for("new_username").is_some() %} aria-invalid="true" aria-describedby="new_username-error" autofocus{% else %} aria-describedby="new_username-hint"{% endif %}>
+                    {% if let Some(why) = self.error_for("new_username") %}<p class="field-error" id="new_username-error">{{ why }}</p>{% else %}<p class="field-hint" id="new_username-hint">{{ self.t("account.add.username_hint") }}</p>{% endif %}
                     <label class="field-label" for="parent_name">{{ self.t("account.add.name") }}</label>
-                    <input type="text" id="parent_name" name="name" value="{{ add_typed.1 }}" autocomplete="off" maxlength="64"{% if let Some(why) = self.error_for("parent_name") %} aria-invalid="true" aria-describedby="parent_name-error" autofocus>
-                    <p class="field-error" id="parent_name-error">{{ why }}</p>{% else %} aria-describedby="parent_name-hint">
-                    <p class="field-hint" id="parent_name-hint">{{ self.t("account.add.name_hint") }}</p>{% endif %}
+                    <input type="text" id="parent_name" name="name" value="{{ add_typed.1 }}" autocomplete="off" maxlength="64"{% if self.error_for("parent_name").is_some() %} aria-invalid="true" aria-describedby="parent_name-error" autofocus{% else %} aria-describedby="parent_name-hint"{% endif %}>
+                    {% if let Some(why) = self.error_for("parent_name") %}<p class="field-error" id="parent_name-error">{{ why }}</p>{% else %}<p class="field-hint" id="parent_name-hint">{{ self.t("account.add.name_hint") }}</p>{% endif %}
                     {#- Your own username for the password manager, so it never pairs the new one with your
                         password (qa-62-design Q62-10); it isn't sent. -#}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
                     {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="add_password"{% if passkey_only %} hidden{% endif %}>{{ self.t("account.parents.your_password") }}</label>
-                    <input type="password" id="add_password" name="current_password" autocomplete="current-password"{% if passkey_only %} hidden{% else %} required{% endif %}{% if let Some(why) = self.error_for("add_password") %} aria-invalid="true" aria-describedby="add_password-error" autofocus>
-                    <p class="field-error" id="add_password-error">{{ why }}</p>{% else %} aria-describedby="add_password-hint">
-                    <p class="field-hint" id="add_password-hint"{% if passkey_only %} hidden{% endif %}>{{ self.t("account.add.password_hint") }}</p>{% endif %}
+                    <input type="password" id="add_password" name="current_password" autocomplete="current-password"{% if passkey_only %} hidden{% else %} required{% endif %}{% if self.error_for("add_password").is_some() %} aria-invalid="true" aria-describedby="add_password-error" autofocus{% else %} aria-describedby="add_password-hint"{% endif %}>
+                    {% if let Some(why) = self.error_for("add_password") %}<p class="field-error" id="add_password-error">{{ why }}</p>{% else %}<p class="field-hint" id="add_password-hint"{% if passkey_only %} hidden{% endif %}>{{ self.t("account.add.password_hint") }}</p>{% endif %}
                     <button type="submit" class="button-wide"{% if passkey_only %} hidden{% endif %}>{{ self.t("account.add.submit") }}</button>
                 </form>
             </details>
