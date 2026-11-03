@@ -512,10 +512,6 @@ input[type="radio"] {
 }
 
 .tab-icon {
-    color: var(--tab-on-icon);
-}
-
-.tab-icon {
     width: 24px;
     height: 24px;
     margin-bottom: 3px;
@@ -2291,6 +2287,18 @@ input.row-input {
 
 .group-apps > .cell > .flash {
     padding-left: 64px;
+}
+
+/* "On Home" in Name and icon: its ⓘ left of the switch (the row's 16px and the 51px switch), the
+   panel under the row. */
+.on-home {
+    position: relative;
+}
+
+.on-home > details.info > summary {
+    position: absolute;
+    top: 4px;
+    right: 67px;
 }
 
 /* ---- Design 31 step 14: the rest of Settings ---- */

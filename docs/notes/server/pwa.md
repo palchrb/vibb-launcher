@@ -343,9 +343,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `partials/device_app_row.html`; the device page's row "Apps · 14 allowed", the count the Apps tab shows, "List
   unreadable" for a corrupt allowlist): **Allowed** (Vibb first, "Always on", no switch; then every app switched on)
   and **Not allowed**, one row per app from `devices::app_rows` - a tile (the icon the phone shows: its own Name and
-  icon, else the catalog's, else the first letter), the name, the state as a sub-line ("Installing 40%", "Not
-  installed · No release yet", a refusal red) and a switch, its own form; an allowed app with a package has its
-  `app_display_form` in a `<details>` under the row ("Name and icon: …"). The footer's ⓘ holds the keyboard and
+  icon, else the catalog's, else the first letter), the name the kid sees (this phone's Name and icon name, else the
+  catalog's, else the phone's label or the catalog app's name - `UnifiedAppRow::label`, the sort key; 2026-11-03), the
+  state as a sub-line ("Installing 40%", "Not installed · No release yet", a refusal red; the app's own name first,
+  "Element X · Installed", when the shown one differs - `own_label`, as the Apps tab's Katalog does) and a switch, its
+  own form; an allowed app with a package has its `app_display_form` in a `<details>` under the row ("Name and icon:
+  …"; its name field's placeholder stays the app's own; "On Home"'s explanation behind an ⓘ left of its switch,
+  `.on-home`). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
   `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`

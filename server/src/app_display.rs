@@ -390,7 +390,7 @@ pub struct AppDisplayForm {
     pub from: Option<String>,
     /// Device page: "On Home" (design 69 §4.4) - `None` on the catalog page, which has no such switch.
     pub on_home: Option<bool>,
-    /// The switch's label and sub-line in the page's language (`i18n`), set with [Self::on_home].
+    /// The switch's label and its ⓘ text in the page's language (`i18n`), set with [Self::on_home].
     pub on_home_words: Option<(&'static str, &'static str)>,
 }
 

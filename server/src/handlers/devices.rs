@@ -731,7 +731,11 @@ fn access_notice(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
 /// `NotInstalled` until an admin adds one (see `tracked_apps.rs`).
 pub(crate) struct UnifiedAppRow {
     pub(crate) package_name: String,
+    /// The name the kid sees: this phone's own name, else the catalog's, else the app's own.
     pub(crate) label: String,
+    /// The app's own name (the phone's label, a catalog app's name) when `label` differs, for the
+    /// row's sub-line - the Apps tab's Katalog does the same (`tracked_apps::catalog_row`).
+    pub(crate) own_label: Option<String>,
     pub(crate) tracked_app_id: Option<i64>,
     pub(crate) is_launcher: bool,
     pub(crate) checked: bool,
@@ -1409,6 +1413,26 @@ pub(crate) async fn app_rows(
             })
     };
 
+    // The name the kid sees and the app's own when it differs: this phone's name, else the
+    // catalog's (by package; a catalog app without one by its row), else the app's own.
+    let own_names = crate::app_display::device_rows(&state.db, id).await?;
+    let catalog_names = crate::app_display::catalog_defaults(&state.db).await?;
+    let shown = |package: &str, catalog: Option<&str>, own: &str| {
+        let name = [own_names.get(package), catalog_names.get(package)]
+            .into_iter()
+            .flatten()
+            .find_map(|values| values.label.clone())
+            .or_else(|| {
+                catalog
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| own.to_string());
+        let own_label = (name != own).then(|| own.to_string());
+        (name, own_label)
+    };
+
     let mut apps: Vec<UnifiedAppRow> = Vec::new();
     let mut seen_packages: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -1423,6 +1447,7 @@ pub(crate) async fn app_rows(
             .iter()
             .find(|t| !t.package_name.is_empty() && t.package_name == app.package_name);
         let update = tracked_match.and_then(|t| download_of(t.id));
+        let (label, own_label) = shown(&app.package_name, None, &app.label);
         apps.push(UnifiedAppRow {
             status_label: if app.preinstalled {
                 t(lang, "device.apps.preinstalled").to_string()
@@ -1440,7 +1465,8 @@ pub(crate) async fn app_rows(
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
             package_name: app.package_name.clone(),
-            label: app.label.clone(),
+            label,
+            own_label,
             is_launcher: false,
             access: app.access.clone(),
         });
@@ -1490,6 +1516,7 @@ pub(crate) async fn app_rows(
                 false,
             ),
         };
+        let (label, own_label) = shown(&t.package_name, t.display_label.as_deref(), &t.name);
         apps.push(UnifiedAppRow {
             status_label,
             is_installing,
@@ -1498,7 +1525,8 @@ pub(crate) async fn app_rows(
             tracked_app_id: Some(t.id),
             show_no_release_hint: !has_release,
             package_name: t.package_name.clone(),
-            label: t.name.clone(),
+            label,
+            own_label,
             is_launcher: false,
             access: None,
         });
@@ -1527,6 +1555,7 @@ pub(crate) async fn app_rows(
                 show_no_release_hint: false,
                 package_name: launcher.package_name.clone(),
                 label: launcher.name.clone(),
+                own_label: None,
                 is_launcher: true,
                 access: None,
             },

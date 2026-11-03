@@ -279,7 +279,9 @@ out: Google (OAuth only - its secret ICS address works as a link), digest, clien
   at `/.well-known/caldav` then `/` (or the path typed), `calendar-home-set` on the principal, Depth 1 on the home set
   (`resourcetype` calendar, `supported-calendar-component-set` with VEVENT or none, `displayname` - else the decoded
   last path segment). At Test **a host gets the password only once it asked for it** (a 401 without it; a mail
-  domain's web host that never asks never gets it); a 401/403 with it is `login_refused`, never retried. The hosts
+  domain's web host that never asks never gets it); a 401/403 with it is `login_refused`, never retried - a 403 keeps
+  its status (`test_status`, also written by the fetch's stop) and is worded "The account has no access to the
+  calendars" (`caldav_why`, `account_stop`'s `no_access`), a 401 "The password was refused" (2026-11-03). The hosts
   that got it are the account's `hosts`, shown: "Passordet sendes bare til: …" - a calendar on a host that never
   asked isn't offered. Every address the server names (principal, home set, calendars) is held as a redirect is
   (code QA M1): a public account never reaches the LAN (an http href resolving there is `private_address`), a LAN

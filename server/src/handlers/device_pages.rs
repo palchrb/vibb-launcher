@@ -2010,7 +2010,7 @@ pub(crate) async fn render_apps(
                     format!("/devices/{id}/apps/display#{anchor}"),
                     format!("display-{package}"),
                     package.clone(),
-                    row.label.clone(),
+                    row.own_label.clone().unwrap_or_else(|| row.label.clone()),
                     &current.cloned().unwrap_or_else(DisplayValues::empty),
                     entered
                         .as_ref()

@@ -1067,3 +1067,62 @@ async fn removing_the_account_takes_its_calendars_off_every_phone() {
             .is_empty()
     );
 }
+
+/// A 403 with the password is the account's lack of access, not a refused password (2026-11-03): its own words at
+/// Test and on the stopped account; a 401 keeps "The password was refused".
+#[tokio::test]
+async fn a_forbidden_answer_says_the_account_has_no_access() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    fake_icloud(&app);
+    app.fetch.answer_method("PROPFIND", LIST, 403, "");
+    let res = test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let page = res.text();
+    assert!(
+        page.contains("The account has no access to the calendars."),
+        "{page}"
+    );
+    assert!(!page.contains("The password was refused"), "{page}");
+
+    // Signed in, ticked, then the calendar answers 403: the account stops, worded as no access.
+    app.fetch
+        .answer_method("PROPFIND", LIST, 207, fixture("icloud_calendars.xml"));
+    let past = crate::music_sweep::stamp(Utc::now() - chrono::TimeDelta::seconds(11));
+    sqlx::query("UPDATE caldav_accounts SET tested_at = ?")
+        .bind(&past)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
+    let account = account_id(&app).await;
+    tick(&app, &cookie, anna, account, &[HOME]).await;
+    app.fetch.answer_method("PROPFIND", HOME, 403, "");
+    let outcome = calendar_feeds::refresh(&app.state, home_source(&app).await, Utc::now())
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Outcome::Failed(ref e) if e.code == "login_refused"));
+    assert_eq!(account_state(&app).await, "login_refused");
+    let list = app
+        .get_page(&format!("/devices/{anna}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(
+        list.contains(
+            "data-caldav-failing>The account has no access to the calendars - test again<"
+        ),
+        "{list}"
+    );
+    let page = app
+        .get_page(
+            &format!("/devices/{anna}/calendar/caldav/{account}"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        page.contains("The account has no access to the calendars - nothing is fetched"),
+        "{page}"
+    );
+}

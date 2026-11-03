@@ -79,6 +79,7 @@ pub fn why_text(lang: Lang, code: &str, status: Option<i64>) -> String {
 /// A CalDAV fetch's or Test's code in words (`calendar.caldav.why.*`), never an address or a body.
 pub fn caldav_why(lang: Lang, code: &str, status: Option<i64>) -> String {
     let key = match code {
+        "login_refused" if status == Some(403) => "calendar.caldav.why.no_access",
         "login_refused" => "calendar.caldav.why.login_refused",
         "host_changed" => "calendar.caldav.why.host_changed",
         "not_caldav" => "calendar.caldav.why.not_caldav",
@@ -158,12 +159,13 @@ fn own_error(link: &LinkRow) -> Option<&str> {
 }
 
 /// What stops a CalDAV account (no request for any of its calendars): the key its password is sealed with gone, a
-/// refused password, a new host. Each says "test again".
+/// refused password (`no_access` when the refusal was a 403), a new host. Each says "test again".
 pub(super) fn account_stop(state: &AppState, account: &AccountView) -> Option<&'static str> {
     if sealed_with_an_old_key(state, &account.key_fp) {
         return Some("key_lost");
     }
     match account.state.as_str() {
+        "login_refused" if account.test_status == Some(403) => Some("no_access"),
         "login_refused" => Some("login_refused"),
         "host_changed" => Some("host_changed"),
         _ => None,
@@ -293,18 +295,7 @@ pub(super) fn source_rows(
             .collect();
         let broken = mine.iter().filter(|l| own_error(l).is_some()).count() as i64;
         let (sub, failing) = match account_stop(state, account) {
-            Some(stop) => (
-                t(
-                    lang,
-                    match stop {
-                        "key_lost" => "calendar.sources.stopped.key_lost",
-                        "login_refused" => "calendar.sources.stopped.login_refused",
-                        _ => "calendar.sources.stopped.host_changed",
-                    },
-                )
-                .to_string(),
-                true,
-            ),
+            Some(stop) => (t(lang, stopped_line(stop)).to_string(), true),
             None if broken > 0 => (
                 t_count(
                     lang,
@@ -796,11 +787,22 @@ pub async fn show_caldav(
     render(lang, template, StatusCode::OK)
 }
 
+/// A stop's ([account_stop]) short line in Device › Calendar's sources and the kid's calendar.
+pub(super) fn stopped_line(stop: &str) -> &'static str {
+    match stop {
+        "key_lost" => "calendar.sources.stopped.key_lost",
+        "login_refused" => "calendar.sources.stopped.login_refused",
+        "no_access" => "calendar.sources.stopped.no_access",
+        _ => "calendar.sources.stopped.host_changed",
+    }
+}
+
 /// The account page's alarm for a stop ([account_stop]).
 fn stop_line(stop: &str) -> &'static str {
     match stop {
         "key_lost" => "calendar.caldav.status.key_lost",
         "login_refused" => "calendar.caldav.status.login_refused",
+        "no_access" => "calendar.caldav.status.no_access",
         _ => "calendar.caldav.status.host_changed",
     }
 }
