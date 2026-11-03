@@ -177,7 +177,7 @@ counts.
 ## A zone stands in for the weather (design 75, migration `0122_lock_weather.sql`)
 
 `device_policy.weather_zone_id` names one of the phone's zones whose centre gives the lock screen's weather when the
-phone has no fresh fix (Device › Weather; `docs/notes/server/launcher-ui.md`, "Lock screen weather"). It is a foreign
+phone has no fresh fix (Lock Screen & PINs › Weather; `docs/notes/server/launcher-ui.md`, "Lock screen weather"). It is a foreign
 key `ON DELETE SET NULL`: deleting the zone clears it (and the delete nudges the phone, as every zone save does).
 **A future migration that rebuilds `device_zones`** (copy, drop, rename) runs with foreign keys on, so dropping the old
 table would set every `weather_zone_id` to NULL without a word: such a rebuild must save the column first and restore

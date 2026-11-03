@@ -1102,7 +1102,7 @@ pub fn build_admin_router(
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
-        // Design 75 §6: Device › Weather and its two rows.
+        // Design 75 §6: the weather's two rows are on Lock Screen & PINs; the old page's address leads there.
         .route("/devices/{id}/weather", get(handlers::weather_page::view))
         .route(
             "/devices/{id}/weather/lock",

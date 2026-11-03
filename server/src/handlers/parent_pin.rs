@@ -9,9 +9,7 @@ use axum::Extension;
 use axum::extract::{Form, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
-use chrono::{DateTime, Utc};
 
-use crate::display_time::Zone;
 use crate::models::{DevicePolicy, DeviceStatus};
 use crate::security::{self, AuthedDevice, CurrentAdmin};
 use crate::{AppState, parent_pin};
@@ -24,19 +22,15 @@ pub struct ParentPinCard {
     /// The flash after a save, `(text, warning)` ([parent_pin::flash_text]).
     pub notice: Option<(&'static str, bool)>,
     /// The launcher reports parent-PIN events (`parent_pin_events_v1`) - or nothing reported yet.
-    /// Without it the old `offline_override_used` flag shows instead.
+    /// Without it the old `offline_override_used` flag shows instead. (The events themselves are the security log's
+    /// and Activity's; the lock page's "Recent use" list went on 2026-11-03, the user: "helt unødvendig".)
     pub capable: bool,
-    /// The last [parent_pin::SHOWN] events, newest first, as "Recent use" rows.
-    pub events: Vec<parent_pin::EventRow>,
 }
 
-pub async fn card(
-    db: &sqlx::SqlitePool,
+pub fn card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
-    zone: &Zone,
-    now: DateTime<Utc>,
 ) -> ParentPinCard {
     let pin_set = policy.override_pin_hash.is_some();
     let capable = latest.is_none_or(|s| {
@@ -44,16 +38,11 @@ pub async fn card(
             caps.contains(&format!("\"{}\"", parent_pin::PARENT_PIN_EVENTS_CAPABILITY))
         })
     });
-    let shown = device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await;
     ParentPinCard {
         pin_set,
         easy: pin_set && policy.override_pin_easy == Some(true),
         notice: notice.and_then(parent_pin::flash_text),
         capable,
-        events: shown
-            .iter()
-            .map(|e| parent_pin::event_row(e, zone, now))
-            .collect(),
     }
 }
 
@@ -182,54 +171,6 @@ pub async fn update_parent_pin(
 
 /// The newest events of a phone (or those after `since_ms`), newest first, at most `limit`; empty
 /// on a database error (logged). Rows of an unknown kind or entry are skipped.
-pub async fn device_events(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-    since_ms: i64,
-    limit: i64,
-) -> Vec<parent_pin::PinEvent> {
-    type Row = (
-        String,
-        String,
-        String,
-        i64,
-        Option<i64>,
-        Option<i64>,
-        Option<i64>,
-        bool,
-    );
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT event_id, kind, entry, occurred_at_ms, until_ms, failures, level, clock_off \
-         FROM device_pin_events WHERE device_id = ? AND occurred_at_ms > ? \
-         ORDER BY occurred_at_ms DESC, id DESC LIMIT ?",
-    )
-    .bind(device_id)
-    .bind(since_ms)
-    .bind(limit)
-    .fetch_all(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(device_id, %err, "couldn't load the parent PIN events");
-        Vec::new()
-    });
-    rows.into_iter()
-        .filter_map(
-            |(event_id, kind, entry, occurred_at_ms, until_ms, failures, level, clock_off)| {
-                Some(parent_pin::PinEvent {
-                    event_id,
-                    kind: parent_pin::Kind::parse(&kind)?,
-                    entry: parent_pin::Entry::parse(&entry)?,
-                    occurred_at_ms,
-                    until_ms,
-                    failures,
-                    level,
-                    clock_off,
-                })
-            },
-        )
-        .collect()
-}
-
 /// `POST /api/devices/pin-events` (bearer, design 24 §3.3) -> 204. Read leniently (QA #10): only
 /// a body that isn't JSON or has no `events` array gets 400, more than
 /// [parent_pin::PIN_EVENTS_MAX] events 413; each event is checked on its own

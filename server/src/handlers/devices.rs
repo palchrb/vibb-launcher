@@ -859,8 +859,6 @@ struct DeviceDetailTemplate {
     /// Device › Calendar's row (design 69), in the request's language.
     calendar_label: &'static str,
     calendar_value: String,
-    /// Device › Weather's row (design 75 §6): "On" / "Off", in the request's language.
-    weather_value: &'static str,
     lock_value: &'static str,
     home_value: String,
     filter_value: &'static str,
@@ -1907,7 +1905,6 @@ async fn render_device(
             time_attention,
             calendar_label: crate::i18n::t(lang, "calendar.summary.label"),
             calendar_value: crate::handlers::calendar::summary_value(state, lang, id).await,
-            weather_value: crate::handlers::weather_page::summary_value(lang, policy.lock_weather),
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_none() {
                 "PIN off"
             } else if crate::kid_lock::android_requested(&policy) {

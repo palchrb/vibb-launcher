@@ -116,11 +116,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Lock screen weather (design 75, `docs/design/75-lock-weather.md`, migration `0122_lock_weather.sql`)
 
-- **The switch and the zone**: Device › Weather (`/devices/{id}/weather`, `handlers::weather_page`,
-  `device_weather.html`), a row on the phone's page with On / Off. `device_policy.lock_weather` (off by default) is
+- **The switch and the zone**: Lock Screen & PINs' Weather group (`#weather` on `/devices/{id}/lock`,
+  `handlers::weather_page::card`, `device_lock.html`; the user moved it there on 2026-11-03 - the old page's address
+  `/devices/{id}/weather` redirects to the group). `device_policy.lock_weather` (off by default) is
   sent as `launcher_ui.lock_weather` (always; `policy_json_keys_snapshot`, the launcher's `PolicyResponseCompatTest`);
   `device_policy.weather_zone_id` (one of the phone's zones, `docs/notes/server/zones.md`) never leaves the server. Each
-  save answers on its own anchor (`#weather-lock`, `#weather-zone`), logs `lock_weather_changed` /
+  save answers on its own anchor of the lock page (`#weather-lock`, `#weather-zone`), logs `lock_weather_changed` /
   `lock_weather_zone_changed` (the zone's name, never coordinates) only on a change, and nudges the phone. Notes: no
   fresh position and no zone; a Vibb One without the `lock_weather_v1` capability.
 - **The routes** (`handlers::weather`, bearer): `GET /api/devices/weather` - `off` (no outside request),

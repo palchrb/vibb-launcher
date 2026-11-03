@@ -28,8 +28,8 @@ fetched only past MET's `Expires`, conditionally. The words, the periods, the da
 computed on the server, in the phone's own time zone; the phone renders keys, MET's symbol codes and numbers. The
 place name comes once per cell from Kartverket's place-name API.
 
-**PWA.** A page of its own, Device › Vær / Weather (`/devices/{id}/weather`, a row on the phone's page beside Apps,
-Time and the others; §6): "Vær på låseskjermen" / "Weather on the lock screen", off by default
+**PWA.** A "Weather" group on Device › Lock Screen & PINs (`/devices/{id}/lock#weather`; §6, §12 - a page of its
+own for a day): "Vær på låseskjermen" / "Weather on the lock screen", off by default
 (`launcher_ui.lock_weather`), and under it "Når posisjonen ikke er fersk, bruk: [sone ▾]" (none by default).
 
 **Out of scope** (decided with the user): clothing advice and reflex hints; radar bars or maps; a weather app and
@@ -687,7 +687,7 @@ contract test (§7.3) checks every key/form pair the server can send has both st
 
 - **Where** (the user, 2026-11-03: "Om det er flere settings så legger vi kanskje inn en egen Vær settings sammen med
   app og time rules etc inne på en spesifikk device sin side?"): a page of its own, Device › Vær / Weather
-  (`GET /devices/{id}/weather`, `templates/device_weather.html`, `handlers::weather_page`), listed on the phone's page
+  (since 2026-11-03 the "Weather" group of Lock Screen & PINs, `/devices/{id}/lock#weather`, §12; `handlers::weather_page`), once listed on the phone's page
   among Apps, Time and the others with its value "På" / "Av" (the switch). Two rows, each its own form with
   `data-autosave` and its own anchor, in the Lock Screen page's switch and select markup:
   1. `#weather-lock` - the switch (`POST /devices/{id}/weather/lock`, as `save_wake`: 404 unknown device, 500 with
@@ -698,7 +698,7 @@ contract test (§7.3) checks every key/form pair the server can send has both st
      of another phone or an unknown id → 400 and nothing written; a `lock_weather_zone_changed` line with the zone's
      name, never coordinates, only when it changed; nudged). With no zones, the row says so and links to Locate's
      zones.
-  Each save answers on its own anchor (`Redirect::to("/devices/{id}/weather#weather-zone")`; with JS
+  Each save answers on its own anchor (`Redirect::to("/devices/{id}/lock#weather-zone")`; with JS
   `scroll-restore.js` keeps the exact place). **A save never jumps to the top.**
 - **Notes under the rows**: `needs_position` while on, Location isn't "Regularly" and no zone is chosen: the lock shows
   no weather now; `needs_update` while on and the phone hasn't reported `lock_weather_v1`.
@@ -931,3 +931,12 @@ None. The one open question (the phone's last-known position, D18) was answered 
   (`weather_catalog_nb`, L5); the foot cuts only the place, the part labels take two lines (L6); the chevron turns on
   open too (L7); the cached switch is read when the lock starts and the kept answer again after the first unlock
   (L8); the layout tests pin the own line and the open card (L9).
+- **The user's move after E8** (2026-11-03: "vær options under lock screen menyen ... Istedetfor en egen kategori"): the
+  two rows, their notes and the credit are the "Weather" group of Device › Lock Screen & PINs (`#weather`, after "Lock
+  screen"); the page `device_weather.html` and its row on the phone's page are gone, `/devices/{id}/weather` redirects to
+  `/devices/{id}/lock#weather`, the saves answer on `/devices/{id}/lock#weather-lock` / `#weather-zone`. The same day
+  the lock page's "Recent use" list went (the user: "helt unødvendig").
+- **E8's fix round** (`docs/testing/2026-11-03-e8-run.md`): the hit area's host padded to hold the whole 48 dp (M1); a
+  nudge waits for a pull that runs, `no_position` waits no hour (M2); an empty period unspoken (L1); "Etter­middag"
+  hyphenated, the labels aligned (L2); a place-less first answer pulled again 2 min later (L3); the nb words' "kl." times
+  24-hour on a 12-hour phone, no double full stop.

@@ -990,24 +990,40 @@ async fn a_one_day_history_prunes_cells_after_a_day() {
     assert_eq!(left, [1]);
 }
 
-// ---- Device › Weather -----------------------------------------------------------------------------
+// ---- Lock Screen & PINs › Weather ----------------------------------------------------------------
 
+/// Lock Screen & PINs, where the weather's group is (design 75 §6, the user's move of 2026-11-03).
 fn page(id: i64) -> String {
-    format!("/devices/{id}/weather")
+    format!("/devices/{id}/lock")
+}
+
+/// The page's Weather group, `<section id="weather">` to its end.
+fn group(html: &str) -> String {
+    let start = html
+        .find(r#"<section id="weather""#)
+        .expect("the Weather group");
+    let end = html[start..].find("</section>").unwrap() + start;
+    html[start..end].to_string()
 }
 
 async fn log_lines(app: &TestApp, kind: &str) -> Vec<String> {
     super::security_words(app, kind, crate::i18n::Lang::En).await
 }
 
-/// §6: the page's switch (off by default) and zone row (while on), each save on its own anchor, logged once per change,
-/// the phone nudged; the phone's page lists it with On / Off.
+/// §6: the lock page's Weather group - the switch (off by default) and the zone row (while on), each save on its own
+/// anchor of the lock page, logged once per change, the phone nudged; the old page's address leads to the group, and
+/// the phone's page has no row of its own for it any more.
 #[tokio::test]
-async fn the_weather_page_saves_on_its_anchors() {
+async fn the_weather_group_saves_on_its_anchors() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let old = app
+        .get_page(&format!("/devices/{id}/weather"), &cookie)
+        .await;
+    assert_redirect(&old, &page(id), Some("weather"));
+    app.assert_lands(&old, &cookie).await;
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(html.contains("Weather on the lock screen"), "{html}");
     assert_eq!(super::input_checked(&html, "on", "on"), Some(false));
     assert!(super::autosaves(&html, "on"));
@@ -1019,8 +1035,10 @@ async fn the_weather_page_saves_on_its_anchors() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let row = &summary[summary.find(r#"data-row="weather""#).unwrap()..];
-    assert!(row[..row.find("</a>").unwrap()].contains("Off"), "{row}");
+    assert!(
+        !summary.contains(r#"data-row="weather""#),
+        "no Weather row of its own"
+    );
 
     let mut nudges = app.state.command_notify.subscribe();
     for on in [true, true, false, true] {
@@ -1045,19 +1063,13 @@ async fn the_weather_page_saves_on_its_anchors() {
         log_lines(&app, "lock_weather_changed").await,
         ["on", "off", "on"].map(|s| format!("phone {id}: weather on the lock screen: {s}"))
     );
-    let summary = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    let row = &summary[summary.find(r#"data-row="weather""#).unwrap()..];
-    assert!(row[..row.find("</a>").unwrap()].contains("On"), "{row}");
 
     // No zones yet: the row says so and links to Locate's zones.
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(html.contains("This phone has no zones yet."), "{html}");
     assert!(html.contains(&format!("/devices/locate?device={id}#zones")));
     let home = zone(&app, id, "Hjemme", 59.9399, 10.7601).await;
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(
         html.contains(r#"<option value="" selected>None</option>"#),
         "{html}"
@@ -1144,7 +1156,7 @@ async fn the_page_says_when_the_lock_shows_no_weather() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = phone(&app, "n", true, "on_request").await;
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(html.contains(r#"data-warning="needs-position""#), "{html}");
     assert!(html.contains(r#"data-warning="needs-update""#), "{html}");
     app.post_status(
@@ -1154,7 +1166,7 @@ async fn the_page_says_when_the_lock_shows_no_weather() {
     .await;
     let home = zone(&app, id, "Hjemme", 59.9399, 10.7601).await;
     set_zone(&app, id, Some(home)).await;
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(!html.contains("data-warning"), "{html}");
     assert!(html.contains(&format!(
         r#"<option value="{home}" selected>Hjemme</option>"#
@@ -1166,7 +1178,7 @@ async fn the_page_says_when_the_lock_shows_no_weather() {
         .execute(&app.db)
         .await
         .unwrap();
-    let html = app.get_page(&page(id), &cookie).await.text();
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(!html.contains("needs-position"), "{html}");
     // In Norwegian.
     let html = app

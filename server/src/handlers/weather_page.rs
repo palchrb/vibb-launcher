@@ -1,27 +1,27 @@
-//! Device › Weather (design 75 §6, the user: "en egen Vær settings ... inne på en spesifikk device sin side"):
-//! `GET /devices/{id}/weather`, `device_weather.html`. Two rows, each an auto-saving form that answers on its own
-//! anchor (with JS `scroll-restore.js` keeps the exact place; a save never jumps to the top):
-//! - `#weather-lock`: "Weather on the lock screen" (`POST /devices/{id}/weather/lock`, as the Lock page's wake
-//!   switch), `device_policy.lock_weather`, sent as `launcher_ui.lock_weather`;
+//! The weather on the lock screen, the parent's side (design 75 §6; the user, 2026-11-03: on Lock Screen & PINs, not a
+//! page of its own): the "Weather" group of `/devices/{id}/lock` ([card], `device_lock.html`). Two rows, each an
+//! auto-saving form that answers on its own anchor of the lock page (with JS `scroll-restore.js` keeps the exact place; a
+//! save never jumps to the top):
+//! - `#weather-lock`: "Weather on the lock screen" (`POST /devices/{id}/weather/lock`, as the Lock page's wake switch),
+//!   `device_policy.lock_weather`, sent as `launcher_ui.lock_weather`;
 //! - `#weather-zone`: while the switch is on, the zone whose centre stands in when the phone has no fresh fix (`POST
 //!   /devices/{id}/weather/zone`, one of this phone's zones or none), `device_policy.weather_zone_id` - never in the
 //!   policy.
 //!
-//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The page never
-//! shows the cell or the forecast.
+//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The old page's
+//! address, `/devices/{id}/weather`, leads to the group ([view]). The page never shows the cell or the forecast.
 
 use std::collections::HashMap;
 
-use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
-use crate::handlers::device_pages::{has_capability, load_device, load_latest, load_policy};
-use crate::i18n::{Lang, Words, t};
-use crate::models::Device;
+use crate::handlers::device_pages::has_capability;
+use crate::i18n::Lang;
+use crate::models::{DevicePolicy, DeviceStatus};
 use crate::security::{self, CurrentAdmin};
 
 /// The launcher capability of a Vibb One that shows the weather.
@@ -34,77 +34,50 @@ pub struct ZoneChoice {
     pub selected: bool,
 }
 
-#[derive(Template)]
-#[template(path = "device_weather.html")]
-struct WeatherTemplate {
-    lang: Lang,
-    title: String,
-    device: Device,
-    on: bool,
-    zones: Vec<ZoneChoice>,
+/// The lock page's Weather group.
+pub struct WeatherCard {
+    pub on: bool,
+    pub zones: Vec<ZoneChoice>,
     /// No zone chosen (the select's "None").
-    no_zone: bool,
+    pub no_zone: bool,
     /// On, Location isn't Regularly and no zone: the lock shows no weather now.
-    needs_position: bool,
+    pub needs_position: bool,
     /// On and the phone's Vibb One doesn't report [CAPABILITY].
-    needs_update: bool,
-}
-crate::i18n::words!(WeatherTemplate);
-
-/// The phone's page's row value: "On" / "Off".
-pub fn summary_value(lang: Lang, on: bool) -> &'static str {
-    t(lang, if on { "common.on" } else { "common.off" })
+    pub needs_update: bool,
 }
 
-/// GET `/devices/{id}/weather`. A phone not set up has the page too.
-pub async fn view(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
-    let device = match load_device(&state, id).await {
-        Ok(device) => device,
-        Err((status, key)) => return crate::i18n::error(lang, status, key),
-    };
-    let policy = match load_policy(&state, id).await {
-        Ok(policy) => policy,
-        Err((status, key)) => return crate::i18n::error(lang, status, key),
-    };
-    let zones = match crate::zones::list(&state.db, id).await {
-        Ok(zones) => zones,
-        Err(err) => return read_failed(lang, id, err),
-    };
-    let latest = match load_latest(&state, id).await {
-        Ok(latest) => latest,
-        Err(err) => return read_failed(lang, id, err),
-    };
+/// The group's state: the switch, this phone's zones (a deleted or foreign one never shows as chosen), the notes.
+pub async fn card(
+    state: &AppState,
+    id: i64,
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+) -> Result<WeatherCard, sqlx::Error> {
+    let zones = crate::zones::list(&state.db, id).await?;
     let on = policy.lock_weather;
     let chosen = policy
         .weather_zone_id
         .filter(|zone| zones.iter().any(|z| z.id == *zone));
-    Html(
-        WeatherTemplate {
-            lang,
-            title: format!("{} · {}", t(lang, "device.page.weather"), device.name),
-            on,
-            no_zone: chosen.is_none(),
-            needs_position: on && policy.location_mode != "interval" && chosen.is_none(),
-            needs_update: on && !has_capability(latest.as_ref(), CAPABILITY),
-            zones: zones
-                .into_iter()
-                .map(|z| ZoneChoice {
-                    selected: Some(z.id) == chosen,
-                    id: z.id,
-                    name: z.name,
-                })
-                .collect(),
-            device,
-        }
-        .render()
-        .unwrap(),
-    )
-    .into_response()
+    Ok(WeatherCard {
+        on,
+        no_zone: chosen.is_none(),
+        needs_position: on && policy.location_mode != "interval" && chosen.is_none(),
+        needs_update: on && !has_capability(latest, CAPABILITY),
+        zones: zones
+            .into_iter()
+            .map(|z| ZoneChoice {
+                selected: Some(z.id) == chosen,
+                id: z.id,
+                name: z.name,
+            })
+            .collect(),
+    })
 }
 
-fn read_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {
-    tracing::error!(device_id = id, %err, "can't read the weather page");
-    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
+/// GET `/devices/{id}/weather`, the page the group lived on before (design 75 §12): old links and bookmarks land on the
+/// lock page's Weather group.
+pub async fn view(Path(id): Path<i64>) -> Response {
+    Redirect::to(&format!("/devices/{id}/lock#weather")).into_response()
 }
 
 fn save_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {
@@ -119,7 +92,7 @@ fn save_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {
 /// Back to the form's row, the phone nudged.
 fn saved(state: &AppState, id: i64, anchor: &str) -> Response {
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}/weather#{anchor}")).into_response()
+    Redirect::to(&format!("/devices/{id}/lock#{anchor}")).into_response()
 }
 
 fn detail(id: i64, key: &str, params: &[(&str, &str)]) -> security::Detail {
