@@ -857,12 +857,26 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   after 20 s. A save started during a wait (a `submit`, a `data-autosave` change) ends it, so no restart cancels the
   save's POST (L3). A `pagehide` stops the wait's timers; coming back re-arms them (the 5 s pings, "Try again" when
   due; L5). The chip's words are set when it shows (empty while hidden), so a screen reader announces them (L9). Visible again after more than **1 minute** hidden (10 minutes until 2026-10-24; the user: a minute is not too short - under it you were only in another app and back) (or back from the back-forward cache after that long): a ping
-  (the chip only if it takes over 3 s); answered, a reload in place through the same machinery, keeping the place -
+  (the chip only if it takes over 3 s); answered, a reload in place (after more than **10 minutes** hidden, `HOME_AFTER`: Devices, `/`, instead - see below) through the same machinery, keeping the place -
   scroll-restore.js's form record in sessionStorage and `window.name` (`path`, `y` of `<main>` in the shell, and over
   a `#fragment` its element's screen top in `tops`), as auto-reload.js leaves it; never the top. No reload once a
   save started (a `submit`, a `data-autosave` change), while a `<details>` is open, when a field differs from what
   the page came with (typed text, a ticked box, a picked option, a chosen file; L4), or on a **POST's own answer**
-  (qa-srv-sweep-resume-code M1) - the page then stays as it is. `admin_auth::mark_post_answer` (a layer on the admin
+  (qa-srv-sweep-resume-code M1) - the page then stays as it is.
+  **Away over 10 minutes (2026-11-03; the user: "10 minutter er bra")**: the same return wait ends on `/` (the
+  manifest's start_url, Devices) instead of the reload in place - `start("return", …, home)`, then `go()` of a
+  `"load"` wait for `/`, so the chip, the pings and the restart are the same, and the same rules apply (a save on its
+  way, an open `<details>`, a typed field, a POST's answer: nothing happens, as for the reload). Already on `/`: only
+  the reload in place. Between 1 and 10 minutes: the reload in place, unchanged. The lock screen is left alone as
+  before; a **due app lock** after more than 10 minutes goes to `/lock?next=/` (a ping answered 423 too), so after the
+  passkey the parent lands on Devices; after less its `next` is the page they were on. **app-lock.js picks that `next`**
+  (`static/app-lock.js?v=4`, QA M1): it is not deferred, so its own `visibilitychange`/`pageshow` handler runs before
+  reconnect.js's and locks first (`going`), after which a later `lock(next)` is a no-op; so it keeps its own hidden-since
+  (set by the veil) and calls `lock("/")` when that was over `HOME_AFTER`. The ten minutes are its one constant,
+  `HOME_AFTER`, which reconnect.js reads as `window.handyLock.homeAfter` for its own return to `/` (without it nothing goes
+  home; the head always loads app-lock.js). A hidden page whose timer fires and locks while hidden (a browser that runs
+  hidden timers; a phone holds them) is already on `/lock?next=<its page>` by the return. Back from the back-forward cache
+  counts the same (`pageshow` with `persisted`). `reconnect.js?v=10`; tests in `jstest/reconnect.test.js`. `admin_auth::mark_post_answer` (a layer on the admin
   router) puts `data-post-answer` on the `<body>` of every HTML answer to a POST outside the device API, whatever its
   status (the setup code, a refused form shown again, the sign-in steps' errors, a music import's preview - about 45
   handlers render on a POST; one rule instead of a flag in each); the script never reloads such a page. As a belt,

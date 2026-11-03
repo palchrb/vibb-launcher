@@ -4,6 +4,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const rc = require("../static/reconnect.js");
+// The ten minutes are app-lock.js's (it runs first and picks the lock's `next` itself); reconnect.js reads them from
+// `window.handyLock.homeAfter`.
+const { HOME_AFTER } = require("../static/app-lock.js");
 const { install, navigationTarget, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
 
 const HERE = "https://pi.example.ts.net/devices/1?tab=apps#apps";
@@ -77,6 +80,7 @@ function fakeWindow({ openForm = false, postAnswer = false, href = "https://pi.e
     const pings = [];
     const view = { bar: false, chip: false, retry: null, marked: new Set() };
     const win = {
+        handyLock: { homeAfter: HOME_AFTER, due: () => false },
         assigned: [],
         reloads: 0,
         openForm,
@@ -357,6 +361,89 @@ test("back after more than a minute (AWAY_MS): a ping, and answered, a reload in
     assert.strictEqual(record.t, win.now());
     assert.strictEqual(record.tops, undefined, "no #fragment");
     assert.strictEqual(win.name, "handy-scroll:" + win.stored["handy-scroll"], "iPhone's second carrier");
+});
+
+// Away over 10 minutes (HOME_AFTER, 2026-11-03): the PWA opens on Devices, `/`, through the same return wait.
+test("away 9 minutes: the reload in place; away 11: Devices (`/`), the same wait and rules", async () => {
+    assert.strictEqual(HOME_AFTER, 10 * 60 * 1000);
+    const nine = fakeWindow();
+    nine.install();
+    nine.hide();
+    nine.advance(9 * 60 * 1000);
+    nine.show();
+    await answer(nine);
+    assert.strictEqual(nine.reloads, 1);
+    assert.deepStrictEqual(nine.assigned, []);
+
+    const eleven = fakeWindow();
+    eleven.install();
+    eleven.hide();
+    eleven.advance(11 * 60 * 1000);
+    eleven.show();
+    assert.strictEqual(eleven.view.chip, false, "no chip unless the ping takes 3 s");
+    await answer(eleven);
+    assert.deepStrictEqual(eleven.assigned, ["/"]);
+    assert.strictEqual(eleven.reloads, 0);
+
+    // A dead server: the chip shows, and `/` is gone to once it answers.
+    const dead = fakeWindow();
+    dead.install();
+    dead.hide();
+    dead.advance(11 * 60 * 1000);
+    dead.show();
+    dead.advance(CHIP_AFTER);
+    assert.strictEqual(dead.view.chip, true);
+    dead.advance(PING_TIMEOUT);
+    dead.advance(PING_EVERY - 1000);
+    await answer(dead);
+    assert.deepStrictEqual(dead.assigned, ["/"]);
+
+    // Back from the back-forward cache after that long: the same.
+    const cached = fakeWindow();
+    cached.install();
+    cached.hide();
+    cached.advance(11 * 60 * 1000);
+    cached.fire("win", "pageshow", { persisted: true });
+    await answer(cached);
+    assert.deepStrictEqual(cached.assigned, ["/"]);
+});
+
+test("away 11 minutes: no navigation with a save on its way, an open <details>, a typed field or a POST's answer; on `/` only the reload", async () => {
+    const saved = fakeWindow();
+    saved.install();
+    saved.fire("doc", "change", { target: { hasAttribute: (n) => n === "data-autosave" } });
+    saved.hide();
+    saved.advance(11 * 60 * 1000);
+    saved.show();
+    assert.strictEqual(saved.pings.length, 0);
+    assert.deepStrictEqual(saved.assigned, []);
+    assert.strictEqual(saved.reloads, 0);
+
+    const open = fakeWindow({ openForm: true });
+    open.install();
+    open.hide();
+    open.advance(11 * 60 * 1000);
+    open.show();
+    await answer(open);
+    assert.deepStrictEqual(open.assigned, []);
+    assert.strictEqual(open.reloads, 0);
+
+    const posted = fakeWindow({ postAnswer: true });
+    posted.install();
+    posted.hide();
+    posted.advance(11 * 60 * 1000);
+    posted.show();
+    assert.strictEqual(posted.pings.length, 0);
+    assert.deepStrictEqual(posted.assigned, []);
+
+    const home = fakeWindow({ href: "https://pi.example.ts.net/" });
+    home.install();
+    home.hide();
+    home.advance(11 * 60 * 1000);
+    home.show();
+    await answer(home);
+    assert.deepStrictEqual(home.assigned, []);
+    assert.strictEqual(home.reloads, 1);
 });
 
 test("the reload over a #fragment records where its element is on the screen", () => {
@@ -872,6 +959,7 @@ test("a ping redirected to the sign-in page asks /api/session before it counts",
 function withLock(win, due) {
     win.locks = [];
     win.handyLock = {
+        homeAfter: HOME_AFTER,
         due: () => win.lockDue,
         lock: (next) => win.locks.push(next === undefined ? null : next),
     };
@@ -892,6 +980,41 @@ test("the lock: back after its time, the lock instead of the return reload (no p
     assert.strictEqual(win.reloads, 0);
 });
 
+test("the lock: after over 10 minutes away its next is Devices (`/`), after less the page they were on", () => {
+    const long = withLock(fakeWindow(), false);
+    long.install();
+    long.hide();
+    long.advance(11 * 60 * 1000);
+    long.lockDue = true;
+    long.show();
+    assert.deepStrictEqual(long.locks, ["/"]);
+
+    const cached = withLock(fakeWindow(), false);
+    cached.install();
+    cached.hide();
+    cached.advance(11 * 60 * 1000);
+    cached.lockDue = true;
+    cached.fire("win", "pageshow", { persisted: true });
+    assert.deepStrictEqual(cached.locks, ["/"]);
+
+    const short = withLock(fakeWindow(), false);
+    short.install();
+    short.hide();
+    short.advance(9 * 60 * 1000);
+    short.lockDue = true;
+    short.show();
+    assert.deepStrictEqual(short.locks, ["/devices/1"]);
+
+    // The bare redirect (no app-lock.js): /lock?next=/
+    const bare = fakeWindow();
+    bare.handyLock = { homeAfter: HOME_AFTER, due: () => true };
+    bare.install();
+    bare.hide();
+    bare.advance(11 * 60 * 1000);
+    bare.show();
+    assert.deepStrictEqual(bare.replaced, ["/lock?next=%2F"]);
+});
+
 test("the lock: due by the time the return ping is answered, the lock instead of the reload", async () => {
     const win = withLock(fakeWindow(), false);
     win.install();
@@ -902,6 +1025,27 @@ test("the lock: due by the time the return ping is answered, the lock instead of
     await answer(win);
     assert.strictEqual(win.reloads, 0);
     assert.deepStrictEqual(win.locks, ["/devices/1"]);
+});
+
+test("the lock: a 423 during the wait of a return after over 10 minutes goes to the lock with next `/`", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.hide();
+    win.advance(11 * 60 * 1000);
+    win.show();
+    await answer(win, 423);
+    assert.deepStrictEqual(win.locks, ["/"]);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.assigned, []);
+
+    // And after 9 minutes it is the page they were on.
+    const nine = withLock(fakeWindow(), false);
+    nine.install();
+    nine.hide();
+    nine.advance(9 * 60 * 1000);
+    nine.show();
+    await answer(nine, 423);
+    assert.deepStrictEqual(nine.locks, ["/devices/1"]);
 });
 
 test("the lock: a ping answered 423 (the server's lock) goes to the lock, with or without app-lock.js", async () => {
