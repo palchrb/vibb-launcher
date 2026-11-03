@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The lock glance's weather mark (design 75 §5.5, mockup v7): yr's symbol, the degrees and, when the day has
+     something to say and it fits, the dot and a few fixed words, then the small chevron - no frame. Included twice in
+     view_lock_glance.xml (beside the date, and on its own line under it; at most one shown, lock.WeatherLockPanel).
+     The degrees and the words are one TextView (the words a 0.93 relative span, so FontScaleRefresh scales both), the
+     date's colour and size, the degrees in the ink; one line, never wrapped or cut (the panel drops the words
+     instead). A tap opens the day's card (no unlock: weather isn't private); its 48 dp hit area is a TouchDelegate on
+     the page's top block. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:baselineAligned="true"
+    android:baselineAlignedChildIndex="1"
+    android:clipChildren="false"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:importantForAccessibility="yes"
+    android:orientation="horizontal"
+    android:visibility="gone">
+
+    <ImageView
+        android:id="@+id/weather_mark_symbol"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:importantForAccessibility="no"
+        android:scaleType="fitCenter" />
+
+    <TextView
+        android:id="@+id/weather_mark_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="4dp"
+        android:fontFamily="@font/nunito_bold"
+        android:importantForAccessibility="no"
+        android:maxLines="1"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="14sp" />
+
+    <ImageView
+        android:id="@+id/weather_mark_chevron"
+        android:layout_width="14dp"
+        android:layout_height="14dp"
+        android:layout_marginStart="4dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_weather_chevron"
+        android:tint="@color/kid_core_dim" />
+</LinearLayout>

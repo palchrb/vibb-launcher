@@ -637,86 +637,44 @@ async fn bad_events_are_skipped_or_cleaned_and_bad_bodies_refused() {
     );
 }
 
-/// Lock Screen & PINs lists what the phone reported ("Recent use", local times); the device page's
-/// Status card has the notices, which link there.
+/// Lock Screen & PINs has no "Recent use" list any more (the user, 2026-11-03: "helt unødvendig") - the phone's
+/// reported uses are the security log's and Activity's; an older launcher's "the override was used" flag still shows.
 #[tokio::test]
-async fn the_group_lists_events_and_the_status_card_has_notices() {
+async fn the_lock_page_lists_no_recent_use_and_keeps_the_old_flag() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let lock = device_page(id, Section::Lock);
-    let page = |path: String| {
-        let app = &app;
-        let cookie = &cookie;
-        async move { app.get_page(&path, cookie).await.text() }
-    };
-    let events_group = |html: &str| -> String {
-        let start = html.find("data-group=\"pin-events\"").unwrap();
-        let end = html[start..].find("</section>").unwrap() + start;
-        html[start..end].to_string()
-    };
-
-    // An older launcher: no list, the old flag instead.
+    // An older launcher: the old flag.
     post_status_caps(&app, &token, &["pin_lock_v1"], true).await;
-    let html = page(lock.clone()).await;
-    assert!(
-        events_group(&html).contains("Vibb One on this phone doesn&#39;t report this yet."),
-        "{html}"
-    );
+    let html = app.get_page(&lock, &cookie).await.text();
     assert!(html.contains("data-warning=\"override-used\""), "{html}");
-
-    // A new one: the list (empty first), no old flag.
+    // A new one reports its uses: no flag, and no list on the page.
     post_status_caps(&app, &token, &["pin_lock_v1", "parent_pin_events_v1"], true).await;
-    let html = page(lock.clone()).await;
-    assert!(events_group(&html).contains("None reported yet."), "{html}");
-    assert!(!html.contains("override-used"), "{html}");
-
-    // Minutes ago, so "N min ago" whatever the local time of day.
     let now = chrono::Utc::now().timestamp_millis();
     let body = serde_json::json!({ "events": [
         event(&hex_id(1), "wrong", "override", now - 30 * 60_000, serde_json::json!({ "failures": 1 })),
-        event(&hex_id(2), "unlocked", "settings", now - 20 * 60_000, serde_json::json!({})),
-        event(&hex_id(3), "unlocked", "pin_lock", now - 10 * 60_000, serde_json::json!({})),
     ]})
     .to_string();
     assert_eq!(
         post_events(&app, &token, &body).await,
         StatusCode::NO_CONTENT
     );
-    let html = page(lock.clone()).await;
-    let group = events_group(&html);
-    // Newest first, local times with the exact one in `title`, never UTC.
-    let opened = group.find("Lock screen opened").expect("the use");
-    let settings = group
-        .find("Vibb One&#39;s Settings opened")
-        .expect("the other use");
-    let wrong = group.find("Wrong Parent PIN").expect("the wrong try");
-    assert!(opened < settings && settings < wrong, "{group}");
-    assert!(
-        group.contains("<span class=\"row-sub\">On the time-lock screen · 1 in a row</span>"),
-        "{group}"
-    );
-    assert_eq!(group.matches("data-event").count(), 3);
-    assert!(!group.contains("UTC"), "{group}");
-
-    // The summary has no notices since Now went (the user, 2026-10-20): the uses are Activity's
-    // events.
-    let summary = page(device_page(id, Section::Summary)).await;
+    let html = app.get_page(&lock, &cookie).await.text();
+    assert!(!html.contains("override-used"), "{html}");
+    for gone in [
+        "data-group=\"pin-events\"",
+        "Recent use",
+        "Wrong Parent PIN",
+    ] {
+        assert!(!html.contains(gone), "{gone}: {html}");
+    }
+    // The summary has no notices since Now went (the user, 2026-10-20): the uses are Activity's events.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
     assert!(!summary.contains("data-pin-notice"), "{summary}");
-    assert!(!summary.contains("<section id=\"now\""), "{summary}");
-
-    // A lockout replaces the wrong-try notice, and is red in the list.
-    let body =
-        serde_json::json!({ "events": [ event(&hex_id(4), "lockout", "override", now - 60_000,
-        serde_json::json!({ "level": 1, "until_ms": now + 14 * 60_000 })) ] })
-        .to_string();
-    post_events(&app, &token, &body).await;
-    let group = events_group(&page(lock).await);
-    assert!(
-        group.contains("<span class=\"text-alarm\">Parent PIN locked</span>"),
-        "{group}"
-    );
-    assert!(group.contains("Locked for 15 minutes, until "), "{group}");
 }
 
 async fn post_status_caps(app: &TestApp, token: &str, caps: &[&str], override_used: bool) {
@@ -754,37 +712,4 @@ async fn old_events_are_pruned_after_90_days() {
     let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.pin_events, 1);
     assert_eq!(stored_events(&app, id).await.len(), 1);
-}
-
-/// qa-24-code Low 4: a new PIN keeps the list on Lock Screen & PINs, every event (the summary's
-/// notices are gone since its Now went, the user 2026-10-20).
-#[tokio::test]
-async fn a_new_pin_keeps_the_list() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    save(&app, &cookie, id, &[("new_pin", "583920")]).await;
-    let now = chrono::Utc::now().timestamp_millis();
-    let body = serde_json::json!({ "events": [
-        event(&hex_id(1), "wrong", "pin_lock", now + 1_000, serde_json::json!({ "failures": 1 })),
-        event(&hex_id(2), "lockout", "pin_lock", now + 2_000,
-            serde_json::json!({ "level": 1, "until_ms": now + 14 * 60_000 })),
-    ]})
-    .to_string();
-    assert_eq!(
-        post_events(&app, &token, &body).await,
-        StatusCode::NO_CONTENT
-    );
-    let page = |section: Section| {
-        let (app, cookie) = (&app, &cookie);
-        async move { app.get_page(&device_page(id, section), cookie).await.text() }
-    };
-    save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
-    let html = page(Section::Lock).await;
-    assert!(
-        html.contains("5 wrong in a row, the last on the lock screen"),
-        "{html}"
-    );
-    // The summary has no PIN notices: the uses and lockouts are Activity's events.
-    assert!(!page(Section::Summary).await.contains("data-pin-notice"));
 }

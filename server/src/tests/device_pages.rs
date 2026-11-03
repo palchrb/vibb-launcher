@@ -636,7 +636,7 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 9] = [
+    let table: [Row; 10] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
@@ -684,6 +684,12 @@ async fn lock_forms_return_to_the_page() {
             "lock-wake#lock-wake",
             &[("on", "on")],
             (lock.clone(), Some("lock-wake")),
+        ),
+        // Design 75 §6: the weather's switch, in the page's Weather group, back to its row.
+        (
+            "weather/lock#weather-lock",
+            &[("on", "on")],
+            (lock.clone(), Some("weather-lock")),
         ),
         // Element X, on for every new phone (its hidden `package_name`); listed only for being
         // on (no report yet): kept on here with its text (2026-10-21's one select per app), back
@@ -767,7 +773,6 @@ async fn a_phone_not_set_up_can_get_its_pins_first() {
         .text();
     assert!(html.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
     assert!(html.contains(&format!("action=\"/devices/{id}/parent-pin#parent-pin\"")));
-    assert!(html.contains("None reported yet."));
 }
 
 /// "On the phone" says when the phone reported it, so an old report never reads as now

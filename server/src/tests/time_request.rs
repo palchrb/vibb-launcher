@@ -503,16 +503,13 @@ async fn the_cap_counts_the_phones_own_day() {
         "phone {name}"
     );
     // Without a zone in the report, Phone Setup's day counts.
-    assert_eq!(
-        crate::handlers::device_api::extra_time_day_zone(None, &setup),
-        setup
-    );
+    assert_eq!(crate::handlers::device_api::phone_zone(None, &setup), setup);
     let report = crate::time_state::TimeReport {
         zone: Some("Not/AZone".to_string()),
         ..Default::default()
     };
     assert_eq!(
-        crate::handlers::device_api::extra_time_day_zone(Some(&report), &setup),
+        crate::handlers::device_api::phone_zone(Some(&report), &setup),
         setup
     );
 }

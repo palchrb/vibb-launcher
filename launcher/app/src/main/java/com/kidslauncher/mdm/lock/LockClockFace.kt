@@ -29,7 +29,9 @@ import kotlin.math.roundToInt
  * the same spot on both screens. Information only: nothing here is a control.
  *
  * [root] is the screen's root (it carries the system bars as padding), [top] the block the clock heads (its first
- * child); [extra] are lines under the date that follow it to the start (the glance's "Neste" line).
+ * child); [extra] are lines under the date that follow it to the start (the glance's "Neste" line and the weather's own
+ * line, design 75). [dateRow] (the glance's, design 75 §5.5): the row holding the date and the weather mark - placed,
+ * measured and baselined instead of the date (the row's baseline is the date's); the time-rule screen passes none.
  */
 class LockClockFace(
     private val context: Context,
@@ -38,9 +40,12 @@ class LockClockFace(
     val clock: TextClock,
     val date: TextClock,
     val alarm: TextView,
-    private val extra: List<TextView> = emptyList(),
+    private val extra: List<View> = emptyList(),
     private val logTag: String,
+    private val dateRow: View? = null,
 ) {
+    /** What the face places where the date was: the glance's date row, else the date. */
+    private val dateBox: View get() = dateRow ?: date
     /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
     val profile: ClockGeometry? = try {
         val density = context.resources.displayMetrics.density
@@ -53,12 +58,29 @@ class LockClockFace(
         null
     }
 
+    private val locale: Locale = context.resources.configuration.locales[0] ?: Locale.getDefault()
+
     init {
-        val locale = context.resources.configuration.locales[0] ?: Locale.getDefault()
-        val datePattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))
-        date.format12Hour = datePattern
-        date.format24Hour = datePattern
+        datePattern(short = profile != null)
         profile?.let { profileLook(it, locale) }
+    }
+
+    private fun datePattern(short: Boolean) {
+        val pattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(short))
+        if (date.format12Hour?.toString() != pattern) date.format12Hour = pattern
+        if (date.format24Hour?.toString() != pattern) date.format24Hour = pattern
+    }
+
+    /** Whether the no-profile date is the short one (design 75 D14, launcher QA M1/L2): while the policy's lock weather
+     * is on, "Man. 3. nov." as the profile phones show - whether or not the line shows at the moment, so the date never
+     * flips with the line's moods; the long date with the switch off. A profile's date is always the short one. */
+    private var short = false
+
+    fun shortDate(on: Boolean) {
+        if (profile != null || on == short) return
+        short = on
+        datePattern(on)
+        date.transformationMethod = if (on) FirstCapital(locale) else null
     }
 
     /**
@@ -138,10 +160,10 @@ class LockClockFace(
         ResourcesCompat.getFont(context, R.font.nunito_light)?.let { clock.typeface = it }
         date.transformationMethod = FirstCapital(locale)
         date.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.dateSp)
-        for (view in listOf(clock, date, alarm) + extra) {
+        for (view in listOf(clock, dateBox, alarm) + extra) {
             (view.layoutParams as LinearLayout.LayoutParams).let { view.layoutParams = it.apply { gravity = Gravity.START } }
         }
-        for (view in listOf(date, alarm) + extra) view.gravity = Gravity.START
+        for (view in listOf(date, alarm) + extra) (view as? TextView)?.gravity = Gravity.START
         // The first digit's ink keeps its place when the hour's first digit changes (its side bearing does).
         clock.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -197,12 +219,14 @@ class LockClockFace(
         val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)
         val clockTop = baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
         var moved = margins(clock, clockStartPx(p), clockTop)
-        measured(date, width)
+        val box = dateBox
+        measured(box, width)
         val clockBottom = contentTop + clockTop + clock.measuredHeight
         val descent = (clock.measuredHeight - clock.baseline).toFloat()
         val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
         val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
-        moved = margins(date, dateStart, baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(), floorPx = -descent)) || moved
+        val baseline = if (box === date) date.baseline else box.baseline.takeIf { it >= 0 } ?: date.baseline
+        moved = margins(box, dateStart, baselineMarginPx(dateTarget, clockBottom, baseline.toFloat(), floorPx = -descent)) || moved
         if (bar != placedBarPx) {
             placedBarPx = bar
             Log.i(logTag, "Glance clock: keyguard status bar ${bar.roundToInt()} px, the clock's baseline at ${clockTarget.roundToInt()} px, the date's at ${dateTarget.roundToInt()} px")

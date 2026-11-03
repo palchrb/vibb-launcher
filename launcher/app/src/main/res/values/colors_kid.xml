@@ -62,6 +62,10 @@
     <color name="kid_music_tile">#1B1B28</color>
     <color name="kid_music_control">#2A2A3A</color>
     <color name="kid_core_dim">#C7FBE4DC</color>
+    <!-- The lock's weather (design 75, mockup v7): the card's precipitation in the mockup's rain blue, and the current
+         period's column raised by white at 6 % over the tile (KidPaletteTest). -->
+    <color name="kid_rain">#7CC4F2</color>
+    <color name="kid_weather_now">#0FFFFFFF</color>
     <color name="kid_emergency_text">#FF8A8A</color>
     <!-- The tonal emergency red's ground (design 34): the 112 avatar (EMERGENCY_AVATAR, which
          KidPaletteTest keeps equal to this pair) and P7's emergency pill. -->

@@ -218,8 +218,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **The page** (`GET /devices/{id}/lock`, `device_pages::view_lock`, `device_lock.html`), reached from a row at the
   bottom of the device page ("Lock Screen & PINs · PIN on/off"); also for a phone not set up yet (PINs can be set
-  before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN (+ "Recent use"), Screen, Lock screen,
-  Notifications on the lock screen.
+  before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN, Screen, Lock screen, Weather (design 75, since
+  2026-11-03), Notifications on the lock screen (Parent PIN's "Recent use" went on 2026-11-03, the user's ask).
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
   and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
   `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and

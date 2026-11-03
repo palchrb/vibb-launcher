@@ -44,7 +44,7 @@ fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
         .any(|tag| tag == "*" || tag == etag)
 }
 
-fn accepts_gzip(headers: &HeaderMap) -> bool {
+pub(crate) fn accepts_gzip(headers: &HeaderMap) -> bool {
     headers
         .get_all(header::ACCEPT_ENCODING)
         .iter()

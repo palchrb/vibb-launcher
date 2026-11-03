@@ -2382,6 +2382,32 @@ note: the UTC body is accepted and shows at the right local time in the account'
 (or the GET after it finds our body); Test fills `writable` from `current-user-privilege-set`; iCloud's rewrite of the
 body after a PUT (`X-APPLE-*`, its own DTSTAMP) is not read as a parent's edit (no hand-back after the first fetch).
 
+## 6x. The weather on the lock glance (design 75 step 2)
+
+Branch `lock-weather`; `jelly36` at `wm density 240` (the Jelly Star's 320 dp) and `handy36` at its own density (360 dp);
+logcat `WeatherPull`, `WeatherStore`, `WeatherLockPanel` (counts and classes only - never a place or a temperature).
+The server needs no MET: point the phone at a server whose `weather_cells` row holds the contract's recorded hours, or
+serve `server/testdata/weather.json`'s `answer` / `answer_words` from a throwaway endpoint as the phone's
+`/api/devices/weather` (and a `now_answers` row as `/weather/now`). Device › Weather on, Location Regularly with a
+fresh fix, or a weather zone. Set the emulator's clock inside the answer's hours (2026-11-03 15:20 Europe/Oslo).
+
+1. **The line**: symbol, degrees and, with `answer_words`, "Regn fra kl. 16" beside the date at 360 dp / font 1.0;
+   on its own line under the date on the Jelly Star (every day, the reference "Regn fra kl. 14" decides); at font 1.3
+   and 2.0 (`adb shell settings put system font_scale`): the place per design §5.3's table, words dropped - never cut.
+   Across an hour's turn (clock to 15:59 -> 16:00) the words change to "Regn nå" and the mark does not move.
+2. **The card**: a tap on the mark (and on its 48 dp hit area just above/below it) folds the day out under the
+   face's lines; morning/afternoon/evening, the current column raised, the mm in the rain blue, "Nydalen · 2° / 7°" and
+   "Mørkt kl. 17:02"; a second tap or the card folds it; power off/on folds it; a swipe up from the mark still asks for
+   the unlock. The "Neste" line stays when the card opens.
+3. **The nowcast**: open the card with `/weather/now` answering at once -> "Regn om ca. 25 min" at the card's top;
+   delayed 2 s (a slow endpoint) -> nothing inserted, the next open within 2 min shows it at once.
+4. **Stale**: the answer's `checked_at_ms` 61 min old -> "Oppdatert kl."; 3 h + 1 min -> no line; the switch off in
+   the PWA -> the line goes at the next sync and no `weather` request leaves the phone (logcat, the server's log).
+5. **TalkBack**: the mark reads "Været nå: Delvis skyet. 7 grader. Regn fra kl. 16." with expand/collapse; the card
+   reads its periods, place, low, high and the dark.
+6. **The look**: the symbols on a bright photo wallpaper and on Sky/Sunset; the clock twin on `jelly36` unchanged with
+   the weather off and on (design 59d's profile: the date row's baseline is the date's).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

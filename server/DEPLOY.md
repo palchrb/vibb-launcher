@@ -451,6 +451,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
 | `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://`; `http://` to a Tailscale address (100.64.0.0/10, `fd7a:115c:a1e0::/48`, a `*.ts.net` name); `http://` to another private address (RFC 1918, `fc00::/7`, link-local, loopback, `.local`/`.internal`/single-label names) is taken with a warning in the log, on Phone Setup and on the Connect page - plain http is safe only through an encrypted tunnel (WireGuard, Tailscale), which the server can't see; `http://` to a public host is ignored with a log line, and Phone Setup refuses it the same way |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
+| `MET_CONTACT` | none - your e-mail address or website, added to the User-Agent of the server's requests to MET Norway for the lock screen's weather (design 75; "Weather on the lock screen" below). MET asks for it and may block clients without a contact; with it MET can tie the grid cells it is asked for to that address. 3-100 printable ASCII characters without quotes (no æ, ø, å), else ignored with a log line |
 | `PWA_DEFAULT_LANG` | none - `en` or `nb`: the admin pages' language for sign-in pages and for an account's first signed-in request (stored once as that account's language), ahead of the browser's `Accept-Language`; unset = the browser's language, else English. `?lang=` and an account's own choice (Settings > Account > Language) always win; any other value is ignored with a log line |
 
 `LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),
@@ -757,6 +758,24 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
   tailnet the confirmation can't arrive and Notifications says it "may not be showing" after three unconfirmed
   pushes, or one a day old.
 
+## Weather on the lock screen (design 75, migration 0122)
+
+Device › Weather turns it on per phone (off by default). The server then asks, only when a phone asks it and its
+cached answer is due (about once an hour per grid cell of about 2 x 2 km):
+
+- **MET Norway** (`api.met.no`, HTTPS 443): Locationforecast 2.0 for the forecast, Nowcast 2.0 when the kid opens the
+  card. MET's terms ask every client to identify itself with a way to contact its operator, and block clients that
+  don't. The server sends `vibb-server/<version> github.com/<SERVER_RELEASE_REPO>`; **set `MET_CONTACT`** in `.env` to
+  your e-mail address or website (3-100 printable ASCII characters - no æ, ø, å - and no quotes) and it is added, so MET can reach you rather
+  than block every install that shares the string (the log warns once while it is unset). With it, MET can tie the
+  cells it is asked for - roughly where your family is, to about 2 km - to that address. MET's data is CC BY 4.0.
+- **Kartverket** (`api.kartverket.no`): the nearest settlement's name, once per cell, with the server's neutral
+  User-Agent. Place names © Kartverket, CC BY 4.0.
+
+The phones only ever ask this server. The cache (`weather_cells`, `weather_places`) has no phone in it: a cell nobody
+asked for in 48 hours goes, a place name with the longest location retention, and a phone's Location set to Off
+erases both at once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
@@ -788,6 +807,8 @@ Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one
 - Since 0.23.0 the server also copies the database to `data/backups/pre-migrate-<from>-<to>.db` before an update
   changes it (the newest 3 are kept). Rolling back a Pi still uses the `update.sh` copy ("Rolling back the server");
   the pre-migration copy is a second one.
+- The weather's caches (design 75: the grid cells asked for and their place names) are in every copy too, and stay
+  there after a phone's Location is set to Off, as its fixes do.
 
 ## Removed: MollySocket and the launcher's UnifiedPush distributor
 

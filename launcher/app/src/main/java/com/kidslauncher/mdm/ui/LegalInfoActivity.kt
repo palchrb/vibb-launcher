@@ -31,11 +31,18 @@ class LegalInfoActivity : UIObjectActivity() {
         } catch (e: java.io.IOException) {
             APACHE_ASSET
         }
+        // And the weather symbols' (Yr/NRK, CC BY 4.0 §3(a); design 75 §4.3).
+        binding.legalInfoCcBy.text = try {
+            assets.open(CC_BY_ASSET).bufferedReader().use { it.readText() }
+        } catch (e: java.io.IOException) {
+            CC_BY_ASSET
+        }
     }
 
     companion object {
         const val OFL_ASSET = "licenses/OFL.txt"
         const val APACHE_ASSET = "licenses/Apache-2.0.txt"
+        const val CC_BY_ASSET = "licenses/CC-BY-4.0.txt"
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

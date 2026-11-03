@@ -86,6 +86,10 @@ pub struct ForkConfig {
     /// on an account's first signed-in request (`i18n::Lang::of_request`, `security::store_first_lang`). The
     /// per-account switch in Settings › Account wins.
     pub pwa_default_lang: Option<crate::i18n::Lang>,
+    /// `MET_CONTACT` (design 75 D8): the operator's contact (an e-mail or a link), appended to MET's User-Agent
+    /// ([ForkConfig::met_user_agent]). 3-100 printable ASCII characters without quotes; anything else is logged and
+    /// ignored. With it MET can tie the cells it is asked for to that address (DEPLOY.md).
+    pub met_contact: Option<String>,
 }
 
 pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 240;
@@ -169,7 +173,24 @@ impl ForkConfig {
                 crate::i18n::Lang::from_code(&v.to_ascii_lowercase()).is_some()
             })
             .and_then(|v| crate::i18n::Lang::from_code(&v.to_ascii_lowercase())),
+            met_contact: read("MET_CONTACT", is_valid_contact),
         }
+    }
+
+    /// MET's User-Agent (design 75 D8, the user: "OK vi kjører standard"): `vibb-server/<version>
+    /// github.com/<SERVER_RELEASE_REPO>`, then `MET_CONTACT` when set. Only MET's requests carry it; every other
+    /// request keeps the neutral `net::USER_AGENT`.
+    pub fn met_user_agent(&self) -> String {
+        let mut agent = format!(
+            "vibb-server/{} github.com/{}",
+            env!("CARGO_PKG_VERSION"),
+            self.server_release_repo
+        );
+        if let Some(contact) = &self.met_contact {
+            agent.push(' ');
+            agent.push_str(contact);
+        }
+        agent
     }
 
     /// Defaults plus a syntactically valid (made-up) checksum, so tests see a working QR page
@@ -193,6 +214,14 @@ pub(crate) fn is_valid_repo(value: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
     };
     matches!(value.split_once('/'), Some((owner, repo)) if ok_part(owner) && ok_part(repo))
+}
+
+/// `MET_CONTACT`: 3-100 printable ASCII characters, no quotes (it goes into a header as it is).
+fn is_valid_contact(value: &str) -> bool {
+    (3..=100).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| (0x20..0x7f).contains(&b) && b != b'"' && b != b'\'')
 }
 
 fn is_valid_component(value: &str) -> bool {
@@ -442,6 +471,27 @@ mod tests {
         for (key, value) in cases {
             let config = ForkConfig::from_vars(&vars(&[(key, value)]));
             assert_eq!(config, defaults, "{key}={value:?} should be ignored");
+        }
+    }
+
+    #[test]
+    fn met_contact_is_checked_and_appended() {
+        let agent =
+            |value: &str| ForkConfig::from_vars(&vars(&[("MET_CONTACT", value)])).met_user_agent();
+        let base = format!(
+            "vibb-server/{} github.com/palchrb/vibb-launcher",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(agent(""), base);
+        assert_eq!(agent(" ola@example.no "), format!("{base} ola@example.no"));
+        for bad in [
+            "ab",
+            "with \"quote\"",
+            "line\nbreak",
+            "ø@example.no",
+            &"x".repeat(101),
+        ] {
+            assert_eq!(agent(bad), base, "{bad:?} is ignored");
         }
     }
 

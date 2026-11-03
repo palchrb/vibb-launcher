@@ -529,4 +529,77 @@
         <item quantity="one">%d hour</item>
         <item quantity="other">%d hours</item>
     </plurals>
+    <!-- Design 75: the weather on the lock glance. The server sends a rule key and a form; each string is whole
+         (WeatherWords maps the pairs). "%1$s" in a "from" string is the hour (weatherHour: "14", "14:00", "2 PM"). -->
+    <string name="weather_thunder_from">Thunder from %1$s</string>
+    <string name="weather_thunder_today">Thunder today</string>
+    <string name="weather_thunder_now">Thunder now</string>
+    <string name="weather_thunder_tomorrow">Thunder tomorrow</string>
+    <string name="weather_snow_from">Snow from %1$s</string>
+    <string name="weather_snow_today">Snow today</string>
+    <string name="weather_snow_now">Snowing now</string>
+    <string name="weather_snow_tomorrow">Snow tomorrow</string>
+    <string name="weather_sleet_from">Sleet from %1$s</string>
+    <string name="weather_sleet_today">Sleet today</string>
+    <string name="weather_sleet_now">Sleet now</string>
+    <string name="weather_sleet_tomorrow">Sleet tomorrow</string>
+    <string name="weather_heavy_rain_from">Heavy rain from %1$s</string>
+    <string name="weather_heavy_rain_today">Heavy rain today</string>
+    <string name="weather_heavy_rain_now">Heavy rain now</string>
+    <string name="weather_heavy_rain_tomorrow">Heavy rain tomorrow</string>
+    <string name="weather_rain_from">Rain from %1$s</string>
+    <string name="weather_rain_today">Rain today</string>
+    <string name="weather_rain_now">Raining now</string>
+    <string name="weather_rain_tomorrow">Rain tomorrow</string>
+    <string name="weather_maybe_rain_today">Maybe a little rain</string>
+    <string name="weather_maybe_rain_tomorrow">Maybe a little rain tomorrow</string>
+    <string name="weather_maybe_snow_today">Maybe a little snow</string>
+    <string name="weather_maybe_snow_tomorrow">Maybe a little snow tomorrow</string>
+    <string name="weather_very_cold_today">Very cold</string>
+    <string name="weather_very_cold_tomorrow">Very cold tomorrow</string>
+    <string name="weather_windy_today">Windy</string>
+    <string name="weather_windy_tomorrow">Windy tomorrow</string>
+    <string name="weather_very_warm_today">Very warm</string>
+    <string name="weather_very_warm_tomorrow">Very warm tomorrow</string>
+    <!-- The card's top line (MET Nowcast, asked when the card opens). -->
+    <string name="weather_now_rain_in">Rain in about %1$d min</string>
+    <string name="weather_now_snow_in">Snow in about %1$d min</string>
+    <string name="weather_now_dry_in">Dry in about %1$d min</string>
+    <string name="weather_now_rain_all">Rain for the next 90 minutes</string>
+    <string name="weather_now_snow_all">Snow for the next 90 minutes</string>
+    <string name="weather_part_morning">Morning</string>
+    <string name="weather_part_afternoon">Afternoon</string>
+    <string name="weather_part_evening">Evening</string>
+    <string name="weather_card_tomorrow">Tomorrow</string>
+    <string name="weather_dark_at">Dark at %1$s</string>
+    <string name="weather_dark_never">Light all night</string>
+    <string name="weather_dark_all_day">Dark all day</string>
+    <string name="weather_updated">Updated %1$s</string>
+    <string name="weather_mm">%1$s mm</string>
+    <string name="weather_low_high">%1$s / %2$s</string>
+    <string name="weather_foot">%1$s · %2$s</string>
+    <!-- TalkBack (launcher QA M5): whole sentences joined with a space, never a sentence glued from parts. -->
+    <string name="weather_spoken_now">Weather now: %1$s.</string>
+    <string name="weather_spoken_now_plain">Weather now.</string>
+    <plurals name="weather_spoken_degrees">
+        <item quantity="one">%1$s degree.</item>
+        <item quantity="other">%1$s degrees.</item>
+    </plurals>
+    <string name="weather_spoken_period">%1$s:</string>
+    <!-- Always one decimal on screen ("1.0"), which CLDR reads as "other" (launcher QA L3): no plural. -->
+    <string name="weather_spoken_mm">%1$s millimetres.</string>
+    <plurals name="weather_spoken_low">
+        <item quantity="one">Low %1$s degree.</item>
+        <item quantity="other">Low %1$s degrees.</item>
+    </plurals>
+    <plurals name="weather_spoken_high">
+        <item quantity="one">High %1$s degree.</item>
+        <item quantity="other">High %1$s degrees.</item>
+    </plurals>
+    <string name="weather_spoken_sentence">%1$s.</string>
+    <string name="weather_expanded">Open</string>
+    <string name="weather_collapsed">Closed</string>
+    <!-- TalkBack says "Double-tap to" before a click label (code QA L2): infinitives. -->
+    <string name="weather_card_hint">see the day</string>
+    <string name="weather_card_close">close the day</string>
 </resources>

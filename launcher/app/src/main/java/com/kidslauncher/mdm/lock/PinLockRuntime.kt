@@ -983,6 +983,8 @@ object PinLockRuntime {
                     com.kidslauncher.mdm.badges.AlarmNoticeReader.screenOn()
                     // Gap closed 2026-11-02 (code QA L6): the resumed lock looks for a still-ringing alarm's screen now.
                     screenOnListeners.toList().forEach { listener -> runCatching { listener() } }
+                    // Design 75: the lock's weather pulled now when its answer is stale (in the background).
+                    com.kidslauncher.mdm.weather.WeatherPull.atScreenOn(app)
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)

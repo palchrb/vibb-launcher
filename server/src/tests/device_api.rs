@@ -436,9 +436,12 @@ async fn policy_json_keys_snapshot() {
             "language",
             "lock_wake_on_notification",
             "lock_wallpaper",
+            "lock_weather",
             "wallpapers"
         ]
     );
+    // Design 75 D17: always sent, off for a new phone (the launcher reads a missing key as off).
+    assert_eq!(launcher_ui["lock_weather"], serde_json::json!(false));
     // Launcher round 7 §3: always sent, off for a new phone (the launcher reads a missing key as off).
     assert_eq!(
         launcher_ui["lock_wake_on_notification"],

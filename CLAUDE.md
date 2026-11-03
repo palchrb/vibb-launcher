@@ -41,6 +41,10 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
   39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs and head.html's
   links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash"),
+  `yr-symbols.py` (the launcher's weather symbols, design 75 §4.1: yr's darkmode SVGs at a pinned commit, checked by
+  one SHA-256 over a manifest, converted to `res/drawable/weather_*.xml` with `WeatherSymbols.kt` and the names;
+  `--selftest`, no network, also converts the vendored `scripts/yr-symbols-11.svg` to exactly the committed
+  `weather_11.xml`; Python's standard library, run with `-I`; run by `launcher.yml`'s always-run changes job),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74).
@@ -152,6 +156,14 @@ The fixed emergency list (design 73 §4: `always`, `by_country`, `vectors` of a 
 `emergency::tests` and the launcher's `EmergencyMenuTest` check their constants (`emergency::ALWAYS`/`BY_COUNTRY`,
 `Emergency.ALWAYS`/`BY_COUNTRY`) against it, run every vector and compare the copies. The policy's
 `call_policy.emergency_menu` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+The weather's contract (design 75 §7.1) is `server/testdata/weather.json`, byte-identical in
+`launcher/app/src/test/resources/`: `forms` and `now_keys` (every key and form the server may send), the rule vectors
+(`words`, `periods`, `dark`, `cells`, `nowcast`) and the answers (`answer`, `answer_now_ms`, `answer_line`,
+`now_answers`, `statuses`). The server's `weather::tests` runs every row and writes the computed parts from the
+recorded MET and Kartverket answers in `server/testdata/weather/` (`WEATHER_CONTRACT_WRITE=1`); the launcher's
+`WeatherContractTest` decodes the answers into its DTOs and checks every symbol code; both compare the copies. The
+policy's `launcher_ui.lock_weather` is pinned by `policy_json_keys_snapshot` and the launcher's
+`PolicyResponseCompatTest`.
 The kid's own events written to the marked CalDAV calendar (design 72b §8) are `server/testdata/calendar_kid_events.json`,
 byte-identical in `launcher/app/src/test/resources/`: `provider` ("Min kalender"'s rows) and the exact POST body
 `snapshot` (and `cut_variant` past the limits), `canonical` (D2.7's form and hash, row by row), `policy` /
@@ -171,7 +183,7 @@ compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json` and `emergency_numbers.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json` and `weather.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -180,7 +192,7 @@ compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json` and `emergency_numbers.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json` and `weather.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

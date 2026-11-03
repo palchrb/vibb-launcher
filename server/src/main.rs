@@ -64,6 +64,8 @@ mod tests;
 mod time_rules;
 mod time_state;
 mod wallpapers;
+mod weather;
+mod weather_cache;
 mod webauthn;
 mod webpush;
 mod window_relock;
@@ -182,6 +184,12 @@ pub struct AppState {
     /// The newest server release, read from GitHub off the request path
     /// (`handlers::system_update::ServerRelease`).
     pub server_release: std::sync::Arc<handlers::system_update::ServerRelease>,
+    /// MET's requests (design 75 §3.3): their own `music_net::HttpSource` behind their own gate, never the music
+    /// fetch's (a card's nowcast must not queue behind a 120 s feed); canned in the tests.
+    pub weather_fetch: std::sync::Arc<dyn music_net::Source>,
+    /// The weather's caches in memory, its locks, Kartverket's client and the phones' ask limits
+    /// (`weather_cache::Weather`).
+    pub weather: std::sync::Arc<weather_cache::Weather>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -514,6 +522,13 @@ async fn main() {
         ),
         kid_writes: Default::default(),
         server_release: Default::default(),
+        weather_fetch: std::sync::Arc::new(music_net::Gated::new(
+            std::sync::Arc::new(music_net::HttpSource::new()),
+            music_net::REQUEST_SPACING,
+        )),
+        weather: std::sync::Arc::new(weather_cache::Weather::new(std::sync::Arc::new(
+            music_net::HttpSource::new(),
+        ))),
     };
     state
         .tokens
@@ -1087,6 +1102,16 @@ pub fn build_admin_router(
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
+        // Design 75 §6: the weather's two rows are on Lock Screen & PINs; the old page's address leads there.
+        .route("/devices/{id}/weather", get(handlers::weather_page::view))
+        .route(
+            "/devices/{id}/weather/lock",
+            post(handlers::weather_page::save_lock),
+        )
+        .route(
+            "/devices/{id}/weather/zone",
+            post(handlers::weather_page::save_zone),
+        )
         .route(
             "/devices/{id}/filter",
             get(handlers::device_pages::view_filter),

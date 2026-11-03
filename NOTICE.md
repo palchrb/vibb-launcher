@@ -34,6 +34,20 @@ under the Apache License 2.0 - see
 and `server/static/app-icons/LICENSE.txt` (the same text in `server/static/music-icons/LICENSE.txt` and
 `music/app/src/main/assets/licenses/Apache-2.0.txt`). Each converted file says what it was converted from.
 
+The launcher's weather symbols (`launcher/app/src/main/res/drawable/weather_*.xml`, their names in
+`res/values*/weather_symbols.xml` and the table `weather/WeatherSymbols.kt`, made by `scripts/yr-symbols.py`, design 75;
+and `scripts/yr-symbols-11.svg`, upstream's `symbols/darkmode/11.svg` unchanged, the script's self-test input)
+are converted from [Yr's weather symbols](https://github.com/nrkno/yr-weather-symbols) (darkmode, commit
+`34039b509167ba1701f1729df5cc95488813dd5f`), "Yr weather symbols © 2015 by Yr/NRK", licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) - see
+[`launcher/app/src/main/assets/licenses/CC-BY-4.0.txt`](launcher/app/src/main/assets/licenses/CC-BY-4.0.txt). Changes:
+converted from SVG to Android VectorDrawables, the soft blurred cloud shading removed, the multiply blend layers merged into the
+shapes they shade; each file says so. The forecast the lock screen shows is MET Norway's
+([CC BY 4.0](https://api.met.no/doc/License)), the place names Kartverket's (© Kartverket, CC BY 4.0, the place-name
+register "Stedsnavn", kartkatalog.geonorge.no entry `30caed2f-454e-44be-b5cc-26bb5c0110ca`, open data under CC BY
+4.0, checked 2026-11-03): the server fetches them, the launcher shows them; neither is
+bundled.
+
 The server's table of Windows time zone names (`server/src/windows_zones.txt`, read by `server/src/ics.rs` for a
 calendar link's Outlook/Exchange TZIDs, design 72) is the territory "001" rows of the Unicode CLDR's
 `common/supplemental/windowsZones.xml`, CLDR release 49, Copyright © 1991-2025 Unicode, Inc., under the
