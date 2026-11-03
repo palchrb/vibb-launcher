@@ -4,33 +4,40 @@
 // phone's circle over it (the phone's circle is the square's inscribed one, `centerCrop`); a drag moves it, a pinch
 // or the slider (or the wheel, + and -) zooms, the arrow keys move it. Zoom 1 is "cover": the square spans the
 // photo's shorter side, so the circle never shows anything outside the photo, and it can't go below that. Save
-// draws the chosen square (at most the server's `photos::MAX_SIDE`, `data-side`) on a white canvas, encodes it as
-// JPEG, puts that file into the form's own file input (DataTransfer) and submits the form - the same route and
-// the same answer as without this script: the redirect to the contact's row, kept on the screen where it was by
-// static/scroll-restore.js's hooked form.submit() (a save never jumps to the top), or the 400 page with the
-// reason under the photo. Cancel empties the input and uploads nothing. "Adjust crop" (`data-photo-adjust`, shown
-// only here) opens the stored 512 px square the same way, to zoom in and move.
+// draws the chosen square (at most the server's `photos::MAX_SIDE`, `data-side`; shrunk by halves with high-quality
+// smoothing, so it doesn't alias) on white, encodes it as JPEG, puts that file into the form's own file input
+// (DataTransfer) and submits the form - the same route and the same answer as without this script: the redirect
+// to the contact's row, kept on the screen where it was by static/scroll-restore.js's hooked form.submit() (a save
+// never jumps to the top), or the 400 page with the reason under the photo. Cancel empties the input and uploads
+// nothing. "Adjust crop" (`data-photo-adjust`, shown only here) opens the stored square the same way: a refinement
+// of it, not a re-crop of the original (the server keeps only the square), so it can only zoom in, and only while
+// the chosen square stays at least MIN_ADJUST_SIDE px - the phone's circle at 3x - so adjusting never makes the
+// photo soft on the phone.
 //
-// The picture: decoded by an <img> (with decode(), off the main thread), which applies the EXIF orientation in
-// Chrome 81+, Firefox 77+ and Safari 13.1+ (iOS 13.4 is when drawImage began to draw photos upright), then drawn
-// once into a working canvas of at most 2048 px on the shorter side, so a 10 MB photo doesn't stall every move.
-// createImageBitmap's `imageOrientation` isn't used: for a Blob in WebKit it is not documented to follow EXIF.
-// A file over the server's limit (`data-max-bytes`) or one the browser can't decode goes up as it is, and the
-// server says why. Without JS, or without canvas.toBlob or a settable file input, nothing here runs and the
-// input autosaves as before (its `data-autosave`, which this removes only where it takes over).
+// The picture: decoded by an <img> (with decode(), off the main thread) from a blob: URL (the admin CSP's img-src
+// allows blob:), which applies the EXIF orientation in Chrome 81+, Firefox 77+ and Safari 13.1+ (iOS 13.4 is when
+// drawImage began to draw photos upright), then drawn once into a working canvas of at most WORK_PIXELS, so a 10 MB
+// photo doesn't stall every move. createImageBitmap's `imageOrientation` isn't used: for a Blob in WebKit it is not
+// documented to follow EXIF. A file over the server's limit (`data-max-bytes`) or one the browser can't decode goes
+// up as it is, and the server says why. Without JS, or without canvas.toBlob or a settable file input, nothing here
+// runs and the input autosaves as before (its `data-autosave`, which this removes only where it takes over).
 //
-// The dialog is the page's `[data-crop-dialog]`, its words the template's. A focus trap, Escape cancels, the
-// slider is labelled. ES5. Run its tests: node --test jstest/photo-crop.test.js
+// The dialog is the page's `[data-crop-dialog]`, its words the template's. While it is open the page behind is
+// `inert`; Tab and Shift-Tab go round the dialog's controls, Escape cancels, a press on the veil keeps the focus in
+// the dialog, the slider is labelled. ES5. Run its tests: node --test jstest/photo-crop.test.js
 (function (root) {
     "use strict";
 
     // How far in the slider and a pinch go: a quarter of the shorter side across.
     var MAX_ZOOM = 4;
-    // The working copy's bounds (shorter side, longer side), and an arrow key's move in CSS px.
-    var WORK_SHORT = 2048;
-    var WORK_LONG = 4096;
+    // The least side of the square an adjust may choose: the 76 dp circle on a 3x phone (228 px).
+    var MIN_ADJUST_SIDE = 230;
+    // The working copy's bounds: its pixels, and its longer side (the server refuses more than 8000 px anyway).
+    var WORK_PIXELS = 8000000;
+    var WORK_LONG = 8192;
+    // An arrow key's move in CSS px.
     var STEP = 10;
-    var QUALITY = 0.92;
+    var QUALITY = 0.95;
     var JPEG = "image/jpeg";
 
     function clamp(n, lo, hi) {
@@ -85,15 +92,78 @@
         return clampView({ zoom: z, cx: ix - px * after, cy: iy - py * after }, w, h, maxZoom);
     }
 
-    /** A `w`×`h` picture's size shrunk (never enlarged) to at most `short` on its shorter, `long` on its longer side. */
-    function fitWithin(w, h, short, long) {
-        var s = Math.min(1, short / Math.min(w, h), long / Math.max(w, h));
+    /**
+     * A `w`×`h` picture's size shrunk (never enlarged, the shape kept) to at most `pixels` pixels and `long` on its
+     * longer side - by area, so a banner keeps its short side.
+     */
+    function fitWithin(w, h, pixels, long) {
+        var s = Math.min(1, Math.sqrt(pixels / (w * h)), long / Math.max(w, h));
         return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
     }
 
     /** The uploaded square's side: the chosen square's own pixels, at most `max` (never enlarged). */
     function outputSide(side, max) {
         return Math.max(1, Math.min(max, Math.round(side)));
+    }
+
+    /**
+     * How far an adjust may zoom into a `w`×`h` stored photo: the square stays at least MIN_ADJUST_SIDE px (a
+     * smaller photo can't zoom at all), never past MAX_ZOOM.
+     */
+    function adjustZoom(w, h) {
+        return Math.max(1, Math.min(MAX_ZOOM, Math.min(w, h) / MIN_ADJUST_SIDE));
+    }
+
+    /**
+     * The sizes a `from`-px side goes through on its way to `to`: halves while it is more than twice the target,
+     * then the target - so no single draw shrinks by more than 2x (a browser's one-step shrink skips pixels).
+     */
+    function halvings(from, to) {
+        var sizes = [];
+        var side = from;
+        while (side > 2 * to) {
+            side = Math.ceil(side / 2);
+            sizes.push(side);
+        }
+        sizes.push(to);
+        return sizes;
+    }
+
+    function smooth(ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        return ctx;
+    }
+
+    /**
+     * A new `tw`×`th` canvas holding `source`'s (sx, sy, sw, sh) part, shrunk by halves (`halvings`, on the longer
+     * side) on white.
+     */
+    function shrink(doc, source, sx, sy, sw, sh, tw, th) {
+        var steps = halvings(Math.max(sw, sh), Math.max(tw, th));
+        var from = source;
+        var rect = [sx, sy, sw, sh];
+        for (var i = 0; i < steps.length; i++) {
+            var last = i === steps.length - 1;
+            var k = steps[i] / Math.max(sw, sh);
+            var cw = last ? tw : Math.max(1, Math.round(sw * k));
+            var ch = last ? th : Math.max(1, Math.round(sh * k));
+            var canvas = doc.createElement("canvas");
+            canvas.width = cw;
+            canvas.height = ch;
+            var ctx = smooth(canvas.getContext("2d"));
+            // JPEG has no alpha: a transparent PNG goes on white, as the server flattens it.
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(0, 0, cw, ch);
+            ctx.drawImage(from, rect[0], rect[1], rect[2], rect[3], 0, 0, cw, ch);
+            if (from !== source) {
+                from.width = 0;
+                from.height = 0;
+            }
+            from = canvas;
+            rect = [0, 0, cw, ch];
+        }
+        return from;
     }
 
     /** Can this browser crop and hand the result to the form: a 2D canvas with toBlob, and a settable file input. */
@@ -140,15 +210,30 @@
         var maxSide = Number(dialog.getAttribute("data-side")) || 512;
         var maxBytes = Number(dialog.getAttribute("data-max-bytes")) || 10 * 1024 * 1024;
         slider.min = "1";
-        slider.max = String(MAX_ZOOM);
 
         // The open crop: the input it fills, what had focus, whether it came from a picked file, the working
-        // canvas and its size, the view and the frame's width. `null` while closed.
+        // canvas and its size, the view, its zoom limit and the frame's width. `null` while closed.
         var session = null;
         var pointers = {};
         var queued = false;
         // Set from Save until the page goes: a change the file input fires for the cropped file starts nothing.
         var submitting = false;
+        // The page behind the dialog, inert while it is open.
+        var behind = [];
+
+        function setInert(on) {
+            if (on) {
+                behind = [doc.querySelector("main"), doc.querySelector(".tab-bar")].filter(function (el) { return !!el; });
+            }
+            for (var i = 0; i < behind.length; i++) {
+                if (on) {
+                    behind[i].setAttribute("inert", "");
+                } else {
+                    behind[i].removeAttribute("inert");
+                }
+            }
+            if (!on) behind = [];
+        }
 
         function setBusy(busy) {
             frame.setAttribute("aria-busy", busy ? "true" : "false");
@@ -160,9 +245,7 @@
             queued = false;
             if (!session || !session.work) return;
             var r = sourceRect(session.view, session.w, session.h);
-            var ctx = preview.getContext("2d");
-            ctx.fillStyle = "#FFFFFF";
-            ctx.fillRect(0, 0, preview.width, preview.height);
+            var ctx = smooth(preview.getContext("2d"));
             ctx.drawImage(session.work, r.x, r.y, r.side, r.side, 0, 0, preview.width, preview.height);
         }
 
@@ -179,12 +262,15 @@
         function setView(view) {
             if (!session || !session.work) return;
             session.view = view;
-            slider.value = String(Math.round(view.zoom * 100) / 100);
+            var zoom = Math.round(view.zoom * 100) / 100;
+            slider.value = String(zoom);
+            slider.setAttribute("aria-valuetext", Math.round(view.zoom * 100) + " %");
             redraw();
         }
 
         function close() {
             dialog.hidden = true;
+            setInert(false);
             pointers = {};
             var s = session;
             session = null;
@@ -209,23 +295,26 @@
         }
 
         function open(input, opener, src, picked, revoke) {
-            session = { input: input, opener: opener, picked: picked, work: null };
+            session = { input: input, opener: opener, picked: picked, work: null, maxZoom: MAX_ZOOM };
             var mine = session;
             setBusy(true);
             slider.value = "1";
+            setInert(true);
             dialog.hidden = false;
             frame.focus();
             loadImage(win, src).then(function (img) {
                 if (revoke) revoke();
                 if (session !== mine) return;
-                var size = fitWithin(img.naturalWidth || img.width, img.naturalHeight || img.height, WORK_SHORT, WORK_LONG);
-                var work = doc.createElement("canvas");
-                work.width = size.w;
-                work.height = size.h;
-                work.getContext("2d").drawImage(img, 0, 0, size.w, size.h);
+                var nw = img.naturalWidth || img.width;
+                var nh = img.naturalHeight || img.height;
+                var size = fitWithin(nw, nh, WORK_PIXELS, WORK_LONG);
+                var work = shrink(doc, img, 0, 0, nw, nh, size.w, size.h);
                 mine.work = work;
                 mine.w = size.w;
                 mine.h = size.h;
+                // A stored square is all there is to adjust: zoom only as far as it stays sharp on the phone.
+                mine.maxZoom = picked ? MAX_ZOOM : adjustZoom(size.w, size.h);
+                slider.max = String(Math.floor(mine.maxZoom * 100) / 100);
                 var box = frame.getBoundingClientRect();
                 mine.frame = box.width || 280;
                 var ratio = win.devicePixelRatio || 1;
@@ -251,23 +340,23 @@
             if (!s || !s.work || submitting) return;
             var r = sourceRect(s.view, s.w, s.h);
             var side = outputSide(r.side, maxSide);
-            var out = doc.createElement("canvas");
-            out.width = side;
-            out.height = side;
-            var ctx = out.getContext("2d");
-            // JPEG has no alpha: a transparent PNG goes on white, as the server flattens it.
-            ctx.fillStyle = "#FFFFFF";
-            ctx.fillRect(0, 0, side, side);
-            ctx.drawImage(s.work, r.x, r.y, r.side, r.side, 0, 0, side, side);
+            var out = shrink(doc, s.work, r.x, r.y, r.side, r.side, side, side);
             submitting = true;
             setBusy(true);
             out.toBlob(function (blob) {
-                close();
                 if (!blob) {
+                    // Out of memory, as a rule. A picked file goes up as it is; an adjust stays open to try again.
                     submitting = false;
-                    if (s.picked) plainUpload(s.input);
+                    if (s.picked) {
+                        close();
+                        plainUpload(s.input);
+                    } else if (session === s) {
+                        setBusy(false);
+                        saveButton.focus();
+                    }
                     return;
                 }
+                close();
                 var transfer = new win.DataTransfer();
                 transfer.items.add(new win.File([blob], "photo.jpg", { type: JPEG }));
                 s.input.files = transfer.files;
@@ -290,6 +379,8 @@
 
         frame.addEventListener("pointerdown", function (e) {
             if (!session || !session.work) return;
+            // Only the main button drags: a right click's pointerup can go to the context menu.
+            if (e.button > 0) return;
             if (e.preventDefault) e.preventDefault();
             try {
                 if (frame.setPointerCapture) frame.setPointerCapture(e.pointerId);
@@ -302,11 +393,16 @@
         frame.addEventListener("pointermove", function (e) {
             var last = pointers[e.pointerId];
             if (!last || !session || !session.work) return;
+            // A mouse whose release went elsewhere: no button is down any more, the drag is over.
+            if (e.pointerType === "mouse" && e.buttons === 0) {
+                delete pointers[e.pointerId];
+                return;
+            }
             var s = session;
             var held = ids();
             if (held.length === 1) {
                 pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-                setView(pan(s.view, e.clientX - last.x, e.clientY - last.y, s.frame, s.w, s.h));
+                setView(pan(s.view, e.clientX - last.x, e.clientY - last.y, s.frame, s.w, s.h, s.maxZoom));
                 return;
             }
             // Two fingers: the midpoint pans, the distance zooms about it.
@@ -316,10 +412,10 @@
             pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
             var midAfter = { x: (e.clientX + other.x) / 2, y: (e.clientY + other.y) / 2 };
             var distAfter = Math.sqrt(Math.pow(e.clientX - other.x, 2) + Math.pow(e.clientY - other.y, 2));
-            var view = pan(s.view, midAfter.x - midBefore.x, midAfter.y - midBefore.y, s.frame, s.w, s.h);
+            var view = pan(s.view, midAfter.x - midBefore.x, midAfter.y - midBefore.y, s.frame, s.w, s.h, s.maxZoom);
             if (distBefore > 0) {
                 var at = framePoint(midAfter.x, midAfter.y);
-                view = zoomAt(view, view.zoom * distAfter / distBefore, at.x, at.y, s.frame, s.w, s.h);
+                view = zoomAt(view, view.zoom * distAfter / distBefore, at.x, at.y, s.frame, s.w, s.h, s.maxZoom);
             }
             setView(view);
         });
@@ -334,8 +430,10 @@
             if (!session || !session.work) return;
             if (e.preventDefault) e.preventDefault();
             var s = session;
+            // Pixels, or lines (Firefox's mouse wheel) or pages as pixels.
+            var dy = e.deltaY * (e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1));
             var at = framePoint(e.clientX, e.clientY);
-            setView(zoomAt(s.view, s.view.zoom * Math.exp(-e.deltaY * 0.002), at.x, at.y, s.frame, s.w, s.h));
+            setView(zoomAt(s.view, s.view.zoom * Math.exp(-dy * 0.002), at.x, at.y, s.frame, s.w, s.h, s.maxZoom));
         });
 
         frame.addEventListener("keydown", function (e) {
@@ -346,11 +444,11 @@
             var moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
             var view = null;
             if (Object.prototype.hasOwnProperty.call(moves, e.key)) {
-                view = pan(s.view, moves[e.key][0], moves[e.key][1], s.frame, s.w, s.h);
+                view = pan(s.view, moves[e.key][0], moves[e.key][1], s.frame, s.w, s.h, s.maxZoom);
             } else if (e.key === "+" || e.key === "=") {
-                view = zoomAt(s.view, s.view.zoom * 1.1, 0, 0, s.frame, s.w, s.h);
+                view = zoomAt(s.view, s.view.zoom * 1.1, 0, 0, s.frame, s.w, s.h, s.maxZoom);
             } else if (e.key === "-") {
-                view = zoomAt(s.view, s.view.zoom / 1.1, 0, 0, s.frame, s.w, s.h);
+                view = zoomAt(s.view, s.view.zoom / 1.1, 0, 0, s.frame, s.w, s.h, s.maxZoom);
             }
             if (!view) return;
             if (e.preventDefault) e.preventDefault();
@@ -360,14 +458,22 @@
         slider.addEventListener("input", function () {
             if (!session || !session.work) return;
             var s = session;
-            setView(zoomAt(s.view, Number(slider.value), 0, 0, s.frame, s.w, s.h));
+            setView(zoomAt(s.view, Number(slider.value), 0, 0, s.frame, s.w, s.h, s.maxZoom));
         });
 
         cancelButton.addEventListener("click", cancel);
         saveButton.addEventListener("click", save);
 
-        // The dialog keeps the focus: Tab and Shift-Tab go round its controls, Escape cancels.
-        dialog.addEventListener("keydown", function (e) {
+        // A press on the veil around the dialog would take the focus out of it: keep it on the frame.
+        dialog.addEventListener("mousedown", function (e) {
+            if (!session || e.target !== dialog) return;
+            if (e.preventDefault) e.preventDefault();
+            frame.focus();
+        });
+
+        // While it is open the dialog keeps the keys, wherever the focus went: Tab and Shift-Tab go round its
+        // controls, Escape cancels.
+        doc.addEventListener("keydown", function (e) {
             if (!session) return;
             if (e.key === "Escape" || e.key === "Esc") {
                 if (e.preventDefault) e.preventDefault();
@@ -380,7 +486,7 @@
             var next = e.shiftKey ? (at <= 0 ? stops.length - 1 : at - 1) : (at < 0 || at === stops.length - 1 ? 0 : at + 1);
             if (e.preventDefault) e.preventDefault();
             stops[next].focus();
-        });
+        }, true);
 
         var inputs = doc.querySelectorAll("input[type=file][data-photo-crop]");
         Array.prototype.forEach.call(inputs, function (input) {
@@ -428,8 +534,11 @@
         zoomAt: zoomAt,
         fitWithin: fitWithin,
         outputSide: outputSide,
+        adjustZoom: adjustZoom,
+        halvings: halvings,
         supported: supported,
-        MAX_ZOOM: MAX_ZOOM
+        MAX_ZOOM: MAX_ZOOM,
+        MIN_ADJUST_SIDE: MIN_ADJUST_SIDE
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

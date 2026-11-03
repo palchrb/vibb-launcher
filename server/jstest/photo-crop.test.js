@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const crop = require("../static/photo-crop.js");
 
-const { clampView, centred, sourceRect, pan, zoomAt, fitWithin, outputSide, install } = crop;
+const { clampView, centred, sourceRect, pan, zoomAt, fitWithin, outputSide, adjustZoom, halvings, install } = crop;
 
 /** The square lies inside the w×h picture. */
 function inside(rect, w, h) {
@@ -70,13 +70,25 @@ test("a zoom keeps the point under the pinch where it is", () => {
     assert.ok(inside(sourceRect(out, 4000, 3000), 4000, 3000));
 });
 
-test("the working copy is shrunk, never enlarged; the upload is at most the server's side", () => {
-    assert.deepStrictEqual(fitWithin(4000, 3000, 2048, 4096), { w: 2731, h: 2048 });
-    assert.deepStrictEqual(fitWithin(800, 600, 2048, 4096), { w: 800, h: 600 });
-    assert.deepStrictEqual(fitWithin(10000, 2500, 2048, 4096), { w: 4096, h: 1024 });
+test("the working copy is shrunk by area, never enlarged; the upload is at most the server's side", () => {
+    assert.deepStrictEqual(fitWithin(4000, 3000, 8000000, 8192), { w: 3266, h: 2449 });
+    assert.deepStrictEqual(fitWithin(800, 600, 8000000, 8192), { w: 800, h: 600 });
+    // A banner keeps its short side (QA photo-crop L6).
+    assert.deepStrictEqual(fitWithin(8000, 600, 8000000, 8192), { w: 8000, h: 600 });
     assert.strictEqual(outputSide(1500, 512), 512);
     assert.strictEqual(outputSide(300.4, 512), 300);
     assert.strictEqual(outputSide(0.2, 512), 1);
+    // By halves while more than twice the target, so no draw shrinks by more than 2x.
+    assert.deepStrictEqual(halvings(2048, 512), [1024, 512]);
+    assert.deepStrictEqual(halvings(3000, 512), [1500, 750, 512]);
+    assert.deepStrictEqual(halvings(1024, 512), [512]);
+    assert.deepStrictEqual(halvings(300, 300), [300]);
+});
+
+test("an adjust zooms only while the square stays at least 230 px", () => {
+    assert.strictEqual(adjustZoom(512, 512), 512 / 230);
+    assert.strictEqual(adjustZoom(2048, 2048), crop.MAX_ZOOM);
+    assert.strictEqual(adjustZoom(200, 200), 1);
 });
 
 // ---- The dialog, with a fake page ----
@@ -111,9 +123,11 @@ function canvas() {
     el.width = 300;
     el.height = 150;
     el.drawn = [];
+    if (page) page.canvases.push(el);
     el.getContext = () => ({
         fillRect() {},
         drawImage: (...args) => el.drawn.push(args),
+        set imageSmoothingQuality(value) { el.smoothing = value; },
     });
     el.toBlob = (done, type, quality) => {
         page.blobs.push({ type, quality, side: el.width });
@@ -126,7 +140,7 @@ let page;
 
 /** The calls page: one contact's photo form (its file input, "Adjust crop" when it has a photo) and the dialog. */
 function fakePage({ photo = true, transfer = true, decodes = true, size = [4000, 3000] } = {}) {
-    page = { blobs: [], loaded: [], revoked: [], submitted: [], noBlob: false };
+    page = { blobs: [], loaded: [], revoked: [], submitted: [], noBlob: false, canvases: [] };
     const dialog = element("div", { "data-crop-dialog": "", "data-side": "512", "data-max-bytes": "10485760", hidden: "" });
     const parts = {
         "[data-crop-frame]": element("div"),
@@ -143,16 +157,18 @@ function fakePage({ photo = true, transfer = true, decodes = true, size = [4000,
     form.querySelector = () => input;
     const adjust = photo ? element("button", { "data-photo-adjust": "/contact-photos/abc", hidden: "" }) : null;
     if (adjust) adjust.form = form;
-    const doc = {
+    const main = element("main");
+    const doc = element("document");
+    Object.assign(doc, {
         activeElement: null,
-        querySelector: (selector) => (selector === "[data-crop-dialog]" ? dialog : null),
+        querySelector: (selector) => ({ "[data-crop-dialog]": dialog, main }[selector] || null),
         querySelectorAll: (selector) => {
             if (selector === "input[type=file][data-photo-crop]") return [input];
             if (selector === "[data-photo-adjust]") return adjust ? [adjust] : [];
             return [];
         },
         createElement: (tag) => (tag === "canvas" ? canvas() : element(tag)),
-    };
+    });
     class FakeTransfer {
         constructor() {
             if (!transfer) throw new TypeError("Illegal constructor");
@@ -191,7 +207,7 @@ function fakePage({ photo = true, transfer = true, decodes = true, size = [4000,
     };
     page.doc = doc;
     page.api = install(doc, win);
-    return Object.assign(page, { dialog, input, adjust, parts, form });
+    return Object.assign(page, { dialog, input, adjust, parts, form, main });
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
@@ -228,7 +244,7 @@ test("Cancel empties the input and uploads nothing; Escape does the same", async
     assert.strictEqual(p.doc.activeElement, p.input);
     pick(p);
     await settle();
-    p.dialog.fire("keydown", { key: "Escape" });
+    p.doc.fire("keydown", { key: "Escape" });
     assert.strictEqual(p.dialog.hidden, true);
     assert.strictEqual(p.input.value, "");
     await settle();
@@ -236,17 +252,24 @@ test("Cancel empties the input and uploads nothing; Escape does the same", async
     assert.deepStrictEqual(p.blobs, []);
 });
 
-test("Save uploads one 512 px JPEG through the form, with the square the frame shows", async () => {
-    const p = fakePage();
+test("Save uploads one 512 px JPEG through the form, drawn from the square the frame shows", async () => {
+    const p = fakePage({ size: [2048, 1536] });
     pick(p);
     await settle();
-    // Zoomed in to 2 and dragged: the working copy is 2731x2048, the square 1024 of it.
+    const preview = p.parts["[data-crop-canvas]"];
+    const work = preview.drawn[preview.drawn.length - 1][0];
+    // Zoomed in to 2 about the centre: the square is 768 of the 2048x1536 working copy, at (640, 384).
     p.parts["[data-crop-zoom]"].value = "2";
     p.parts["[data-crop-zoom]"].fire("input");
+    const made = p.canvases.length;
     p.parts["[data-crop-save]"].fire("click");
     await settle();
+    const drawn = p.canvases.slice(made);
+    assert.strictEqual(drawn.length, 1);
+    assert.deepStrictEqual(drawn[0].drawn, [[work, 640, 384, 768, 768, 0, 0, 512, 512]]);
+    assert.strictEqual(drawn[0].smoothing, "high");
     assert.strictEqual(p.blobs.length, 1);
-    assert.deepStrictEqual(p.blobs[0], { type: "image/jpeg", quality: 0.92, side: 512 });
+    assert.deepStrictEqual(p.blobs[0], { type: "image/jpeg", quality: 0.95, side: 512 });
     assert.strictEqual(p.submitted.length, 1);
     const files = p.submitted[0];
     assert.strictEqual(files.length, 1);
@@ -259,24 +282,72 @@ test("Save uploads one 512 px JPEG through the form, with the square the frame s
     assert.strictEqual(p.dialog.hidden, true);
 });
 
+test("no draw shrinks by more than 2x: cover's 1536 px square goes to 512 through 768", async () => {
+    const p = fakePage({ size: [2048, 1536] });
+    pick(p);
+    await settle();
+    const made = p.canvases.length;
+    p.parts["[data-crop-save]"].fire("click");
+    await settle();
+    const draws = p.canvases.slice(made).map((c) => c.drawn[0]);
+    assert.deepStrictEqual(draws.map((d) => d.slice(1)), [
+        [256, 0, 1536, 1536, 0, 0, 768, 768],
+        [0, 0, 768, 768, 0, 0, 512, 512],
+    ]);
+});
+
+test("toBlob failing: a picked photo goes up as it is, an adjust stays open to try again", async () => {
+    const p = fakePage();
+    page.noBlob = true;
+    pick(p);
+    await settle();
+    p.parts["[data-crop-save]"].fire("click");
+    await settle();
+    assert.strictEqual(p.submitted.length, 1);
+    assert.strictEqual(p.submitted[0][0].name, "IMG_1234.jpg");
+
+    const a = fakePage({ size: [512, 512] });
+    page.noBlob = true;
+    a.adjust.fire("click");
+    await settle();
+    a.parts["[data-crop-save]"].fire("click");
+    await settle();
+    assert.deepStrictEqual(a.submitted, []);
+    assert.strictEqual(a.dialog.hidden, false);
+    assert.strictEqual(a.parts["[data-crop-save]"].disabled, false);
+});
+
+test("the page behind is inert while the dialog is open", async () => {
+    const p = fakePage();
+    pick(p);
+    assert.ok(p.main.hasAttribute("inert"));
+    await settle();
+    p.parts["[data-crop-cancel]"].fire("click");
+    assert.ok(!p.main.hasAttribute("inert"));
+});
+
 test("the focus stays in the dialog: Tab from Save goes back to the frame, Shift-Tab from the frame to Save", async () => {
     const p = fakePage();
     pick(p);
     await settle();
     p.parts["[data-crop-save]"].focus();
-    p.dialog.fire("keydown", { key: "Tab" });
+    p.doc.fire("keydown", { key: "Tab" });
     assert.strictEqual(p.doc.activeElement, p.parts["[data-crop-frame]"]);
-    p.dialog.fire("keydown", { key: "Tab", shiftKey: true });
+    p.doc.fire("keydown", { key: "Tab", shiftKey: true });
     assert.strictEqual(p.doc.activeElement, p.parts["[data-crop-save]"]);
 });
 
-test("Adjust crop opens the stored photo and saves the same way", async () => {
+test("Adjust crop opens the stored photo, zooms only to a 230 px square, and saves the same way", async () => {
     const p = fakePage({ size: [512, 512] });
     p.adjust.fire("click");
     await settle();
     assert.deepStrictEqual(p.loaded, ["/contact-photos/abc"]);
+    assert.strictEqual(p.parts["[data-crop-zoom]"].max, "2.22");
+    p.parts["[data-crop-zoom]"].value = "4";
+    p.parts["[data-crop-zoom]"].fire("input");
     p.parts["[data-crop-save]"].fire("click");
     await settle();
+    assert.strictEqual(p.blobs[0].side, 230);
     assert.strictEqual(p.submitted.length, 1);
     assert.strictEqual(p.submitted[0][0].type, "image/jpeg");
 });

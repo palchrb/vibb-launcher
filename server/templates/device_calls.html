@@ -245,7 +245,7 @@
     <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title" aria-describedby="crop-hint">
         <h2 class="crop-title" id="crop-title">{{ self.t("device.calls.crop.title") }}</h2>
         <p class="crop-hint" id="crop-hint">{{ self.t("device.calls.crop.hint") }}</p>
-        <div class="crop-frame" data-crop-frame tabindex="0" role="img" aria-label="{{ self.t("device.calls.crop.frame") }}">
+        <div class="crop-frame" data-crop-frame tabindex="0" role="application" aria-label="{{ self.t("device.calls.crop.frame") }}">
             <canvas class="crop-canvas" data-crop-canvas></canvas>
             <div class="crop-mask" aria-hidden="true"></div>
         </div>

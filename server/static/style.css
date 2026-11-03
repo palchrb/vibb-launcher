@@ -2441,6 +2441,9 @@ input.row-input {
     position: relative;
     width: 100%;
     max-width: 280px;
+    /* A landscape phone: the whole dialog, Save included, on the screen. */
+    max-width: min(280px, 50vh);
+    max-width: min(280px, 50dvh);
     margin: 0 auto;
     overflow: hidden;
     border-radius: 12px;
