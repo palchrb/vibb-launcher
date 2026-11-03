@@ -178,6 +178,9 @@ pub struct AppState {
     /// The kid's events written to a CalDAV calendar (design 72b): the write job's wake-up and the tests' clock
     /// (`calendar_kid_events::KidWrites`).
     pub kid_writes: std::sync::Arc<calendar_kid_events::KidWrites>,
+    /// The newest server release, read from GitHub off the request path
+    /// (`handlers::system_update::ServerRelease`).
+    pub server_release: std::sync::Arc<handlers::system_update::ServerRelease>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -509,6 +512,7 @@ async fn main() {
             .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
         ),
         kid_writes: Default::default(),
+        server_release: Default::default(),
     };
     state
         .tokens
@@ -526,6 +530,11 @@ async fn main() {
     music::flag_missing_files(&state.db, &state.music_files_dir).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
+    // Software Updates shows the newest release without waiting on GitHub.
+    let release_state = state.clone();
+    tokio::task::spawn(async move {
+        handlers::system_update::refresh_release(&release_state).await;
+    });
     // The live mirror feeds an external drive and the app-update schedule a root helper - neither
     // exists in the container (design 22 §6: nothing writes update_requested there).
     if state.net.deploy_kind == net::DeployKind::Systemd {

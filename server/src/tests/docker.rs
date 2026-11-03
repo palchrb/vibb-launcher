@@ -442,6 +442,7 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
         latest_version: latest.map(str::to_string),
         update_available,
         check_failed: latest.is_none(),
+        checking: false,
         watcher_version: None,
         watcher_needs_update: true,
         reinstall_hint: "curl ... | sudo bash".to_string(),
@@ -592,4 +593,101 @@ async fn in_docker_the_host_helper_routes_and_drive_features_are_gone() {
     let page = pi.get_page("/backups", &cookie).await.text();
     assert!(page.contains("id=\"drive\""));
     assert!(page.contains("continuous_mirror_enabled"));
+}
+
+/// A fake GitHub release list: `tag` (`None`: a 500), and how many reads it answered.
+async fn fake_github(
+    tag: std::sync::Arc<std::sync::Mutex<Option<&'static str>>>,
+    hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    use axum::response::IntoResponse;
+    let releases = move || async move {
+        hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match *tag.lock().unwrap() {
+            Some(tag) => axum::Json(serde_json::json!([{ "tag_name": tag }])).into_response(),
+            None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    };
+    let router = axum::Router::new().route(
+        "/repos/{owner}/{repo}/releases",
+        axum::routing::get(releases),
+    );
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    url
+}
+
+/// Software Updates never waits on GitHub (2026-11-03): it shows the release read in the
+/// background, a due read starts once however many pages ask, and a failed read keeps the last
+/// good tag.
+#[tokio::test]
+async fn the_updates_page_shows_the_release_read_in_the_background() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let tag = std::sync::Arc::new(std::sync::Mutex::new(Some("server-v99.0.0")));
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut config = crate::config::ForkConfig::for_tests();
+    config.github_api = fake_github(tag.clone(), hits.clone()).await;
+    let app = TestApp::with_net_config(Default::default(), config, Default::default()).await;
+    let cookie = app.admin_cookie().await;
+    let release = &app.state.server_release;
+    let read_ended = || async {
+        for _ in 0..500 {
+            if !release.latest().1 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the background read never ended");
+    };
+    let latest_row = |page: &str| {
+        let row = &page[page.find("data-row=\"latest\"").unwrap()..];
+        row[..row.find("</").unwrap()].to_string()
+    };
+
+    // Nothing read yet: checking, not a failure; the read starts in the background.
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(
+        latest_row(&page).contains("Checking for a new version"),
+        "{page}"
+    );
+    read_ended().await;
+    assert_eq!(hits.load(SeqCst), 1);
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(
+        latest_row(&page).contains("Version 99.0.0 is out"),
+        "{page}"
+    );
+    assert_eq!(hits.load(SeqCst), 1, "a fresh release is never read again");
+
+    // Due: the page shows what it has, and two pages start one read.
+    release.set(Some("v99.0.0"), true, false);
+    *tag.lock().unwrap() = Some("server-v99.1.0");
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(
+        latest_row(&page).contains("Version 99.0.0 is out"),
+        "{page}"
+    );
+    app.get_page("/updates", &cookie).await;
+    read_ended().await;
+    assert_eq!(hits.load(SeqCst), 2);
+    assert_eq!(release.latest().0.as_deref(), Some("v99.1.0"));
+
+    // A failed read keeps the last good tag.
+    release.set(Some("v99.1.0"), true, false);
+    *tag.lock().unwrap() = None;
+    app.get_page("/updates", &cookie).await;
+    read_ended().await;
+    assert_eq!(hits.load(SeqCst), 3);
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(
+        latest_row(&page).contains("Version 99.1.0 is out"),
+        "{page}"
+    );
+    assert_eq!(hits.load(SeqCst), 3, "a failed read waits before the next");
+
+    // Only a failed read with nothing to show says so.
+    release.set(None, false, true);
+    let page = app.get_page("/updates", &cookie).await.text();
+    assert!(latest_row(&page).contains("Couldn't check"), "{page}");
 }

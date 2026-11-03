@@ -71,7 +71,12 @@ async fn apt_upgradable_count() -> Option<usize> {
 }
 
 async fn tailscale_versions() -> Option<(String, String)> {
-    let current = run("tailscale", &["version"]).await?;
+    // `--upstream` asks pkgs.tailscale.com: both run at once, so the page waits for the slower.
+    let (current, upstream) = tokio::join!(
+        run("tailscale", &["version"]),
+        run("tailscale", &["version", "--upstream"])
+    );
+    let current = current?;
     let current = current.lines().next().unwrap_or("").trim().to_string();
 
     // `--upstream` prints the same version block as plain `tailscale
@@ -82,8 +87,7 @@ async fn tailscale_versions() -> Option<(String, String)> {
     // value via substring search rather than assuming it's on its own line,
     // since it's unclear whether tailscale's output actually has a newline
     // there or just a space.
-    let upstream = run("tailscale", &["version", "--upstream"])
-        .await
+    let upstream = upstream
         .unwrap_or_default()
         .split("upstream:")
         .nth(1)
@@ -198,8 +202,8 @@ pub(crate) async fn gather(data: &std::path::Path) -> OsUpdateData {
         if busy {
             (None, None, None, false)
         } else {
-            let os_update_count = apt_upgradable_count().await;
-            let tailscale = tailscale_versions().await;
+            let (os_update_count, tailscale) =
+                tokio::join!(apt_upgradable_count(), tailscale_versions());
             let (tailscale_current, tailscale_upstream, tailscale_update_available) =
                 match tailscale {
                     Some((current, upstream)) => {

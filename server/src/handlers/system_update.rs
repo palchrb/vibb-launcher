@@ -19,7 +19,7 @@ use axum::Extension;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use serde::Deserialize;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::AppState;
 use crate::config::SERVER_RELEASE_TAG_PREFIX;
@@ -118,6 +118,71 @@ async fn latest_release_tag(config: &crate::config::ForkConfig) -> Option<String
     newest_server_version(&releases)
 }
 
+/// How long the newest release read from GitHub stands before a page reads it again, and how soon
+/// after a failed read.
+const RELEASE_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+const RELEASE_RETRY: Duration = Duration::from_secs(5 * 60);
+
+/// The newest server release, in memory (`AppState::server_release`): Software Updates shows it
+/// and never waits on GitHub (2026-11-03: the live read made the page ~140 ms slower). Read at
+/// start, by the scheduled check and the Update button, and in the background when a page finds
+/// it older than [RELEASE_MAX_AGE].
+#[derive(Default)]
+pub struct ServerRelease(std::sync::Mutex<ReleaseState>);
+
+#[derive(Default)]
+struct ReleaseState {
+    /// The last tag a read found; a failed read keeps it.
+    latest: Option<String>,
+    /// Once a read has ended: when the next is due, and whether that one failed.
+    read: Option<(Instant, bool)>,
+    refreshing: bool,
+}
+
+impl ServerRelease {
+    /// What a page shows - the last good tag and how the last read ended (`None`: none has yet) -
+    /// and whether it should start a read (one is due and none is running).
+    fn seen(&self) -> (Option<String>, Option<bool>, bool) {
+        let mut release = self.0.lock().unwrap();
+        let due = release.read.is_none_or(|(due, _)| Instant::now() >= due);
+        let start = due && !std::mem::replace(&mut release.refreshing, true);
+        (release.latest.clone(), release.read.map(|r| r.1), start)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set(&self, latest: Option<&str>, due: bool, failed: bool) {
+        let next = Instant::now() + if due { Duration::ZERO } else { RELEASE_MAX_AGE };
+        *self.0.lock().unwrap() = ReleaseState {
+            latest: latest.map(str::to_string),
+            read: Some((next, failed)),
+            refreshing: false,
+        };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn latest(&self) -> (Option<String>, bool) {
+        let release = self.0.lock().unwrap();
+        (release.latest.clone(), release.refreshing)
+    }
+}
+
+/// Reads the newest release from GitHub into [ServerRelease] and returns what the read found.
+pub(crate) async fn refresh_release(state: &AppState) -> Option<String> {
+    let found = latest_release_tag(&state.config).await;
+    let mut release = state.server_release.0.lock().unwrap();
+    if found.is_some() {
+        release.latest.clone_from(&found);
+    }
+    let wait = if found.is_some() {
+        RELEASE_MAX_AGE
+    } else {
+        RELEASE_RETRY
+    };
+    release.read = Some((Instant::now() + wait, found.is_none()));
+    release.refreshing = false;
+    found
+}
+
 #[derive(Clone)]
 pub(crate) struct AppUpdateScheduleConfig {
     pub(crate) frequency: String,
@@ -179,6 +244,8 @@ pub(crate) struct AppUpdateData {
     pub(crate) latest_version: Option<String>,
     pub(crate) update_available: bool,
     pub(crate) check_failed: bool,
+    /// No read of GitHub has ended since the server started: the page says it's checking.
+    pub(crate) checking: bool,
     pub(crate) watcher_version: Option<String>,
     pub(crate) watcher_needs_update: bool,
     pub(crate) reinstall_hint: String,
@@ -187,8 +254,13 @@ pub(crate) struct AppUpdateData {
 
 pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
     let current_version = crate::APP_VERSION.to_string();
-    let latest_version = latest_release_tag(&state.config).await;
-    let check_failed = latest_version.is_none();
+    let (latest_version, last_read_failed, start) = state.server_release.seen();
+    if start {
+        let state = state.clone();
+        tokio::spawn(async move { refresh_release(&state).await });
+    }
+    let checking = last_read_failed.is_none();
+    let check_failed = last_read_failed == Some(true) && latest_version.is_none();
     let update_available = latest_version
         .as_deref()
         .is_some_and(|latest| is_newer(latest, &current_version));
@@ -198,6 +270,7 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
         latest_version,
         update_available,
         check_failed,
+        checking,
         watcher_version: security::installed_watcher_version().await,
         watcher_needs_update: security::watcher_needs_update().await,
         reinstall_hint: security::reinstall_hint(&state.config.server_release_repo),
@@ -218,7 +291,7 @@ pub async fn trigger_update(
     }
     // A failed check doesn't block the button (update.sh refuses a downgrade on its own), but a
     // known release that isn't newer does.
-    if let Some(latest) = latest_release_tag(&state.config).await
+    if let Some(latest) = refresh_release(&state).await
         && !is_newer(&latest, crate::APP_VERSION)
     {
         let flash = Flash::refused("app", "Already on the newest version").because(format!(
@@ -360,7 +433,7 @@ pub async fn run_scheduled_app_update_check(state: AppState) {
             tracing::warn!("auto-update skipped: {reason}");
             continue;
         }
-        let Some(latest) = latest_release_tag(&state.config).await else {
+        let Some(latest) = refresh_release(&state).await else {
             continue;
         };
         if is_newer(&latest, crate::APP_VERSION) {
