@@ -288,7 +288,7 @@ class PressFeedbackTest {
         assertTrue(book.contains("PressFeedback.reset(holder.itemView)"))
         // The contact helper does all four, the focus ring included.
         val helper = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt").substringAfter("fun contact(").substringBefore("\n    }")
-        for (call in listOf("depth(avatar)", "cellBackground(item, avatarPx,", "attach(item, avatar, scrolling = true)")) {
+        for (call in listOf("depth(avatar, elevationDp)", "cellBackground(item, avatarPx,", "attach(item, avatar, scrolling = true)")) {
             assertTrue(call, helper.contains(call))
         }
     }

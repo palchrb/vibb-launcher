@@ -116,6 +116,15 @@ object KidAvatars {
     }
 
     /**
+     * Home's white ring on a contact's avatar (mockup A): shown for a photo and for an initial disc alike, hidden for an
+     * emergency contact, whose red ring ([bindContact]) is its edge already. Only Home calls this; the phone book
+     * and the sheet leave `contact_ring` gone.
+     */
+    fun bindHomeRing(ring: View, isEmergency: Boolean) {
+        ring.visibility = if (isEmergency) View.GONE else View.VISIBLE
+    }
+
+    /**
      * The green call badge with a ring in the wallpaper's ink (white on dark grounds, near-black on
      * light ones - [com.kidslauncher.mdm.ui.wallpaper.InkChoice]), so it stays legible on any
      * wallpaper (emulator run 2026-10-06; it was a ring in the fixed ground colour).

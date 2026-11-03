@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A contact as a round avatar (photo or initial) with its missed-call badge: 76 dp on Home
-     (with the green call badge), 64 dp in the phone book - KidAvatars sizes it. -->
+     (with the green call badge), 64 dp in the phone book - KidAvatars sizes it.
+     Depth is the avatar's own elevation with an oval outline (PressFeedback.depth: 2 dp, 4 dp on Home), so the
+     frame and this item keep clipChildren=false for the shadow. contact_ring is Home's white 3 dp ring
+     (mockup A) over the photo's or the disc's edge, so a photo on a busy wallpaper has an edge; it stays gone
+     in the phone book and for an emergency contact, whose red ring is drawn by KidAvatars.bindContact
+     (KidAvatars.bindHomeRing). It is a child of the avatar, so the press scale and shade cover it too; both
+     badges are lifted to the avatar's elevation in PressFeedback.contact and sit after it, so they draw above. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="wrap_content"
@@ -43,6 +49,14 @@
                 android:importantForAccessibility="no"
                 android:maxLines="1"
                 android:textSize="30sp" />
+
+            <View
+                android:id="@+id/contact_ring"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_kid_contact_ring"
+                android:importantForAccessibility="no"
+                android:visibility="gone" />
         </FrameLayout>
 
         <!-- The green call badge (Home only), on the frame - not inside the avatar, whose bounds

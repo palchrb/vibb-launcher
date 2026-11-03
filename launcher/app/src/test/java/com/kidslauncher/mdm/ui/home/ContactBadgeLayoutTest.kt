@@ -32,4 +32,21 @@ class ContactBadgeLayoutTest {
             assert(!value.startsWith("-")) { "$margin = $value" }
         }
     }
+
+    /** Mockup A: the white ring is Home's alone - gone in the layout, shown by Home, never by the phone book. */
+    @Test
+    fun `the white ring is gone by default and only Home shows it`() {
+        val ring = byId("contact_ring")
+        assertEquals("gone", ring.getAttributeNS(ns, "visibility"))
+        assertEquals(byId("contact_avatar"), ring.parentNode)
+        val main = listOf("src/main/java", "app/src/main/java").map(::File).first { it.exists() }
+        val home = File(main, "com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
+        assert(home.contains("KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency)"))
+        assert(home.contains("PressFeedback.HOME_AVATAR_ELEVATION_DP"))
+        main.walkTopDown().filter { it.extension == "kt" && it.name != "HomeActivity.kt" && it.name != "KidAvatars.kt" }
+            .forEach { assert(!it.readText().contains("bindHomeRing")) { it.name } }
+        // An emergency avatar keeps its own red ring: the white one is hidden for it.
+        val avatars = File(main, "com/kidslauncher/mdm/ui/home/KidAvatars.kt").readText()
+        assert(avatars.contains("ring.visibility = if (isEmergency) View.GONE else View.VISIBLE"))
+    }
 }

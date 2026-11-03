@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home's white ring on a contact's avatar (mockup A): 3 dp, white at 95 %, inside the avatar's edge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+    <stroke android:width="3dp" android:color="#F2FFFFFF" />
+</shape>
