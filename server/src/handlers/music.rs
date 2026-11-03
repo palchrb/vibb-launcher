@@ -3213,13 +3213,25 @@ pub async fn delete_file(
     Redirect::to(&format!("/music/entries/{id}#{anchor}")).into_response()
 }
 
-/// `GET /music-covers/{hash}` (session): a cover for the parent's pages.
+/// `GET /music-covers/{hash}` (session): a cover for the parent's pages. The name is the JPEG's
+/// SHA-256 (`photos::store` never rewrites a file), so a new cover is a new URL: cached for good,
+/// as the contact photos and the avatars.
 pub async fn view_cover(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
     let Some(path) = photos::path_for(&state.music_cover_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     match tokio::fs::read(&path).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }

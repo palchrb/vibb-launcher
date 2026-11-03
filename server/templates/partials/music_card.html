@@ -6,9 +6,9 @@
 <div class="cell music-card" id="entry-{{ entry.id }}">
     <a class="row music-row" href="/music/entries/{{ entry.id }}">
         {% if let Some(cover) = entry.cover %}
-        <img class="music-cover" src="/music-covers/{{ cover }}" alt="">
+        <img class="music-cover" src="/music-covers/{{ cover }}" alt="" width="44" height="44" loading="lazy" decoding="async">
         {% else %}
-        <span class="music-tile" style="background: {{ entry.category_color }}" aria-hidden="true"><img src="/static/music-icons/{{ entry.category_icon }}.svg" alt=""></span>
+        <span class="music-tile" style="background: {{ entry.category_color }}" aria-hidden="true"><img src="/static/music-icons/{{ entry.category_icon }}.svg" alt="" width="26" height="26" loading="lazy" decoding="async"></span>
         {% endif %}
         <div class="row-label"><span class="music-name">{{ entry.name }}</span><span class="row-sub music-sub">{{ entry.sub }}{% if entry.missing > 0 %} · <span class="music-missing">{{ entry.missing }} missing</span>{% endif %}</span>{% if let Some(sweep) = entry.sweep %}{% call music_status::status_block(sweep.status) %}{% endcall %}{% endif %}</div>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

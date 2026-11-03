@@ -2777,6 +2777,11 @@ async fn covers_are_uploaded_processed_backed_up_and_pruned() {
         .get_page(&format!("/music-covers/{hash}"), &cookie)
         .await;
     assert_eq!(res.status, StatusCode::OK);
+    // Its name is its content's hash: cached for good (a new cover is a new URL).
+    assert_eq!(
+        res.headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "private, max-age=31536000, immutable"
+    );
 
     // In the backup zip; recovered after a restore; forgotten when in no backup.
     let backups = tempfile::tempdir().unwrap();

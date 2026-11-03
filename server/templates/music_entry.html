@@ -14,9 +14,9 @@
     <div class="group" id="cover">
         <div class="cover-row">
             {% if let Some(cover) = entry.cover_hash %}
-            <img class="cover-big" src="/music-covers/{{ cover }}" alt="Cover of {{ entry.name }}">
+            <img class="cover-big" src="/music-covers/{{ cover }}" alt="Cover of {{ entry.name }}" width="96" height="96" decoding="async">
             {% else if let Some(cover) = source_cover %}
-            <img class="cover-big" src="/music-covers/{{ cover }}" alt="The source's picture">
+            <img class="cover-big" src="/music-covers/{{ cover }}" alt="The source's picture" width="96" height="96" decoding="async">
             {% endif %}
             <span class="row-label">{{ kind }}{% if let Some(target) = entry.target %}<span class="row-sub" style="overflow-wrap:anywhere;">{% if storytel %}{{ target }}{% else if spotify %}{{ target }}{% if let Some(link) = spotify_link %} (<a href="{{ link }}" rel="noopener noreferrer" target="_blank">Open in Spotify</a>){% endif %}{% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</span>{% endif %}<span class="row-sub">{% if entry.cover_hash.is_some() %}Your photo{% else %}The source's picture{% if own %} (the first file's art){% endif %}{% endif %}</span></span>
         </div>
@@ -158,7 +158,7 @@
         {% for file in files %}
         <details class="cell file-cell" id="file-{{ file.id }}">
             <summary class="row">
-                {% if let Some(art) = file.art %}<img class="music-art" src="/music-covers/{{ art }}" alt="">{% endif %}
+                {% if let Some(art) = file.art %}<img class="music-art" src="/music-covers/{{ art }}" alt="" width="36" height="36" loading="lazy" decoding="async">{% endif %}
                 <span class="row-label">{{ file.title }}<span class="row-sub">{{ file.detail }}{% if file.missing %} · <span class="music-missing">missing on this server</span>{% endif %}</span></span>
                 <span class="row-value file-delete">Delete…</span>
             </summary>

@@ -15,7 +15,7 @@
         {% for category in categories %}
         <details class="cell category-block" id="category-{{ category.id }}"{% if category.open %} open{% endif %}>
             <summary class="row">
-                <span class="music-tile music-tile-small" style="background: {{ category.tile }}" aria-hidden="true"><img src="/static/music-icons/{{ category.icon }}.svg" alt=""></span>
+                <span class="music-tile music-tile-small" style="background: {{ category.tile }}" aria-hidden="true"><img src="/static/music-icons/{{ category.icon }}.svg" alt="" width="18" height="18" loading="lazy" decoding="async"></span>
                 <span class="row-label">{{ category.name }}</span>
                 <span class="row-value">{{ category.entries }}</span>
                 <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
