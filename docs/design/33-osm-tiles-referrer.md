@@ -50,7 +50,9 @@ never shipped, so no install has a `data/tiles` to clean up.
 - **Unchanged**:
   - The document-wide `Referrer-Policy: same-origin`: every other link, form and fetch still sends nothing to
     another site.
-  - `ADMIN_CSP`'s `img-src 'self' data: https://tile.openstreetmap.org`: one image host, nothing broader.
+  - `ADMIN_CSP`'s `img-src 'self' data: blob: https://tile.openstreetmap.org`: one image host, nothing broader. (`blob:`
+    since 2026-11-03: the contact photo crop shows the picked file from a blob URL, `static/photo-crop.js`; only the
+    page's own `script-src 'self'` can make one, so it opens no other host.)
   - The service worker has no fetch handler, so tile requests pass straight through.
 - **What OSM sees**:
   - the parent's IP address and browser `User-Agent`;
@@ -65,7 +67,7 @@ never shipped, so no install has a `data/tiles` to clean up.
 ## Files
 
 - `server/templates/device_locate.html`: the tile layer's `referrerPolicy`.
-- `server/src/tests/admin_auth.rs`: the CSP's `img-src` is exactly `'self' data: https://tile.openstreetmap.org`.
+- `server/src/tests/admin_auth.rs`: the CSP's `img-src` is exactly `'self' data: blob: https://tile.openstreetmap.org`.
 - `server/src/tests/locations.rs`: `the_map_loads_osm_tiles_with_an_origin_only_referer`. It checks:
   - the Locate page's tile layer: the OSM URL, the `referrerPolicy` and the attribution;
   - the page's own `Referrer-Policy: same-origin`;

@@ -401,7 +401,7 @@ async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
     assert_eq!(header(header::REFERRER_POLICY), "same-origin");
     assert!(
         header(header::CONTENT_SECURITY_POLICY)
-            .contains("img-src 'self' data: https://tile.openstreetmap.org;"),
+            .contains("img-src 'self' data: blob: https://tile.openstreetmap.org;"),
         "{}",
         header(header::CONTENT_SECURITY_POLICY)
     );
