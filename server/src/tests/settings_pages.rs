@@ -967,8 +967,8 @@ async fn sign_out_everywhere_fails_visibly() {
     }
 }
 
-/// Security Log: labels, never the raw id outside the ⓘ; local times, no "UTC"; the detail
-/// escaped behind the ⓘ; a blocked address with its end and Unban; an unreadable log a 500.
+/// Security Log: labels, never the raw id; local times, no "UTC"; who, the detail (escaped) and
+/// the exact time shown under each label (2026-11-03, no ⓘ); a blocked address with its end and Unban; an unreadable log a 500.
 #[tokio::test]
 async fn the_security_log_reads_as_labelled_rows() {
     let app = TestApp::new().await;
@@ -1023,15 +1023,16 @@ async fn the_security_log_reads_as_labelled_rows() {
     check_forms("/security", &page);
     let rows: Vec<&str> = page.split("data-event>").skip(1).collect();
     assert_eq!(rows.len(), 4);
-    let (summary, panel) = rows[3].split_once("</summary>").unwrap();
-    assert!(summary.contains("Command sent to phone"), "{summary}");
-    assert!(summary.contains("parent · 192.0.2.9"));
+    // One plain row: who, the detail and the exact time shown under the label, no ⓘ and no id.
+    let row = &rows[3][..rows[3].find("</div>").unwrap()];
+    assert!(row.contains("Command sent to phone"), "{row}");
     assert!(
-        !summary.contains("device_command_queued"),
-        "the id only behind ⓘ"
+        row.contains("<span class=\"row-sub\">parent · 192.0.2.9 · "),
+        "{row}"
     );
-    assert!(panel.contains("device_command_queued"));
-    assert!(panel.contains("&#60;img src=x") && !page.contains("<img src=x"));
+    assert!(row.contains("&#60;img src=x") && !page.contains("<img src=x"));
+    assert!(!page.contains("device_command_queued") && !page.contains("Logged as"));
+    assert!(!page.contains("info-icon"), "{page}");
     assert!(rows[2].contains("Music moved"));
     assert!(
         rows[1].contains("Password change refused") && rows[1].contains("wrong current password"),

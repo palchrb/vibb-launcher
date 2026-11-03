@@ -2,7 +2,8 @@
 //! `security_events` audit trail - sign-ins and failed ones, lockouts, refused requests,
 //! enrollments, the parent's changes and what the phones report (`security::record_security_event`
 //! and its siblings write it). Design 31 step 14: each event a row with a label instead of its
-//! id ([event_label]), the time in the Phone Setup zone, the stored detail behind the row's ⓘ.
+//! id ([event_label]), the time in the Phone Setup zone; since 2026-11-03 who, the detail and the
+//! exact time shown under it (no ⓘ).
 
 use crate::i18n::Words;
 use askama::Template;
@@ -17,17 +18,16 @@ use crate::display_time::{Zone, parse_db_utc};
 use crate::i18n::Lang;
 use crate::models::{BannedIp, SecurityEvent};
 
-/// One event as a row: label · when, "admin · 192.0.2.1" under it, the stored detail behind ⓘ.
+/// One event as a plain row: label · when, and under it everything about it - who, the detail,
+/// the exact time (the user, 2026-11-03: no ⓘ to open).
 struct EventRow {
     label: String,
-    /// The event id, for the ⓘ panel only.
-    kind: String,
-    who: String,
+    /// "Mamma (mamma) · 10.0.0.3 · " then the row's words in the reader's language (`params`,
+    /// design 70 §4) and its facts; the facts alone, or an older row's prose, when there are no
+    /// words.
+    sub: String,
     when: String,
     exact: String,
-    /// The row's words in the reader's language (`params`, design 70 §4), then " · " and its
-    /// facts; the facts alone, or an older row's prose, when there are no words.
-    detail: Option<String>,
 }
 
 /// A blocked address: until when (local) and why.
@@ -61,7 +61,7 @@ const EVENTS_PER_PAGE: i64 = 200;
 /// What a parent reads for an event id, in their language: `security.event.<id>` from the catalog
 /// (every id this server writes has one in both, pinned by `tests::every_written_event_has_a_label`,
 /// which reads the writers in `src/`); anything else (an id from an older version) reads as its
-/// words ("retired_event" -> "Retired event"), never as the raw id - that stays in the row's ⓘ.
+/// words ("retired_event" -> "Retired event"), never as the raw id.
 pub(crate) fn event_label(lang: Lang, kind: &str) -> String {
     match label_key(lang, kind) {
         Some(key) => crate::i18n::t(lang, &key).to_string(),
@@ -102,9 +102,12 @@ fn event_row(
 ) -> EventRow {
     let at = parse_db_utc(&event.created_at);
     // "Mamma (mamma) · 10.0.0.3" (design 62 §6); a name that is no account's stays as stored.
-    let who = [
+    let detail =
+        crate::security::Detail::shown(event.detail.as_deref(), event.params.as_deref(), zone, now);
+    let sub = [
         event.username.as_deref().map(|u| names.logged(u)),
-        event.ip_address.clone(),
+        event.ip_address,
+        detail,
     ]
     .into_iter()
     .flatten()
@@ -113,14 +116,7 @@ fn event_row(
     .join(" · ");
     EventRow {
         label: event_label(zone.lang(), &event.event_type),
-        detail: crate::security::Detail::shown(
-            event.detail.as_deref(),
-            event.params.as_deref(),
-            zone,
-            now,
-        ),
-        kind: event.event_type,
-        who,
+        sub,
         when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
         exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
     }
