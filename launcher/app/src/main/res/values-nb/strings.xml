@@ -120,6 +120,12 @@
     <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
     <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
     <string name="kid_settings_location_shared">Telefonen deler hvor den er med mamma og pappa.</string>
+    <!-- Barnets skjulte apper i barnets innstillinger (2026-11-03): raden, ordet ved en app, TalkBack-navnet, listen åpen eller lukket. -->
+    <string name="kid_settings_hidden_apps">Skjulte apper</string>
+    <string name="kid_settings_hidden_show">Vis</string>
+    <string name="kid_settings_hidden_show_app">Vis %1$s igjen</string>
+    <string name="kid_settings_hidden_open">Utvidet</string>
+    <string name="kid_settings_hidden_closed">Lukket</string>
     <string name="wallpaper_navy">Mørk blå</string>
     <string name="wallpaper_vibb_night">Natt</string>
     <string name="wallpaper_forest">Skog</string>

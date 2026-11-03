@@ -128,9 +128,12 @@ class PlayInvariantsTest {
     @Test
     fun `Home drops the store outside install mode`() {
         val refresh = code("HomeActivity.kt").substringAfter("private fun refreshApps(").substringBefore("\n    }\n")
-        assertTrue(".filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }" in refresh)
-        assertTrue("PlayRuntime.installModeActive(context)" in refresh)
-        assertTrue("storeListable" !in refresh)
+        assertTrue("val visible = homeApps(context, all)" in refresh)
+        // Home's filter, shared with Kid Settings' hidden apps (2026-11-03).
+        val homeApps = code("HomeApps.kt").substringAfter("fun homeApps(")
+        assertTrue(".filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }" in homeApps)
+        assertTrue("PlayRuntime.installModeActive(context)" in homeApps)
+        assertTrue("storeListable" !in homeApps)
     }
 
     /** Design 28 (QA M1): the list refresh comes from the window's own edges, not from Play's

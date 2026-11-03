@@ -57,8 +57,6 @@ import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.TsnetClient
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.openAppsList
-import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.play.playPackageOnHome
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
@@ -77,6 +75,7 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.PressFeedback
 import com.kidslauncher.mdm.ui.home.gridColumns
+import com.kidslauncher.mdm.ui.home.homeApps
 import com.kidslauncher.mdm.ui.home.homeArrivalOf
 import com.kidslauncher.mdm.ui.home.homeGroundDue
 import com.kidslauncher.mdm.ui.home.homeGrid
@@ -753,7 +752,7 @@ class HomeActivity : UIObjectActivity() {
     private fun contentWidthDp(): Float = (resources.configuration.screenWidthDp - 32).toFloat()
 
     /**
-     * [AppFilter] (a `isPackageSuspended` call per app), the cached policy (columns) and the
+     * [homeApps] ([AppFilter]: a `isPackageSuspended` call per app), the cached policy (columns) and the
      * rendered icons ([KidAvatars.renderAppIcon]: loading, palette, drawing) off the main thread;
      * the newest run wins. `onBind` only reads the finished bitmaps (QA 08 #5).
      */
@@ -765,16 +764,8 @@ class HomeActivity : UIObjectActivity() {
         appsJob?.cancel()
         appsJob = CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.Default) {
-                // The drawer's filter lists the Play Store in a parent-PIN window too; Home's grid
-                // only in install mode (design 28). Unreadable = not in install mode.
-                val installMode = try {
-                    PlayRuntime.installModeActive(context)
-                } catch (e: Exception) {
-                    false
-                }
-                val visible = AppFilter(context).invoke(all)
-                    .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
-                    .filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }
+                // The same filter as Kid Settings' hidden apps (homeApps: the Play Store only in install mode, design 28).
+                val visible = homeApps(context, all)
                 val infos = visible.associateBy { it.getRawInfo().serialize() }
                 val list = infos.map { (key, info) ->
                     GridApp(key, info.getCustomLabel(context), (info.getRawInfo() as? AppInfo)?.packageName)

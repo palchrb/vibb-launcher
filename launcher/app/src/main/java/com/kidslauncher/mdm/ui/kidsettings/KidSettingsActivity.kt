@@ -30,6 +30,9 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.apps.AbstractAppInfo
+import com.kidslauncher.mdm.apps.AppFilter.Companion.AppSetVisibility
+import com.kidslauncher.mdm.databinding.ItemKidHiddenAppBinding
 import com.kidslauncher.mdm.databinding.ActivityKidSettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
@@ -46,6 +49,7 @@ import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.quickcontrols.BluetoothDevicesActivity
 import com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity
 import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.home.homeApps
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
@@ -53,7 +57,10 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The kid's own Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html), opened by the
@@ -67,7 +74,8 @@ import kotlinx.coroutines.launch
  * The screen re-renders when a sync stores a new policy (the mask can change while it is open).
  * The sound row (design 18) re-reads the phone on every ringer-mode or Do Not Disturb change
  * while the screen is shown - the volume keys change it underneath. The touch row (design r9 §4) is
- * read again on every resume and after a tap's write.
+ * read again on every resume and after a tap's write. The kid's hidden apps (the user, 2026-11-03) are filtered again on
+ * every resume, policy and change of the hidden set.
  */
 class KidSettingsActivity : UIObjectActivity() {
     private lateinit var binding: ActivityKidSettingsBinding
@@ -82,6 +90,14 @@ class KidSettingsActivity : UIObjectActivity() {
     private var touchWrites = 0
     private var section: ControlsSection? = null
     private var ink: InkChoice? = null
+
+    /** One of the kid's hidden apps: what unhides it, the name the kid sees, the icon as Home draws it. */
+    private class HiddenApp(val raw: AbstractAppInfo, val label: String, val icon: android.graphics.Bitmap?)
+
+    /** The kid's hidden apps from the newest filter pass ([loadHiddenApps]; main thread), and whether their list is open. */
+    private var hiddenApps: List<HiddenApp> = emptyList()
+    private var hiddenOpen = false
+    private var hiddenJob: Job? = null
 
     /** Volume keys, the volume panel or a DND schedule changed the ringer: show what is true now. */
     private val soundReceiver = object : BroadcastReceiver() {
@@ -102,7 +118,10 @@ class KidSettingsActivity : UIObjectActivity() {
             LauncherPreferences.mdm().keys().kidModePolicy() -> {
                 render()
                 WallpaperStore.refreshAsync(this)
+                loadHiddenApps()
             }
+            // An app shown again here, or hidden on Home: the list follows.
+            LauncherPreferences.apps().keys().hidden() -> loadHiddenApps()
             // A time rule or the budget began while this screen was open: the lock comes first.
             LauncherPreferences.mdm().keys().lockReason() -> redirectIfLocked()
         }
@@ -151,6 +170,10 @@ class KidSettingsActivity : UIObjectActivity() {
                 section?.let { renderControls(it) }
             }
         }
+        binding.kidSettingsHiddenRow.setOnClickListener {
+            hiddenOpen = !hiddenOpen
+            renderHidden()
+        }
         binding.kidSettingsBrightnessSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) QuickControls.setBrightness(dpm, admin, progress)
@@ -179,6 +202,7 @@ class KidSettingsActivity : UIObjectActivity() {
         // Also refreshes whether the system wallpaper is still ours (in the background).
         WallpaperStore.refreshAsync(this)
         render()
+        loadHiddenApps()
     }
 
     override fun onStop() {
@@ -216,6 +240,66 @@ class KidSettingsActivity : UIObjectActivity() {
         this.section = section
         renderControls(section)
         binding.kidSettingsLocationLine.visibility = if (model.sharesLocation) View.VISIBLE else View.GONE
+        renderHidden()
+    }
+
+    /**
+     * The kid's hidden apps that Home would otherwise show - Home's own filter ([homeApps]) with the hidden set taken
+     * instead of left out - and their icons, off the main thread (the filter asks the package manager about every app,
+     * the icons are drawn); the newest pass wins.
+     */
+    private fun loadHiddenApps() {
+        val all = (application as? com.kidslauncher.mdm.Application)?.apps?.value ?: return
+        val context = applicationContext
+        val sizePx = KidAvatars.dp(this, HIDDEN_ICON_DP)
+        hiddenJob?.cancel()
+        hiddenJob = lifecycleScope.launch {
+            hiddenApps = withContext(Dispatchers.Default) {
+                homeApps(context, all, AppSetVisibility.EXCLUSIVE).map { info ->
+                    val raw = info.getRawInfo()
+                    val icon = try {
+                        KidAvatars.renderAppIcon(context, raw.serialize(), { info.getIcon(context) }, sizePx)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Couldn't draw a hidden app's icon: ${e.javaClass.simpleName}")
+                        null
+                    }
+                    HiddenApp(raw, info.getCustomLabel(context), icon)
+                }
+            }
+            renderHidden()
+        }
+    }
+
+    /** The row while the kid has hidden an app ([hiddenAppsView]); the list under it while open, in the wallpaper's ink. */
+    private fun renderHidden() {
+        val view = hiddenAppsView(hiddenApps, hiddenOpen)
+        hiddenOpen = view.open
+        binding.kidSettingsHiddenCard.visibility = if (view.rowShown) View.VISIBLE else View.GONE
+        binding.kidSettingsHiddenList.visibility = if (view.open) View.VISIBLE else View.GONE
+        binding.kidSettingsHiddenRow.stateDescription =
+            getString(if (view.open) R.string.kid_settings_hidden_open else R.string.kid_settings_hidden_closed)
+        val down = if (binding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL) -90f else 90f
+        binding.kidSettingsHiddenChevron.rotation = if (view.open) down else 0f
+        val ink = WallpaperStore.state.ink
+        binding.kidSettingsHiddenChevron.imageTintList = ColorStateList.valueOf(ink.ink)
+        val list = binding.kidSettingsHiddenList
+        list.removeAllViews()
+        for (app in view.listed) {
+            val item = ItemKidHiddenAppBinding.inflate(layoutInflater, list, true)
+            item.kidHiddenAppIcon.setImageBitmap(app.icon)
+            item.kidHiddenAppLabel.text = app.label
+            KidInk.label(item.kidHiddenAppLabel, ink)
+            KidInk.label(item.kidHiddenAppShow, ink)
+            item.kidHiddenAppRow.contentDescription = getString(R.string.kid_settings_hidden_show_app, app.label)
+            item.kidHiddenAppRow.setOnClickListener { showAgain(app) }
+        }
+    }
+
+    /** A tap on a hidden app: off the kid's hidden set at once - Home and the drawer follow its change. */
+    private fun showAgain(app: HiddenApp) {
+        LauncherPreferences.apps().hidden(LauncherPreferences.apps().hidden().orEmpty() - app.raw)
+        hiddenApps = hiddenApps - app
+        renderHidden()
     }
 
     private fun renderControls(section: ControlsSection) {
@@ -359,6 +443,7 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
             binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard, binding.kidSettingsLocationLine,
+            binding.kidSettingsHiddenLabel,
             // The card's links in the ink too: peach on the card over a light or mid-tone ground
             // was ~2:1 (qa-34-s10-code M1). Bold, as before.
             binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,
@@ -509,5 +594,8 @@ class KidSettingsActivity : UIObjectActivity() {
 
     companion object {
         private const val TAG = "KidSettings"
+
+        /** A hidden app's icon in the list (Home's tile drawn smaller). */
+        private const val HIDDEN_ICON_DP = 40f
     }
 }

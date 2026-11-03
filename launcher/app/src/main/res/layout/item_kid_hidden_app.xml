@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One app in Kid Settings' hidden apps (the user, 2026-11-03): a divider, then the row - the icon as Home draws it,
+     the name the kid sees, "Show". The row is the one button TalkBack reads ("Show <name> again", in code); icon, name
+     and the word are decorative. The name wraps to two lines, so it grows with the font scale. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <View style="@style/KidDivider" />
+
+    <LinearLayout
+        android:id="@+id/kid_hidden_app_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:minHeight="56dp"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp">
+
+        <ImageView
+            android:id="@+id/kid_hidden_app_icon"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:importantForAccessibility="no"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/kid_hidden_app_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:importantForAccessibility="no"
+            android:maxLines="2"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/kid_hidden_app_show"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/nunito_bold"
+            android:importantForAccessibility="no"
+            android:text="@string/kid_settings_hidden_show"
+            android:textColor="@color/kid_ink"
+            android:textSize="14sp" />
+    </LinearLayout>
+</LinearLayout>
