@@ -46,6 +46,8 @@ pub enum Kind {
     Token,
     /// A calendar link's body (design 72 §2.1): 5 MB decoded, past it `too_big` and the last set kept.
     Calendar,
+    /// MET's forecast and nowcast, and Kartverket's place names (design 75 §3.3): 1 MB decoded, 10 s.
+    Weather,
 }
 
 impl Kind {
@@ -59,6 +61,7 @@ impl Kind {
             Kind::Shelf => 8_000_000,
             Kind::Token => 64_000,
             Kind::Calendar => 5_000_000,
+            Kind::Weather => 1_000_000,
         }
     }
 
@@ -72,6 +75,7 @@ impl Kind {
             Kind::Shelf => 30,
             Kind::Token => 20,
             Kind::Calendar => 60,
+            Kind::Weather => 10,
         })
     }
 }
@@ -150,6 +154,10 @@ pub struct SourceResponse {
     pub location: Option<String>,
     /// `Content-Type` as sent, at most 200 characters (design 72 QA L1: a calendar body's charset).
     pub content_type: Option<String>,
+    /// `Expires` and `Date` as sent, at most 100 characters each (design 75 D7: MET's next fetch is `Expires − Date`
+    /// from now, never the server's clock against MET's).
+    pub expires: Option<String>,
+    pub date: Option<String>,
 }
 
 /// Without the body (design 26b QA L4): a Storytel login's body holds the session token.
@@ -164,6 +172,8 @@ impl std::fmt::Debug for SourceResponse {
             .field("retry_after", &self.retry_after)
             .field("location", &self.location.is_some())
             .field("content_type", &self.content_type)
+            .field("expires", &self.expires)
+            .field("date", &self.date)
             .finish()
     }
 }
@@ -554,6 +564,8 @@ impl Source for HttpSource {
             let last_modified = header(&response, reqwest::header::LAST_MODIFIED);
             let retry_after = header(&response, reqwest::header::RETRY_AFTER);
             let content_type = header_cut(&response, reqwest::header::CONTENT_TYPE, 200);
+            let expires = header_cut(&response, reqwest::header::EXPIRES, 100);
+            let date = header_cut(&response, reqwest::header::DATE, 100);
             let location = header_cut(
                 &response,
                 reqwest::header::LOCATION,
@@ -580,6 +592,8 @@ impl Source for HttpSource {
                 retry_after,
                 location,
                 content_type,
+                expires,
+                date,
             })
         })
     }

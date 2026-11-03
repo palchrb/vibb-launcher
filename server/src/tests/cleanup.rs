@@ -382,6 +382,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             lifts: 0,
             bans: 0,
             install_progress: 0,
+            weather: 0,
             failed: vec![],
         }
     );

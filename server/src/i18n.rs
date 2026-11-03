@@ -638,6 +638,8 @@ mod tests {
         "partials/reauth_passkey.html",
         "device_calendar.html",
         "device_calendar_add.html",
+        // Design 75 §6: Device › Weather.
+        "device_weather.html",
         "device_calendar_caldav.html",
         "device_calendar_link.html",
         "device_calendar_rule.html",

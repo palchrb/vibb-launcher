@@ -35,6 +35,11 @@ pub struct Canned {
     pub location: Option<String>,
     /// `Content-Type` (design 72: a calendar body's charset).
     pub content_type: Option<String>,
+    /// `Expires` and `Date` (design 75: MET's cache rule).
+    pub expires: Option<String>,
+    pub date: Option<String>,
+    /// `Retry-After` (design 75: MET's 429).
+    pub retry_after: Option<String>,
 }
 
 /// One request as the canned fetch saw it (design 26b §2.2: the Storytel bookshelf's shape).
@@ -47,6 +52,8 @@ pub struct Recorded {
     pub body: Option<Vec<u8>>,
     /// The request's `follow` (design 26c §3.1).
     pub follow: bool,
+    /// The request's `If-Modified-Since` (design 75 D7).
+    pub last_modified: Option<String>,
 }
 
 impl Recorded {
@@ -127,6 +134,16 @@ impl CannedFetch {
                 ..Default::default()
             },
         );
+    }
+
+    /// Answers the next request for `url` once with `answer`, before the standing answer.
+    pub fn canned_once(&self, url: &str, answer: Canned) {
+        self.once
+            .lock()
+            .unwrap()
+            .entry(url.to_string())
+            .or_default()
+            .push_back(answer);
     }
 
     /// Answers the next request for `url` once, before the standing answer.
@@ -296,6 +313,7 @@ impl crate::music_net::Source for CannedFetch {
                     .collect(),
                 body: request.body.clone(),
                 follow: request.follow,
+                last_modified: request.last_modified.clone(),
             });
             self.conditional
                 .lock()
@@ -374,9 +392,13 @@ impl crate::music_net::Source for CannedFetch {
                 body: answer.body[..answer.body.len().min(limit)].to_vec(),
                 etag: answer.etag,
                 last_modified: answer.last_modified,
-                retry_after: self.retry_after.lock().unwrap().get(&request.url).cloned(),
+                retry_after: answer
+                    .retry_after
+                    .or_else(|| self.retry_after.lock().unwrap().get(&request.url).cloned()),
                 location: answer.location,
                 content_type: answer.content_type,
+                expires: answer.expires,
+                date: answer.date,
             })
         })
     }

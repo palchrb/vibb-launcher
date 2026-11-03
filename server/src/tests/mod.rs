@@ -65,6 +65,7 @@ mod time_request;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
+mod weather;
 mod web_push;
 mod window_relock;
 mod zone_watch;
@@ -249,6 +250,18 @@ impl TestApp {
             )),
             kid_writes: Default::default(),
             server_release: Default::default(),
+            // MET through its own real gate, Kartverket ungated, both answered by the same canned fetch; a short wait
+            // so a slow fetch's test takes no 6 s.
+            weather_fetch: std::sync::Arc::new(crate::music_net::Gated::new(
+                fetch.clone(),
+                std::time::Duration::ZERO,
+            )),
+            weather: {
+                let mut weather = crate::weather_cache::Weather::new(fetch.clone());
+                weather.forecast_wait = std::time::Duration::from_millis(500);
+                weather.nowcast_wait = std::time::Duration::from_millis(500);
+                std::sync::Arc::new(weather)
+            },
         };
 
         TestApp {
@@ -307,7 +320,7 @@ impl TestApp {
 
     /// Sends a request through the router as a real connection would: with a fixed loopback
     /// `ConnectInfo` (handlers that rate-limit by client address extract it).
-    async fn send(&self, request: Request<Body>) -> TestResponse {
+    pub async fn send(&self, request: Request<Body>) -> TestResponse {
         self.send_via(&self.router, LOOPBACK_PEER, request).await
     }
 

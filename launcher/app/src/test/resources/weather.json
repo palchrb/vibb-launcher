@@ -1,0 +1,2083 @@
+{
+  "about": "Design 75's contract, byte-identical in server/testdata/ and launcher/app/src/test/resources/. Times in words, periods and nowcast are local wall times in the row's zone; nowcast minutes count from 2026-11-03T14:00:00Z. forms, now_keys, dark[].expect, answer, answer_now_ms, answer_line, now_answers and statuses are written by the server's weather::tests::the_contract (WEATHER_CONTRACT_WRITE=1).",
+  "answer": {
+    "checked_at_ms": 1793714422000,
+    "days": [
+      {
+        "dark": {
+          "at_ms": 1793721720000,
+          "kind": "at"
+        },
+        "date": "2026-11-03",
+        "high": 7,
+        "low": 3,
+        "periods": [
+          {
+            "part": "morning",
+            "precip_mm": null,
+            "symbol": null,
+            "temp": null
+          },
+          {
+            "part": "afternoon",
+            "precip_mm": 0.0,
+            "symbol": null,
+            "temp": 7
+          },
+          {
+            "part": "evening",
+            "precip_mm": 0.0,
+            "symbol": "partlycloudy_night",
+            "temp": 3
+          }
+        ]
+      },
+      {
+        "dark": {
+          "at_ms": 1793808000000,
+          "kind": "at"
+        },
+        "date": "2026-11-04",
+        "high": 7,
+        "low": 1,
+        "periods": [
+          {
+            "part": "morning",
+            "precip_mm": 0.0,
+            "symbol": "fair_day",
+            "temp": 2
+          },
+          {
+            "part": "afternoon",
+            "precip_mm": 0.0,
+            "symbol": "partlycloudy_day",
+            "temp": 7
+          },
+          {
+            "part": "evening",
+            "precip_mm": 0.0,
+            "symbol": "clearsky_night",
+            "temp": 4
+          }
+        ]
+      }
+    ],
+    "hours": [
+      {
+        "at_ms": 1793714400000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "partlycloudy_day",
+        "temp": 7,
+        "words": null
+      },
+      {
+        "at_ms": 1793718000000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "partlycloudy_night",
+        "temp": 6,
+        "words": null
+      },
+      {
+        "at_ms": 1793721600000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "partlycloudy_night",
+        "temp": 5,
+        "words": null
+      },
+      {
+        "at_ms": 1793725200000,
+        "card": "2026-11-04",
+        "current": null,
+        "symbol": "partlycloudy_night",
+        "temp": 5,
+        "words": null
+      }
+    ],
+    "place": "Bjølsen",
+    "status": "ok",
+    "v": 1
+  },
+  "answer_line": {
+    "at_ms": 1793714400000,
+    "card": "2026-11-03",
+    "current": 1,
+    "symbol": "partlycloudy_day",
+    "temp": 7,
+    "words": null
+  },
+  "answer_now_ms": 1793715600000,
+  "cells": [
+    {
+      "cell": [
+        2997,
+        269
+      ],
+      "lat": 59.9412,
+      "lon": 10.7598,
+      "name": "Oslo",
+      "query": "lat=59.94&lon=10.76"
+    },
+    {
+      "cell": [
+        2997,
+        269
+      ],
+      "lat": 59.93,
+      "lon": 10.74,
+      "name": "on a 0.01° edge",
+      "query": "lat=59.94&lon=10.76"
+    },
+    {
+      "cell": [
+        -1694,
+        -1766
+      ],
+      "lat": -33.871,
+      "lon": -70.649,
+      "name": "south and west",
+      "query": "lat=-33.88&lon=-70.64"
+    },
+    {
+      "cell": [
+        0,
+        -4500
+      ],
+      "lat": 0.004,
+      "lon": 179.99,
+      "name": "179.99 wraps to -180",
+      "query": "lat=0.00&lon=-180.00"
+    },
+    {
+      "cell": [
+        4500,
+        0
+      ],
+      "lat": 89.999,
+      "lon": 0.0,
+      "name": "just under the pole",
+      "query": "lat=90.00&lon=0.00"
+    },
+    {
+      "cell": [
+        0,
+        0
+      ],
+      "lat": -0.001,
+      "lon": -0.001,
+      "name": "never minus zero",
+      "query": "lat=0.00&lon=0.00"
+    }
+  ],
+  "dark": [
+    {
+      "civil_ref": "2026-11-03T17:02+01:00",
+      "date": "2026-11-03",
+      "expect": {
+        "at": "2026-11-03T17:02+01:00",
+        "kind": "at"
+      },
+      "lat": 59.94,
+      "lon": 10.76,
+      "name": "Oslo in November",
+      "sunset_met": "2026-11-03T16:16+01:00",
+      "zone": "Europe/Oslo"
+    },
+    {
+      "civil_ref": "2026-06-22T00:29+02:00",
+      "date": "2026-06-21",
+      "expect": {
+        "at": "2026-06-22T00:29+02:00",
+        "kind": "at"
+      },
+      "lat": 59.94,
+      "lon": 10.76,
+      "name": "Oslo at midsummer: dark after midnight",
+      "sunset_met": "2026-06-21T22:44+02:00",
+      "zone": "Europe/Oslo"
+    },
+    {
+      "civil_ref": null,
+      "date": "2026-06-21",
+      "expect": {
+        "kind": "never"
+      },
+      "lat": 63.42,
+      "lon": 10.4,
+      "name": "Trondheim at midsummer: light all night",
+      "sunset_met": "2026-06-21T23:37+02:00",
+      "zone": "Europe/Oslo"
+    },
+    {
+      "civil_ref": "2026-12-21T13:53+01:00",
+      "date": "2026-12-21",
+      "expect": {
+        "at": "2026-12-21T13:53+01:00",
+        "kind": "at"
+      },
+      "lat": 69.66,
+      "lon": 18.96,
+      "name": "Tromsø in polar night: twilight at noon",
+      "sunset_met": null,
+      "zone": "Europe/Oslo"
+    },
+    {
+      "civil_ref": null,
+      "date": "2026-12-21",
+      "expect": {
+        "kind": "all_day"
+      },
+      "lat": 78.22,
+      "lon": 15.64,
+      "name": "Longyearbyen in polar night: dark all day",
+      "sunset_met": null,
+      "zone": "Arctic/Longyearbyen"
+    },
+    {
+      "civil_ref": null,
+      "date": "2026-06-21",
+      "expect": {
+        "kind": "never"
+      },
+      "lat": 69.66,
+      "lon": 18.96,
+      "name": "Tromsø at midsummer: light all night",
+      "sunset_met": null,
+      "zone": "Europe/Oslo"
+    }
+  ],
+  "forms": {
+    "heavy_rain": [
+      "from",
+      "today",
+      "now",
+      "tomorrow"
+    ],
+    "maybe_rain": [
+      "today",
+      "tomorrow"
+    ],
+    "maybe_snow": [
+      "today",
+      "tomorrow"
+    ],
+    "rain": [
+      "from",
+      "today",
+      "now",
+      "tomorrow"
+    ],
+    "sleet": [
+      "from",
+      "today",
+      "now",
+      "tomorrow"
+    ],
+    "snow": [
+      "from",
+      "today",
+      "now",
+      "tomorrow"
+    ],
+    "thunder": [
+      "from",
+      "today",
+      "now",
+      "tomorrow"
+    ],
+    "very_cold": [
+      "today",
+      "tomorrow"
+    ],
+    "very_warm": [
+      "today",
+      "tomorrow"
+    ],
+    "windy": [
+      "today",
+      "tomorrow"
+    ]
+  },
+  "now_answers": [
+    {
+      "answer": {
+        "line": null,
+        "status": "ok",
+        "v": 1
+      },
+      "name": "the recorded nowcast (dry)"
+    },
+    {
+      "answer": {
+        "line": {
+          "key": "rain_in",
+          "minutes": 25
+        },
+        "status": "ok",
+        "v": 1
+      },
+      "name": "rain in 25 minutes"
+    },
+    {
+      "answer": {
+        "line": {
+          "key": "dry_in",
+          "minutes": 45
+        },
+        "status": "ok",
+        "v": 1
+      },
+      "name": "dry in 45 minutes"
+    },
+    {
+      "answer": {
+        "line": {
+          "key": "rain_all"
+        },
+        "status": "ok",
+        "v": 1
+      },
+      "name": "rain all the way"
+    },
+    {
+      "answer": {
+        "status": "none",
+        "v": 1
+      },
+      "name": "off or no position"
+    }
+  ],
+  "now_keys": [
+    "rain_in",
+    "snow_in",
+    "dry_in",
+    "rain_all",
+    "snow_all"
+  ],
+  "nowcast": [
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "rain_in",
+        "minutes": 25
+      },
+      "name": "rain in 25 minutes",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "snow_in",
+        "minutes": 25
+      },
+      "name": "snow in 25 minutes: no precipitation in the code, below 0",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": -2
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "dry_in",
+        "minutes": 45
+      },
+      "name": "dry in 45 minutes",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.6,
+          "sym": "rain",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.6
+        },
+        {
+          "min": 10,
+          "rate": 0.6
+        },
+        {
+          "min": 15,
+          "rate": 0.6
+        },
+        {
+          "min": 20,
+          "rate": 0.6
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.0
+        },
+        {
+          "min": 50,
+          "rate": 0.0
+        },
+        {
+          "min": 55,
+          "rate": 0.0
+        },
+        {
+          "min": 60,
+          "rate": 0.0
+        },
+        {
+          "min": 65,
+          "rate": 0.0
+        },
+        {
+          "min": 70,
+          "rate": 0.0
+        },
+        {
+          "min": 75,
+          "rate": 0.0
+        },
+        {
+          "min": 80,
+          "rate": 0.0
+        },
+        {
+          "min": 85,
+          "rate": 0.0
+        },
+        {
+          "min": 90,
+          "rate": 0.0
+        },
+        {
+          "min": 95,
+          "rate": 0.0
+        },
+        {
+          "min": 100,
+          "rate": 0.0
+        },
+        {
+          "min": 105,
+          "rate": 0.0
+        },
+        {
+          "min": 110,
+          "rate": 0.0
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "rain_all"
+      },
+      "name": "rain all the way",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.6,
+          "sym": "rain",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.6
+        },
+        {
+          "min": 10,
+          "rate": 0.6
+        },
+        {
+          "min": 15,
+          "rate": 0.6
+        },
+        {
+          "min": 20,
+          "rate": 0.6
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "snow_all"
+      },
+      "name": "snow all the way",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.6,
+          "sym": "snow",
+          "temp": 1
+        },
+        {
+          "min": 5,
+          "rate": 0.6
+        },
+        {
+          "min": 10,
+          "rate": 0.6
+        },
+        {
+          "min": 15,
+          "rate": 0.6
+        },
+        {
+          "min": 20,
+          "rate": 0.6
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "no coverage",
+      "expect": null,
+      "name": "no radar coverage",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": null,
+      "name": "dry",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.0
+        },
+        {
+          "min": 30,
+          "rate": 0.0
+        },
+        {
+          "min": 35,
+          "rate": 0.0
+        },
+        {
+          "min": 40,
+          "rate": 0.0
+        },
+        {
+          "min": 45,
+          "rate": 0.0
+        },
+        {
+          "min": 50,
+          "rate": 0.0
+        },
+        {
+          "min": 55,
+          "rate": 0.0
+        },
+        {
+          "min": 60,
+          "rate": 0.0
+        },
+        {
+          "min": 65,
+          "rate": 0.0
+        },
+        {
+          "min": 70,
+          "rate": 0.0
+        },
+        {
+          "min": 75,
+          "rate": 0.0
+        },
+        {
+          "min": 80,
+          "rate": 0.0
+        },
+        {
+          "min": 85,
+          "rate": 0.0
+        },
+        {
+          "min": 90,
+          "rate": 0.0
+        },
+        {
+          "min": 95,
+          "rate": 0.0
+        },
+        {
+          "min": 100,
+          "rate": 0.0
+        },
+        {
+          "min": 105,
+          "rate": 0.0
+        },
+        {
+          "min": 110,
+          "rate": 0.0
+        }
+      ]
+    },
+    {
+      "coverage": "temporarily unavailable",
+      "expect": null,
+      "name": "radar temporarily unavailable",
+      "now_min": 0,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    },
+    {
+      "coverage": "ok",
+      "expect": {
+        "key": "rain_in",
+        "minutes": 20
+      },
+      "name": "seven minutes after the first step",
+      "now_min": 7,
+      "steps": [
+        {
+          "min": 0,
+          "rate": 0.0,
+          "sym": "cloudy",
+          "temp": 3
+        },
+        {
+          "min": 5,
+          "rate": 0.0
+        },
+        {
+          "min": 10,
+          "rate": 0.0
+        },
+        {
+          "min": 15,
+          "rate": 0.0
+        },
+        {
+          "min": 20,
+          "rate": 0.0
+        },
+        {
+          "min": 25,
+          "rate": 0.6
+        },
+        {
+          "min": 30,
+          "rate": 0.6
+        },
+        {
+          "min": 35,
+          "rate": 0.6
+        },
+        {
+          "min": 40,
+          "rate": 0.6
+        },
+        {
+          "min": 45,
+          "rate": 0.6
+        },
+        {
+          "min": 50,
+          "rate": 0.6
+        },
+        {
+          "min": 55,
+          "rate": 0.6
+        },
+        {
+          "min": 60,
+          "rate": 0.6
+        },
+        {
+          "min": 65,
+          "rate": 0.6
+        },
+        {
+          "min": 70,
+          "rate": 0.6
+        },
+        {
+          "min": 75,
+          "rate": 0.6
+        },
+        {
+          "min": 80,
+          "rate": 0.6
+        },
+        {
+          "min": 85,
+          "rate": 0.6
+        },
+        {
+          "min": 90,
+          "rate": 0.6
+        },
+        {
+          "min": 95,
+          "rate": 0.6
+        },
+        {
+          "min": 100,
+          "rate": 0.6
+        },
+        {
+          "min": 105,
+          "rate": 0.6
+        },
+        {
+          "min": 110,
+          "rate": 0.6
+        }
+      ]
+    }
+  ],
+  "periods": [
+    {
+      "base": {
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "partlycloudy_day",
+        "temp": 4
+      },
+      "date": "2026-11-04",
+      "expect": [
+        {
+          "part": "morning",
+          "precip_mm": 0.0,
+          "symbol": "cloudy",
+          "temp": 6
+        },
+        {
+          "part": "afternoon",
+          "precip_mm": 2.1,
+          "symbol": "partlycloudy_day",
+          "temp": 4
+        },
+        {
+          "part": "evening",
+          "precip_mm": 0.0,
+          "symbol": "partlycloudy_day",
+          "temp": 0
+        }
+      ],
+      "name": "the morning from a merged older fetch",
+      "now": "2026-11-04T15:00",
+      "old_until": "12:00",
+      "set": [
+        {
+          "from": "06:00",
+          "sym6": "cloudy",
+          "to": "07:00"
+        },
+        {
+          "from": "09:00",
+          "temp": 6,
+          "to": "10:00"
+        },
+        {
+          "from": "13:00",
+          "mm": 1.04,
+          "to": "15:00"
+        },
+        {
+          "from": "21:00",
+          "temp": -0.4,
+          "to": "22:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "partlycloudy_day",
+        "temp": 4
+      },
+      "date": "2026-11-04",
+      "drop_until": "12:00",
+      "expect": [
+        {
+          "part": "morning",
+          "precip_mm": null,
+          "symbol": null,
+          "temp": null
+        },
+        {
+          "part": "afternoon",
+          "precip_mm": 0.0,
+          "symbol": "partlycloudy_day",
+          "temp": 4
+        },
+        {
+          "part": "evening",
+          "precip_mm": 0.5,
+          "symbol": "partlycloudy_day",
+          "temp": 4
+        }
+      ],
+      "name": "a day without its morning",
+      "now": "2026-11-04T15:00",
+      "set": [
+        {
+          "from": "18:00",
+          "mm": 0.25,
+          "to": "20:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    }
+  ],
+  "statuses": [
+    {
+      "status": "off",
+      "v": 1
+    },
+    {
+      "status": "no_position",
+      "v": 1
+    },
+    {
+      "status": "unavailable",
+      "v": 1
+    }
+  ],
+  "words": [
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "nothing all day",
+      "now": "2026-11-04T10:00",
+      "set": [],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "14:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "rain from 14",
+      "now": "2026-11-04T10:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "now",
+        "key": "rain"
+      },
+      "name": "rain now at 14:05",
+      "now": "2026-11-04T14:05",
+      "set": [
+        {
+          "day": 0,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "now",
+        "key": "rain"
+      },
+      "name": "rain now at 07:42",
+      "now": "2026-11-04T07:42",
+      "set": [
+        {
+          "day": 0,
+          "from": "07:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "10:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "rain"
+      },
+      "name": "rain already at 7, seen at 06:30",
+      "now": "2026-11-04T06:30",
+      "set": [
+        {
+          "day": 0,
+          "from": "07:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "10:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "rain that stopped by 16:30",
+      "now": "2026-11-04T16:30",
+      "set": [
+        {
+          "day": 0,
+          "from": "08:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "12:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": -12,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "very_cold"
+      },
+      "name": "17:59 is today",
+      "now": "2026-11-04T17:59",
+      "set": [],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": -12,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "tomorrow",
+        "key": "very_cold"
+      },
+      "name": "18:00 is tomorrow",
+      "now": "2026-11-04T18:00",
+      "set": [],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "tomorrow",
+        "key": "rain"
+      },
+      "name": "tomorrow's rain drops the hour",
+      "now": "2026-11-04T19:00",
+      "set": [
+        {
+          "day": 1,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "tomorrow",
+        "key": "rain"
+      },
+      "name": "the 23:30 entry speaks of tomorrow",
+      "now": "2026-11-04T23:30",
+      "set": [
+        {
+          "day": 1,
+          "from": "10:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "11:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "10:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "the 00:10 entry speaks of the new day",
+      "now": "2026-11-04T00:10",
+      "set": [
+        {
+          "day": 0,
+          "from": "10:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "11:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "12:00",
+        "form": "from",
+        "key": "thunder"
+      },
+      "name": "thunder over heavy rain",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "12:00",
+          "mm": 3,
+          "pop": 80,
+          "sym": "heavyrainandthunder",
+          "to": "15:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "12:00",
+        "form": "from",
+        "key": "heavy_rain"
+      },
+      "name": "heavy rain",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "12:00",
+          "mm": 2,
+          "pop": 80,
+          "sym": "heavyrain",
+          "to": "15:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": -15,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": -5
+      },
+      "expect": {
+        "at": "10:00",
+        "form": "from",
+        "key": "snow"
+      },
+      "name": "snow over very cold",
+      "now": "2026-11-04T08:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "10:00",
+          "mm": 0.6,
+          "pop": 70,
+          "sym": "snow",
+          "to": "12:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "10:00",
+        "form": "from",
+        "key": "sleet"
+      },
+      "name": "sleet in MET's own spelling",
+      "now": "2026-11-04T08:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "10:00",
+          "mm": 0.6,
+          "pop": 70,
+          "sym": "lightssleetshowers_day",
+          "to": "11:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "13:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "the chance alone on a rain day",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "from": "13:00",
+          "pop": 70,
+          "to": "14:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": -6,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": -3
+      },
+      "expect": {
+        "form": "today",
+        "key": "maybe_snow"
+      },
+      "name": "no chance arm on a snow day",
+      "now": "2026-11-04T08:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "10:00",
+          "mm": 0.3,
+          "pop": 20,
+          "sym": "lightsnow",
+          "to": "11:00"
+        },
+        {
+          "from": "13:00",
+          "pop": 70,
+          "to": "14:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "maybe_rain"
+      },
+      "name": "a little chance",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "from": "13:00",
+          "pop": 40,
+          "to": "14:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "maybe_rain"
+      },
+      "name": "a sleet day's maybe is rain",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "10:00",
+          "mm": 0.3,
+          "pop": 20,
+          "sym": "sleet",
+          "to": "11:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "high from the window, not the evening",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "from": "19:00",
+          "temp": 27,
+          "to": "21:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "very_warm"
+      },
+      "name": "very warm",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "from": "13:00",
+          "temp": 26,
+          "to": "15:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "windy"
+      },
+      "name": "windy",
+      "now": "2026-11-04T09:00",
+      "set": [
+        {
+          "from": "12:00",
+          "gust": 16,
+          "to": "13:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "mm": 0,
+        "sym": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "a missing gust and chance count as none",
+      "now": "2026-11-04T09:00",
+      "set": [],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "gust": 2,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "temp": -11
+      },
+      "expect": {
+        "form": "today",
+        "key": "very_cold"
+      },
+      "name": "a missing feels-like falls back to the temperature",
+      "now": "2026-11-04T09:00",
+      "set": [],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "14:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "spring forward 2026-03-29",
+      "now": "2026-03-29T08:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "15:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "14:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "fall back 2026-10-25",
+      "now": "2026-10-25T10:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "15:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": null,
+      "expect": null,
+      "name": "no hours",
+      "now": "2026-11-04T10:00",
+      "set": [],
+      "zone": "Europe/Oslo"
+    }
+  ]
+}

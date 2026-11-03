@@ -85,6 +85,7 @@ fn provision_payload_uses_configured_values() {
         sse_keepalive_secs: 120,
         pwa_default_lang: None,
         github_api: "https://api.github.com".to_string(),
+        met_contact: None,
     };
     let payload = provisioning::provisioning_payload(
         &config,

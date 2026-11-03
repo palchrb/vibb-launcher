@@ -173,3 +173,12 @@ counts.
   `here_now_counts_the_served_interval_and_a_still_re_send`), `device_api::policy_json_keys_snapshot`,
   `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_95_in_order`,
   `zone_watch::a_fix_keeps_its_provider_and_mock_flag_in_the_title_only`.
+
+## A zone stands in for the weather (design 75, migration `0122_lock_weather.sql`)
+
+`device_policy.weather_zone_id` names one of the phone's zones whose centre gives the lock screen's weather when the
+phone has no fresh fix (Device › Weather; `docs/notes/server/launcher-ui.md`, "Lock screen weather"). It is a foreign
+key `ON DELETE SET NULL`: deleting the zone clears it (and the delete nudges the phone, as every zone save does).
+**A future migration that rebuilds `device_zones`** (copy, drop, rename) runs with foreign keys on, so dropping the old
+table would set every `weather_zone_id` to NULL without a word: such a rebuild must save the column first and restore
+it after (server QA R2 of design 75).

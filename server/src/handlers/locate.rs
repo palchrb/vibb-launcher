@@ -2102,6 +2102,23 @@ pub async fn update_location_policy(
     {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_location_mode");
     }
+    // The mode before (design 75 D13): a change to Off erases the weather's caches too.
+    let before: Option<String> =
+        match sqlx::query_scalar("SELECT location_mode FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(before) => before,
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "failed to read the location policy");
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error.save_failed_log",
+                );
+            }
+        };
     let result = sqlx::query(
         "UPDATE device_policy SET location_mode = ?, \
          location_interval_minutes = COALESCE(?, location_interval_minutes), \
@@ -2144,6 +2161,13 @@ pub async fn update_location_policy(
             if mode == "off" {
                 // A failing table is logged by the pass itself (security review L9).
                 crate::retention::prune(&state.db).await;
+                // Design 75 D13: the weather's cells and place names are a coarse trail of where the family has
+                // been - they go at the change to Off, whole (they carry no device id). Never in the prune.
+                if before.as_deref() != Some("off")
+                    && let Err(err) = crate::weather_cache::erase(&state).await
+                {
+                    tracing::error!(device_id = id, %err, "couldn't erase the weather's caches");
+                }
             }
             let _ = state.command_notify.send(id);
             let group = match form.get("back").map(String::as_str) {

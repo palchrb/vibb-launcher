@@ -126,6 +126,11 @@ impl Zone {
             .map_or(now, |t| t.with_timezone(&Utc))
     }
 
+    /// The zone itself (the weather's hours, design 75 D12).
+    pub fn tz(&self) -> Tz {
+        self.tz
+    }
+
     pub fn local(&self, t: DateTime<Utc>) -> DateTime<Tz> {
         t.with_timezone(&self.tz)
     }

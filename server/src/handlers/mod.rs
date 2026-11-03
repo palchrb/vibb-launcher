@@ -34,5 +34,7 @@ pub mod system_update;
 pub mod tracked_apps;
 pub mod updates;
 pub mod wallpapers;
+pub mod weather;
+pub mod weather_page;
 pub mod window_relock;
 pub mod zones;

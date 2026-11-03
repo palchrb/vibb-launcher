@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">{{ self.t("device.page.weather") }}</h1>
+
+    {#- Design 75 §6: two rows, each its own auto-saving form answering on its own anchor (#weather-lock,
+        #weather-zone): without JS the answer lands on the row, with JS scroll-restore.js keeps the exact place - a
+        save never jumps to the top. <noscript> Save without JS. The zone row shows while the switch is on. -#}
+    <section id="weather" aria-labelledby="weather-title">
+        <h2 class="group-header" id="weather-title">{{ self.t("device.lock.lock_screen") }}</h2>
+        {% if needs_position %}
+        <div class="attention attention-action" data-warning="needs-position">
+            <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/locate?device={{ device.id }}#location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
+        </div>
+        {% endif %}
+        {% if needs_update %}
+        <div class="attention attention-action" data-warning="needs-update">
+            <div class="attention-text">{{ self.t("device.weather.needs_update") }}</div>
+        </div>
+        {% endif %}
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/weather/lock#weather-lock" class="cell" id="weather-lock">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.weather.lock") }}<span class="row-sub">{{ self.t("device.weather.lock_sub") }}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% if on %}
+            {% if zones.is_empty() %}
+            <div class="row" id="weather-zone" data-row="weather-zone-empty">
+                <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_empty") }} <a href="/devices/locate?device={{ device.id }}#zones">{{ self.t("device.weather.zone_empty_link") }}</a></span></span>
+            </div>
+            {% else %}
+            <form method="post" action="/devices/{{ device.id }}/weather/zone#weather-zone" class="cell" id="weather-zone">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_sub") }}</span></span>
+                    <select class="pick" name="zone" data-autosave>
+                        <option value=""{% if no_zone %} selected{% endif %}>{{ self.t("device.weather.zone_none") }}</option>
+                        {% for z in zones %}
+                        <option value="{{ z.id }}"{% if z.selected %} selected{% endif %}>{{ z.name }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% endif %}
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("device.weather.footer") }}</p>
+    </section>
+</main>
+</body>
+</html>

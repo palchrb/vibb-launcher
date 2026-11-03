@@ -445,7 +445,7 @@ pub(crate) async fn load_policy(
 }
 
 /// The last report lists the launcher capability `name`.
-fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
+pub(crate) fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
     latest
         .and_then(|s| s.capabilities_json.as_deref())
         .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
