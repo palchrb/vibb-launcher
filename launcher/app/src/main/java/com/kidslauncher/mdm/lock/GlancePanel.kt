@@ -1171,7 +1171,7 @@ class GlancePanel(
                 }
                 val shown = if (line.visibility == View.VISIBLE) line.height + (line.layoutParams as ViewGroup.MarginLayoutParams).topMargin else 0
                 // Design 75 §5.5: measured with the weather's open card taken out, so opening it never hides the line.
-                (top - shown - weather.cardHeight()) / activity.resources.displayMetrics.density
+                (top - shown - weatherCardTaken()) / activity.resources.displayMetrics.density
             }
             glanceNextFits(glance.lockGlanceScroll.height / activity.resources.displayMetrics.density, thirdTop, lineDp)
         }
@@ -1558,6 +1558,14 @@ class GlancePanel(
         apply(layout)
         // Design 75 D15: a new page width decides the weather mark's place again.
         weather.resume()
+    }
+
+    /** What the open weather card adds above the rows: its height with its margin, less the 8 dp the list's margin
+     * gives back under it when nothing else sits there (22 -> 14 dp, [placeList]); 0 while folded. */
+    private fun weatherCardTaken(): Int {
+        val card = weather.cardHeight()
+        val bare = laidOut?.let { it.tile == GlanceTileSize.NONE && !it.timer && !it.rule } == true
+        return if (card > 0 && bare) card - dp(ROWS_TOP_NO_TILE_DP - ROWS_TOP_DP) else card
     }
 
     /** The weather's card opened or folded, or its own line came or went: the list's margin and the "Neste" line. */

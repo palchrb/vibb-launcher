@@ -921,3 +921,13 @@ None. The one open question (the phone's last-known position, D18) was answered 
   hour's patterns live in `ClockFormat.weatherHour` (the one place a time pattern may be spelled); the mark is hidden
   until its place is known; `legal_info_weather` is English like the other licence paragraphs
   (`donottranslate.xml`).
+- **Step 2's code QA** (`docs/review/qa-75-code-step2.md`): the card's nowcast is asked at most every 2 min from the
+  ask's start, whatever it brought, never while one runs, cancelled when the card folds or the lock stops, and a
+  failure never replaces a good answer (M1, pure `weatherNowAsk`); a pull that started before a clear keeps nothing
+  and a pull asked while one runs runs once more after it (L1, the store's generation); TalkBack's click labels are
+  infinitives ("se dagen", "lukke dagen"), the state "Åpen"/"Lukket" (L2); the mark is as tall as the date's line - the
+  symbol overhangs it - so nothing moves when it comes beside the date (L3); the own line's room is held only for a
+  line that went stale within the last hour past its 3 h (L4); the hour follows the strings' catalog by a resource
+  (`weather_catalog_nb`, L5); the foot cuts only the place, the part labels take two lines (L6); the chevron turns on
+  open too (L7); the cached switch is read when the lock starts and the kept answer again after the first unlock
+  (L8); the layout tests pin the own line and the open card (L9).

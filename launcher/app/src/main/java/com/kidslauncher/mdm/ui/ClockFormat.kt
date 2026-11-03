@@ -132,9 +132,6 @@ object ClockFormat {
     /** The phone's format now: `TIME_12_24`, else the system locale's default. */
     fun systemIs24(context: Context): Boolean = systemIs24(context, systemLocale(context))
 
-    /** Whether the phone's one clock format (design 34 P12) is 24-hour now. */
-    fun is24(context: Context): Boolean = systemIs24(context, systemLocale(context))
-
     /**
      * The hour of the lock weather's "from" words (design 75 §5.2), keyed on the strings' catalog ([catalogNb]:
      * `values-nb`, else English): 24-hour nb "14" (the string carries "kl."), 24-hour en "14:00", 12-hour "2 PM"; a

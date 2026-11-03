@@ -354,7 +354,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (U+2212, never "−0°"), `weatherCard`, `weatherPlace`/`weatherWordsFit` (§5.3's budgets). The words:
   `weather/WeatherWords.kt` (a `when` table; `WeatherContractTest` checks every pair of the contract's `forms` in both
   catalogs). The hour of a `from`: `ClockFormat.weatherHour` (nb "14", en "14:00", 12 h "2 PM"). The store:
-  `weather/WeatherStore.kt` (memory + CE prefs `weather`; the policy's switch and location mode from every accepted
+  `weather/WeatherStore.kt` (memory + CE prefs `weather`; a `generation` bumped by every clear, so a pull begun before it keeps nothing; the policy's switch and location mode from every accepted
   sync and the `Ok` cache at start). The pulls: `weather/WeatherPull.kt` - at the end of every sync before the
   self-update commit, at screen-on, at once on a policy step; one in flight, a 15 s call timeout, everything caught;
   only `createMdmApi` (`WeatherGuardTest`). **R1** (a zone's save or delete only nudges): `SyncRunner` marks a sync
@@ -363,7 +363,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `lock_glance_date_row`, `lock_glance_weather_line` under it; `view_lock_weather_mark.xml`), the card
   (`lock_weather_card`, `view_lock_weather_card.xml`, before the rule card), the place decided at a lock-up, a refit,
   a width change and the first bind (hidden until known), the card folded by every lock-up, the stage leaving the page,
-  `stop`, the VoIP card, the line or the card going; the nowcast asked at an open (3 s), inserted within 1 s; the
+  `stop`, the VoIP card, the line or the card going; the nowcast asked at an open (3 s), inserted within 1 s, asked at most every 2 min from an ask's start whatever it brought and never while one runs (`weatherNowAsk`; a failure keeps the last good answer; the ask is cancelled at a fold or `stop`); the
   mark's 48 dp hit area a `TouchDelegate` on `lock_glance_top` (pure `weatherHitRect`: the top capped at the clock's
   baseline, the rest below - the design review's L1); the own line's room held through a screen-on pull when a line
   had gone stale (L2). `LockClockFace` gained `dateRow` (placed and baselined as the date) and `shortDate(on)` (the

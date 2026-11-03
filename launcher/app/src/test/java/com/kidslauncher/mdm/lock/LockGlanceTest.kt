@@ -914,6 +914,43 @@ class LockGlanceLayoutTest {
         assertEquals(82f, parts.rule, 0.01f)
     }
 
+    /**
+     * Design 75 §5.5 (launcher QA L13, code QA L9): the weather's own line under the date is part of the face - on the
+     * Jelly Star's worst case (the profile clock, the alarm line, music + 3 rows) it takes row 3's room, "Neste" yields
+     * at 473 and 497 dp, and row 3 stays partly in sight; the mark is as tall as the date's line (no row grows when it
+     * comes beside the date). The open card is in the scroller: past the fold it scrolls, never clipped.
+     */
+    @Test
+    fun `the weather's own line makes Neste yield, and the open card scrolls (design 75)`() {
+        val line = root.byId("lock_glance_weather_line")
+        val slot = line.dim("layout_marginTop") + height(line)
+        assertEquals("the symbol's 22 dp, the mark's tallest part in the XML", 22f, slot, 0.01f)
+        val next = withMargins("lock_glance_next")
+        val layout = glanceLayout(tile = true, rowCount = 3, timer = false)
+        val third = content(layout, profileParts, alarm = true) - parts.row
+        for (bar in listOf(48f, 24f)) {
+            val scroller = scroller(bar)
+            assertFalse("Neste at ${569 - bar} with the own line", glanceNextFits(scroller, third + slot, next))
+            assertTrue("row 3 partly in sight at ${569 - bar}", scroller - (third + slot) > 0f)
+        }
+        // The open card: inside the scrolled top block, of its content's own height (no fixed height, nothing to clip).
+        val card = root.byId("lock_weather_card")
+        assertEquals("lock_glance_top", (card.parentNode as Element).id())
+        assertEquals("wrap_content", card.getAttributeNS(ns, "layout_height"))
+        assertEquals("", card.getAttributeNS(ns, "maxHeight"))
+        val open = card.cloneNode(true) as Element
+        open.removeAttributeNS(ns, "visibility")
+        for (font in listOf(1f, 2f)) {
+            val withCard = content(layout, partsAt(font), alarm = true) + open.dim("layout_marginTop") + height(open, font)
+            assertTrue("font $font: the page with the open card scrolls past 401 dp", withCard > scroller(48f))
+        }
+        // The mark beside the date is as tall as the date's line: the symbol hangs over it by its negative margins.
+        val panel = file("java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
+        assertTrue(panel.contains("val overhang = minOf(0, ((metrics.bottom - metrics.top) - symbolPx) / 2)"))
+        assertEquals("false", root.byId("lock_glance_date_row").getAttributeNS(ns, "clipChildren"))
+        assertEquals("false", root.byId("lock_glance_weather").getAttributeNS(ns, "clipChildren"))
+    }
+
     /** Design r13 §1.3: the card is information only - no tap, one TalkBack stop without a keyboard focus stop. */
     @Test
     fun `the rule card - not clickable, one TalkBack stop, the disc, the compact tile's ground (r13 §1_3)`() {

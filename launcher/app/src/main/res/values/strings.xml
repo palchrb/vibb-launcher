@@ -575,7 +575,6 @@
     <string name="weather_dark_never">Light all night</string>
     <string name="weather_dark_all_day">Dark all day</string>
     <string name="weather_updated">Updated %1$s</string>
-    <string name="weather_degrees">%1$s°</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
     <string name="weather_foot">%1$s · %2$s</string>
@@ -598,8 +597,9 @@
         <item quantity="other">High %1$s degrees.</item>
     </plurals>
     <string name="weather_spoken_sentence">%1$s.</string>
-    <string name="weather_expanded">Expanded</string>
-    <string name="weather_collapsed">Collapsed</string>
-    <string name="weather_card_hint">Tap to see the day</string>
-    <string name="weather_card_close">Close the day</string>
+    <string name="weather_expanded">Open</string>
+    <string name="weather_collapsed">Closed</string>
+    <!-- TalkBack says "Double-tap to" before a click label (code QA L2): infinitives. -->
+    <string name="weather_card_hint">see the day</string>
+    <string name="weather_card_close">close the day</string>
 </resources>

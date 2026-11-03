@@ -502,7 +502,6 @@
     <string name="weather_dark_never">Lyst hele natta</string>
     <string name="weather_dark_all_day">Mørkt hele dagen</string>
     <string name="weather_updated">Oppdatert kl. %1$s</string>
-    <string name="weather_degrees">%1$s°</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
     <string name="weather_foot">%1$s · %2$s</string>
@@ -523,8 +522,9 @@
         <item quantity="other">Høyeste %1$s grader.</item>
     </plurals>
     <string name="weather_spoken_sentence">%1$s.</string>
-    <string name="weather_expanded">Utvidet</string>
+    <string name="weather_expanded">Åpen</string>
     <string name="weather_collapsed">Lukket</string>
-    <string name="weather_card_hint">Trykk for å se dagen</string>
-    <string name="weather_card_close">Lukk dagen</string>
+    <!-- TalkBack sier «Dobbelttrykk for å» foran en klikketikett (kode-QA L2): infinitiv. -->
+    <string name="weather_card_hint">se dagen</string>
+    <string name="weather_card_close">lukke dagen</string>
 </resources>

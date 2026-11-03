@@ -36,6 +36,9 @@ object WeatherPull {
     private val inFlight = AtomicBoolean(false)
     private val nudge = AtomicBoolean(false)
 
+    /** A pull was asked while one ran (code QA L1: a policy step's pull is never dropped): one more when it ends. */
+    private val again = AtomicBoolean(false)
+
     /** A pull is running. */
     fun running(): Boolean = inFlight.get()
 
@@ -74,10 +77,26 @@ object WeatherPull {
     /** One pull (if none is running): `GET /api/devices/weather`, its result kept by [WeatherStore.pulled]. Returns
      * whether it ran. */
     suspend fun pull(context: Context): Boolean {
-        if (!inFlight.compareAndSet(false, true)) return false
+        if (!inFlight.compareAndSet(false, true)) {
+            again.set(true)
+            return false
+        }
         try {
+            do {
+                again.set(false)
+                pullOnce(context)
+            } while (again.get() && WeatherStore.policyOn)
+            return true
+        } finally {
+            inFlight.set(false)
+        }
+    }
+
+    private suspend fun pullOnce(context: Context) {
+        try {
+            val startedAt = WeatherStore.generation
             val result = fetch()
-            WeatherStore.pulled(context.applicationContext, result, System.currentTimeMillis())
+            WeatherStore.pulled(context.applicationContext, result, System.currentTimeMillis(), startedAt)
             when (result) {
                 is WeatherPullResult.Answered -> Log.i(
                     LOG_TAG,
@@ -85,14 +104,10 @@ object WeatherPull {
                 )
                 WeatherPullResult.Failed -> Unit
             }
-            return true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Weather: pull failed (${e.javaClass.simpleName})")
-            return true
-        } finally {
-            inFlight.set(false)
         }
     }
 

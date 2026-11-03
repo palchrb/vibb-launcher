@@ -61,8 +61,8 @@ class ClockFormatTest {
         assertTrue("chooseTextLocale(context.resources.configuration.locales[0], system)" in
             code.substringAfter("private fun textLocale(").substringBefore("fun "))
         assertFalse(".resources.configuration" in code.substringAfter("fun systemIs24("))
-        // Every format decision goes through systemLocale(context) (design 75's is24(context) the fourth).
-        assertEquals(4, Regex("""val locale = systemLocale\(context\)""").findAll(code).count() +
+        // Every format decision goes through systemLocale(context).
+        assertEquals(3, Regex("""val locale = systemLocale\(context\)""").findAll(code).count() +
             Regex("""systemIs24\(context, systemLocale\(context\)\)""").findAll(code).count())
     }
 

@@ -132,7 +132,6 @@ class WeatherModelTest {
         assertFalse("later: kept for the next open", weatherNowShown(1_000, 1_001 + WEATHER_NOW_INSERT_MS, 3, 3, rowsHeld = false))
         assertFalse("folded and opened again since", weatherNowShown(1_000, 1_200, 3, 4, rowsHeld = false))
         assertFalse("a finger on the rows", weatherNowShown(1_000, 1_200, 3, 3, rowsHeld = true))
-        assertTrue(WEATHER_NOW_TIMEOUT_MS == 3_000L && WEATHER_NOW_INSERT_MS == 1_000L)
         // The line's keys: `_in` with its minutes, `_all` without; an unknown key or a dry answer is nothing.
         val k: (String) -> Boolean = { it in setOf("rain_in", "rain_all") }
         assertEquals("rain_in" to 25, weatherNowLine(WeatherNow(1, "ok", WeatherNowLine("rain_in", 25)), k))
@@ -140,6 +139,17 @@ class WeatherModelTest {
         assertNull(weatherNowLine(WeatherNow(1, "ok", null), k))
         assertNull(weatherNowLine(WeatherNow(1, "ok", WeatherNowLine("hail_in", 5)), k))
         assertNull(weatherNowLine(WeatherNow(1, "none"), k))
+    }
+
+    /** Code QA M1 (D9: at most every 2 min): no ask while one runs, none within 2 min of the last ask's start - a
+     * failed or throttled one included. */
+    @Test
+    fun `the card asks for the nowcast at most every 2 min, whatever the last ask brought`() {
+        assertTrue("never asked", weatherNowAsk(null, inFlight = false, nowElapsed = 10_000))
+        assertFalse("an ask runs", weatherNowAsk(null, inFlight = true, nowElapsed = 10_000))
+        assertFalse(weatherNowAsk(10_000, inFlight = false, nowElapsed = 10_000 + WEATHER_NOW_REUSE_MS - 1))
+        assertTrue(weatherNowAsk(10_000, inFlight = false, nowElapsed = 10_000 + WEATHER_NOW_REUSE_MS))
+        assertTrue("a reboot's clock", weatherNowAsk(10_000, inFlight = false, nowElapsed = 5_000))
     }
 
     @Test

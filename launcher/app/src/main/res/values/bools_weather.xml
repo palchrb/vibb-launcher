@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Design 75 (code QA L5): which catalog the weather's words come from - the "from" hour follows it ("Regn fra kl.
+         14" in values-nb, "Rain from 14:00" here). -->
+    <bool name="weather_catalog_nb">false</bool>
+</resources>

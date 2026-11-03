@@ -145,6 +145,12 @@ fun weatherFold(open: Boolean, event: WeatherEvent, hasCard: Boolean): Boolean =
 fun weatherNowShown(openedAtMs: Long, answeredAtMs: Long, generation: Int, current: Int, rowsHeld: Boolean): Boolean =
     generation == current && !rowsHeld && answeredAtMs >= openedAtMs && answeredAtMs - openedAtMs <= WEATHER_NOW_INSERT_MS
 
+/** Whether opening the card asks for the nowcast (code QA M1, D9's "at most every 2 min"): not while an ask runs, and
+ * not within [WEATHER_NOW_REUSE_MS] of the last ask's start, whatever it brought (a failure, a 429). A clock going back
+ * (a reboot's elapsed realtime) asks. */
+fun weatherNowAsk(askedAtElapsed: Long?, inFlight: Boolean, nowElapsed: Long): Boolean =
+    !inFlight && (askedAtElapsed == null || nowElapsed < askedAtElapsed || nowElapsed - askedAtElapsed >= WEATHER_NOW_REUSE_MS)
+
 /** The nowcast line's key and minutes, when the phone has words for it; else none. */
 fun weatherNowLine(now: WeatherNow?, known: (String) -> Boolean = { WeatherWords.nowRes(it) != null }): Pair<String, Int?>? {
     val line = now?.takeIf { it.status == "ok" }?.line ?: return null

@@ -24,7 +24,9 @@ import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockWeatherMarkBinding
 import com.kidslauncher.mdm.server.dto.WeatherAnswer
 import com.kidslauncher.mdm.ui.ClockFormat
+import com.kidslauncher.mdm.weather.WEATHER_HIDE_AFTER_MS
 import com.kidslauncher.mdm.weather.WEATHER_NOW_INSERT_MS
+import com.kidslauncher.mdm.weather.weatherNowAsk
 import com.kidslauncher.mdm.weather.WeatherCard
 import com.kidslauncher.mdm.weather.WeatherEvent
 import com.kidslauncher.mdm.weather.WeatherLine
@@ -132,6 +134,8 @@ class WeatherLockPanel(
     fun start() = guarded("start") {
         if (started) return@guarded
         started = true
+        // L8: the cached switch now (the date short from the first frame), the kept answer once the phone is unlocked.
+        WeatherStore.ensureLoaded(activity)
         WeatherStore.addListener(changed)
     }
 
@@ -148,7 +152,9 @@ class WeatherLockPanel(
         fold(WeatherEvent.LOCK_UP)
         place = null
         // Only a line that was there and went stale: a phone whose weather never comes keeps no empty room.
-        slotHeld = WeatherStore.policyOn && WeatherStore.answer?.status == "ok" && WeatherPull.let { it.running() || it.due() }
+        // L4: and only while that line showed recently - an answer past its 3 h and one more hour holds no room.
+        val recent = WeatherStore.answer?.checkedAtMs?.let { System.currentTimeMillis() - it <= WEATHER_HIDE_AFTER_MS + HOLD_EXTRA_MS } == true
+        slotHeld = WeatherStore.policyOn && WeatherStore.answer?.status == "ok" && recent && WeatherPull.let { it.running() || it.due() }
         shownFor = null
         repick()
     }
@@ -232,7 +238,18 @@ class WeatherLockPanel(
         val text = mark.weatherMarkText
         text.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
         val symbolPx = maxOf(ceil(glance.lockGlanceDate.textSize * SYMBOL_SCALE).toInt(), dp(SYMBOL_MIN_DP))
-        mark.weatherMarkSymbol.layoutParams = mark.weatherMarkSymbol.layoutParams.apply { width = symbolPx; height = symbolPx }
+        // L3 (code QA): the mark is as tall as the date's line - the symbol centred on the text, overhanging it by its
+        // negative margins (nothing clips it) -, so the row never grows when the mark comes and the text's baseline is
+        // the row's honestly (a horizontal LinearLayout's baseline ignores a centred child's offset).
+        val metrics = text.paint.fontMetricsInt
+        val overhang = minOf(0, ((metrics.bottom - metrics.top) - symbolPx) / 2)
+        (mark.weatherMarkSymbol.layoutParams as ViewGroup.MarginLayoutParams).let {
+            it.width = symbolPx
+            it.height = symbolPx
+            it.topMargin = overhang
+            it.bottomMargin = overhang
+            mark.weatherMarkSymbol.layoutParams = it
+        }
         val drawable = model.symbol?.let { WeatherSymbols.drawable(it) }
         if (drawable != null) mark.weatherMarkSymbol.setImageResource(drawable)
         mark.weatherMarkSymbol.visibility = if (drawable != null) View.VISIBLE else View.GONE
@@ -253,7 +270,7 @@ class WeatherLockPanel(
         }
         text.text = built
         mark.weatherMarkChevron.visibility = if (hasCard) View.VISIBLE else View.GONE
-        mark.weatherMarkChevron.rotation = if (open) 180f else 0f
+        if (SystemClock.elapsedRealtime() >= turningUntil) mark.weatherMarkChevron.rotation = if (open) 180f else 0f
         mark.root.isClickable = hasCard
         mark.root.isFocusable = hasCard
         mark.root.contentDescription = spokenMark(model, shownWords)
@@ -272,9 +289,10 @@ class WeatherLockPanel(
     }
 
     private fun hourText(atMs: Long): String =
-        weatherHour(atMs, ZoneId.systemDefault(), ClockFormat.is24(activity), catalogNb())
+        weatherHour(atMs, ZoneId.systemDefault(), ClockFormat.systemIs24(activity), catalogNb())
 
-    private fun catalogNb(): Boolean = activity.resources.configuration.locales[0]?.language in setOf("nb", "no", "nn")
+    /** L5: the strings' catalog itself (`values-nb` sets it), not a guess from the first locale. */
+    private fun catalogNb(): Boolean = activity.resources.getBoolean(R.bool.weather_catalog_nb)
 
     // ---- the place (D15) ---------------------------------------------------------------------------
 
@@ -353,17 +371,27 @@ class WeatherLockPanel(
         val lowHigh = if (model.low != null && model.high != null) {
             activity.getString(R.string.weather_low_high, weatherDegrees(model.low), weatherDegrees(model.high))
         } else null
-        card.weatherCardFoot.text = when {
-            model.place != null && lowHigh != null -> activity.getString(R.string.weather_foot, model.place, lowHigh)
-            else -> model.place ?: lowHigh.orEmpty()
-        }
-        card.weatherCardDark.text = darkText(model).orEmpty()
+        val dark = darkText(model).orEmpty()
+        card.weatherCardDark.text = dark
+        card.weatherCardFoot.text = footText(model.place, lowHigh, dark)
         val updated = model.updatedAtMs
         card.weatherCardUpdated.visibility = if (updated != null) View.VISIBLE else View.GONE
         if (updated != null) card.weatherCardUpdated.text = activity.getString(R.string.weather_updated, ClockFormat.formatClock(activity, updated))
         view.visibility = View.VISIBLE
         view.contentDescription = withNow(spokenCard(model, lowHigh != null))
         view.stateDescription = activity.getString(R.string.weather_expanded)
+    }
+
+    /** "Nydalen · 2° / 7°" (code QA L6): the place cut to what the low and high, the dark text and the card's padding
+     * leave on the line - the low and high are never cut. */
+    private fun footText(place: String?, lowHigh: String?, dark: String): String {
+        if (place == null || lowHigh == null) return place ?: lowHigh.orEmpty()
+        val paint = card.weatherCardFoot.paint
+        val tail = activity.getString(R.string.weather_foot, "", lowHigh)
+        val room = contentWidth() - dp(CARD_PADDING_DP * 2 + DARK_GAP_DP) - Layout.getDesiredWidth(dark, card.weatherCardDark.paint) -
+            Layout.getDesiredWidth(tail, paint) - dp(SLACK_DP)
+        val cut = if (room > 0) android.text.TextUtils.ellipsize(place, paint, room, android.text.TextUtils.TruncateAt.END).toString() else ""
+        return if (cut.isEmpty()) lowHigh else activity.getString(R.string.weather_foot, cut, lowHigh)
     }
 
     private fun darkText(model: WeatherCard): String? {
@@ -389,25 +417,34 @@ class WeatherLockPanel(
         val opened = SystemClock.elapsedRealtime()
         val asked = generation
         card.weatherCardNow.visibility = View.GONE
+        // L7: the chevron turns before the rebind (which then leaves the turning one alone).
+        turnChevron()
         shownFor = null
         repick()
-        turnChevron()
         // The open card below the fold comes into view (no animation).
         card.root.post { guarded("scroll") { card.root.requestRectangleOnScreen(Rect(0, 0, card.root.width, card.root.height), true) } }
-        // The nowcast (D9, launcher QA M2): a kept answer of the last 2 min at once, else asked - inserted only within 1 s.
-        val kept = WeatherStore.freshNow()
-        if (kept != null) {
-            showNow(kept)
-            return
-        }
-        activity.lifecycleScope.launch {
+        // The nowcast (D9, launcher QA M2, code QA M1): a kept good answer of the last 2 min shows at once; an ask only
+        // by [weatherNowAsk] - none while one runs, none within 2 min of the last one's start, whatever it brought.
+        WeatherStore.freshNow()?.let(::showNow)
+        if (!weatherNowAsk(WeatherStore.nowAskedAtElapsed, WeatherStore.nowAsking, opened)) return
+        WeatherStore.nowAskStarted()
+        nowJob = activity.lifecycleScope.launch {
+            var got: com.kidslauncher.mdm.server.dto.WeatherNow? = null
+            try {
+                got = WeatherPull.nowcast()
+            } finally {
+                // Cancelled (the card folded, the screen went off) or done: the ask has ended; a failure keeps the old.
+                WeatherStore.nowAskEnded(got)
+                nowJob = null
+            }
             guarded("nowcast") {
-                val got = WeatherPull.nowcast()
-                WeatherStore.nowAnswered(got)
                 if (open && weatherNowShown(opened, SystemClock.elapsedRealtime(), asked, generation, rowsHeld())) showNow(got)
             }
         }
     }
+
+    /** The card's nowcast ask while it runs: cancelled when the card folds or the lock stops. */
+    private var nowJob: kotlinx.coroutines.Job? = null
 
     private fun showNow(answer: com.kidslauncher.mdm.server.dto.WeatherNow?) {
         val (key, minutes) = weatherNowLine(answer) ?: return
@@ -429,6 +466,8 @@ class WeatherLockPanel(
     }
 
     private fun fold(event: WeatherEvent) {
+        nowJob?.cancel()
+        nowJob = null
         val next = weatherFold(open, event, line?.card != null)
         if (!open && !next) {
             if (event != WeatherEvent.TAP) generation++
@@ -447,8 +486,12 @@ class WeatherLockPanel(
     }
 
     /** The chevron's turn (150 ms; none with "Remove animations"). */
+    /** Until when a turn runs (a rebind leaves the chevron alone meanwhile). */
+    private var turningUntil = 0L
+
     private fun turnChevron() {
         val to = if (open) 180f else 0f
+        turningUntil = SystemClock.elapsedRealtime() + TURN_MS + 50
         for (mark in listOf(beside, ownLine)) {
             val chevron = mark.weatherMarkChevron
             if (ValueAnimator.areAnimatorsEnabled() && mark.root.isShown) chevron.animate().rotation(to).setDuration(TURN_MS).start()
@@ -556,6 +599,11 @@ class WeatherLockPanel(
         const val HIT_MIN_DP = 48f
         const val HIT_SIDE_DP = 8f
         const val TURN_MS = 150L
+        const val CARD_PADDING_DP = 12f
+        const val DARK_GAP_DP = 8f
+
+        /** L4: the own line's room is held for a line that went stale less than this past its 3 h. */
+        const val HOLD_EXTRA_MS = 3_600_000L
         const val DOT = " · "
 
         /** The widest degrees a day plans for. */

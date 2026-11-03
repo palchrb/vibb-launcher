@@ -63,11 +63,12 @@
 
             <TextView
                 android:id="@+id/weather_col_0_part"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_bold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:textColor="@color/kid_core_dim"
                 android:textSize="12sp" />
 
@@ -114,11 +115,12 @@
 
             <TextView
                 android:id="@+id/weather_col_1_part"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_bold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:textColor="@color/kid_core_dim"
                 android:textSize="12sp" />
 
@@ -165,11 +167,12 @@
 
             <TextView
                 android:id="@+id/weather_col_2_part"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_bold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:textColor="@color/kid_core_dim"
                 android:textSize="12sp" />
 
@@ -212,12 +215,13 @@
         android:importantForAccessibility="no"
         android:orientation="horizontal">
 
+        <!-- "Nydalen · 2° / 7°": only the place gives way (code QA L6, the panel cuts it to what the low and high
+             leave), never the low and high. -->
         <TextView
             android:id="@+id/weather_card_foot"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:ellipsize="end"
             android:fontFamily="@font/nunito_bold"
             android:importantForAccessibility="no"
             android:maxLines="1"
