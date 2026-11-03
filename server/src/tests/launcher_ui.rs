@@ -295,11 +295,35 @@ async fn photo_is_reencoded_and_reaches_the_device() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 
     // The admin page shows it.
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
+    let calls = app.get_page(&format!("/devices/{id}/calls"), &cookie).await;
+    // The crop dialog shows a picked photo from a blob: URL: the page's CSP must allow it (QA photo-crop H1).
+    let csp = calls.headers[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap();
+    let img_src = csp
+        .split(';')
+        .map(str::trim)
+        .find(|directive| directive.starts_with("img-src"))
+        .unwrap_or_default();
+    assert!(img_src.split(' ').any(|source| source == "blob:"), "{csp}");
+    let page = calls.text();
     assert!(page.contains(&format!("src=\"/contact-photos/{hash}\"")));
+    // The crop (static/photo-crop.js): "Adjust crop" on the stored photo, the dialog with the server's side and
+    // limit, its words from the catalog.
+    let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
+    assert!(page.contains(&format!(
+        "data-photo-adjust=\"/contact-photos/{hash}\" hidden>{}</button>",
+        words("device.calls.adjust_crop")
+    )));
+    assert!(page.contains("<script src=\"/static/photo-crop.js?v=1\" defer></script>"));
+    assert!(page.contains(&format!(
+        "data-side=\"{}\" data-max-bytes=\"{}\"",
+        crate::photos::MAX_SIDE,
+        crate::photos::MAX_UPLOAD_BYTES
+    )));
+    for key in ["device.calls.crop.title", "device.calls.crop.zoom"] {
+        assert!(page.contains(words(key)), "{key}");
+    }
     let res = app
         .get_page(&format!("/contact-photos/{hash}"), &cookie)
         .await;

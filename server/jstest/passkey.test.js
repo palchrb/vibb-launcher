@@ -1,7 +1,7 @@
 // Behaviour of static/passkey.js (design 74 step 1): base64url both ways, the server's JSON options as the browser's
 // options, a credential as the server reads it, the controls hidden without PublicKeyCredential (D4.4), the sign-in
 // button's assertion posted in its form, a re-auth that fills `assertion` and sends the form, and the lock screen's
-// prompt on its own (once per load, the kept passkey as its hint; the tap asks for every passkey).
+// prompt on its own (once per showing, the kept passkey as its hint; the tap asks for every passkey).
 // Run: node --test jstest/passkey.test.js
 "use strict";
 const test = require("node:test");
@@ -605,7 +605,18 @@ const optionsCalls = (page) => page.fetched.filter((f) => f[0] === "/lock/option
 const gets = (page) => page.fetched.filter((f) => f[0] === "get");
 const cancel = () => Promise.reject({ name: "NotAllowedError" });
 
-test("the lock screen never prompts without a tap; the tap asks for the kept passkey, unlocks and keeps it", async () => {
+/** A prompt that waits until aborted (then AbortError) or settled by hand: `{get, aborted, settle(value), fail(err)}`. */
+function heldPrompt() {
+    const held = { aborted: 0 };
+    held.get = (o) => new Promise((resolve, reject) => {
+        held.settle = resolve;
+        held.fail = reject;
+        if (o.signal) o.signal.addEventListener("abort", () => { held.aborted++; reject({ name: "AbortError" }); });
+    });
+    return held;
+}
+
+test("the lock screen asks on its own at load with the kept passkey, unlocks and keeps it", async () => {
     const page = unlockPage(
         { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
         () => Promise.resolve(ASSERTION),
@@ -614,22 +625,14 @@ test("the lock screen never prompts without a tap; the tap asks for the kept pas
     passkey.install(page.win);
     assert.strictEqual(page.button.hidden, false);
     assert.strictEqual(page.hint.hidden, false);
-    await flush();
-    page.win.document.listeners.visibilitychange();
-    page.win.listeners.pageshow({ persisted: true });
-    await flush();
-    assert.strictEqual(gets(page).length, 0, "no prompt on its own");
-    assert.deepStrictEqual(optionsCalls(page).map((f) => f[1].body), ["hint=AQI"], "fetched ahead, once");
+    assert.deepStrictEqual(optionsCalls(page).map((f) => f[1].body), ["hint=AQI", ""], "the tap's fetched ahead too");
     // Sign Out is its own form: the lock screen listens to nothing but its button.
     assert.deepStrictEqual(Object.keys(page.form.listeners), []);
     assert.deepStrictEqual(Object.keys(page.button.listeners), ["click"]);
-    page.button.listeners.click();
-    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "the prompt before any fetch (iOS)");
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1, "no tap");
     assert.strictEqual(gets(page)[0][1].mediation, undefined, "modal, not conditional");
-    page.button.listeners.click();
-    assert.strictEqual(gets(page).length, 1, "a second tap while the try is open is dropped");
-    await flush();
-    await flush();
     const post = page.fetched.find((f) => f[0] === "/lock");
     const body = new URLSearchParams(post[1].body);
     assert.strictEqual(JSON.parse(body.get("assertion")).id, "AQI");
@@ -639,7 +642,7 @@ test("the lock screen never prompts without a tap; the tap asks for the kept pas
     assert.strictEqual(page.win.local[passkey.LAST_PASSKEY_KEY], "AQI", "the passkey this device used");
 });
 
-test("the lock screen: after a cancel the red line and the retry hint show, and the next tap asks for every passkey", async () => {
+test("the lock screen: a cancelled automatic try stays quiet, and the tap asks with every passkey within the gesture", async () => {
     let calls = 0;
     const page = unlockPage(
         { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
@@ -648,58 +651,160 @@ test("the lock screen: after a cancel the red line and the retry hint show, and 
     page.win.local[passkey.LAST_PASSKEY_KEY] = "AQI";
     passkey.install(page.win);
     await flush();
+    await flush();
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(page.error.hidden, true, "no red line");
+    assert.strictEqual(page.hint.textContent, "Tap anywhere to unlock");
+    // The same showing never asks on its own again.
+    page.win.document.listeners.visibilitychange();
+    page.win.listeners.pageshow({ persisted: false });
+    await flush();
+    assert.strictEqual(calls, 1);
     page.button.listeners.click();
-    await flush();
-    await flush();
-    assert.strictEqual(page.error.hidden, false);
-    assert.strictEqual(page.error.textContent, "Couldn't unlock");
-    assert.strictEqual(page.hint.textContent, "Tap to try again");
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "the prompt before any fetch (iOS)");
     assert.deepStrictEqual(optionsCalls(page).map((f) => f[1].body), ["hint=AQI", ""], "every passkey's, ahead");
-    page.button.listeners.click();
-    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "within the tap");
-    assert.strictEqual(page.error.hidden, true);
     await flush();
     await flush();
     assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
 });
 
-test("the lock screen: a refused unlock shows the server's line and keeps nothing; without a kept passkey, no hint", async () => {
+test("the lock screen: a refused unlock and a tap's cancel show the red line and the retry hint", async () => {
+    let calls = 0;
     const page = unlockPage(
         { "/lock/options": UNLOCK_OPTIONS, "/lock": { status: 400, json: { error: "Couldn't unlock. Try again" } } },
-        () => Promise.resolve(ASSERTION),
+        () => (++calls === 1 ? Promise.resolve(ASSERTION) : cancel()),
     );
     passkey.install(page.win);
     assert.strictEqual(page.fetched[0][1].body, "", "nothing kept yet: every passkey");
     await flush();
+    await flush();
+    await flush();
+    assert.strictEqual(page.error.textContent, "Couldn't unlock. Try again", "the automatic try's refused unlock");
+    assert.strictEqual(page.hint.textContent, "Tap to try again");
+    assert.strictEqual(page.win.local[passkey.LAST_PASSKEY_KEY], undefined, "kept only after an unlock");
+    page.button.listeners.click();
+    assert.strictEqual(page.error.hidden, true);
+    await flush();
+    await flush();
+    assert.strictEqual(page.error.textContent, "Couldn't unlock", "the tap's own cancel");
+    assert.deepStrictEqual(page.win.replaced, []);
+});
+
+test("the lock screen asks once per showing: loaded hidden at the first showing, again after hidden or the bfcache", async () => {
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, cancel);
+    const doc = page.win.document;
+    doc.visibilityState = "hidden";
+    passkey.install(page.win);
+    await flush();
+    assert.strictEqual(gets(page).length, 0);
+    doc.visibilityState = "visible";
+    doc.listeners.visibilitychange();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    // A tap's cancel: the red line - which the next showing clears.
     page.button.listeners.click();
     await flush();
+    assert.strictEqual(page.error.hidden, false);
+    doc.listeners.visibilitychange();
+    await flush();
+    assert.strictEqual(gets(page).length, 2, "no new showing: the tap's only");
+    doc.visibilityState = "hidden";
+    doc.listeners.visibilitychange();
+    doc.visibilityState = "visible";
+    doc.listeners.visibilitychange();
+    assert.strictEqual(page.error.hidden, true);
+    assert.strictEqual(page.hint.textContent, "Tap anywhere to unlock");
     await flush();
     await flush();
-    assert.strictEqual(page.error.textContent, "Couldn't unlock. Try again");
-    assert.strictEqual(page.hint.textContent, "Tap to try again");
-    assert.deepStrictEqual(page.win.replaced, []);
-    assert.strictEqual(page.win.local[passkey.LAST_PASSKEY_KEY], undefined, "kept only after an unlock");
+    assert.strictEqual(gets(page).length, 3, "hidden and shown: once more");
+    assert.strictEqual(page.error.hidden, true, "and quiet");
+    // The back-forward cache: pagehide, then pageshow and visibilitychange both - one try.
+    page.win.listeners.pagehide();
+    page.win.listeners.pageshow({ persisted: true });
+    doc.listeners.visibilitychange();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 4);
+});
+
+test("the lock screen: a passkey sheet that hides the page is no new showing - a cancel there never loops", async () => {
+    const held = heldPrompt();
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, held.get);
+    const doc = page.win.document;
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    assert.strictEqual(page.hint.textContent, "Tap anywhere to unlock", "behind the sheet, the hint stays");
+    doc.visibilityState = "hidden";
+    doc.listeners.visibilitychange();
+    held.fail({ name: "NotAllowedError" });
+    await flush();
+    doc.visibilityState = "visible";
+    doc.listeners.visibilitychange();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    assert.strictEqual(page.error.hidden, true);
+});
+
+test("the lock screen: a tap while the automatic try is open aborts it and leaves one prompt, with every passkey", async () => {
+    const held = heldPrompt();
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } }, held.get);
+    page.win.AbortController = AbortController;
+    page.win.local[passkey.LAST_PASSKEY_KEY] = "AQI";
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 1);
+    page.button.listeners.click();
+    assert.strictEqual(held.aborted, 1);
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "within the tap");
+    assert.deepStrictEqual(optionsCalls(page).map((f) => f[1].body), ["hint=AQI", ""]);
+    page.button.listeners.click();
+    assert.strictEqual(gets(page).length, 2, "a second tap is dropped");
+    await flush();
+    assert.strictEqual(page.error.hidden, true, "the aborted try's end is ignored");
+    held.settle(ASSERTION);
+    await flush();
+    await flush();
+    assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+    // A tap before the automatic try's options are back: that try never prompts.
+    const early = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => new Promise(() => {}));
+    early.win.AbortController = AbortController;
+    passkey.install(early.win);
+    early.button.listeners.click();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(early).length, 1);
 });
 
 test("the lock screen: a try that never settles gives way to the first tap after the page is shown again (QA M1)", async () => {
     const aborted = [];
     let calls = 0;
-    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } }, (o) =>
-        ++calls === 1
-            ? new Promise((resolve, reject) => o.signal.addEventListener("abort", () => { aborted.push(1); reject({ name: "AbortError" }); }))
-            : Promise.resolve(ASSERTION),
-    );
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } }, (o) => {
+        calls++;
+        if (calls === 1) return cancel();
+        if (calls === 2) return new Promise((resolve, reject) => o.signal.addEventListener("abort", () => { aborted.push(1); reject({ name: "AbortError" }); }));
+        return Promise.resolve(ASSERTION);
+    });
     page.win.AbortController = AbortController;
     passkey.install(page.win);
     await flush();
+    await flush();
     page.button.listeners.click();
     await flush();
     page.button.listeners.click();
-    assert.strictEqual(gets(page).length, 1, "still open: dropped");
-    // Backgrounded during Face ID and back: WebKit never settles that prompt.
+    assert.strictEqual(calls, 2, "still open: dropped");
+    // Backgrounded during Face ID and back: WebKit never settles that prompt - and nothing starts on its own.
+    page.win.document.visibilityState = "hidden";
+    page.win.document.listeners.visibilitychange();
+    page.win.document.visibilityState = "visible";
     page.win.document.listeners.visibilitychange();
     await flush();
     assert.deepStrictEqual(aborted, [], "the showing alone aborts nothing");
+    assert.strictEqual(calls, 2);
     page.button.listeners.click();
     assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "a fresh prompt within the tap");
     assert.deepStrictEqual(aborted, [1]);
@@ -711,12 +816,14 @@ test("the lock screen: a try that never settles gives way to the first tap after
     const old = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => new Promise(() => {}));
     passkey.install(old.win);
     await flush();
+    await flush();
     old.button.listeners.click();
+    old.button.listeners.click();
+    assert.strictEqual(gets(old).length, 2, "the automatic try replaced, the double tap dropped");
     old.win.listeners.pageshow({ persisted: true });
     old.button.listeners.click();
     await flush();
-    await flush();
-    assert.strictEqual(gets(old).length, 2);
+    assert.strictEqual(gets(old).length, 3);
 });
 
 test("the lock screen: a replaced try's late refusal says nothing while the new prompt is open (QA L2b)", async () => {
@@ -733,9 +840,10 @@ test("the lock screen: a replaced try's late refusal says nothing while the new 
     };
     passkey.install(page.win);
     await flush();
-    page.button.listeners.click();
     await flush();
-    assert.ok(refuse, "the first try is posting");
+    assert.ok(refuse, "the automatic try is posting");
+    page.button.listeners.click();
+    assert.strictEqual(gets(page).length, 1, "a tap while it posts is dropped");
     page.win.document.listeners.visibilitychange();
     await flush();
     page.button.listeners.click();
@@ -747,7 +855,7 @@ test("the lock screen: a replaced try's late refusal says nothing while the new 
     assert.strictEqual(page.error.hidden, true);
 });
 
-test("the lock screen: a prompt that throws at once shows the red line, and the next tap asks again (QA L2)", async () => {
+test("the lock screen: a prompt that throws at once - quiet for the automatic try, the red line for a tap (QA L2)", async () => {
     let calls = 0;
     const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => {
         calls++;
@@ -755,12 +863,66 @@ test("the lock screen: a prompt that throws at once shows the red line, and the 
     });
     passkey.install(page.win);
     await flush();
+    await flush();
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(page.error.hidden, true);
     page.button.listeners.click();
+    assert.strictEqual(calls, 2, "within the tap");
     await flush();
     assert.strictEqual(page.error.textContent, "Couldn't unlock");
-    await flush();
     page.button.listeners.click();
-    assert.strictEqual(calls, 2, "not a dead screen");
+    assert.strictEqual(calls, 3, "not a dead screen");
+});
+
+test("the lock screen: the automatic try's options that don't come stay quiet; the tap unlocks (qa-lock-auto L1)", async () => {
+    const page = unlockPage(
+        { "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } },
+        () => Promise.resolve(ASSERTION),
+    );
+    page.win.local[passkey.LAST_PASSKEY_KEY] = "AQI";
+    const fetch = page.win.fetch;
+    page.win.fetch = (url, init) =>
+        url === "/lock/options" && init.body === "hint=AQI" ? Promise.reject(new TypeError("offline")) : fetch(url, init);
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    assert.strictEqual(gets(page).length, 0);
+    assert.strictEqual(page.error.hidden, true, "no red line without a touch");
+    assert.strictEqual(page.hint.textContent, "Tap anywhere to unlock");
+    page.button.listeners.click();
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "within the tap");
+    await flush();
+    await flush();
+    assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+});
+
+test("the lock screen: after many showings the tap's challenge is still one the server keeps (qa-lock-auto M1)", async () => {
+    const page = unlockPage({}, cancel);
+    const issued = [];
+    page.win.fetch = (url, init) => {
+        page.fetched.push([url, init]);
+        issued.push(init.body);
+        const challenge = passkey.b64url(bytes(issued.length));
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ challenge, allowCredentials: [] }) });
+    };
+    const doc = page.win.document;
+    passkey.install(page.win);
+    await flush();
+    await flush();
+    for (let i = 0; i < 8; i++) {
+        doc.visibilityState = "hidden";
+        doc.listeners.visibilitychange();
+        doc.visibilityState = "visible";
+        doc.listeners.visibilitychange();
+        await flush();
+        await flush();
+    }
+    assert.strictEqual(gets(page).length, 9, "one automatic try per showing");
+    page.button.listeners.click();
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "within the tap");
+    const used = new Uint8Array(gets(page)[9][1].publicKey.challenge)[0];
+    assert.strictEqual(issued[used - 1], "", "the tap's own options");
+    assert.ok(used > issued.length - 8, "among the session's 8 newest (passkeys::PER_SESSION)");
 });
 
 test("the lock screen: storage that throws or holds junk changes nothing but the hint", async () => {
@@ -776,8 +938,6 @@ test("the lock screen: storage that throws or holds junk changes nothing but the
         page.win.localStorage = storage;
         passkey.install(page.win);
         assert.strictEqual(page.fetched[0][1].body, "", "no hint");
-        await flush();
-        page.button.listeners.click();
         await flush();
         await flush();
         assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
@@ -860,20 +1020,21 @@ test("the lock screen fetches a fresh challenge every 3.5 minutes on screen, so 
     passkey.install(page.win);
     await flush();
     await flush();
-    // The tap's challenge, fetched ahead.
-    assert.strictEqual(optionsCalls(page).length, 1);
+    // The automatic try's challenge, and the tap's, fetched ahead.
+    assert.strictEqual(gets(page).length, 1);
+    assert.strictEqual(optionsCalls(page).length, 2);
     assert.strictEqual(timers.length, 1);
     assert.strictEqual(timers[0].ms, passkey.UNLOCK_REFRESH_MS);
     assert.ok(passkey.UNLOCK_REFRESH_MS < passkey.AHEAD_MS);
     timers.shift().fn();
     await flush();
-    assert.strictEqual(optionsCalls(page).length, 2, "fetched again");
+    assert.strictEqual(optionsCalls(page).length, 3, "fetched again");
     assert.strictEqual(timers.length, 1, "and again later");
     // Hidden: no fetch (the page refetches when shown).
     page.win.document.visibilityState = "hidden";
     timers.shift().fn();
     await flush();
-    assert.strictEqual(optionsCalls(page).length, 2);
+    assert.strictEqual(optionsCalls(page).length, 3);
     // The tap after the refresh prompts within the gesture.
     page.win.document.visibilityState = "visible";
     page.button.listeners.click();

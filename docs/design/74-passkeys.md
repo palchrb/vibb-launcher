@@ -444,6 +444,16 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
    breathing Vibb mark, "Vibb er låst" and the hint "Trykk hvor som helst for å låse opp"; the whole screen is the
    Unlock button. The first tap asks with the hint, every tap after a cancel or a failure with every passkey; the red
    line then sits over the hint "Trykk for å prøve igjen" (branch `lock-pust`).
+   *Changed again 2026-11-03 (server 0.65.1; the user, on server-v0.65.0 on their iPhone: "den nye trykk hvor du vil på
+   skjermen egentlig bare legger til et trykk til på skjermen? Ios sin egen 'lås opp med denne passkeyen' kommer
+   uansett ... bedre å trigge login med last used passkey uten trykk først og så kun få ios sin egen bruk denne passkey
+   automatisk"):* Pust's premise was wrong on the user's iPhone - iOS's own passkey sheet comes after the tap too, so the
+   tap only added one. Each showing asks once on its own again (on load while visible, else at the first showing; again
+   after hidden and shown, or back from the bfcache; never twice in one showing), with the hint; cancelled, timed out
+   or refused for want of a gesture it stays quiet ("Trykk hvor som helst for å låse opp" stays), and the tap asks with
+   every passkey. Safari gives a tab one gesture-free `get` (w3c/webauthn#1293), so a later showing's try may be
+   refused - quietly. A tap while the automatic try waits aborts it and asks itself; a refused unlock still shows the
+   red line. Pust's screen, stale-try handling and VoiceOver stay (branch `lock-auto`).
    `docs/notes/server/connectivity.md`, "The app lock".
 
 ## 8. Open for the user

@@ -52,6 +52,8 @@ const MOVED = {
     // header).
     "app-lock.js": ["Vibb"],
     "calendar-preview.js": ["Content-Type"],
+    // The contact photo's crop: key names.
+    "photo-crop.js": ["Escape", "Esc", "Tab"],
 };
 
 /** Every string literal outside comments, in order. */

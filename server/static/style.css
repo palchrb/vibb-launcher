@@ -2386,6 +2386,141 @@ input.row-input {
     padding-left: 16px;
 }
 
+/* A contact photo's crop (static/photo-crop.js): a dialog over the page, the photo in a square frame with the
+   phone's circle cut out of a dim veil (the phone shows the square's inscribed circle) and a thin white ring, the
+   zoom slider, Cancel and Save. "Adjust crop" stays hidden without the script (.row's display beats [hidden]). */
+[data-photo-adjust][hidden],
+.crop-backdrop[hidden] {
+    display: none;
+}
+
+/* Against the body, as the tab bar: the shell's body is the screen and never scrolls, and nothing is fixed to the
+   viewport (design 43). */
+.crop-backdrop {
+    position: absolute;
+    z-index: 3000;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    background: rgba(12, 12, 20, 0.6);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.crop-dialog {
+    width: 100%;
+    max-width: 360px;
+    margin: auto;
+    padding: 20px 16px 16px;
+    border-radius: 16px;
+    background: var(--surface);
+    color: var(--label);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.crop-title {
+    margin: 0 0 4px;
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 800;
+    text-align: center;
+}
+
+.crop-hint {
+    margin: 0 0 14px;
+    color: var(--label-2);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+/* Square without aspect-ratio (iOS 14): the ::before's padding is the frame's width. */
+.crop-frame {
+    position: relative;
+    width: 100%;
+    max-width: 280px;
+    /* A landscape phone: the whole dialog, Save included, on the screen. */
+    max-width: min(280px, 50vh);
+    max-width: min(280px, 50dvh);
+    margin: 0 auto;
+    overflow: hidden;
+    border-radius: 12px;
+    background: var(--field-bg);
+    touch-action: none;
+    cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+.crop-frame::before {
+    content: "";
+    display: block;
+    padding-top: 100%;
+}
+
+.crop-frame:active {
+    cursor: grabbing;
+}
+
+.crop-frame:focus-visible {
+    outline: 2px solid var(--tint);
+    outline-offset: 2px;
+}
+
+.crop-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.crop-mask {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    border-radius: 50%;
+    box-shadow: 0 0 0 200px rgba(12, 12, 20, 0.55);
+    pointer-events: none;
+}
+
+.crop-zoom {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 4px 0;
+    font-size: 0.9375rem;
+}
+
+.crop-zoom input[type="range"] {
+    flex: 1 1 auto;
+    width: 100%;
+    margin: 0;
+    accent-color: var(--tint);
+}
+
+.crop-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.crop-actions button {
+    flex: 1 1 0;
+    margin: 0;
+}
+
+.crop-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* ---- Design 31 step 9: Time Rules and Device › Time ---- */
 
 /* The rule editor's top bar: the back link on the left, Save on the right (the RuleEditor mockup). */

@@ -28,7 +28,7 @@
     </form>
     <p class="auth-note" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.sign_in.no_browser") }}"></p>
     <noscript><p class="auth-note">{{ self.t("passkeys.sign_in.no_browser") }}</p></noscript>
-    <script src="/static/passkey.js?v=7" defer></script>
+    <script src="/static/passkey.js?v=8" defer></script>
     {%- else %}
     <p class="auth-note">{{ self.t("passkeys.not_here") }}</p>
     {%- endif %}
@@ -55,7 +55,7 @@
         <p class="or-divider">{{ self.t("passkeys.or") }}</p>
         <button type="button" class="button-outline" data-passkey-login>{% include "partials/key_icon.html" %}{{ self.t("passkeys.sign_in.button") }}</button>
     </form>
-    <script src="/static/passkey.js?v=7" defer></script>
+    <script src="/static/passkey.js?v=8" defer></script>
     {%- endif %}
     {%- endif %}
 </main>
