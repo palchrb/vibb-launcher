@@ -297,6 +297,22 @@ async fn photo_is_reencoded_and_reaches_the_device() {
         .await
         .text();
     assert!(page.contains(&format!("src=\"/contact-photos/{hash}\"")));
+    // The crop (static/photo-crop.js): "Adjust crop" on the stored photo, the dialog with the server's side and
+    // limit, its words from the catalog.
+    let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
+    assert!(page.contains(&format!(
+        "data-photo-adjust=\"/contact-photos/{hash}\" hidden>{}</button>",
+        words("device.calls.adjust_crop")
+    )));
+    assert!(page.contains("<script src=\"/static/photo-crop.js?v=1\" defer></script>"));
+    assert!(page.contains(&format!(
+        "data-side=\"{}\" data-max-bytes=\"{}\"",
+        crate::photos::MAX_SIDE,
+        crate::photos::MAX_UPLOAD_BYTES
+    )));
+    for key in ["device.calls.crop.title", "device.calls.crop.zoom"] {
+        assert!(page.contains(words(key)), "{key}");
+    }
     let res = app
         .get_page(&format!("/contact-photos/{hash}"), &cookie)
         .await;
