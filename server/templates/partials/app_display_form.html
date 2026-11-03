@@ -43,10 +43,19 @@
         </fieldset>
         {% if let Some(on_home) = form.on_home %}{% if let Some((label, sub)) = form.on_home_words %}
         <input type="hidden" name="on_home_shown" value="1">
-        <label class="row">
-            <span class="row-label">{{ label }}<span class="row-sub">{{ sub }}</span></span>
-            <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-        </label>
+        {#- The switch's row keeps its name; what Off means is behind the ⓘ left of the switch. -#}
+        <div class="on-home">
+            <label class="row">
+                <span class="row-label">{{ label }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+            </label>
+            <details class="info">
+                <summary aria-label="{{ self.t("apps.on_home_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ sub }}</p>
+                </div>
+            </details>
+        </div>
         {% endif %}{% endif %}
         <button type="submit" name="action" value="save">{{ self.t("common.save") }}</button>
         {% if form.can_reset() %}

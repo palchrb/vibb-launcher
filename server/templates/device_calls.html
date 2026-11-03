@@ -206,6 +206,23 @@
                     <button type="submit" class="button-wide">{{ self.t("device.calls.add") }}</button>
                 </form>
             </details>
+            {#- A family contact another phone has (the user, 2026-11-03): its name, number and photo come with it; back
+                to its new row. Only while there is one. -#}
+            {% if !family.is_empty() %}
+            <details class="edit cell" id="add-family">
+                <summary class="row row-button">{{ self.t("device.calls.add_family") }}</summary>
+                <form method="post" action="/devices/{{ device.id }}/contacts#add-family" class="edit-body">
+                    <label class="field-label" for="family_contact">{{ self.t("device.calls.family_contact") }}</label>
+                    <select id="family_contact" name="contact_id" required>
+                        {% for (contact_id, label) in family %}
+                        <option value="{{ contact_id }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="field-hint">{{ self.t("device.calls.family_hint") }}</p>
+                    <button type="submit" class="button-wide">{{ self.t("device.calls.add") }}</button>
+                </form>
+            </details>
+            {% endif %}
         </div>
         <p class="group-footer">{{ self.t("device.calls.contacts_footer") }}</p>
     </section>

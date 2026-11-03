@@ -159,6 +159,8 @@ struct DeviceCallsTemplate {
     add_name: String,
     add_number: String,
     add_error: Option<(&'static str, String)>,
+    /// The family's contacts not on this phone (`id`, "name · number"), for "Add from the family".
+    family: Vec<(i64, String)>,
     /// Design 73: the emergency menu's rows, in order.
     emergency: Vec<EmergencyRow>,
     /// Room for another number (at most `emergency::MAX_ENTRIES`).
@@ -412,6 +414,17 @@ async fn load_page(
             view
         })
         .collect();
+    let family: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, name, phone_number FROM contacts WHERE id NOT IN \
+         (SELECT contact_id FROM device_contacts WHERE device_id = ?) ORDER BY name COLLATE NOCASE, id",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    let family = family
+        .into_iter()
+        .map(|(id, name, number)| (id, format!("{name} · {number}")))
+        .collect();
     let report = call_report(state, &policy).await?;
     let (zone, now) = (Zone::load(&state.db, lang).await, Utc::now());
     let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
@@ -466,6 +479,7 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
+        family,
         emergency: emergency_view,
         emergency_can_add: menu.len() < emergency::MAX_ENTRIES,
         emergency_suggestions,
@@ -1134,6 +1148,9 @@ pub async fn add_contact(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
+    if let Some(contact_id) = form.get("contact_id") {
+        return add_family_contact(&state, lang, id, contact_id).await;
+    }
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
     let state = &state;
@@ -1207,6 +1224,55 @@ pub async fn add_contact(
     match result {
         Ok(None) => not_found(lang),
         Ok(Some(contact_id)) => saved(
+            state,
+            id,
+            format!("/devices/{id}/calls#contact-{contact_id}"),
+        ),
+        Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// "Add from the family" (the user, 2026-11-03): puts a contact of the family's address book that another phone has
+/// on this one, with every flag on and at the end of the list, as Add Contact does - its name, number and photo are
+/// the contact's. Back to its new row; a contact that no longer exists → `?notice=contact_gone#contacts`, one already
+/// on this phone → its row, nothing written (both refusals, [crate::settings_log::refused]).
+async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &str) -> Response {
+    let contact_id: i64 = contact_id.trim().parse().unwrap_or(0);
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let (device, contact): (bool, bool) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?1), \
+             EXISTS(SELECT 1 FROM contacts WHERE id = ?2)",
+        )
+        .bind(id)
+        .bind(contact_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !device || !contact {
+            return Ok::<_, sqlx::Error>((device, contact, false));
+        }
+        let added = sqlx::query(
+            "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order) \
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
+                              WHERE device_id = ?1))",
+        )
+        .bind(id)
+        .bind(contact_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+        tx.commit().await?;
+        Ok((true, true, added))
+    }
+    .await;
+    match result {
+        Ok((false, _, _)) => not_found(lang),
+        Ok((true, false, _)) => contacts_group(id, true),
+        Ok((true, true, false)) => {
+            crate::settings_log::refused(Redirect::to(&contact_row(id, contact_id)))
+        }
+        Ok((true, true, true)) => saved(
             state,
             id,
             format!("/devices/{id}/calls#contact-{contact_id}"),

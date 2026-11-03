@@ -815,11 +815,7 @@ pub async fn view_calendar(
         let stop = marked_account.and_then(|a| {
             calendar_sources::account_stop(state, a).map(|code| {
                 (
-                    match code {
-                        "key_lost" => "calendar.sources.stopped.key_lost",
-                        "login_refused" => "calendar.sources.stopped.login_refused",
-                        _ => "calendar.sources.stopped.host_changed",
-                    },
+                    calendar_sources::stopped_line(code),
                     calendar_sources::caldav_page(id, a.id),
                 )
             })

@@ -1252,3 +1252,106 @@ async fn an_unreadable_contact_list_is_a_500() {
     let res = app.get_page("/devices/9999/calls", &cookie).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
+
+/// "Add from the family" (2026-11-03): a contact another phone has goes on this one with every flag on, at the end of
+/// its order and into its `call_policy`; one already on it, one that doesn't exist and an unknown phone write nothing.
+#[tokio::test]
+async fn a_family_contact_is_added_from_another_phone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, token) = app.enrolled_device("Anna").await;
+    let (ola, _) = app.enrolled_device("Ola").await;
+    set_managed(&app, anna, true, false).await;
+    let pappa = attach(&app, anna, "Pappa", "+4790000002", [true, true, true], 0).await;
+    let mormor = attach(&app, ola, "Mormor", "+4790000003", [false, true, false], 4).await;
+
+    let page = calls_page(&app, &cookie, anna).await;
+    let group = part(&page, "id=\"add-family\"", "</details>");
+    assert!(group.contains(&format!(
+        "<option value=\"{mormor}\">Mormor · +4790000003</option>"
+    )));
+    assert!(
+        !group.contains(&format!("value=\"{pappa}\"")),
+        "not one already on it"
+    );
+    let ola_page = calls_page(&app, &cookie, ola).await;
+    assert!(ola_page.contains(&format!("<option value=\"{pappa}\">")));
+
+    let add_family = |device: i64, contact: String| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{device}/contacts"),
+                Some(cookie),
+                &[("contact_id", contact.as_str())],
+            )
+            .await
+        }
+    };
+    let res = add_family(anna, mormor.to_string()).await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{anna}/calls"),
+        Some(&format!("contact-{mormor}")),
+    );
+    let row: (bool, bool, bool, i64) = sqlx::query_as(
+        "SELECT allow_inbound, allow_outbound, show_on_home, sort_order FROM device_contacts \
+         WHERE device_id = ? AND contact_id = ?",
+    )
+    .bind(anna)
+    .bind(mormor)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(row, (true, true, true, 1), "every flag on, at the end");
+    let contacts = &app.policy(&token).await["call_policy"]["contacts"];
+    assert_eq!(contacts[1]["name"], json!("Mormor"));
+    // Every family contact is on Anna now: no group.
+    assert!(
+        !calls_page(&app, &cookie, anna)
+            .await
+            .contains("id=\"add-family\"")
+    );
+
+    // Already on it: back to its row, open, nothing written.
+    let res = add_family(anna, mormor.to_string()).await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{anna}/calls?open={mormor}"),
+        Some(&format!("contact-{mormor}")),
+    );
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_contacts")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count().await, 3);
+    // A contact that doesn't exist, or no number at all: "already removed", nothing written.
+    for contact in ["999999".to_string(), "x".to_string()] {
+        let res = add_family(anna, contact).await;
+        assert_redirect(
+            &res,
+            &format!("/devices/{anna}/calls?notice=contact_gone"),
+            Some("contacts"),
+        );
+    }
+    assert_eq!(count().await, 3);
+    // An unknown phone.
+    assert_eq!(
+        add_family(9999, pappa.to_string()).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // Needs the session like every other form.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{ola}/contacts"),
+            None,
+            &[("contact_id", &pappa.to_string())],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert_eq!(count().await, 3);
+}

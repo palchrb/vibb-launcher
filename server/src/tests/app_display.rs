@@ -289,7 +289,7 @@ async fn the_apps_own_logo_is_stored_sent_and_shown() {
         .await
         .text();
     let form = &page[page.find(r#"id="display-com.spotify.music""#).unwrap()..];
-    let form = &form[..form.find("</details>").unwrap()];
+    let form = &form[..form.find("</form>").unwrap()];
     assert!(
         form.contains("its own name, with the app&#39;s logo"),
         "{form}"
@@ -395,6 +395,81 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
     )
     .await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+/// Device › Apps names an app as the kid sees it (2026-11-03): this phone's name, else the catalog's, else the phone's
+/// label - the label in the sub-line when it differs, as the Katalog does -, sorted by that name. The name field's
+/// placeholder stays the app's own; "On Home"'s explanation is behind its ⓘ.
+#[tokio::test]
+async fn an_apps_row_shows_the_name_the_kid_sees() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    report_installed(
+        &app,
+        &token,
+        &["com.spotify.music", ELEMENT, "org.example.clock"],
+    )
+    .await;
+    let element = catalog_app(&app, "Element X", ELEMENT).await;
+    sqlx::query("UPDATE tracked_apps SET display_label = 'Chat' WHERE id = ?")
+        .bind(element)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", "com.spotify.music"), ("label", "Musikk")],
+    )
+    .await;
+    let page = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    let row = |package: &str| {
+        let row = &page[page.find(&format!(r#"id="app-{package}""#)).expect(package)..];
+        row[..row.find("</label>").unwrap()].to_string()
+    };
+    assert!(
+        row("com.spotify.music").contains(
+            r#"row-label">Musikk<span class="row-sub" data-installing="false" data-failed="false">Label of com.spotify.music · Installed<"#
+        ),
+        "{}",
+        row("com.spotify.music")
+    );
+    assert!(
+        row(ELEMENT).contains(&format!(
+            r#"row-label">Chat<span class="row-sub" data-installing="false" data-failed="false">Label of {ELEMENT} · Installed<"#
+        )),
+        "{}",
+        row(ELEMENT)
+    );
+    assert!(
+        row("org.example.clock").contains(r#"row-label">Label of org.example.clock<span class="row-sub" data-installing="false" data-failed="false">Installed<"#),
+        "{}",
+        row("org.example.clock")
+    );
+    let at = |package: &str| page.find(&format!(r#"id="app-{package}""#)).unwrap();
+    assert!(
+        at(ELEMENT) < at("org.example.clock") && at("org.example.clock") < at("com.spotify.music")
+    );
+    assert!(page.contains(r#"placeholder="Label of com.spotify.music""#));
+    let on_home = &page[page.find(r#"class="on-home""#).unwrap()..];
+    let on_home = &on_home[..on_home.find("</details>").unwrap()];
+    assert!(
+        on_home.contains(r#"row-label">On Home</span>"#),
+        "{on_home}"
+    );
+    assert!(
+        on_home.contains(r#"aria-label="About On Home""#),
+        "{on_home}"
+    );
+    assert!(
+        on_home.contains("<p>Off: the app stays allowed"),
+        "{on_home}"
+    );
 }
 
 /// Design 69 §4.4: "On Home" off sends `on_home: false` (a sync app stays allowed but off Home); on again, or Reset,

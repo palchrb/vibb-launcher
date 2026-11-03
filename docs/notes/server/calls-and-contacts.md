@@ -30,7 +30,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   it; the emergency, RCS, voicemail and spoofing facts behind the footer's ⓘ); **Contacts** (one row per contact: the
   photo or the initial, the name, the number, "Both ways · Home"; the row opens its form - Can call, In the phone book,
   On the home screen, Message button, Matrix ID, one form (§5.6); New photo / Remove Photo; **Remove Contact…** as a
-  `<details>` confirm, M6), Add Contact as a disclosure at the end. No country code here.
+  `<details>` confirm, M6), Add Contact as a disclosure at the end, then **Add from the family** (2026-11-03) while
+  the address book has a contact this phone lacks: a `<select>` of "name · number" posting `contact_id` to the same
+  `POST /devices/{id}/contacts` (`calls::add_family_contact`) - every flag on, the end of the order, its name, number
+  and photo the contact's; back to `#contact-<id>`, one already on the phone to its row (`?open=`), one gone to
+  `?notice=contact_gone#contacts` (both refusals, nothing written), an unknown phone 404. No country code here.
 - **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
   rendered forms): `/calls/settings` → `#settings` (scroll-restore keeps the place);
   a contact's save, photo and photo removal → `?open=<id>#contact-<id>` (its row, open again, with or without JS);

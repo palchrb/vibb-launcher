@@ -514,7 +514,11 @@ impl Dav<'_> {
                 answer.status == 401
             };
             if refused && with_password {
-                return Err(FeedError::code("login_refused"));
+                // A 403 is worded as no access, a 401 as a refused password (`handlers::calendar::caldav_why`).
+                return Err(FeedError {
+                    code: "login_refused",
+                    status: Some(answer.status),
+                });
             }
             if !read {
                 // A write never follows a redirect (QA L1): the 3xx is the answer, a `status` error for its event.
@@ -992,10 +996,13 @@ pub async fn refresh_source(
     {
         // Only while the password is the one this fetch used: a Test that saved a new one meanwhile wins (code QA
         // L4).
+        // The refusal's status rides along (`test_status`): a 403 stops as "no access".
         sqlx::query(
-            "UPDATE caldav_accounts SET state = ? WHERE id = ? AND state = 'ok' AND password_nonce = ?",
+            "UPDATE caldav_accounts SET state = ?, test_status = ? WHERE id = ? AND state = 'ok' \
+             AND password_nonce = ?",
         )
         .bind(err.code)
+        .bind(err.status.map(i64::from))
         .bind(id)
         .bind(&row.password_nonce)
         .execute(&state.db)
