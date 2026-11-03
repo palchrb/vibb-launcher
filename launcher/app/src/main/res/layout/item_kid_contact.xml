@@ -5,7 +5,8 @@
      frame and this item keep clipChildren=false for the shadow. contact_ring is Home's white 3 dp ring
      (mockup A) over the photo's or the disc's edge, so a photo on a busy wallpaper has an edge; it stays gone
      in the phone book and for an emergency contact, whose red ring is drawn by KidAvatars.bindContact
-     (KidAvatars.bindHomeRing). It is a child of the avatar, so the press scale and shade cover it too; both
+     (KidAvatars.bindHomeRing); on a light wallpaper it grows 1 dp past the avatar for a dark hairline, hence the
+     avatar's clipChildren=false. It is a child of the avatar, so the press scale and shade cover it too; both
      badges are lifted to the avatar's elevation in PressFeedback.contact and sit after it, so they draw above. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -30,7 +31,8 @@
             android:id="@+id/contact_avatar"
             android:layout_width="76dp"
             android:layout_height="76dp"
-            android:layout_gravity="bottom|center_horizontal">
+            android:layout_gravity="bottom|center_horizontal"
+            android:clipChildren="false">
 
             <ImageView
                 android:id="@+id/contact_photo"

@@ -11,6 +11,7 @@ import android.graphics.PorterDuff
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.util.LruCache
 import android.util.TypedValue
 import android.view.View
@@ -47,6 +48,13 @@ internal fun iconKeyIsPackage(cacheKey: String, packageName: String): Boolean {
         false
     }
 }
+
+/** Whether Home's white avatar ring gets its dark hairline: on a light wallpaper (dark ink), not for an emergency avatar (no white ring). */
+internal fun homeRingHairline(darkInk: Boolean, isEmergency: Boolean): Boolean = darkInk && !isEmergency
+
+/** The hairline: 1 dp, black at about 28 %. */
+private const val HOME_RING_HAIRLINE_DP = 1f
+private const val HOME_RING_HAIRLINE_COLOUR = 0x47000000
 
 object KidAvatars {
 
@@ -118,10 +126,31 @@ object KidAvatars {
     /**
      * Home's white ring on a contact's avatar (mockup A): shown for a photo and for an initial disc alike, hidden for an
      * emergency contact, whose red ring ([bindContact]) is its edge already. Only Home calls this; the phone book
-     * and the sheet leave `contact_ring` gone.
+     * and the sheet leave `contact_ring` gone. On a light wallpaper ([ink] dark, [homeRingHairline]) the white ring
+     * gets a faint dark hairline just outside the avatar's edge, so it can't vanish into a pale photo: the ring view
+     * grows 1 dp past the avatar (the avatar doesn't clip, `item_kid_contact.xml`) and its white stroke is inset by
+     * the same 1 dp, so the ring itself and the photo area are as on a dark wallpaper.
      */
-    fun bindHomeRing(ring: View, isEmergency: Boolean) {
+    fun bindHomeRing(ring: View, isEmergency: Boolean, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
         ring.visibility = if (isEmergency) View.GONE else View.VISIBLE
+        val context = ring.context
+        val hairline = homeRingHairline(ink.darkInk, isEmergency)
+        val edge = if (hairline) dp(context, HOME_RING_HAIRLINE_DP) else 0
+        (ring.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
+            it.setMargins(-edge, -edge, -edge, -edge)
+            ring.layoutParams = it
+        }
+        val white = ContextCompat.getDrawable(context, R.drawable.bg_kid_contact_ring)!!.mutate()
+        ring.background = if (hairline) {
+            val outer = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.TRANSPARENT)
+                setStroke(edge, HOME_RING_HAIRLINE_COLOUR)
+            }
+            LayerDrawable(arrayOf(outer, white)).apply { setLayerInset(1, edge, edge, edge, edge) }
+        } else {
+            white
+        }
     }
 
     /**

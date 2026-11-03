@@ -911,7 +911,7 @@ class HomeActivity : UIObjectActivity() {
                 item.findViewById<TextView>(R.id.contact_initial),
                 contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
             )
-            KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency)
+            KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
             KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)
             val missedCount = missed[contact.number]?.count ?: 0
             KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)

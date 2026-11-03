@@ -262,6 +262,8 @@ class PressFeedbackTest {
         // The call badge takes the avatar's elevation in code, with no outline.
         val src = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt")
         assertTrue(src.contains("outlineProvider = null\n            elevation = avatar.elevation"))
+        // So does the missed-call badge, else Home's 4 dp avatar would draw over its 2 dp.
+        assertTrue(src.contains("R.id.contact_badge)?.elevation = avatar.elevation"))
     }
 
     @Test
