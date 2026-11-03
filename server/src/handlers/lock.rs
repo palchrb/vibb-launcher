@@ -5,7 +5,7 @@
 //! - `POST /lock/options` (form `hint`, optional): an `unlock` challenge bound to `/lock`, `allowCredentials` = the
 //!   signed-in parent's passkeys for this RP ID (D3.5) - only the `hint`'s one when it names one of them (the passkey
 //!   this browser unlocked with last, so the prompt needs no pick; anything else is ignored). `static/passkey.js`
-//!   asks with the hint for the prompt it starts on its own when the page loads, and without it for "Lås opp".
+//!   asks with the hint on the first tap of the screen, and without it for every tap after a cancel or a failure.
 //! - `POST /lock` (form `assertion`, `next`): the parent's own credential only; done, the session's use moves, its
 //!   id is cycled (D3.7) and the answer is `{"next": <local path>}` (the page replaces itself with it, so Back never
 //!   returns to the lock); a bad assertion is `app_unlock_failed` and counts in `reauth_wrong` (3 end every session).

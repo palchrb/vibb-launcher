@@ -1117,7 +1117,14 @@ fn the_app_shell_scrolls_main_not_the_document() {
         auth.contains("height: auto;") && auth.contains("overflow: visible;"),
         "{auth}"
     );
-    // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card).
+    // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card; the lock screen adds its
+    // own classes to both - each matched as a whole class).
+    let has_class = |text: &str, tag: &str, class: &str| {
+        regex::Regex::new(&format!(r#"<{tag} class="([^"]*)""#))
+            .unwrap()
+            .captures(text)
+            .is_some_and(|caps| caps[1].split_whitespace().any(|c| c == class))
+    };
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
         if !text.contains("<body") {
@@ -1125,8 +1132,7 @@ fn the_app_shell_scrolls_main_not_the_document() {
         }
         assert!(
             text.contains("<main class=\"container")
-                || (text.contains("<body class=\"auth-page\">")
-                    && text.contains("<main class=\"auth-card\">")),
+                || (has_class(&text, "body", "auth-page") && has_class(&text, "main", "auth-card")),
             "{} is neither in the shell nor an auth page",
             path.display()
         );
@@ -1545,6 +1551,51 @@ async fn a_posts_own_page_is_marked_so_it_is_never_reloaded() {
         b"<html><body data-post-answer class=\"x\">hi</body></html>"
     );
     assert_eq!(crate::admin_auth::mark_body(b"no page"), b"no page");
+}
+
+/// The lock screen takes over from the start-up splash with no jump (2026-11-03, "en fin overgang"): its mark and the
+/// due page's resting mark are the same four rings in one viewBox, and style.css's `--vibb-mark-size` makes the ring at
+/// rest (2 x 0.94 x its reach) the splash's `mark_share` of the shorter side - `scripts/pwa-startup-images.py` writes
+/// it; this checks it, since CI doesn't run the script.
+#[test]
+fn the_lock_screens_mark_is_the_splashs() {
+    let read = |path: &str| std::fs::read_to_string(path).unwrap();
+    let paths = |svg: &str| -> Vec<String> {
+        regex::Regex::new(r#"\sd="([^"]+)""#)
+            .unwrap()
+            .captures_iter(svg)
+            .map(|c| c[1].to_string())
+            .collect()
+    };
+    let breath = read("templates/partials/vibb_breath.html");
+    let rest = read("static/vibb-rest.svg");
+    let rings = paths(&breath);
+    assert_eq!(rings.len(), 4);
+    assert_eq!(paths(&rest), rings);
+    for svg in [&breath, &rest] {
+        assert!(svg.contains("viewBox=\"-30 -30 60 60\""));
+    }
+    let number = regex::Regex::new(r"-?\d+\.\d+").unwrap();
+    let reach = rings
+        .iter()
+        .flat_map(|d| {
+            number
+                .find_iter(d)
+                .map(|m| m.as_str().parse::<f64>().unwrap().abs())
+        })
+        .fold(0.0, f64::max)
+        + 2.6 / 2.0;
+    let screens: serde_json::Value =
+        serde_json::from_str(&read("testdata/pwa_startup_screens.json")).unwrap();
+    let share = screens["mark_share"].as_f64().unwrap();
+    let size = share * 100.0 * 60.0 / (2.0 * 0.94 * reach);
+    let css = read("static/style.css");
+    assert!(
+        css.contains(&format!(
+            ":root {{ --vibb-mark-size: min({size:.2}vmin, 240px); }}"
+        )),
+        "run scripts/pwa-startup-images.py ({size:.2}vmin)"
+    );
 }
 
 /// The installed iPhone app's start-up splash (2026-10-24): head.html links one image per row of

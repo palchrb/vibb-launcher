@@ -103,6 +103,11 @@
     --brand-word: #FFFFFF;
     --night-action: #F0A884;
     --night-action-hover: #F6C4AA;
+    /* Words on the night ground, both schemes (the lock screen): cream 16.2:1, the second line 8.4:1, a failure's pale
+       red 11.4:1. */
+    --night-text: #F6E7E0;
+    --night-text-2: #B4A8A2;
+    --night-error: #F2B8B5;
     --avatar-bg: #F0A884;
     --avatar-text: #0C0C14;
     /* The Locate map's trail (static/locate.js): on OSM's light tiles in both schemes. */
@@ -2722,16 +2727,119 @@ a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
    ground stays. The lock is the server's; this only keeps the page from flashing up first (D3.3). */
 html.locked body > *,
 html.veiled body > * { visibility: hidden !important; }
-/* The lock screen (§6.5): the Vibb mark, the large title, the sub, one wide filled Unlock, Sign Out as plain text at the
-   bottom; centred in one narrow column. */
-.lock-card { display: flex; flex-direction: column; align-items: center; max-width: 320px; margin: 0 auto; text-align: center; }
-.lock-mark { display: block; width: 64px; height: 64px; border-radius: 16px; margin: 0 0 12px; }
-.lock-title { margin: 0 0 6px; font-family: var(--font-display); font-size: 1.9rem; font-weight: 800; line-height: 1.15; }
-.lock-sub { margin: 0 0 22px; font-size: 1rem; color: var(--label-2); }
-.lock-form { width: 100%; }
-.lock-error { margin: 0 0 14px; font-size: 0.9375rem; line-height: 1.4; color: var(--red-text); }
-.lock-note { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
-.lock-out { margin-top: 32px; }
-.button-plain,
-.button-plain:hover { padding: 10px 16px; border: 0; background: transparent; color: var(--tint); font-size: 1rem; }
+/* The lock screen (§6.5; the user's pick A "Pust", 2026-11-03): vibb's night edge to edge in both schemes, the Vibb mark
+   breathing, "Vibb is locked" in Nunito under it, the hint at the bottom and Sign Out under the hint. The whole screen
+   is the Unlock button: `.lock-tap` covers the body (absolute in it, never the viewport - design 43), under Sign Out
+   alone; the words show through it. On night: cream 16.2:1, the hint and Sign Out 8.4:1, the red line pale red 11.4:1.
+   It takes over from the iPhone start-up splash with no jump (the user: "en fin overgang"): the mark at the splash's
+   size (--vibb-mark-size, from the splash's MARK_SHARE) on the screen's centre - the middle of the visible height,
+   the screen itself in the installed app (100vh there, under the black-translucent status bar, viewport-fit=cover)
+   -, its first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
+   in. */
+/* The Vibb mark's size: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. */
+:root { --vibb-mark-size: min(51.30vmin, 240px); }
+/* End of the Vibb mark's size. */
+.lock-page {
+    flex-direction: column;
+    align-items: center;
+    background: var(--night);
+    color: var(--night-text);
+    color-scheme: dark;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.lock-screen { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 420px; text-align: center; }
+.lock-form { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; }
+/* In the flow (never over the foot): the space above the mark puts its centre on the screen's (the body's padding and
+   the status bar's inset taken off), so the foot comes after the title, scrolling if it must. */
+.lock-centre {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
+    margin-top: max(0px, calc(50dvh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
+}
+@media (display-mode: standalone) {
+    .lock-page { min-height: 100vh; }
+    .lock-centre { margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px))); }
+}
+.lock-centre .vibb-breath { width: var(--vibb-mark-size); height: var(--vibb-mark-size); }
+/* No room for the splash's centre with the foot below it (a Safari tab on a small iPhone, any phone on its side - no
+   start-up splash there): the mark smaller at the top, the title and the foot after it. */
+@media (max-height: 540px) {
+    .lock-centre { margin-top: 0; }
+    .lock-centre .vibb-breath { width: min(var(--vibb-mark-size), 30vh); height: min(var(--vibb-mark-size), 30vh); }
+}
+.lock-title { margin: 6px 0 0; font-family: var(--font-display); font-size: 1.625rem; font-weight: 800; line-height: 1.2; letter-spacing: 0.01em; color: var(--night-text); }
+.lock-foot { width: 100%; margin-top: auto; padding-top: 20px; }
+.lock-error { margin: 0 auto 12px; max-width: 300px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-error); }
+.lock-hint { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }
+.lock-note { margin: 0 auto; max-width: 320px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }
+.lock-title { animation: lock-fade-in 500ms ease-out 150ms backwards; }
+.lock-hint,
+.lock-note,
+.lock-out { animation: lock-fade-in 500ms ease-out 400ms backwards; }
+@keyframes lock-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.lock-tap,
+.lock-tap:hover {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.lock-tap:focus-visible { outline: 2px solid var(--night-action); outline-offset: -10px; border-radius: 28px; }
+.lock-out { position: relative; z-index: 2; margin-top: 4px; }
+.lock-out-button,
+.lock-out-button:hover { padding: 10px 18px; border: 0; background: transparent; color: var(--night-text-2); font-size: 0.9375rem; font-weight: 600; }
+.lock-out-button:hover { color: var(--night-text); }
+.lock-out-button:focus { outline-color: var(--night-action); }
+/* A due page on its way to /lock (app-lock.js's html.locked; html.veiled while hidden): its content hidden as above,
+   the ground night with the mark at rest on the screen's centre - the splash's picture, so a launch inside the
+   server's minute of slack goes splash, this, the lock screen with nothing in between. */
+html.locked,
+html.veiled { background: var(--night); }
+html.locked body,
+html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--vibb-mark-size) no-repeat; }
+/* The Vibb mark (partials/vibb_breath.html, from launcher/scripts/vibb-icon.py): the breath of the pust SVG, its 4 s loop
+   as CSS keyframes - rings 0.94 -> 1.04 -> 0.94 and 0.55 -> 1 -> 0.55, the core 0.9 -> 1.08; every half its keySplines
+   0.42 0 0.58 1. The outer ring starts first, the others 0.28, 0.56 and 0.84 s later and the core with the last (the
+   pust SVG's stagger, as positive delays): held at the 0 % keyframe until then, so the first frame is the mark at rest,
+   the start-up splash's picture, and the breath grows out of it. Each shape scales about its own box's centre (the
+   rings are hand-shaped: within 0.3 units, under 0.1 px here, of the SVG's 0,0). Under prefers-reduced-motion the
+   mark stands still at rest and the words show at once. */
+.vibb-breath { display: block; width: 130px; height: 130px; overflow: visible; }
+.vibb-breath-ring,
+.vibb-breath-core {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: vibb-breathe 4s cubic-bezier(0.42, 0, 0.58, 1) infinite backwards;
+}
+.vibb-breath-core { animation-name: vibb-breathe-core; }
+@keyframes vibb-breathe {
+    0%, 100% { transform: scale(0.94); opacity: 0.55; }
+    50% { transform: scale(1.04); opacity: 1; }
+}
+@keyframes vibb-breathe-core {
+    0%, 100% { transform: scale(0.9); }
+    50% { transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .vibb-breath-ring { animation: none; transform: scale(0.94); opacity: 0.55; }
+    .vibb-breath-core { animation: none; transform: scale(0.9); }
+    .lock-title,
+    .lock-hint,
+    .lock-note,
+    .lock-out { animation: none; }
+}
 .lock-field-error { margin: 4px 16px 10px; }

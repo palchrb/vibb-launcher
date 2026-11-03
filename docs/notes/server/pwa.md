@@ -1117,6 +1117,19 @@ man er inne på en device". Branch `pwa-fixes-b`.
   max-age=31536000, immutable` (`admin_auth::admin_headers`, `/static/startup/` and a 2xx only - the icons have no long
   caching; the test pins that style.css, the manifest, an icon and a 404 under `startup/` don't get it).
   The real iPhone check (add to the home screen, cold start) is the user's.
+- **The lock screen takes over from it** (2026-11-03, the user: "en fin overgang"): `/lock`'s mark
+  (`partials/vibb_breath.html`) sits at the splash's size and the screen's centre (style.css's `--vibb-mark-size`,
+  `min(51.30vmin, 240px)` - written by this script from `mark_share` between the `Vibb mark's size` markers; the
+  middle of the body, which is the screen in the installed app: 100vh, black-translucent, `viewport-fit=cover`), and
+  its first frame is the mark at rest: the breath's delays are positive (outer ring 0 s, then 0.28/0.56/0.84 s, the
+  core 0.84 s - the pust SVG's stagger) with the 0 % keyframe held during them. The mark is in the flow (the space
+  above it puts its centre on the screen's), so the title and the foot always come after it; below 540 px of height
+  (a Safari tab on a small iPhone, a phone on its side - no splash there) it sits smaller at the top instead. The title, then the hint and Sign Out
+  fade in (500 ms); under `prefers-reduced-motion` the mark stays at rest and the words show at once. A launch within
+  the server's minute of slack paints the start page first, which app-lock.js hides at once (`html.locked`): that
+  page is night too, with `static/vibb-rest.svg` (the mark at rest, from `vibb-icon.py`) at the same place;
+  app-lock.js fetches it on every lock-on page, so it is there before the first lock.
+  `shell::the_lock_screens_mark_is_the_splashs` checks the size and the rings in CI; the script's `--selftest` too.
 - **Android**: the manifest's `background_color` is night `#0C0C14` (was `#F2F2F7`): Chrome draws the icon on it and
   always adds the app's name under it - nothing to do about the name. `theme_color` and the one `<meta
   name="theme-color">` stay the same night.

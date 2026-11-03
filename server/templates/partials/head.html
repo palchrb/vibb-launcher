@@ -3,7 +3,7 @@
 {#- The lock screen (design 74 §6.5) has no title of its own: the head says only "Vibb". #}
 <title>{% if title.is_empty() %}Vibb{% else %}{{ title }} · Vibb Phone{% endif %}</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=75">
+<link rel="stylesheet" href="/static/style.css?v=76">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -38,7 +38,7 @@
 {#- The app lock (design 74 §3): on a page of a lock-on session (the server marks its html tag), the last input in
     sessionStorage, html.locked and the way to /lock once it is due, the veil while hidden, the input beacon, and
     window.handyLock.due() for the scripts that reload. Not deferred: it decides before the body paints. #}
-<script src="/static/app-lock.js?v=2"></script>
+<script src="/static/app-lock.js?v=3"></script>
 <script src="/static/register-sw.js?v=4" defer></script>
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
      deferred, so form.submit() is hooked before any control can call it. -->

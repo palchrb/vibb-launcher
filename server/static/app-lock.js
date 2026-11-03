@@ -13,6 +13,8 @@
 //   its server numbers are old (qa-passkeys-3 client M1; the server also serves a lock-on session's pages `no-store`).
 // - Time within the page is the longer of the page's own clock (`performance.now()`) and the wall clock, so neither a
 //   clock set back nor a sleeping phone holds the lock (L1). Only real input counts (`isTrusted`).
+// - On a lock-on page `static/vibb-rest.svg` is fetched at once: style.css draws it on the night ground of a locked or
+//   veiled page (the start-up splash's picture), and it must be there before the first lock.
 // - Hidden: `html.veiled` too (best effort: the iOS app switcher's picture may be taken before it), and the title is
 //   "Vibb" while hidden or locked.
 // - The input beacon `POST /api/used` (the server's "used", D3.3): on an input while the page is visible, at most
@@ -28,6 +30,7 @@
     var BEACON_EVERY = 60 * 1000;
     var BEACON_URL = "/api/used";
     var LOCK_PATH = "/lock";
+    var REST_MARK = "/static/vibb-rest.svg";
 
     /** The lock screen's address for `next` (a path of this app). */
     function lockUrl(next) {
@@ -126,6 +129,11 @@
 
         var lockMs = parseInt(html && html.getAttribute ? html.getAttribute("data-lock-ms") : "", 10);
         if (!(lockMs > 0) || win.location.pathname === LOCK_PATH) return api;
+        // The night picture of a locked or veiled page (style.css: the mark at rest, as the start-up splash): fetched now
+        // on every page of a lock-on session, so the first lock never paints plain night first.
+        try {
+            if (win.Image) new win.Image().src = REST_MARK;
+        } catch (e) {}
 
         var wallLoaded = now();
         var monoLoaded = mono();
