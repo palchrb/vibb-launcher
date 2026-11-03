@@ -609,6 +609,19 @@ mod tests {
         "partials/music_status.html",
         "partials/music_status_only.html",
         "partials/spotify_setup.html",
+        // 3e-a: Settings' core pages.
+        "settings_hub.html",
+        "notifications.html",
+        "notifications_settings.html",
+        "schedules.html",
+        "schedule_rule.html",
+        "schedule_budget.html",
+        "dns_filter.html",
+        "dns_log.html",
+        "wallpapers.html",
+        "updates.html",
+        "backups.html",
+        "provisioning_settings.html",
         // Design 74 step 3: the lock screen.
         "lock.html",
     ];

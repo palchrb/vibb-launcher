@@ -18,7 +18,7 @@ use std::io::Write;
 
 use crate::AppState;
 use crate::handlers::settings::Flash;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t};
 use crate::security::{self, CurrentAdmin};
 
 /// The backups' folder in `AppState::data_dir` (`data/backups`).
@@ -130,14 +130,15 @@ pub(crate) fn retention_of(value: &str) -> Option<usize> {
 
 /// The schedule forms' day choices (Sunday = 0, as the schedule files and the root scheduler
 /// read them).
+/// Each: the value and the key of the day's name.
 pub(crate) const WEEKDAYS: [(&str, &str); 7] = [
-    ("1", "Monday"),
-    ("2", "Tuesday"),
-    ("3", "Wednesday"),
-    ("4", "Thursday"),
-    ("5", "Friday"),
-    ("6", "Saturday"),
-    ("0", "Sunday"),
+    ("1", "settings.time_rules.weekday.1"),
+    ("2", "settings.time_rules.weekday.2"),
+    ("3", "settings.time_rules.weekday.3"),
+    ("4", "settings.time_rules.weekday.4"),
+    ("5", "settings.time_rules.weekday.5"),
+    ("6", "settings.time_rules.weekday.6"),
+    ("0", "settings.time_rules.weekday.7"),
 ];
 
 async fn external_drive_mounted() -> bool {
@@ -372,9 +373,9 @@ struct BackupsTemplate {
     backups: Vec<BackupRow>,
     /// The last form's result, in its group ("backups", "upload", "schedule", "drive").
     flash: Option<Flash>,
-    /// A refused restore: the file whose confirm renders open, and why.
+    /// A refused restore: the file whose confirm renders open, and the key of why.
     restore_refused: Option<(String, &'static str)>,
-    /// A refused format: the drive whose confirm renders open, and why.
+    /// A refused format: the drive whose confirm renders open, and the key of why.
     format_refused: Option<(String, &'static str)>,
     schedule: BackupScheduleConfig,
     weekdays: &'static [(&'static str, &'static str)],
@@ -465,26 +466,18 @@ impl Done {
 
     /// The line in its group. A restore's result is shown on the page the server answers after
     /// it is back, so it says what happened.
-    fn flash(self, docker: bool) -> Flash {
-        let text = match self {
-            Done::Backup => "Backup made.",
-            Done::Deleted => "Backup deleted.",
-            Done::Gone => "That backup was already deleted.",
-            Done::Schedule => "Schedule saved.",
-            Done::Upload => "Uploaded. It is at the top of the list.",
-            Done::Restore if docker => {
-                "Restore started. The server puts the backup in place and starts again within a \
-                 few seconds; everyone signs in again then."
-            }
-            Done::Restore => {
-                "Restore started. The server puts the backup in place and starts again within \
-                 about a minute; everyone signs in again then."
-            }
-            Done::Format => {
-                "Formatting the drive. It takes about a minute; reload this page then to see it."
-            }
+    fn flash(self, lang: Lang, docker: bool) -> Flash {
+        let key = match self {
+            Done::Backup => "settings.backups.done.backup",
+            Done::Deleted => "settings.backups.done.deleted",
+            Done::Gone => "settings.backups.done.gone",
+            Done::Schedule => "settings.schedule.saved",
+            Done::Upload => "settings.backups.done.upload",
+            Done::Restore if docker => "settings.backups.done.restore_docker",
+            Done::Restore => "settings.backups.done.restore",
+            Done::Format => "settings.backups.done.format",
         };
-        Flash::done(self.group(), text)
+        Flash::done(self.group(), t(lang, key))
     }
 
     fn redirect(self) -> Response {
@@ -529,7 +522,10 @@ async fn render_backups(
             backups.push(BackupRow {
                 filename,
                 size_display: human_size(meta.len()),
-                when: made.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+                when: made.map_or_else(
+                    || t(lang, "settings.backups.time_unknown").to_string(),
+                    |made| zone.when(made, now),
+                ),
                 exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
             });
         }
@@ -539,7 +535,7 @@ async fn render_backups(
 
     let page = BackupsTemplate {
         lang,
-        title: "Backups".to_string(),
+        title: t(lang, "settings.backups.title").to_string(),
         backups,
         flash: answer.flash,
         restore_refused: answer.restore_refused,
@@ -569,7 +565,7 @@ pub async fn list_backups(
         flash: query
             .get("done")
             .and_then(|code| Done::parse(code))
-            .map(|done| done.flash(docker)),
+            .map(|done| done.flash(lang, docker)),
         ..Answer::default()
     };
     render_backups(&state, StatusCode::OK, answer, lang).await
@@ -588,8 +584,8 @@ pub async fn create_backup(lang: Lang, State(state): State<AppState>) -> Respons
             tracing::error!("manual backup failed: {e}");
             let answer = Answer {
                 flash: Some(
-                    Flash::refused("backups", "The backup failed")
-                        .because("Nothing was saved. The server's log says why."),
+                    Flash::refused("backups", t(lang, "settings.backups.failed"))
+                        .because(t(lang, "settings.backups.failed_why")),
                 ),
                 ..Answer::default()
             };
@@ -600,10 +596,11 @@ pub async fn create_backup(lang: Lang, State(state): State<AppState>) -> Respons
 
 pub async fn download_backup(
     State(state): State<AppState>,
+    lang: Lang,
     Path(filename): Path<String>,
 ) -> impl IntoResponse {
     if !is_safe_backup_filename(&filename) {
-        return (StatusCode::NOT_FOUND, "Not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
     }
     match tokio::fs::read(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
         Ok(bytes) => {
@@ -616,7 +613,7 @@ pub async fn download_backup(
             ];
             (headers, bytes).into_response()
         }
-        Err(_) => (StatusCode::NOT_FOUND, "Not found").into_response(),
+        Err(_) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found"),
     }
 }
 
@@ -627,14 +624,14 @@ pub async fn delete_backup(
     Path(filename): Path<String>,
 ) -> Response {
     if !is_safe_backup_filename(&filename) {
-        return (StatusCode::NOT_FOUND, "Not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
     }
     match tokio::fs::remove_file(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
         Ok(()) => Done::Deleted.redirect(),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Done::Gone.redirect(),
         Err(err) => {
             tracing::error!(%err, "couldn't delete a backup");
-            let answer = Answer::refused("backups", "Couldn't delete the backup.");
+            let answer = Answer::refused("backups", t(lang, "settings.backups.delete_failed"));
             render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
         }
     }
@@ -662,7 +659,7 @@ pub async fn save_backup_schedule(
     axum::Form(form): axum::Form<BackupScheduleForm>,
 ) -> Response {
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
-        let answer = Answer::refused("schedule", "Unknown frequency - nothing was saved.");
+        let answer = Answer::refused("schedule", t(lang, "settings.schedule.bad_frequency"));
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
@@ -675,7 +672,7 @@ pub async fn save_backup_schedule(
     } else {
         let answer = Answer::refused(
             "schedule",
-            "The time must look like 02:00 - nothing was saved.",
+            crate::handlers::updates::bad_time(lang, "02:00"),
         );
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
@@ -716,7 +713,7 @@ pub async fn save_backup_schedule(
         .await;
         return Done::Schedule.redirect();
     } else {
-        Answer::refused("schedule", "Couldn't save the schedule.")
+        Answer::refused("schedule", t(lang, "settings.schedule.save_failed"))
     };
     render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
@@ -913,17 +910,11 @@ enum FormatRefusal {
 
 impl FormatRefusal {
     /// The page's answer: a wrong size under that drive's open confirm, a gone drive in the group.
-    fn answer(self, device: &str) -> Answer {
+    fn answer(self, lang: Lang, device: &str) -> Answer {
         match self {
-            FormatRefusal::Gone => Answer::refused(
-                "drive",
-                "That drive isn't connected any more - nothing was formatted.",
-            ),
+            FormatRefusal::Gone => Answer::refused("drive", t(lang, "settings.backups.drive_gone")),
             FormatRefusal::WrongSize => Answer {
-                format_refused: Some((
-                    device.to_string(),
-                    "That isn't the drive's size - nothing was formatted.",
-                )),
+                format_refused: Some((device.to_string(), "settings.backups.wrong_size")),
                 ..Answer::default()
             },
         }
@@ -975,7 +966,7 @@ pub async fn format_drive(
     let drive = match format_target(&drives, &form.device, &form.confirm_size) {
         Ok(drive) => drive,
         Err(refusal) => {
-            let answer = refusal.answer(&form.device);
+            let answer = refusal.answer(lang, &form.device);
             return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
         }
     };
@@ -995,15 +986,15 @@ pub async fn format_drive(
         .await;
         return Done::Format.redirect();
     } else {
-        not_requested("drive")
+        not_requested(lang, "drive")
     };
     render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
 
 /// The root helper's request file couldn't be written: nothing happens, and why is behind ⓘ.
-fn not_requested(at: &'static str) -> Answer {
+fn not_requested(lang: Lang, at: &'static str) -> Answer {
     Answer {
-        flash: Some(crate::handlers::updates::not_requested(at)),
+        flash: Some(crate::handlers::updates::not_requested(lang, at)),
         ..Answer::default()
     }
 }
@@ -1034,22 +1025,16 @@ pub async fn restore_backup(
     axum::Form(form): axum::Form<RestoreBackupForm>,
 ) -> Response {
     if !is_safe_backup_filename(&filename) {
-        return (StatusCode::NOT_FOUND, "Not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
     }
     let names = list_backup_filenames(&state.data_dir.join(BACKUP_DIR)).await;
     if !names.contains(&filename) {
-        let answer = Answer::refused(
-            "backups",
-            "That backup isn't there any more - nothing was restored.",
-        );
+        let answer = Answer::refused("backups", t(lang, "settings.backups.restore_gone"));
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
     if form.confirm_filename.trim() != filename {
         let answer = Answer {
-            restore_refused: Some((
-                filename,
-                "That isn't the file's name - nothing was restored.",
-            )),
+            restore_refused: Some((filename, "settings.backups.wrong_name")),
             ..Answer::default()
         };
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
@@ -1074,7 +1059,7 @@ pub async fn restore_backup(
         .await;
         return Done::Restore.redirect();
     } else {
-        not_requested("backups")
+        not_requested(lang, "backups")
     };
     render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
@@ -1093,10 +1078,7 @@ async fn restore_in_container(
     let marker = state.data_dir.join(crate::startup::RESTORE_REQUEST);
     if let Err(err) = tokio::fs::write(&marker, filename).await {
         tracing::error!(%err, "couldn't write the restore request");
-        let answer = Answer::refused(
-            "backups",
-            "Couldn't start the restore - nothing was restored. The server's log says why.",
-        );
+        let answer = Answer::refused("backups", t(lang, "settings.backups.restore_failed"));
         return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await;
     }
     security::record_security_event(
@@ -1137,25 +1119,25 @@ pub async fn upload_backup(
     lang: Lang,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let refused = |why: &'static str| Answer::refused("upload", why);
+    let refused = |key: &'static str| Answer::refused("upload", t(lang, key));
     let Ok(Some(field)) = multipart.next_field().await else {
         return render_backups(
             &state,
             StatusCode::BAD_REQUEST,
-            refused("Choose a file first."),
+            refused("settings.backups.upload_none"),
             lang,
         )
         .await;
     };
     let Ok(bytes) = field.bytes().await else {
-        let answer = refused("The file couldn't be read. Nothing was added.");
+        let answer = refused("settings.backups.upload_unreadable");
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
     if bytes.is_empty() {
         return render_backups(
             &state,
             StatusCode::BAD_REQUEST,
-            refused("That file is empty."),
+            refused("settings.backups.upload_empty"),
             lang,
         )
         .await;
@@ -1174,8 +1156,8 @@ pub async fn upload_backup(
     if !valid {
         let answer = Answer {
             flash: Some(
-                Flash::refused("upload", "That isn't a Vibb Phone backup")
-                    .because("A backup is a .zip with kidphone.db inside. Nothing was added."),
+                Flash::refused("upload", t(lang, "settings.backups.not_a_backup"))
+                    .because(t(lang, "settings.backups.not_a_backup_why")),
             ),
             ..Answer::default()
         };
@@ -1200,7 +1182,7 @@ pub async fn upload_backup(
         Ok(()) => Done::Upload.redirect(),
         Err(err) => {
             tracing::error!(%err, "couldn't save an uploaded backup");
-            let answer = refused("Couldn't save the file. Nothing was added.");
+            let answer = refused("settings.backups.upload_failed");
             render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
         }
     }
@@ -1234,10 +1216,14 @@ mod tests {
             format_target(&[], "/dev/sda", "29.8 GB").err(),
             Some(FormatRefusal::Gone)
         );
-        let wrong = FormatRefusal::WrongSize.answer("/dev/sda");
+        let wrong = FormatRefusal::WrongSize.answer(Lang::En, "/dev/sda");
         assert_eq!(wrong.format_refused.unwrap().0, "/dev/sda");
         assert_eq!(
-            FormatRefusal::Gone.answer("/dev/sda").flash.unwrap().at,
+            FormatRefusal::Gone
+                .answer(Lang::En, "/dev/sda")
+                .flash
+                .unwrap()
+                .at,
             "drive"
         );
     }
@@ -1275,14 +1261,14 @@ mod tests {
         assert!(html.contains("<summary class=\"row\">Format /dev/sda (29.8 GB)…</summary>"));
         assert!(!html.contains("data-drive=\"/dev/sda\" open"));
         let refused = page(
-            Some(("/dev/sda".to_string(), "That isn't the drive's size.")),
+            Some(("/dev/sda".to_string(), "settings.backups.wrong_size")),
             None,
         );
         assert!(refused.contains("data-drive=\"/dev/sda\" open"));
         assert!(refused.contains("id=\"format-error\""));
         for done in Done::ALL {
             assert_eq!(Done::parse(done.code()), Some(done));
-            let html = page(None, Some(done.flash(false)));
+            let html = page(None, Some(done.flash(Lang::En, false)));
             assert!(
                 html.contains(&format!("id=\"{}\"", done.group())),
                 "{done:?}"
@@ -1291,7 +1277,12 @@ mod tests {
                 html.contains(&format!("data-flash=\"{}\"", done.group())),
                 "{done:?}"
             );
-            assert!(!done.flash(true).title.contains("open this page again"));
+            assert!(
+                !done
+                    .flash(Lang::En, true)
+                    .title
+                    .contains("open this page again")
+            );
         }
         assert_eq!(Done::parse("nonsense"), None);
     }

@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, t};
 use crate::models::ProvisioningSettings;
 
 /// A form's result, shown inside the group `at` (its id) by `partials/group_flash.html`: green
@@ -78,7 +78,7 @@ struct ProvisioningSettingsTemplate {
     /// The address the QR uses is plain http to a private address, or the saved one is refused by
     /// the rule now (saved before 0.55.0, QA L-e): said under the field (security review L8).
     url_warning: Option<String>,
-    /// A refused save: the field ("server_url", "locale" or "time_zone") and why.
+    /// A refused save: the field ("server_url", "locale" or "time_zone") and the key of why.
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
 }
@@ -89,7 +89,7 @@ struct CountryCode {
     value: String,
     /// `?saved=country-code`: the flash under its Save.
     saved: bool,
-    /// A refused save's reason, under the field.
+    /// A refused save's reason (its key), under the field.
     error: Option<&'static str>,
 }
 
@@ -138,12 +138,12 @@ async fn load_country_code(state: &AppState) -> Option<String> {
         .ok()
 }
 
-fn read_failed() -> Response {
-    (
+fn read_failed(lang: Lang) -> Response {
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read Phone Setup - check the server log.",
+        "error.read_phone_setup",
     )
-        .into_response()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -166,17 +166,13 @@ fn render(
     let url_warning = if url_refused || shown.is_empty() {
         None
     } else if crate::handlers::provisioning::saved_refused(shown) {
-        Some(
-            "This saved address isn't put in the setup QR: plain http goes only to a private \
-             address. Save an https:// one."
-                .to_string(),
-        )
+        Some(t(lang, "settings.provisioning.saved_refused").to_string())
     } else {
-        crate::handlers::provisioning::plain_http_warning(shown)
+        crate::handlers::provisioning::plain_http_warning(lang, shown)
     };
     let page = ProvisioningSettingsTemplate {
         lang,
-        title: "Phone Setup".to_string(),
+        title: t(lang, "settings.provisioning.title").to_string(),
         url_warning,
         entered,
         env_server_url: state.config.phone_server_url.clone(),
@@ -199,7 +195,7 @@ pub async fn provisioning_settings_form(
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
     let (Some(settings), Some(code)) = (load(&state).await, load_country_code(&state).await) else {
-        return read_failed();
+        return read_failed(lang);
     };
     let saved = query.get("saved").map(String::as_str);
     let country_code = CountryCode {
@@ -259,19 +255,16 @@ pub async fn update_provisioning_settings(
     let error = if let Some(why) = url_refusal {
         Some(("server_url", why))
     } else if !locale.is_empty() && !crate::handlers::provisioning::valid_locale(locale) {
-        Some(("locale", "Use the form nb_NO. Nothing was saved."))
+        Some(("locale", "settings.provisioning.locale_refused"))
     } else if !time_zone.is_empty() && !crate::handlers::provisioning::valid_time_zone(time_zone) {
-        Some((
-            "time_zone",
-            "Use a name like Europe/Oslo. Nothing was saved.",
-        ))
+        Some(("time_zone", "settings.provisioning.time_zone_refused"))
     } else {
         None
     };
     if error.is_some() {
         let (Some(settings), Some(code)) = (load(&state).await, load_country_code(&state).await)
         else {
-            return read_failed();
+            return read_failed(lang);
         };
         let entered = Entered {
             server_url: server_url.to_string(),
@@ -312,11 +305,11 @@ pub async fn update_provisioning_settings(
     .await;
     if let Err(err) = result {
         tracing::error!(%err, "couldn't save Phone Setup");
-        return (
+        return crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save - nothing was changed. Check the server log.",
-        )
-            .into_response();
+            "error.save_failed_log",
+        );
     }
 
     Redirect::to("/settings/provisioning?saved=1#saved").into_response()
@@ -341,12 +334,12 @@ pub async fn save_country_code(
     let code = typed.strip_prefix('+').unwrap_or(typed);
     if !crate::phone::valid_country_code(code) {
         let Some(settings) = load(&state).await else {
-            return read_failed();
+            return read_failed(lang);
         };
         let country_code = CountryCode {
             value: typed.chars().take(16).collect(),
             saved: false,
-            error: Some("Use 1 to 3 digits, like 47. Nothing was saved."),
+            error: Some("settings.provisioning.country_code_refused"),
         };
         return render(
             &state,
@@ -385,11 +378,11 @@ pub async fn save_country_code(
         }
         Err(err) => {
             tracing::error!(%err, "couldn't save the default country code");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed. Check the server log.",
+                "error.save_failed_log",
             )
-                .into_response()
         }
     }
 }

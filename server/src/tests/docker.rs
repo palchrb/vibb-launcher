@@ -467,7 +467,7 @@ fn the_updates_page_says_how_to_update_the_image() {
     let (summary, panel) = row.split_once("</summary>").unwrap();
     assert!(!summary.contains("HANDY_VERSION"), "{summary}");
     assert!(panel.contains("HANDY_VERSION=0.24.0"));
-    assert!(panel.contains("docker compose pull &amp;&amp; docker compose up -d"));
+    assert!(panel.contains("docker compose pull &#38;&#38; docker compose up -d"));
     for gone in [
         "/update/trigger",
         "/update/restart",
@@ -689,5 +689,5 @@ async fn the_updates_page_shows_the_release_read_in_the_background() {
     // Only a failed read with nothing to show says so.
     release.set(None, false, true);
     let page = app.get_page("/updates", &cookie).await.text();
-    assert!(latest_row(&page).contains("Couldn't check"), "{page}");
+    assert!(latest_row(&page).contains("Couldn&#39;t check"), "{page}");
 }

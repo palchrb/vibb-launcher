@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,16 +8,16 @@
 {% include "partials/tab_bar.html" %}
 {% import "partials/group_flash.html" as group_flash %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Backups</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("settings.backups.title") }}</h1>
 
     {#- Every form renders its answer in the POST's response, posting to its group's fragment, so
         the answer lands where the parent was (design 31 §5.1). Delete, Restore and Format are
         <details> confirms; Restore and Format also need the file name or the drive's size typed. -#}
-    <section id="backups" aria-label="Backups">
+    <section id="backups" aria-label="{{ self.t("settings.backups.title") }}">
         <div class="group">
             <form method="post" action="/backups/create#backups" class="cell">
-                <button type="submit" class="row row-button">Back Up Now</button>
+                <button type="submit" class="row row-button">{{ self.t("settings.backups.back_up_now") }}</button>
             </form>
             {% call group_flash::show(flash, "backups") %}{% endcall %}
             {% for b in backups %}
@@ -28,38 +28,38 @@
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
                 <div class="edit-body">
-                    <a href="/backups/{{ b.filename }}/download" class="button-small" download>Download</a>
+                    <a href="/backups/{{ b.filename }}/download" class="button-small" download>{{ self.t("settings.backups.download") }}</a>
                     <details class="confirm"{% if refused.is_some() %} open{% endif %}>
-                        <summary class="row">Restore…</summary>
+                        <summary class="row">{{ self.t("settings.backups.restore") }}…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/restore#backups" class="confirm-body">
-                            <p>Replace everything on this server with this backup? What is here now is kept in a safety copy, and the server restarts. {{ self.t("backups.restore.accounts") }}</p>
-                            <label class="field-label" for="confirm_{{ b.filename }}">Type {{ b.filename }} to confirm</label>
+                            <p>{{ self.t("settings.backups.restore_confirm") }} {{ self.t("backups.restore.accounts") }}</p>
+                            <label class="field-label" for="confirm_{{ b.filename }}">{{ self.tp("settings.backups.type_name", [("name", b.filename.as_str())]) }}</label>
                             <input type="text" id="confirm_{{ b.filename }}" name="confirm_filename" autocomplete="off" autocapitalize="none" spellcheck="false"{% if refused.is_some() %} aria-invalid="true" aria-describedby="restore-error" autofocus{% endif %}>
-                            {% if let Some(why) = refused %}<p class="field-error" id="restore-error">{{ why }}</p>{% endif %}
-                            <button type="submit" class="button-destructive">Restore This Backup</button>
+                            {% if let Some(why) = refused %}<p class="field-error" id="restore-error">{{ self.t(why) }}</p>{% endif %}
+                            <button type="submit" class="button-destructive">{{ self.t("settings.backups.restore_button") }}</button>
                             {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
                     <details class="confirm">
-                        <summary class="row">Delete…</summary>
+                        <summary class="row">{{ self.t("settings.backups.delete") }}…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/delete#backups" class="confirm-body">
-                            <p>Delete this backup? This can't be undone.</p>
-                            <button type="submit" class="button-destructive">Delete Backup</button>
+                            <p>{{ self.t("settings.backups.delete_confirm") }}</p>
+                            <button type="submit" class="button-destructive">{{ self.t("settings.backups.delete_button") }}</button>
                             {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
                 </div>
             </details>
             {% else %}
-            <p class="row row-note">No backups yet.</p>
+            <p class="row row-note">{{ self.t("settings.backups.none") }}</p>
             {% endfor %}
         </div>
-        <div class="group-footer">Keep a copy somewhere else too: download one every so often.
+        <div class="group-footer">{{ self.t("settings.backups.footer") }}
             <details class="info">
-                <summary aria-label="About backups"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("settings.backups.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>A backup holds everything, the two-factor secret too: keep it as safe as your password. Your own music files, sign-ins and the phones' Tailscale key aren't in it.</p>
-                    <p>A backup keeps locations, logs and the rest as they were when it was made, until the backup itself is deleted - longer than the times you chose for keeping them.{% if !docker %} The external drive keeps as many backups as this server, also while copying to it is off.{% endif %}</p>
+                    <p>{{ self.t("settings.backups.info_holds") }}</p>
+                    <p>{{ self.t("settings.backups.info_keeps") }}{% if !docker %} {{ self.t("settings.backups.info_drive") }}{% endif %}</p>
                 </div>
             </details>
         </div>
@@ -68,98 +68,98 @@
     <section id="upload" aria-labelledby="upload-title">
         <div class="group">
             <details class="disclosure cell"{% if let Some(f) = flash %}{% if f.at == "upload" && !f.ok %} open{% endif %}{% endif %}>
-                <summary class="row row-button" id="upload-title">Upload a Backup…</summary>
+                <summary class="row row-button" id="upload-title">{{ self.t("settings.backups.upload") }}…</summary>
                 <form method="post" action="/backups/upload#upload" enctype="multipart/form-data" class="form-group">
-                    <label class="field-label" for="backup_file">Backup file (.zip)</label>
+                    <label class="field-label" for="backup_file">{{ self.t("settings.backups.file") }}</label>
                     <input type="file" id="backup_file" name="file" accept=".zip" required>
-                    <button type="submit" class="button-wide">Upload</button>
+                    <button type="submit" class="button-wide">{{ self.t("settings.wallpapers.upload") }}</button>
                 </form>
             </details>
             {% call group_flash::show(flash, "upload") %}{% endcall %}
         </div>
-        <p class="group-footer">{% if docker %}One downloaded earlier.{% else %}One downloaded earlier, or from the external drive.{% endif %}</p>
+        <p class="group-footer">{% if docker %}{{ self.t("settings.backups.upload_footer_docker") }}{% else %}{{ self.t("settings.backups.upload_footer") }}{% endif %}</p>
     </section>
 
     <section id="schedule" aria-labelledby="schedule-title">
-        <h2 class="group-header" id="schedule-title">Schedule</h2>
+        <h2 class="group-header" id="schedule-title">{{ self.t("settings.backups.schedule") }}</h2>
         <form method="post" action="/backups/schedule#schedule" class="group form-group">
             {% call group_flash::show(flash, "schedule") %}{% endcall %}
             <div class="field">
-                <label class="field-label" for="frequency">How often</label>
+                <label class="field-label" for="frequency">{{ self.t("settings.backups.how_often") }}</label>
                 <select id="frequency" name="frequency">
-                    <option value="daily"{% if schedule.frequency == "daily" %} selected{% endif %}>Every day</option>
-                    <option value="weekly"{% if schedule.frequency == "weekly" %} selected{% endif %}>Every week</option>
-                    <option value="monthly"{% if schedule.frequency == "monthly" %} selected{% endif %}>Every month</option>
+                    <option value="daily"{% if schedule.frequency == "daily" %} selected{% endif %}>{{ self.t("settings.schedule.daily") }}</option>
+                    <option value="weekly"{% if schedule.frequency == "weekly" %} selected{% endif %}>{{ self.t("settings.schedule.weekly") }}</option>
+                    <option value="monthly"{% if schedule.frequency == "monthly" %} selected{% endif %}>{{ self.t("settings.schedule.monthly") }}</option>
                 </select>
             </div>
             <div class="field">
-                <label class="field-label" for="day_of_week">Day (every week)</label>
+                <label class="field-label" for="day_of_week">{{ self.t("settings.schedule.day_of_week") }}</label>
                 <select id="day_of_week" name="day_of_week">
                     {% for (value, name) in weekdays %}
-                    <option value="{{ value }}"{% if schedule.day_of_week == **value %} selected{% endif %}>{{ name }}</option>
+                    <option value="{{ value }}"{% if schedule.day_of_week == **value %} selected{% endif %}>{{ self.t(name) }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="field">
-                <label class="field-label" for="day_of_month">Day of the month (every month, 1-28)</label>
+                <label class="field-label" for="day_of_month">{{ self.t("settings.schedule.day_of_month") }}</label>
                 <input type="number" id="day_of_month" name="day_of_month" min="1" max="28" value="{{ schedule.day_of_month }}">
             </div>
             <div class="field">
-                <label class="field-label" for="backup_time">Time</label>
+                <label class="field-label" for="backup_time">{{ self.t("settings.schedule.time") }}</label>
                 <input type="time" id="backup_time" name="backup_time" value="{{ schedule.backup_time }}">
             </div>
             <div class="field">
-                <label class="field-label" for="retention_count">Backups to keep</label>
+                <label class="field-label" for="retention_count">{{ self.t("settings.backups.keep") }}</label>
                 <input type="number" id="retention_count" name="retention_count" min="0" max="3650" value="{{ schedule.retention_count }}">
-                <p class="field-hint">Older ones are deleted. 0 keeps them all.</p>
+                <p class="field-hint">{{ self.t("settings.backups.keep_hint") }}</p>
             </div>
             {% if !docker %}
             <label class="row field-switch">
-                <span class="row-label">Copy to the external drive<span class="row-sub">When one is connected.</span></span>
+                <span class="row-label">{{ self.t("settings.backups.copy") }}<span class="row-sub">{{ self.t("settings.backups.copy_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="external_copy_enabled" value="1"{% if schedule.external_copy_enabled %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row field-switch">
-                <span class="row-label">Keep a live copy on the drive<span class="row-sub">Refreshed every 1-2 minutes.</span></span>
+                <span class="row-label">{{ self.t("settings.backups.mirror") }}<span class="row-sub">{{ self.t("settings.backups.mirror_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="continuous_mirror_enabled" value="1"{% if schedule.continuous_mirror_enabled %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
             </label>
             {% endif %}
-            <button type="submit" class="button-wide">Save</button>
+            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
         {% if docker %}
-        <p class="group-footer">The backups stay in the data volume: copy them off the host yourself.</p>
+        <p class="group-footer">{{ self.t("settings.backups.schedule_footer_docker") }}</p>
         {% else %}
-        <p class="group-footer">At the Pi's own time of day.</p>
+        <p class="group-footer">{{ self.t("settings.backups.schedule_footer") }}</p>
         {% endif %}
     </section>
 
     {% if !docker %}
     <section id="drive" aria-labelledby="drive-title">
-        <h2 class="group-header" id="drive-title">External Drive</h2>
+        <h2 class="group-header" id="drive-title">{{ self.t("settings.backups.drive") }}</h2>
         <div class="group">
             <details class="info cell" data-row="drive">
                 <summary class="row">
-                    <span class="row-label">Backup drive</span>
-                    <span class="row-value">{% if external_drive_mounted %}Connected{% else %}Not connected{% endif %}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Where the drive is" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                    <span class="row-label">{{ self.t("settings.backups.backup_drive") }}</span>
+                    <span class="row-value">{% if external_drive_mounted %}{{ self.t("settings.backups.connected") }}{% else %}{{ self.t("settings.backups.not_connected") }}{% endif %}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.backups.drive_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                 </summary>
-                <div class="info-panel"><p>The backup drive is the one mounted at {{ external_mount }}. Formatting a USB drive below makes it that drive.</p></div>
+                <div class="info-panel"><p>{{ self.tp("settings.backups.drive_info", [("path", external_mount.as_str())]) }}</p></div>
             </details>
             {% for d in removable_drives %}
             {% let refused = self.format_error(d.device) %}
             <details class="confirm cell" data-drive="{{ d.device }}"{% if refused.is_some() %} open{% endif %}>
-                <summary class="row">Format {{ d.device }} ({{ d.size_display }})…</summary>
+                <summary class="row">{{ self.tp("settings.backups.format", [("device", d.device.as_str()), ("size", d.size_display.as_str())]) }}…</summary>
                 <form method="post" action="/backups/format-drive#drive" class="confirm-body">
                     <input type="hidden" name="device" value="{{ d.device }}">
-                    <p>Erase everything on this drive and make it the backup drive? This can't be undone.</p>
-                    <label class="field-label" for="confirm_{{ d.device }}">Type its size ({{ d.size_display }}) to confirm</label>
+                    <p>{{ self.t("settings.backups.format_confirm") }}</p>
+                    <label class="field-label" for="confirm_{{ d.device }}">{{ self.tp("settings.backups.type_size", [("size", d.size_display.as_str())]) }}</label>
                     <input type="text" id="confirm_{{ d.device }}" name="confirm_size" autocomplete="off"{% if refused.is_some() %} aria-invalid="true" aria-describedby="format-error" autofocus{% endif %}>
-                    {% if let Some(why) = refused %}<p class="field-error" id="format-error">{{ why }}</p>{% endif %}
-                    <button type="submit" class="button-destructive">Format Drive</button>
+                    {% if let Some(why) = refused %}<p class="field-error" id="format-error">{{ self.t(why) }}</p>{% endif %}
+                    <button type="submit" class="button-destructive">{{ self.t("settings.backups.format_button") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
             {% else %}
-            <p class="row row-note">No USB drive found. Plug one in and open this page again.</p>
+            <p class="row row-note">{{ self.t("settings.backups.no_drive") }}</p>
             {% endfor %}
             {% call group_flash::show(flash, "drive") %}{% endcall %}
         </div>

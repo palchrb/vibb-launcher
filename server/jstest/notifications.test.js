@@ -1,6 +1,7 @@
 // Behaviour of static/notifications.js (design 35 §5.2, qa-35-design H2): the state order, Turn
 // On calling pushManager.subscribe first in the tap with a Uint8Array key, the form filled and
-// sent, the server-known check by the endpoint's hash, Turn Off.
+// sent, the server-known check by the endpoint's hash, Turn Off. The state words are the form's data-w-* (here
+// as an nb page renders them, design 70 §5.3).
 // Run: node --test jstest/notifications.test.js
 "use strict";
 const test = require("node:test");
@@ -10,6 +11,16 @@ const { install, decodeKey, endpointHash } = require("../static/notifications.js
 
 const KEY = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4";
 const ENDPOINT = "https://web.push.apple.com/QK1-fake";
+// The form's words, as notifications_settings.html renders them in Norwegian.
+const WORDS = {
+    "data-w-home-screen": "Legg den på Hjem-skjermen først",
+    "data-w-not-available": "Ikke tilgjengelig i denne nettleseren",
+    "data-w-blocked": "Blokkert",
+    "data-w-off": "Av",
+    "data-w-on": "På",
+    "data-w-on-failed": "Fikk ikke slått på - prøv igjen",
+    "data-w-off-failed": "Fikk ikke slått av - prøv igjen",
+};
 const hashOf = (endpoint) =>
     crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
 
@@ -46,13 +57,14 @@ function fakePage({
     known = [],
     subscription = null,
     subscribe,
+    words = WORDS,
 } = {}) {
     const calls = [];
     const submitted = [];
     const field = () => ({ value: "" });
     const form = element({
         elements: { endpoint: field(), p256dh: field(), auth: field() },
-        getAttribute: (name) => ({ "data-key": KEY, "data-subscribed": known.join(",") })[name],
+        getAttribute: (name) => ({ "data-key": KEY, "data-subscribed": known.join(","), ...words })[name],
         submit: () => submitted.push("on"),
     });
     const offForm = element({ elements: { endpoint: field() }, submit: () => submitted.push("off") });
@@ -99,21 +111,27 @@ test("an iPhone's Safari tab says to add the app to the Home Screen first", () =
     // iOS Safari outside the Home Screen has no PushManager: the Home Screen still comes first.
     const page = fakePage({ standalone: false, pushManager: false });
     install(page.win);
-    assert.strictEqual(page.nodes["push-state"].textContent, "Add to the Home Screen first");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Legg den på Hjem-skjermen først");
     assert.strictEqual(page.nodes["push-home-screen"].hidden, false);
     assert.strictEqual(page.nodes["push-on"].hidden, true);
+});
+
+test("a word the page doesn't give shows its name", () => {
+    const page = fakePage({ pushManager: false, words: {} });
+    install(page.win);
+    assert.strictEqual(page.nodes["push-state"].textContent, "not-available");
 });
 
 test("then not available, then blocked", () => {
     let page = fakePage({ pushManager: false });
     install(page.win);
-    assert.strictEqual(page.nodes["push-state"].textContent, "Not available in this browser");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Ikke tilgjengelig i denne nettleseren");
     page = fakePage({ secure: false });
     install(page.win);
-    assert.strictEqual(page.nodes["push-state"].textContent, "Not available in this browser");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Ikke tilgjengelig i denne nettleseren");
     page = fakePage({ standalone: true, permission: "denied" });
     install(page.win);
-    assert.strictEqual(page.nodes["push-state"].textContent, "Blocked");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Blokkert");
     assert.strictEqual(page.nodes["push-blocked"].hidden, false);
     assert.strictEqual(page.nodes["push-on"].hidden, true);
 });
@@ -122,7 +140,7 @@ test("Turn On waits for the worker, subscribes first in the tap and sends the fo
     const page = fakePage();
     install(page.win);
     const on = page.nodes["push-on"];
-    assert.strictEqual(page.nodes["push-state"].textContent, "Off");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Av");
     assert.ok(!on.hidden && on.disabled, "disabled until the registration is in");
     await settle();
     assert.ok(!on.disabled);
@@ -152,7 +170,7 @@ test("a refused prompt shows Blocked and sends nothing", async () => {
     await settle();
     page.nodes["push-on"].click();
     await settle();
-    assert.strictEqual(page.nodes["push-state"].textContent, "Blocked");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Blokkert");
     assert.deepStrictEqual(page.submitted, []);
 });
 
@@ -168,7 +186,7 @@ test("a subscription the server knows is On, and Turn Off ends it there too", as
     const page = fakePage({ subscription, known: ["0123456789abcdef", hashOf(ENDPOINT)] });
     install(page.win);
     await settle();
-    assert.strictEqual(page.nodes["push-state"].textContent, "On");
+    assert.strictEqual(page.nodes["push-state"].textContent, "På");
     assert.ok(page.nodes["push-on"].hidden && !page.nodes["push-off"].hidden);
     page.nodes["push-off"].click();
     await settle();
@@ -190,7 +208,7 @@ test("a subscription the server doesn't know is dropped and shows Off", async ()
     install(page.win);
     await settle();
     assert.ok(ended);
-    assert.strictEqual(page.nodes["push-state"].textContent, "Off");
+    assert.strictEqual(page.nodes["push-state"].textContent, "Av");
     assert.ok(!page.nodes["push-on"].disabled);
 });
 

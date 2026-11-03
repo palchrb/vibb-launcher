@@ -446,12 +446,12 @@ async fn the_web_filter_refuses_in_its_groups() {
         let section = part(&page, &format!("<section id=\"{group}\""), "</section>");
         assert!(
             section.contains(&format!("data-flash=\"{group}\""))
-                && section.contains("isn't a domain name")
+                && section.contains("isn&#39;t a domain name")
                 && section.contains("value=\"not &#60;a&#62; domain\""),
             "{section}"
         );
         assert!(!page.contains("<a> domain"));
-        assert_eq!(page.matches("isn't a domain name").count(), 1);
+        assert_eq!(page.matches("isn&#39;t a domain name").count(), 1);
     }
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM dns_custom_domains").await,
@@ -613,6 +613,200 @@ async fn blocked_activity_lists_the_phones() {
     assert!(page.find(">Anna<").unwrap() < page.find(">Ella<").unwrap());
 }
 
+/// Design 70 §5.1, slice 3e (part A): Settings' core pages in Norwegian - each under `lang="nb"` with its words, the
+/// handlers' rows and values, a refusal and an error body in the reader's language.
+#[tokio::test]
+async fn the_settings_pages_speak_norwegian() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.enrolled_device("Anna").await;
+    let week = r#"[{"start":495,"end":840},{"start":495,"end":840},{"start":495,"end":840},{"start":495,"end":840},{"start":495,"end":840},null,null]"#;
+    let rule: i64 = sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, days_json, sort_order) \
+         VALUES (NULL, 'Skole', 'school', 0, '[]', ?, 0) RETURNING id",
+    )
+    .bind(week)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let page = |uri: String| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            let res = app.get_page(&uri, cookie).await;
+            assert_eq!(res.status, StatusCode::OK, "{uri}");
+            let html = res.text();
+            assert!(html.contains(r#"<html lang="nb">"#), "{uri}");
+            html
+        }
+    };
+    let has = |html: &str, words: &[&str]| {
+        for w in words {
+            assert!(html.contains(w), "{w}\n{html}");
+        }
+    };
+    has(
+        &page("/settings?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Innstillinger</h1>",
+            "Varsler",
+            "Tidsregler",
+            "Nettfilter",
+            "Blokkert aktivitet",
+            "Bakgrunnsbilder",
+            "Telefonoppsett",
+            "Sikkerhetskopier",
+            "Oppdateringer",
+            "Konto og foreldre",
+            "Sikkerhetslogg",
+            "Logg ut",
+            ">1 regel<",
+            ">Ingen i dag<",
+        ],
+    );
+    has(
+        &page("/notifications?from=settings&lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Varsler</h1>",
+            "Ingenting ennå",
+            "aria-label=\"Varselinnstillinger\"",
+            "</svg>Innstillinger</a>",
+        ],
+    );
+    has(
+        &page("/notifications/settings?lang=nb".to_string()).await,
+        &[
+            "Varselinnstillinger",
+            "Får varsler",
+            "Varsle meg om",
+            "Nødanrop",
+            "Alltid på",
+            "Foreldre-PIN brukt",
+            "Appoppdateringer",
+        ],
+    );
+    has(
+        &page("/schedules?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Tidsregler</h1>",
+            "Alle · Regler",
+            "Man-fre 08:15-14:00 · anrop av",
+            "Legg til regel",
+            "Daglig grense",
+            "Ingen grense",
+            "Ingen leggetid",
+            "Nødanrop virker alltid.",
+        ],
+    );
+    has(
+        &page("/schedules/screen-time?lang=nb".to_string()).await,
+        &[
+            "Alle · Skjermtid",
+            ">Mandag<",
+            ">Søndag<",
+            "Om den daglige grensen",
+        ],
+    );
+    has(
+        &page(format!("/schedules/rules/{rule}?lang=nb")).await,
+        &[
+            "Anrop med kontakter",
+            "<option value=\"school\" selected>Skole</option>",
+            ">Man<",
+            "aria-label=\"Mandag fra\"",
+            "Slett regel",
+            "Slette Skole? Telefonene som følger reglene for alle, låses ikke lenger av den.",
+        ],
+    );
+    has(
+        &page("/schedules/rules/new?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Ny regel</h1>",
+            ">Legg til</button>",
+            "placeholder=\"Skole\"",
+        ],
+    );
+    let refused = app
+        .request_form(
+            Method::POST,
+            "/schedules/rules?lang=nb",
+            Some(&cookie),
+            &[("name", ""), ("kind", "school"), ("scope", "")],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    has(
+        &refused.text(),
+        &["Ikke lagret. Gi regelen et navn på 1 til"],
+    );
+    has(
+        &page("/dns?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Nettfilter</h1>",
+            "Lister for alle telefoner",
+            "Sikre DNS-servere",
+            "Blokkerte domener",
+            "Tillatte domener",
+            "DNS-server",
+            "Oppslag går til",
+            "Egen server",
+            "Reserveserver",
+            "placeholder=\"eksempel.no\"",
+        ],
+    );
+    has(
+        &page("/dns/log?lang=nb".to_string()).await,
+        &["Blokkert aktivitet", ">Av<", "Lagres i 7 dager."],
+    );
+    has(
+        &page("/wallpapers?lang=nb".to_string()).await,
+        &[
+            "Legg til et bilde",
+            "Også på låseskjermen",
+            "Alle bakgrunnsbilder",
+            "Innebygd · på",
+        ],
+    );
+    has(
+        &page("/updates?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Oppdateringer</h1>",
+            "Versjon",
+            "Diagnostikk",
+            "Tidsmåling av sider",
+        ],
+    );
+    has(
+        &page("/backups?lang=nb".to_string()).await,
+        &[
+            "Ta sikkerhetskopi nå",
+            "Ingen sikkerhetskopier ennå.",
+            "Tidsplan",
+            "Hver dag",
+            ">Mandag<",
+            "Sikkerhetskopier som beholdes",
+        ],
+    );
+    has(
+        &page("/settings/provisioning?lang=nb".to_string()).await,
+        &[
+            "<h1 class=\"page-title\">Telefonoppsett</h1>",
+            "Serveradresse",
+            "Tailscale-nøkkel",
+            "Telefonens språk",
+            "Tidssone",
+            "Landskode",
+        ],
+    );
+    let missing = app.get_page("/schedules/rules/9999?lang=nb", &cookie).await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    assert_eq!(missing.text(), "Fant ikke regelen");
+    // English stays as it was.
+    has(
+        &app.get_page("/schedules?lang=en", &cookie).await.text(),
+        &["Everyone · Rules", "Mon-Fri 08:15-14:00 · calls off"],
+    );
+}
+
 /// Wallpapers: a photo's Delete is a confirm, its switch saves itself, a refused upload says why
 /// under the photo field (400, nothing stored), an upload lands on its row, a built-in can't go.
 #[tokio::test]
@@ -633,7 +827,7 @@ async fn wallpapers_confirm_deletes_and_land_on_the_photo() {
     check_forms("/wallpapers", &page);
     assert!(page.contains(&format!("id=\"wallpaper-{photo}\"")));
     behind_a_confirm(&page, &format!("/wallpapers/{photo}/delete#all"));
-    assert!(page.contains("Delete \"Hytta &#60;3\" from this server and every phone?"));
+    assert!(page.contains("Delete &#34;Hytta &#60;3&#34; from this server and every phone?"));
     assert!(super::autosaves(&page, "lock_screen"));
     let row = part(&page, &format!("id=\"wallpaper-{photo}\""), "</form>");
     assert_eq!(
@@ -719,7 +913,7 @@ async fn phone_setup_refuses_under_the_field_and_flashes_a_save() {
         // The pasted key isn't kept, and the page says so under its field (qa-31-s14-code L3).
         let key_field = part(&html, "id=\"tailscale_auth_key\"", "</p>");
         assert!(
-            key_field.contains("The new key wasn't saved. Paste it again."),
+            key_field.contains("The new key wasn&#39;t saved. Paste it again."),
             "{key_field}"
         );
         assert_eq!(html.matches("aria-invalid").count(), 2);

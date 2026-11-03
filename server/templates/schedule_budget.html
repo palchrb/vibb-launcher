@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,26 +7,26 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/schedules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Time Rules</a>
-    <h1 class="page-title">Daily Limit</h1>
+    <a class="nav-back" href="/schedules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("settings.time_rules.title") }}</a>
+    <h1 class="page-title">{{ self.t("device.time.limit") }}</h1>
 
     {#- One form (§5.6: the handler writes all 7 days). Save returns to #screen-time with the flash
         under it; a refusal renders this page again there, as typed. -#}
     <section id="screen-time" aria-labelledby="screen-time-title">
-        <h2 class="group-header" id="screen-time-title">Everyone · Screen Time</h2>
+        <h2 class="group-header" id="screen-time-title">{{ self.t("settings.time_rules.everyone_screen_time") }}</h2>
         {% if corrupt %}
-        <div class="attention attention-alarm" data-warning="budget-corrupt"><div class="attention-text">Stored limits unreadable<div class="attention-sub">The phones get an error instead of their rules until you save here again.</div></div></div>
+        <div class="attention attention-alarm" data-warning="budget-corrupt"><div class="attention-text">{{ self.t("device.time.budget_corrupt") }}<div class="attention-sub">{{ self.t("settings.time_rules.budget_corrupt_sub") }}</div></div></div>
         {% endif %}
         <form method="post" action="/schedules/global#screen-time" class="group">
             {% include "partials/budget_rows.html" %}
-            <button type="submit" class="row row-button">Save</button>
-            {% if saved %}<p class="flash" role="status" data-flash="screen-time">Saved. Phones that follow everyone's rules get it within seconds.</p>{% endif %}
+            <button type="submit" class="row row-button">{{ self.t("common.save") }}</button>
+            {% if saved %}<p class="flash" role="status" data-flash="screen-time">{{ self.t("settings.time_rules.budget_saved") }}</p>{% endif %}
         </form>
-        <div class="group-footer">Minutes a day. Empty means no limit. A phone with its own rules has its own, on its Time page.
+        <div class="group-footer">{{ self.t("settings.time_rules.budget_footer") }}
             <details class="info">
-                <summary aria-label="About the daily limit"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("settings.time_rules.budget_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Calls don't count. When it's used up, only calls and the contacts' message apps still work.</p>
+                    <p>{{ self.t("settings.time_rules.budget_info") }}</p>
                 </div>
             </details>
         </div>

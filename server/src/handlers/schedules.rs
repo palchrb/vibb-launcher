@@ -56,16 +56,45 @@ use crate::time_rules::{
     self, DayWindow, LAST_MINUTE, MAX_EXEMPT_APPS, MAX_RULE_NAME_CHARS, RULE_KINDS, TimeRuleRow,
 };
 
+/// The days' keys, Monday first: the full names (a field's label, a refusal's start), the short ones (the editor's
+/// rows) and the ones inside a summary ("Mon-Fri 08:15-14:30, Sat …", nb lower-case: [capitalized] makes the first
+/// word upper-case).
 const DAY_NAMES: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
+    "settings.time_rules.weekday.1",
+    "settings.time_rules.weekday.2",
+    "settings.time_rules.weekday.3",
+    "settings.time_rules.weekday.4",
+    "settings.time_rules.weekday.5",
+    "settings.time_rules.weekday.6",
+    "settings.time_rules.weekday.7",
 ];
-const DAY_SHORT: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_SHORT: [&str; 7] = [
+    "settings.time_rules.day_short.1",
+    "settings.time_rules.day_short.2",
+    "settings.time_rules.day_short.3",
+    "settings.time_rules.day_short.4",
+    "settings.time_rules.day_short.5",
+    "settings.time_rules.day_short.6",
+    "settings.time_rules.day_short.7",
+];
+const DAY_IN_TEXT: [&str; 7] = [
+    "settings.time_rules.day_in_text.1",
+    "settings.time_rules.day_in_text.2",
+    "settings.time_rules.day_in_text.3",
+    "settings.time_rules.day_in_text.4",
+    "settings.time_rules.day_in_text.5",
+    "settings.time_rules.day_in_text.6",
+    "settings.time_rules.day_in_text.7",
+];
+
+/// `text` with its first letter upper-case: a summary that starts with a day ("Man-fre …").
+fn capitalized(text: String) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) if first.is_lowercase() => first.to_uppercase().chain(chars).collect(),
+        _ => text,
+    }
+}
 
 /// HTML `<input type="time">` "HH:MM" from minutes since midnight.
 pub(crate) fn minutes_to_time_input(minutes: i64) -> String {
@@ -83,8 +112,8 @@ pub(crate) fn time_input_to_minutes(value: &str) -> Option<i64> {
     ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 60 + m)
 }
 
-/// Runs of equal consecutive days, as "Mon-Fri" / "Sat" / "Every day" with their value.
-fn day_runs<T: PartialEq + Copy>(days: &[T]) -> Vec<(String, T)> {
+/// Runs of equal consecutive days, as "Mon-Fri" / "Sat" / "Every day" with their value, in `lang` (nb lower-case).
+fn day_runs<T: PartialEq + Copy>(lang: Lang, days: &[T]) -> Vec<(String, T)> {
     let mut runs = Vec::new();
     let mut d = 0;
     while d < days.len() {
@@ -93,11 +122,11 @@ fn day_runs<T: PartialEq + Copy>(days: &[T]) -> Vec<(String, T)> {
             last += 1;
         }
         let range = if d == 0 && last == 6 {
-            "Every day".to_string()
+            t(lang, "settings.time_rules.every_day").to_string()
         } else if last == d {
-            DAY_SHORT[d].to_string()
+            t(lang, DAY_IN_TEXT[d]).to_string()
         } else {
-            format!("{}-{}", DAY_SHORT[d], DAY_SHORT[last])
+            format!("{}-{}", t(lang, DAY_IN_TEXT[d]), t(lang, DAY_IN_TEXT[last]))
         };
         runs.push((range, days[d]));
         d = last + 1;
@@ -107,15 +136,15 @@ fn day_runs<T: PartialEq + Copy>(days: &[T]) -> Vec<(String, T)> {
 
 /// "Mon-Fri 08:15-14:30, Sat 00:00-23:59" (a day rule starts and ends on its day, design 66),
 /// "Never" for a rule without days.
-pub(crate) fn days_summary(days: &[Option<DayWindow>]) -> String {
-    let parts: Vec<String> = day_runs(days)
+pub(crate) fn days_summary(lang: Lang, days: &[Option<DayWindow>]) -> String {
+    let parts: Vec<String> = day_runs(lang, days)
         .into_iter()
         .filter_map(|(range, w)| Some(format!("{range} {}", window_text(w?))))
         .collect();
     if parts.is_empty() {
-        "Never".to_string()
+        t(lang, "settings.time_rules.never").to_string()
     } else {
-        parts.join(", ")
+        capitalized(parts.join(", "))
     }
 }
 
@@ -129,19 +158,25 @@ pub(crate) fn window_text(w: DayWindow) -> String {
 }
 
 /// "Mon-Fri 90 min · Sat-Sun 2 h", "Every day 45 min", "No limit".
-pub(crate) fn budget_summary(budget: &[Option<i64>]) -> String {
+pub(crate) fn budget_summary(lang: Lang, budget: &[Option<i64>]) -> String {
     if budget.iter().all(Option::is_none) {
-        return "No limit".to_string();
+        return t(lang, "device.time.no_limit").to_string();
     }
-    day_runs(budget)
+    let runs = day_runs(lang, budget)
         .into_iter()
-        .map(|(range, minutes)| match minutes {
-            Some(m) if m >= 60 && m % 60 == 0 => format!("{range} {} h", m / 60),
-            Some(m) => format!("{range} {m} min"),
-            None => format!("{range} no limit"),
+        .map(|(range, minutes)| {
+            let value = match minutes {
+                Some(m) if m >= 60 && m % 60 == 0 => {
+                    t_params(lang, "common.n_h", &[("n", &(m / 60).to_string())])
+                }
+                Some(m) => t_params(lang, "common.n_min", &[("n", &m.to_string())]),
+                None => t(lang, "settings.time_rules.run_no_limit").to_string(),
+            };
+            format!("{range} {value}")
         })
         .collect::<Vec<_>>()
-        .join(" · ")
+        .join(" · ");
+    capitalized(runs)
 }
 
 /// One rule as a navigation row: "Skole" over "Mon-Fri 08:15-14:30 · calls off · silent".
@@ -170,7 +205,7 @@ fn rule_rows(lang: Lang, rows: &[TimeRuleRow]) -> Vec<RuleRow> {
                     id: row.id,
                     summary: format!(
                         "{} · {}{}",
-                        days_summary(&days),
+                        days_summary(lang, &days),
                         t(
                             lang,
                             if row.calls_allowed {
@@ -190,7 +225,7 @@ fn rule_rows(lang: Lang, rows: &[TimeRuleRow]) -> Vec<RuleRow> {
                 _ => RuleRow {
                     id: row.id,
                     name: row.name.clone(),
-                    summary: "Can't be read".to_string(),
+                    summary: t(lang, "settings.time_rules.unreadable").to_string(),
                     corrupt: true,
                     own: row.device_id.is_some(),
                     off: false,
@@ -228,16 +263,8 @@ pub(crate) fn read_failed_in(lang: Lang, err: sqlx::Error, what: &str) -> Respon
     crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_rules")
 }
 
-pub(crate) fn read_failed(err: sqlx::Error, what: &str) -> Response {
-    tracing::error!(%err, "can't read {what}");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the time rules - check the server log.",
-    )
-        .into_response()
-}
-
-pub(crate) fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+/// A page that didn't render (never in practice: no reader's language at hand).
+fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -254,10 +281,6 @@ pub(crate) fn server_error_in(lang: Lang, err: impl std::fmt::Display, what: &st
         StatusCode::INTERNAL_SERVER_ERROR,
         "error.save_failed_log",
     )
-}
-
-fn bad_request(message: impl Into<String>) -> Response {
-    (StatusCode::BAD_REQUEST, message.into()).into_response()
 }
 
 pub(crate) fn render(template: impl Template, status: StatusCode) -> Response {
@@ -365,18 +388,18 @@ pub async fn show_schedules(
             .await
         {
             Ok(json) => json,
-            Err(err) => return read_failed(err, "the global screen time"),
+            Err(err) => return read_failed_in(lang, err, "the global screen time"),
         };
     let rules = match time_rules::rule_set_rows(&state.db, None).await {
         Ok(rules) => rules,
-        Err(err) => return read_failed(err, "the global rules"),
+        Err(err) => return read_failed_in(lang, err, "the global rules"),
     };
     let devices = match sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name")
         .fetch_all(&state.db)
         .await
     {
         Ok(devices) => devices,
-        Err(err) => return read_failed(err, "the devices"),
+        Err(err) => return read_failed_in(lang, err, "the devices"),
     };
     // Everyone's rules switched off on a phone (migration 0115): "Off for Emil" under the rule.
     let off: Vec<(i64, String)> = match sqlx::query_as(
@@ -387,14 +410,14 @@ pub async fn show_schedules(
     .await
     {
         Ok(off) => off,
-        Err(err) => return read_failed(err, "the rule switches"),
+        Err(err) => return read_failed_in(lang, err, "the rule switches"),
     };
     // Each phone's rules in force (its bedtime too), the row's value.
     let mut in_force = HashMap::new();
     for d in &devices {
         match time_rules::effective_rule_rows(&state.db, d.id).await {
             Ok(rules) => in_force.insert(d.id, rules.len() as i64),
-            Err(err) => return read_failed(err, "a phone's rules"),
+            Err(err) => return read_failed_in(lang, err, "a phone's rules"),
         };
     }
     let bedtimes: HashMap<Option<i64>, TimeRuleRow> =
@@ -403,13 +426,13 @@ pub async fn show_schedules(
             .await
         {
             Ok(rows) => rows.into_iter().map(|row| (row.device_id, row)).collect(),
-            Err(err) => return read_failed(err, "the bedtimes"),
+            Err(err) => return read_failed_in(lang, err, "the bedtimes"),
         };
     let budget_json = budget_json.unwrap_or_else(|| time_rules::UNLIMITED_BUDGET_JSON.to_string());
     render(
         SchedulesTemplate {
             lang,
-            title: "Time Rules".to_string(),
+            title: t(lang, "settings.time_rules.title").to_string(),
             rules: rule_rows(lang, &rules)
                 .into_iter()
                 .map(|mut row| {
@@ -430,7 +453,7 @@ pub async fn show_schedules(
                 .collect(),
             budget: time_rules::parse_budget(&budget_json)
                 .ok()
-                .map(|b| budget_summary(&b)),
+                .map(|b| budget_summary(lang, &b)),
             phones: devices
                 .iter()
                 .map(|d| PhoneRow {
@@ -465,12 +488,12 @@ pub(crate) struct BudgetInput {
 }
 
 /// The 7 fields from a stored budget (a corrupt one shows empty fields - its warning says so).
-fn budget_inputs(json: &str) -> Vec<BudgetInput> {
+fn budget_inputs(lang: Lang, json: &str) -> Vec<BudgetInput> {
     let values = time_rules::parse_budget(json).unwrap_or_else(|_| vec![None; 7]);
     (0..7)
         .map(|i| BudgetInput {
             index: i,
-            name: DAY_NAMES[i],
+            name: t(lang, DAY_NAMES[i]),
             value: values[i].map(|m| m.to_string()).unwrap_or_default(),
             error: None,
         })
@@ -478,11 +501,15 @@ fn budget_inputs(json: &str) -> Vec<BudgetInput> {
 }
 
 /// The 7 fields as typed, the refused one with its reason.
-fn budget_entered(fields: &[(String, String)], error: &(usize, String)) -> Vec<BudgetInput> {
+fn budget_entered(
+    lang: Lang,
+    fields: &[(String, String)],
+    error: &(usize, String),
+) -> Vec<BudgetInput> {
     (0..7)
         .map(|i| BudgetInput {
             index: i,
-            name: DAY_NAMES[i],
+            name: t(lang, DAY_NAMES[i]),
             value: field(fields, &format!("b{i}"))
                 .trim()
                 .chars()
@@ -519,18 +546,18 @@ async fn render_budget(
             .await
         {
             Ok(json) => json,
-            Err(err) => return read_failed(err, "the global screen time"),
+            Err(err) => return read_failed_in(lang, err, "the global screen time"),
         };
     let json = json.unwrap_or_else(|| time_rules::UNLIMITED_BUDGET_JSON.to_string());
     let refused = entered.is_some();
     render(
         BudgetTemplate {
             lang,
-            title: "Daily Limit".to_string(),
+            title: t(lang, "device.time.limit").to_string(),
             corrupt: time_rules::parse_budget(&json).is_err(),
             budget: match &entered {
-                Some((fields, error)) => budget_entered(fields, error),
-                None => budget_inputs(&json),
+                Some((fields, error)) => budget_entered(lang, fields, error),
+                None => budget_inputs(lang, &json),
             },
             saved: saved && !refused,
         },
@@ -771,14 +798,14 @@ struct RuleForm {
     apps_error: Option<String>,
 }
 
-fn day_inputs(days: &[Option<DayWindow>]) -> Vec<DayInput> {
+fn day_inputs(lang: Lang, days: &[Option<DayWindow>]) -> Vec<DayInput> {
     (0..7)
         .map(|i| {
             let w = days.get(i).copied().flatten();
             DayInput {
                 index: i,
-                name: DAY_NAMES[i],
-                short: DAY_SHORT[i],
+                name: t(lang, DAY_NAMES[i]),
+                short: t(lang, DAY_SHORT[i]),
                 start: w
                     .map(|w| minutes_to_time_input(w.start))
                     .unwrap_or_default(),
@@ -871,23 +898,26 @@ fn render_rule(
             "{text} {}",
             t_params(lang, "settings.time_rules.saved_off", &[("name", name)])
         ),
-        _ => format!("{text} The phones get it within seconds when online."),
+        _ => format!("{text} {}", t(lang, "settings.time_rules.phones_get_it")),
     });
     let (back_href, back_label) = match &scope.device {
         Some((id, _)) => (
             format!("/devices/{id}/time"),
             t(lang, "device.page.time").to_string(),
         ),
-        None => ("/schedules".to_string(), "Time Rules".to_string()),
+        None => (
+            "/schedules".to_string(),
+            t(lang, "settings.time_rules.title").to_string(),
+        ),
     };
     render(
         RuleTemplate {
             lang,
             title: if rule.id == 0 {
-                "New Rule".to_string()
+                t(lang, "settings.time_rules.new_rule").to_string()
             } else if rule.name.trim().is_empty() {
                 // A refused save with the name cleared.
-                "Rule".to_string()
+                t(lang, "settings.time_rules.rule").to_string()
             } else {
                 rule.name.clone()
             },
@@ -900,12 +930,15 @@ fn render_rule(
             corrupt,
             kinds: if rule.kind == "bedtime" {
                 vec![
-                    ("school", "School"),
-                    ("bedtime", "Bedtime"),
-                    ("custom", "Other"),
+                    ("school", t(lang, "settings.time_rules.kind_school")),
+                    ("bedtime", t(lang, "device.bedtime.title")),
+                    ("custom", t(lang, "settings.time_rules.kind_other")),
                 ]
             } else {
-                vec![("school", "School"), ("custom", "Other")]
+                vec![
+                    ("school", t(lang, "settings.time_rules.kind_school")),
+                    ("custom", t(lang, "settings.time_rules.kind_other")),
+                ]
             },
             rule,
         },
@@ -914,7 +947,11 @@ fn render_rule(
 }
 
 /// The rule's scope from its row or the form: a device that must exist (404 otherwise).
-async fn scope_of(state: &AppState, device: Option<i64>) -> Result<RuleScope, Box<Response>> {
+async fn scope_of(
+    state: &AppState,
+    device: Option<i64>,
+    lang: Lang,
+) -> Result<RuleScope, Box<Response>> {
     let Some(id) = device else {
         return Ok(RuleScope {
             device: None,
@@ -933,46 +970,48 @@ async fn scope_of(state: &AppState, device: Option<i64>) -> Result<RuleScope, Bo
             device: Some((id, name)),
             in_force: true,
         }),
-        Ok(None) => Err(Box::new(
-            (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        )),
-        Err(err) => Err(Box::new(read_failed(err, "a device"))),
+        Ok(None) => Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ))),
+        Err(err) => Err(Box::new(read_failed_in(lang, err, "a device"))),
     }
 }
 
 /// `scope` from a form: "" = global, otherwise a device id that must exist (else 404).
-async fn parse_scope(state: &AppState, raw: &str) -> Result<RuleScope, Box<Response>> {
+async fn parse_scope(state: &AppState, raw: &str, lang: Lang) -> Result<RuleScope, Box<Response>> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return scope_of(state, None).await;
+        return scope_of(state, None, lang).await;
     }
     let Ok(id) = raw.parse::<i64>() else {
-        return Err(Box::new(bad_request("Unknown scope")));
+        return Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::BAD_REQUEST,
+            "error.unknown_scope",
+        )));
     };
-    scope_of(state, Some(id)).await
+    scope_of(state, Some(id), lang).await
 }
 
 /// The parts of a stored rule that don't read, for the editor's warning: they open empty (or as
 /// Other) and a save writes them as shown (qa-31-s9-code L3). `None` for a readable rule.
-fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
-    let mut parts = Vec::new();
-    if !RULE_KINDS.contains(&row.kind.as_str()) {
-        parts.push("type");
-    }
-    if time_rules::parse_days(&row.days_json).is_err() {
-        parts.push("days");
-    }
-    if time_rules::parse_exempt_apps(&row.exempt_apps_json).is_err() {
-        parts.push("apps");
-    }
-    match parts.as_slice() {
-        [] => None,
-        [one] => Some(format!("Its {one} couldn't be read")),
-        [first @ .., last] => Some(format!(
-            "Its {} and {last} couldn't be read",
-            first.join(", ")
-        )),
-    }
+fn unreadable_parts(lang: Lang, row: &TimeRuleRow) -> Option<String> {
+    let kind = !RULE_KINDS.contains(&row.kind.as_str());
+    let days = time_rules::parse_days(&row.days_json).is_err();
+    let apps = time_rules::parse_exempt_apps(&row.exempt_apps_json).is_err();
+    let key = match (kind, days, apps) {
+        (false, false, false) => return None,
+        (true, false, false) => "settings.time_rules.unreadable_type",
+        (false, true, false) => "settings.time_rules.unreadable_days",
+        (false, false, true) => "settings.time_rules.unreadable_apps",
+        (true, true, false) => "settings.time_rules.unreadable_type_days",
+        (true, false, true) => "settings.time_rules.unreadable_type_apps",
+        (false, true, true) => "settings.time_rules.unreadable_days_apps",
+        (true, true, true) => "settings.time_rules.unreadable_all",
+    };
+    Some(t(lang, key).to_string())
 }
 
 /// GET `/schedules/rules/{id}`: the editor. A rule whose stored data doesn't read opens with what
@@ -990,30 +1029,32 @@ pub async fn show_rule(
         .await
     {
         Ok(Some(row)) => row,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Rule not found").into_response(),
-        Err(err) => return read_failed(err, "a time rule"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.rule_not_found");
+        }
+        Err(err) => return read_failed_in(lang, err, "a time rule"),
     };
     if row.bedtime {
         return match row.device_id {
             Some(device) => Redirect::to(&format!("/devices/{device}/bedtime")).into_response(),
-            None => (StatusCode::NOT_FOUND, "Rule not found").into_response(),
+            None => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.rule_not_found"),
         };
     }
-    let mut scope = match scope_of(&state, row.device_id).await {
+    let mut scope = match scope_of(&state, row.device_id, lang).await {
         Ok(scope) => scope,
         Err(answer) => return *answer,
     };
     if let Some(device) = row.device_id {
         scope.in_force = match time_rules::rules_off(&state.db, device).await {
             Ok(off) => !off.contains(&row.id),
-            Err(err) => return read_failed(err, "the phone's rule switches"),
+            Err(err) => return read_failed_in(lang, err, "the phone's rule switches"),
         };
     }
     let available = match scope.apps(&state).await {
         Ok(apps) => apps,
-        Err(err) => return read_failed(err, "the reported apps"),
+        Err(err) => return read_failed_in(lang, err, "the reported apps"),
     };
-    let corrupt = unreadable_parts(&row);
+    let corrupt = unreadable_parts(lang, &row);
     let days = time_rules::parse_days(&row.days_json).unwrap_or_else(|_| vec![None; 7]);
     let exempt = time_rules::parse_exempt_apps(&row.exempt_apps_json).unwrap_or_default();
     let rule = RuleForm {
@@ -1026,14 +1067,14 @@ pub async fn show_rule(
         name: row.name,
         calls_allowed: row.calls_allowed,
         silent: row.silent,
-        days: day_inputs(&days),
+        days: day_inputs(lang, &days),
         exceptions: available.exceptions(&exempt, row.calendar_allowed),
         name_error: None,
         apps_error: None,
     };
     let saved = match params.get("saved").map(String::as_str) {
-        Some("added") => Some("Rule added."),
-        Some(_) => Some("Saved."),
+        Some("added") => Some(t(lang, "settings.time_rules.added")),
+        Some(_) => Some(t(lang, "common.saved")),
         None => None,
     };
     render_rule(&scope, rule, saved, corrupt, StatusCode::OK, lang)
@@ -1045,13 +1086,19 @@ pub async fn new_rule(
     lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let scope = match parse_scope(&state, params.get("device").map_or("", String::as_str)).await {
+    let scope = match parse_scope(
+        &state,
+        params.get("device").map_or("", String::as_str),
+        lang,
+    )
+    .await
+    {
         Ok(scope) => scope,
         Err(answer) => return *answer,
     };
     let available = match scope.apps(&state).await {
         Ok(apps) => apps,
-        Err(err) => return read_failed(err, "the reported apps"),
+        Err(err) => return read_failed_in(lang, err, "the reported apps"),
     };
     let rule = RuleForm {
         id: 0,
@@ -1060,7 +1107,7 @@ pub async fn new_rule(
         calls_allowed: false,
         // School is silent by definition (the user, 2026-11-02); the kind select presets it.
         silent: true,
-        days: day_inputs(&[]),
+        days: day_inputs(lang, &[]),
         exceptions: available.exceptions(&[], false),
         name_error: None,
         apps_error: None,
@@ -1101,27 +1148,40 @@ pub(crate) fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
 
 /// The ticked `exempt_apps` (a rule's or the bedtime's): package names, each once, at most
 /// [MAX_EXEMPT_APPS]; the refusal's words otherwise.
-pub(crate) fn parse_exempt_apps_form(fields: &[(String, String)]) -> Result<Vec<String>, String> {
+pub(crate) fn parse_exempt_apps_form(
+    lang: Lang,
+    fields: &[(String, String)],
+) -> Result<Vec<String>, String> {
     let mut exempt_apps: Vec<String> = Vec::new();
     for (k, v) in fields {
         if k == "exempt_apps" && !exempt_apps.contains(v) {
             if !time_rules::valid_package_name(v) {
-                return Err("One of the apps isn't an app. Pick them again.".to_string());
+                return Err(t(lang, "settings.time_rules.not_an_app").to_string());
             }
             exempt_apps.push(v.clone());
         }
     }
     if exempt_apps.len() > MAX_EXEMPT_APPS {
-        return Err(format!("Pick at most {MAX_EXEMPT_APPS} apps."));
+        return Err(t_params(
+            lang,
+            "settings.time_rules.too_many_apps",
+            &[("max", &MAX_EXEMPT_APPS.to_string())],
+        ));
     }
     Ok(exempt_apps)
 }
 
-pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, RuleError> {
+/// The rule form, or why not in `lang`.
+pub(crate) fn parse_rule_form(
+    lang: Lang,
+    fields: &[(String, String)],
+) -> Result<RuleInput, RuleError> {
     let name = field(fields, "name").trim().to_string();
     if name.is_empty() || name.chars().count() > MAX_RULE_NAME_CHARS {
-        return Err(RuleError::Name(format!(
-            "Give the rule a name of 1 to {MAX_RULE_NAME_CHARS} characters."
+        return Err(RuleError::Name(t_params(
+            lang,
+            "settings.time_rules.name_length",
+            &[("max", &MAX_RULE_NAME_CHARS.to_string())],
         )));
     }
     let kind = field(fields, "kind").to_string();
@@ -1129,7 +1189,8 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
         return Err(RuleError::Kind);
     }
     let mut days = Vec::with_capacity(7);
-    for (i, day) in DAY_NAMES.iter().enumerate() {
+    for (i, day) in DAY_NAMES.iter().map(|key| t(lang, key)).enumerate() {
+        let refused = |why: &str| RuleError::Day(i, t_params(lang, why, &[("day", day)]));
         let start = field(fields, &format!("d{i}_start")).trim();
         let end = field(fields, &format!("d{i}_end")).trim();
         if start.is_empty() && end.is_empty() {
@@ -1150,24 +1211,14 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
             {
                 days.push(Some(DayWindow { start, end }))
             }
-            (Some(_), Some(_)) => {
-                return Err(RuleError::Day(
-                    i,
-                    format!("{day}: the end must be after the start. For a night, use Bedtime."),
-                ));
-            }
+            (Some(_), Some(_)) => return Err(refused("settings.time_rules.end_after_start")),
             _ if start.is_empty() || end.is_empty() => {
-                return Err(RuleError::Day(
-                    i,
-                    format!("{day}: give both times, or leave both empty."),
-                ));
+                return Err(refused("settings.time_rules.both_times"));
             }
-            _ => {
-                return Err(RuleError::Day(i, format!("{day}: use times like 08:15.")));
-            }
+            _ => return Err(refused("settings.time_rules.time_format")),
         }
     }
-    let exempt_apps = parse_exempt_apps_form(fields).map_err(RuleError::Apps)?;
+    let exempt_apps = parse_exempt_apps_form(lang, fields).map_err(RuleError::Apps)?;
     Ok(RuleInput {
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
@@ -1182,6 +1233,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
 /// The editor as typed, with the refusal under its field. What was typed goes back escaped and
 /// cut short; an app that isn't a package name is dropped.
 fn rule_entered(
+    lang: Lang,
     id: i64,
     fields: &[(String, String)],
     available: &ScopeApps,
@@ -1209,8 +1261,8 @@ fn rule_entered(
         days: (0..7)
             .map(|i| DayInput {
                 index: i,
-                name: DAY_NAMES[i],
-                short: DAY_SHORT[i],
+                name: t(lang, DAY_NAMES[i]),
+                short: t(lang, DAY_SHORT[i]),
                 start: typed(&format!("d{i}_start"), 8),
                 end: typed(&format!("d{i}_end"), 8),
                 error: None,
@@ -1281,18 +1333,18 @@ async fn refuse_rule(
 ) -> Response {
     let id = stored.map_or(0, |row| row.id);
     if error == RuleError::Kind {
-        return bad_request("Unknown kind of rule.");
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_rule_kind");
     }
     let available = match scope.apps(state).await {
         Ok(apps) => apps,
-        Err(err) => return read_failed(err, "the reported apps"),
+        Err(err) => return read_failed_in(lang, err, "the reported apps"),
     };
-    let form = rule_entered(id, fields, &available, error);
+    let form = rule_entered(lang, id, fields, &available, error);
     render_rule(
         scope,
         form,
         None,
-        stored.and_then(unreadable_parts),
+        stored.and_then(|row| unreadable_parts(lang, row)),
         StatusCode::BAD_REQUEST,
         lang,
     )
@@ -1306,11 +1358,11 @@ pub async fn create_rule(
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let scope = match parse_scope(&state, field(&fields, "scope")).await {
+    let scope = match parse_scope(&state, field(&fields, "scope"), lang).await {
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    let input = match parse_rule_form(&fields) {
+    let input = match parse_rule_form(lang, &fields) {
         Ok(input) => input,
         Err(error) => return refuse_rule(&state, &scope, None, &fields, error, lang).await,
     };
@@ -1334,7 +1386,7 @@ pub async fn create_rule(
     .await;
     let rule_id = match result {
         Ok(id) => id,
-        Err(err) => return server_error(err, "failed to add a time rule"),
+        Err(err) => return server_error_in(lang, err, "failed to add a time rule"),
     };
     log_change(&state, &admin, "time_rule_created", device, &input.name).await;
     nudge(&state, device).await;
@@ -1348,6 +1400,7 @@ async fn rule_in_scope(
     state: &AppState,
     rule_id: i64,
     scope: Option<i64>,
+    lang: Lang,
 ) -> Result<Option<TimeRuleRow>, Box<Response>> {
     match sqlx::query_as::<_, TimeRuleRow>("SELECT * FROM time_rules WHERE id = ?")
         .bind(rule_id)
@@ -1355,11 +1408,13 @@ async fn rule_in_scope(
         .await
     {
         Ok(Some(rule)) if rule.device_id == scope && !rule.bedtime => Ok(Some(rule)),
-        Ok(Some(_)) => Err(Box::new(
-            (StatusCode::NOT_FOUND, "Rule not found").into_response(),
-        )),
+        Ok(Some(_)) => Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.rule_not_found",
+        ))),
         Ok(None) => Ok(None),
-        Err(err) => Err(Box::new(server_error(err, "failed to read a time rule"))),
+        Err(err) => Err(Box::new(read_failed_in(lang, err, "a time rule"))),
     }
 }
 
@@ -1382,16 +1437,16 @@ pub async fn update_rule(
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let scope = match parse_scope(&state, field(&fields, "scope")).await {
+    let scope = match parse_scope(&state, field(&fields, "scope"), lang).await {
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    let stored = match rule_in_scope(&state, rule_id, scope.id()).await {
+    let stored = match rule_in_scope(&state, rule_id, scope.id(), lang).await {
         Ok(Some(row)) => row,
         Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone_unsaved")),
         Err(response) => return *response,
     };
-    let input = match parse_rule_form(&fields) {
+    let input = match parse_rule_form(lang, &fields) {
         Ok(input) => input,
         Err(error) => {
             return refuse_rule(&state, &scope, Some(&stored), &fields, error, lang).await;
@@ -1419,7 +1474,7 @@ pub async fn update_rule(
             return crate::settings_log::refused(to_list(&scope, "gone_unsaved"));
         }
         Ok(_) => {}
-        Err(err) => return server_error(err, "failed to save a time rule"),
+        Err(err) => return server_error_in(lang, err, "failed to save a time rule"),
     }
     log_change(&state, &admin, "time_rule_updated", scope.id(), &input.name).await;
     nudge(&state, scope.id()).await;
@@ -1430,16 +1485,17 @@ pub async fn update_rule(
 /// POST `/schedules/rules/{id}/delete`: then the list it was in.
 pub async fn delete_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(rule_id): Path<i64>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let scope = match parse_scope(&state, field(&fields, "scope")).await {
+    let scope = match parse_scope(&state, field(&fields, "scope"), lang).await {
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    let rule = match rule_in_scope(&state, rule_id, scope.id()).await {
+    let rule = match rule_in_scope(&state, rule_id, scope.id(), lang).await {
         Ok(Some(rule)) => rule,
         Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone")),
         Err(response) => return *response,
@@ -1451,7 +1507,7 @@ pub async fn delete_rule(
             .execute(&state.db)
             .await
     {
-        return server_error(err, "failed to delete a time rule");
+        return server_error_in(lang, err, "failed to delete a time rule");
     }
     log_change(&state, &admin, "time_rule_deleted", scope.id(), &rule.name).await;
     nudge(&state, scope.id()).await;
@@ -1459,9 +1515,12 @@ pub async fn delete_rule(
 }
 
 /// `b0`..`b6` (Monday first): minutes 0-1440, blank = unlimited; a refusal names its day.
-pub(crate) fn parse_budget_form(fields: &[(String, String)]) -> Result<String, (usize, String)> {
+pub(crate) fn parse_budget_form(
+    lang: Lang,
+    fields: &[(String, String)],
+) -> Result<String, (usize, String)> {
     let mut budget: Vec<Option<i64>> = Vec::with_capacity(7);
-    for (i, day) in DAY_NAMES.iter().enumerate() {
+    for (i, day) in DAY_NAMES.iter().map(|key| t(lang, key)).enumerate() {
         let raw = field(fields, &format!("b{i}")).trim();
         if raw.is_empty() {
             budget.push(None);
@@ -1472,7 +1531,7 @@ pub(crate) fn parse_budget_form(fields: &[(String, String)]) -> Result<String, (
             _ => {
                 return Err((
                     i,
-                    format!("{day}: 0 to 1440 minutes, or empty for no limit."),
+                    t_params(lang, "settings.time_rules.limit_range", &[("day", day)]),
                 ));
             }
         }
@@ -1488,7 +1547,7 @@ pub async fn save_global_schedule(
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let budget = match parse_budget_form(&fields) {
+    let budget = match parse_budget_form(lang, &fields) {
         Ok(budget) => budget,
         Err(error) => return render_budget(&state, Some((&fields, error)), false, lang).await,
     };
@@ -1500,7 +1559,7 @@ pub async fn save_global_schedule(
     .execute(&state.db)
     .await
     {
-        return server_error(err, "failed to save the global screen time");
+        return server_error_in(lang, err, "failed to save the global screen time");
     }
     security::record_security_event(
         &state.db,
@@ -1540,7 +1599,7 @@ pub async fn save_device_schedule(
         }
     };
     let budget = if limits {
-        match parse_budget_form(&fields) {
+        match parse_budget_form(lang, &fields) {
             Ok(budget) => Some(budget),
             Err(error) => {
                 return render_device_time(
@@ -1815,7 +1874,7 @@ async fn render_device_time(
         Ok(json) => {
             time_rules::parse_budget(json.as_deref().unwrap_or(time_rules::UNLIMITED_BUDGET_JSON))
                 .ok()
-                .map(|b| budget_summary(&b))
+                .map(|b| budget_summary(lang, &b))
         }
         Err(err) => return read_failed_in(lang, err, "the global screen time"),
     };
@@ -1922,8 +1981,8 @@ async fn render_device_time(
             everyone_limit,
             budget_corrupt: time_rules::parse_budget(&policy.daily_budget_json).is_err(),
             budget: match &entered {
-                Some((fields, error)) => budget_entered(fields, error),
-                None => budget_inputs(&policy.daily_budget_json),
+                Some((fields, error)) => budget_entered(lang, fields, error),
+                None => budget_inputs(lang, &policy.daily_budget_json),
             },
             budget_saved: !refused && query.get("saved").map(String::as_str) == Some("budget"),
             device,
@@ -1953,7 +2012,7 @@ mod tests {
             end: 840,
         });
         let days = vec![w, w, w, w, w, None, None];
-        assert_eq!(days_summary(&days), "Mon-Fri 08:15-14:00");
+        assert_eq!(days_summary(Lang::En, &days), "Mon-Fri 08:15-14:00");
         let bed = vec![
             Some(DayWindow {
                 start: 1260,
@@ -1961,15 +2020,25 @@ mod tests {
             });
             7
         ];
-        assert_eq!(days_summary(&bed), "Every day 21:00-07:00");
+        assert_eq!(days_summary(Lang::En, &bed), "Every day 21:00-07:00");
         let mut mixed = vec![None; 7];
         mixed[5] = Some(DayWindow {
             start: 0,
             end: LAST_MINUTE,
         });
         mixed[0] = w;
-        assert_eq!(days_summary(&mixed), "Mon 08:15-14:00, Sat 00:00-23:59");
-        assert_eq!(days_summary(&[None; 7]), "Never");
+        assert_eq!(
+            days_summary(Lang::En, &mixed),
+            "Mon 08:15-14:00, Sat 00:00-23:59"
+        );
+        assert_eq!(days_summary(Lang::En, &[None; 7]), "Never");
+        // In Norwegian, the days are lower-case but the first.
+        assert_eq!(days_summary(Lang::Nb, &days), "Man-fre 08:15-14:00");
+        assert_eq!(
+            days_summary(Lang::Nb, &mixed),
+            "Man 08:15-14:00, lør 00:00-23:59"
+        );
+        assert_eq!(days_summary(Lang::Nb, &bed), "Hver dag 21:00-07:00");
     }
 
     #[test]
@@ -1983,24 +2052,41 @@ mod tests {
             Some(120),
             Some(120),
         ];
-        assert_eq!(budget_summary(&weekdays), "Mon-Fri 90 min · Sat-Sun 2 h");
-        assert_eq!(budget_summary(&[Some(90); 7]), "Every day 90 min");
-        assert_eq!(budget_summary(&[Some(180); 7]), "Every day 3 h");
-        assert_eq!(budget_summary(&[None; 7]), "No limit");
+        assert_eq!(
+            budget_summary(Lang::En, &weekdays),
+            "Mon-Fri 90 min · Sat-Sun 2 h"
+        );
+        assert_eq!(budget_summary(Lang::En, &[Some(90); 7]), "Every day 90 min");
+        assert_eq!(budget_summary(Lang::En, &[Some(180); 7]), "Every day 3 h");
+        assert_eq!(budget_summary(Lang::En, &[None; 7]), "No limit");
         let one = [Some(0), None, None, None, None, None, None];
-        assert_eq!(budget_summary(&one), "Mon 0 min · Tue-Sun no limit");
+        assert_eq!(
+            budget_summary(Lang::En, &one),
+            "Mon 0 min · Tue-Sun no limit"
+        );
+        assert_eq!(
+            budget_summary(Lang::Nb, &weekdays),
+            "Man-fre 90 min · lør-søn 2 t"
+        );
+        assert_eq!(
+            budget_summary(Lang::Nb, &one),
+            "Man 0 min · tir-søn ingen grense"
+        );
     }
 
     #[test]
     fn rule_form_validation() {
-        let ok = parse_rule_form(&pairs(&[
-            ("name", " Skole "),
-            ("kind", "school"),
-            ("exempt_apps", "org.fossify.calendar"),
-            ("exempt_apps", "org.fossify.calendar"),
-            ("d0_start", "08:15"),
-            ("d0_end", "14:00"),
-        ]))
+        let ok = parse_rule_form(
+            Lang::En,
+            &pairs(&[
+                ("name", " Skole "),
+                ("kind", "school"),
+                ("exempt_apps", "org.fossify.calendar"),
+                ("exempt_apps", "org.fossify.calendar"),
+                ("d0_start", "08:15"),
+                ("d0_end", "14:00"),
+            ]),
+        )
         .unwrap();
         assert_eq!(ok.name, "Skole");
         assert!(!ok.calls_allowed);
@@ -2014,7 +2100,7 @@ mod tests {
         );
         assert!(ok.days[1..].iter().all(Option::is_none));
 
-        let refused = |list: &[(&str, &str)]| parse_rule_form(&pairs(list)).unwrap_err();
+        let refused = |list: &[(&str, &str)]| parse_rule_form(Lang::En, &pairs(list)).unwrap_err();
         assert!(matches!(
             refused(&[("name", ""), ("kind", "school")]),
             RuleError::Name(_)
@@ -2088,23 +2174,29 @@ mod tests {
             );
         }
         for (start, end) in [(0, LAST_MINUTE), (LAST_MINUTE, LAST_MINUTE)] {
-            let ok = parse_rule_form(&pairs(&[
-                ("name", "x"),
-                ("kind", "custom"),
-                ("d5_start", &minutes_to_time_input(start)),
-                ("d5_end", &minutes_to_time_input(end)),
-            ]))
+            let ok = parse_rule_form(
+                Lang::En,
+                &pairs(&[
+                    ("name", "x"),
+                    ("kind", "custom"),
+                    ("d5_start", &minutes_to_time_input(start)),
+                    ("d5_end", &minutes_to_time_input(end)),
+                ]),
+            )
             .unwrap();
             assert_eq!(ok.days[5], Some(DayWindow { start, end }));
         }
         // An end of 00:00 is "until midnight", stored as 23:59 (qa-66-code L2).
         for (start, stored) in [("20:00", 1200), ("00:00", 0)] {
-            let ok = parse_rule_form(&pairs(&[
-                ("name", "x"),
-                ("kind", "custom"),
-                ("d5_start", start),
-                ("d5_end", "00:00"),
-            ]))
+            let ok = parse_rule_form(
+                Lang::En,
+                &pairs(&[
+                    ("name", "x"),
+                    ("kind", "custom"),
+                    ("d5_start", start),
+                    ("d5_end", "00:00"),
+                ]),
+            )
             .unwrap();
             assert_eq!(
                 ok.days[5],
@@ -2119,15 +2211,19 @@ mod tests {
     #[test]
     fn budget_form_validation() {
         assert_eq!(
-            parse_budget_form(&pairs(&[("b0", "60"), ("b6", "0")])).unwrap(),
+            parse_budget_form(Lang::En, &pairs(&[("b0", "60"), ("b6", "0")])).unwrap(),
             "[60,null,null,null,null,null,0]"
         );
         assert_eq!(
-            parse_budget_form(&pairs(&[("b0", "1441")])).unwrap_err().0,
+            parse_budget_form(Lang::En, &pairs(&[("b0", "1441")]))
+                .unwrap_err()
+                .0,
             0
         );
         assert_eq!(
-            parse_budget_form(&pairs(&[("b3", "lots")])).unwrap_err().0,
+            parse_budget_form(Lang::En, &pairs(&[("b3", "lots")]))
+                .unwrap_err()
+                .0,
             3
         );
     }

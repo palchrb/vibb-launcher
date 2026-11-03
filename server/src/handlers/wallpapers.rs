@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t};
 use crate::photos::{self, PhotoError, Shape, WALLPAPERS};
 use crate::security::{self, CurrentAdmin};
 use crate::wallpapers::{self as store, WallpaperRow};
@@ -45,7 +45,7 @@ crate::i18n::words!(WallpapersTemplate);
 async fn page(state: &AppState, status: StatusCode, error: Option<String>, lang: Lang) -> Response {
     let rows = match store::all(&state.db).await {
         Ok(rows) => rows,
-        Err(err) => return db_error(err),
+        Err(err) => return db_error(lang, err),
     };
     let counts: Vec<(i64, i64)> = match sqlx::query_as(
         "SELECT wallpaper_id, COUNT(*) FROM device_wallpapers GROUP BY wallpaper_id",
@@ -54,7 +54,7 @@ async fn page(state: &AppState, status: StatusCode, error: Option<String>, lang:
     .await
     {
         Ok(counts) => counts,
-        Err(err) => return db_error(err),
+        Err(err) => return db_error(lang, err),
     };
     let wallpapers = rows
         .iter()
@@ -73,20 +73,16 @@ async fn page(state: &AppState, status: StatusCode, error: Option<String>, lang:
         .collect();
     let template = WallpapersTemplate {
         lang,
-        title: "Wallpapers".to_string(),
+        title: t(lang, "settings.wallpapers.title").to_string(),
         upload_error: error,
         wallpapers,
     };
     (status, Html(template.render().unwrap())).into_response()
 }
 
-fn db_error(err: sqlx::Error) -> Response {
+fn db_error(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "wallpaper page database error");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't load or save wallpapers - nothing was changed. Check the server log.",
-    )
-        .into_response()
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.wallpapers")
 }
 
 fn nudge(state: &AppState, devices: &[i64]) {
@@ -142,8 +138,9 @@ pub async fn upload(
         }
     }
     let label: String = label.trim().chars().take(MAX_LABEL_CHARS).collect();
+    // The placeholder's word, in the parent's language: the phone reads it out.
     let label = if label.is_empty() {
-        "Photo".to_string()
+        t(lang, "settings.wallpapers.photo").to_string()
     } else {
         label
     };
@@ -172,11 +169,7 @@ pub async fn upload(
         let _files = WALLPAPERS.lock().await;
         if let Err(err) = photos::store(&state.wallpaper_dir, &processed).await {
             tracing::error!(%err, "couldn't store a wallpaper");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save the wallpaper - nothing was changed. Check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_photo");
         }
         sqlx::query(
             "INSERT INTO wallpapers (kind, image_hash, label, sort, lock_screen) \
@@ -197,7 +190,7 @@ pub async fn upload(
         .into_response(),
         Err(err) => {
             WALLPAPERS.prune(&state.db, &state.wallpaper_dir).await;
-            db_error(err)
+            db_error(lang, err)
         }
     }
 }
@@ -212,6 +205,7 @@ async fn wallpaper(state: &AppState, id: i64) -> Result<Option<WallpaperRow>, sq
 /// "Also on the lock screen" for an uploaded image (`lock_screen=on` or absent).
 pub async fn set_lock_screen(
     State(state): State<AppState>,
+    lang: Lang,
     Path(wallpaper_id): Path<i64>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
@@ -219,10 +213,16 @@ pub async fn set_lock_screen(
     match wallpaper(&state, wallpaper_id).await {
         Ok(Some(w)) if w.kind == "image" => {}
         Ok(Some(_)) => {
-            return (StatusCode::BAD_REQUEST, "Only photos have this choice").into_response();
+            return crate::i18n::error(
+                lang,
+                StatusCode::BAD_REQUEST,
+                "error.wallpaper_photos_only",
+            );
         }
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such wallpaper").into_response(),
-        Err(err) => return db_error(err),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.wallpaper_not_found");
+        }
+        Err(err) => return db_error(lang, err),
     }
     let result = async {
         sqlx::query("UPDATE wallpapers SET lock_screen = ? WHERE id = ?")
@@ -239,26 +239,26 @@ pub async fn set_lock_screen(
             // Back to the photo's own row: a long list must not land at the top without JS.
             Redirect::to(&format!("/wallpapers#wallpaper-{wallpaper_id}")).into_response()
         }
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
 /// Deletes an uploaded wallpaper: off every phone (their rows cascade, the phones are nudged and
 /// replace it at once), then the file is pruned. Built-ins can't be deleted, only unticked.
-pub async fn delete(State(state): State<AppState>, Path(wallpaper_id): Path<i64>) -> Response {
+pub async fn delete(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(wallpaper_id): Path<i64>,
+) -> Response {
     match wallpaper(&state, wallpaper_id).await {
         Ok(Some(w)) if w.builtin_key.is_none() => {}
         // The page offers no Delete for these; only a hand-made post gets here.
         Ok(Some(_)) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Built-in wallpapers can't be deleted - untick them on a phone's Home Screen.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.wallpaper_built_in");
         }
         // Already gone (a second tab): nothing to do, back to the list.
         Ok(None) => return Redirect::to("/wallpapers#all").into_response(),
-        Err(err) => return db_error(err),
+        Err(err) => return db_error(lang, err),
     }
     let result = async {
         let devices = store::devices_with(&state.db, wallpaper_id).await?;
@@ -276,7 +276,7 @@ pub async fn delete(State(state): State<AppState>, Path(wallpaper_id): Path<i64>
             nudge(&state, &devices);
             Redirect::to("/wallpapers#all").into_response()
         }
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -344,6 +344,7 @@ pub async fn device_choices(
 /// Screen's Wallpapers group (`/devices/{id}/home#wallpapers`, design 31 §5.1.4).
 pub async fn save_device_wallpapers(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
@@ -354,7 +355,13 @@ pub async fn save_device_wallpapers(
         }
         match value.parse::<i64>() {
             Ok(v) => chosen.push(v),
-            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown wallpaper").into_response(),
+            Err(_) => {
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::BAD_REQUEST,
+                    "error.unknown_wallpaper",
+                );
+            }
         }
     }
     let result = async {
@@ -402,10 +409,10 @@ pub async fn save_device_wallpapers(
             Redirect::to(&format!("/devices/{id}/home#wallpapers")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
-        Ok(Err(status)) => (status, "Unknown wallpaper").into_response(),
-        Err(err) => db_error(err),
+        Ok(Err(status)) => crate::i18n::error(lang, status, "error.unknown_wallpaper"),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -415,6 +422,7 @@ pub async fn save_device_wallpapers(
 /// & PINs (`/devices/{id}/lock#lock-wallpaper`, design 31 §5.1.4).
 pub async fn save_lock_wallpaper(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
@@ -423,7 +431,13 @@ pub async fn save_lock_wallpaper(
         "" => None,
         v => match v.parse::<i64>() {
             Ok(v) => Some(v),
-            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown wallpaper").into_response(),
+            Err(_) => {
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::BAD_REQUEST,
+                    "error.unknown_wallpaper",
+                );
+            }
         },
     };
     let result = async {
@@ -482,14 +496,10 @@ pub async fn save_lock_wallpaper(
             Redirect::to(&format!("/devices/{id}/lock#lock-wallpaper")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
-        Ok(Err(status)) => (
-            status,
-            "That wallpaper isn't ticked for this phone - tick it first.",
-        )
-            .into_response(),
-        Err(err) => db_error(err),
+        Ok(Err(status)) => crate::i18n::error(lang, status, "error.wallpaper_not_ticked"),
+        Err(err) => db_error(lang, err),
     }
 }
 

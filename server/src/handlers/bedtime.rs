@@ -252,7 +252,7 @@ pub(crate) fn parse_bedtime_form(
             free: rows[1],
         },
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
-        exempt_apps: parse_exempt_apps_form(fields).map_err(BedtimeError::Apps)?,
+        exempt_apps: parse_exempt_apps_form(lang, fields).map_err(BedtimeError::Apps)?,
         calendar_allowed: fields.iter().any(|(k, _)| k == "calendar_allowed"),
         silent: fields.iter().any(|(k, _)| k == "silent"),
     })

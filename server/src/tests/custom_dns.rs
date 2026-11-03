@@ -497,7 +497,7 @@ async fn custom_without_a_valid_pair_is_cloudflare() {
         assert_eq!(policy["dns_upstream"], Value::Null, "{server}");
         let page = app.get_page("/dns", &cookie).await.text();
         assert!(
-            page.contains("The saved addresses aren't accepted any more"),
+            page.contains("The saved addresses aren&#39;t accepted any more"),
             "{server}"
         );
         assert!(page.contains("id=\"custom-server\" open"));

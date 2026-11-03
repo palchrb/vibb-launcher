@@ -32,14 +32,14 @@ use crate::parent_events::{self, Kind};
 use crate::push::{self, Health};
 use crate::security::CurrentAdmin;
 
-/// The tab the parent came from: the back link's target and words. Anything else is Devices.
+/// The tab the parent came from: the back link's target and the key of its words. Anything else is Devices.
 fn back_of(from: Option<&str>) -> (&'static str, &'static str, &'static str) {
     match from {
-        Some("apps") => ("apps", "/apps", "Apps"),
-        Some("locate") => ("locate", "/devices/locate", "Locate"),
-        Some("music") => ("music", "/music", "Music"),
-        Some("settings") => ("settings", "/settings", "Settings"),
-        _ => ("devices", "/devices", "Devices"),
+        Some("apps") => ("apps", "/apps", "nav.apps"),
+        Some("locate") => ("locate", "/devices/locate", "nav.locate"),
+        Some("music") => ("music", "/music", "nav.music"),
+        Some("settings") => ("settings", "/settings", "nav.settings"),
+        _ => ("devices", "/devices", "nav.devices"),
     }
 }
 
@@ -101,13 +101,31 @@ pub struct Switch {
     pub on: bool,
 }
 
+/// A Notify Me About switch's words, by its `notification_prefs` column ([Kind::switches]); `every_switch_is_worded`
+/// keeps a new switch from showing its key.
+fn switch_key(column: &str) -> &'static str {
+    match column {
+        "push_pin_used" => "settings.notifications.switch.pin_used",
+        "push_pin_lockout" => "settings.notifications.switch.pin_lockout",
+        "push_foreign_access" => "settings.notifications.switch.foreign_access",
+        "push_unseen_boot" => "settings.notifications.switch.unseen_boot",
+        "push_low_battery" => "settings.notifications.switch.low_battery",
+        "push_phone_off" => "settings.notifications.switch.phone_off",
+        "push_phone_on" => "settings.notifications.switch.phone_on",
+        "push_zones" => "settings.notifications.switch.zones",
+        "push_extra_time" => "settings.notifications.switch.extra_time",
+        crate::parent_events::APP_UPDATES_SWITCH => "settings.notifications.switch.app_updates",
+        _ => "settings.notifications.switch.unknown",
+    }
+}
+
 /// The inbox (design 45 §1.1).
 #[derive(Template)]
 #[template(path = "notifications.html")]
 struct InboxTemplate {
     lang: Lang,
     title: String,
-    /// `from`, the back link's path and words.
+    /// `from`, the back link's path and the key of its words.
     back: (&'static str, &'static str, &'static str),
     /// The picker: every phone, the chosen one marked.
     phones: Vec<(i64, String, bool)>,
@@ -158,39 +176,20 @@ struct SettingsTemplate {
 }
 crate::i18n::words!(SettingsTemplate);
 
-/// A notice code's words and group (`#this-device` = true, `#devices` = false).
-fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
-    Some(match code? {
-        "push_service" => (true, "This browser's push service isn't supported.", true),
-        "push_key" => (
-            true,
-            "This browser sent a key that doesn't work - try again.",
-            true,
-        ),
-        "push_many" => (
-            true,
-            "10 devices get notifications already - remove one under Getting Notifications first.",
-            true,
-        ),
-        "push_origin" => (
-            true,
-            "This browser didn't say where the page came from - try again.",
-            true,
-        ),
-        "push_server" => (
-            true,
-            "Notifications are off on this server - check the server log.",
-            true,
-        ),
-        "test_sent" => (false, "A test is on its way.", false),
-        "test_wait" => (false, "Wait half a minute between tests.", true),
-        "test_gone" => (
-            false,
-            "That device's notifications are turned off - turn them on again there.",
-            true,
-        ),
+/// A notice code's words in `lang` and its group (`#this-device` = true, `#devices` = false).
+fn notice_of(lang: Lang, code: Option<&str>) -> Option<(bool, &'static str, bool)> {
+    let (this_device, key, error) = match code? {
+        "push_service" => (true, "settings.notifications.notice.push_service", true),
+        "push_key" => (true, "settings.notifications.notice.push_key", true),
+        "push_many" => (true, "settings.notifications.notice.push_many", true),
+        "push_origin" => (true, "settings.notifications.notice.push_origin", true),
+        "push_server" => (true, "settings.notifications.notice.push_server", true),
+        "test_sent" => (false, "settings.notifications.notice.test_sent", false),
+        "test_wait" => (false, "settings.notifications.notice.test_wait", true),
+        "test_gone" => (false, "settings.notifications.notice.test_gone", true),
         _ => return None,
-    })
+    };
+    Some((this_device, t(lang, key), error))
 }
 
 /// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
@@ -316,7 +315,7 @@ pub async fn page(
     };
     let (phones, raw, unread_after, badge, mut lines, subscriptions) = match read.await {
         Ok(read) => read,
-        Err(err) => return read_error(err),
+        Err(err) => return read_error(lang, err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let older_than = (raw.len() as i64 > parent_events::PAGE)
@@ -327,14 +326,14 @@ pub async fn page(
         .take(parent_events::PAGE as usize)
         .map(|raw| {
             let mut row = inbox_row(raw, &zone, now, |t| zone.relative(t, now));
-            row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(&d));
+            row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(lang, &d));
             row
         })
         .collect();
     Html(
         InboxTemplate {
             lang,
-            title: "Notifications".to_string(),
+            title: t(lang, "settings.notifications.title").to_string(),
             back,
             phones: phones
                 .into_iter()
@@ -377,15 +376,19 @@ pub async fn settings_page(
     };
     let (settings, subscriptions, known) = match read.await {
         Ok(read) => read,
-        Err(err) => return read_error(err),
+        Err(err) => return read_error(lang, err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let switches = Kind::switches()
         .into_iter()
         .zip(settings)
-        .map(|((name, label), on)| Switch { name, label, on })
+        .map(|((name, _), on)| Switch {
+            name,
+            label: t(lang, switch_key(name)),
+            on,
+        })
         .collect();
-    let notice = notice_of(params.get("notice").map(String::as_str));
+    let notice = notice_of(lang, params.get("notice").map(String::as_str));
     let sub = number(&params, "sub");
     let devices = subscriptions
         .iter()
@@ -402,7 +405,7 @@ pub async fn settings_page(
     Html(
         SettingsTemplate {
             lang,
-            title: "Notification Settings".to_string(),
+            title: t(lang, "settings.notifications.settings_title").to_string(),
             back,
             device,
             query: page_query(back.0, device),
@@ -439,7 +442,7 @@ pub async fn subscriptions_json(
     let now = chrono::Utc::now();
     let subscriptions = match push::subscriptions(&state.db, admin.id, now).await {
         Ok(subscriptions) => subscriptions,
-        Err(err) => return read_error(err),
+        Err(err) => return read_error(lang, err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let rows: Vec<DeviceRowJson> = subscriptions
@@ -457,13 +460,13 @@ pub async fn subscriptions_json(
     axum::Json(rows).into_response()
 }
 
-fn read_error(err: sqlx::Error) -> Response {
+fn read_error(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "can't read the notifications page");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the notifications - check the server log.",
+        "error.read_notifications",
     )
-        .into_response()
 }
 
 /// The `?push=<delivery>` marker of a tapped notification (server round 5 §1), a layer on the
@@ -573,6 +576,7 @@ fn switch_names() -> Vec<&'static str> {
 /// `device`).
 pub async fn open(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -592,13 +596,14 @@ pub async fn open(
         Ok(_) => {
             Redirect::to(&format!("/notifications{}#inbox", back_query(&form))).into_response()
         }
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
 /// Mark All as Read: every event (of the chosen phone) read for this parent, back to the inbox.
 pub async fn read_all(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -615,7 +620,7 @@ pub async fn read_all(
         Ok(_) => {
             Redirect::to(&format!("/notifications{}#inbox", back_query(&form))).into_response()
         }
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -623,6 +628,7 @@ pub async fn read_all(
 /// design 62 §5), back to `#events`. A removed account's held request writes nothing.
 pub async fn save_settings(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -651,17 +657,17 @@ pub async fn save_settings(
             back_query(&form)
         ))
         .into_response(),
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
-fn db_error(err: sqlx::Error) -> Response {
+fn db_error(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "notifications database error");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
+        "error.save_failed_log",
     )
-        .into_response()
 }
 
 /// A subscription's warning, `(title, sub-line)`, when it needs the parent (§6, qa-35-s2-code M1).
@@ -687,56 +693,98 @@ fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, String)> 
     }
 }
 
-/// A subscription as Getting Notifications shows it.
+/// A subscription as Getting Notifications shows it, in the [Zone]'s language.
 fn device_row(
     sub: &push::Subscription,
     zone: &Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> DeviceRow {
+    let lang = zone.lang();
+    let when = |t| zone.relative(t, now);
     // The newer of the last receipt and the last push Apple's service accepted and shows itself.
     let last = match (sub.last_receipt_at, sub.last_delivered_at) {
-        (Some(r), Some(d)) if d > r => Some(format!("Last delivered {}", zone.relative(d, now))),
-        (Some(r), _) => Some(format!("Last shown {}", zone.relative(r, now))),
-        (None, Some(d)) => Some(format!("Last delivered {}", zone.relative(d, now))),
+        (Some(r), Some(d)) if d > r => Some(t_params(
+            lang,
+            "settings.notifications.row.last_delivered",
+            &[("when", &when(d))],
+        )),
+        (Some(r), _) => Some(t_params(
+            lang,
+            "settings.notifications.row.last_shown",
+            &[("when", &when(r))],
+        )),
+        (None, Some(d)) => Some(t_params(
+            lang,
+            "settings.notifications.row.last_delivered",
+            &[("when", &when(d))],
+        )),
         (None, None) => None,
     };
+    let nothing_shown = || t(lang, "settings.notifications.row.nothing_shown").to_string();
     // The quiet count (server round 5 §2): pushes since the device last confirmed or opened one.
     let shown = |line: Option<String>| {
-        let line = line.unwrap_or_else(|| "Nothing shown yet".to_string());
+        let line = line.unwrap_or_else(nothing_shown);
+        let n = sub.since_opened.to_string();
         Some(match (sub.since_opened, sub.ever_opened) {
             (0, _) => line,
-            (n, true) => format!("{line} · {n} since one was opened"),
-            (n, false) => format!("{line} · {n} not opened yet"),
+            (_, true) => t_params(
+                lang,
+                "settings.notifications.row.since_opened",
+                &[("line", &line), ("n", &n)],
+            ),
+            (_, false) => t_params(
+                lang,
+                "settings.notifications.row.not_opened",
+                &[("line", &line), ("n", &n)],
+            ),
         })
     };
+    let on = (t(lang, "common.on"), "badge badge-on");
     let (badge, sub_line) = match sub.health {
-        Health::Ok => (("On", "badge badge-on"), shown(last)),
-        Health::NeverSent if sub.sending => {
-            (("On", "badge badge-on"), Some("Sending…".to_string()))
-        }
+        Health::Ok => (on, shown(last)),
+        Health::NeverSent if sub.sending => (
+            on,
+            Some(t(lang, "settings.notifications.row.sending").to_string()),
+        ),
         Health::NeverSent => (
-            ("On", "badge badge-on"),
-            Some("Nothing sent yet".to_string()),
+            on,
+            Some(t(lang, "settings.notifications.row.nothing_sent").to_string()),
         ),
         Health::NotGettingThrough => (
-            ("Not getting through", "badge badge-warn"),
-            Some(format!(
-                "{}{}",
-                sub.failure.as_deref().unwrap_or(""),
-                if sub.sending { " · trying again" } else { "" }
-            )),
+            (
+                t(lang, "settings.notifications.badge.not_through"),
+                "badge badge-warn",
+            ),
+            Some({
+                let failure = sub.failure.as_deref().unwrap_or("");
+                if sub.sending {
+                    t_params(
+                        lang,
+                        "settings.notifications.row.trying_again",
+                        &[("failure", failure)],
+                    )
+                } else {
+                    failure.to_string()
+                }
+            }),
         ),
-        Health::MayNotShow => (("May not be showing", "badge badge-warn"), shown(last)),
+        Health::MayNotShow => (
+            (
+                t(lang, "settings.notifications.badge.may_not_show"),
+                "badge badge-warn",
+            ),
+            shown(last),
+        ),
         Health::Gone => (
-            ("Turned off", "badge"),
-            Some("Turned off on that device - turn it on again there".to_string()),
+            (t(lang, "settings.notifications.badge.off"), "badge"),
+            Some(t(lang, "settings.notifications.row.gone").to_string()),
         ),
     };
     DeviceRow {
         id: sub.id,
         label: sub.label.clone(),
         badge,
-        sub: sub_line.unwrap_or_else(|| "Nothing shown yet".to_string()),
+        sub: sub_line.unwrap_or_else(nothing_shown),
         active: sub.health != Health::Gone,
         notice: None,
     }
@@ -788,7 +836,7 @@ async fn delivery_lines(
 /// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
 /// next start's "restarted" replaced) or a newer shutdown superseded counts as none - the row says
 /// nothing, never "Not sent".
-pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
+pub fn delivery_line(lang: Lang, deliveries: &[DeliveryState]) -> Option<String> {
     let deliveries: Vec<&DeliveryState> = deliveries
         .iter()
         .filter(|d| !(d.0 == "dropped" && matches!(d.1.as_deref(), Some("restart" | "superseded"))))
@@ -800,21 +848,35 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
         .filter(|d| d.0 == "accepted" && !folded(d))
         .collect();
     let delivered = |d: &&DeliveryState| d.2 || d.1.as_deref() == Some("declarative");
-    let shown = accepted.iter().filter(|d| delivered(d)).count();
+    let shown = accepted.iter().filter(|d| delivered(d)).count().to_string();
     let opened = accepted.iter().filter(|d| d.4).count();
+    let to = |key: &str, label: &str| t_params(lang, key, &[("label", label)]);
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
-        [] if deliveries.iter().any(|d| d.0 == "queued") => "Sending".to_string(),
-        [] if deliveries.iter().any(|d| folded(d) && d.0 == "accepted") => {
-            "In a summary".to_string()
+        [] if deliveries.iter().any(|d| d.0 == "queued") => {
+            t(lang, "settings.notifications.delivery.sending").to_string()
         }
-        [] => "Not sent".to_string(),
-        [one] if one.4 => format!("Opened on {}", one.3),
-        [one] if one.2 => format!("Shown on {}", one.3),
-        [one] if delivered(one) => format!("Delivered to {}", one.3),
-        [one] => format!("Pushed to {}, not confirmed", one.3),
-        many if opened > 0 => format!("Pushed to {} devices · opened on {opened}", many.len()),
-        many => format!("Pushed to {} devices · shown on {shown}", many.len()),
+        [] if deliveries.iter().any(|d| folded(d) && d.0 == "accepted") => {
+            t(lang, "settings.notifications.delivery.summary").to_string()
+        }
+        [] => t(lang, "settings.notifications.delivery.not_sent").to_string(),
+        [one] if one.4 => to("settings.notifications.delivery.opened", &one.3),
+        [one] if one.2 => to("settings.notifications.delivery.shown", &one.3),
+        [one] if delivered(one) => to("settings.notifications.delivery.delivered", &one.3),
+        [one] => to("settings.notifications.delivery.pushed", &one.3),
+        many if opened > 0 => t_params(
+            lang,
+            "settings.notifications.delivery.many_opened",
+            &[
+                ("devices", &many.len().to_string()),
+                ("opened", &opened.to_string()),
+            ],
+        ),
+        many => t_params(
+            lang,
+            "settings.notifications.delivery.many_shown",
+            &[("devices", &many.len().to_string()), ("shown", &shown)],
+        ),
     })
 }
 
@@ -876,6 +938,7 @@ fn b64url(value: Option<&String>) -> Option<Vec<u8>> {
 /// same row, made active again.
 pub async fn subscribe(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     headers: HeaderMap,
     Form(form): Form<HashMap<String, String>>,
@@ -971,7 +1034,7 @@ pub async fn subscribe(
             }
         }
         Ok(false) => crate::settings_log::refused(back_to(&form, "push_many", "this-device")),
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -979,6 +1042,7 @@ pub async fn subscribe(
 /// made it (This Device shows On for any account's subscription of this browser, L1).
 pub async fn unsubscribe(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let done = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ?")
@@ -987,7 +1051,7 @@ pub async fn unsubscribe(
         .await;
     match done {
         Ok(_) => back_to(&form, "push_off", "this-device"),
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -995,6 +1059,7 @@ pub async fn unsubscribe(
 /// subscription nobody sends to).
 pub async fn remove(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -1006,13 +1071,14 @@ pub async fn remove(
         .await;
     match done {
         Ok(_) => back_to(&form, "removed", "devices"),
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
 /// Getting Notifications' Send a Test (§6): a visible push to that device, one per 30 s.
 pub async fn send_test(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -1029,7 +1095,7 @@ pub async fn send_test(
     match active {
         Ok(Some(true)) => {}
         Ok(_) => return back_to_sub(&form, "test_gone", id),
-        Err(err) => return db_error(err),
+        Err(err) => return db_error(lang, err),
     }
     if !state
         .push
@@ -1048,7 +1114,7 @@ pub async fn send_test(
             state.push.wake();
             back_to_sub(&form, "test_sent", id)
         }
-        Err(err) => db_error(err),
+        Err(err) => db_error(lang, err),
     }
 }
 
@@ -1209,10 +1275,27 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                delivery_line(&deliveries).as_deref(),
+                delivery_line(Lang::En, &deliveries).as_deref(),
                 line,
                 "{deliveries:?}"
             );
+        }
+        // In Norwegian too.
+        assert_eq!(
+            delivery_line(Lang::Nb, &[d("accepted", None, true, iphone)]).as_deref(),
+            Some("Vist på iPhone · Safari")
+        );
+    }
+
+    /// Every Notify Me About switch has its words in both catalogs.
+    #[test]
+    fn every_switch_is_worded() {
+        for (column, _) in Kind::switches() {
+            let key = switch_key(column);
+            assert_ne!(key, "settings.notifications.switch.unknown", "{column}");
+            for lang in Lang::ALL {
+                assert_ne!(t(lang, key), key, "{column}");
+            }
         }
     }
 }

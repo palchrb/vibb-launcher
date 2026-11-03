@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -18,25 +18,25 @@
         <div class="editor-bar" data-bar="rule">
             <div class="title-bar title-bar-split">
                 <a class="nav-back" href="{{ back_href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back_label }}</a>
-                <button type="submit" class="title-action" data-save="rule">{% if rule.id == 0 %}Add{% else %}Save{% endif %}</button>
+                <button type="submit" class="title-action" data-save="rule">{% if rule.id == 0 %}{{ self.t("common.add") }}{% else %}{{ self.t("common.save") }}{% endif %}</button>
             </div>
-            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. {{ why }}</p>{% endif %}
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>{% endif %}
             {% if let Some(text) = saved %}<p class="flash bar-flash" role="status" data-flash="rule">{{ text }}</p>{% endif %}
         </div>
         <h1 class="page-title">{{ title }}</h1>
 
         {% if let Some(parts) = corrupt %}
-        <div class="attention attention-alarm" data-warning="rule-corrupt"><div class="attention-text">Stored rule unreadable<div class="attention-sub">The phones get an error instead of their rules. {{ parts }}, so they show empty here and are saved as you see them: set them again, then Save - or delete the rule.</div></div></div>
+        <div class="attention attention-alarm" data-warning="rule-corrupt"><div class="attention-text">{{ self.t("settings.time_rules.corrupt") }}<div class="attention-sub">{{ self.tp("settings.time_rules.corrupt_sub", [("parts", parts.as_str())]) }}</div></div></div>
         {% endif %}
-        <section id="rule-main" aria-label="Rule">
+        <section id="rule-main" aria-label="{{ self.t("settings.time_rules.rule") }}">
             <div class="group">
                 <label class="row">
-                    <span class="row-label">Name</span>
-                    <input type="text" class="row-input row-input-end" name="name" value="{{ rule.name }}" maxlength="60" required placeholder="Skole" autocomplete="off"{% if rule.name_error.is_some() %} aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}>
+                    <span class="row-label">{{ self.t("settings.time_rules.name") }}</span>
+                    <input type="text" class="row-input row-input-end" name="name" value="{{ rule.name }}" maxlength="60" required placeholder="{{ self.t("settings.time_rules.name_example") }}" autocomplete="off"{% if rule.name_error.is_some() %} aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}>
                 </label>
                 {% if let Some(why) = rule.name_error %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
                 <label class="row">
-                    <span class="row-label">Type</span>
+                    <span class="row-label">{{ self.t("settings.time_rules.kind") }}</span>
                     {#- The kind pre-sets the calls switch (school: off) and Silent (school: on; static/rule-kind.js); the switches can still be changed. -#}
                     <select class="pick" name="kind" data-presets-calls>
                         {% for (value, label) in kinds %}
@@ -45,7 +45,7 @@
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
                 <label class="row">
-                    <span class="row-label">Calls with contacts</span>
+                    <span class="row-label">{{ self.t("device.bedtime.calls") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="calls_allowed" value="on"{% if rule.calls_allowed %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
                 {#- 0121: the phone's own Do Not Disturb while the rule runs; the Type presets it (school, bedtime: on). A
@@ -55,37 +55,37 @@
                     <input type="checkbox" role="switch" class="sw" name="silent" value="on"{% if rule.silent %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <p class="group-footer">The phone is locked while the rule runs. Emergency calls always work.</p>
+            <p class="group-footer">{{ self.t("settings.time_rules.rule_footer") }}</p>
         </section>
 
         <section id="when" aria-labelledby="when-title">
-            <h2 class="group-header" id="when-title">When</h2>
+            <h2 class="group-header" id="when-title">{{ self.t("settings.time_rules.when") }}</h2>
             <div class="group">
                 {% for d in rule.days %}
                 <div class="row day-row" data-day="{{ d.index }}">
                     <span class="row-label">{{ d.short }}</span>
-                    <input type="time" class="row-time" name="d{{ d.index }}_start" value="{{ d.start }}" aria-label="{{ d.name }} from"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error" autofocus{% endif %}>
+                    <input type="time" class="row-time" name="d{{ d.index }}_start" value="{{ d.start }}" aria-label="{{ self.tp("settings.time_rules.day_from", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error" autofocus{% endif %}>
                     <span class="day-dash" aria-hidden="true">&ndash;</span>
-                    <input type="time" class="row-time" name="d{{ d.index }}_end" value="{{ d.end }}" aria-label="{{ d.name }} until"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error"{% endif %}>
+                    <input type="time" class="row-time" name="d{{ d.index }}_end" value="{{ d.end }}" aria-label="{{ self.tp("settings.time_rules.day_until", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error"{% endif %}>
                 </div>
                 {% if let Some(why) = d.error %}<p class="flash flash-error" id="d{{ d.index }}-error" data-flash="day-{{ d.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}
             </div>
-            <p class="group-footer">On the phone's clock, from the start to the end of the same day; an end of 00:00 is midnight, and 00:00-23:59 is the whole day. Leave a day empty when the rule is off. A night past midnight goes in Bedtime, on each phone's Time page.</p>
+            <p class="group-footer">{{ self.t("settings.time_rules.when_footer") }}</p>
         </section>
 
 {% include "partials/exceptions.html" %}
     </form>
 
     {% if rule.id != 0 %}
-    <section id="delete" aria-label="Delete rule">
+    <section id="delete" aria-label="{{ self.t("settings.time_rules.delete_label") }}">
         <div class="group">
             <details class="confirm cell">
-                <summary class="row">Delete Rule&hellip;</summary>
+                <summary class="row">{{ self.t("settings.time_rules.delete") }}&hellip;</summary>
                 <form method="post" action="/schedules/rules/{{ rule.id }}/delete" class="confirm-body">
                     <input type="hidden" name="scope" value="{{ scope }}">
-                    <p>Delete {{ title }}? {% if let Some(name) = device_name %}{{ name }}'s phone is{% else %}The phones that follow everyone's rules are{% endif %} no longer locked by it.</p>
-                    <button type="submit" class="button-destructive">Delete Rule</button>
+                    <p>{% if let Some(name) = device_name %}{{ self.tp("settings.time_rules.delete_own", [("rule", title.as_str()), ("name", name.as_str())]) }}{% else %}{{ self.tp("settings.time_rules.delete_everyone", [("rule", title.as_str())]) }}{% endif %}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("settings.time_rules.delete") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>

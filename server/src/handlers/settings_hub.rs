@@ -14,14 +14,14 @@ use crate::i18n::Words;
 use askama::Template;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::path::Path;
 
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::handlers::backups::{BACKUP_DIR, is_safe_backup_filename};
-use crate::i18n::Lang;
+use crate::i18n::{Lang, t, t_count, t_params};
 
 #[derive(Template)]
 #[template(path = "settings_hub.html")]
@@ -71,7 +71,7 @@ pub async fn settings_hub(
     Html(
         SettingsHubTemplate {
             lang,
-            title: "Settings".to_string(),
+            title: t(lang, "nav.settings").to_string(),
             values,
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
         }
@@ -107,21 +107,34 @@ pub async fn hub_values(
     )
     .await;
     let wallpapers = count(db, "SELECT COUNT(*) FROM wallpapers", None).await;
+    let lang = zone.lang();
     HubValues {
-        time_rules: rules.map(|n| plural(n, "No rules", "rule", "rules")),
-        web_filter: lists.map(|n| plural(n, "No lists", "list", "lists")),
-        blocked_today: blocked.map(|n| {
-            if n == 0 {
-                "None today".to_string()
-            } else {
-                format!("{n} today")
-            }
+        time_rules: rules.map(|n| match n {
+            0 => t(lang, "settings.hub.no_rules").to_string(),
+            n => t_count(lang, "settings.hub.rules", n, &[]),
         }),
+        web_filter: lists.map(|n| match n {
+            0 => t(lang, "settings.hub.no_lists").to_string(),
+            n => t_count(lang, "settings.hub.lists", n, &[]),
+        }),
+        blocked_today: blocked.map(|n| blocked_today(lang, n)),
         wallpapers: wallpapers.map(|n| n.to_string()),
         backups: newest_backup(backup_dir)
             .await
             .map(|t| backup_label(zone, t, now)),
-        about: format!("Server {}", crate::APP_VERSION.trim_start_matches('v')),
+        about: t_params(
+            lang,
+            "settings.hub.server_version",
+            &[("version", crate::APP_VERSION.trim_start_matches('v'))],
+        ),
+    }
+}
+
+/// "None today", "12 today": the Blocked Activity row's value, and each phone's on that page.
+pub(crate) fn blocked_today(lang: Lang, n: i64) -> String {
+    match n {
+        0 => t(lang, "settings.hub.none_today").to_string(),
+        n => t_params(lang, "settings.hub.n_today", &[("n", &n.to_string())]),
     }
 }
 
@@ -136,15 +149,6 @@ async fn count(db: &SqlitePool, sql: &str, bind: Option<&str>) -> Option<i64> {
             tracing::error!("settings hub: {sql}: {e}");
             None
         }
-    }
-}
-
-/// "No rules", "1 rule", "3 rules".
-fn plural(n: i64, zero: &str, one: &str, many: &str) -> String {
-    match n {
-        0 => zero.to_string(),
-        1 => format!("1 {one}"),
-        n => format!("{n} {many}"),
     }
 }
 
@@ -182,50 +186,34 @@ async fn newest_backup(dir: &Path) -> Option<DateTime<Utc>> {
     newest.map(DateTime::<Utc>::from)
 }
 
-/// The Backups row's value: [day_time_label] in `zone`, its clock time labelled "UTC" in the
+/// The Backups row's value: "Today 03:00", "Yesterday 03:00", "12 Oct" (this year), "12 Oct 2025" (earlier), in
+/// `zone`'s language; a time ahead of `now` (a clock that moved back) by its date. The clock time says "UTC" in the
 /// fallback zone.
 pub fn backup_label(zone: &Zone, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let label = day_time_label(zone.local(t).naive_local(), zone.local(now).naive_local());
-    if zone.is_fallback() && (label.starts_with("Today") || label.starts_with("Yesterday")) {
-        format!("{label} UTC")
-    } else {
-        label
-    }
-}
-
-/// "Today 03:00", "Yesterday 03:00", "12 Oct" (this year), "12 Oct 2025" (earlier); a time
-/// ahead of `now` (a clock that moved back) by its date.
-pub fn day_time_label(t: NaiveDateTime, now: NaiveDateTime) -> String {
-    let days = (now.date() - t.date()).num_days();
-    match days {
-        0 => format!("Today {}", t.format("%H:%M")),
-        1 => format!("Yesterday {}", t.format("%H:%M")),
-        _ if t.format("%Y").to_string() == now.format("%Y").to_string() => {
-            t.format("%-d %b").to_string()
-        }
-        _ => t.format("%-d %b %Y").to_string(),
+    let (day, today) = (zone.local(t).date_naive(), zone.today(now));
+    let clock = || zone.clock(t);
+    match (today - day).num_days() {
+        0 => t_params(
+            zone.lang(),
+            "settings.hub.backup_today",
+            &[("clock", &clock())],
+        ),
+        1 => t_params(
+            zone.lang(),
+            "settings.hub.backup_yesterday",
+            &[("clock", &clock())],
+        ),
+        _ => zone.date_of(day, today),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDateTime;
 
     fn at(s: &str) -> NaiveDateTime {
         NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
-    }
-
-    #[test]
-    fn backup_times_read_as_days() {
-        let now = at("2026-10-13 14:05");
-        assert_eq!(day_time_label(at("2026-10-13 03:00"), now), "Today 03:00");
-        assert_eq!(
-            day_time_label(at("2026-10-12 23:59"), now),
-            "Yesterday 23:59"
-        );
-        assert_eq!(day_time_label(at("2026-10-01 03:00"), now), "1 Oct");
-        assert_eq!(day_time_label(at("2025-12-31 03:00"), now), "31 Dec 2025");
-        assert_eq!(day_time_label(at("2026-10-14 03:00"), now), "14 Oct");
     }
 
     #[test]
@@ -255,11 +243,31 @@ mod tests {
     }
 
     #[test]
+    fn backup_times_read_as_days_in_both_languages() {
+        let utc = |s: &str| at(s).and_utc();
+        let now = utc("2026-10-13 14:05");
+        let oslo = Zone::from_setting("Europe/Oslo");
+        let nb = Zone::from_setting("Europe/Oslo").in_lang(Lang::Nb);
+        for (t, en, no) in [
+            ("2026-10-13 01:00", "Today 03:00", "I dag 03:00"),
+            ("2026-10-12 21:59", "Yesterday 23:59", "I går 23:59"),
+            ("2026-10-01 01:00", "1 Oct", "1. okt."),
+            ("2025-12-31 01:00", "31 Dec 2025", "31. des. 2025"),
+            // A clock that moved back: by its date.
+            ("2026-10-14 01:00", "14 Oct", "14. okt."),
+        ] {
+            assert_eq!(backup_label(&oslo, utc(t), now), en, "{t}");
+            assert_eq!(backup_label(&nb, utc(t), now), no, "{t}");
+        }
+    }
+
+    #[test]
     fn counts_read_as_short_values() {
-        assert_eq!(plural(0, "No rules", "rule", "rules"), "No rules");
-        assert_eq!(plural(1, "No rules", "rule", "rules"), "1 rule");
-        assert_eq!(plural(0, "No lists", "list", "lists"), "No lists");
-        assert_eq!(plural(3, "No lists", "list", "lists"), "3 lists");
+        assert_eq!(blocked_today(Lang::En, 0), "None today");
+        assert_eq!(blocked_today(Lang::En, 12), "12 today");
+        assert_eq!(blocked_today(Lang::Nb, 12), "12 i dag");
+        assert_eq!(t_count(Lang::En, "settings.hub.rules", 1, &[]), "1 rule");
+        assert_eq!(t_count(Lang::Nb, "settings.hub.lists", 3, &[]), "3 lister");
     }
 
     fn zoned(offset_hours: i32, local: &str) -> DateTime<chrono::FixedOffset> {

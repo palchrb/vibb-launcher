@@ -152,8 +152,11 @@ impl ForkConfig {
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
             phone_server_url: read("PHONE_SERVER_URL", |url| match check_server_url(url) {
                 ServerUrl::Fine => true,
-                ServerUrl::PlainHttp(why) => {
-                    tracing::warn!("PHONE_SERVER_URL: {why}");
+                ServerUrl::PlainHttp(host) => {
+                    tracing::warn!(
+                        "PHONE_SERVER_URL: the phones will use plain http to {host}. That is safe only if \
+                         the path is an encrypted tunnel (WireGuard, Tailscale). The server can't tell."
+                    );
                     true
                 }
                 ServerUrl::Refused(_) => false,
@@ -205,10 +208,10 @@ fn is_valid_url(value: &str) -> bool {
 pub enum ServerUrl {
     /// `https://`, or plain `http://` to a Tailscale address: the path is encrypted.
     Fine,
-    /// Plain `http://` to another private address: taken, with this warning - safe only through
-    /// an encrypted tunnel, which the server can't see.
+    /// Plain `http://` to another private address: taken, with a warning naming this host - safe only
+    /// through an encrypted tunnel, which the server can't see.
     PlainHttp(String),
-    /// Not taken, and why.
+    /// Not taken, and the key of why (`settings.provisioning.url_*`, worded by Phone Setup).
     Refused(&'static str),
 }
 
@@ -232,7 +235,7 @@ pub fn check_server_url(value: &str) -> ServerUrl {
                 .is_some_and(|(_, rest)| !rest.starts_with('/'))
         })
         .filter(|url| url.host_str().is_some_and(|host| !host.is_empty()));
-    const SHAPE: &str = "Use an address like https://vibb.your-tailnet.ts.net. Nothing was saved.";
+    const SHAPE: &str = "settings.provisioning.url_shape";
     let Some(url) = parsed else {
         return ServerUrl::Refused(SHAPE);
     };
@@ -247,14 +250,8 @@ pub fn check_server_url(value: &str) -> ServerUrl {
         "https" => ServerUrl::Fine,
         "http" => match host_kind(&host) {
             HostKind::Tailscale => ServerUrl::Fine,
-            HostKind::Private => ServerUrl::PlainHttp(format!(
-                "The phones will use plain http to {host}. That is safe only if the path is an \
-                 encrypted tunnel (WireGuard, Tailscale). The server can't tell."
-            )),
-            HostKind::Public => ServerUrl::Refused(
-                "Use https:// to a public address: plain http would carry the phones' traffic \
-                 unencrypted over the internet. Nothing was saved.",
-            ),
+            HostKind::Private => ServerUrl::PlainHttp(host),
+            HostKind::Public => ServerUrl::Refused("settings.provisioning.url_public_http"),
         },
         _ => ServerUrl::Refused(SHAPE),
     }
@@ -391,9 +388,9 @@ mod tests {
             "http://vibb",
         ] {
             match check_server_url(warned) {
-                ServerUrl::PlainHttp(why) => assert!(
-                    why.contains("plain http to ") && why.contains("The server can't tell."),
-                    "{why}"
+                ServerUrl::PlainHttp(host) => assert!(
+                    !host.is_empty() && warned.contains(&host),
+                    "{warned}: {host}"
                 ),
                 other => panic!("{warned}: {other:?}"),
             }

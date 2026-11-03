@@ -304,9 +304,9 @@ pub async fn save_schedule(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ScheduleForm>,
 ) -> Response {
-    let refuse = |why: &str| Flash::refused("os-schedule", why);
+    let refuse = |why: String| Flash::refused("os-schedule", why);
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
-        let flash = refuse("Unknown frequency - nothing was saved.");
+        let flash = refuse(crate::i18n::t(lang, "settings.schedule.bad_frequency").to_string());
         let page = updates::render_page(&state, Some(flash), lang).await;
         return (http::StatusCode::BAD_REQUEST, page).into_response();
     }
@@ -318,7 +318,7 @@ pub async fn save_schedule(
     } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
     } else {
-        let flash = refuse("The time must look like 03:00 - nothing was saved.");
+        let flash = refuse(updates::bad_time(lang, "03:00"));
         let page = updates::render_page(&state, Some(flash), lang).await;
         return (http::StatusCode::BAD_REQUEST, page).into_response();
     };
@@ -340,8 +340,14 @@ pub async fn save_schedule(
     .await
     .is_err()
     {
-        let page =
-            updates::render_page(&state, Some(refuse("Couldn't save the schedule.")), lang).await;
+        let page = updates::render_page(
+            &state,
+            Some(refuse(
+                crate::i18n::t(lang, "settings.schedule.save_failed").to_string(),
+            )),
+            lang,
+        )
+        .await;
         return (http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
     security::record_security_event(

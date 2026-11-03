@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,13 +7,13 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Time Rules</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("settings.time_rules.title") }}</h1>
 
     {#- Links only (design 31 §3.5): each rule and the daily limit open their own page, each phone
         its Time page. A delete lands back on #rules with its flash. -#}
     <section id="rules" aria-labelledby="rules-title">
-        <h2 class="group-header" id="rules-title">Everyone · Rules</h2>
+        <h2 class="group-header" id="rules-title">{{ self.t("settings.time_rules.everyone_rules") }}</h2>
         <div class="group">
             {% for r in rules %}
             <a class="row" href="/schedules/rules/{{ r.id }}" data-rule="{{ r.id }}">
@@ -21,24 +21,24 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endfor %}
-            <a class="row row-button" href="/schedules/rules/new">Add Rule</a>
+            <a class="row row-button" href="/schedules/rules/new">{{ self.t("device.time.add_rule") }}</a>
             {% if let Some((text, refused)) = notice %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="rules">{{ text }}</p>{% endif %}
         </div>
         <p class="group-footer">{{ self.t("settings.time_rules.rules_footer") }}</p>
     </section>
 
     <section id="screen-time" aria-labelledby="screen-time-title">
-        <h2 class="group-header" id="screen-time-title">Everyone · Screen Time</h2>
+        <h2 class="group-header" id="screen-time-title">{{ self.t("settings.time_rules.everyone_screen_time") }}</h2>
         <div class="group">
             <a class="row" href="/schedules/screen-time" data-row="daily-limit">
-                <span class="row-label">Daily Limit{% if let Some(summary) = budget %}<span class="row-sub">{{ summary }}</span>{% else %}<span class="row-sub text-alarm">Can't be read</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.time.limit") }}{% if let Some(summary) = budget %}<span class="row-sub">{{ summary }}</span>{% else %}<span class="row-sub text-alarm">{{ self.t("settings.time_rules.unreadable") }}</span>{% endif %}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
     </section>
 
     <section id="phones" aria-labelledby="phones-title">
-        <h2 class="group-header" id="phones-title">Phones</h2>
+        <h2 class="group-header" id="phones-title">{{ self.t("settings.time_rules.phones") }}</h2>
         <div class="group group-avatars group-small">
             {% for p in phones %}
             <a class="row" href="/devices/{{ p.id }}/time" data-phone="{{ p.id }}">
@@ -48,10 +48,10 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% else %}
-            <p class="row row-note">No phones yet.</p>
+            <p class="row row-note">{{ self.t("settings.no_phones") }}</p>
             {% endfor %}
         </div>
-        <p class="group-footer">Emergency calls always work.</p>
+        <p class="group-footer">{{ self.t("device.time.emergency") }}</p>
     </section>
 </main>
 </body>
