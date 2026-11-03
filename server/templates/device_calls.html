@@ -180,7 +180,7 @@
                             {#- The kept original at its saved view in the crop dialog again, or a photo from before
                                 migration 0123 its stored square (static/photo-crop.js shows it; nothing without JS). -#}
                             {% if let Some((original, view)) = contact.original %}
-                            <button type="button" class="row row-button" data-photo-adjust="/contact-photos/original/{{ original }}" data-photo-original="{{ original }}" data-photo-view="{{ view }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
+                            <button type="button" class="row row-button" data-photo-adjust="/contact-photos/original/{{ original }}" data-photo-original="{{ original }}" data-photo-view="{{ view }}" data-photo-square="/contact-photos/{{ photo }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
                             {% else %}
                             <button type="button" class="row row-button" data-photo-adjust="/contact-photos/{{ photo }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
                             {% endif %}
@@ -243,7 +243,7 @@
     <script src="/static/auto-reload.js?v=5" defer></script>
     {% endif %}
     {% if !contacts.is_empty() %}
-    <script src="/static/photo-crop.js?v=2" defer></script>
+    <script src="/static/photo-crop.js?v=3" defer></script>
     {% endif %}
 </main>
 {#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s kept original (or a photo

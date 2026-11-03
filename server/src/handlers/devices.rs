@@ -812,7 +812,7 @@ struct DeviceDetailTemplate {
     /// The phone's own picture (server round C): the header's avatar is its picker, and a refused
     /// upload's reason (`?avatar=`) is said under it.
     photo: Option<String>,
-    avatar_error: Option<&'static str>,
+    avatar_error: Option<String>,
     connection: crate::streams::ConnectionState,
     /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
     dot: &'static str,
@@ -1861,6 +1861,7 @@ async fn render_device(
             photo: avatar_photo(&device),
             avatar_error: crate::handlers::device_avatar::error_text(
                 query.get("avatar").map(String::as_str),
+                lang,
             ),
             connection,
             dot,

@@ -95,11 +95,14 @@ test("an adjust zooms only while the square stays at least 230 px", () => {
     assert.strictEqual(adjustZoom(200, 200), 1);
 });
 
-test("the server's original size (photos::original_size): 2048 on the long side, a panorama's short side kept", () => {
+test("the server's original size (photos::original_size): 2048 on the long side, ~3 MP, a panorama's short side kept", () => {
     assert.deepStrictEqual(originalSize(4000, 3000), { w: 2048, h: 1536 });
     assert.deepStrictEqual(originalSize(4000, 2250), { w: 2048, h: 1152 });
     assert.deepStrictEqual(originalSize(8000, 1000), { w: 5017, h: 627 });
     assert.deepStrictEqual(originalSize(600, 600), { w: 600, h: 600 });
+    // The pixels capped last: a square photo, a banner (QA photo-original L3).
+    assert.deepStrictEqual(originalSize(4000, 4000), { w: 1774, h: 1774 });
+    assert.deepStrictEqual(originalSize(1000, 8000), { w: 627, h: 5017 });
     assert.ok(!overLimits(8000, 5000) && overLimits(8001, 10) && overLimits(7000, 7000));
 });
 
@@ -427,7 +430,7 @@ test("Adjust crop of a kept original starts at its saved view, can zoom out to c
     ]);
 });
 
-test("a photo the browser can't read, or one over the limit, goes up as it is", async () => {
+test("a photo the browser can't read goes up as it is", async () => {
     const p = fakePage({ decodes: false });
     pick(p);
     await settle();
@@ -435,12 +438,30 @@ test("a photo the browser can't read, or one over the limit, goes up as it is", 
     assert.strictEqual(p.submitted.length, 1);
     assert.strictEqual(p.submitted[0].files[0].name, "IMG_1234.jpg");
     assert.strictEqual(p.submitted[0].view, "", "no view: the server cuts cover, centred");
+});
 
-    const big = fakePage();
-    pick(big, { name: "huge.jpg", size: 11 * 1024 * 1024 });
-    assert.strictEqual(big.dialog.hidden, true);
-    assert.strictEqual(big.submitted.length, 1);
-    assert.strictEqual(big.submitted[0].files[0].name, "huge.jpg");
+test("a photo over the server's 10 MB opens the dialog and goes up as its copy at the original's size", async () => {
+    const p = fakePage({ size: [4000, 3000] });
+    pick(p, { name: "huge.jpg", size: 11 * 1024 * 1024 });
+    assert.strictEqual(p.dialog.hidden, false);
+    await settle();
+    p.parts["[data-crop-save]"].fire("click");
+    await settle();
+    assert.deepStrictEqual(p.blobs, [{ type: "image/jpeg", quality: 0.95, side: 2048 }]);
+    assert.strictEqual(p.submitted.length, 1);
+    assert.strictEqual(p.submitted[0].files[0].name, "photo.jpg");
+    assert.strictEqual(p.submitted[0].view, viewText(centred(3266, 2449), 3266, 2449));
+});
+
+test("a kept original that won't load is adjusted as the stored square", async () => {
+    const p = fakePage({ decodes: false, kept: { hash: "def", view: "0,0,1,1" } });
+    p.adjust.setAttribute("data-photo-square", "/contact-photos/abc");
+    p.adjust.fire("click");
+    await settle();
+    // Both loads fail here (the fake decodes nothing): the square was tried, nothing went up.
+    assert.deepStrictEqual(p.loaded, ["/contact-photos/original/def", "/contact-photos/abc"]);
+    assert.deepStrictEqual(p.submitted, []);
+    assert.strictEqual(p.dialog.hidden, true);
 });
 
 test("without a settable file input nothing changes: the input autosaves, Adjust crop stays hidden", () => {

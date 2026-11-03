@@ -1519,15 +1519,18 @@ async fn photo_saved(
     }
 }
 
-/// A contact's kept original, if it has one.
-async fn photo_original(state: &AppState, contact_id: i64) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, Option<String>>(
-        "SELECT photo_original_hash FROM contacts WHERE id = ? AND photo_hash IS NOT NULL",
+/// A contact's kept original and the view its square was cut at, if it has one.
+async fn photo_original(
+    state: &AppState,
+    contact_id: i64,
+) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT photo_original_hash, photo_view FROM contacts WHERE id = ? AND photo_hash IS NOT NULL",
     )
     .bind(contact_id)
     .fetch_optional(&state.db)
-    .await
-    .map(Option::flatten)
+    .await?;
+    Ok(row.and_then(|(hash, view)| hash.map(|hash| (hash, view))))
 }
 
 /// Uploads a contact's photo (multipart: the file `photo`, the crop `view` - `x,y,w,h`, `photos::View` - and, for
@@ -1568,7 +1571,7 @@ pub async fn upload_photo(
         }
     };
     let refusal = |err: photos::ContactPhotoError| match err {
-        photos::ContactPhotoError::Photo(err) => err.message().to_string(),
+        photos::ContactPhotoError::Photo(err) => err.text(lang),
         photos::ContactPhotoError::View(err) => t(lang, err.key()).to_string(),
     };
 
@@ -1582,7 +1585,9 @@ pub async fn upload_photo(
                 match name.as_str() {
                     "photo" => match field.bytes().await {
                         Ok(bytes) => upload = Some(bytes),
-                        Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
+                        Err(_) => {
+                            return photo_error(&photos::PhotoError::TooLarge.text(lang)).await;
+                        }
                     },
                     "view" | "original" => match field.text().await {
                         // A hash or four numbers: anything longer is neither.
@@ -1600,7 +1605,7 @@ pub async fn upload_photo(
                 }
             }
             Ok(None) => break,
-            Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
+            Err(_) => return photo_error(&photos::PhotoError::TooLarge.text(lang)).await,
         }
     }
     let view = match view_text.as_str() {
@@ -1615,32 +1620,50 @@ pub async fn upload_photo(
     // "Adjust crop" on a kept original: only the view comes, the square is cut from the original again.
     let Some(bytes) = upload else {
         if original_text.is_empty() {
-            return photo_error(photos::PhotoError::Empty.message()).await;
+            return photo_error(&photos::PhotoError::Empty.text(lang)).await;
         }
         let Some(view) = view else {
             return photo_error(t(lang, photos::ViewError::Malformed.key())).await;
         };
         let changed = || photo_error(t(lang, "device.calls.crop.photo_changed"));
-        let original = match photo_original(&state, contact_id).await {
-            Ok(Some(original)) if original == original_text => original,
+        let (original, saved_view) = match photo_original(&state, contact_id).await {
+            Ok(Some((original, saved))) if original == original_text => (original, saved),
             Ok(_) => return changed().await,
             Err(err) => return db_error(lang, id, err),
         };
         let Some(path) = photos::path_for(&state.photo_original_dir, &original) else {
             return changed().await;
         };
-        let Ok(jpeg) = tokio::fs::read(&path).await else {
-            return changed().await;
+        let jpeg = match tokio::fs::read(&path).await {
+            Ok(jpeg) => jpeg,
+            Err(err) => {
+                // Lost while the server runs (startup's recovery would have caught it): forget it, as recovery
+                // does - the square stays and its adjust refines it again - and say so (QA photo-original L2).
+                tracing::warn!(%err, hash = original, "a contact photo's kept original is missing");
+                let forgot = {
+                    let _files = photos::lock_files().await;
+                    photos::CONTACT_ORIGINALS.forget(&state.db, &original).await
+                };
+                if let Err(err) = forgot {
+                    return db_error(lang, id, err);
+                }
+                return photo_error(t(lang, "device.calls.crop.original_lost")).await;
+            }
         };
         let cut = match photos::recut_limited(jpeg, view).await {
             Ok(cut) => cut,
             Err(err) => return photo_error(&refusal(err)).await,
         };
+        // The square that is already stored (Save without a move): nothing to commit, no phone to send it to
+        // again (QA photo-original L1). Compared as the pixels cut, so the cropper's rounding doesn't count.
+        if saved_view.as_deref() == Some(cut.view.as_str()) {
+            return Redirect::to(&contact_row(id, contact_id)).into_response();
+        }
         let result = {
             let _files = photos::lock_files().await;
             // Replaced or removed meanwhile (another tab): this view was chosen on another picture.
             match photo_original(&state, contact_id).await {
-                Ok(Some(now)) if now == original => {
+                Ok(Some((now, _))) if now == original => {
                     if let Err(err) = photos::store(&state.photo_dir, &cut.square).await {
                         tracing::error!(%err, "couldn't store a contact photo");
                         return crate::i18n::error(

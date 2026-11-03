@@ -809,6 +809,11 @@ Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one
   the pre-migration copy is a second one.
 - The weather's caches (design 75: the grid cells asked for and their place names) are in every copy too, and stay
   there after a phone's Location is set to Off, as its fixes do.
+- Since migration 0123 a backup also holds each contact photo's **kept original** (`contact_photo_originals/<hash>.jpg`:
+  the photo as uploaded, at most about 3 MP, without location or camera data, for "Adjust crop"), stored in the zip as
+  it is - a JPEG doesn't compress further. That is about 0.5-1.5 MB per contact with a photo against 30-60 KB for its
+  square: 30 photos make each zip about 30 MB, so 14 kept backups need a few hundred MB in `data/backups/` and on the
+  external drive. Removing a photo removes its original at once; the backups keep it until they are deleted.
 
 ## Removed: MollySocket and the launcher's UnifiedPush distributor
 

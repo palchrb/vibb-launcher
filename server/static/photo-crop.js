@@ -13,14 +13,17 @@
 // this script: the redirect to the contact's row, kept on the screen where it was by static/scroll-restore.js's
 // hooked form.submit() (a save never jumps to the top), or the 400 page with the reason under the photo. The
 // server turns the photo upright, keeps a downscaled original (no EXIF, GPS or camera data; never sent to a phone)
-// and cuts the 512 px square from it there. A photo over the server's decoder limits (`data-max-input-*`, a 48 MP
-// photo) goes up as its copy instead, the whole photo at the original's size drawn here as a JPEG (shrunk by halves
-// with high-quality smoothing, so it doesn't alias). Cancel empties the input and uploads nothing.
+// and cuts the 512 px square from it there. A photo over the server's upload or decoder limits (`data-max-bytes`,
+// `data-max-input-*`: a 12 MB or 48 MP photo) goes up as its copy instead, the whole photo at the original's size
+// drawn here as a JPEG (shrunk by halves with high-quality smoothing, so it doesn't alias). Cancel empties the input
+// and uploads nothing. A deep zoom gives a square under 512 px (at most 4x of a 1536 px short side is 384): never
+// enlarged, and always at least the 228 px the phone's circle needs.
 //
 // "Adjust crop" (`data-photo-adjust`, shown only here) opens the kept original (`/contact-photos/original/<hash>`,
 // `data-photo-original`) at its saved view (`data-photo-view`): it can zoom out to cover and in to the same limit,
 // and Save sends only the new view with `original` and no file - the server cuts again from its original, so a
-// re-crop can widen again and loses nothing. A photo stored before 0123 has no original: its adjust opens the stored
+// re-crop can widen again and loses nothing; an original that won't load (lost on the server) is adjusted as the
+// stored square (`data-photo-square`). A photo stored before 0123 has no original: its adjust opens the stored
 // square, a refinement of it, and uploads the new square it draws (at most `data-side`, on white) as the file, as
 // before - the server then keeps that square as the original.
 //
@@ -28,9 +31,8 @@
 // allows blob:), which applies the EXIF orientation in Chrome 81+, Firefox 77+ and Safari 13.1+ (iOS 13.4 is when
 // drawImage began to draw photos upright) - the same upright picture the server's view is in - then drawn once into
 // a working canvas of at most WORK_PIXELS, so a 10 MB photo doesn't stall every move. createImageBitmap's
-// `imageOrientation` isn't used: for a Blob in WebKit it is not documented to follow EXIF. A file over the server's
-// limit (`data-max-bytes`) or one the browser can't decode goes up as it is (no view: the server cuts cover,
-// centred), and the server says why. Without JS, or without canvas.toBlob or a settable file input, nothing here
+// `imageOrientation` isn't used: for a Blob in WebKit it is not documented to follow EXIF. A file the browser can't
+// decode goes up as it is (no view: the server cuts cover, centred, or says why). Without JS, or without canvas.toBlob or a settable file input, nothing here
 // runs and the input autosaves as before (its `data-autosave`, which this removes only where it takes over); the
 // server then keeps the original with a centred view.
 //
@@ -118,16 +120,16 @@
     }
 
     /**
-     * The size the server keeps a `w`×`h` upright photo at (`photos::original_size`): never enlarged; the long side at
-     * most `limits.long`, unless that squeezes the short side below `limits.short` - then the short side up to that,
-     * within `limits.pixels`.
+     * The size the server keeps a `w`×`h` upright photo at (`photos::original_size`): never enlarged, never over
+     * `limits.pixels` (a square photo is 1774 px); the long side at most `limits.long`, unless that squeezes the short
+     * side below `limits.short` - then the short side up to that, within the pixels.
      */
     function originalSize(w, h, limits) {
         limits = limits || ORIGINAL;
         var byLong = limits.long / Math.max(w, h);
         var byShort = limits.short / Math.min(w, h);
         var byArea = Math.sqrt(limits.pixels / (w * h));
-        var s = Math.min(1, Math.max(byLong, Math.min(byShort, byArea)));
+        var s = Math.min(1, byArea, Math.max(byLong, Math.min(byShort, byArea)));
         return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
     }
 
@@ -376,13 +378,15 @@
             file.files = transfer.files;
         }
 
-        // `from`: {picked, revoke} for a picked file, {original, view} for an adjust of a kept original, {} for
+        // `from`: {picked, revoke, big} for a picked file (`big`: over the server's upload limit), {original, view,
+        // square} for an adjust of a kept original (`square`: the stored square, if the original won't load), {} for
         // an adjust of a stored square.
         function open(input, opener, src, from) {
             var picked = !!from.picked;
             var revoke = from.revoke;
             session = {
-                input: input, opener: opener, picked: picked, original: from.original || null, saved: from.view,
+                input: input, opener: opener, picked: picked, big: !!from.big, original: from.original || null,
+                saved: from.view,
                 work: null, maxZoom: MAX_ZOOM
             };
             var mine = session;
@@ -419,9 +423,12 @@
                 if (revoke) revoke();
                 if (session !== mine) return;
                 close();
-                // A file the browser can't read goes up as it is: the server's answer says what is wrong.
+                // A file the browser can't read goes up as it is: the server's answer says what is wrong. A kept
+                // original that won't load (lost on the server) is adjusted as a stored square instead.
                 if (picked) {
                     plainUpload(input);
+                } else if (from.original && from.square) {
+                    open(input, opener, from.square, {});
                 } else if (opener && opener.focus) {
                     opener.focus();
                 }
@@ -443,14 +450,15 @@
             }
             if (s.picked) {
                 setHidden(form, viewText(s.view, s.w, s.h), "");
-                if (!overLimits(s.nw, s.nh, inputLimits)) {
+                if (!s.big && !overLimits(s.nw, s.nh, inputLimits)) {
                     // The photo itself, as picked: the server keeps its original and cuts the square.
                     submitting = true;
                     close();
                     form.submit();
                     return;
                 }
-                // Past the server's decoder: the whole photo at the original's size goes instead (never enlarged).
+                // Past the server's upload or decoder limits: the whole photo at the original's size goes instead
+                // (never enlarged).
                 var kept = originalSize(s.nw, s.nh, originalLimits);
                 var cw = Math.min(kept.w, s.w);
                 var ch = Math.min(kept.h, s.h);
@@ -619,12 +627,12 @@
                 if (session || submitting) return;
                 var file = input.files && input.files[0];
                 if (!file) return;
-                if (file.size > maxBytes) {
-                    plainUpload(input);
-                    return;
-                }
                 var url = win.URL.createObjectURL(file);
-                open(input, input, url, { picked: true, revoke: function () { win.URL.revokeObjectURL(url); } });
+                open(input, input, url, {
+                    picked: true,
+                    big: file.size > maxBytes,
+                    revoke: function () { win.URL.revokeObjectURL(url); }
+                });
             });
         });
 
@@ -637,7 +645,8 @@
                 if (session || submitting) return;
                 open(file, button, button.getAttribute("data-photo-adjust"), {
                     original: button.getAttribute("data-photo-original"),
-                    view: button.getAttribute("data-photo-view")
+                    view: button.getAttribute("data-photo-view"),
+                    square: button.getAttribute("data-photo-square")
                 });
             });
         });

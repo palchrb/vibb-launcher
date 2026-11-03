@@ -16,7 +16,7 @@
 //!
 //! A contact photo also keeps a downscaled original ([CONTACT_ORIGINALS], migration 0123; the user, 2026-11-03):
 //! [process_contact] turns the upload upright, shrinks it to [original_size] (at most [ORIGINAL_LONG] on the long
-//! side, a panorama's short side kept up to [ORIGINAL_SHORT] within [ORIGINAL_PIXELS]) and re-encodes it as JPEG -
+//! side and [ORIGINAL_PIXELS] in all; a panorama keeps its short side up to [ORIGINAL_SHORT]) and re-encodes it as JPEG -
 //! no EXIF, GPS or camera data, as every stored picture - then cuts the contact's square from it at the parent's
 //! [View] (validated by [view_square]). "Adjust crop" sends only a new view and [recut] cuts again from that
 //! original, so a re-crop can widen again and never loses a generation. The original is the parent's alone: served
@@ -51,7 +51,7 @@ const MAX_STORED_BYTES: u64 = 2 * 1024 * 1024;
 pub const ORIGINAL_LONG: u32 = 2048;
 /// ...unless that would squeeze a panorama's short side below this (as far as [ORIGINAL_PIXELS] allows).
 pub const ORIGINAL_SHORT: u32 = 1024;
-/// The original's pixels at most: a 4:3 photo at [ORIGINAL_LONG].
+/// The original's pixels at most, whatever its shape: a 4:3 photo at [ORIGINAL_LONG] (a square one is 1774 px).
 pub const ORIGINAL_PIXELS: u64 = 2048 * 1536;
 /// The original is the source of every later cut: a little finer than the square's [JPEG_QUALITY].
 const ORIGINAL_QUALITY: u8 = 90;
@@ -224,20 +224,33 @@ pub enum Shape {
 }
 
 impl PhotoError {
-    /// Parent-facing text for the calls page.
-    pub fn message(&self) -> &'static str {
+    /// The i18n key of the parent-facing line (`photo.error.*`, en + nb).
+    pub fn key(&self) -> &'static str {
         match self {
-            PhotoError::Empty => "Choose a photo first.",
-            PhotoError::TooLarge => "That photo is too big (at most 10 MB).",
-            PhotoError::UnsupportedType => "Use a JPEG, PNG or WebP photo.",
-            PhotoError::TooManyPixels => {
-                "That photo has too many pixels (at most 40 megapixels and 8000 pixels a side)."
-            }
-            PhotoError::Undecodable => "That photo couldn't be read - try another one.",
-            PhotoError::TooDetailed => {
-                "That photo is too detailed to send to a phone (over 3 MB as a wallpaper) - try another one."
-            }
+            PhotoError::Empty => "photo.error.empty",
+            PhotoError::TooLarge => "photo.error.too_large",
+            PhotoError::UnsupportedType => "photo.error.unsupported_type",
+            PhotoError::TooManyPixels => "photo.error.too_many_pixels",
+            PhotoError::Undecodable => "photo.error.undecodable",
+            PhotoError::TooDetailed => "photo.error.too_detailed",
         }
+    }
+
+    /// The parent-facing line in `lang`, the limits filled in from the constants.
+    pub fn text(&self, lang: crate::i18n::Lang) -> String {
+        let mb = |bytes: usize| (bytes / (1024 * 1024)).to_string();
+        let (upload, wallpaper) = (mb(MAX_UPLOAD_BYTES), mb(MAX_WALLPAPER_BYTES));
+        let (mp, side) = (
+            (MAX_INPUT_PIXELS / 1_000_000).to_string(),
+            MAX_INPUT_SIDE.to_string(),
+        );
+        let params: &[(&str, &str)] = match self {
+            PhotoError::TooLarge => &[("mb", &upload)],
+            PhotoError::TooManyPixels => &[("mp", &mp), ("side", &side)],
+            PhotoError::TooDetailed => &[("mb", &wallpaper)],
+            _ => &[],
+        };
+        crate::i18n::t_params(lang, self.key(), params)
     }
 }
 
@@ -373,16 +386,17 @@ fn encode_jpeg(rgb: &image::RgbImage, quality: u8) -> Result<ProcessedPhoto, Pho
     Ok(ProcessedPhoto { jpeg, hash })
 }
 
-/// The size a contact photo's original is kept at, from its upright `w`×`h`: never enlarged; the long side at most
-/// [ORIGINAL_LONG], unless that squeezes the short side below [ORIGINAL_SHORT] (a panorama, a banner) - then the
-/// short side is kept up to [ORIGINAL_SHORT], within [ORIGINAL_PIXELS]. The cropper mirrors it
+/// The size a contact photo's original is kept at, from its upright `w`×`h`: never enlarged, never over
+/// [ORIGINAL_PIXELS] (applied last, so a square photo is 1774×1774); the long side at most [ORIGINAL_LONG], unless
+/// that squeezes the short side below [ORIGINAL_SHORT] (a panorama, a banner) - then the short side is kept up to
+/// [ORIGINAL_SHORT] and the long side may pass [ORIGINAL_LONG], within the pixels. The cropper mirrors it
 /// (`static/photo-crop.js`, `originalSize`) for its zoom limit.
 pub fn original_size(w: u32, h: u32) -> (u32, u32) {
     let (wf, hf) = (f64::from(w.max(1)), f64::from(h.max(1)));
     let by_long = f64::from(ORIGINAL_LONG) / wf.max(hf);
     let by_short = f64::from(ORIGINAL_SHORT) / wf.min(hf);
     let by_area = (ORIGINAL_PIXELS as f64 / (wf * hf)).sqrt();
-    let scale = by_long.max(by_short.min(by_area)).min(1.0);
+    let scale = by_long.max(by_short.min(by_area)).min(by_area).min(1.0);
     let side = |n: f64| ((n * scale).round() as u32).max(1);
     (side(wf), side(hf))
 }
@@ -855,6 +869,15 @@ impl Store {
         }
     }
 
+    /// Forgets `hash` in the database as a lost file is forgotten ([Store::recover_missing]). The caller holds the
+    /// store's lock.
+    pub async fn forget(&self, db: &sqlx::SqlitePool, hash: &str) -> Result<(), sqlx::Error> {
+        for sql in self.forget_sql {
+            sqlx::query(sql).bind(hash).execute(db).await?;
+        }
+        Ok(())
+    }
+
     /// Adds every stored file to a backup zip under this store's prefix (blocking).
     /// Content-addressed, so a file is the same in every backup that has it.
     pub fn add_to_zip<W: std::io::Write + std::io::Seek>(
@@ -1163,6 +1186,10 @@ mod tests {
         // The cropper's mirror (`originalSize`, jstest/photo-crop.test.js) pins the same rows.
         assert_eq!(original_size(4000, 3000), (2048, 1536));
         assert_eq!(original_size(4000, 2250), (2048, 1152));
+        // The pixels are capped last: a square photo, a banner whose long side stays (QA photo-original L3).
+        assert_eq!(original_size(4000, 4000), (1774, 1774));
+        assert_eq!(original_size(300, 8000), (300, 8000));
+        assert_eq!(original_size(1000, 8000), (627, 5017));
         assert_eq!(original_size(8000, 1000), (5017, 627));
         assert_eq!(original_size(600, 600), (600, 600));
         assert_eq!(original_size(1, 1), (1, 1));

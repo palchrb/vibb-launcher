@@ -2840,20 +2840,20 @@ pub async fn upload_cover(
             Ok(Some(field)) if field.name() == Some("cover") => match field.bytes().await {
                 Ok(bytes) => image = Some(bytes),
                 Err(_) => {
-                    let entered = refuse(photos::PhotoError::TooLarge.message());
+                    let entered = refuse(&photos::PhotoError::TooLarge.text(lang));
                     return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
                 }
             },
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(_) => {
-                let entered = refuse(photos::PhotoError::TooLarge.message());
+                let entered = refuse(&photos::PhotoError::TooLarge.text(lang));
                 return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
             }
         }
     }
     let Some(bytes) = image else {
-        let entered = refuse(photos::PhotoError::Empty.message());
+        let entered = refuse(&photos::PhotoError::Empty.text(lang));
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     };
     let processed = match photos::process_limited(bytes, Shape::Square).await {
@@ -2863,7 +2863,7 @@ pub async fn upload_cover(
                 &state,
                 id,
                 StatusCode::BAD_REQUEST,
-                refuse(err.message()),
+                refuse(&err.text(lang)),
                 lang,
             )
             .await;
