@@ -29,7 +29,8 @@
 //   (`loginReturn`; never off this origin); a ping redirected to the login asks it too.
 // - the app lock (design 74 D3.3-D3.4): before the return reload, a restart or the reload in place another script asks
 //   for, `window.handyLock.due()` (static/app-lock.js) is asked, and a due lock goes to /lock instead; a ping or the
-//   sign-in page's session check answered 423 (the server's lock) goes there too.
+//   sign-in page's session check answered 423 (the server's lock) goes there too. The lock screen itself is left alone
+//   on a return (its own showing asks for the passkey, passkey.js), and the way to the lock from it keeps its `next`.
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
 // WebView 80, iOS Safari 14). Run its tests: node --test jstest/reconnect.test.js
 (function (root) {
@@ -166,6 +167,16 @@
      * hides the page first), else the address itself.
      */
     function toLock(win, next) {
+        // From the lock screen itself: its own `next`, never `/lock?next=/lock?…` (which the server refuses, and the
+        // unlock would end on Devices - qa-lock-auto L2).
+        if (/^\/lock(?:[?#]|$)/.test(next || "")) {
+            var own = /[?&]next=([^&#]*)/.exec(next);
+            try {
+                next = own ? decodeURIComponent(own[1].replace(/\+/g, " ")) : "";
+            } catch (e) {
+                next = "";
+            }
+        }
         var lock = win.handyLock;
         if (lock && typeof lock.lock === "function") {
             lock.lock(next);
@@ -721,6 +732,10 @@
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
             hiddenAt = null;
+            // The lock screen is left alone on a return: its own showing asks for the passkey (passkey.js), and a
+            // reload or the 423's way to the lock would replace the page under that prompt (qa-lock-auto M2). A dead
+            // session shows there as /lock/options' 401.
+            if (win.location.pathname === "/lock") return;
             // Back after the lock's time (design 74 D3.3): the lock, before any return reload.
             if (lockDue(win)) {
                 end();

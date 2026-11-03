@@ -20,13 +20,14 @@
 // - Step 3, the app lock: the lock screen (`#unlock`, `[data-passkey-unlock]`, D3.5; the user's pick A "Pust",
 //   2026-11-03) is one button the size of the screen. Each showing asks once on its own (an `unlock` challenge from
 //   `POST /lock/options` with `hint` = localStorage `handy-lock-passkey`, the passkey this browser unlocked with last),
-//   so iOS's own passkey sheet is the only tap; cancelled, timed out or refused (no gesture: Safari gives a tab one
-//   get without one), it stays quiet and the tap asks with every passkey. A tap's cancel or failure, or a refused
-//   unlock, shows the red line and the hint "Tap to try again". The tap's challenge is fetched ahead, so its prompt
-//   opens within the tap (iOS needs the gesture); a tap while the automatic try waits aborts it. The assertion is
-//   posted to `/lock`, the page replaced with the answer's `next`. Account's "Lock with Face ID" (`[data-app-lock]`,
-//   D3.2): a change runs a re-auth assertion for `/account/lock` first (its challenge fetched on the first touch of
-//   the control), then the form is sent; a cancel puts the control back. A 423 (the server's lock) goes to /lock and ends the flow there.
+//   so iOS's own passkey sheet is the only tap; cancelled, timed out, refused (no gesture: Safari gives a tab one get
+//   without one) or without its options, it stays quiet and the tap asks with every passkey. A tap's cancel or failure,
+//   or a refused unlock, shows the red line and the hint "Tap to try again". The tap's challenge is fetched ahead, so
+//   its prompt opens within the tap (iOS needs the gesture); a tap while the automatic try waits aborts it. The
+//   assertion is posted to `/lock`, the page replaced with the answer's `next`. Account's "Lock with Face ID"
+//   (`[data-app-lock]`, D3.2): a change runs a re-auth assertion for `/account/lock` first (its challenge fetched on
+//   the first touch of the control), then the form is sent; a cancel puts the control back. A 423 (the server's lock)
+//   goes to /lock and ends the flow there.
 // A cancelled prompt (`NotAllowedError`, `AbortError`) is the browser's and sends nothing (D1.5). The words come from
 // the page (`data-w-*`, design 70 §5.3). ES5 with promises, no framework. Tests: node --test jstest/passkey.test.js
 (function (root) {
@@ -520,15 +521,16 @@
     }
 
     // The lock screen (§6.5, D3.5; the user's pick A "Pust", 2026-11-03): the whole screen is the button. Each showing
-    // asks once on its own - on load while visible, else the first time it is shown, and again after it was hidden (with
-    // no try open) or back from the back-forward cache - with the passkey this browser used last when there is one, so
-    // iOS's own passkey sheet is the only tap (the user 2026-11-03: the tap first only added one). Cancelled, timed out
-    // or refused for want of a gesture, it stays quiet: "Tap anywhere to unlock" stays, and the tap asks
-    // with every passkey of the parent's (one removed or lost never strands the parent); a tap's own cancel or failure,
-    // or a refused unlock, shows the red line and the hint "Tap to try again". The tap's challenge is always fetched
-    // ahead, so its prompt opens within the gesture. Safari (16 on) gives each tab one `credentials.get` without a gesture
-    // and refuses the later ones (NotAllowedError; Apple in w3c/webauthn#1293, 2022-10-21: "Each tab gets a 'freebie'
-    // attempt"), so a showing after the first in the same document may well be refused: quiet, and the tap works.
+    // asks once on its own - on load while visible, else the first time it is shown, and again after it was hidden
+    // (with no try open) or back from the back-forward cache - with the passkey this browser used last when there is
+    // one, so iOS's own passkey sheet is the only tap (the user 2026-11-03: the tap first only added one). Cancelled,
+    // timed out, refused for want of a gesture or without its options (the network back late, the server refusing), it
+    // stays quiet: "Tap anywhere to unlock" stays, and the tap asks with every passkey of the parent's (one removed or
+    // lost never strands the parent); a tap's own cancel or failure, or a refused unlock, shows the red line and the
+    // hint "Tap to try again". The tap's challenge is always fetched ahead, so its prompt opens within the gesture.
+    // Safari (16 on) gives each tab one `credentials.get` without a gesture and refuses the later ones
+    // (NotAllowedError; Apple in w3c/webauthn#1293, 2022-10-21: "Each tab gets a 'freebie' attempt"), so a showing
+    // after the first in the same document may well be refused: quiet, and the tap works.
     function installUnlock(win, form) {
         var button = form.querySelector("[data-passkey-unlock-button]");
         var error = form.querySelector("[data-passkey-error]");
@@ -608,15 +610,18 @@
             }, function (err) {
                 if (open !== running) return;
                 open = null;
-                // No gesture, a cancel or a timeout of the automatic try: quiet - the tap is there.
-                if (auto && cancelled(err)) return prefetch();
+                // The automatic try before its answer - no gesture, a cancel, a timeout, or options that didn't come
+                // (the network back late, the server refusing): quiet, the tap is there. Answered, a failure is a try.
+                if (running.auto) return prefetch();
                 failed(err && err.name === "refused" ? err.message : "");
             });
         }
+        // True when it started one.
         function autoStart() {
-            if (autoTried || open || !visible()) return;
+            if (autoTried || open || !visible()) return false;
             autoTried = true;
             start(first, true);
+            return true;
         }
         // The tap (a click: Enter and Space too): the prompt at once, within the gesture, with every passkey.
         button.addEventListener("click", function () {
@@ -628,18 +633,22 @@
         });
         autoStart();
         prefetch();
-        // On screen for long (a tablet on a stand): fresh options before the ready ones age out.
+        // On screen for long (a tablet on a stand): fresh options before the ready ones age out (the old ones stay
+        // ready until the new ones come, so a tap meanwhile still prompts within the gesture).
+        function renew() {
+            every.fetch().then(null, function () {});
+        }
         function refresh() {
-            if (visible()) {
-                every.spend();
-                prefetch();
-            }
+            if (visible()) renew();
             if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
         }
         if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
         // A page shown again (a phone holds a hidden one, or back from the back-forward cache). With a try open: it may
         // never settle now, so the next tap may replace it, and nothing starts on its own. Else a new showing (`fresh`:
-        // the page went away with no try open) gets its automatic try, the red line of the last one cleared.
+        // the page went away with no try open) gets its automatic try, the red line of the last one cleared. Its
+        // challenge is a new one on the server, which keeps a session's 8 newest (passkeys::PER_SESSION): the tap's
+        // is fetched anew after it, so repeated showings never leave the tap a challenge the server dropped
+        // (qa-lock-auto M1).
         function shown(fresh) {
             if (open) open.stale = true;
             else if (fresh) {
@@ -647,8 +656,8 @@
                 show(error, "");
                 if (hintLine) hintLine.textContent = hintText;
             }
-            autoStart();
-            prefetch();
+            if (autoStart()) renew();
+            else prefetch();
         }
         // Hidden or put in the back-forward cache (an older Safari fires only `pagehide` there), and shown again: the
         // first of `visibilitychange` and `pageshow` takes the new showing, so it asks once.

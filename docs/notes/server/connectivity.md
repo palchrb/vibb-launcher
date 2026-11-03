@@ -408,12 +408,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   sheet that hides the page while its try is open is no new showing, so a cancel there never loops. The automatic try
   asks with `hint` = the passkey this browser unlocked with last (localStorage `handy-lock-passkey`, its `rawId`, kept
   after an unlock): `handlers::lock::offered` narrows `allowCredentials` to it only when it is one of the parent's
-  passkeys here, else all (another parent's, unknown, junk, over the route's 1 KiB). Cancelled, timed out or refused
-  for want of a gesture it stays quiet: no red line, "Tap anywhere to unlock" stays. Safari (16 on) gives each tab one
+  passkeys here, else all (another parent's, unknown, junk, over the route's 1 KiB). Cancelled, timed out, refused
+  for want of a gesture, or without its options (a fetch that fails - the network back late - or the server refusing
+  them) it stays quiet: no red line, "Tap anywhere to unlock" stays; anything before its answer is quiet, a failure
+  after it (the unlock's post) is a try. Safari (16 on) gives each tab one
   `credentials.get` without a gesture and refuses the later ones with `NotAllowedError` (Apple in w3c/webauthn#1293,
   2022-10-21: "Each tab gets a 'freebie' attempt"), so the automatic try of a later showing in the same document may be
   refused - quietly, and the tap works. The tap always asks with every passkey (a removed or lost one never strands the
-  parent); its challenge is fetched ahead, so its prompt opens within the tap. A tap's cancel or failure, or a refused
+  parent); its challenge is fetched ahead, so its prompt opens within the tap, and fetched anew after every automatic
+  try's (the old options stay ready until the new ones come; the 3.5-minute refresh the same): the server keeps a
+  session's 8 newest challenges (`passkeys::PER_SESSION`), so many showings never leave the tap one it dropped
+  (qa-lock-auto M1). reconnect.js does nothing on `/lock` on a return (its ping's 423 would replace the page under the
+  automatic prompt; a dead session shows as `/lock/options`' 401), and its way to the lock from a `/lock` address keeps
+  that address's own `next`. A tap's cancel or failure, or a refused
   unlock (the automatic try's too), shows the red line over the hint, which turns to "Tap to try again"; the next
   showing clears both. A tap while the automatic try waits for its answer aborts it (its end is then ignored) and asks
   itself - never two prompts; a tap while a tap's try is open, or while an answered one posts, is dropped, unless the
