@@ -170,8 +170,12 @@
                         <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo#contact-{{ contact.id }}" enctype="multipart/form-data">
                             <label class="row">
                                 <span class="row-label">{% if contact.photo.is_some() %}{{ self.t("device.calls.new_photo") }}{% else %}{{ self.t("device.calls.add_photo") }}{% endif %}</span>
-                                <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "photo" %} aria-invalid="true" aria-describedby="photo-{{ contact.id }}-error"{% endif %}{% endif %}>
+                                <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave data-photo-crop{% if let Some((field, _)) = contact.error %}{% if *field == "photo" %} aria-invalid="true" aria-describedby="photo-{{ contact.id }}-error"{% endif %}{% endif %}>
                             </label>
+                            {% if let Some(photo) = contact.photo %}
+                            {#- The stored square in the crop dialog again (static/photo-crop.js shows it; nothing without JS). -#}
+                            <button type="button" class="row row-button" data-photo-adjust="/contact-photos/{{ photo }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
+                            {% endif %}
                             {% if let Some((field, why)) = contact.error %}{% if *field == "photo" %}<p class="field-error contact-photo-error" id="photo-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% endif %}
                             <noscript><button type="submit" class="row row-button">{{ self.t("device.calls.upload") }}</button></noscript>
                         </form>
@@ -229,6 +233,32 @@
     {% if auto_refresh %}
     <script src="/static/auto-reload.js?v=5" defer></script>
     {% endif %}
+    {% if !contacts.is_empty() %}
+    <script src="/static/photo-crop.js?v=1" defer></script>
+    {% endif %}
 </main>
+{#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s stored one, in the phone's
+    circle; Save puts the square into the contact's file input and submits its form. Outside <main>, so a touch on
+    it never scrolls the page. Hidden for good without JS. -#}
+{% if !contacts.is_empty() %}
+<div class="crop-backdrop" data-crop-dialog data-side="{{ crate::photos::MAX_SIDE }}" data-max-bytes="{{ crate::photos::MAX_UPLOAD_BYTES }}" hidden>
+    <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title" aria-describedby="crop-hint">
+        <h2 class="crop-title" id="crop-title">{{ self.t("device.calls.crop.title") }}</h2>
+        <p class="crop-hint" id="crop-hint">{{ self.t("device.calls.crop.hint") }}</p>
+        <div class="crop-frame" data-crop-frame tabindex="0" role="application" aria-label="{{ self.t("device.calls.crop.frame") }}">
+            <canvas class="crop-canvas" data-crop-canvas></canvas>
+            <div class="crop-mask" aria-hidden="true"></div>
+        </div>
+        <label class="crop-zoom">
+            <span>{{ self.t("device.calls.crop.zoom") }}</span>
+            <input type="range" min="1" max="4" step="0.01" value="1" data-crop-zoom>
+        </label>
+        <div class="crop-actions">
+            <button type="button" class="button-secondary" data-crop-cancel>{{ self.t("common.cancel") }}</button>
+            <button type="button" data-crop-save>{{ self.t("common.save") }}</button>
+        </div>
+    </div>
+</div>
+{% endif %}
 </body>
 </html>

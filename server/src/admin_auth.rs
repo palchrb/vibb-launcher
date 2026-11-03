@@ -854,7 +854,7 @@ fn normalize_host(host: &str) -> String {
 /// `/static` - no template has an inline script or an `on*=` handler
 /// (`tests::admin_auth::no_template_has_inline_script`). Inline styles stay allowed.
 pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; \
      connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; \
      object-src 'none'";
 
