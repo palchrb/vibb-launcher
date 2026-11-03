@@ -1091,46 +1091,28 @@ impl LoginOutcome {
 
     /// The page's line for a `?login=` code (`ok` names the newest account), and whether it is
     /// good news. `None` for an unknown code.
-    pub fn text(code: &str, newest: Option<&str>) -> Option<(String, bool)> {
+    pub fn text(
+        lang: crate::i18n::Lang,
+        code: &str,
+        newest: Option<&str>,
+    ) -> Option<(String, bool)> {
+        use crate::i18n::{t, t_params};
+        let bad = |key: &str| (t(lang, key).to_string(), false);
         Some(match code {
             "ok" => (
                 match newest {
-                    Some(name) => format!("Logged in as {name}."),
-                    None => "Logged in.".to_string(),
+                    Some(name) => t_params(lang, "music.login.ok_as", &[("name", name)]),
+                    None => t(lang, "music.login.ok").to_string(),
                 },
                 true,
             ),
-            "cancelled" => ("Spotify login cancelled.".to_string(), false),
-            "not_registered" => (
-                "Spotify refused this account for your app: add it under User Management in the \
-                 dashboard (name and e-mail), then log in again."
-                    .to_string(),
-                false,
-            ),
-            "refused" => (
-                "Spotify refused the login - check that the Client ID and the Redirect URI here \
-                 are exactly the ones in your app's settings, then log in again."
-                    .to_string(),
-                false,
-            ),
-            "unreachable" => (
-                "Spotify couldn't be reached - log in again in a moment.".to_string(),
-                false,
-            ),
-            "expired" => (
-                "That login wasn't started in this browser, was started at another address of \
-                 this server, was already used, or took longer than 10 minutes - log in again."
-                    .to_string(),
-                false,
-            ),
-            "off" => (
-                "Spotify isn't set up on this server any more - nothing was stored.".to_string(),
-                false,
-            ),
-            "error" => (
-                "The login couldn't be saved - check the server log.".to_string(),
-                false,
-            ),
+            "cancelled" => bad("music.login.cancelled"),
+            "not_registered" => bad("music.login.not_registered"),
+            "refused" => bad("music.login.refused"),
+            "unreachable" => bad("music.login.unreachable"),
+            "expired" => bad("music.login.expired"),
+            "off" => bad("music.login.off"),
+            "error" => bad("music.login.error"),
             _ => return None,
         })
     }

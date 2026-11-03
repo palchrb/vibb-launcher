@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::music::{NEXT_SORT, log_event, nudge, render_import, server_error};
 use crate::AppState;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, t, t_count, t_params};
 use crate::music::{self, MusicCategory};
 use crate::music_import::{self, MAX_IMPORT_BYTES, Section};
 use crate::security::CurrentAdmin;
@@ -72,24 +72,28 @@ pub struct PreviewRow {
     pub reason: Option<String>,
 }
 
-fn order_text(order: &str) -> &'static str {
-    match order {
-        "newest_first" => "newest first",
-        "oldest_first" => "oldest first",
-        _ => "natural order",
-    }
+fn order_text(lang: Lang, order: &str) -> &'static str {
+    t(
+        lang,
+        match order {
+            "newest_first" => "music.import.order.newest_first",
+            "oldest_first" => "music.import.order.oldest_first",
+            _ => "music.import.order.natural",
+        },
+    )
 }
 
-fn cache_text(source: &str, cache: i64) -> String {
+fn cache_text(lang: Lang, source: &str, cache: i64) -> String {
+    let n = cache.to_string();
     match cache {
         // Spotify streams (design 26c §3.2).
-        _ if source == "spotify" => "streamed, on no phone yet".to_string(),
+        _ if source == "spotify" => t(lang, "music.import.cache.streamed").to_string(),
         // Storytel is download-only (design 26b §2.6): the first N books in reading order.
-        -1 if source == "storytel" => "every book downloaded".to_string(),
-        n if source == "storytel" => format!("the first {n} books downloaded"),
-        -1 => "all kept offline".to_string(),
-        0 => "nothing kept offline".to_string(),
-        n => format!("newest {n} kept offline"),
+        -1 if source == "storytel" => t(lang, "music.import.cache.every_book").to_string(),
+        _ if source == "storytel" => t_params(lang, "music.import.cache.first_books", &[("n", &n)]),
+        -1 => t(lang, "music.import.cache.all").to_string(),
+        0 => t(lang, "music.import.cache.nothing").to_string(),
+        _ => t_params(lang, "music.import.cache.newest", &[("n", &n)]),
     }
 }
 
@@ -100,9 +104,9 @@ fn default_choice(categories: &[MusicCategory], section: &str) -> String {
         .unwrap_or_else(|| "new".to_string())
 }
 
-fn section_label(section: &Section) -> String {
+fn section_label(lang: Lang, section: &Section) -> String {
     if section.name.is_empty() {
-        "(a section without a name)".to_string()
+        t(lang, "music.import.unnamed_section").to_string()
     } else {
         section.name.clone()
     }
@@ -138,6 +142,7 @@ async fn preview_card(
     state: &AppState,
     mut sections: Vec<Section>,
     error: Option<String>,
+    lang: Lang,
 ) -> Result<ImportCard, sqlx::Error> {
     let mut conn = state.db.acquire().await?;
     let existing = existing(&mut conn).await?;
@@ -170,14 +175,20 @@ async fn preview_card(
                             (
                                 format!(
                                     "{} · {} · {} · {}",
-                                    music::kind_label(candidate.source, Some(&candidate.target)),
-                                    order_text(&candidate.order),
-                                    cache_text(candidate.source, candidate.cache),
-                                    if candidate.resume {
-                                        "continues where it stopped"
-                                    } else {
-                                        "starts from the beginning"
-                                    }
+                                    t(
+                                        lang,
+                                        music::kind_key(candidate.source, Some(&candidate.target))
+                                    ),
+                                    order_text(lang, &candidate.order),
+                                    cache_text(lang, candidate.source, candidate.cache),
+                                    t(
+                                        lang,
+                                        if candidate.resume {
+                                            "music.import.resume"
+                                        } else {
+                                            "music.import.from_start"
+                                        }
+                                    )
                                 ),
                                 None,
                             )
@@ -190,7 +201,7 @@ async fn preview_card(
                     PreviewRow {
                         value: format!("{s}.{r}"),
                         name: if row.name.is_empty() {
-                            "(no name)".to_string()
+                            t(lang, "music.import.no_name").to_string()
                         } else {
                             row.name.clone()
                         },
@@ -202,7 +213,7 @@ async fn preview_card(
                 .collect();
             PreviewSection {
                 index: s,
-                name: section_label(section),
+                name: section_label(lang, section),
                 new_name: music_import::new_category_name(&section.name),
                 selected: default_choice(&categories, &section.name),
                 importable: rows.iter().filter(|r| r.reason.is_none()).count(),
@@ -237,32 +248,29 @@ pub async fn preview(
     lang: Lang,
     mut multipart: Multipart,
 ) -> Response {
-    const TOO_BIG: &str =
-        "That file is over 1 MB - a Vibb library is much smaller. Pick the box's library.json.";
+    let too_big = || refused(t(lang, "music.import.too_big"));
     let mut bytes = None;
     loop {
         match multipart.next_field().await {
             Ok(Some(field)) if field.name() == Some("library") => match field.bytes().await {
                 Ok(read) => bytes = Some(read),
                 Err(_) => {
-                    return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang)
-                        .await;
+                    return render_import(&state, StatusCode::BAD_REQUEST, too_big(), lang).await;
                 }
             },
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(_) => {
-                return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang)
-                    .await;
+                return render_import(&state, StatusCode::BAD_REQUEST, too_big(), lang).await;
             }
         }
     }
     let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
-        let card = refused("Choose the library file first.");
+        let card = refused(t(lang, "music.import.choose_file"));
         return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
     };
     if bytes.len() > MAX_IMPORT_BYTES {
-        return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang).await;
+        return render_import(&state, StatusCode::BAD_REQUEST, too_big(), lang).await;
     }
     let sections = match music_import::parse(&bytes) {
         Ok(sections) => sections,
@@ -270,9 +278,9 @@ pub async fn preview(
             return render_import(&state, StatusCode::BAD_REQUEST, refused(error), lang).await;
         }
     };
-    match preview_card(&state, sections, None).await {
+    match preview_card(&state, sections, None, lang).await {
         Ok(card) => render_import(&state, StatusCode::OK, card, lang).await,
-        Err(err) => server_error(err, "couldn't preview a Vibb import"),
+        Err(err) => server_error(lang, err, "couldn't preview a Vibb import"),
     }
 }
 
@@ -333,13 +341,13 @@ pub async fn confirm(
         }
     }
     let Some(doc) = doc.filter(|d| d.len() <= MAX_IMPORT_BYTES) else {
-        let card = refused("The preview was lost - choose the file and preview it again.");
+        let card = refused(t(lang, "music.import.preview_lost"));
         return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
     };
     let mut sections = match music_import::parse(doc.as_bytes()) {
         Ok(sections) => sections,
         Err(_) => {
-            let card = refused("The preview was lost - choose the file and preview it again.");
+            let card = refused(t(lang, "music.import.preview_lost"));
             return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
         }
     };
@@ -347,18 +355,14 @@ pub async fn confirm(
         let state = state.clone();
         let error = error.to_string();
         async move {
-            match preview_card(&state, sections, Some(error)).await {
+            match preview_card(&state, sections, Some(error), lang).await {
                 Ok(card) => render_import(&state, StatusCode::BAD_REQUEST, card, lang).await,
-                Err(err) => server_error(err, "couldn't preview a Vibb import"),
+                Err(err) => server_error(lang, err, "couldn't preview a Vibb import"),
             }
         }
     };
     if malformed {
-        return again(
-            "That form wasn't filled in as expected - try again.",
-            sections,
-        )
-        .await;
+        return again(t(lang, "music.import.malformed"), sections).await;
     }
     let file = sections.clone();
 
@@ -387,9 +391,7 @@ pub async fn confirm(
             .into_iter()
             .collect();
         if phones.iter().any(|p| !known.contains(p)) {
-            return Ok(Err(
-                "That phone doesn't exist any more - pick the phones again.",
-            ));
+            return Ok(Err("music.import.phone_gone"));
         }
         // A category per section with something to add; "New: <section>" made once per name.
         let mut section_category: HashMap<usize, i64> = HashMap::new();
@@ -435,9 +437,7 @@ pub async fn confirm(
                 match choice.parse::<i64>() {
                     Ok(id) if categories.iter().any(|c| c.id == id) => id,
                     _ => {
-                        return Ok(Err(
-                            "That category doesn't exist any more - pick another one.",
-                        ));
+                        return Ok(Err("music.import.category_gone"));
                     }
                 }
             };
@@ -581,8 +581,8 @@ pub async fn confirm(
     .await;
     let done = match outcome {
         Ok(Ok(done)) => done,
-        Ok(Err(error)) => return again(error, file).await,
-        Err(err) => return server_error(err, "couldn't import a Vibb library"),
+        Ok(Err(error)) => return again(t(lang, error), file).await,
+        Err(err) => return server_error(lang, err, "couldn't import a Vibb library"),
     };
 
     let phone_names: HashMap<i64, String> =
@@ -591,13 +591,13 @@ pub async fn confirm(
             .await
         {
             Ok(rows) => rows.into_iter().collect(),
-            Err(err) => return server_error(err, "couldn't read the phones"),
+            Err(err) => return server_error(lang, err, "couldn't read the phones"),
         };
-    let result = describe(&sections, &wanted, &done, &phone_names);
+    let result = describe(lang, &sections, &wanted, &done, &phone_names);
     nudge(&state, &done.ticked_phones);
     // The sweep fills the new entries in the background (design 21b §7).
     state.music_sweep.wake();
-    let skipped = skipped_rows(&sections, &done.as_previewed, &wanted).len();
+    let skipped = skipped_rows(lang, &sections, &done.as_previewed, &wanted).len();
     log_event(
         &state,
         &admin,
@@ -622,6 +622,7 @@ pub async fn confirm(
 /// confirm found it, an unticked one as the preview showed it (no tick there means it was
 /// skipped). A row the parent unticked isn't "skipped".
 fn skipped_rows(
+    lang: Lang,
     sections: &[Section],
     as_previewed: &[Section],
     wanted: &HashSet<(usize, usize)>,
@@ -638,13 +639,13 @@ fn skipped_rows(
                 continue;
             };
             let name = if row.name.is_empty() {
-                "(no name)"
+                t(lang, "music.import.no_name")
             } else {
                 row.name.as_str()
             };
             lines.push(format!(
                 "{} / {name}: {}",
-                section_label(section),
+                section_label(lang, section),
                 skip.reason()
             ));
         }
@@ -653,12 +654,13 @@ fn skipped_rows(
 }
 
 fn describe(
+    lang: Lang,
     sections: &[Section],
     wanted: &HashSet<(usize, usize)>,
     done: &Done,
     phone_names: &HashMap<i64, String>,
 ) -> ImportResult {
-    let skipped = skipped_rows(sections, &done.as_previewed, wanted);
+    let skipped = skipped_rows(lang, sections, &done.as_previewed, wanted);
     let left_out = done
         .as_previewed
         .iter()
@@ -676,57 +678,85 @@ fn describe(
         phone_names
             .get(id)
             .cloned()
-            .unwrap_or_else(|| format!("phone {id}"))
+            .unwrap_or_else(|| t_params(lang, "music.import.phone_n", &[("id", &id.to_string())]))
     };
     let mut summary = if done.added.is_empty() {
         if skipped.is_empty() {
-            "Nothing was imported.".to_string()
+            t(lang, "music.import.result.nothing").to_string()
         } else {
-            "Nothing new to import.".to_string()
+            t(lang, "music.import.result.nothing_new").to_string()
         }
     } else {
-        let mut text = format!(
-            "Imported {} entr{}",
-            done.added.len(),
-            if done.added.len() == 1 { "y" } else { "ies" }
-        );
-        if done.categories_created > 0 {
-            text.push_str(&format!(
-                " and {} new categor{}",
-                done.categories_created,
-                if done.categories_created == 1 {
-                    "y"
-                } else {
-                    "ies"
-                }
-            ));
-        }
+        let entries = done.added.len() as i64;
+        let text = if done.categories_created > 0 {
+            t_count(
+                lang,
+                "music.import.result.imported_categories",
+                entries,
+                &[(
+                    "categories",
+                    &t_count(
+                        lang,
+                        "music.import.result.categories",
+                        done.categories_created as i64,
+                        &[],
+                    ),
+                )],
+            )
+        } else {
+            t_count(lang, "music.import.result.imported", entries, &[])
+        };
         if done.ticked_phones.is_empty() {
-            text.push_str(", on no phone yet - turn them on in each phone's Music page.");
+            t_params(
+                lang,
+                "music.import.result.on_no_phone",
+                &[("imported", &text)],
+            )
         } else {
             let names: Vec<String> = done.ticked_phones.iter().map(name_of).collect();
-            text.push_str(&format!(", ticked on {}.", names.join(", ")));
+            t_params(
+                lang,
+                "music.import.result.ticked_on",
+                &[("imported", &text), ("phones", &names.join(", "))],
+            )
         }
-        text
     };
     if !skipped.is_empty() {
-        summary.push_str(&format!(" {} skipped:", skipped.len()));
+        summary.push(' ');
+        summary.push_str(&t_params(
+            lang,
+            "music.import.result.skipped",
+            &[("count", &skipped.len().to_string())],
+        ));
     }
     if left_out > 0 {
-        summary.push_str(&format!(" ({left_out} you left out.)"));
+        summary.push(' ');
+        summary.push_str(&t_params(
+            lang,
+            "music.import.result.left_out",
+            &[("count", &left_out.to_string())],
+        ));
     }
     let mut lines = skipped;
     lines.extend(done.misses.iter().map(|(phone, name)| {
-        format!(
-            "Not ticked on {}: \"{name}\" - that phone's music library would pass {} MB.",
-            name_of(phone),
-            music::MAX_LIBRARY_BYTES / 1_000_000
+        t_params(
+            lang,
+            "music.import.result.miss",
+            &[
+                ("phone", &name_of(phone)),
+                ("name", name),
+                ("mb", &(music::MAX_LIBRARY_BYTES / 1_000_000).to_string()),
+            ],
         )
     }));
     if lines.len() > MAX_RESULT_LINES {
         let more = lines.len() - MAX_RESULT_LINES;
         lines.truncate(MAX_RESULT_LINES);
-        lines.push(format!("... and {more} more."));
+        lines.push(t_params(
+            lang,
+            "music.import.result.more",
+            &[("count", &more.to_string())],
+        ));
     }
     ImportResult { summary, lines }
 }

@@ -19,8 +19,14 @@
         }
     }
 
+    // The cards' address for `ids`, in the page's language (its <html lang>, design 70 §5.3): a
+    // ?lang= view's cards stay in it.
+    function cardsUrl(ids, lang) {
+        return "/music/cards?ids=" + ids.join(",") + (lang ? "&lang=" + encodeURIComponent(lang) : "");
+    }
+
     if (typeof module !== "undefined" && module.exports) {
-        module.exports = { scrollBy: scrollBy };
+        module.exports = { scrollBy: scrollBy, cardsUrl: cardsUrl };
         return;
     }
 
@@ -77,7 +83,7 @@
     function tick() {
         var ids = busyIds();
         if (!ids.length || Date.now() - started > FOR_MS) return;
-        fetch("/music/cards?ids=" + ids.join(","), {
+        fetch(cardsUrl(ids, document.documentElement.getAttribute("lang")), {
             credentials: "same-origin",
             headers: { Accept: "application/json" }
         })

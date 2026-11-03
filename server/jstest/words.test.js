@@ -35,6 +35,8 @@ const MOVED = {
         "Enter",
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     ],
+    // 3d: Music (the status blocks come worded from /music/cards): a selector.
+    "music-cards.js": [".music-card, .card"],
     // Design 74: DOM exception names, a header and selectors.
     "passkey.js": [
         "NotAllowedError",

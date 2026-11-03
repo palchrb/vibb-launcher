@@ -595,6 +595,20 @@ mod tests {
         "device_locate.html",
         "device_locations.html",
         "device_zone.html",
+        // 3d: Music.
+        "music.html",
+        "music_categories.html",
+        "music_entry.html",
+        "music_import.html",
+        "music_settings.html",
+        "music_spotify.html",
+        "music_spotify_done.html",
+        "music_storytel.html",
+        "device_music.html",
+        "partials/music_card.html",
+        "partials/music_status.html",
+        "partials/music_status_only.html",
+        "partials/spotify_setup.html",
         // Design 74 step 3: the lock screen.
         "lock.html",
     ];

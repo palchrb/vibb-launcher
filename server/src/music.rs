@@ -60,31 +60,21 @@ const MAX_TAG_CHARS: usize = 200;
 /// NRK's programme API (the same one the vibb Pi and the music app use).
 pub const PSAPI: &str = "https://psapi.nrk.no";
 
-/// Offline depth choices: value and label (`cache`: -1 all, 0 none, N newest).
-pub const CACHE_CHOICES: [(i64, &str); 7] = [
-    (0, "None"),
-    (1, "1"),
-    (3, "3"),
-    (5, "5"),
-    (10, "10"),
-    (20, "20"),
-    (-1, "All"),
-];
+/// Offline depth choices (`cache`: -1 all, 0 none, N newest); the PWA words them
+/// (`handlers::music::cache_label`).
+pub const CACHE_CHOICES: [i64; 7] = [0, 1, 3, 5, 10, 20, -1];
 pub const DEFAULT_CACHE: i64 = 5;
-/// Play orders: value and label.
+/// Play orders: value and the key of its words.
 pub const ORDERS: [(&str, &str); 3] = [
-    (
-        "auto",
-        "Natural (podcasts newest first, series and own files from the start)",
-    ),
-    ("newest_first", "Newest first"),
-    ("oldest_first", "Oldest first"),
+    ("auto", "music.order.auto"),
+    ("newest_first", "music.order.newest_first"),
+    ("oldest_first", "music.order.oldest_first"),
 ];
 /// The volume cap choices in percent; `None` = off (the default, decision after QA review).
 pub const VOLUME_CAPS: [i64; 4] = [90, 80, 70, 60];
 
 pub fn valid_cache(cache: i64) -> bool {
-    CACHE_CHOICES.iter().any(|(c, _)| *c == cache)
+    CACHE_CHOICES.contains(&cache)
 }
 
 pub fn valid_order(order: &str) -> bool {
@@ -154,12 +144,17 @@ impl OlderApps {
         }
     }
 
-    /// Device › Music's warning and the Attention row.
+    /// The Attention row (English until the summary's words move, design 70 §6).
     pub fn title(self) -> &'static str {
+        crate::i18n::t(crate::i18n::Lang::En, self.title_key())
+    }
+
+    /// Device › Music's warning: the key of its title.
+    pub fn title_key(self) -> &'static str {
         match self {
-            OlderApps::VibbOne => "Update Vibb One",
-            OlderApps::MusicApp => "Update the music app",
-            OlderApps::Both => "Update Vibb One and the music app",
+            OlderApps::VibbOne => "device.music.update_vibb_one",
+            OlderApps::MusicApp => "device.music.update_music_app",
+            OlderApps::Both => "device.music.update_both",
         }
     }
 }
@@ -485,28 +480,37 @@ pub fn new_own_key() -> String {
     format!("own-{}", &crate::security::generate_device_token()[..12])
 }
 
-/// "NRK podcast", "Own files", ... for the parent's pages.
+/// "NRK podcast", "Own files", ... for the parent's pages, in English (the tests' and the
+/// helpers' name for a kind); the pages word [kind_key].
+#[cfg(test)]
 pub fn kind_label(source: &str, target: Option<&str>) -> &'static str {
+    crate::i18n::t(crate::i18n::Lang::En, kind_key(source, target))
+}
+
+/// The key of a kind's words ("NRK podcast", "Own files", ...) on the parent's pages.
+pub fn kind_key(source: &str, target: Option<&str>) -> &'static str {
     match source {
-        "own" => "Own files",
-        "rss" => "Podcast (RSS)",
-        "nrk" if target.is_some_and(|t| t.contains("/serie/")) => "NRK series",
-        "nrk" => "NRK podcast",
-        "storytel" if target.is_some_and(|t| t.starts_with("storytel:book:")) => "Storytel book",
-        "storytel" => "Storytel series",
+        "own" => "music.kind.own",
+        "rss" => "music.kind.rss",
+        "nrk" if target.is_some_and(|t| t.contains("/serie/")) => "music.kind.nrk_series",
+        "nrk" => "music.kind.nrk_podcast",
+        "storytel" if target.is_some_and(|t| t.starts_with("storytel:book:")) => {
+            "music.kind.storytel_book"
+        }
+        "storytel" => "music.kind.storytel_series",
         "spotify" => match target
             .and_then(crate::spotify::parse_target)
             .map(|r| r.kind)
         {
-            Some(crate::spotify::LinkKind::Playlist) => "Spotify playlist",
-            Some(crate::spotify::LinkKind::Album) => "Spotify album",
-            Some(crate::spotify::LinkKind::Track) => "Spotify track",
-            Some(crate::spotify::LinkKind::Artist) => "Spotify artist",
-            Some(crate::spotify::LinkKind::Show) => "Spotify podcast",
-            Some(crate::spotify::LinkKind::Episode) => "Spotify episode",
-            None => "Spotify",
+            Some(crate::spotify::LinkKind::Playlist) => "music.kind.spotify_playlist",
+            Some(crate::spotify::LinkKind::Album) => "music.kind.spotify_album",
+            Some(crate::spotify::LinkKind::Track) => "music.kind.spotify_track",
+            Some(crate::spotify::LinkKind::Artist) => "music.kind.spotify_artist",
+            Some(crate::spotify::LinkKind::Show) => "music.kind.spotify_podcast",
+            Some(crate::spotify::LinkKind::Episode) => "music.kind.spotify_episode",
+            None => "music.spotify_name",
         },
-        _ => "Other",
+        _ => "music.kind.unknown",
     }
 }
 

@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { scrollBy } = require("../static/music-cards.js");
+const { scrollBy, cardsUrl } = require("../static/music-cards.js");
 
 function fakeWindow(overflowY) {
     const main = { scrollTop: 300, overflowY };
@@ -30,4 +30,10 @@ test("a page whose window scrolls scrolls the window", () => {
     scrollBy(w.win, -12);
     assert.deepStrictEqual(w.windowScrolls, [[0, -12]]);
     assert.strictEqual(w.main.scrollTop, 300);
+});
+
+test("the cards are asked for in the page's language", () => {
+    assert.strictEqual(cardsUrl([3, 5], "nb"), "/music/cards?ids=3,5&lang=nb");
+    assert.strictEqual(cardsUrl([3], "en"), "/music/cards?ids=3&lang=en");
+    assert.strictEqual(cardsUrl([3], null), "/music/cards?ids=3");
 });

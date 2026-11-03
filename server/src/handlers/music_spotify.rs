@@ -41,7 +41,7 @@ use chrono::{DateTime, Utc};
 
 use super::music::{BELOW_ENTRY_LIMIT, NEXT_SORT, log_event, nudge, server_error};
 use crate::AppState;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, t, t_params};
 use crate::music::{self, MAX_ENTRIES, MAX_NAME_CHARS};
 use crate::music_sweep::parse_stamp;
 use crate::security::CurrentAdmin;
@@ -53,9 +53,18 @@ fn field(form: &FormMap, key: &str) -> String {
     form.get(key).cloned().unwrap_or_default()
 }
 
-/// "12 Oct 2026", in the Phone Setup zone (design 31 M4, qa-26c-merge2-code L4).
+/// "12 Oct 2026" (nb "12. okt. 2026"), in the Phone Setup zone (design 31 M4, qa-26c-merge2-code L4).
 fn day(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
-    zone.local(time).format("%-d %b %Y").to_string()
+    let date = zone.local(time).date_naive();
+    t_params(
+        zone.lang(),
+        "time.date_year",
+        &[
+            ("day", &chrono::Datelike::day(&date).to_string()),
+            ("month", &zone.month_name(date)),
+            ("year", &chrono::Datelike::year(&date).to_string()),
+        ],
+    )
 }
 
 /// A phone on the add form: its name, whom it plays as (`None` = Spotify is off on it), ticked.
@@ -159,7 +168,7 @@ pub struct SpotifySetup {
     pub loopback_redirect: &'static str,
 }
 
-/// Why Add from Spotify can't add yet (design 47 §1.3): the attention row's words and the
+/// Why Add from Spotify can't add yet (design 47 §1.3): the attention row's words (keys) and the
 /// fragment of Music › Settings it leads to.
 pub struct NotReady {
     pub title: &'static str,
@@ -268,7 +277,7 @@ async fn render_add(
 ) -> Response {
     match add_page(state, entered, query, lang).await {
         Ok(page) => (status, Html(page.render().unwrap())).into_response(),
-        Err(err) => server_error(err, "couldn't load the Spotify page"),
+        Err(err) => server_error(lang, err, "couldn't load the Spotify page"),
     }
 }
 
@@ -283,44 +292,43 @@ async fn add_page(
     let usable = rows.iter().filter(|row| row.needs_login == 0).count();
     let not_ready = if state.music_key.is_none() {
         Some(NotReady {
-            title: "The server has no music key",
-            sub: "Spotify logins can't be kept safe without it.",
+            title: "music.spotify.not_ready.no_key",
+            sub: "music.spotify.not_ready.no_key_sub",
             fragment: "spotify-key",
         })
     } else if app.is_none() {
         Some(NotReady {
-            title: "No Spotify app is saved - set it up first",
-            sub: "Your family's own Spotify app, once.",
+            title: "music.spotify.not_ready.no_app",
+            sub: "music.spotify.not_ready.no_app_sub",
             fragment: "spotify",
         })
     } else if usable == 0 && !rows.is_empty() {
         Some(NotReady {
-            title: "An account needs to log in again",
-            sub: "Spotify ended the login.",
+            title: "music.spotify.not_ready.renew",
+            sub: "music.spotify.not_ready.renew_sub",
             fragment: "spotify-accounts",
         })
     } else if usable == 0 {
         Some(NotReady {
-            title: "No child's account is logged in yet",
-            sub: "Log in each child's own account.",
+            title: "music.spotify.not_ready.no_account",
+            sub: "music.spotify.not_ready.no_account_sub",
             fragment: "spotify",
         })
     } else {
         None
     };
     let setup_value = match (app.is_some(), rows.len()) {
-        (false, _) => "Not set up yet".to_string(),
-        (true, 0) => "App saved, no account yet".to_string(),
-        (true, 1) => "1 account".to_string(),
-        (true, n) => format!("{n} accounts"),
+        (false, _) => t(lang, "music.spotify.setup_none").to_string(),
+        (true, 0) => t(lang, "music.spotify.setup_no_account").to_string(),
+        (true, n) => crate::i18n::t_count(lang, "music.spotify.setup_accounts", n as i64, &[]),
     };
     Ok(AddTemplate {
         lang,
-        title: "Add from Spotify".to_string(),
+        title: t(lang, "music.spotify.title").to_string(),
         setup_value,
         not_ready,
         add: add_view(state, entered).await?,
-        added: added_view(state, query).await?,
+        added: added_view(state, query, lang).await?,
     })
 }
 
@@ -349,41 +357,46 @@ pub async fn setup_view(
         .iter()
         .map(|row| {
             let ends = row.login_ends();
+            let name = row.display_name.as_str();
             let line = match (parse_stamp(&row.authorized_at), ends) {
-                (Some(at), Some(ends)) => {
-                    format!(
-                        "Logged in {} - log in again before {}",
-                        day(&zone, at),
-                        day(&zone, ends)
-                    )
-                }
-                _ => "Logged in".to_string(),
+                (Some(at), Some(ends)) => t_params(
+                    lang,
+                    "music.setup.account_line",
+                    &[("since", &day(&zone, at)), ("until", &day(&zone, ends))],
+                ),
+                _ => t(lang, "device.music.logged_in").to_string(),
             };
             let warning = if row.needs_login != 0 {
-                Some(format!(
-                    "Spotify ended this login (a login lasts 6 months, or its access was removed \
-                     at spotify.com) - log in again as {}.",
-                    row.display_name
+                Some(t_params(
+                    lang,
+                    "music.setup.account_ended",
+                    &[("name", name)],
                 ))
             } else if row.refresh_error.as_deref() == Some("key") {
-                Some(format!(
-                    "The saved login was locked with another key (a restored backup or a new key \
-                     file) - log in again as {}.",
-                    row.display_name
+                Some(t_params(
+                    lang,
+                    "music.setup.account_other_key",
+                    &[("name", name)],
                 ))
             } else {
                 ends.filter(|_| row.login_ending(now)).map(|ends| {
                     if now < ends {
-                        format!(
-                            "{}'s Spotify login ends on {}: log in again on this page.",
-                            row.display_name,
-                            zone.local(ends).format("%-d %b")
+                        let date = zone.local(ends).date_naive();
+                        let date = t_params(
+                            lang,
+                            "time.date",
+                            &[
+                                ("day", &chrono::Datelike::day(&date).to_string()),
+                                ("month", &zone.month_name(date)),
+                            ],
+                        );
+                        t_params(
+                            lang,
+                            "music.setup.account_ends",
+                            &[("name", name), ("date", &date)],
                         )
                     } else {
-                        format!(
-                            "{}'s Spotify login has ended: log in again on this page.",
-                            row.display_name
-                        )
+                        t_params(lang, "music.setup.account_has_ended", &[("name", name)])
                     }
                 })
             };
@@ -392,10 +405,14 @@ pub async fn setup_view(
                 .filter(|(_, _, account)| *account == Some(row.id))
                 .collect();
             let plays_on = if bound.is_empty() {
-                "Plays on no phone yet".to_string()
+                t(lang, "music.setup.plays_on_none").to_string()
             } else {
                 let names: Vec<&str> = bound.iter().map(|(_, name, _)| name.as_str()).collect();
-                format!("Plays on {}", names.join(", "))
+                t_params(
+                    lang,
+                    "music.setup.plays_on_phones",
+                    &[("phones", &names.join(", "))],
+                )
             };
             AccountView {
                 id: row.id,
@@ -427,25 +444,28 @@ pub async fn setup_view(
             )
             .fetch_optional(&state.db)
             .await?;
-            match LoginOutcome::text(code, newest.as_deref()) {
+            match LoginOutcome::text(lang, code, newest.as_deref()) {
                 Some((text, good)) => (Some(text), good),
                 None => (None, false),
             }
         }
-        None if query.contains_key("removed") => (
-            Some("Removed - its login is deleted from this server.".to_string()),
-            true,
-        ),
+        None if query.contains_key("removed") => {
+            (Some(t(lang, "music.setup.removed").to_string()), true)
+        }
         None => (None, false),
     };
     let app_notice = if let Some(n) = query.get("saved") {
         Some(match n.parse::<u64>().unwrap_or(0) {
-            0 => "Saved.".to_string(),
-            1 => "Saved - the account logged in with the old app was removed.".to_string(),
-            n => format!("Saved - the {n} accounts logged in with the old app were removed."),
+            0 => t(lang, "common.saved").to_string(),
+            1 => t(lang, "music.setup.saved_removed_one").to_string(),
+            n => t_params(
+                lang,
+                "music.setup.saved_removed",
+                &[("count", &n.to_string())],
+            ),
         })
     } else if query.contains_key("cleared") {
-        Some("The Spotify app and every Spotify login were removed from this server.".to_string())
+        Some(t(lang, "music.setup.cleared").to_string())
     } else {
         None
     };
@@ -553,6 +573,7 @@ fn ids(query: &HashMap<String, String>, key: &str) -> Vec<i64> {
 async fn added_view(
     state: &AppState,
     query: &HashMap<String, String>,
+    lang: Lang,
 ) -> Result<Option<AddedView>, sqlx::Error> {
     let Some(id) = query.get("added").and_then(|id| id.parse::<i64>().ok()) else {
         return Ok(None);
@@ -580,12 +601,16 @@ async fn added_view(
     };
     let mut skipped: Vec<String> = named("off")
         .into_iter()
-        .map(|phone| format!("{phone}: not ticked - Spotify is off on this phone"))
+        .map(|phone| t_params(lang, "music.spotify.skipped_off", &[("phone", &phone)]))
         .collect();
     skipped.extend(named("big").into_iter().map(|phone| {
-        format!(
-            "{phone}: not ticked - its music library would be bigger than {} MB",
-            music::MAX_LIBRARY_BYTES / 1_000_000
+        t_params(
+            lang,
+            "music.spotify.skipped_big",
+            &[
+                ("phone", &phone),
+                ("mb", &(music::MAX_LIBRARY_BYTES / 1_000_000).to_string()),
+            ],
         )
     }));
     Ok(Some(AddedView {
@@ -639,11 +664,7 @@ pub async fn save_app(
     };
     let peer_trusted = trusted(&state, peer);
     if !spotify::valid_client_id(&client) {
-        let entered = refuse(
-            "A Client ID is 32 letters and digits - copy it from your app's page on \
-             developer.spotify.com (not the Client secret).",
-            "client_id",
-        );
+        let entered = refuse(t(lang, "music.setup.error.client_id"), "client_id");
         return render_setup(
             &state,
             &headers,
@@ -656,10 +677,13 @@ pub async fn save_app(
     }
     if !spotify::valid_redirect_uri(&redirect) {
         let entered = refuse(
-            &format!(
-                "The Redirect URI is https://<this server's address>{} or exactly {}.",
-                spotify::CALLBACK_PATH,
-                spotify::LOOPBACK_REDIRECT
+            &t_params(
+                lang,
+                "music.setup.error.redirect_uri",
+                &[
+                    ("path", spotify::CALLBACK_PATH),
+                    ("loopback", spotify::LOOPBACK_REDIRECT),
+                ],
             ),
             "redirect_uri",
         );
@@ -675,23 +699,19 @@ pub async fn save_app(
     }
     let current = match spotify::app(&state).await {
         Ok(current) => current,
-        Err(err) => return server_error(err, "couldn't read the Spotify app"),
+        Err(err) => return server_error(lang, err, "couldn't read the Spotify app"),
     };
     let accounts: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM music_spotify_accounts")
         .fetch_one(&state.db)
         .await
     {
         Ok(n) => n,
-        Err(err) => return server_error(err, "couldn't count the Spotify accounts"),
+        Err(err) => return server_error(lang, err, "couldn't count the Spotify accounts"),
     };
     let another_client = current.as_ref().is_none_or(|app| app.client_id != client);
     if another_client && accounts > 0 && field(&form, "replace_accounts") != "on" {
         let entered = refuse(
-            &format!(
-                "Tick the box to save another Client ID: it removes the {accounts} logged-in \
-                 Spotify account{} (their logins belong to the old app).",
-                if accounts == 1 { "" } else { "s" }
-            ),
+            &crate::i18n::t_count(lang, "music.setup.error.replace", accounts, &[]),
             "replace_accounts",
         );
         return render_setup(
@@ -711,7 +731,7 @@ pub async fn save_app(
                 removed = count;
                 nudge(&state, &phones);
             }
-            Err(err) => return server_error(err, "couldn't remove the Spotify accounts"),
+            Err(err) => return server_error(lang, err, "couldn't remove the Spotify accounts"),
         }
     }
     let saved = sqlx::query(
@@ -725,7 +745,7 @@ pub async fn save_app(
     .execute(&state.db)
     .await;
     if let Err(err) = saved {
-        return server_error(err, "couldn't save the Spotify app");
+        return server_error(lang, err, "couldn't save the Spotify app");
     }
     let last_four = &client[client.len() - 4..];
     let mut detail = crate::security::Detail::words(
@@ -757,9 +777,7 @@ pub async fn clear_app(
 ) -> Response {
     if field(&form, "confirm") != "on" {
         let entered = Entered {
-            clear_error: Some(
-                "Tick the box to remove the Spotify app and every Spotify login.".to_string(),
-            ),
+            clear_error: Some(t(lang, "music.setup.error.clear").to_string()),
             ..Default::default()
         };
         return render_setup(
@@ -774,7 +792,7 @@ pub async fn clear_app(
     }
     let (removed, phones) = match spotify::remove_all(&state, true).await {
         Ok(done) => done,
-        Err(err) => return server_error(err, "couldn't clear the Spotify app"),
+        Err(err) => return server_error(lang, err, "couldn't clear the Spotify app"),
     };
     nudge(&state, &phones);
     log_event(
@@ -836,7 +854,7 @@ pub async fn login(
     };
     let app = match spotify::app(&state).await {
         Ok(app) => app,
-        Err(err) => return server_error(err, "couldn't read the Spotify app"),
+        Err(err) => return server_error(lang, err, "couldn't read the Spotify app"),
     };
     let ready = app
         .as_ref()
@@ -845,13 +863,12 @@ pub async fn login(
     let refused = if state.music_key.is_none() {
         Some(refuse(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Spotify logins are off: this server has no key to keep them safe (see the server's \
-             log, \"Storytel logins are off: ...\").",
+            t(lang, "music.setup.error.no_key"),
         ))
     } else if ready.is_none() {
         Some(refuse(
             StatusCode::BAD_REQUEST,
-            "Set up your Spotify app first: its Client ID and Redirect URI.",
+            t(lang, "music.setup.error.not_ready"),
         ))
     } else {
         None
@@ -877,9 +894,10 @@ pub async fn login(
         && here != target
     {
         let entered = Entered {
-            login_error: Some(format!(
-                "Spotify sends this login back to https://{target}: open this page there to log \
-                 in."
+            login_error: Some(t_params(
+                lang,
+                "music.setup.error.elsewhere",
+                &[("host", &target)],
             )),
             login_elsewhere: Some(format!("https://{target}/music/settings#spotify-accounts")),
             ..Default::default()
@@ -1000,12 +1018,12 @@ pub async fn callback(
 pub async fn done(lang: Lang, Query(params): Query<HashMap<String, String>>) -> Response {
     let code = params
         .get("login")
-        .filter(|code| LoginOutcome::text(code, None).is_some())
+        .filter(|code| LoginOutcome::text(lang, code, None).is_some())
         .map(String::as_str)
         .unwrap_or("expired");
     let page = DoneTemplate {
         lang,
-        title: "Spotify Login".to_string(),
+        title: t(lang, "music.spotify.done.title").to_string(),
         target: format!("/music/settings?login={code}#spotify-accounts"),
     };
     (
@@ -1066,10 +1084,10 @@ pub async fn paste(
         let entered = Entered {
             paste: Some((
                 String::new(),
-                format!(
-                    "Paste the whole address your browser shows after logging in - it starts \
-                     with {}?code= (or ?error=).",
-                    spotify::LOOPBACK_REDIRECT
+                t_params(
+                    lang,
+                    "music.setup.error.paste",
+                    &[("loopback", spotify::LOOPBACK_REDIRECT)],
                 ),
             )),
             ..Default::default()
@@ -1112,14 +1130,11 @@ pub async fn remove_account(
     match exists {
         Ok(Some(_)) => {}
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(err) => return server_error(err, "couldn't read a Spotify account"),
+        Err(err) => return server_error(lang, err, "couldn't read a Spotify account"),
     }
     if field(&form, "confirm") != "on" {
         let entered = Entered {
-            remove: Some((
-                id,
-                "Tick the box to remove this account's login.".to_string(),
-            )),
+            remove: Some((id, t(lang, "music.setup.error.remove").to_string())),
             ..Default::default()
         };
         return render_setup(
@@ -1148,7 +1163,7 @@ pub async fn remove_account(
             Redirect::to("/music/settings?removed=1#spotify-accounts").into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(err) => server_error(err, "couldn't remove a Spotify account"),
+        Err(err) => server_error(lang, err, "couldn't remove a Spotify account"),
     }
 }
 
@@ -1160,6 +1175,7 @@ pub async fn remove_account(
 /// account or phone, or no `device`, is a 400 with nothing written. Back to the account's row.
 pub async fn save_plays_on(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<FormMap>,
@@ -1168,9 +1184,15 @@ pub async fn save_plays_on(
         Some("none") => None,
         Some(value) => match value.parse::<i64>() {
             Ok(device) => Some(device),
-            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown phone").into_response(),
+            Err(_) => {
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::BAD_REQUEST,
+                    "error.music_unknown_phone",
+                );
+            }
         },
-        None => return (StatusCode::BAD_REQUEST, "Pick a phone").into_response(),
+        None => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_pick_phone"),
     };
     // The account's name, the phones bound to it now, the phones unbound from it.
     type Changed = (String, Vec<i64>, Vec<i64>);
@@ -1220,8 +1242,14 @@ pub async fn save_plays_on(
     .await;
     let (name, bound, unbound) = match saved {
         Ok(Some(saved)) => saved,
-        Ok(None) => return (StatusCode::BAD_REQUEST, "Unknown account or phone").into_response(),
-        Err(err) => return server_error(err, "couldn't save where a Spotify account plays"),
+        Ok(None) => {
+            return crate::i18n::error(
+                lang,
+                StatusCode::BAD_REQUEST,
+                "error.music_unknown_account",
+            );
+        }
+        Err(err) => return server_error(lang, err, "couldn't save where a Spotify account plays"),
     };
     let changed: Vec<i64> = bound.iter().chain(&unbound).copied().collect();
     nudge(&state, &changed);
@@ -1259,7 +1287,11 @@ pub async fn save_plays_on(
 /// hands it to the music app at once. One-shot: a press while it runs starts the 15 minutes again. Back to the group
 /// (`#spotify-diag`: the page never jumps to the top); an unknown phone, or one that doesn't play Spotify, is a 404
 /// with nothing written.
-pub async fn start_diag(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn start_diag(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
     // As the page: only a phone that plays Spotify has the button.
     match sqlx::query_scalar::<_, bool>(PLAYS_SPOTIFY)
         .bind(id)
@@ -1267,8 +1299,8 @@ pub async fn start_diag(State(state): State<AppState>, Path(id): Path<i64>) -> R
         .await
     {
         Ok(Some(true)) => {}
-        Ok(_) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return server_error(err, "couldn't read the phone"),
+        Ok(_) => return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
+        Err(err) => return server_error(lang, err, "couldn't read the phone"),
     }
     let until = Utc::now().timestamp() + music::SPOTIFY_DIAG_SECS;
     let saved = sqlx::query(
@@ -1281,13 +1313,13 @@ pub async fn start_diag(State(state): State<AppState>, Path(id): Path<i64>) -> R
     .await;
     match saved {
         Ok(r) if r.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "Device not found").into_response()
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
         }
         Ok(_) => {
             nudge(&state, &[id]);
             Redirect::to(&format!("/devices/{id}/advanced#spotify-diag")).into_response()
         }
-        Err(err) => server_error(err, "couldn't start the Spotify diagnostic log"),
+        Err(err) => server_error(lang, err, "couldn't start the Spotify diagnostic log"),
     }
 }
 
@@ -1361,23 +1393,26 @@ pub async fn add(
     }
     if form.len() > MAX_ADD_FIELDS {
         refused!(
-            format!("At most {MAX_ADD_FIELDS} phones at once - nothing was added."),
+            t_params(
+                lang,
+                "music.spotify.error.too_many",
+                &[("max", &MAX_ADD_FIELDS.to_string())],
+            ),
             "device"
         );
     }
     match spotify::app(&state).await {
         Ok(Some(_)) => {}
-        Ok(None) => refused!("Set up your Spotify app first.", "link"),
-        Err(err) => return server_error(err, "couldn't read the Spotify app"),
+        Ok(None) => refused!(t(lang, "music.spotify.error.no_app"), "link"),
+        Err(err) => return server_error(lang, err, "couldn't read the Spotify app"),
     }
     match spotify::readers(&state.db, None).await.map(|r| r.refusal()) {
         Ok(None) => {}
-        Ok(Some(spotify::SpotifyError::Reauthorize)) => refused!(
-            "The Spotify logins need renewing - log in again with a Spotify account first.",
-            "link"
-        ),
-        Ok(Some(_)) => refused!("Log in with a Spotify account first.", "link"),
-        Err(err) => return server_error(err, "couldn't read the Spotify accounts"),
+        Ok(Some(spotify::SpotifyError::Reauthorize)) => {
+            refused!(t(lang, "music.spotify.error.renew"), "link")
+        }
+        Ok(Some(_)) => refused!(t(lang, "music.spotify.error.no_account"), "link"),
+        Err(err) => return server_error(lang, err, "couldn't read the Spotify accounts"),
     }
     // The phones picked must exist (before any request); whether each plays as an account is
     // decided in the insert's transaction (qa-26c-step2b-code L2).
@@ -1389,14 +1424,11 @@ pub async fn add(
         match row {
             Ok(Some(_)) => {}
             Ok(None) => bad_device = true,
-            Err(err) => return server_error(err, "couldn't read the phones"),
+            Err(err) => return server_error(lang, err, "couldn't read the phones"),
         }
     }
     if bad_device {
-        refused!(
-            "One of the phones doesn't exist any more - pick the phones again.",
-            "device"
-        );
+        refused!(t(lang, "music.spotify.error.phone_gone"), "device");
     }
     let deadline = tokio::time::Instant::now() + state.spotify.add_budget();
     let reference = match spotify::parse_link(&link_text) {
@@ -1410,7 +1442,7 @@ pub async fn add(
             match resolved {
                 Ok(Ok(reference)) => reference,
                 Ok(Err(err)) => refused!(err.message(), "link"),
-                Err(_) => refused!("Spotify couldn't be reached - try again.", "link"),
+                Err(_) => refused!(t(lang, "music.spotify.error.unreachable"), "link"),
             }
         }
         Err(err) => refused!(err.message(), "link"),
@@ -1423,10 +1455,10 @@ pub async fn add(
             .await
         {
             Ok(existing) => existing,
-            Err(err) => return server_error(err, "music entry lookup failed"),
+            Err(err) => return server_error(lang, err, "music entry lookup failed"),
         };
     if let Some(id) = existing {
-        refused!("Already in the library.", "link", Some(id));
+        refused!(t(lang, "music.spotify.error.exists"), "link", Some(id));
     }
     let categories: Vec<music::MusicCategory> =
         match sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
@@ -1434,16 +1466,16 @@ pub async fn add(
             .await
         {
             Ok(categories) => categories,
-            Err(err) => return server_error(err, "music category lookup failed"),
+            Err(err) => return server_error(lang, err, "music category lookup failed"),
         };
     let category = match picked.trim().parse::<i64>() {
         Ok(id) => match categories.iter().find(|c| c.id == id) {
             Some(c) => c.id,
-            None => refused!("That category doesn't exist any more.", "category"),
+            None => refused!(t(lang, "music.error.category_gone"), "category"),
         },
         Err(_) => match music::default_category_for(&categories, "spotify", Some(&target)) {
             Some(c) => c.id,
-            None => refused!("Add a category first (on the Music page).", "category"),
+            None => refused!(t(lang, "music.spotify.error.no_category"), "category"),
         },
     };
     let check =
@@ -1451,11 +1483,11 @@ pub async fn add(
             Ok(Ok(check)) => check,
             Ok(Err(none)) => {
                 if let spotify::SpotifyError::Database(err) = &none.err {
-                    return server_error(err, "couldn't read the Spotify accounts");
+                    return server_error(lang, err, "couldn't read the Spotify accounts");
                 }
                 refused!(spotify::add_refusal(&none), "link")
             }
-            Err(_) => refused!("Spotify couldn't be reached - try again.", "link"),
+            Err(_) => refused!(t(lang, "music.spotify.error.unreachable"), "link"),
         };
     let name = check
         .meta
@@ -1516,14 +1548,18 @@ pub async fn add(
     let id = match inserted {
         Ok(Some(id)) => id,
         Ok(None) => refused!(
-            format!("The library has {MAX_ENTRIES} entries - delete one first."),
+            t_params(
+                lang,
+                "music.error.library_full",
+                &[("max", &MAX_ENTRIES.to_string())],
+            ),
             "link"
         ),
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
-            refused!("Already in the library.", "link")
+            refused!(t(lang, "music.spotify.error.exists"), "link")
         }
-        Err(err) => return server_error(err, "couldn't add a Spotify entry"),
+        Err(err) => return server_error(lang, err, "couldn't add a Spotify entry"),
     };
     // Its first check comes before anything waiting (design 21b §2.2): listed within a minute.
     state.music_sweep.wake();

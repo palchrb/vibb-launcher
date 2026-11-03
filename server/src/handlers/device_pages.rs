@@ -2164,7 +2164,7 @@ pub async fn view_music(
     Html(
         MusicTemplate {
             lang,
-            title: format!("Music · {}", device.name),
+            title: t_params(lang, "device.music.title", &[("name", &device.name)]),
             music,
             reported,
             device,
