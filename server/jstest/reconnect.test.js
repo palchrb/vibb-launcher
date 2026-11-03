@@ -960,3 +960,32 @@ test("the lock: the sign-in page's session check answered 423 goes to the lock, 
     assert.deepStrictEqual(win.locks, ["/devices/2"]);
     assert.deepStrictEqual(win.replaced, []);
 });
+
+test("the lock: the lock screen is left alone on a return - no ping, no reload, no way to the lock (qa-lock-auto M2)", async () => {
+    const win = withLock(fakeWindow({ href: "https://pi.example.ts.net/lock?next=%2Fdevices%2F3" }), true);
+    win.install();
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.show();
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.fire("win", "pagehide");
+    win.fire("win", "pageshow", { persisted: true });
+    win.advance(60000);
+    await settle();
+    assert.strictEqual(win.pings.length, 0);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.locks, []);
+    assert.deepStrictEqual(win.replaced, []);
+});
+
+test("the lock: from the lock screen itself, the way to the lock keeps its own next (qa-lock-auto L2)", () => {
+    const bare = fakeWindow();
+    rc.toLock(bare, "/lock?next=%2Fdevices%2F3");
+    rc.toLock(bare, "/lock");
+    assert.deepStrictEqual(bare.replaced, ["/lock?next=" + encodeURIComponent("/devices/3"), "/lock"]);
+    const win = withLock(fakeWindow(), false);
+    rc.toLock(win, "/lock?next=%2Fapps%3Fx%3D1#top");
+    rc.toLock(win, "/lockers");
+    assert.deepStrictEqual(win.locks, ["/apps?x=1", "/lockers"]);
+});

@@ -7,10 +7,11 @@
     2026-11-03): the Vibb mark breathing, "Vibb is locked", the hint at the bottom and Sign Out under it. No tab bar,
     nothing private - no name, no phone, no count, nothing from the page behind. The whole screen is the Unlock button
     (`.lock-tap`, over everything but Sign Out; it reads the title, the red line and the hint as its description);
-    nothing starts on its own - a prompt without a tap gets iOS's own "Continue" sheet. static/passkey.js: the first
-    tap asks for the passkey this browser used last (its challenge fetched ahead, so the prompt opens within the tap
-    and iOS goes straight to Face ID); a cancel or a refused unlock shows the red line, the hint says "Tap to try
-    again", and the next tap asks with every passkey. A done unlock replaces this page with the one it was opened for. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
+    each showing asks once on its own, so iOS's own passkey sheet is the only tap. static/passkey.js: the automatic
+    try asks for the passkey this browser used last; cancelled, timed out or refused (no gesture) it stays quiet, and
+    the tap asks with every passkey (its challenge fetched ahead, so the prompt opens within the tap; a tap while the
+    automatic try waits aborts it); a tap's cancel or a refused unlock shows the red line and the hint says "Tap to try
+    again". A done unlock replaces this page with the one it was opened for. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
     sign-in page keeps where the parent was going. Without a passkey here or without WebAuthn there is no tap target,
     only the note. -#}
 <body class="auth-page lock-page">
@@ -43,6 +44,6 @@
         <button type="submit" class="lock-out-button">{{ self.t("lock.page.sign_out") }}</button>
     </form>
 </main>
-<script src="/static/passkey.js?v=7" defer></script>
+<script src="/static/passkey.js?v=8" defer></script>
 </body>
 </html>
