@@ -4,9 +4,10 @@
 {% include "partials/head.html" %}
 </head>
 {#- Design 74 §6.5, D3.5: the lock screen. No tab bar, nothing private - no name, no phone, no count, nothing from the
-    page behind. "Unlock" waits for a tap (iOS needs one for WebAuthn; static/passkey.js fetches the challenge when the
-    page loads, so the prompt opens within the tap) and replaces this page with the one it was opened for; a failed or
-    cancelled try shows the red line. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
+    page behind. static/passkey.js starts the prompt on its own once per page load (the passkey this browser used last
+    alone); refused or cancelled, "Unlock" asks again on a tap with every passkey (its challenge fetched ahead, so the
+    prompt opens within the tap - iOS needs the gesture) and replaces this page with the one it was opened for; a
+    refused unlock or a cancelled tap shows the red line. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
     sign-in page keeps where the parent was going. -#}
 <body class="auth-page">
 {% include "partials/js_words.html" %}
@@ -34,6 +35,6 @@
     </form>
 </div>
 </main>
-<script src="/static/passkey.js?v=5" defer></script>
+<script src="/static/passkey.js?v=6" defer></script>
 </body>
 </html>

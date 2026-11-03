@@ -813,6 +813,9 @@ const SIGNED_OUT_FORM_LIMIT: usize = 4096;
 /// The unlock's form (design 74 D3.5): the largest assertion `/auth/passkey`'s 4 KiB takes, and a `next` of up to 512
 /// bytes, urlencoded (qa-passkeys-3 server N2).
 const LOCK_FORM_LIMIT: usize = 6 * 1024;
+/// The unlock's options form: its `hint`, a credential id (at most `webauthn::MAX_CREDENTIAL_ID` bytes, base64url).
+/// Past it the hint is ignored (every passkey is offered).
+const LOCK_OPTIONS_LIMIT: usize = 1024;
 /// A new passkey's form: the browser's credential as JSON (design 74 D1.2).
 const PASSKEY_FORM_LIMIT: usize = 8192;
 
@@ -1685,7 +1688,10 @@ pub fn build_admin_router(
                 .post(handlers::lock::unlock)
                 .layer(DefaultBodyLimit::max(LOCK_FORM_LIMIT)),
         )
-        .route(lock::OPTIONS_ROUTE, post(handlers::lock::options))
+        .route(
+            lock::OPTIONS_ROUTE,
+            post(handlers::lock::options).layer(DefaultBodyLimit::max(LOCK_OPTIONS_LIMIT)),
+        )
         // D3.3: the page's input beacon (static/app-lock.js, at most once a minute) - a use of the app, so the lock's
         // check moves the session's last use on the way in. Not exempt: locked, it is 423 like any other.
         .route(lock::BEACON_ROUTE, post(handlers::lock::used))
