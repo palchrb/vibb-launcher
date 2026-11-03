@@ -17,6 +17,11 @@ The mark's share of the screen is the launcher's: at rest it is 169 dp across (i
 84.6 dp from the centre) in the 288 dp splash area, which a phone shows at that size - 43 % of a
 393 dp wide phone - so here the mark is MARK_SHARE of the shorter screen side.
 
+The PWA's lock screen (/lock) takes over from this picture with no jump: its mark (partials/vibb_breath.html,
+static/vibb-rest.svg, from launcher/scripts/vibb-icon.py - the same rings, viewBox -30..30) is centred on the screen
+at style.css's --vibb-mark-size, which this script writes from the same MARK_SHARE (between the markers in
+style.css) so the ring at rest is exactly the splash's size.
+
 The screens are server/testdata/pwa_startup_screens.json (shared with the server's test
 `shell::every_startup_image_has_its_screens_size`): each iPhone portrait size in CSS px and its
 device pixel ratio. head.html's links between the two markers are written from it.
@@ -35,6 +40,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCREENS = os.path.join(ROOT, "server", "testdata", "pwa_startup_screens.json")
 OUT = os.path.join(ROOT, "server", "static", "startup")
 HEAD = os.path.join(ROOT, "server", "templates", "partials", "head.html")
+STYLE = os.path.join(ROOT, "server", "static", "style.css")
+PWA_MARK = os.path.join(ROOT, "server", "templates", "partials", "vibb_breath.html")
+PWA_REST = os.path.join(ROOT, "server", "static", "vibb-rest.svg")
+STYLE_BEGIN = "/* The Vibb mark's size: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. */"
+STYLE_END = "/* End of the Vibb mark's size. */"
+# The PWA marks' viewBox side (-30..30) in path units.
+VIEWBOX = 60
+# Past this the mark stops growing (a desktop window); every iPhone's is smaller.
+MARK_CAP_PX = 240
 LAUNCHER_SPLASH = os.path.join(
     ROOT, "launcher", "app", "src", "main", "res", "drawable", "splash_vibb_breathe.xml"
 )
@@ -232,6 +246,19 @@ def render(screen, share):
     return image.quantize(colors=64, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
 
 
+def style_block(share):
+    """style.css's --vibb-mark-size: the SVG box whose ring at rest (2 x 0.94 x reach units) is `share` of the
+    shorter screen side, as the splash's is."""
+    box = share * 100 * VIEWBOX / (2 * RING_REST * reach())
+    return "\n".join([STYLE_BEGIN, f":root {{ --vibb-mark-size: min({box:.2f}vmin, {MARK_CAP_PX}px); }}", STYLE_END])
+
+
+def current_style_block(style):
+    start, end = style.find(STYLE_BEGIN), style.find(STYLE_END)
+    assert 0 <= start < end, "style.css has no Vibb mark size block"
+    return style[start:end + len(STYLE_END)]
+
+
 def link(screen, version):
     return (
         '<link rel="apple-touch-startup-image" media="(device-width: {w}px) and (device-height: {h}px) '
@@ -266,6 +293,14 @@ def selftest():
     assert f"{90 / reach():.4f}" == "3.3645", reach()
     head = open(HEAD, encoding="utf-8").read()
     assert current_block(head) == head_block(screens, version), "head.html's links differ: run the script"
+    style = open(STYLE, encoding="utf-8").read()
+    assert current_style_block(style) == style_block(share), "style.css's mark size differs: run the script"
+    # The lock screen's marks are these rings in the viewBox the size is for.
+    for path in (PWA_MARK, PWA_REST):
+        svg = open(path, encoding="utf-8").read()
+        half = VIEWBOX // 2
+        assert f'viewBox="-{half} -{half} {VIEWBOX} {VIEWBOX}"' in svg, path
+        assert re.findall(r'\sd="([^"]+)"', svg) == RINGS, path
     for screen, name in zip(screens, names):
         path = os.path.join(OUT, name)
         assert os.path.exists(path), f"{name} missing: run the script"
@@ -323,6 +358,9 @@ def main():
     head = open(HEAD, encoding="utf-8").read()
     head = head.replace(current_block(head), head_block(screens, version))
     open(HEAD, "w", encoding="utf-8").write(head)
+    style = open(STYLE, encoding="utf-8").read()
+    style = style.replace(current_style_block(style), style_block(share))
+    open(STYLE, "w", encoding="utf-8").write(style)
     print(f"{len(screens)} images, {total} bytes")
 
 
