@@ -495,7 +495,8 @@
     <string name="weather_now_rain_all">Regn de neste 90 minuttene</string>
     <string name="weather_now_snow_all">Snø de neste 90 minuttene</string>
     <string name="weather_part_morning">Morgen</string>
-    <string name="weather_part_afternoon">Ettermiddag</string>
+    <!-- A soft hyphen: at a large font it wraps "Etter-/middag", never mid-syllable (E8's L2). -->
+    <string name="weather_part_afternoon">Etter\u00ADmiddag</string>
     <string name="weather_part_evening">Kveld</string>
     <string name="weather_card_tomorrow">I morgen</string>
     <string name="weather_dark_at">Mørkt kl. %1$s</string>

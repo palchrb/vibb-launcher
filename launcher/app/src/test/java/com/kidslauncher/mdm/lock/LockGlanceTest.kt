@@ -951,6 +951,23 @@ class LockGlanceLayoutTest {
         assertEquals("false", root.byId("lock_glance_weather").getAttributeNS(ns, "clipChildren"))
     }
 
+    /** E8's M1: the mark's 48 dp rectangle lies inside the view hosting its TouchDelegate - the top block is padded at its
+     * bottom by what the rectangle reaches past its content (nothing below the own line: the E8 case, 36 dp reached). */
+    @Test
+    fun `the mark's hit rectangle lies inside its host (E8 M1)`() {
+        // The own-line mark at the top block's bottom (E8: [262, 297] px at 1.5x, the clock's baseline at 200).
+        val area = weatherHitRect(48, 262, 138, 297, 72, 12, capTop = 200)
+        val contentBottom = 297
+        val pad = weatherHostPadBottom(area[3], contentBottom)
+        assertEquals(72, area[3] - area[1])
+        assertTrue("inside the host", area[1] >= 0 && area[3] <= contentBottom + pad)
+        assertEquals("only what the rectangle needs", area[3] - contentBottom, pad)
+        assertEquals("content below the mark already holds it", 0, weatherHostPadBottom(area[3], area[3] + 40))
+        val panel = file("java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
+        assertTrue(panel.contains("padHost(top, weatherHostPadBottom(area[3], top.height - top.paddingBottom))"))
+        assertTrue(panel.contains("top.touchDelegate = TouchDelegate(Rect(area[0], area[1], area[2], area[3]), mark)"))
+    }
+
     /** Design r13 §1.3: the card is information only - no tap, one TalkBack stop without a keyboard focus stop. */
     @Test
     fun `the rule card - not clickable, one TalkBack stop, the disc, the compact tile's ground (r13 §1_3)`() {

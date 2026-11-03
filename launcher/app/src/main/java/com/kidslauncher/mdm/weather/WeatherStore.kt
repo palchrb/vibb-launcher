@@ -126,7 +126,7 @@ object WeatherStore {
             val kept = weatherKeep(answer, result)
             triedAtMs = atMs
             // A settled answer (`ok`, `off`, `no_position`) waits the hour; `unavailable` and a failure only the try gap.
-            if (result is WeatherPullResult.Answered && result.answer.status in setOf("ok", "off", "no_position")) pulledAtMs = atMs
+            if (result is WeatherPullResult.Answered && weatherSettled(result.answer.status)) pulledAtMs = atMs
             val changed = kept !== answer
             answer = kept
             write(context)

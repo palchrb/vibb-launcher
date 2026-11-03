@@ -140,12 +140,20 @@ object ClockFormat {
     fun weatherHour(hour: Int, minute: Int, is24: Boolean, catalogNb: Boolean): String {
         val locale = if (catalogNb) Locale.forLanguageTag("nb-NO") else Locale.US
         val pattern = when {
-            is24 && catalogNb && minute == 0 -> "H"
-            is24 -> PATTERN_24
+            // E8: the nb words say "kl.", which reads with the 24-hour hour - "Regn fra kl. 21", never "kl. 9 p.m.".
+            catalogNb && minute == 0 -> "H"
+            catalogNb || is24 -> PATTERN_24
             minute == 0 -> "h a"
             else -> PATTERN_12_AM_PM
         }
-        return format(pattern, hour, minute, is24, locale, amPm = !is24)
+        return format(pattern, hour, minute, is24 || catalogNb, locale, amPm = !is24 && !catalogNb)
+    }
+
+    /** The weather card's "kl." times in the nb catalog ("Mørkt kl. 17:02", "Oppdatert kl. 13:41"): 24-hour, whatever
+     * the phone's format (design 75, E8). */
+    fun weatherClockNb(ms: Long, zone: java.time.ZoneId): String {
+        val t = at(ms, zone)
+        return format(PATTERN_24, t.hour, t.minute, true, Locale.forLanguageTag("nb-NO"), amPm = false)
     }
 
     private fun systemIs24(context: Context, locale: Locale): Boolean {

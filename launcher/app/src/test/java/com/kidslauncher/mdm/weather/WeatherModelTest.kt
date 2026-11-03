@@ -100,6 +100,22 @@ class WeatherModelTest {
         assertTrue("a clock set back", weatherPullDue(true, now + hour, now + hour, now))
     }
 
+    /** E8's M2: a zone saved 30 s after a `no_position` - the nudge is held back by the 3-min gap but stays pending,
+     * and `no_position` doesn't wait the hour: the next screen-on 3 min after the try pulls. */
+    @Test
+    fun `a zone saved right after no_position is pulled at the next screen-on`() {
+        val tried = h0
+        assertFalse(weatherSettled("no_position"))
+        assertTrue(weatherSettled("ok") && weatherSettled("off"))
+        assertFalse(weatherSettled("unavailable"))
+        // no_position stamps no pulledAt; the nudge 30 s later is held back by the gap ...
+        assertFalse(weatherPullDue(true, null, tried, tried + 30_000L, nudged = true))
+        assertTrue("... and kept", weatherNudgeKept(pending = true, ran = false))
+        assertFalse("a pull that ran spends it", weatherNudgeKept(pending = true, ran = true))
+        // ... so the screen-on 3 min after the try pulls.
+        assertTrue(weatherPullDue(true, null, tried, tried + WEATHER_NUDGE_GAP_MS, nudged = true))
+    }
+
     @Test
     fun `what a pull keeps and what a policy change clears`() {
         val kept = answer()
@@ -165,9 +181,12 @@ class WeatherModelTest {
         assertEquals("16", weatherHour(at, oslo, twentyFour = true, catalogNb = true))
         assertEquals("16:00", weatherHour(at, oslo, twentyFour = true, catalogNb = false))
         assertEquals("4 PM", weatherHour(at, oslo, twentyFour = false, catalogNb = false))
+        // E8: the nb words say "kl." - always the 24-hour hour, a 12-hour phone too ("Regn fra kl. 16", never "4 p.m.").
+        assertEquals("16", weatherHour(at, oslo, twentyFour = false, catalogNb = true))
         val half = at + 30 * 60_000L
         assertEquals("16:30", weatherHour(half, oslo, twentyFour = true, catalogNb = true))
         assertEquals("4:30 PM", weatherHour(half, oslo, twentyFour = false, catalogNb = false))
+        assertEquals("16:30", weatherHour(half, oslo, twentyFour = false, catalogNb = true))
     }
 
     @Test

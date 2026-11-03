@@ -292,6 +292,11 @@ class WeatherLockPanel(
         weatherHour(atMs, ZoneId.systemDefault(), ClockFormat.systemIs24(activity), catalogNb())
 
     /** L5: the strings' catalog itself (`values-nb` sets it), not a guess from the first locale. */
+    /** "Mørkt kl. 17:02", "Oppdatert kl. 13:41": in the nb catalog always 24-hour (E8: "kl." with "5:02 p.m." reads
+     * wrong); in English the phone's own clock format. */
+    private fun clockText(ms: Long): String =
+        if (catalogNb()) ClockFormat.weatherClockNb(ms, ZoneId.systemDefault()) else ClockFormat.formatClock(activity, ms)
+
     private fun catalogNb(): Boolean = activity.resources.getBoolean(R.bool.weather_catalog_nb)
 
     // ---- the place (D15) ---------------------------------------------------------------------------
@@ -368,6 +373,14 @@ class WeatherLockPanel(
             }
             col.root.setBackgroundResource(if (c.current) R.drawable.bg_weather_now else 0)
         }
+        // E8's L2: a label that wraps ("Etter-/middag" at a large font) gives the three the same lines, so the symbols
+        // and degrees stay on one line across the card.
+        card.root.post {
+            guarded("labels") {
+                val lines = columns.filter { it.root.visibility == View.VISIBLE }.maxOfOrNull { it.part.lineCount } ?: 1
+                for (col in columns) if (col.part.minLines != lines) col.part.minLines = lines
+            }
+        }
         val lowHigh = if (model.low != null && model.high != null) {
             activity.getString(R.string.weather_low_high, weatherDegrees(model.low), weatherDegrees(model.high))
         } else null
@@ -376,7 +389,7 @@ class WeatherLockPanel(
         card.weatherCardFoot.text = footText(model.place, lowHigh, dark)
         val updated = model.updatedAtMs
         card.weatherCardUpdated.visibility = if (updated != null) View.VISIBLE else View.GONE
-        if (updated != null) card.weatherCardUpdated.text = activity.getString(R.string.weather_updated, ClockFormat.formatClock(activity, updated))
+        if (updated != null) card.weatherCardUpdated.text = activity.getString(R.string.weather_updated, clockText(updated))
         view.visibility = View.VISIBLE
         view.contentDescription = withNow(spokenCard(model, lowHigh != null))
         view.stateDescription = activity.getString(R.string.weather_expanded)
@@ -397,7 +410,7 @@ class WeatherLockPanel(
     private fun darkText(model: WeatherCard): String? {
         val dark = model.dark ?: return null
         return when (dark.kind) {
-            "at" -> dark.atMs?.let { activity.getString(R.string.weather_dark_at, ClockFormat.formatClock(activity, it)) }
+            "at" -> dark.atMs?.let { activity.getString(R.string.weather_dark_at, clockText(it)) }
             "never" -> activity.getString(R.string.weather_dark_never)
             "all_day" -> activity.getString(R.string.weather_dark_all_day)
             else -> null
@@ -503,12 +516,16 @@ class WeatherLockPanel(
 
     /** The visible mark's touch rectangle: at least 48 dp tall - its bounds extended evenly, the top capped at the
      * clock's baseline above (the design review's L1: the rest goes below) - and 8 dp wider at each side, through one
-     * [TouchDelegate] on the page's top block; the layout and the rows don't move. */
+     * [TouchDelegate] on the page's top block; the layout and the rows don't move. A delegate sees only touches inside
+     * its host (E8's M1: with nothing under the mark the top block ended at its bottom, 36 dp of the 48 reached): the top
+     * block is padded at its bottom by what the rectangle reaches past its content ([weatherHostPadBottom]) - room
+     * nothing else uses, so nothing moves. */
     private fun hitArea() {
         val top = glance.lockGlanceTop
         val mark = listOf(beside, ownLine).firstOrNull { it.root.visibility == View.VISIBLE && it.root.isClickable }?.root
         if (mark == null || mark.width == 0) {
             if (top.touchDelegate != null) top.touchDelegate = null
+            padHost(top, 0)
             return
         }
         val rect = Rect(0, 0, mark.width, mark.height)
@@ -516,12 +533,19 @@ class WeatherLockPanel(
         val clock = glance.lockGlanceClock
         val capTop = clock.top + clock.baseline
         val area = weatherHitRect(rect.left, rect.top, rect.right, rect.bottom, dp(HIT_MIN_DP), dp(HIT_SIDE_DP), capTop)
+        padHost(top, weatherHostPadBottom(area[3], top.height - top.paddingBottom))
         top.touchDelegate = TouchDelegate(Rect(area[0], area[1], area[2], area[3]), mark)
+    }
+
+    private fun padHost(top: View, bottom: Int) {
+        if (top.paddingBottom != bottom) top.setPadding(top.paddingLeft, top.paddingTop, top.paddingRight, bottom)
     }
 
     // ---- TalkBack (launcher QA M5) -------------------------------------------------------------------
 
-    private fun sentence(text: String): String = activity.getString(R.string.weather_spoken_sentence, text)
+    /** A whole sentence: the text and its full stop - never two ("9 p.m.."). */
+    private fun sentence(text: String): String =
+        if (text.trimEnd().endsWith(".")) text.trimEnd() else activity.getString(R.string.weather_spoken_sentence, text)
 
     private fun spokenMark(model: WeatherLine, words: String?): String {
         val parts = mutableListOf<String>()
@@ -538,6 +562,8 @@ class WeatherLockPanel(
         val parts = mutableListOf<String>()
         if (model.tomorrow) parts += sentence(activity.getString(R.string.weather_card_tomorrow))
         for (c in model.columns) {
+            // E8's L1: a period without its hours says nothing (no bare "Morgen:").
+            if (c.symbol == null && c.temp == null) continue
             val label = WeatherWords.partRes(c.part)?.let(activity::getString) ?: continue
             parts += activity.getString(R.string.weather_spoken_period, label)
             c.symbol?.let { WeatherSymbols.name(it) }?.let { parts += sentence(activity.getString(it)) }
@@ -616,6 +642,13 @@ class WeatherLockPanel(
  * block's coordinates; at least [minHeight] tall - extended evenly, but never above [capTop] (the clock's baseline;
  * what can't go above goes below) - and [side] wider at each side. Returns left, top, right, bottom.
  */
+/**
+ * The mark's touch rectangle must lie inside its host (E8's M1: a `TouchDelegate` sees only the host's touches): the
+ * bottom padding the host needs so its height reaches [areaBottom] from [contentBottom] (its height without that
+ * padding); 0 when its content already reaches there.
+ */
+fun weatherHostPadBottom(areaBottom: Int, contentBottom: Int): Int = maxOf(0, areaBottom - contentBottom)
+
 fun weatherHitRect(left: Int, top: Int, right: Int, bottom: Int, minHeight: Int, side: Int, capTop: Int): IntArray {
     val need = maxOf(0, minHeight - (bottom - top))
     var up = need / 2

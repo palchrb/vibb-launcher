@@ -54,8 +54,10 @@ object WeatherPull {
     suspend fun afterSync(context: Context, policy: PolicyResponse?) {
         try {
             val asked = policy?.let { WeatherStore.policyChanged(context, WeatherStore.policyOf(it)) } == true
-            val nudged = nudge.getAndSet(false)
-            if (asked || due(nudged = nudged)) pull(context)
+            // E8's M2: a nudge the 3-min gap holds back stays pending for the next screen-on or sync.
+            val nudged = nudge.get()
+            val ran = (asked || due(nudged = nudged)) && run { pull(context); true }
+            nudge.set(weatherNudgeKept(nudge.get(), ran))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -66,9 +68,12 @@ object WeatherPull {
     /** A screen-on (`PinLockRuntime`'s receiver): a pull in the background when due. */
     fun atScreenOn(context: Context) {
         try {
-            if (!due()) return
+            if (!due(nudged = nudge.get())) return
             val app = context.applicationContext
-            CoroutineScope(Dispatchers.IO).launch { pull(app) }
+            CoroutineScope(Dispatchers.IO).launch {
+                pull(app)
+                nudge.set(false)
+            }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Weather: the screen-on pull failed (${e.javaClass.simpleName})")
         }
@@ -98,10 +103,13 @@ object WeatherPull {
             val result = fetch()
             WeatherStore.pulled(context.applicationContext, result, System.currentTimeMillis(), startedAt)
             when (result) {
-                is WeatherPullResult.Answered -> Log.i(
-                    LOG_TAG,
-                    "Weather: pulled (${result.answer.status}, ${result.answer.hours.size} hours, place ${if (result.answer.place != null) "yes" else "no"})",
-                )
+                is WeatherPullResult.Answered -> {
+                    Log.i(
+                        LOG_TAG,
+                        "Weather: pulled (${result.answer.status}, ${result.answer.hours.size} hours, place ${if (result.answer.place != null) "yes" else "no"})",
+                    )
+                    placeLater(context, result.answer)
+                }
                 WeatherPullResult.Failed -> Unit
             }
         } catch (e: CancellationException) {
@@ -135,6 +143,24 @@ object WeatherPull {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Weather: the answer doesn't decode (${e.javaClass.simpleName})")
             WeatherPullResult.Failed
+        }
+    }
+
+    /** E8's L3: a new cell's first answer has no place (Kartverket is asked after it): one more pull
+     * [WEATHER_PLACE_RETRY_MS] later, once until an answer with a place comes. */
+    private val placeRetried = AtomicBoolean(false)
+
+    private fun placeLater(context: Context, answer: WeatherAnswer) {
+        if (answer.status != "ok") return
+        if (answer.place != null) {
+            placeRetried.set(false)
+            return
+        }
+        if (!placeRetried.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(WEATHER_PLACE_RETRY_MS)
+            if (WeatherStore.policyOn) pull(app)
         }
     }
 

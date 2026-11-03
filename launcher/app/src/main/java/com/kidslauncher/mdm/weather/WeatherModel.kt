@@ -33,6 +33,9 @@ const val WEATHER_TRY_GAP_MS = 5 * 60_000L
  * this often, so a parent's change reaches the lock within a sync. */
 const val WEATHER_NUDGE_GAP_MS = 3 * 60_000L
 
+/** E8's L3: a new cell's place-less first answer is pulled once more this much later (Kartverket is asked after it). */
+const val WEATHER_PLACE_RETRY_MS = 2 * 60_000L
+
 /** The card's nowcast answer is reused this long (memory only). */
 const val WEATHER_NOW_REUSE_MS = 2 * 60_000L
 
@@ -119,6 +122,14 @@ sealed class WeatherPullResult {
     object Failed : WeatherPullResult()
 }
 
+/** A pull's answer that waits the hour ([WEATHER_PULL_AFTER_MS]): `ok` and `off`. `no_position` doesn't (E8's M2: a
+ * zone picked just after it is tried at the next screen-on or nudge), nor `unavailable` or a failure - the try gaps
+ * govern those. */
+fun weatherSettled(status: String): Boolean = status == "ok" || status == "off"
+
+/** A nudge waits until a pull actually runs (E8's M2): kept while [ran] is false. */
+fun weatherNudgeKept(pending: Boolean, ran: Boolean): Boolean = pending && !ran
+
 /** What the store keeps after a pull: an `ok` answer replaces the kept one; `off` and `no_position` clear it;
  * `unavailable`, an unknown status and a failure keep the old one (its own age still hides it after 3 h). */
 fun weatherKeep(kept: WeatherAnswer?, got: WeatherPullResult): WeatherAnswer? = when (got) {
@@ -175,8 +186,8 @@ fun weatherDegrees(temp: Int): String = "${weatherNumber(temp)}°"
 
 /**
  * The hour of a `from` form (§5.2), keyed on the strings' catalog ([catalogNb]: `values-nb`, else English) and the
- * phone's one clock format: 24-hour nb "14" (the string carries "kl."), 24-hour en "14:00", 12-hour "2 PM"; a start not
- * on :00 shows its minutes ("14:30", "2:30 PM"). In the phone's zone.
+ * phone's one clock format: nb "14" always (the string carries "kl.", E8), en "14:00" in 24 hours, "2 PM" in 12; a
+ * start not on :00 shows its minutes ("14:30", "2:30 PM"). In the phone's zone.
  */
 fun weatherHour(atMs: Long, zone: ZoneId, twentyFour: Boolean, catalogNb: Boolean): String {
     val time = Instant.ofEpochMilli(atMs).atZone(zone)
