@@ -248,6 +248,7 @@ impl TestApp {
                 pushes.clone(),
             )),
             kid_writes: Default::default(),
+            server_release: Default::default(),
         };
 
         TestApp {

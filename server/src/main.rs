@@ -78,6 +78,7 @@ use axum::routing::{get, post};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
+use tower_http::compression::Predicate as _;
 use tower_http::services::ServeDir;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions::session_store::ExpiredDeletion;
@@ -178,6 +179,9 @@ pub struct AppState {
     /// The kid's events written to a CalDAV calendar (design 72b): the write job's wake-up and the tests' clock
     /// (`calendar_kid_events::KidWrites`).
     pub kid_writes: std::sync::Arc<calendar_kid_events::KidWrites>,
+    /// The newest server release, read from GitHub off the request path
+    /// (`handlers::system_update::ServerRelease`).
+    pub server_release: std::sync::Arc<handlers::system_update::ServerRelease>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -509,6 +513,7 @@ async fn main() {
             .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
         ),
         kid_writes: Default::default(),
+        server_release: Default::default(),
     };
     state
         .tokens
@@ -526,6 +531,11 @@ async fn main() {
     music::flag_missing_files(&state.db, &state.music_files_dir).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
+    // Software Updates shows the newest release without waiting on GitHub.
+    let release_state = state.clone();
+    tokio::task::spawn(async move {
+        handlers::system_update::refresh_release(&release_state).await;
+    });
     // The live mirror feeds an external drive and the app-update schedule a root helper - neither
     // exists in the container (design 22 §6: nothing writes update_requested there).
     if state.net.deploy_kind == net::DeployKind::Systemd {
@@ -1756,6 +1766,13 @@ pub fn build_admin_router(
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
         .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         .layer(axum::middleware::from_fn(admin_auth::admin_headers))
+        // Text answers gzip'd, never a page with a secret (`admin_auth::Compressible`).
+        .layer(
+            tower_http::compression::CompressionLayer::new().compress_when(
+                tower_http::compression::predicate::SizeAbove::new(1024)
+                    .and(admin_auth::compress_when),
+            ),
+        )
         // Outermost: a refused request never reaches the session store.
         .layer(from_fn_with_state(state, gate::admin_gate))
 }

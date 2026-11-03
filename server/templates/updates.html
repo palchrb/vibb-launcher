@@ -42,7 +42,9 @@
                 <span class="row-value">{{ app.current_version.trim_start_matches('v') }}{% if docker %} (Docker image){% endif %}</span>
             </div>
             {% endif %}
-            {% if app.check_failed %}
+            {% if app.checking %}
+            <p class="row row-note" data-row="latest">Checking for a new version…</p>
+            {% else if app.check_failed %}
             <p class="row row-note" data-row="latest">Couldn't check for a new version right now.</p>
             {% else if docker %}
             {% if let Some(version) = docker_version %}
@@ -66,7 +68,7 @@
             <div class="row" data-row="latest"><span class="row-label">Up to date</span></div>
             {% endif %}
             {% if !docker %}
-            {% if app.update_available || app.check_failed %}
+            {% if app.update_available || app.check_failed || app.checking %}
             <details class="confirm cell" id="update-now">
                 <summary class="row">Update Now…</summary>
                 <form method="post" action="/update/trigger#app" class="confirm-body">

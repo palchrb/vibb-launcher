@@ -40,18 +40,10 @@
             </a>
             {% endif %}
             {% for e in events %}
-            <details class="info cell" data-event>
-                <summary class="row">
-                    <span class="row-label">{{ e.label }}{% if !e.who.is_empty() %}<span class="row-sub">{{ e.who }}</span>{% endif %}</span>
-                    <span class="row-value"{% if !e.exact.is_empty() %} title="{{ e.exact }}"{% endif %}>{{ e.when }}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Details" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                </summary>
-                <div class="info-panel">
-                    {% if !e.exact.is_empty() %}<p>{{ e.exact }}</p>{% endif %}
-                    {% if let Some(detail) = e.detail %}<p>{{ detail }}</p>{% endif %}
-                    <p>Logged as {{ e.kind }}.</p>
-                </div>
-            </details>
+            <div class="row" data-event>
+                <span class="row-label">{{ e.label }}{% if !e.sub.is_empty() %}<span class="row-sub">{{ e.sub }}</span>{% endif %}{% if !e.exact.is_empty() %}<span class="row-sub">{{ e.exact }}</span>{% endif %}</span>
+                <span class="row-value row-value-keep">{{ e.when }}</span>
+            </div>
             {% else %}
             <p class="row row-note">Nothing logged yet.</p>
             {% endfor %}
