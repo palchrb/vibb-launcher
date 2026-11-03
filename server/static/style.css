@@ -2394,8 +2394,10 @@ input.row-input {
     display: none;
 }
 
+/* Against the body, as the tab bar: the shell's body is the screen and never scrolls, and nothing is fixed to the
+   viewport (design 43). */
 .crop-backdrop {
-    position: fixed;
+    position: absolute;
     z-index: 3000;
     top: 0;
     right: 0;
