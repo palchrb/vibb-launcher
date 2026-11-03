@@ -114,14 +114,9 @@ pub const PROBE_BUDGET: Duration = Duration::from_secs(45);
 /// so the page answers within this whatever the sweep is fetching.
 pub const READ_BUDGET: Duration = Duration::from_secs(45);
 
-/// A Storytel entry's offline choices (vibb `app.js` 513-535: download-only, so no "none"): value
-/// and label. A stored or posted 0 means all ([cache_value]).
-pub const CACHE_CHOICES: [(i64, &str); 4] = [
-    (-1, "All books"),
-    (5, "The first 5"),
-    (10, "The first 10"),
-    (20, "The first 20"),
-];
+/// A Storytel entry's offline choices (vibb `app.js` 513-535: download-only, so no "none"): all
+/// and the first 5, 10, 20 (the PWA words them). A stored or posted 0 means all ([cache_value]).
+pub const CACHE_CHOICES: [i64; 4] = [-1, 5, 10, 20];
 
 /// A Storytel entry's `cache`: 0 is all (vibb `library.py` 87-89: download-only, an entry that
 /// keeps nothing plays nothing).

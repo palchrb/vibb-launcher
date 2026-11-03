@@ -2777,6 +2777,11 @@ async fn covers_are_uploaded_processed_backed_up_and_pruned() {
         .get_page(&format!("/music-covers/{hash}"), &cookie)
         .await;
     assert_eq!(res.status, StatusCode::OK);
+    // Its name is its content's hash: cached for good (a new cover is a new URL).
+    assert_eq!(
+        res.headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "private, max-age=31536000, immutable"
+    );
 
     // In the backup zip; recovered after a restore; forgotten when in no backup.
     let backups = tempfile::tempdir().unwrap();
@@ -3428,11 +3433,10 @@ async fn the_music_page_scopes_sonos_rooms() {
     let page = music_page(&app, &cookie, device).await;
     let sonos = sonos_group(&page);
     assert!(sonos.contains("No speakers seen yet."));
-    assert!(
-        sonos.contains(
-            "Until then the phone may play on any Sonos speaker it finds, a friend's too."
-        )
-    );
+    assert!(sonos.contains(
+        // Askama escapes the word's apostrophe.
+        "Until then the phone may play on any Sonos speaker it finds, a friend&#39;s too."
+    ));
     assert!(!sonos.contains("/music/sonos-rooms"));
     let all = library().await;
     assert_eq!(all["sonos_rooms"], Value::Null);
@@ -5912,4 +5916,181 @@ async fn the_library_rows_and_edit_mode() {
             format!("/music/entries/{b}/move#entry-{b} up"),
         ]
     );
+}
+
+/// Design 70 §5.1, slice 3d: the Music tab in Norwegian - every page under `lang="nb"` with its
+/// words, the handlers' rows and lines, `/music/cards`' status blocks (asked for in the page's
+/// language) and an error body in the reader's language; English stays as it was.
+#[tokio::test]
+async fn the_music_tab_speaks_norwegian() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("Anna").await;
+    let nrk: i64 = sqlx::query_scalar(
+        "INSERT INTO music_entries (name, category_id, source, target, key, sort) VALUES \
+         ('Abels tårn', 1, 'nrk', 'https://radio.nrk.no/serie/abels-taarn', 'nrk-abel', 10) \
+         RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let own: i64 = sqlx::query_scalar(
+        "INSERT INTO music_entries (name, category_id, source, key, cache, sort) VALUES \
+         ('Sanger', 1, 'own', 'own-sanger', -1, 20) RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO device_music_entries (device_id, entry_id) VALUES (?, ?)")
+        .bind(device)
+        .bind(nrk)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = |uri: String| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            let res = app.get_page(&uri, cookie).await;
+            assert_eq!(res.status, StatusCode::OK, "{uri}");
+            let html = res.text();
+            assert!(html.contains(r#"<html lang="nb">"#), "{uri}");
+            html
+        }
+    };
+    let has = |html: &str, words: &[&str]| {
+        for w in words {
+            assert!(html.contains(w), "{w}");
+        }
+    };
+
+    let tab = page("/music?lang=nb".to_string()).await;
+    has(
+        &tab,
+        &[
+            "<h1 class=\"page-title\">Musikk</h1>",
+            "Bibliotek",
+            "NRK-serie · 1 telefon",
+            "Egne filer · 0 filer · ingen telefoner",
+            "Venter på første sjekk",
+            "Last opp egne filer",
+            "Fra Storytel",
+            "Importer fra Vibb",
+            "Kategorier",
+            "1 av 2",
+            "/static/music-cards.js?v=4",
+        ],
+    );
+    assert!(!tab.contains("Library") && !tab.contains("Upload your own files"));
+
+    let entry = page(format!("/music/entries/{nrk}?lang=nb")).await;
+    has(
+        &entry,
+        &[
+            "Episoder",
+            "Rekkefølge",
+            "Naturlig (podkaster nyeste først",
+            "Fortsett der den stoppet",
+            "Ikke rapportert ennå",
+            "Slett innslag",
+            "Nedlastet (nyeste episoder)",
+            "<option value=\"0\">Ingen</option>",
+        ],
+    );
+    let files = page(format!("/music/entries/{own}?lang=nb")).await;
+    has(
+        &files,
+        &["Filer (0 av ", "Lydfiler", "Ingen telefon har det ennå."],
+    );
+
+    let settings = page("/music/settings?lang=nb".to_string()).await;
+    has(
+        &settings,
+        &[
+            "Nye episoder",
+            ">Hver time</option>",
+            ">Hver 6. time</option>",
+            "Din Spotify-app",
+            "Musikkappen",
+        ],
+    );
+    let categories = page("/music/categories?lang=nb".to_string()).await;
+    has(
+        &categories,
+        &[
+            "Legg til en kategori",
+            "<legend>Farge</legend>",
+            "title=\"note\"",
+            " Blå</label>",
+        ],
+    );
+    has(
+        &page("/music/import?lang=nb".to_string()).await,
+        &["Bibliotekfilen", "Forhåndsvis"],
+    );
+    has(
+        &page("/music/storytel?lang=nb".to_string()).await,
+        &["<h1 class=\"page-title\">Storytel-hylla</h1>"],
+    );
+    has(
+        &page("/music/spotify?lang=nb".to_string()).await,
+        &["Legg til fra Spotify", "Spotify-oppsett"],
+    );
+    let done = app
+        .get_page("/music/spotify/done?login=ok&lang=nb", "")
+        .await
+        .text();
+    assert!(done.contains(r#"<html lang="nb">"#) && done.contains("Tilbake til"));
+
+    let phone = page(format!("/devices/{device}/music?lang=nb")).await;
+    has(
+        &phone,
+        &[
+            "Musikk · Anna",
+            "Mobildata",
+            "Strøm på mobildata",
+            "Volumtak",
+            "Sonos-høyttalere",
+            "Ingen høyttalere sett ennå.",
+            "NRK-serie · ",
+        ],
+    );
+
+    let cards = app
+        .get_page(&format!("/music/cards?ids={nrk}&lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(cards.contains("Venter på første sjekk"), "{cards}");
+
+    // The Add-link form's refusal (`music::parse_link`'s key) in the reader's language.
+    let refused = app
+        .request_form(
+            Method::POST,
+            "/music?lang=nb",
+            Some(&cookie),
+            &[("link", "ftp://example.org/x")],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused
+            .text()
+            .contains("Bare http- og https-lenker virker.")
+    );
+
+    let missing = app.get_page("/music/entries/9999?lang=nb", &cookie).await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    assert_eq!(missing.text(), "Fant ikke innslaget");
+
+    // English stays as it was.
+    let en = app.get_page("/music?lang=en", &cookie).await.text();
+    assert!(en.contains(r#"<html lang="en">"#));
+    for words in [
+        "NRK series · 1 phone",
+        "Own files · 0 files · no phones",
+        "Waiting for the first check",
+        "Upload your own files",
+        "1 of 2",
+    ] {
+        assert!(en.contains(words), "{words}");
+    }
 }

@@ -1501,6 +1501,22 @@ man er inne på en device". Branch `pwa-fixes-b`.
   The span pick's words are `locate.span.<hours>` (`locate::SPANS` holds the keys). Zone events and their pushes were
   keys already (design 64, slice 2). Left for slice 4: `kid_lock::PinAnswer::words` (a `set_kid_pin` answer in
   Activity stays English with `kid_lock`'s other words).
+- **Slice 3d (Music)**: the Music tab, an entry's page, Settings (with `partials/spotify_setup.html`), Categories,
+  Import from Vibb, the Storytel shelf, Add from Spotify, the Spotify login's step back and Device › Music are
+  worded (`music.*`, `device.music.*`, `error.music_*`), with the handlers' titles, rows, notices, field refusals,
+  upload problems, the import's preview and result, and error bodies (`handlers::music::server_error(lang, …)`,
+  `i18n::error`). The cards' status lines (`SweepView`: Checking…, Waiting…, Checked …, Last check failed …, the
+  phones' lines, the Spotify card's notes) come in the `Zone`'s language; `music::kind_key` gives a kind's key,
+  `ORDERS` holds keys, the offline choices are worded by `cache_label`/`storytel_caches`, the category icons and
+  colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice and
+  `OlderApps::title_key` Device › Music's update warning. `music::parse_link` (the Add-link form) and
+  `music_import::parse` (the Import form) refuse with a key (`music.link.*`, `music.import.not_json`/`no_sections`)
+  the handler words; the import's skip reasons word `parse_link`'s keys in English until slice 4.
+  `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4:
+  the helpers' sentences inside those lines - `music::sweep_error_text`, `CheckError::message`, `entry_error_text`,
+  `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
+  `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
+  `music::storage`'s sizes - and the summary's Music row and Attention (`OlderApps::title` stays English there).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

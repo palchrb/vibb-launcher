@@ -42,13 +42,13 @@ use crate::security::{self, CurrentAdmin};
 
 type FormMap = HashMap<String, String>;
 
-pub(super) fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+pub(super) fn server_error(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't load or save the music library - nothing was changed. Check the server log.",
+        "error.music_failed",
     )
-        .into_response()
 }
 
 fn field(form: &FormMap, key: &str) -> String {
@@ -112,12 +112,13 @@ pub(crate) async fn music_app_row(
 /// `vibb-music.apk`, stable only, "Musikk" on the phones.
 pub async fn add_catalog_row(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     match music_app_row(&state.db).await {
         Ok(Some(_)) => return Redirect::to("/music/settings#app").into_response(),
         Ok(None) => {}
-        Err(err) => return server_error(err, "music app row lookup failed"),
+        Err(err) => return server_error(lang, err, "music app row lookup failed"),
     }
     let inserted = sqlx::query(
         "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, asset_pattern, \
@@ -130,7 +131,7 @@ pub async fn add_catalog_row(
     .execute(&state.db)
     .await;
     if let Err(err) = inserted {
-        return server_error(err, "couldn't add the music app to the catalog");
+        return server_error(lang, err, "couldn't add the music app to the catalog");
     }
     log_event(
         &state,
@@ -332,10 +333,10 @@ struct MusicTemplate {
     category_count: usize,
     add: AddForm,
     own: OwnForm,
-    /// The From Storytel row's value: "Signed in" or "No login".
+    /// The From Storytel row's value (a key): "Signed in" or "No login".
     storytel_value: &'static str,
     /// The "From Spotify ›" row's value (design 31 §3.4's Add rows, design 26c step 2b): "Signed
-    /// in" (an account that can read), "No login", or "No app".
+    /// in" (an account that can read), "No login", or "No app" - a key.
     spotify_state: &'static str,
     phones: Vec<PhoneRow>,
     bell: crate::parent_events::Bell,
@@ -360,7 +361,8 @@ struct MusicSettingsTemplate {
     orphans: Option<(usize, String)>,
     /// The sweep setting (design 21b §3): the hours and every choice.
     sweep_hours: i64,
-    sweep_choices: Vec<i64>,
+    /// Each choice and its words ("Every 6 hours").
+    sweep_choices: Vec<(i64, String)>,
 }
 crate::i18n::words!(MusicSettingsTemplate);
 
@@ -371,8 +373,10 @@ struct MusicCategoriesTemplate {
     lang: Lang,
     title: String,
     categories: Vec<CategoryView>,
-    icons: Vec<&'static str>,
-    colors: Vec<(&'static str, &'static str)>,
+    /// Each icon and the key of its name.
+    icons: Vec<(&'static str, &'static str)>,
+    /// Each colour, its tile colour and the key of its name.
+    colors: Vec<(&'static str, &'static str, &'static str)>,
     new_category: NewCategoryForm,
 }
 crate::i18n::words!(MusicCategoriesTemplate);
@@ -395,10 +399,100 @@ fn tile_of(color: &str) -> String {
     music::color_hex(color).unwrap_or("#5C6370").to_string()
 }
 
-fn html(status: StatusCode, page: Result<impl Template, sqlx::Error>, what: &str) -> Response {
+/// The key of a category icon's name (`music_icons::ICONS`; `every_music_icon_is_worded`).
+fn icon_word(key: &str) -> &'static str {
+    match key {
+        "music_note" => "music.icon.music_note",
+        "star" => "music.icon.star",
+        "menu_book" => "music.icon.menu_book",
+        "mic" => "music.icon.mic",
+        "auto_stories" => "music.icon.auto_stories",
+        "bedtime" => "music.icon.bedtime",
+        "headphones" => "music.icon.headphones",
+        "radio" => "music.icon.radio",
+        "piano" => "music.icon.piano",
+        "pets" => "music.icon.pets",
+        "favorite" => "music.icon.favorite",
+        "rocket_launch" => "music.icon.rocket_launch",
+        _ => "music.icon.music_note",
+    }
+}
+
+/// The key of a category colour's name (`music_icons::COLORS`).
+fn color_word(key: &str) -> &'static str {
+    match key {
+        "rose" => "music.color.rose",
+        "gold" => "music.color.gold",
+        "terracotta" => "music.color.terracotta",
+        "teal" => "music.color.teal",
+        "indigo" => "music.color.indigo",
+        "purple" => "music.color.purple",
+        "green" => "music.color.green",
+        _ => "music.color.sky",
+    }
+}
+
+/// "9 Oct 2026" (nb "9. okt. 2026"), the local date with its year.
+fn date_with_year(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
+    let day = zone.local(time).date_naive();
+    crate::i18n::t_params(
+        zone.lang(),
+        "time.date_year",
+        &[
+            ("day", &chrono::Datelike::day(&day).to_string()),
+            ("month", &zone.month_name(day)),
+            ("year", &chrono::Datelike::year(&day).to_string()),
+        ],
+    )
+}
+
+/// The sweep setting's choice: "Every 1 hour", "Every 6 hours" (nb "Hver time", "Hver 6. time").
+fn every_hours(lang: Lang, hours: i64) -> String {
+    if hours == 1 {
+        crate::i18n::t(lang, "music.settings.every_hour").to_string()
+    } else {
+        crate::i18n::t_params(
+            lang,
+            "music.settings.every_hours",
+            &[("hours", &hours.to_string())],
+        )
+    }
+}
+
+/// An offline choice's words: "None", "5", "All", and a value from a Vibb import "7 (from Vibb)".
+fn cache_label(lang: Lang, cache: i64) -> String {
+    match cache {
+        0 => crate::i18n::t(lang, "music.cache.none").to_string(),
+        -1 => crate::i18n::t(lang, "music.cache.all").to_string(),
+        n => n.to_string(),
+    }
+}
+
+/// The offline select of an NRK/RSS entry: every choice, plus the entry's own value when it is none
+/// of them (an import keeps the Vibb box's, design 21a).
+fn cache_choices(lang: Lang, stored: i64) -> Vec<(i64, String)> {
+    let mut caches: Vec<(i64, String)> = CACHE_CHOICES
+        .iter()
+        .map(|value| (*value, cache_label(lang, *value)))
+        .collect();
+    if !music::valid_cache(stored) {
+        caches.push((
+            stored,
+            crate::i18n::t_params(lang, "music.cache.from_vibb", &[("n", &stored.to_string())]),
+        ));
+    }
+    caches
+}
+
+fn html(
+    lang: Lang,
+    status: StatusCode,
+    page: Result<impl Template, sqlx::Error>,
+    what: &str,
+) -> Response {
     match page {
         Ok(page) => (status, Html(page.render().unwrap())).into_response(),
-        Err(err) => server_error(err, what),
+        Err(err) => server_error(lang, err, what),
     }
 }
 
@@ -432,7 +526,7 @@ async fn render_music(
     lang: Lang,
 ) -> Response {
     let page = music_page(state, admin_id, edit, add, own, lang).await;
-    html(status, page, "couldn't load the music page")
+    html(lang, status, page, "couldn't load the music page")
 }
 
 async fn music_page(
@@ -473,20 +567,25 @@ async fn music_page(
             let (file_count, missing) = files.get(&e.id).copied().unwrap_or((0, 0));
             let sweep = view.card(e);
             let phones = view.phone_count(e);
-            let kind = music::kind_label(&e.source, e.target.as_deref());
-            let mut sub = vec![kind.to_string()];
+            let kind = music::kind_key(&e.source, e.target.as_deref());
+            let mut sub = vec![crate::i18n::t(lang, kind).to_string()];
             match &sweep {
                 // "Storytel book" already says it is one book.
-                Some(_) if kind == "Storytel book" => {}
+                Some(_) if kind == "music.kind.storytel_book" => {}
                 Some(card) => sub.extend(card.count.clone()),
-                None => sub.push(plural(file_count as usize, "file", "files")),
+                None => sub.push(crate::i18n::t_count(
+                    lang,
+                    "music.tab.files",
+                    file_count,
+                    &[],
+                )),
             }
             sub.push(match phones {
-                0 => "no phones".to_string(),
-                n => plural(n as usize, "phone", "phones"),
+                0 => crate::i18n::t(lang, "music.tab.no_phones").to_string(),
+                n => crate::i18n::t_count(lang, "music.tab.phones", n, &[]),
             });
             if sweep.as_ref().is_some_and(|s| s.lan) {
-                sub.push("home network".to_string());
+                sub.push(crate::i18n::t(lang, "music.tab.home_network").to_string());
             }
             EntryRow {
                 id: e.id,
@@ -523,7 +622,18 @@ async fn music_page(
         .iter()
         .map(|d| {
             let ticked = ticks.get(&d.id).copied().unwrap_or(0);
-            PhoneRow::new(d, format!("{ticked} of {count}"), None)
+            PhoneRow::new(
+                d,
+                crate::i18n::t_params(
+                    lang,
+                    "music.tab.phone_ticked",
+                    &[
+                        ("ticked", &ticked.to_string()),
+                        ("count", &count.to_string()),
+                    ],
+                ),
+                None,
+            )
         })
         .collect();
 
@@ -536,7 +646,7 @@ async fn music_page(
 
     Ok(MusicTemplate {
         lang,
-        title: "Music".to_string(),
+        title: crate::i18n::t(lang, "nav.music").to_string(),
         entries: entry_rows,
         entry_count: count as i64,
         max_entries: MAX_ENTRIES,
@@ -545,17 +655,21 @@ async fn music_page(
         category_count: categories.len(),
         add,
         own,
-        storytel_value: if signed_in { "Signed in" } else { "No login" },
+        storytel_value: if signed_in {
+            "music.tab.signed_in"
+        } else {
+            "music.tab.no_login"
+        },
         spotify_state: if !view.spotify_configured {
-            "No app"
+            "music.tab.no_app"
         } else if crate::spotify::accounts(&state.db)
             .await?
             .iter()
             .any(|row| row.needs_login == 0)
         {
-            "Signed in"
+            "music.tab.signed_in"
         } else {
-            "No login"
+            "music.tab.no_login"
         },
         phones,
         bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
@@ -631,7 +745,7 @@ pub(crate) async fn render_settings(
         settings_page(state, storytel_error, storytel_notice, open, spotify, lang).await
     }
     .await;
-    let mut response = html(status, page, "couldn't load the music settings");
+    let mut response = html(lang, status, page, "couldn't load the music settings");
     match axum::http::HeaderValue::from_str(&super::music_spotify::page_csp(state)) {
         Ok(csp) => {
             response
@@ -682,8 +796,8 @@ async fn settings_page(
             .2
             .as_deref()
             .and_then(crate::music_sweep::parse_stamp)
-            .map(|t| zone.local(t).format("%-d %b %Y").to_string())
-            .unwrap_or_else(|| "earlier".to_string())
+            .map(|t| date_with_year(&zone, t))
+            .unwrap_or_else(|| crate::i18n::t(lang, "music.settings.earlier").to_string())
     });
     let stale = stored.0.is_some() && !login_opens(state, stored.1.as_deref());
     let (status, status_error) = if stored.0.is_some() && !stale {
@@ -713,7 +827,7 @@ async fn settings_page(
         session: stored
             .0
             .as_ref()
-            .map(|_| storytel_session(state.storytel.facts())),
+            .map(|_| storytel_session(lang, state.storytel.facts())),
     };
 
     let catalog = match music_app_row(&state.db).await? {
@@ -736,7 +850,7 @@ async fn settings_page(
 
     Ok(MusicSettingsTemplate {
         lang,
-        title: "Music Settings".to_string(),
+        title: crate::i18n::t(lang, "music.settings.title").to_string(),
         storytel,
         storytel_switches,
         storytel_phones_open,
@@ -748,7 +862,10 @@ async fn settings_page(
                 (!o.files.is_empty()).then(|| (o.files.len(), music::megabytes(o.bytes as i64)))
             })?,
         sweep_hours: crate::music_sweep::sweep_hours(&state.db).await?,
-        sweep_choices: crate::music_sweep::SWEEP_HOURS.to_vec(),
+        sweep_choices: crate::music_sweep::SWEEP_HOURS
+            .iter()
+            .map(|hours| (*hours, every_hours(lang, *hours)))
+            .collect(),
     })
 }
 
@@ -772,7 +889,7 @@ async fn render_categories(
     lang: Lang,
 ) -> Response {
     let page = categories_page(state, new_category, refused, open, lang).await;
-    html(status, page, "couldn't load the music categories")
+    html(lang, status, page, "couldn't load the music categories")
 }
 
 async fn categories_page(
@@ -827,10 +944,16 @@ async fn categories_page(
         .collect();
     Ok(MusicCategoriesTemplate {
         lang,
-        title: "Categories".to_string(),
+        title: crate::i18n::t(lang, "music.categories.title").to_string(),
         categories: views,
-        icons: crate::music_icons::ICONS.iter().map(|(k, _)| *k).collect(),
-        colors: crate::music_icons::COLORS.to_vec(),
+        icons: crate::music_icons::ICONS
+            .iter()
+            .map(|(k, _)| (*k, icon_word(k)))
+            .collect(),
+        colors: crate::music_icons::COLORS
+            .iter()
+            .map(|(k, hex)| (*k, *hex, color_word(k)))
+            .collect(),
         new_category: new_category.unwrap_or_default(),
     })
 }
@@ -867,13 +990,13 @@ pub(super) async fn render_import(
                 .await?;
         Ok(MusicImportTemplate {
             lang,
-            title: "Import from Vibb".to_string(),
+            title: crate::i18n::t(lang, "music.import.title").to_string(),
             category_options,
             import: card,
         })
     }
     .await;
-    html(status, page, "couldn't load the import page")
+    html(lang, status, page, "couldn't load the import page")
 }
 
 /// `POST /music/orphans/delete`: deletes the own files no entry names (left by restoring an older
@@ -881,11 +1004,12 @@ pub(super) async fn render_import(
 /// its row meanwhile stays.
 pub async fn delete_orphans(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let orphans = match music::orphan_files(&state.db, &state.music_files_dir).await {
         Ok(orphans) => orphans,
-        Err(err) => return server_error(err, "couldn't list the music files"),
+        Err(err) => return server_error(lang, err, "couldn't list the music files"),
     };
     let mut deleted = 0;
     for file in &orphans.files {
@@ -918,6 +1042,7 @@ async fn pick_category(
     picked: &str,
     source: &str,
 ) -> Result<Result<i64, &'static str>, sqlx::Error> {
+    // `Err` holds a key.
     let categories: Vec<MusicCategory> =
         sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
             .fetch_all(db)
@@ -927,11 +1052,11 @@ async fn pick_category(
             .iter()
             .find(|c| c.id == id)
             .map(|c| c.id)
-            .ok_or("That category doesn't exist any more."));
+            .ok_or("music.error.category_gone"));
     }
     Ok(music::default_category(&categories, source)
         .map(|c| c.id)
-        .ok_or("Add a category first."))
+        .ok_or("music.error.no_category"))
 }
 
 async fn entry_count(db: &sqlx::SqlitePool) -> Result<i64, sqlx::Error> {
@@ -993,16 +1118,28 @@ pub async fn add_link(
     let link = match music::parse_link(&link_text) {
         Ok(link) => link,
         Err(error) => {
-            return refused_add(&state, admin.id, refuse(error.to_string()), lang).await;
+            return refused_add(
+                &state,
+                admin.id,
+                refuse(crate::i18n::t(lang, error).to_string()),
+                lang,
+            )
+            .await;
         }
+    };
+    let full = || {
+        crate::i18n::t_params(
+            lang,
+            "music.error.library_full",
+            &[("max", &MAX_ENTRIES.to_string())],
+        )
     };
     match entry_count(&state.db).await {
         Ok(n) if n >= MAX_ENTRIES => {
-            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, admin.id, refuse(error), lang).await;
+            return refused_add(&state, admin.id, refuse(full()), lang).await;
         }
         Ok(_) => {}
-        Err(err) => return server_error(err, "music entry count failed"),
+        Err(err) => return server_error(lang, err, "music entry count failed"),
     }
     let target = link.target();
     let exists: Option<String> =
@@ -1012,18 +1149,25 @@ pub async fn add_link(
             .await
         {
             Ok(name) => name,
-            Err(err) => return server_error(err, "music entry lookup failed"),
+            Err(err) => return server_error(lang, err, "music entry lookup failed"),
         };
     if let Some(name) = exists {
-        let error = format!("That link is already in the library (\"{name}\").");
+        let error =
+            crate::i18n::t_params(lang, "music.error.link_exists_named", &[("name", &name)]);
         return refused_add(&state, admin.id, refuse(error), lang).await;
     }
     let category = match pick_category(&state.db, &picked, link.source()).await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_add(&state, admin.id, refuse(error.to_string()), lang).await;
+            return refused_add(
+                &state,
+                admin.id,
+                refuse(crate::i18n::t(lang, error).to_string()),
+                lang,
+            )
+            .await;
         }
-        Err(err) => return server_error(err, "music category lookup failed"),
+        Err(err) => return server_error(lang, err, "music category lookup failed"),
     };
     let title = match music::check_link(state.music_fetch.as_ref(), &link).await {
         Ok(title) => title,
@@ -1048,15 +1192,14 @@ pub async fn add_link(
     let id = match inserted {
         Ok(Some(id)) => id,
         Ok(None) => {
-            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, admin.id, refuse(error), lang).await;
+            return refused_add(&state, admin.id, refuse(full()), lang).await;
         }
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
-            let error = "That link is already in the library.".to_string();
+            let error = crate::i18n::t(lang, "music.error.link_exists").to_string();
             return refused_add(&state, admin.id, refuse(error), lang).await;
         }
-        Err(err) => return server_error(err, "couldn't add a music entry"),
+        Err(err) => return server_error(lang, err, "couldn't add a music entry"),
     };
     // Its first fill comes before anything waiting (design 21b §2.2).
     state.music_sweep.wake();
@@ -1112,16 +1255,22 @@ pub async fn add_own(
         error: Some(error),
     };
     let Some(name) = music::clean_name(&name_text, MAX_NAME_CHARS) else {
-        let error = format!("Give it a name (at most {MAX_NAME_CHARS} characters).");
+        let error = name_refusal(lang);
         return refused_own(&state, admin.id, refuse(error), lang).await;
     };
     // The 200-entry limit is the INSERT's own condition below.
     let category = match pick_category(&state.db, &picked, "own").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_own(&state, admin.id, refuse(error.to_string()), lang).await;
+            return refused_own(
+                &state,
+                admin.id,
+                refuse(crate::i18n::t(lang, error).to_string()),
+                lang,
+            )
+            .await;
         }
-        Err(err) => return server_error(err, "music category lookup failed"),
+        Err(err) => return server_error(lang, err, "music category lookup failed"),
     };
     // The key is "own-" and 12 random hex digits, unique for good: after a restore the ids come
     // back, and the music app keys positions and downloads by it (qa-21-step1-code #7). The limit
@@ -1139,10 +1288,14 @@ pub async fn add_own(
     let id = match inserted {
         Ok(Some(id)) => id,
         Ok(None) => {
-            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
+            let error = crate::i18n::t_params(
+                lang,
+                "music.error.library_full",
+                &[("max", &MAX_ENTRIES.to_string())],
+            );
             return refused_own(&state, admin.id, refuse(error), lang).await;
         }
-        Err(err) => return server_error(err, "couldn't add an own-files entry"),
+        Err(err) => return server_error(lang, err, "couldn't add an own-files entry"),
     };
     log_event(
         &state,
@@ -1195,14 +1348,17 @@ async fn move_row(
 /// `POST /music/entries/{id}/move` (`direction` up/down): the carousel order on every phone.
 pub async fn move_entry(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
     match move_row(&state.db, "music_entries", id, &field(&form, "direction")).await {
         Ok(true) => {}
-        Ok(false) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "couldn't move a music entry"),
+        Ok(false) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "couldn't move a music entry"),
     }
     let phones: Vec<i64> =
         sqlx::query_scalar("SELECT DISTINCT device_id FROM device_music_entries")
@@ -1220,19 +1376,40 @@ pub async fn move_entry(
     Redirect::to(&format!("/music?edit=1#entry-{id}")).into_response()
 }
 
+/// "Give it a name (at most 60 characters)."
+fn name_refusal(lang: Lang) -> String {
+    crate::i18n::t_params(
+        lang,
+        "music.error.name",
+        &[("max", &MAX_NAME_CHARS.to_string())],
+    )
+}
+
 /// A category as typed: `Err((message, field))`.
-fn check_category(name: &str, icon: &str, color: &str) -> Result<String, (String, &'static str)> {
+fn check_category(
+    lang: Lang,
+    name: &str,
+    icon: &str,
+    color: &str,
+) -> Result<String, (String, &'static str)> {
     let Some(name) = music::clean_name(name, MAX_CATEGORY_NAME_CHARS) else {
         return Err((
-            format!("Give the category a name (at most {MAX_CATEGORY_NAME_CHARS} characters)."),
+            crate::i18n::t_params(
+                lang,
+                "music.error.category_name",
+                &[("max", &MAX_CATEGORY_NAME_CHARS.to_string())],
+            ),
             "name",
         ));
     };
     if !music::icon_known(icon) {
-        return Err(("Pick one of the icons.".to_string(), "icon"));
+        return Err((crate::i18n::t(lang, "music.error.icon").to_string(), "icon"));
     }
     if music::color_hex(color).is_none() {
-        return Err(("Pick one of the colours.".to_string(), "color"));
+        return Err((
+            crate::i18n::t(lang, "music.error.colour").to_string(),
+            "color",
+        ));
     }
     Ok(name)
 }
@@ -1249,7 +1426,7 @@ pub async fn add_category(
         field(&form, "icon"),
         field(&form, "color"),
     );
-    let checked = match check_category(&name, &icon, &color) {
+    let checked = match check_category(lang, &name, &icon, &color) {
         Ok(checked) => checked,
         Err((error, error_field)) => {
             let form = NewCategoryForm {
@@ -1281,7 +1458,7 @@ pub async fn add_category(
     .await;
     let id = match inserted {
         Ok(id) => id,
-        Err(err) => return server_error(err, "couldn't add a music category"),
+        Err(err) => return server_error(lang, err, "couldn't add a music category"),
     };
     log_event(
         &state,
@@ -1306,7 +1483,7 @@ pub async fn save_category(
         field(&form, "icon"),
         field(&form, "color"),
     );
-    let checked = match check_category(&name, &icon, &color) {
+    let checked = match check_category(lang, &name, &icon, &color) {
         Ok(checked) => checked,
         Err((error, error_field)) => {
             let refused = (id, name, icon, color, error, error_field);
@@ -1331,10 +1508,14 @@ pub async fn save_category(
             .await;
     match updated {
         Ok(result) if result.rows_affected() == 0 => {
-            return (StatusCode::NOT_FOUND, "No such category").into_response();
+            return crate::i18n::error(
+                lang,
+                StatusCode::NOT_FOUND,
+                "error.music_category_not_found",
+            );
         }
         Ok(_) => {}
-        Err(err) => return server_error(err, "couldn't save a music category"),
+        Err(err) => return server_error(lang, err, "couldn't save a music category"),
     }
     nudge(
         &state,
@@ -1355,6 +1536,7 @@ pub async fn save_category(
 /// `POST /music/categories/{id}/move` (`direction` up/down): the tiles' order on the phones.
 pub async fn move_category(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -1368,8 +1550,14 @@ pub async fn move_category(
     .await
     {
         Ok(true) => {}
-        Ok(false) => return (StatusCode::NOT_FOUND, "No such category").into_response(),
-        Err(err) => return server_error(err, "couldn't move a music category"),
+        Ok(false) => {
+            return crate::i18n::error(
+                lang,
+                StatusCode::NOT_FOUND,
+                "error.music_category_not_found",
+            );
+        }
+        Err(err) => return server_error(lang, err, "couldn't move a music category"),
     }
     let phones: Vec<i64> =
         sqlx::query_scalar("SELECT DISTINCT device_id FROM device_music_entries")
@@ -1401,10 +1589,14 @@ pub async fn delete_category(
             .await
         {
             Ok(category) => category,
-            Err(err) => return server_error(err, "music category lookup failed"),
+            Err(err) => return server_error(lang, err, "music category lookup failed"),
         };
     let Some(category) = category else {
-        return (StatusCode::NOT_FOUND, "No such category").into_response();
+        return crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.music_category_not_found",
+        );
     };
     let used: i64 =
         match sqlx::query_scalar("SELECT COUNT(*) FROM music_entries WHERE category_id = ?")
@@ -1413,7 +1605,7 @@ pub async fn delete_category(
             .await
         {
             Ok(used) => used,
-            Err(err) => return server_error(err, "music category use lookup failed"),
+            Err(err) => return server_error(lang, err, "music category use lookup failed"),
         };
     if used > 0 {
         let refused = (
@@ -1421,12 +1613,7 @@ pub async fn delete_category(
             category.name.clone(),
             category.icon.clone(),
             category.color.clone(),
-            format!(
-                "Not deleted: {used} entr{} use{} this category - move {} to another one first.",
-                if used == 1 { "y" } else { "ies" },
-                if used == 1 { "s" } else { "" },
-                if used == 1 { "it" } else { "them" }
-            ),
+            crate::i18n::t_count(lang, "music.error.category_used", used, &[]),
             "delete",
         );
         return render_categories(
@@ -1444,7 +1631,7 @@ pub async fn delete_category(
         .execute(&state.db)
         .await
     {
-        return server_error(err, "couldn't delete a music category");
+        return server_error(lang, err, "couldn't delete a music category");
     }
     log_event(
         &state,
@@ -1462,16 +1649,30 @@ pub async fn delete_category(
 
 /// The Storytel card's session facts (design 58 §2.7): how long the server's session lives and
 /// whether Storytel put an e-mail address in it - a word, never the value.
-fn storytel_session(facts: Option<crate::storytel::LoginFacts>) -> String {
+fn storytel_session(lang: Lang, facts: Option<crate::storytel::LoginFacts>) -> String {
+    use crate::i18n::{t, t_params};
     match facts {
-        Some(facts) => format!(
-            "Session: lives {} min; holds an e-mail address: {}.",
-            facts.left_s / 60,
-            facts.has_email.as_str()
+        Some(facts) => t_params(
+            lang,
+            "music.settings.session",
+            &[
+                ("min", &(facts.left_s / 60).to_string()),
+                (
+                    "email",
+                    t(
+                        lang,
+                        match facts.has_email {
+                            crate::storytel::Presence::Yes => "music.settings.session_email.yes",
+                            crate::storytel::Presence::No => "music.settings.session_email.no",
+                            crate::storytel::Presence::Unknown => {
+                                "music.settings.session_email.unknown"
+                            }
+                        },
+                    ),
+                ),
+            ],
         ),
-        None => {
-            "Session: not known yet - it shows after the server's next Storytel login.".to_string()
-        }
+        None => t(lang, "music.settings.session_unknown").to_string(),
     }
 }
 
@@ -1498,15 +1699,28 @@ fn storytel_status(
     error_at: Option<&str>,
     now: DateTime<Utc>,
 ) -> Option<(String, bool)> {
-    // " (10:02)" from `login_error_at`.
-    let when = error_at
-        .and_then(crate::music_sweep::parse_stamp)
-        .map(|at| format!(" ({})", zone.when(at, now)))
-        .unwrap_or_else(|| " at the last try".to_string());
+    use crate::i18n::{t, t_params};
+    let lang = zone.lang();
+    // "10:02" from `login_error_at`, else "at the last try".
+    let when = error_at.and_then(crate::music_sweep::parse_stamp);
+    // A sentence with its time, or without one ("… at the last try").
+    let timed = |key_at: &str, key: &str, params: &[(&str, &str)]| match when {
+        Some(at) => {
+            let at = zone.when(at, now);
+            let mut all = params.to_vec();
+            all.push(("when", at.as_str()));
+            t_params(lang, key_at, &all)
+        }
+        None => t_params(lang, key, params),
+    };
     let Some(code) = error else {
         let at = crate::music_sweep::parse_stamp(ok_at?)?;
         return Some((
-            format!("Storytel accepted the login ({}).", zone.when(at, now)),
+            t_params(
+                lang,
+                "music.settings.storytel_accepted",
+                &[("when", &zone.when(at, now))],
+            ),
             false,
         ));
     };
@@ -1519,33 +1733,46 @@ fn storytel_status(
                 at,
                 crate::storytel::cooldown_until(refused_at, refused_generation, generation, now),
             ) {
-                (Some(at), Some(until)) => format!(
-                    "Storytel refused the login ({}). Nothing is tried again before {} - save \
-                     the password again to try now.",
-                    zone.when(at, now),
-                    zone.until(until, now)
+                (Some(at), Some(until)) => t_params(
+                    lang,
+                    "music.settings.storytel_refused_until",
+                    &[
+                        ("when", &zone.when(at, now)),
+                        ("until", &zone.until(until, now)),
+                    ],
                 ),
-                (Some(at), None) => format!(
-                    "Storytel refused the login ({}). It is tried again the next time the shelf \
-                     is read - save the password again if it changed.",
-                    zone.when(at, now)
+                (Some(at), None) => t_params(
+                    lang,
+                    "music.settings.storytel_refused_retry",
+                    &[("when", &zone.when(at, now))],
                 ),
-                _ => "Storytel refused the login - save the password again.".to_string(),
+                _ => t(lang, "music.settings.storytel_refused").to_string(),
             }
         }
-        "storytel_key" => {
-            "The saved login was locked with another key - enter it again.".to_string()
-        }
-        "no_jwt" => format!("Storytel took the login but sent no session{when}."),
+        "storytel_key" => t(lang, "music.settings.storytel_other_key").to_string(),
+        "no_jwt" => timed(
+            "music.settings.storytel_no_session_at",
+            "music.settings.storytel_no_session",
+            &[],
+        ),
         // Design 58 §2.6: only the fake-login guard records it while a login is stored.
-        "storytel_off" => {
-            "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."
-                .to_string()
-        }
-        "network" | "timeout" => format!("Storytel couldn't be reached{when}."),
+        "storytel_off" => t(lang, "music.settings.storytel_not_asked").to_string(),
+        "network" | "timeout" => timed(
+            "music.settings.storytel_unreachable_at",
+            "music.settings.storytel_unreachable",
+            &[],
+        ),
         code => match code.strip_prefix("http_") {
-            Some(status) => format!("Storytel answered {status}{when}."),
-            None => format!("Storytel's shelf couldn't be read{when}."),
+            Some(status) => timed(
+                "music.settings.storytel_answered_at",
+                "music.settings.storytel_answered",
+                &[("status", status)],
+            ),
+            None => timed(
+                "music.settings.storytel_shelf_unread_at",
+                "music.settings.storytel_shelf_unread",
+                &[],
+            ),
         },
     };
     Some((text, true))
@@ -1581,7 +1808,7 @@ pub async fn save_storytel(
         )
     };
     let Some(key) = state.music_key.clone() else {
-        let entered = refuse("Storytel is off: this server has no key to keep the login safe.");
+        let entered = refuse(crate::i18n::t(lang, "music.settings.storytel_off_save"));
         return refused(StatusCode::SERVICE_UNAVAILABLE, entered).await;
     };
     let email = field(&form, "email").trim().to_string();
@@ -1590,14 +1817,14 @@ pub async fn save_storytel(
         && email.contains('@')
         && !email.chars().any(|c| c.is_control() || c.is_whitespace());
     if !email_ok {
-        let entered = refuse("Enter the Storytel account's e-mail address.");
+        let entered = refuse(crate::i18n::t(lang, "music.settings.enter_email"));
         return refused(StatusCode::BAD_REQUEST, entered).await;
     }
     if password.is_empty()
         || password.chars().count() > 200
         || password.chars().any(char::is_control)
     {
-        let entered = refuse("Enter the Storytel password.");
+        let entered = refuse(crate::i18n::t(lang, "music.settings.enter_password"));
         return refused(StatusCode::BAD_REQUEST, entered).await;
     }
     let probe =
@@ -1622,31 +1849,28 @@ pub async fn save_storytel(
             // Worded by the login's class (QA L5, design 58 §2.3): a 5xx, a 408, a 429 or no
             // session is Storytel's trouble, not a wrong password. Nothing is stored either way.
             let text = match (outage, status) {
-                (false, _) => {
-                    "Storytel refused that e-mail and password. The saved login is unchanged."
-                        .to_string()
-                }
-                (true, Some(status)) => format!(
-                    "Storytel answered {status} - nothing was saved; the saved login is \
-                     unchanged. Try again later."
+                (false, _) => crate::i18n::t(lang, "music.settings.save_refused").to_string(),
+                (true, Some(status)) => crate::i18n::t_params(
+                    lang,
+                    "music.settings.save_answered",
+                    &[("status", &status.to_string())],
                 ),
-                (true, None) => "Storytel took the login but sent no session - nothing was \
-                                 saved; the saved login is unchanged. Try again later."
-                    .to_string(),
+                (true, None) => crate::i18n::t(lang, "music.settings.save_no_session").to_string(),
             };
             let entered = refuse(&text);
             return refused(StatusCode::BAD_REQUEST, entered).await;
         }
         Probe::Accepted { login, shelf } => {
-            let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
+            let notice =
+                crate::i18n::t_count(lang, "music.settings.saved_shelf", shelf.len() as i64, &[]);
             (Some(login), Some(shelf), None, notice)
         }
         Probe::Unreachable { code, login } => {
             // `storytel_off` here is only the STORYTEL_BASE guard: nothing was asked (design 58 §2.6).
             let notice = if code == crate::storytel::StorytelError::NotConfigured.code() {
-                "Saved; STORYTEL_BASE is set, so Storytel wasn't asked.".to_string()
+                crate::i18n::t(lang, "music.settings.saved_not_asked").to_string()
             } else {
-                "Saved, but Storytel couldn't be reached to check it.".to_string()
+                crate::i18n::t(lang, "music.settings.saved_unreachable").to_string()
             };
             (login, None, Some(code), notice)
         }
@@ -1674,7 +1898,7 @@ pub async fn save_storytel(
     .await;
     let generation = match saved {
         Ok(generation) => generation,
-        Err(err) => return server_error(err, "couldn't save the Storytel login"),
+        Err(err) => return server_error(lang, err, "couldn't save the Storytel login"),
     };
     state.storytel.keep(generation, login, shelf);
     nudge(&state, &storytel_phones(&state.db).await);
@@ -1698,6 +1922,7 @@ pub async fn save_storytel(
 /// delete theirs (generation 0).
 pub async fn clear_storytel(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let cleared = sqlx::query(
@@ -1709,7 +1934,7 @@ pub async fn clear_storytel(
     .execute(&state.db)
     .await;
     if let Err(err) = cleared {
-        return server_error(err, "couldn't clear the Storytel login");
+        return server_error(lang, err, "couldn't clear the Storytel login");
     }
     state.storytel.forget().await;
     nudge(&state, &storytel_phones(&state.db).await);
@@ -1789,10 +2014,6 @@ fn book_duration(ms: i64) -> String {
     format!("{}:{:02}", minutes / 60, minutes % 60)
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
-
 /// What the picker shows after a read of the shelf, and what a refused add brings back.
 struct PickerView {
     all: bool,
@@ -1846,23 +2067,19 @@ async fn render_picker(
                 let geo = g.books.iter().filter(|b| b.geo).count();
                 let mut notes = Vec::new();
                 if locked > 0 {
-                    notes.push(format!(
-                        "{} - each is tried anyway",
-                        plural(
-                            locked,
-                            "book marked locked by Storytel",
-                            "books marked locked by Storytel"
-                        )
+                    notes.push(crate::i18n::t_count(
+                        lang,
+                        "music.storytel.locked",
+                        locked as i64,
+                        &[],
                     ));
                 }
                 if geo > 0 {
-                    notes.push(format!(
-                        "{} (per Storytel)",
-                        plural(
-                            geo,
-                            "book not available in this country",
-                            "books not available in this country"
-                        )
+                    notes.push(crate::i18n::t_count(
+                        lang,
+                        "music.storytel.geo",
+                        geo as i64,
+                        &[],
                     ));
                 }
                 PickerRow {
@@ -1874,10 +2091,13 @@ async fn render_picker(
                         g.name.clone()
                     },
                     what: match g.kind {
-                        TargetKind::Series => {
-                            format!("Series · {}", plural(g.books.len(), "book", "books"))
-                        }
-                        TargetKind::Book => "Book".to_string(),
+                        TargetKind::Series => crate::i18n::t_count(
+                            lang,
+                            "music.storytel.series",
+                            g.books.len() as i64,
+                            &[],
+                        ),
+                        TargetKind::Book => crate::i18n::t(lang, "music.storytel.book").to_string(),
                     },
                     kids: g.kids,
                     checked: view.ticked.contains(&g.target),
@@ -1890,8 +2110,10 @@ async fn render_picker(
                             title: b.title.clone(),
                             duration: book_duration(b.duration_ms),
                             flags: [
-                                b.locked.then_some("marked locked"),
-                                b.geo.then_some("not in this country"),
+                                b.locked
+                                    .then(|| crate::i18n::t(lang, "music.storytel.marked_locked")),
+                                b.geo
+                                    .then(|| crate::i18n::t(lang, "music.storytel.not_here")),
                             ]
                             .into_iter()
                             .flatten()
@@ -1905,7 +2127,7 @@ async fn render_picker(
             .collect();
         Ok(StorytelPickerTemplate {
             lang,
-            title: "Storytel shelf".to_string(),
+            title: crate::i18n::t(lang, "music.storytel.title").to_string(),
             no_login,
             error,
             rows,
@@ -1922,7 +2144,7 @@ async fn render_picker(
     .await;
     match page {
         Ok(page) => (status, Html(page.render().unwrap())).into_response(),
-        Err(err) => server_error(err, "couldn't load the Storytel shelf page"),
+        Err(err) => server_error(lang, err, "couldn't load the Storytel shelf page"),
     }
 }
 
@@ -2001,18 +2223,20 @@ pub async fn add_storytel(
     let groups = match &shelf {
         Ok(groups) => groups.clone(),
         Err(_) => {
-            let view = refuse("Nothing was added: the shelf couldn't be read.".to_string());
+            let view = refuse(crate::i18n::t(lang, "music.storytel.unread").to_string());
             return render_picker(&state, StatusCode::SERVICE_UNAVAILABLE, shelf, view, lang).await;
         }
     };
     if too_many {
-        let view = refuse(format!(
-            "More than {MAX_ENTRIES} rows are ticked - nothing was added."
+        let view = refuse(crate::i18n::t_params(
+            lang,
+            "music.storytel.too_many",
+            &[("max", &MAX_ENTRIES.to_string())],
         ));
         return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
     if targets.is_empty() {
-        let view = refuse("Tick a series or a book first.".to_string());
+        let view = refuse(crate::i18n::t(lang, "music.storytel.tick_first").to_string());
         return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
     let mut chosen = Vec::new();
@@ -2020,11 +2244,7 @@ pub async fn add_storytel(
         match groups.iter().find(|g| &g.target == target) {
             Some(group) => chosen.push(group),
             None => {
-                let view = refuse(
-                    "Something you ticked isn't on the Storytel shelf (any more) - nothing was \
-                     added."
-                        .to_string(),
-                );
+                let view = refuse(crate::i18n::t(lang, "music.storytel.not_on_shelf").to_string());
                 return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
             }
         }
@@ -2032,10 +2252,10 @@ pub async fn add_storytel(
     let category = match pick_category(&state.db, &picked, "storytel").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            let view = refuse(error.to_string());
+            let view = refuse(crate::i18n::t(lang, error).to_string());
             return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
         }
-        Err(err) => return server_error(err, "music category lookup failed"),
+        Err(err) => return server_error(lang, err, "music category lookup failed"),
     };
     let mut added = 0;
     let mut full = false;
@@ -2047,7 +2267,7 @@ pub async fn add_storytel(
                 .await
             {
                 Ok(exists) => exists,
-                Err(err) => return server_error(err, "music entry lookup failed"),
+                Err(err) => return server_error(lang, err, "music entry lookup failed"),
             };
         if exists {
             continue;
@@ -2080,7 +2300,7 @@ pub async fn add_storytel(
             }
             // Added by another request since the check above.
             Err(sqlx::Error::Database(err)) if err.is_unique_violation() => continue,
-            Err(err) => return server_error(err, "couldn't add a Storytel entry"),
+            Err(err) => return server_error(lang, err, "couldn't add a Storytel entry"),
         };
         added += 1;
         log_event(
@@ -2100,8 +2320,10 @@ pub async fn add_storytel(
         .await;
     }
     if full && added == 0 {
-        let view = refuse(format!(
-            "The library has {MAX_ENTRIES} entries - delete one first."
+        let view = refuse(crate::i18n::t_params(
+            lang,
+            "music.error.library_full",
+            &[("max", &MAX_ENTRIES.to_string())],
         ));
         return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
@@ -2144,6 +2366,7 @@ struct EntryTemplate {
     lang: Lang,
     title: String,
     entry: MusicEntry,
+    /// The kind's key (`music::kind_key`).
     kind: &'static str,
     own: bool,
     /// A Storytel entry: its own offline choices (books in reading order), the target as text.
@@ -2156,7 +2379,7 @@ struct EntryTemplate {
     /// (emulator check §6l A, F5).
     spotify_artist: bool,
     spotify_link: Option<String>,
-    /// The status group's header ([list_title]): "Books", "Tracks" or "Episodes".
+    /// The status group's header's key ([list_title]): "Books", "Tracks" or "Episodes".
     list_title: &'static str,
     form: EntryForm,
     categories: Vec<(i64, String)>,
@@ -2185,7 +2408,7 @@ crate::i18n::words!(EntryTemplate);
 /// (NRK, RSS, a Spotify show or episode).
 fn list_title(entry: &MusicEntry) -> &'static str {
     match entry.source.as_str() {
-        "storytel" => "Books",
+        "storytel" => "music.entry.books",
         "spotify" => match entry
             .target
             .as_deref()
@@ -2193,11 +2416,11 @@ fn list_title(entry: &MusicEntry) -> &'static str {
             .map(|r| r.kind)
         {
             Some(crate::spotify::LinkKind::Show | crate::spotify::LinkKind::Episode) | None => {
-                "Episodes"
+                "music.entry.episodes"
             }
-            Some(_) => "Tracks",
+            Some(_) => "music.entry.tracks",
         },
-        _ => "Episodes",
+        _ => "music.entry.episodes",
     }
 }
 
@@ -2251,8 +2474,10 @@ async fn render_entry(
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     let page: Result<EntryTemplate, sqlx::Error> = async {
         let categories: Vec<(i64, String)> =
@@ -2314,7 +2539,9 @@ async fn render_entry(
             .iter()
             .map(|f| {
                 let detail = [
-                    f.track_no.map(|t| format!("track {t}")),
+                    f.track_no.map(|t| {
+                        crate::i18n::t_params(lang, "music.entry.track", &[("n", &t.to_string())])
+                    }),
                     f.artist.clone(),
                     f.album.clone(),
                     duration_text(f.duration_ms),
@@ -2337,7 +2564,7 @@ async fn render_entry(
         Ok(EntryTemplate {
             lang,
             title: entry.name.clone(),
-            kind: music::kind_label(&entry.source, entry.target.as_deref()),
+            kind: music::kind_key(&entry.source, entry.target.as_deref()),
             own: entry.source == "own",
             storytel,
             spotify,
@@ -2349,16 +2576,9 @@ async fn render_entry(
             categories,
             orders: ORDERS.to_vec(),
             caches: if storytel {
-                storytel_caches(entry.cache)
+                storytel_caches(lang, entry.cache)
             } else {
-                let mut caches: Vec<(i64, String)> = CACHE_CHOICES
-                    .iter()
-                    .map(|(value, label)| (*value, label.to_string()))
-                    .collect();
-                if !music::valid_cache(entry.cache) {
-                    caches.push((entry.cache, format!("{} (from Vibb)", entry.cache)));
-                }
-                caches
+                cache_choices(lang, entry.cache)
             },
             file_count: files.len() as i64,
             files: file_rows,
@@ -2375,20 +2595,34 @@ async fn render_entry(
     .await;
     match page {
         Ok(page) => (status, Html(page.render().unwrap())).into_response(),
-        Err(err) => server_error(err, "couldn't load a music entry's page"),
+        Err(err) => server_error(lang, err, "couldn't load a music entry's page"),
     }
 }
 
 /// A Storytel entry's offline choices (vibb's: all, the first 5, 10, 20), plus its own value when it
 /// is none of them (an import keeps the Vibb box's); a stored 0 is "all".
-fn storytel_caches(stored: i64) -> Vec<(i64, String)> {
+fn storytel_caches(lang: Lang, stored: i64) -> Vec<(i64, String)> {
+    let first = |n: i64| crate::i18n::t_params(lang, "music.cache.first", &[("n", &n.to_string())]);
     let mut caches: Vec<(i64, String)> = crate::storytel::CACHE_CHOICES
         .iter()
-        .map(|(value, label)| (*value, label.to_string()))
+        .map(|value| {
+            let label = match value {
+                -1 => crate::i18n::t(lang, "music.cache.all_books").to_string(),
+                n => first(*n),
+            };
+            (*value, label)
+        })
         .collect();
     let stored = crate::storytel::cache_value(stored);
     if !caches.iter().any(|(value, _)| *value == stored) {
-        caches.push((stored, format!("The first {stored} (from Vibb)")));
+        caches.push((
+            stored,
+            crate::i18n::t_params(
+                lang,
+                "music.cache.first_from_vibb",
+                &[("n", &stored.to_string())],
+            ),
+        ));
     }
     caches
 }
@@ -2404,8 +2638,10 @@ pub async fn save_entry(
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     let own = entry.source == "own";
     let storytel = entry.source == "storytel";
@@ -2449,10 +2685,7 @@ pub async fn save_entry(
         ..Default::default()
     };
     let Some(name) = music::clean_name(&name_text, MAX_NAME_CHARS) else {
-        let entered = refuse(
-            format!("Give it a name (at most {MAX_NAME_CHARS} characters)."),
-            "name",
-        );
+        let entered = refuse(name_refusal(lang), "name");
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     };
     let category_exists: bool =
@@ -2462,26 +2695,33 @@ pub async fn save_entry(
             .await
         {
             Ok(exists) => exists,
-            Err(err) => return server_error(err, "music category lookup failed"),
+            Err(err) => return server_error(lang, err, "music category lookup failed"),
         };
     if !category_exists {
-        let entered = refuse("Pick one of the categories.".to_string(), "category");
+        let entered = refuse(
+            crate::i18n::t(lang, "music.error.pick_category").to_string(),
+            "category",
+        );
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     if !music::valid_order(&order) {
-        let entered = refuse("Pick one of the orders.".to_string(), "order");
+        let entered = refuse(
+            crate::i18n::t(lang, "music.error.pick_order").to_string(),
+            "order",
+        );
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     // One of the choices, or the value it already has (an import keeps the Vibb box's, 21a).
     let choice = if storytel {
-        crate::storytel::CACHE_CHOICES
-            .iter()
-            .any(|(value, _)| *value == cache)
+        crate::storytel::CACHE_CHOICES.contains(&cache)
     } else {
         music::valid_cache(cache)
     };
     if !own && !spotify && !choice && cache != entry.cache {
-        let entered = refuse("Pick one of the offline choices.".to_string(), "cache");
+        let entered = refuse(
+            crate::i18n::t(lang, "error.music_pick_offline").to_string(),
+            "cache",
+        );
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     let updated = sqlx::query(
@@ -2497,7 +2737,7 @@ pub async fn save_entry(
     .execute(&state.db)
     .await;
     if let Err(err) = updated {
-        return server_error(err, "couldn't save a music entry");
+        return server_error(lang, err, "couldn't save a music entry");
     }
     if order != entry.play_order {
         // An NRK series' window follows its order: the refill shouldn't wait (QA 1c #10).
@@ -2533,24 +2773,27 @@ pub async fn save_entry(
 /// covers nothing else uses.
 pub async fn delete_entry(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     let phones = match music::phones_with_entry(&state.db, id).await {
         Ok(phones) => phones,
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     if let Err(err) = sqlx::query("DELETE FROM music_entries WHERE id = ?")
         .bind(id)
         .execute(&state.db)
         .await
     {
-        return server_error(err, "couldn't delete a music entry");
+        return server_error(lang, err, "couldn't delete a music entry");
     }
     tokio::fs::remove_dir_all(state.music_files_dir.join(id.to_string()))
         .await
@@ -2582,8 +2825,10 @@ pub async fn upload_cover(
 ) -> Response {
     match load_entry(&state.db, id).await {
         Ok(Some(_)) => {}
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     }
     let refuse = |message: &str| EntryEntered {
         cover_error: Some(message.to_string()),
@@ -2627,7 +2872,7 @@ pub async fn upload_cover(
     let result = {
         let _files = MUSIC_COVERS.lock().await;
         if let Err(err) = photos::store(&state.music_cover_dir, &processed).await {
-            return server_error(err, "couldn't store a music cover");
+            return server_error(lang, err, "couldn't store a music cover");
         }
         sqlx::query("UPDATE music_entries SET cover_hash = ? WHERE id = ?")
             .bind(&processed.hash)
@@ -2637,7 +2882,7 @@ pub async fn upload_cover(
     };
     MUSIC_COVERS.prune(&state.db, &state.music_cover_dir).await;
     if let Err(err) = result {
-        return server_error(err, "couldn't save a music cover");
+        return server_error(lang, err, "couldn't save a music cover");
     }
     nudge(
         &state,
@@ -2658,6 +2903,7 @@ pub async fn upload_cover(
 /// `POST /music/entries/{id}/cover/remove`: back to the source's art (or an own file's).
 pub async fn remove_cover(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
@@ -2667,10 +2913,10 @@ pub async fn remove_cover(
         .await;
     match updated {
         Ok(result) if result.rows_affected() == 0 => {
-            return (StatusCode::NOT_FOUND, "No such entry").into_response();
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
         }
         Ok(_) => {}
-        Err(err) => return server_error(err, "couldn't remove a music cover"),
+        Err(err) => return server_error(lang, err, "couldn't remove a music cover"),
     }
     MUSIC_COVERS.prune(&state.db, &state.music_cover_dir).await;
     nudge(
@@ -2994,30 +3240,34 @@ pub async fn upload_files(
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     if entry.source != "own" {
         // Its page has no upload form: only a hand-made request gets here.
-        return (
-            StatusCode::BAD_REQUEST,
-            "Only an own-files entry takes uploads.",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_own_only");
     }
     let dir = state.music_files_dir.join(id.to_string());
     if let Err(err) = tokio::fs::create_dir_all(&dir).await {
-        return server_error(err, "couldn't create a music file directory");
+        return server_error(lang, err, "couldn't create a music file directory");
     }
     let mut added: Vec<i64> = Vec::new();
     let mut restored: Vec<i64> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
+    // "<file>: <what>" in the reader's language.
+    let problem = |key: &str, original: &str, params: &[(&str, &str)]| {
+        let mut all = params.to_vec();
+        all.push(("file", original));
+        crate::i18n::t_params(lang, key, &all)
+    };
     loop {
         let mut file_field = match multipart.next_field().await {
             Ok(Some(file_field)) => file_field,
             Ok(None) => break,
             Err(_) => {
-                problems.push("The upload stopped half-way - try the rest again.".to_string());
+                problems.push(crate::i18n::t(lang, "music.upload.stopped").to_string());
                 break;
             }
         };
@@ -3031,32 +3281,32 @@ pub async fn upload_files(
         let (temp, size, sha256) = match receive(&mut file_field, &dir, MIN_FREE_BYTES).await {
             Ok(received) => received,
             Err(ReceiveError::CutOff) => {
-                problems.push(format!("{original}: the upload stopped half-way."));
+                problems.push(problem("music.upload.file_stopped", &original, &[]));
                 break;
             }
             Err(ReceiveError::TooBig) => {
-                problems.push(format!(
-                    "{original}: not saved - over {} GB.",
-                    MAX_FILE_BYTES / 1_000_000_000
+                problems.push(problem(
+                    "music.upload.too_big",
+                    &original,
+                    &[("gb", &(MAX_FILE_BYTES / 1_000_000_000).to_string())],
                 ));
                 continue;
             }
             Err(ReceiveError::Empty) => {
-                problems.push(format!("{original}: the file is empty."));
+                problems.push(problem("music.upload.empty", &original, &[]));
                 continue;
             }
             Err(ReceiveError::NoSpace) => {
-                problems.push(format!(
-                    "{original}: not saved - the server would have less than {} GB free.",
-                    MIN_FREE_BYTES / 1_000_000_000
+                problems.push(problem(
+                    "music.upload.no_space",
+                    &original,
+                    &[("gb", &(MIN_FREE_BYTES / 1_000_000_000).to_string())],
                 ));
                 break;
             }
             Err(ReceiveError::Disk(err)) => {
                 tracing::error!(%err, "couldn't write an uploaded music file");
-                problems.push(format!(
-                    "{original}: couldn't be written to the server's disk."
-                ));
+                problems.push(problem("music.upload.disk", &original, &[]));
                 break;
             }
         };
@@ -3069,22 +3319,19 @@ pub async fn upload_files(
                 .flatten()
         };
         let Some(tags) = tags else {
-            problems.push(format!(
-                "{original}: not an audio file the music app can play (mp3, m4a, m4b, ogg, opus, \
-                 flac or wav) - not saved."
-            ));
+            problems.push(problem("music.upload.not_audio", &original, &[]));
             continue;
         };
         match keep_upload(&state, id, temp, size, &sha256, &original, &tags).await {
             Kept::Added(file_id) => added.push(file_id),
             Kept::Restored(file_id) => restored.push(file_id),
-            Kept::Duplicate => problems.push(format!(
-                "{original}: already in this entry - not saved again."
+            Kept::Duplicate => problems.push(problem("music.upload.duplicate", &original, &[])),
+            Kept::Full => problems.push(problem(
+                "music.upload.full",
+                &original,
+                &[("max", &MAX_FILES_PER_ENTRY.to_string())],
             )),
-            Kept::Full => problems.push(format!(
-                "{original}: not saved - an entry holds at most {MAX_FILES_PER_ENTRY} files."
-            )),
-            Kept::Failed => problems.push(format!("{original}: couldn't be saved on the server.")),
+            Kept::Failed => problems.push(problem("music.upload.failed", &original, &[])),
         }
     }
     if let Err(err) = music::resort_files(&state.db, id).await {
@@ -3107,11 +3354,11 @@ pub async fn upload_files(
             if too_big {
                 remove_files(&state, &added).await;
                 music::resort_files(&state.db, id).await.ok();
-                problems.push(format!(
-                    "Not saved: with these {} file(s) a phone's music library would be bigger than \
-                     {} MB. Take the entry off a phone, or split it.",
-                    added.len(),
-                    MAX_LIBRARY_BYTES / 1_000_000
+                problems.push(crate::i18n::t_count(
+                    lang,
+                    "music.upload.library_too_big",
+                    added.len() as i64,
+                    &[("mb", &(MAX_LIBRARY_BYTES / 1_000_000).to_string())],
                 ));
                 added.clear();
                 break;
@@ -3151,6 +3398,7 @@ pub async fn upload_files(
 /// `POST /music/entries/{id}/files/{file_id}/delete`.
 pub async fn delete_file(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, file_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
@@ -3163,10 +3411,10 @@ pub async fn delete_file(
     .await
     {
         Ok(row) => row,
-        Err(err) => return server_error(err, "music file lookup failed"),
+        Err(err) => return server_error(lang, err, "music file lookup failed"),
     };
     let Some((path, name)) = row else {
-        return (StatusCode::NOT_FOUND, "No such file").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_file_not_found");
     };
     // Back to where the parent was (qa-21-step1-code #8): the next file in the list, else the one
     // before, else the card.
@@ -3190,7 +3438,7 @@ pub async fn delete_file(
         .execute(&state.db)
         .await
     {
-        return server_error(err, "couldn't delete a music file");
+        return server_error(lang, err, "couldn't delete a music file");
     }
     if let Some(path) = music::file_path(&state.music_files_dir, &path) {
         tokio::fs::remove_file(path).await.ok();
@@ -3213,13 +3461,25 @@ pub async fn delete_file(
     Redirect::to(&format!("/music/entries/{id}#{anchor}")).into_response()
 }
 
-/// `GET /music-covers/{hash}` (session): a cover for the parent's pages.
+/// `GET /music-covers/{hash}` (session): a cover for the parent's pages. The name is the JPEG's
+/// SHA-256 (`photos::store` never rewrites a file), so a new cover is a new URL: cached for good,
+/// as the contact photos and the avatars.
 pub async fn view_cover(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
     let Some(path) = photos::path_for(&state.music_cover_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     match tokio::fs::read(&path).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -3228,19 +3488,29 @@ pub async fn view_cover(State(state): State<AppState>, Path(hash): Path<String>)
 // The sweep on the cards (design 21b §3)
 // ------------------------------------------------------------------------------------------------
 
-/// "9 Oct", the local date.
+/// "9 Oct" (nb "9. okt."), the local date without its year.
 fn day_text(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
-    zone.local(time).format("%-d %b").to_string()
+    let day = zone.local(time).date_naive();
+    crate::i18n::t_params(
+        zone.lang(),
+        "time.date",
+        &[
+            ("day", &chrono::Datelike::day(&day).to_string()),
+            ("month", &zone.month_name(day)),
+        ],
+    )
 }
 
-/// "just now", "5 min ago", "2 h ago", "3 days ago".
-fn ago(time: DateTime<Utc>, now: DateTime<Utc>) -> String {
+/// "just now", "5 min ago", "2 h ago", "3 days ago" (in the zone's language).
+fn ago(zone: &crate::display_time::Zone, time: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    use crate::i18n::{t, t_count, t_params};
+    let lang = zone.lang();
     let minutes = (now - time).num_minutes().max(0);
     match minutes {
-        0 => "just now".to_string(),
-        1..=59 => format!("{minutes} min ago"),
-        60..=2879 => format!("{} h ago", minutes / 60),
-        _ => format!("{} days ago", minutes / 1440),
+        0 => t(lang, "time.just_now").to_string(),
+        1..=59 => t_params(lang, "time.min_ago", &[("n", &minutes.to_string())]),
+        60..=2879 => t_params(lang, "time.h_ago", &[("n", &(minutes / 60).to_string())]),
+        _ => t_count(lang, "music.days_ago", minutes / 1440, &[]),
     }
 }
 
@@ -3400,20 +3670,21 @@ impl SweepView {
     /// Why the library's gate keeps `entry` from `device` (design 26b §2.7, 26c §3.6); `None` =
     /// it is sent.
     fn gated(&self, entry: &MusicEntry, device: i64) -> Option<&'static str> {
+        // A key: the phone line's "Not sent - <why>".
         match entry.source.as_str() {
             "storytel" => {
                 if !self.storytel_stored {
-                    return Some("no Storytel login is saved");
+                    return Some("music.gate.no_storytel_login");
                 }
                 self.storytel_off
                     .contains(&device)
-                    .then_some("Storytel is off on this phone")
+                    .then_some("music.gate.storytel_off")
             }
             // As `spotify_gate!()`: the binding decides (qa-26c-step2b-code L1). Without an app a
             // bound phone still gets the entry; its line says it can't play.
             "spotify" if self.spotify_bound.contains_key(&device) => None,
-            "spotify" if !self.spotify_configured => Some("no Spotify app is set up"),
-            "spotify" => Some("Spotify is off on this phone"),
+            "spotify" if !self.spotify_configured => Some("music.gate.no_spotify_app"),
+            "spotify" => Some("music.gate.spotify_off"),
             _ => None,
         }
     }
@@ -3429,7 +3700,9 @@ impl SweepView {
     }
 
     fn status(&self, entry: &MusicEntry) -> StatusBlock {
+        use crate::i18n::{t, t_params};
         use crate::music_sweep::parse_stamp;
+        let lang = self.zone.lang();
         let now = self.now;
         let block = |text: String, tone: &'static str, busy: bool| StatusBlock {
             entry_id: entry.id,
@@ -3451,16 +3724,24 @@ impl SweepView {
                 })
         });
         if self.current == Some(entry.id) || checking {
-            return block("Checking…".to_string(), "busy", true);
+            return block(t(lang, "music.status.checking").to_string(), "busy", true);
         }
         let scheduled = self.schedule.get(&entry.id);
         let next_try = scheduled.map(|(s, _)| self.zone.until(s.at.max(now), now));
-        let waiting = |what: &str, ahead: usize| {
-            if ahead == 0 {
-                format!("Waiting for {what}")
-            } else {
-                format!("Waiting for {what} ({ahead} ahead)")
-            }
+        // `first`: the first check, else a check.
+        let waiting = |first: bool, ahead: usize| match (first, ahead) {
+            (true, 0) => t(lang, "music.status.waiting_first").to_string(),
+            (false, 0) => t(lang, "music.status.waiting").to_string(),
+            (true, n) => t_params(
+                lang,
+                "music.status.waiting_first_ahead",
+                &[("ahead", &n.to_string())],
+            ),
+            (false, n) => t_params(
+                lang,
+                "music.status.waiting_ahead",
+                &[("ahead", &n.to_string())],
+            ),
         };
         let failed = listing.filter(|l| l.failures > 0 && l.error.is_some());
         let listed = listing.and_then(|l| l.version.as_ref());
@@ -3468,59 +3749,91 @@ impl SweepView {
             && scheduled.at <= now
             && failed.is_none()
         {
-            let what = match scheduled.why {
-                crate::music_sweep::Why::New => "the first check",
-                _ if listed.is_none() => "the first check",
-                _ => "a check",
+            let first = match scheduled.why {
+                crate::music_sweep::Why::New => true,
+                _ => listed.is_none(),
             };
-            return block(waiting(what, *ahead), "busy", true);
+            return block(waiting(first, *ahead), "busy", true);
         }
         if let Some(listing) = failed {
             let code = listing.error.clone().unwrap_or_default();
             let next = next_try
-                .map(|t| format!(" Next try {t}."))
+                .map(|at| {
+                    format!(
+                        " {}",
+                        t_params(lang, "music.status.next_try", &[("time", &at)])
+                    )
+                })
+                .unwrap_or_default();
+            let failed_at = listing
+                .error_at
+                .as_deref()
+                .and_then(parse_stamp)
+                .map(|at| self.zone.when(at, now))
                 .unwrap_or_default();
             // Without a login the phones have dropped the entry (the gate), they keep nothing.
             let gated = entry.source == "storytel" && !self.storytel_stored;
             let text = match (listed, listing.listed_at.as_deref().and_then(parse_stamp)) {
                 (Some(_), _) if gated => format!(
-                    "Last check failed {}: {}. The phones don't get it until a login is \
-                     saved.{next}",
-                    listing
-                        .error_at
-                        .as_deref()
-                        .and_then(parse_stamp)
-                        .map(|t| self.zone.when(t, now))
-                        .unwrap_or_default(),
-                    music::sweep_error_text(&entry.source, &code),
+                    "{}{next}",
+                    t_params(
+                        lang,
+                        "music.status.failed_gated",
+                        &[
+                            ("when", &failed_at),
+                            ("error", &music::sweep_error_text(&entry.source, &code)),
+                        ],
+                    )
                 ),
-                (Some(_), listed_at) => format!(
-                    "Last check failed {}: {}. The phones keep the list{}.{next}",
-                    listing
-                        .error_at
-                        .as_deref()
-                        .and_then(parse_stamp)
-                        .map(|t| self.zone.when(t, now))
-                        .unwrap_or_default(),
-                    music::sweep_error_text(&entry.source, &code),
-                    listed_at
-                        .map(|t| format!(" from {}", day_text(&self.zone, t)))
-                        .unwrap_or_default(),
-                ),
+                (Some(_), listed_at) => {
+                    let error = music::sweep_error_text(&entry.source, &code);
+                    let text = match listed_at {
+                        Some(listed) => t_params(
+                            lang,
+                            "music.status.failed_kept_from",
+                            &[
+                                ("when", &failed_at),
+                                ("error", &error),
+                                ("date", &day_text(&self.zone, listed)),
+                            ],
+                        ),
+                        None => t_params(
+                            lang,
+                            "music.status.failed_kept",
+                            &[("when", &failed_at), ("error", &error)],
+                        ),
+                    };
+                    format!("{text}{next}")
+                }
                 (None, _) => format!(
-                    "Couldn't list it: {}{next}",
-                    match entry.source.as_str() {
-                        "storytel" => music::CheckError::Storytel(code).message(),
-                        "spotify" => music::CheckError::Spotify(code).message(),
-                        _ => music::CheckError::from_code(&code).message(),
-                    }
+                    "{}{next}",
+                    t_params(
+                        lang,
+                        "music.status.unlisted",
+                        &[(
+                            "error",
+                            &match entry.source.as_str() {
+                                "storytel" => music::CheckError::Storytel(code).message(),
+                                "spotify" => music::CheckError::Spotify(code).message(),
+                                _ => music::CheckError::from_code(&code).message(),
+                            }
+                        )],
+                    )
                 ),
             };
             return block(text, "error", false);
         }
         match listing.and_then(|l| l.listed_at.as_deref().and_then(parse_stamp)) {
-            Some(at) if listed.is_some() => block(format!("Checked {}", ago(at, now)), "ok", false),
-            _ => block(waiting("the first check", 0), "busy", true),
+            Some(at) if listed.is_some() => block(
+                t_params(
+                    lang,
+                    "music.status.checked",
+                    &[("ago", &ago(&self.zone, at, now))],
+                ),
+                "ok",
+                false,
+            ),
+            _ => block(waiting(true, 0), "busy", true),
         }
     }
 
@@ -3542,29 +3855,29 @@ impl SweepView {
         if entry.source == "spotify" {
             return Some(self.spotify_card(entry));
         }
+        use crate::i18n::{t_count, t_params};
         use crate::music_sweep::parse_stamp;
+        let lang = self.zone.lang();
         let storytel = entry.source == "storytel";
         let listing = self.listings.get(&entry.id);
         let episodes = listing.filter(|l| l.version.is_some()).map(|l| {
             if storytel {
                 // A series in reading order: its newest book is no news line (design 26b §2.3).
-                return format!(
-                    "{} book{}",
-                    l.item_count,
-                    if l.item_count == 1 { "" } else { "s" }
-                );
+                return t_count(lang, "music.card.books", l.item_count, &[]);
             }
-            let mut text = format!(
-                "{} episode{}",
-                l.item_count,
-                if l.item_count == 1 { "" } else { "s" }
-            );
+            let mut text = t_count(lang, "music.card.episodes", l.item_count, &[]);
             if let Some(count) = self.with_art.get(&entry.id).filter(|c| **c > 0) {
-                text.push_str(&format!(" · {count} with episode art"));
+                text.push_str(" · ");
+                text.push_str(&t_params(
+                    lang,
+                    "music.card.with_art",
+                    &[("count", &count.to_string())],
+                ));
             }
             if let Some((title, date)) = self.newest.get(&entry.id) {
                 if let Some(title) = title {
-                    text.push_str(&format!(" · newest: {title}"));
+                    text.push_str(" · ");
+                    text.push_str(&t_params(lang, "music.card.newest", &[("title", title)]));
                 }
                 if let Some(date) = date.as_deref().and_then(parse_stamp) {
                     text.push_str(&format!(" · {}", day_text(&self.zone, date)));
@@ -3573,11 +3886,11 @@ impl SweepView {
             text
         });
         let count = listing.filter(|l| l.version.is_some()).map(|l| {
-            let n = l.item_count.max(0) as usize;
+            let n = l.item_count.max(0);
             if storytel {
-                plural(n, "book", "books")
+                t_count(lang, "music.card.books", n, &[])
             } else {
-                plural(n, "episode", "episodes")
+                t_count(lang, "music.card.episodes", n, &[])
             }
         });
         let mut notes = Vec::new();
@@ -3587,26 +3900,30 @@ impl SweepView {
                 .as_deref()
                 .is_some_and(|t| t.contains("/serie/"));
             if listing.capped {
-                let what = if series { "series" } else { "podcast" };
                 let cap = if entry.source == "rss" {
                     crate::music_sweep::MAX_RSS_ITEMS
                 } else {
                     crate::music_sweep::MAX_NRK_ITEMS
                 };
-                notes.push(match listing.keep_end.as_deref() {
-                    Some("first") => format!("first {cap} episodes (the {what} has more)"),
-                    _ => format!("the newest {cap} episodes (the {what} has more)"),
-                });
+                let first = listing.keep_end.as_deref() == Some("first");
+                let key = match (first, series) {
+                    (true, true) => "music.card.capped_first_series",
+                    (true, false) => "music.card.capped_first_podcast",
+                    (false, true) => "music.card.capped_newest_series",
+                    (false, false) => "music.card.capped_newest_podcast",
+                };
+                notes.push(t_params(lang, key, &[("cap", &cap.to_string())]));
             }
             if listing.cut {
-                let end = if listing.keep_end.as_deref() == Some("first") {
-                    "first"
+                let key = if listing.keep_end.as_deref() == Some("first") {
+                    "music.card.cut_first"
                 } else {
-                    "newest"
+                    "music.card.cut_newest"
                 };
-                notes.push(format!(
-                    "list cut to the {end} {} (size limit)",
-                    listing.item_count
+                notes.push(t_params(
+                    lang,
+                    key,
+                    &[("count", &listing.item_count.to_string())],
                 ));
             }
         }
@@ -3614,17 +3931,10 @@ impl SweepView {
         let (cache, caches) = if storytel {
             (
                 crate::storytel::cache_value(entry.cache),
-                storytel_caches(entry.cache),
+                storytel_caches(lang, entry.cache),
             )
         } else {
-            let mut caches: Vec<(i64, String)> = CACHE_CHOICES
-                .iter()
-                .map(|(value, label)| (*value, label.to_string()))
-                .collect();
-            if !music::valid_cache(entry.cache) {
-                caches.push((entry.cache, format!("{} (from Vibb)", entry.cache)));
-            }
-            (entry.cache, caches)
+            (entry.cache, cache_choices(lang, entry.cache))
         };
         Some(SweepCard {
             source_title: listing
@@ -3662,7 +3972,9 @@ impl SweepView {
     /// out, a cap, context mode's notice; no offline select (it streams); the link back to
     /// Spotify.
     fn spotify_card(&self, entry: &MusicEntry) -> SweepCard {
+        use crate::i18n::{t, t_count, t_params};
         use crate::spotify::LinkKind;
+        let lang = self.zone.lang();
         let reference = entry
             .target
             .as_deref()
@@ -3670,82 +3982,81 @@ impl SweepView {
         let kind = reference.as_ref().map(|r| r.kind);
         let listing = self.listings.get(&entry.id).filter(|l| l.version.is_some());
         let mut notes = Vec::new();
+        // "42 tracks", "3 episodes".
+        let counted = |n: i64| match kind {
+            Some(LinkKind::Show | LinkKind::Episode) => {
+                t_count(lang, "music.card.episodes", n, &[])
+            }
+            _ => t_count(lang, "music.card.tracks", n, &[]),
+        };
         // The row's count ("42 tracks"; a context lists none) and the entry page's line with
         // the reader (which child's account listed it).
         let count = listing
             .filter(|l| l.spotify_mode.as_deref() != Some("context"))
-            .map(|l| {
-                let (one, many) = match kind {
-                    Some(LinkKind::Show | LinkKind::Episode) => ("episode", "episodes"),
-                    _ => ("track", "tracks"),
-                };
-                format!(
-                    "{} {}",
-                    l.item_count,
-                    if l.item_count == 1 { one } else { many }
-                )
-            });
+            .map(|l| counted(l.item_count));
         let episodes = listing.map(|l| {
             let reader = l
                 .spotify_reader
                 .and_then(|id| self.spotify_accounts.get(&id))
-                .map(|name| format!(" · read as {name}"))
+                .map(|name| {
+                    format!(
+                        " · {}",
+                        t_params(lang, "music.card.read_as", &[("name", name)])
+                    )
+                })
                 .unwrap_or_default();
             if l.spotify_mode.as_deref() == Some("context") {
-                return format!("Spotify picks the order{reader}");
+                return format!("{}{reader}", t(lang, "music.card.spotify_picks"));
             }
-            let (one, many) = match kind {
-                Some(LinkKind::Show | LinkKind::Episode) => ("episode", "episodes"),
-                _ => ("track", "tracks"),
-            };
-            format!(
-                "{} {}{reader}",
-                l.item_count,
-                if l.item_count == 1 { one } else { many }
-            )
+            format!("{}{reader}", counted(l.item_count))
         });
         if let Some(listing) = listing {
             if listing.spotify_mode.as_deref() == Some("context") {
-                notes.push(match kind {
-                    Some(LinkKind::Artist) if self.spotify_artist_albums => {
-                        "Spotify refused the artist's albums - played as Spotify picks.".to_string()
-                    }
-                    Some(LinkKind::Artist) => "An artist plays as Spotify picks: no track list, \
-                         and it starts from Spotify's own beginning each time."
-                        .to_string(),
-                    _ => "No logged-in account owns this playlist or collaborates on it, so the \
-                          phones can't show its tracks: they play it in Spotify's order. For the \
-                          track list, make the playlist in your child's Spotify account, or invite \
-                          your child to collaborate on yours and join from your child's account."
-                        .to_string(),
-                });
+                notes.push(
+                    t(
+                        lang,
+                        match kind {
+                            Some(LinkKind::Artist) if self.spotify_artist_albums => {
+                                "music.card.artist_refused"
+                            }
+                            Some(LinkKind::Artist) => "music.card.artist_context",
+                            _ => "music.spotify.context",
+                        },
+                    )
+                    .to_string(),
+                );
             } else {
                 if listing.spotify_skipped > 0 {
-                    notes.push(format!(
-                        "{} left out: not playable here, local files or podcast episodes",
-                        listing.spotify_skipped
+                    notes.push(t_params(
+                        lang,
+                        "music.card.left_out",
+                        &[("count", &listing.spotify_skipped.to_string())],
                     ));
                 }
                 if listing.capped {
                     notes.push(match kind {
-                        Some(LinkKind::Show) => format!(
-                            "the newest {} episodes (the podcast has more)",
-                            crate::spotify::MAX_SHOW_EPISODES
+                        Some(LinkKind::Show) => t_params(
+                            lang,
+                            "music.card.capped_show",
+                            &[("cap", &crate::spotify::MAX_SHOW_EPISODES.to_string())],
                         ),
-                        Some(LinkKind::Artist) => format!(
-                            "the newest {} albums and singles, at most {} tracks (the artist \
-                             has more)",
-                            crate::spotify::MAX_ARTIST_ALBUMS,
-                            crate::spotify::MAX_ARTIST_TRACKS
+                        Some(LinkKind::Artist) => t_params(
+                            lang,
+                            "music.card.capped_artist",
+                            &[
+                                ("albums", &crate::spotify::MAX_ARTIST_ALBUMS.to_string()),
+                                ("tracks", &crate::spotify::MAX_ARTIST_TRACKS.to_string()),
+                            ],
                         ),
-                        _ => format!(
-                            "the first {} tracks (the {} has more)",
-                            crate::spotify::MAX_LIST_TRACKS,
-                            if kind == Some(LinkKind::Album) {
-                                "album"
-                            } else {
-                                "playlist"
-                            }
+                        Some(LinkKind::Album) => t_params(
+                            lang,
+                            "music.card.capped_album",
+                            &[("cap", &crate::spotify::MAX_LIST_TRACKS.to_string())],
+                        ),
+                        _ => t_params(
+                            lang,
+                            "music.card.capped_playlist",
+                            &[("cap", &crate::spotify::MAX_LIST_TRACKS.to_string())],
                         ),
                     });
                 }
@@ -3775,13 +4086,18 @@ impl SweepView {
         let Some(phones) = self.phones.get(&entry.id) else {
             return Vec::new();
         };
+        use crate::i18n::{t, t_params};
+        let lang = self.zone.lang();
         let current = self.listings.get(&entry.id).and_then(|l| l.version.clone());
         let own = entry.source == "own";
         phones
             .iter()
             .map(|(device, _)| {
                 if let Some(why) = self.gated(entry, *device) {
-                    return (*device, format!("Not sent - {why}"));
+                    return (
+                        *device,
+                        t_params(lang, "music.line.not_sent", &[("why", t(lang, why))]),
+                    );
                 }
                 if entry.source == "spotify" {
                     return (
@@ -3790,7 +4106,7 @@ impl SweepView {
                     );
                 }
                 let Some((report, at)) = self.reports.get(device) else {
-                    return (*device, "Not reported yet".to_string());
+                    return (*device, t(lang, "music.line.not_reported").to_string());
                 };
                 let row = report.downloads.iter().find(|d| d.entry == entry.id);
                 let failing: Vec<&music::ItemError> = report
@@ -3803,41 +4119,60 @@ impl SweepView {
                 let mut parts: Vec<String> = Vec::new();
                 match row {
                     Some(row) if !own && current.as_deref() != Some(row.version.as_str()) => {
-                        parts.push("has an older list".to_string())
+                        parts.push(t(lang, "music.line.older_list").to_string())
                     }
                     Some(row) => {
+                        let counts = [
+                            ("have", row.have.to_string()),
+                            ("want", row.want.to_string()),
+                        ];
+                        let counts: Vec<(&str, &str)> =
+                            counts.iter().map(|(k, v)| (*k, v.as_str())).collect();
                         let mut text = if entry.source == "storytel" {
-                            format!("{} of {} books on the phone", row.have, row.want)
+                            t_params(lang, "music.line.books_on_phone", &counts)
                         } else {
-                            format!("{} of {} offline", row.have, row.want)
+                            t_params(lang, "music.line.offline", &counts)
                         };
-                        match row.waiting.as_deref() {
-                            Some("wifi") => text.push_str(" · waiting for Wi-Fi"),
-                            Some("storage") => text.push_str(" · waiting for storage space"),
-                            Some("roaming") => text.push_str(" · paused while roaming"),
-                            Some("login") => {
-                                text.push_str(" · waiting for the Storytel login on the phone")
-                            }
-                            _ => {}
+                        let waiting = match row.waiting.as_deref() {
+                            Some("wifi") => Some("music.line.waiting_wifi"),
+                            Some("storage") => Some("music.line.waiting_storage"),
+                            Some("roaming") => Some("music.line.paused_roaming"),
+                            Some("login") => Some("music.line.waiting_login"),
+                            _ => None,
+                        };
+                        if let Some(key) = waiting {
+                            text.push_str(" · ");
+                            text.push_str(t(lang, key));
                         }
                         parts.push(text);
                     }
                     // It reported, but not on this entry yet.
                     None if failing.is_empty() => {
-                        parts.push("nothing on it reported yet".to_string())
+                        parts.push(t(lang, "music.line.nothing_reported").to_string())
                     }
                     None => {}
                 }
                 if let Some(first) = failing.first() {
-                    parts.push(format!(
-                        "{} failing ({})",
-                        failing.len(),
-                        music::sweep_error_text(&entry.source, &first.error)
+                    parts.push(t_params(
+                        lang,
+                        "music.line.failing",
+                        &[
+                            ("count", &failing.len().to_string()),
+                            (
+                                "error",
+                                &music::sweep_error_text(&entry.source, &first.error),
+                            ),
+                        ],
                     ));
                 }
                 let mut line = parts.join(" · ");
                 if let Some(at) = at.filter(|at| *at < self.now - chrono::TimeDelta::hours(1)) {
-                    line.push_str(&format!(" (as of {})", self.zone.when(at, self.now)));
+                    line.push(' ');
+                    line.push_str(&t_params(
+                        lang,
+                        "music.line.as_of",
+                        &[("when", &self.zone.when(at, self.now))],
+                    ));
                 }
                 // "Has an older list", "3 of 5 offline": the line starts the row's sub-line.
                 let mut chars = line.chars();
@@ -3854,12 +4189,14 @@ impl SweepView {
     /// it couldn't play at the current list (`unplayable`). Nothing is downloaded, so no "on the
     /// phone" counts.
     fn spotify_phone_line(&self, entry: &MusicEntry, device: i64, current: Option<&str>) -> String {
+        use crate::i18n::{t, t_params};
+        let lang = self.zone.lang();
         let mut line = match self.spotify_bound.get(&device) {
             Some(account) if !self.spotify_configured => {
-                format!("Plays as {account} - no Spotify app is set up, so it can't play")
+                t_params(lang, "music.line.plays_as_no_app", &[("name", account)])
             }
-            Some(account) => format!("Plays as {account}"),
-            None => "Spotify is off on this phone".to_string(),
+            Some(account) => t_params(lang, "music.plays_as", &[("name", account)]),
+            None => t(lang, "music.spotify_off_phone").to_string(),
         };
         if let Some((report, at)) = self.reports.get(&device) {
             let failing: Vec<&music::ItemError> = report
@@ -3868,13 +4205,25 @@ impl SweepView {
                 .filter(|e| e.entry == entry.id && current == Some(e.version.as_str()))
                 .collect();
             if let Some(first) = failing.first() {
-                line.push_str(&format!(
-                    " · {} failing ({})",
-                    failing.len(),
-                    music::sweep_error_text(&entry.source, &first.error)
+                line.push_str(" · ");
+                line.push_str(&t_params(
+                    lang,
+                    "music.line.failing",
+                    &[
+                        ("count", &failing.len().to_string()),
+                        (
+                            "error",
+                            &music::sweep_error_text(&entry.source, &first.error),
+                        ),
+                    ],
                 ));
                 if let Some(at) = at.filter(|at| *at < self.now - chrono::TimeDelta::hours(1)) {
-                    line.push_str(&format!(" (as of {})", self.zone.when(at, self.now)));
+                    line.push(' ');
+                    line.push_str(&t_params(
+                        lang,
+                        "music.line.as_of",
+                        &[("when", &self.zone.when(at, self.now))],
+                    ));
                 }
             }
         }
@@ -3885,6 +4234,7 @@ impl SweepView {
 /// `POST /music/sweep` (`hours`): the family-wide sweep cadence; back to `#sweep`.
 pub async fn save_sweep(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
@@ -3894,14 +4244,14 @@ pub async fn save_sweep(
         .ok()
         .filter(|h| crate::music_sweep::SWEEP_HOURS.contains(h))
     else {
-        return (StatusCode::BAD_REQUEST, "Pick one of the choices.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_pick_choice");
     };
     if let Err(err) = sqlx::query("UPDATE music_settings SET sweep_hours = ? WHERE id = 1")
         .bind(hours)
         .execute(&state.db)
         .await
     {
-        return server_error(err, "couldn't save the music sweep setting");
+        return server_error(lang, err, "couldn't save the music sweep setting");
     }
     // Nothing is rewritten: the next pass reads the setting (design 21b §2.2).
     state.music_sweep.wake();
@@ -3923,6 +4273,7 @@ pub async fn save_sweep(
 /// it isn't allowed the card already says when it is.
 pub async fn check_now(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -3934,27 +4285,25 @@ pub async fn check_now(
     };
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     if !matches!(
         entry.source.as_str(),
         "nrk" | "rss" | "storytel" | "spotify"
     ) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Only NRK, RSS, Storytel and Spotify entries are checked",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_check_kinds");
     }
     let now = state.music_sweep.now();
     match crate::music_sweep::check_now_blocked_until(&state.db, id, now).await {
         Ok(Some(_)) => return Redirect::to(&back).into_response(),
         Ok(None) => {}
-        Err(err) => return server_error(err, "couldn't read the check limits"),
+        Err(err) => return server_error(lang, err, "couldn't read the check limits"),
     }
     if let Err(err) = crate::music_sweep::request_check(&state.db, id, now).await {
-        return server_error(err, "couldn't ask for a check");
+        return server_error(lang, err, "couldn't ask for a check");
     }
     state.music_sweep.wake();
     log_event(
@@ -3972,21 +4321,20 @@ pub async fn check_now(
 /// entry has no select and is always saved as 0 (design 26c §3.2).
 pub async fn save_offline(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
-        Err(err) => return server_error(err, "music entry lookup failed"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.music_entry_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music entry lookup failed"),
     };
     if entry.source == "own" {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Own files are always all on the phone",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_own_offline");
     }
     let posted = field(&form, "cache")
         .trim()
@@ -3997,16 +4345,14 @@ pub async fn save_offline(
         (0, true)
     } else if entry.source == "storytel" {
         let cache = crate::storytel::cache_value(posted);
-        let allowed = crate::storytel::CACHE_CHOICES
-            .iter()
-            .any(|(value, _)| *value == cache)
+        let allowed = crate::storytel::CACHE_CHOICES.contains(&cache)
             || cache == crate::storytel::cache_value(entry.cache);
         (cache, allowed)
     } else {
         (posted, music::valid_cache(posted) || posted == entry.cache)
     };
     if !allowed {
-        return (StatusCode::BAD_REQUEST, "Pick one of the offline choices.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_pick_offline");
     }
     if let Err(err) = sqlx::query("UPDATE music_entries SET cache = ? WHERE id = ?")
         .bind(cache)
@@ -4014,7 +4360,7 @@ pub async fn save_offline(
         .execute(&state.db)
         .await
     {
-        return server_error(err, "couldn't save a music entry's offline choice");
+        return server_error(lang, err, "couldn't save a music entry's offline choice");
     }
     nudge(
         &state,
@@ -4071,10 +4417,10 @@ pub async fn cards(
         .map(|p| p.trim().parse::<i64>())
         .collect();
     let Ok(ids) = ids else {
-        return (StatusCode::BAD_REQUEST, "ids are numbers").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_card_ids");
     };
     if ids.len() > MAX_CARD_IDS {
-        return (StatusCode::BAD_REQUEST, "At most 200 cards at once").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_card_count");
     }
     let built: Result<Vec<serde_json::Value>, sqlx::Error> = async {
         let view = SweepView::load(&state, state.music_sweep.now(), lang).await?;
@@ -4105,7 +4451,7 @@ pub async fn cards(
             axum::Json(serde_json::json!({ "cards": cards })),
         )
             .into_response(),
-        Err(err) => server_error(err, "couldn't build the music cards"),
+        Err(err) => server_error(lang, err, "couldn't build the music cards"),
     }
 }
 
@@ -4131,7 +4477,7 @@ pub struct MusicAppSwitch {
     pub tracked_app_id: i64,
     pub package_name: String,
     pub checked: bool,
-    /// "Installed", "Waiting for the phone", "Not installed", "No release yet".
+    /// "Installed", "Waiting for the phone", "Not installed", "No release yet" - a key.
     pub status: &'static str,
 }
 
@@ -4251,18 +4597,17 @@ pub struct MusicCard {
 
 /// `?music_notice=` codes of a tick or a Sonos save (the music app's switch uses
 /// `devices::toggle_refusal`'s).
-pub fn notice_text(code: &str) -> Option<&'static str> {
-    Some(match code {
-        "too_big" => {
-            "Not added: this phone's library would pass 3 MB. Turn another entry off first."
-        }
-        "sonos_too_many" => "Not saved: at most 32 speakers can be on. Turn one off first.",
-        "sonos_unknown" => "Not saved: that isn't a Sonos speaker.",
-        "spotify_unknown" => {
-            "Not saved: that Spotify account isn't logged in here (any more) - pick another one."
-        }
-        _ => return None,
-    })
+pub fn notice_text(lang: Lang, code: &str) -> Option<&'static str> {
+    Some(crate::i18n::t(
+        lang,
+        match code {
+            "too_big" => "device.music.notice.too_big",
+            "sonos_too_many" => "device.music.notice.sonos_too_many",
+            "sonos_unknown" => "device.music.notice.sonos_unknown",
+            "spotify_unknown" => "device.music.notice.spotify_unknown",
+            _ => return None,
+        },
+    ))
 }
 
 fn warning(title: &str, detail: String) -> Note {
@@ -4436,9 +4781,10 @@ pub(crate) async fn device_card(
     lang: Lang,
 ) -> Result<MusicCard, sqlx::Error> {
     // A refused Spotify binding goes by its select (design 26c §2.5), as Sonos's by its rooms.
+    use crate::i18n::{t, t_count, t_params};
     let spotify_notice = notice
         .filter(|code| code.starts_with("spotify_"))
-        .and_then(notice_text);
+        .and_then(|code| notice_text(lang, code));
     let device_id = policy.device_id;
     let state_report =
         music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
@@ -4450,7 +4796,11 @@ pub(crate) async fn device_card(
         .flat_map(|report| &report.entry_errors)
         .map(|e| (e.entry, music::entry_error_text(&e.error)))
         .collect();
-    let row_notice = notice_entry.zip(notice.filter(|c| *c == "too_big").and_then(notice_text));
+    let row_notice = notice_entry.zip(
+        notice
+            .filter(|c| *c == "too_big")
+            .and_then(|code| notice_text(lang, code)),
+    );
     let entries: Vec<(i64, String, String, Option<String>, String, bool)> = sqlx::query_as(
         "SELECT e.id, e.name, e.source, e.target, COALESCE(c.name, ''), \
          EXISTS(SELECT 1 FROM device_music_entries d WHERE d.device_id = ? AND d.entry_id = e.id) \
@@ -4480,7 +4830,7 @@ pub(crate) async fn device_card(
             name,
             detail: format!(
                 "{} · {category}",
-                music::kind_label(&source, target.as_deref())
+                t(lang, music::kind_key(&source, target.as_deref()))
             ),
             checked,
             error: errors.get(&id).filter(|_| checked).cloned(),
@@ -4508,10 +4858,10 @@ pub(crate) async fn device_card(
                 .iter()
                 .any(|a| a.package_name == row.package_name && !row.package_name.is_empty());
             let status = match (on_phone, &row.latest_release_tag) {
-                (true, _) => "Installed",
-                (false, None) => "No release yet",
-                (false, Some(_)) if checked => "Waiting for the phone",
-                (false, Some(_)) => "Not installed",
+                (true, _) => "device.apps.installed",
+                (false, None) => "device.apps.no_release",
+                (false, Some(_)) if checked => "device.music.waiting",
+                (false, Some(_)) => "device.apps.not_installed",
             };
             Some(MusicAppSwitch {
                 tracked_app_id: row.id,
@@ -4553,7 +4903,7 @@ pub(crate) async fn device_card(
     );
     sonos.notice = notice
         .filter(|code| code.starts_with("sonos_"))
-        .and_then(notice_text);
+        .and_then(|code| notice_text(lang, code));
     match &state_report {
         Some(report) => {
             on_phone.extend(crate::handlers::device_pages::music_app_row(
@@ -4561,27 +4911,31 @@ pub(crate) async fn device_card(
             ));
             let current = library.as_ref().map(|l| l.version.as_str());
             let library_state = match (&report.library_version, current) {
-                (Some(applied), Some(current)) if applied == current => Some("Up to date"),
-                (Some(_), Some(_)) => Some("Update waiting"),
-                (None, Some(_)) => Some("Not there yet"),
+                (Some(applied), Some(current)) if applied == current => {
+                    Some("device.music.library_current")
+                }
+                (Some(_), Some(_)) => Some("device.music.library_waiting"),
+                (None, Some(_)) => Some("device.music.library_missing"),
                 (_, None) => None,
             };
             if let Some(value) = library_state {
                 // The library's size only behind the ⓘ (§2.2b, qa-31-s7-code L3).
                 let size = library.as_ref().map(|l| {
-                    let n = ticked.len();
-                    format!(
-                        "This phone's library: {n} entr{}, {:.1} kB.",
-                        if n == 1 { "y" } else { "ies" },
-                        l.json.len() as f64 / 1000.0
+                    t_count(
+                        lang,
+                        "device.music.library_size",
+                        ticked.len() as i64,
+                        &[("kb", &format!("{:.1}", l.json.len() as f64 / 1000.0))],
                     )
                 });
-                on_phone.push(Row::new("library", "Library", value).detail(size));
+                on_phone.push(
+                    Row::new("library", t(lang, "music.tab.library"), t(lang, value)).detail(size),
+                );
             }
             if let Some(waiting) = report.downloads_waiting.filter(|n| *n > 0) {
                 on_phone.push(Row::new(
                     "waiting",
-                    "Waiting to download",
+                    t(lang, "device.music.waiting_download"),
                     waiting.to_string(),
                 ));
             }
@@ -4589,56 +4943,78 @@ pub(crate) async fn device_card(
                 // An app from before design 30 step 3a sends no `audio_bytes`: only what it stores.
                 let stored =
                     music::storage(bytes, report.audio_bytes, report.extra_bytes, storage_limit);
-                on_phone.push(Row::new("stored", "Stored on the phone", stored.stored));
+                on_phone.push(Row::new(
+                    "stored",
+                    t(lang, "device.music.stored"),
+                    stored.stored,
+                ));
                 if let Some(downloads) = stored.downloads {
-                    on_phone.push(Row::new("downloads", "Music downloads", downloads));
+                    on_phone.push(Row::new(
+                        "downloads",
+                        t(lang, "device.music.downloads"),
+                        downloads,
+                    ));
                 }
                 if let Some(extras) = stored.extras {
                     on_phone.push(
-                        Row::new("extras", "Played, kept for now", extras).detail(Some(
-                            "Played beyond the offline depth, kept while there is room: removed \
-                             first when the limit is reached.",
-                        )),
+                        Row::new("extras", t(lang, "device.music.extras"), extras)
+                            .detail(Some(t(lang, "device.music.extras_info"))),
                     );
                 }
             }
             // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused` -
             // all the music app sends; anything else shows no row (qa-31-s7-code N1).
             match report.storytel.as_deref() {
-                Some("ok") => on_phone.push(Row::new("storytel", "Storytel login", "Logged in")),
-                Some("none") => on_phone.push(Row::new("storytel", "Storytel login", "None")),
+                Some("ok") => on_phone.push(Row::new(
+                    "storytel",
+                    t(lang, "device.music.storytel_login"),
+                    t(lang, "device.music.logged_in"),
+                )),
+                Some("none") => on_phone.push(Row::new(
+                    "storytel",
+                    t(lang, "device.music.storytel_login"),
+                    t(lang, "music.settings.login_none"),
+                )),
                 Some("refused") => on_phone.push(
-                    Row::new("storytel", "Storytel login", "Refused").class("row-value-alarm"),
+                    Row::new(
+                        "storytel",
+                        t(lang, "device.music.storytel_login"),
+                        t(lang, "device.music.refused"),
+                    )
+                    .class("row-value-alarm"),
                 ),
                 _ => {}
             }
-            on_phone.extend(spotify_report_row(policy, report.spotify.as_deref()));
+            on_phone.extend(spotify_report_row(lang, policy, report.spotify.as_deref()));
         }
         // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
         None if capable => on_phone.push(Row::new(
             "app",
-            "Music app",
-            if installed
-                .iter()
-                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str()))
-            {
-                "No report yet"
-            } else {
-                "Not installed"
-            },
+            t(lang, "device.music.app"),
+            t(
+                lang,
+                if installed
+                    .iter()
+                    .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str()))
+                {
+                    "device.music.no_report"
+                } else {
+                    "device.apps.not_installed"
+                },
+            ),
         )),
         None => {}
     }
     if found.unreachable {
         warnings.push(warning(
-            "Music app not reachable",
-            "Vibb One on the phone can't reach the music app.".to_string(),
+            t(lang, "device.music.unreachable"),
+            t(lang, "device.music.unreachable_sub").to_string(),
         ));
     }
     if found.cant_deliver {
         warnings.push(warning(
-            "Vibb One can't deliver music yet",
-            "Update Vibb One on this phone to send it the library.".to_string(),
+            t(lang, "device.music.cant_deliver"),
+            t(lang, "device.music.cant_deliver_sub").to_string(),
         ));
     }
 
@@ -4661,9 +5037,8 @@ pub(crate) async fn device_card(
         // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
         older_phone: found.older_phone.map(|apps| {
             warning(
-                apps.title(),
-                "Until then this phone uses mobile data for music only when both switches are on."
-                    .to_string(),
+                t(lang, apps.title_key()),
+                t(lang, "device.music.older_phone_sub").to_string(),
             )
         }),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
@@ -4683,27 +5058,30 @@ pub(crate) async fn device_card(
             .collect(),
         over_limit: found.over_limit.as_ref().map(|(used, gb)| {
             warning(
-                "Over the storage limit",
-                format!(
-                    "Kept episodes and books alone use {used} of the {gb} GB limit. Lower an \
-                     entry's offline depth or raise the limit."
+                t(lang, "device.music.over_limit"),
+                t_params(
+                    lang,
+                    "device.music.over_limit_sub",
+                    &[("used", used), ("gb", &gb.to_string())],
                 ),
             )
         }),
         storytel: policy.music_storytel,
         storytel_stored,
         storytel_unsent: (storytel_ticked > 0 && !(policy.music_storytel && storytel_stored)).then(
-            || match storytel_ticked {
-                1 => "1 Storytel entry isn't sent".to_string(),
-                n => format!("{n} Storytel entries aren't sent"),
+            || {
+                t_count(
+                    lang,
+                    "device.music.storytel_unsent",
+                    storytel_ticked as i64,
+                    &[],
+                )
             },
         ),
         storytel_refused: found.storytel_refused.then(|| {
             warning(
-                "Storytel refused the phone's login",
-                "The phone tries again in an hour, or at once when you save the password again in \
-                 Music › Settings."
-                    .to_string(),
+                t(lang, "device.music.storytel_refused"),
+                t(lang, "device.music.storytel_refused_sub").to_string(),
             )
         }),
         warnings,
@@ -4737,53 +5115,60 @@ async fn spotify_binding_card(
         return Ok(None);
     }
     let now = state.music_sweep.now();
+    use crate::i18n::{t, t_params};
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
-    let day = |t: chrono::DateTime<chrono::Utc>, year: bool| {
-        let local = zone.local(t);
+    let day = |at: chrono::DateTime<chrono::Utc>, year: bool| {
         if year {
-            local.format("%-d %b %Y").to_string()
+            date_with_year(&zone, at)
         } else {
-            local.format("%-d %b").to_string()
+            day_text(&zone, at)
         }
     };
     let mut login = None;
     let mut warnings = Vec::new();
     if !configured {
         warnings.push(warning(
-            "No Spotify app set up",
-            "Spotify can't play until one is set up on the Spotify page.".to_string(),
+            t(lang, "device.music.spotify.no_app"),
+            t(lang, "device.music.spotify.no_app_sub").to_string(),
         ));
     }
     if let Some(row) = bound.and_then(|id| rows.iter().find(|row| row.id == id)) {
         let name = &row.display_name;
         let renew = row.needs_login != 0 || reported == Some("reauthorize");
+        let named = |key: &str| t_params(lang, key, &[("name", name)]);
         if renew {
             warnings.push(warning(
-                "Spotify login needs renewing",
-                format!("Log in again as {name} on the Spotify page."),
+                t(lang, "device.music.spotify.renew"),
+                named("device.music.spotify.log_in_again"),
             ));
         } else if row.refresh_error.as_deref() == Some("key") {
             warnings.push(warning(
-                "Spotify login can't be opened",
-                format!(
-                    "It was locked with another key: log in again as {name} on the Spotify page."
-                ),
+                t(lang, "device.music.spotify.other_key"),
+                named("device.music.spotify.other_key_sub"),
             ));
         } else if let Some(ends) = row.login_ends() {
             if row.login_ending(now) {
                 warnings.push(if now < ends {
                     warning(
-                        &format!("Spotify login ends {}", day(ends, false)),
-                        format!("Log in again as {name} on the Spotify page before then."),
+                        &t_params(
+                            lang,
+                            "device.music.spotify.ends",
+                            &[("date", &day(ends, false))],
+                        ),
+                        named("device.music.spotify.log_in_before"),
                     )
                 } else {
                     warning(
-                        "Spotify login has ended",
-                        format!("Log in again as {name} on the Spotify page."),
+                        t(lang, "device.music.spotify.ended"),
+                        named("device.music.spotify.log_in_again"),
                     )
                 });
             } else {
-                login = Some(format!("Log in again before {}", day(ends, true)));
+                login = Some(t_params(
+                    lang,
+                    "device.music.spotify.login_line",
+                    &[("date", &day(ends, true))],
+                ));
             }
         }
         // One account plays on one phone at a time (§2.5).
@@ -4795,43 +5180,64 @@ async fn spotify_binding_card(
         .fetch_all(&state.db)
         .await?;
         if phones.len() > 1 {
-            let owners: Vec<String> = phones.iter().map(|p| format!("{p}'s")).collect();
-            let listed = match owners.split_last() {
-                Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            // "Anna's", "Ola's" (nb "Anna", "Ola": "telefonene til Anna og Ola").
+            let phones: Vec<String> = phones
+                .iter()
+                .map(|p| t_params(lang, "device.music.spotify.owner", &[("name", p)]))
+                .collect();
+            let listed = match phones.split_last() {
+                Some((last, rest)) => t_params(
+                    lang,
+                    "device.music.spotify.phones_and",
+                    &[("phones", &rest.join(", ")), ("last", last)],
+                ),
                 None => String::new(),
             };
+            let two = phones.len() == 2;
             warnings.push(warning(
-                &format!(
-                    "{} phones share one account",
-                    if phones.len() == 2 { "Two" } else { "Several" }
+                t(
+                    lang,
+                    if two {
+                        "device.music.spotify.shared_two"
+                    } else {
+                        "device.music.spotify.shared_several"
+                    },
                 ),
-                format!(
-                    "{listed} phones {} play as {name}, and Spotify plays on one phone at a time: \
-                     give each child their own.",
-                    if phones.len() == 2 { "both" } else { "all" }
+                t_params(
+                    lang,
+                    if two {
+                        "device.music.spotify.shared_two_sub"
+                    } else {
+                        "device.music.spotify.shared_several_sub"
+                    },
+                    &[("phones", &listed), ("name", name)],
                 ),
             ));
         }
         // The phone's own refusals (§3.6, §4.4); `reauthorize` is the renewing note above.
         match reported {
             Some("refused") => warnings.push(warning(
-                "Spotify refused the account",
-                format!("Check {name} under User Management in your app's dashboard."),
+                t(lang, "device.music.spotify.refused"),
+                named("device.music.spotify.refused_sub"),
             )),
             Some("not_premium") => warnings.push(warning(
-                "No Spotify Premium",
-                format!("Spotify says {name} has no Premium, so the phone can't play Spotify."),
+                t(lang, "device.music.spotify.not_premium"),
+                named("device.music.spotify.not_premium_sub"),
             )),
             Some("no_widevine") => warnings.push(warning(
-                "This phone can't play Spotify",
-                "Its web player lacks the copy protection Spotify needs.".to_string(),
+                t(lang, "device.music.spotify.no_widevine"),
+                t(lang, "device.music.spotify.no_widevine_sub").to_string(),
             )),
             _ => {}
         }
     }
     let note = (bound.is_none() && ticked > 0).then(|| match ticked {
-        1 => "Its Spotify entry isn't sent.".to_string(),
-        n => format!("Its {n} Spotify entries aren't sent."),
+        1 => t(lang, "device.music.spotify.unsent_one").to_string(),
+        n => t_params(
+            lang,
+            "device.music.spotify.unsent",
+            &[("count", &n.to_string())],
+        ),
     });
     Ok(Some(SpotifyBindingCard {
         accounts: rows
@@ -4849,16 +5255,20 @@ async fn spotify_binding_card(
 /// The phone's passing Spotify word as an "On the phone" row (as Storytel's login): `ok`
 /// "Plays", `unreachable` "Couldn't reach Spotify", `quota` "Limit reached" - only while the
 /// phone plays as an account. The words that need the parent are [spotify_binding_card]'s notes.
-fn spotify_report_row(policy: &DevicePolicy, reported: Option<&str>) -> Option<Row> {
+fn spotify_report_row(lang: Lang, policy: &DevicePolicy, reported: Option<&str>) -> Option<Row> {
+    use crate::i18n::t;
     policy.music_spotify_account?;
+    let label = t(lang, "music.spotify_name");
     Some(match reported? {
-        "ok" => Row::new("spotify", "Spotify", "Plays"),
-        "unreachable" => Row::new("spotify", "Spotify", "Couldn't reach Spotify").detail(Some(
-            "The phone couldn't reach Spotify the last time it tried.",
-        )),
-        "quota" => Row::new("spotify", "Spotify", "Limit reached").detail(Some(
-            "Spotify's limit for your app was reached; the phone tries again later.",
-        )),
+        "ok" => Row::new("spotify", label, t(lang, "device.music.spotify.plays")),
+        "unreachable" => Row::new(
+            "spotify",
+            label,
+            t(lang, "device.music.spotify.unreachable"),
+        )
+        .detail(Some(t(lang, "device.music.spotify.unreachable_sub"))),
+        "quota" => Row::new("spotify", label, t(lang, "device.music.spotify.quota"))
+            .detail(Some(t(lang, "device.music.spotify.quota_sub"))),
         _ => return None,
     })
 }
@@ -4872,6 +5282,7 @@ fn spotify_report_row(policy: &DevicePolicy, reported: Option<&str>) -> Option<R
 /// the library revision (0074's trigger): the phone's Spotify entries come or go with it.
 pub async fn save_device_spotify(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -4916,11 +5327,13 @@ pub async fn save_device_spotify(
                 Ok(true) => crate::settings_log::refused(Redirect::to(&format!(
                     "/devices/{id}/music?music_notice=spotify_unknown#music-spotify"
                 ))),
-                Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-                Err(err) => server_error(err, "couldn't read a phone's policy"),
+                Ok(false) => {
+                    crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
+                }
+                Err(err) => server_error(lang, err, "couldn't read a phone's policy"),
             };
         }
-        Err(err) => return server_error(err, "couldn't save a phone's Spotify account"),
+        Err(err) => return server_error(lang, err, "couldn't save a phone's Spotify account"),
     };
     nudge(&state, &[id]);
     log_event(
@@ -4979,6 +5392,7 @@ pub(crate) async fn bind_spotify<'e>(
 /// unknown phone is a 400. Back to the row, open (`?storytel=phones#storytel-phones`).
 pub async fn save_storytel_phone(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -4994,8 +5408,10 @@ pub async fn save_storytel_phone(
     .await;
     match updated {
         Ok(done) if done.rows_affected() == 1 => {}
-        Ok(_) => return (StatusCode::BAD_REQUEST, "Unknown phone").into_response(),
-        Err(err) => return server_error(err, "couldn't save Storytel on a phone"),
+        Ok(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_unknown_phone");
+        }
+        Err(err) => return server_error(lang, err, "couldn't save Storytel on a phone"),
     }
     nudge(&state, &[id]);
     log_event(
@@ -5023,6 +5439,7 @@ pub async fn save_storytel_phone(
 /// 404.
 pub async fn set_device_entry(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, entry_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -5048,8 +5465,10 @@ pub async fn set_device_entry(
         Ok((true, None)) => {
             return Redirect::to(&format!("/devices/{id}/music#library")).into_response();
         }
-        Ok((false, _)) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return server_error(err, "music tick lookup failed"),
+        Ok((false, _)) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return server_error(lang, err, "music tick lookup failed"),
     };
     if selected {
         // The size check and the tick in one write transaction (qa-21-step1-code #6): two quick
@@ -5077,7 +5496,7 @@ pub async fn set_device_entry(
                     "/devices/{id}/music?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
                 )));
             }
-            Err(err) => return server_error(err, "couldn't tick a music entry"),
+            Err(err) => return server_error(lang, err, "couldn't tick a music entry"),
         }
     } else if let Err(err) =
         sqlx::query("DELETE FROM device_music_entries WHERE device_id = ? AND entry_id = ?")
@@ -5086,7 +5505,7 @@ pub async fn set_device_entry(
             .execute(&state.db)
             .await
     {
-        return server_error(err, "couldn't untick a music entry");
+        return server_error(lang, err, "couldn't untick a music entry");
     }
     nudge(&state, &[id]);
     // A ticked entry may now follow the setting instead of once a day (design 21b §2.2).
@@ -5133,6 +5552,7 @@ pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
 /// `/devices/{id}/music#music-settings`.
 pub async fn save_device_settings(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -5143,7 +5563,9 @@ pub async fn save_device_settings(
         "" | "off" => None,
         value => match value.parse::<i64>() {
             Ok(pct) if VOLUME_CAPS.contains(&pct) => Some(pct),
-            _ => return (StatusCode::BAD_REQUEST, "Unknown volume cap").into_response(),
+            _ => {
+                return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.music_volume_cap");
+            }
         },
     };
     // `Some(new)` = save it (`new` = None is no limit), `None` = keep the stored one.
@@ -5152,7 +5574,13 @@ pub async fn save_device_settings(
         Some("none") => Some(None),
         Some(value) => match value.parse::<i64>() {
             Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(Some(gb)),
-            _ => return (StatusCode::BAD_REQUEST, "Unknown storage limit").into_response(),
+            _ => {
+                return crate::i18n::error(
+                    lang,
+                    StatusCode::BAD_REQUEST,
+                    "error.music_storage_limit",
+                );
+            }
         },
     };
     let updated: Result<Option<Option<i64>>, sqlx::Error> = sqlx::query_scalar(
@@ -5171,9 +5599,11 @@ pub async fn save_device_settings(
     .fetch_optional(&state.db)
     .await;
     let stored_limit = match updated {
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
         Ok(Some(stored)) => stored,
-        Err(err) => return server_error(err, "couldn't save a phone's music settings"),
+        Err(err) => return server_error(lang, err, "couldn't save a phone's music settings"),
     };
     nudge(&state, &[id]);
     log_event(
@@ -5207,6 +5637,7 @@ pub async fn save_device_settings(
 /// unticks one. One auto-saving form; back to Device › Music's `#music-sonos`.
 pub async fn save_device_sonos_rooms(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Vec<(String, String)>>,
@@ -5253,8 +5684,10 @@ pub async fn save_device_sonos_rooms(
     .await;
     let report = match saved {
         Ok(Some(report)) => music::parse_music_state(report.as_deref()),
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return server_error(err, "couldn't save a phone's Sonos rooms"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return server_error(lang, err, "couldn't save a phone's Sonos rooms"),
     };
     nudge(&state, &[id]);
     let names: Vec<String> = rooms

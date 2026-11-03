@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,7 +8,7 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">Music</h1>
+    <h1 class="page-title">{{ self.t("nav.music") }}</h1>
 
     {#- Where the forms return (§5.1): the music app's switch to its group, #music-app (with the
         reason when refused);
@@ -19,129 +19,129 @@
     {% include "partials/note_warning.html" %}
     {% endfor %}
 
-    <section id="music-app" aria-label="Music app">
+    <section id="music-app" aria-label="{{ self.t("device.music.app") }}">
         {% if let Some(app) = music.app %}
         <form method="post" action="/devices/{{ device.id }}/apps/toggle#music-app" class="group">
             <input type="hidden" name="tracked_app_id" value="{{ app.tracked_app_id }}">
             <input type="hidden" name="package_name" value="{{ app.package_name }}">
             <input type="hidden" name="back" value="music">
             <label class="row">
-                <span class="row-label">Music app<span class="row-sub">{{ app.status }}</span></span>
+                <span class="row-label">{{ self.t("device.music.app") }}<span class="row-sub">{{ self.t(app.status) }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="selected"{% if app.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             {% if let Some(text) = music.app_refused %}
             <p class="flash flash-error" role="status" data-flash="music-app">{{ text }}</p>
             {% endif %}
         </form>
-        <p class="group-footer">Installed like any app from the catalog. Off uninstalls it.</p>
+        <p class="group-footer">{{ self.t("device.music.app_footer") }}</p>
         {% else %}
         <div class="group">
             <a class="row" href="/music/settings#app" data-row="music-app">
-                <span class="row-label">Music app</span>
-                <span class="row-value">Not in the catalog</span>
+                <span class="row-label">{{ self.t("device.music.app") }}</span>
+                <span class="row-value">{{ self.t("device.music.not_in_catalog") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <p class="group-footer">Add it to the catalog in Music › Settings first.</p>
+        <p class="group-footer">{{ self.t("device.music.add_to_catalog") }}</p>
         {% endif %}
     </section>
 
     <section id="library" aria-labelledby="library-title">
-        <h2 class="group-header" id="library-title">Library</h2>
+        <h2 class="group-header" id="library-title">{{ self.t("music.tab.library") }}</h2>
         <div class="group">
             {% for tick in music.ticks %}
             <div class="cell" id="music-entry-{{ tick.id }}">
                 <form method="post" action="/devices/{{ device.id }}/music/entries/{{ tick.id }}#music-entry-{{ tick.id }}">
                     <label class="row">
-                        <span class="row-label">{{ tick.name }}<span class="row-sub">{{ tick.detail }}</span>{% if let Some(error) = tick.error %}<span class="row-sub text-alarm" data-entry-error>On the phone: {{ error }}</span>{% endif %}</span>
+                        <span class="row-label">{{ tick.name }}<span class="row-sub">{{ tick.detail }}</span>{% if let Some(error) = tick.error %}<span class="row-sub text-alarm" data-entry-error>{{ self.tp("device.music.on_phone_error", [("error", error.as_str())]) }}</span>{% endif %}</span>
                         <input type="checkbox" role="switch" class="sw" name="selected"{% if tick.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
-                    <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                 </form>
                 {% if let Some(text) = tick.notice %}
                 <p class="flash flash-error" role="status" data-flash="music-entry-{{ tick.id }}">{{ text }}</p>
                 {% endif %}
             </div>
             {% else %}
-            <p class="row row-note" data-row="no-entries">Nothing in the library yet.</p>
+            <p class="row row-note" data-row="no-entries">{{ self.t("device.music.no_entries") }}</p>
             {% endfor %}
         </div>
-        <p class="group-footer">Add podcasts, NRK series and your own files under <a href="/music">Music</a>.</p>
+        <p class="group-footer">{{ self.t("device.music.library_footer.before") }} <a href="/music">{{ self.t("nav.music") }}</a>{{ self.t("device.music.library_footer.after") }}</p>
     </section>
 
     {#- One form, one save (design 31 §5.6, design 30 `v=2`): the handler writes all five values,
         so the switches and pickers stay together; the groups inside are only for their footers. -#}
     <form method="post" action="/devices/{{ device.id }}/music#music-settings" id="music-settings">
         <input type="hidden" name="v" value="2">
-        <h2 class="group-header" id="mobile-data-title">Mobile data</h2>
+        <h2 class="group-header" id="mobile-data-title">{{ self.t("device.music.mobile_data") }}</h2>
         {% if let Some(note) = music.older_phone %}
         {% include "partials/note_warning.html" %}
         {% endif %}
         <div class="group" role="group" aria-labelledby="mobile-data-title">
             <label class="row">
-                <span class="row-label">Stream on mobile data</span>
+                <span class="row-label">{{ self.t("device.music.stream_mobile") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="stream_mobile_data" value="on"{% if music.stream_mobile_data %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">Download on mobile data</span>
+                <span class="row-label">{{ self.t("device.music.download_mobile") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="download_mobile_data" value="on"{% if music.download_mobile_data %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
         </div>
-        <div class="group-footer">Never while roaming. On Wi-Fi both always work.
+        <div class="group-footer">{{ self.t("device.music.mobile_footer") }}
             <details class="info">
-                <summary aria-label="About mobile data"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.music.mobile_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Streaming includes Spotify, about 60-150 MB an hour. Downloads: a Storytel book is often several hundred MB.</p>
+                    <p>{{ self.t("device.music.mobile_info") }}</p>
                 </div>
             </details>
         </div>
 
-        <h2 class="group-header" id="storage-title">Storage</h2>
+        <h2 class="group-header" id="storage-title">{{ self.t("device.music.storage") }}</h2>
         {% if let Some(note) = music.over_limit %}
         {% include "partials/note_warning.html" %}
         {% endif %}
         <div class="group" role="group" aria-labelledby="storage-title">
             <label class="row">
-                <span class="row-label">Storage limit</span>
+                <span class="row-label">{{ self.t("device.music.storage_limit") }}</span>
                 <select class="pick" name="storage_limit" data-autosave>
                     {% for (gb, selected) in music.storage_limits %}
-                    <option value="{{ gb }}"{% if selected %} selected{% endif %}>{{ gb }} GB</option>
+                    <option value="{{ gb }}"{% if selected %} selected{% endif %}>{% let gb_text = gb.to_string() %}{{ self.tp("device.music.gb", [("gb", gb_text.as_str())]) }}</option>
                     {% endfor %}
-                    <option value="none"{% if music.storage_limit.is_none() %} selected{% endif %}>No limit</option>
+                    <option value="none"{% if music.storage_limit.is_none() %} selected{% endif %}>{{ self.t("device.music.no_limit") }}</option>
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             <label class="row">
-                <span class="row-label">Volume cap</span>
+                <span class="row-label">{{ self.t("device.music.volume_cap") }}</span>
                 <select class="pick" name="volume_cap" data-autosave>
-                    <option value="off"{% if music.volume_cap.is_none() %} selected{% endif %}>Off</option>
+                    <option value="off"{% if music.volume_cap.is_none() %} selected{% endif %}>{{ self.t("common.off") }}</option>
                     {% for (cap, selected) in music.volume_caps %}
                     <option value="{{ cap }}"{% if selected %} selected{% endif %}>{{ cap }} %</option>
                     {% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
         </div>
-        <div class="group-footer">Played episodes beyond the kept ones are removed first.
+        <div class="group-footer">{{ self.t("device.music.storage_footer") }}
             <details class="info">
-                <summary aria-label="About the storage limit and the volume cap"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.music.storage_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>The offline episodes always stay. The volume cap holds in every app.</p>
+                    <p>{{ self.t("device.music.storage_info") }}</p>
                 </div>
             </details>
         </div>
 
-        <h2 class="group-header" id="storytel-title">Storytel</h2>
+        <h2 class="group-header" id="storytel-title">{{ self.t("music.storytel_name") }}</h2>
         {% if let Some(note) = music.storytel_refused %}
         {% include "partials/note_warning.html" %}
         {% endif %}
         <div class="group" role="group" aria-labelledby="storytel-title">
             <label class="row">
-                <span class="row-label">Storytel on this phone{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.storytel_on") }}{% if let Some(unsent) = music.storytel_unsent %}<span class="row-sub" data-storytel-unsent>{{ unsent }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="storytel" value="on"{% if music.storytel %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
         </div>
-        <p class="group-footer">{% if music.storytel_stored %}Gives the music app the family's login. Off removes it from the phone.{% else %}No login saved yet: add it in <a href="/music/settings#storytel">Music › Settings</a>.{% endif %}</p>
-        <noscript><div class="group"><button type="submit" class="row row-button">Save</button></div></noscript>
+        <p class="group-footer">{% if music.storytel_stored %}{{ self.t("device.music.storytel_footer") }}{% else %}{{ self.t("device.music.storytel_none.before") }} <a href="/music/settings#storytel">{{ self.t("device.music.music_settings") }}</a>{{ self.t("device.music.storytel_none.after") }}{% endif %}</p>
+        <noscript><div class="group"><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></div></noscript>
     </form>
 
     {#- Spotify (design 26c §2.5, §3.6): which account this phone plays as - one per phone, the
@@ -151,42 +151,42 @@
         group. Shown once a Spotify app is set up, or while accounts or a binding remain. -#}
     {% if let Some(spotify) = music.spotify %}
     <section id="music-spotify" aria-labelledby="music-spotify-title">
-        <h2 class="group-header" id="music-spotify-title">Spotify</h2>
+        <h2 class="group-header" id="music-spotify-title">{{ self.t("music.spotify_name") }}</h2>
         {% for note in spotify.warnings %}
         {% include "partials/note_warning.html" %}
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/music/spotify#music-spotify" class="group">
             <label class="row" for="music_spotify_account">
-                <span class="row-label">Plays as{% if let Some(login) = spotify.login %}<span class="row-sub" data-row="spotify-login">{{ login }}</span>{% endif %}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.music.plays_as") }}{% if let Some(login) = spotify.login %}<span class="row-sub" data-row="spotify-login">{{ login }}</span>{% endif %}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
                 <select class="pick" id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
-                    <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>Off</option>
+                    <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>{{ self.t("common.off") }}</option>
                     {% for (id, name) in spotify.accounts %}
                     <option value="{{ id }}"{% if spotify.bound == Some(**id) %} selected{% endif %}>{{ name }}</option>
                     {% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             {% if let Some(text) = spotify.notice %}
             <p class="flash flash-error" role="status" data-flash="music-spotify">{{ text }}</p>
             {% endif %}
             <a class="row" href="/music/settings#spotify-accounts" data-row="spotify-accounts">
-                <span class="row-label">Spotify Accounts</span>
+                <span class="row-label">{{ self.t("device.music.spotify_accounts") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </form>
-        <p class="group-footer">One account per phone: the child's own Premium account, never yours.</p>
+        <p class="group-footer">{{ self.t("device.music.spotify_footer") }}</p>
     </section>
     {% endif %}
 
     <section id="music-sonos" aria-labelledby="music-sonos-title">
-        <h2 class="group-header" id="music-sonos-title">Sonos speakers</h2>
+        <h2 class="group-header" id="music-sonos-title">{{ self.t("device.music.sonos") }}</h2>
         {% if music.sonos.all && music.sonos.rows.is_empty() %}
-        <div class="group"><p class="row row-note" data-row="no-speakers">No speakers seen yet.</p></div>
-        <p class="group-footer">Until then the phone may play on any Sonos speaker it finds, a friend's too.</p>
+        <div class="group"><p class="row row-note" data-row="no-speakers">{{ self.t("device.music.no_speakers") }}</p></div>
+        <p class="group-footer">{{ self.t("device.music.no_speakers_footer") }}</p>
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms#music-sonos" class="group">
             <label class="row">
-                <span class="row-label">All rooms</span>
+                <span class="row-label">{{ self.t("device.music.all_rooms") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="all" value="on"{% if music.sonos.all %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% if music.sonos.all %}
@@ -196,21 +196,21 @@
             {% else %}
             {% for room in music.sonos.rows %}
             <label class="row">
-                {% if room.reported %}<span class="row-label">{{ room.label }}</span>{% else %}<span class="row-label" title="{{ room.uid }}">A speaker not seen lately</span>{% endif %}
+                {% if room.reported %}<span class="row-label">{{ room.label }}</span>{% else %}<span class="row-label" title="{{ room.uid }}">{{ self.t("device.music.not_seen") }}</span>{% endif %}
                 <input type="checkbox" role="switch" class="sw" name="room" value="{{ room.uid }}"{% if room.allowed %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% endfor %}
             {% endif %}
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             {% if let Some(text) = music.sonos.notice %}
             <p class="flash flash-error" role="status" data-flash="music-sonos">{{ text }}</p>
             {% endif %}
         </form>
-        <div class="group-footer">{% if music.sonos.none_allowed() %}No room on: music plays only on the phone and headphones.{% else if music.sonos.all %}On any Wi-Fi, a friend's speakers too.{% else %}Only the rooms switched on.{% endif %}
+        <div class="group-footer">{% if music.sonos.none_allowed() %}{{ self.t("device.music.sonos_none") }}{% else if music.sonos.all %}{{ self.t("device.music.sonos_all") }}{% else %}{{ self.t("device.music.sonos_some") }}{% endif %}
             <details class="info">
-                <summary aria-label="About Sonos rooms"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("device.music.sonos_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Speakers found later stay off until you switch them on. A group plays only when every room in it is on.</p>
+                    <p>{{ self.t("device.music.sonos_info") }}</p>
                 </div>
             </details>
         </div>
@@ -219,14 +219,14 @@
 
     {% if !music.on_phone.is_empty() %}
     <section id="on-phone" aria-labelledby="on-phone-title">
-        <h2 class="group-header" id="on-phone-title">On the phone</h2>
+        <h2 class="group-header" id="on-phone-title">{{ self.t("device.music.on_phone") }}</h2>
         <div class="group">
             {% for row in music.on_phone %}
             {% include "partials/info_row.html" %}
             {% endfor %}
         </div>
         {% if let Some((age, exact)) = reported %}
-        <p class="group-footer">At the last report, <span title="{{ exact }}">{{ age }}</span>.</p>
+        <p class="group-footer">{{ self.t("device.music.reported.before") }} <span title="{{ exact }}">{{ age }}</span>{{ self.t("device.music.reported.after") }}</p>
         {% endif %}
     </section>
     {% endif %}

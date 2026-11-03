@@ -1863,8 +1863,11 @@ async fn language_is_each_parents() {
     assert!(!once.contains(r#"lang="nb" selected"#));
     assert_eq!(stored("pappa").await.as_deref(), Some("en"));
     // A page not moved yet keeps lang="en" over its English words (qa-s-i18n-1-code L1).
-    let unmoved = get_in(&app, "/music?lang=nb", &pappa, None).await.text();
+    let unmoved = get_in(&app, "/settings?lang=nb", &pappa, None).await.text();
     assert!(unmoved.contains(r#"<html lang="en">"#));
+    // Music is moved (slice 3d).
+    let music = get_in(&app, "/music?lang=nb", &pappa, None).await.text();
+    assert!(music.contains(r#"<html lang="nb">"#) && music.contains("Bibliotek"));
     // Devices is moved (slice 3a): Norwegian words under lang="nb".
     let moved = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
     assert!(moved.contains(r#"<html lang="nb">"#) && moved.contains("Legg til telefon"));
