@@ -66,6 +66,20 @@ class KidPaletteTest {
         }
     }
 
+    /** Design 75 §5.5 (launcher QA L7): the weather card's two tokens - the mockup's rain blue and the current period's
+     * raised tone (white at 6 % over the tile) - and every text on them stays readable. */
+    @Test
+    fun `the weather card's rain blue and raised tone are readable`() {
+        assertTrue(resolve("kid_rain").equals("#7CC4F2", ignoreCase = true))
+        assertTrue(resolve("kid_weather_now").equals("#0FFFFFFF", ignoreCase = true))
+        val raised = over("kid_weather_now", "kid_music_tile")
+        for (ground in listOf(resolve("kid_music_tile"), raised)) {
+            assertTrue(contrast("kid_rain", ground) >= 4.5)
+            assertTrue(contrast("kid_ink", ground) >= 4.5)
+            assertTrue(contrast("kid_core_dim", ground) >= 4.5)
+        }
+    }
+
     @Test
     fun `the ground is the Vibb night`() {
         assertTrue(resolve("kid_ground").equals("#0C0C14", ignoreCase = true))

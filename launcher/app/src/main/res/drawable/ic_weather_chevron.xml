@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The lock weather mark's tap hint (design 75, the user: "Jeg liker best den lille pilen"): a small downward chevron,
+     turned 180° while the day's card is open. Drawn by hand; white, tinted by the layout. Decorative: the mark is the
+     button. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="14dp"
+    android:height="14dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M7,10l5,5l5,-5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

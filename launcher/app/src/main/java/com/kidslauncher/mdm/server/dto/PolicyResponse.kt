@@ -212,6 +212,9 @@ data class LauncherUi(
      * lock's glance page or a missed call turns the screen on, on the lock
      * ([com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame]). Missing (an older server) = off. */
     val lockWakeOnNotification: Boolean = false,
+    /** Device › Weather's "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by
+     * the date and asks `GET /api/devices/weather`. Missing (an older server) = off. */
+    val lockWeather: Boolean = false,
 )
 
 /** One entry of `launcher_ui.wallpapers` - see kid-phone-server's `PolicyWallpaper`. Checked by

@@ -15,9 +15,11 @@
 use std::collections::HashMap;
 
 /// The `User-Agent` of every request this server makes (security review P5): GitHub, F-Droid
-/// repos, the filter lists, podcast hosts and their CDNs, NRK, Storytel, Spotify. Neutral - no
+/// repos, the filter lists, podcast hosts and their CDNs, NRK, Storytel, Spotify, Kartverket. Neutral - no
 /// "kid", nothing about the household - and fixed, never the server's version, so every server
-/// sends the same; GitHub's API wants one (an app name).
+/// sends the same; GitHub's API wants one (an app name). The one exception is MET Norway (design 75 D8): its
+/// terms want the client identified and a contact, so its requests carry `ForkConfig::met_user_agent` as a request
+/// header (`vibb-server/<version> github.com/<repo>` and `MET_CONTACT`) over this client default.
 pub const USER_AGENT: &str = "vibb/1.0";
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 

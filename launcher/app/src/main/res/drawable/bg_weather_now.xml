@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The weather card's current period (design 75, mockup v7): the column raised by white at 6 % over the tile. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_weather_now" />
+    <corners android:radius="10dp" />
+</shape>

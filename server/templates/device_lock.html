@@ -169,18 +169,6 @@
                 </div>
             </details>
         </div>
-
-        <h3 class="group-header">{{ self.t("device.lock.recent") }}</h3>
-        <div class="group" data-group="pin-events">
-            {% for e in parent.events %}
-            <div class="row" data-event>
-                <span class="row-label"><span{% if e.alarm %} class="text-alarm"{% endif %}>{{ e.title }}</span>{% if let Some(sub) = e.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
-                <span class="row-value" title="{{ e.exact }}">{{ e.when }}</span>
-            </div>
-            {% else %}
-            <p class="row row-note">{% if parent.capable %}{{ self.t("device.lock.none_yet") }}{% else %}{{ self.t("device.lock.not_reported") }}{% endif %}</p>
-            {% endfor %}
-        </div>
     </section>
 
     {#- The pickers and switches save on change (autosave.js) and return to their group or row
@@ -233,6 +221,54 @@
             </form>
         </div>
         <p class="group-footer">{{ self.t("device.lock.lock_screen_footer") }}</p>
+    </section>
+
+    {#- Design 75 §6 (the user, 2026-11-03: the weather's options on the lock page, not a page of their own): the switch
+        and, while it is on, the zone row, each its own auto-saving form answering on its own anchor (#weather-lock,
+        #weather-zone) - without JS the answer lands on the row, with JS scroll-restore.js keeps the exact place; a save
+        never jumps to the top. The notes above the group; the credit under it. -#}
+    <section id="weather" aria-labelledby="weather-title">
+        <h2 class="group-header" id="weather-title">{{ self.t("device.page.weather") }}</h2>
+        {% if weather.needs_position %}
+        <div class="attention attention-action" data-warning="needs-position">
+            <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/locate?device={{ device.id }}#location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
+        </div>
+        {% endif %}
+        {% if weather.needs_update %}
+        <div class="attention attention-action" data-warning="needs-update">
+            <div class="attention-text">{{ self.t("device.weather.needs_update") }}</div>
+        </div>
+        {% endif %}
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/weather/lock#weather-lock" class="cell" id="weather-lock">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.weather.lock") }}<span class="row-sub">{{ self.t("device.weather.lock_sub") }}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if weather.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% if weather.on %}
+            {% if weather.zones.is_empty() %}
+            <div class="row" id="weather-zone" data-row="weather-zone-empty">
+                <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_empty") }} <a href="/devices/locate?device={{ device.id }}#zones">{{ self.t("device.weather.zone_empty_link") }}</a></span></span>
+            </div>
+            {% else %}
+            <form method="post" action="/devices/{{ device.id }}/weather/zone#weather-zone" class="cell" id="weather-zone">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_sub") }}</span></span>
+                    <select class="pick" name="zone" data-autosave>
+                        <option value=""{% if weather.no_zone %} selected{% endif %}>{{ self.t("device.weather.zone_none") }}</option>
+                        {% for z in weather.zones %}
+                        <option value="{{ z.id }}"{% if z.selected %} selected{% endif %}>{{ z.name }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% endif %}
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("device.weather.footer") }}</p>
     </section>
 
     <section id="notifications" aria-labelledby="notifications-title">

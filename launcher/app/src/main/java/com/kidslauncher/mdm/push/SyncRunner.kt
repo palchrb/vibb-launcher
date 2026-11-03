@@ -66,6 +66,8 @@ object SyncRunner {
         scope.launch {
             val reasons = synchronized(this@SyncRunner) { coalescer.takeReasons() }
             Log.i(LOG_TAG, "Sync for $reasons")
+            // Design 75's R1 gap: a nudged sync pulls the weather too (a zone's save or delete only nudges).
+            if ("sse" in reasons) com.kidslauncher.mdm.weather.WeatherPull.nudged()
             try {
                 if (withTimeoutOrNull(SYNC_TIMEOUT_MS) { performMdmSync(context) } == null) {
                     Log.w(LOG_TAG, "Policy sync timed out")

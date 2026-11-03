@@ -275,7 +275,11 @@ class TimeLockModelTest {
             val a = screen.byId(ours)
             val b = glance.byId(theirs)
             assertEquals(ours, b.tagName, a.tagName)
-            for (attr in look) assertEquals("$ours $attr", b.attr(attr), a.attr(attr))
+            for (attr in look) {
+                // Design 75 §5.5: the glance's date sits in a row with the weather mark - the row carries its margin.
+                val theirsAttr = if (theirs == "lock_glance_date" && attr == "layout_marginTop") glance.byId("lock_glance_date_row").attr(attr) else b.attr(attr)
+                assertEquals("$ours $attr", theirsAttr, a.attr(attr))
+            }
         }
         // The emergency button: the same text button; the glance's side margins are room for its flashlight.
         val button = listOf("fontFamily", "textColor", "textSize", "gravity", "minHeight", "paddingStart", "paddingEnd", "background", "text", "clickable", "focusable")

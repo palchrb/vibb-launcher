@@ -526,6 +526,7 @@ pub(crate) async fn build_policy(
                     Vec::new()
                 }),
             lock_wake_on_notification: policy.lock_wake_on_notification,
+            lock_weather: policy.lock_weather,
         },
         time_policy,
         location_policy,
@@ -2555,11 +2556,10 @@ impl TimeRequestAnswer {
     };
 }
 
-/// The zone whose day a request for more time is counted in (qa-r13-rule-card-code Q-2): the
-/// phone's own IANA zone from its report (`time_state.zone`), which its ledger - and so its own
-/// count of three - counts the day in; Phone Setup's when the report names none or one that doesn't
-/// read.
-pub fn extra_time_day_zone(
+/// The phone's own zone (qa-r13-rule-card-code Q-2; design 75 D12): its IANA zone from its report
+/// (`time_state.zone`) - the zone its ledger counts a request for more time's day in, and the weather's words and
+/// hours are in -; Phone Setup's when the report names none or one that doesn't read.
+pub fn phone_zone(
     report: Option<&crate::time_state::TimeReport>,
     setup: &crate::display_time::Zone,
 ) -> crate::display_time::Zone {
@@ -2581,7 +2581,7 @@ pub fn time_request_id_ok(id: &str) -> bool {
 /// `POST /api/devices/time-request` (design r13 §2.5-2.6): the kid tapped "Be om mer tid" in the
 /// phone's notification. 200 with [TimeRequestAnswer], 400 for a body that doesn't parse or an id
 /// that isn't 16-64 lowercase hex, 413 above [TIME_REQUEST_BODY_LIMIT], 500 on a DB error (the phone
-/// keeps its request and retries). "Today" is the phone's own day ([extra_time_day_zone]: the zone
+/// keeps its request and retries). "Today" is the phone's own day ([phone_zone]: the zone
 /// its report names, else Phone Setup's). A request asked before it isn't stored (`stale`); a
 /// future `asked_at` counts as now. In one `BEGIN IMMEDIATE` transaction: the fourth request of
 /// the day (rows of today other than this id) isn't stored (`capped`, one log line);
@@ -2628,7 +2628,7 @@ pub async fn time_request(
     });
     // The day the cap and "stale" go by (qa-r13-rule-card-code Q-2): the phone's own, in the zone it
     // reports (`time_state.zone`, the zone its ledger counts its day in), else Phone Setup's.
-    let day = extra_time_day_zone(report.as_ref().map(|(_, r)| r), &phone.zone);
+    let day = phone_zone(report.as_ref().map(|(_, r)| r), &phone.zone);
     let start_of_day = day.start_of_today(now);
     if asked < start_of_day {
         return Json(TimeRequestAnswer::STALE).into_response();

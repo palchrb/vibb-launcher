@@ -445,7 +445,7 @@ pub(crate) async fn load_policy(
 }
 
 /// The last report lists the launcher capability `name`.
-fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
+pub(crate) fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
     latest
         .and_then(|s| s.capabilities_json.as_deref())
         .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
@@ -925,7 +925,7 @@ struct LockTemplate {
     /// The page answers Show Child PIN: `static/reveal.js` turns its history entry into a GET
     /// (a reload never posts the password again) and hides the PIN when the page is left.
     reveal_answer: bool,
-    /// Parent PIN: set, easy, its flash, the phone's reports ("Recent use").
+    /// Parent PIN: set, easy, its flash, whether the phone reports its uses.
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
     parent_open: bool,
@@ -951,6 +951,8 @@ struct LockTemplate {
     passkey_reauth: bool,
     /// The parent is passkey-only (design 74 D2.2): Show Child PIN takes only the passkey.
     passkey_only: bool,
+    /// Design 75 §6: the weather on the lock screen - its switch, the stand-in zone, the notes.
+    weather: crate::handlers::weather_page::WeatherCard,
 }
 crate::i18n::words!(LockTemplate);
 
@@ -1281,9 +1283,12 @@ async fn render_lock(
     if let Some(send) = pin_send.filter(|_| child.pin_set) {
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(None));
     }
-    let parent =
-        crate::handlers::parent_pin::card(&state.db, &policy, latest.as_ref(), notice, &zone, now)
-            .await;
+    let parent = crate::handlers::parent_pin::card(&policy, latest.as_ref(), notice);
+    let weather =
+        match crate::handlers::weather_page::card(state, id, &policy, latest.as_ref()).await {
+            Ok(weather) => weather,
+            Err(err) => return read_failed(lang, id, "the phone's zones", err),
+        };
 
     let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, id)
         .await
@@ -1360,6 +1365,7 @@ async fn render_lock(
         lock_screen,
         child,
         parent,
+        weather,
         device,
     };
     (status, Html(page.render().unwrap())).into_response()

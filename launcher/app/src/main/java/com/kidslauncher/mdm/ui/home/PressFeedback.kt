@@ -168,9 +168,9 @@ object PressFeedback {
     internal const val FOCUS_RING_STROKE_DP = 2f
 
     /** An oval outline and a small elevation; the parents must not clip it (`clipChildren=false`). */
-    fun depth(target: View) {
+    fun depth(target: View, elevationDp: Float = PressMotion.ELEVATION_DP) {
         target.outlineProvider = OVAL
-        target.elevation = KidAvatars.dp(target.context, PressMotion.ELEVATION_DP).toFloat()
+        target.elevation = KidAvatars.dp(target.context, elevationDp).toFloat()
         target.outlineSpotShadowColor = Color.BLACK
         target.outlineAmbientShadowColor = Color.BLACK
     }
@@ -219,20 +219,25 @@ object PressFeedback {
      * on it, the ripple and focus ring around it. The avatar sits [CONTACT_AVATAR_TOP_DP] below the
      * item's top in both (4 dp padding + the frame's 6 dp for the badge). The call badge is lifted
      * with it so it stays drawn above the avatar (no shadow of its own); the missed-call badge gets
-     * that from `KidBadge`.
+     * that from `KidBadge` at 2 dp - so [elevationDp] above that (Home's [HOME_AVATAR_ELEVATION_DP]) lifts the
+     * missed-call badge to the avatar too, else the avatar's shadow and body would draw over it.
      */
-    fun contact(item: View, avatarPx: Int) {
+    fun contact(item: View, avatarPx: Int, elevationDp: Float = PressMotion.ELEVATION_DP) {
         val avatar = item.findViewById<View>(R.id.contact_avatar)
-        depth(avatar)
+        depth(avatar, elevationDp)
         item.findViewById<View>(R.id.contact_call_badge)?.apply {
             outlineProvider = null
             elevation = avatar.elevation
         }
+        item.findViewById<View>(R.id.contact_badge)?.elevation = avatar.elevation
         cellBackground(item, avatarPx, KidAvatars.dp(item.context, CONTACT_AVATAR_TOP_DP))
         attach(item, avatar, scrolling = true)
     }
 
     private const val CONTACT_AVATAR_TOP_DP = 10f
+
+    /** Home's contact avatars float a little higher than the grid's icons (the white ring's soft shadow, mockup A). */
+    const val HOME_AVATAR_ELEVATION_DP = 4f
 
     /** The grid's icon sits 4 dp below the cell's top (`tile_frame` is 4 dp taller, for the badge). */
     const val TILE_ICON_TOP_DP = 4f

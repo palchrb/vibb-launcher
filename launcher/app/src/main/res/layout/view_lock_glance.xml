@@ -61,16 +61,40 @@
                 android:textColor="@color/kid_ink"
                 android:textSize="56sp" />
 
-            <!-- Centred also when it wraps (font scale 2.0: "Wednesday, / October 14", emulator round N8). -->
-            <TextClock
-                android:id="@+id/lock_glance_date"
+            <!-- The date and, beside it, the weather mark (design 75 §5.5): one row on the date's baseline (the row's
+                 baseline is the date's - lock.LockClockFace places the row as it placed the date). The mark is gone
+                 unless the lock shows the weather and it sits beside the date (lock.WeatherLockPanel). -->
+            <LinearLayout
+                android:id="@+id/lock_glance_date_row"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
                 android:layout_marginTop="6dp"
-                android:fontFamily="@font/nunito_bold"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="14sp" />
+                android:baselineAligned="true"
+                android:baselineAlignedChildIndex="0"
+                android:clipChildren="false"
+                android:orientation="horizontal">
+
+                <!-- Centred also when it wraps (font scale 2.0: "Wednesday, / October 14", emulator round N8). -->
+                <TextClock
+                    android:id="@+id/lock_glance_date"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:fontFamily="@font/nunito_bold"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="14sp" />
+
+                <include
+                    android:id="@+id/lock_glance_weather"
+                    layout="@layout/view_lock_weather_mark" />
+            </LinearLayout>
+
+            <!-- The weather mark on its own line under the date (design 75 D15, the user: "Egen linje under datoen"):
+                 where the date's line can't hold it (the Jelly Star). Part of the face - the "Neste" line yields
+                 before it. -->
+            <include
+                android:id="@+id/lock_glance_weather_line"
+                layout="@layout/view_lock_weather_mark" />
 
             <!-- The next alarm (design 42 §1.3): "Alarm 07:00", "Alarm tor 07:00" more than 24 h away - only
                  the system clock app's or the pinned clock app's (PinLockRuntime.clockPackages). No tap. Shown
@@ -101,6 +125,12 @@
                 android:textColor="@color/kid_core_dim"
                 android:textSize="13sp"
                 android:visibility="gone" />
+
+            <!-- The weather's day (design 75 §5.5): folded out under the face's lines by a tap on the mark, above the
+                 tiles and rows; gone while folded. view_lock_weather_card.xml. -->
+            <include
+                android:id="@+id/lock_weather_card"
+                layout="@layout/view_lock_weather_card" />
 
             <!-- The time rule's card (design r13 §1.3, lock.GlancePanel, pure lock.RuleCard; lock.RuleCardView binds it):
                  view_lock_rule_card.xml, shared with the time-rule screen (launcher round L6). 82 dp with its margin in

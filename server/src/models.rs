@@ -178,6 +178,12 @@ pub struct DevicePolicy {
     /// "Wake the screen for a notification" (launcher round 7 §3, migrations/0084, default off),
     /// sent as `launcher_ui.lock_wake_on_notification`.
     pub lock_wake_on_notification: bool,
+    /// Device › Weather's "Weather on the lock screen" (design 75, migrations/0122, default off), sent as
+    /// `launcher_ui.lock_weather`.
+    pub lock_weather: bool,
+    /// The zone whose centre stands in for the weather when the phone has no fresh fix (design 75 D5, migrations/0122):
+    /// one of this phone's zones, `None` by default. Never in the policy JSON.
+    pub weather_zone_id: Option<i64>,
     /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,
     /// entries are kept `retention::DNS_LOG_RETENTION_DAYS`.
     pub dns_log_enabled: bool,
@@ -282,6 +288,9 @@ pub struct LauncherUi {
     /// page or a missed call turns the screen on, on the lock. Always sent; a launcher without the
     /// key reads it as off.
     pub lock_wake_on_notification: bool,
+    /// "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by the date and asks
+    /// `GET /api/devices/weather`. Always sent; a launcher without the key reads it as off.
+    pub lock_weather: bool,
 }
 
 /// One allowed wallpaper in `launcher_ui.wallpapers` - every key always present.

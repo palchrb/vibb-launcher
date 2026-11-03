@@ -121,6 +121,9 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::music_api::STORYTEL_TOKEN_BODY_LIMIT,
             )),
         )
+        // Design 75 §3.4: the lock glance's weather and the card's nowcast line.
+        .route("/api/devices/weather", get(handlers::weather::forecast))
+        .route("/api/devices/weather/now", get(handlers::weather::now))
         // Design 72 §3: a calendar link's set, for a phone that has the link.
         .route(
             "/api/devices/calendar/feeds/{uid}",

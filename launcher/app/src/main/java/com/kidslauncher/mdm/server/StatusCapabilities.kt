@@ -47,6 +47,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     APP_PERMISSIONS_CAPABILITY,
     // Server 0121: the policy's `time_policy.rules[].silent` - a silent rule turns on our own Do Not Disturb rule.
     RULE_SILENCE_CAPABILITY,
+    // Design 75: the lock glance shows the weather (`launcher_ui.lock_weather`, `GET /api/devices/weather`); the
+    // server's Device › Weather says so until a phone reports it.
+    com.kidslauncher.mdm.weather.LOCK_WEATHER_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

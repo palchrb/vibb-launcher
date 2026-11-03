@@ -387,6 +387,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     }
 
     reportBlockedDnsEvents(context, api)
+    // Design 75: the lock's weather - the policy's switch and location mode, then a pull when due (its own 15 s call
+    // timeout and in-flight guard; never fails a sync). Before the self-update commit: nothing may run after it.
+    com.kidslauncher.mdm.weather.WeatherPull.afterSync(context, decision.policy)
     // Last of all (handy step 11): committing our own update gets this process killed seconds
     // later. Offline too - the APK was downloaded and checked when the server advertised it.
     commitPendingSelfUpdateIfDue(context, api)
