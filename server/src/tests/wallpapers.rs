@@ -656,6 +656,7 @@ async fn backups_carry_wallpapers_and_a_restore_gets_them_back() {
         db.to_str().unwrap(),
         zip_path.to_str().unwrap(),
         &app.state.photo_dir,
+        &app.state.photo_original_dir,
         &app.state.wallpaper_dir,
         &app.state.music_cover_dir,
         &app.state.avatar_dir,

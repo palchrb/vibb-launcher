@@ -95,6 +95,8 @@ async fn the_device_router_serves_nothing_but_the_device_api() {
         // Q-1): never on the phones' port.
         "/phone-avatars/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "/contact-photos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        // A contact photo's kept original (migration 0123): the parent's alone.
+        "/contact-photos/original/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ];
     for path in paths {
         for method in [Method::GET, Method::POST] {

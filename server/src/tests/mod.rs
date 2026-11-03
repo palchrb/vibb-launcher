@@ -204,6 +204,7 @@ impl TestApp {
             config: std::sync::Arc::new(config),
             data_dir: std::sync::Arc::new(dir.path().join("data")),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
+            photo_original_dir: std::sync::Arc::new(dir.path().join("contact_photo_originals")),
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             avatar_dir: std::sync::Arc::new(dir.path().join("device_avatars")),

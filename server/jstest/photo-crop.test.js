@@ -1,12 +1,16 @@
 // Behaviour of static/photo-crop.js: the crop maths (the square from the zoom and the centre, the clamp that keeps
-// the circle on the photo, cover as the least zoom) and the dialog with a fake canvas - Cancel uploads nothing,
-// Save puts one JPEG into the input and submits its form. Run: node --test jstest/photo-crop.test.js
+// the circle on the photo, cover as the least zoom, the server's original size, the view as the form sends it) and
+// the dialog with a fake canvas - Cancel uploads nothing, Save submits the picked photo with its view, an adjust of a
+// kept original starts at its saved view and sends only the new one. Run: node --test jstest/photo-crop.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
 const crop = require("../static/photo-crop.js");
 
-const { clampView, centred, sourceRect, pan, zoomAt, fitWithin, outputSide, adjustZoom, halvings, install } = crop;
+const {
+    clampView, centred, sourceRect, pan, zoomAt, fitWithin, outputSide, adjustZoom, halvings, originalSize, overLimits,
+    viewText, viewOf, install,
+} = crop;
 
 /** The square lies inside the w×h picture. */
 function inside(rect, w, h) {
@@ -91,6 +95,24 @@ test("an adjust zooms only while the square stays at least 230 px", () => {
     assert.strictEqual(adjustZoom(200, 200), 1);
 });
 
+test("the server's original size (photos::original_size): 2048 on the long side, a panorama's short side kept", () => {
+    assert.deepStrictEqual(originalSize(4000, 3000), { w: 2048, h: 1536 });
+    assert.deepStrictEqual(originalSize(4000, 2250), { w: 2048, h: 1152 });
+    assert.deepStrictEqual(originalSize(8000, 1000), { w: 5017, h: 627 });
+    assert.deepStrictEqual(originalSize(600, 600), { w: 600, h: 600 });
+    assert.ok(!overLimits(8000, 5000) && overLimits(8001, 10) && overLimits(7000, 7000));
+});
+
+test("the view goes as fractions of the picture and comes back as the same square", () => {
+    const text = viewText({ zoom: 2, cx: 1024, cy: 768 }, 2048, 1536);
+    assert.strictEqual(text, "0.312500,0.250000,0.375000,0.500000");
+    // The same square in another copy's pixels (the server's original, the cropper's working copy).
+    assert.deepStrictEqual(viewOf(text, 4096, 3072, 4), { zoom: 2, cx: 2048, cy: 1536 });
+    for (const bad of [null, "", "1,2,3", "a,b,c,d", "0,0,0,0"]) {
+        assert.deepStrictEqual(viewOf(bad, 2048, 1536, 4), centred(2048, 1536), String(bad));
+    }
+});
+
 // ---- The dialog, with a fake page ----
 
 function element(tag, attrs = {}) {
@@ -138,8 +160,11 @@ function canvas() {
 
 let page;
 
-/** The calls page: one contact's photo form (its file input, "Adjust crop" when it has a photo) and the dialog. */
-function fakePage({ photo = true, transfer = true, decodes = true, size = [4000, 3000] } = {}) {
+/**
+ * The calls page: one contact's photo form (its file input, the hidden view and original, "Adjust crop" when it has
+ * a photo - of its kept original when `kept` is {hash, view}) and the dialog.
+ */
+function fakePage({ photo = true, kept = null, transfer = true, decodes = true, size = [4000, 3000] } = {}) {
     page = { blobs: [], loaded: [], revoked: [], submitted: [], noBlob: false, canvases: [] };
     const dialog = element("div", { "data-crop-dialog": "", "data-side": "512", "data-max-bytes": "10485760", hidden: "" });
     const parts = {
@@ -150,12 +175,20 @@ function fakePage({ photo = true, transfer = true, decodes = true, size = [4000,
         "[data-crop-save]": element("button"),
     };
     dialog.querySelector = (selector) => parts[selector] || null;
-    const form = { submit() { page.submitted.push(input.files); } };
+    const form = {
+        submit() { page.submitted.push({ files: input.files, value: input.value, view: view.value, original: original.value }); },
+    };
     const input = element("input", { type: "file", name: "photo", "data-autosave": "", "data-photo-crop": "" });
     input.form = form;
     input.files = [];
-    form.querySelector = () => input;
-    const adjust = photo ? element("button", { "data-photo-adjust": "/contact-photos/abc", hidden: "" }) : null;
+    const view = element("input", { type: "hidden", name: "view" });
+    const original = element("input", { type: "hidden", name: "original" });
+    const fields = { "input[type=file][data-photo-crop]": input, "[data-photo-view]": view, "[data-photo-original]": original };
+    form.querySelector = (selector) => fields[selector] || null;
+    const attrs = kept
+        ? { "data-photo-adjust": `/contact-photos/original/${kept.hash}`, "data-photo-original": kept.hash, "data-photo-view": kept.view }
+        : { "data-photo-adjust": "/contact-photos/abc" };
+    const adjust = photo ? element("button", { ...attrs, hidden: "" }) : null;
     if (adjust) adjust.form = form;
     const main = element("main");
     const doc = element("document");
@@ -207,7 +240,7 @@ function fakePage({ photo = true, transfer = true, decodes = true, size = [4000,
     };
     page.doc = doc;
     page.api = install(doc, win);
-    return Object.assign(page, { dialog, input, adjust, parts, form, main });
+    return Object.assign(page, { dialog, input, view, original, adjust, parts, form, main });
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
@@ -252,59 +285,73 @@ test("Cancel empties the input and uploads nothing; Escape does the same", async
     assert.deepStrictEqual(p.blobs, []);
 });
 
-test("Save uploads one 512 px JPEG through the form, drawn from the square the frame shows", async () => {
+test("Save submits the picked photo itself with the view of the square the frame shows", async () => {
     const p = fakePage({ size: [2048, 1536] });
     pick(p);
     await settle();
-    const preview = p.parts["[data-crop-canvas]"];
-    const work = preview.drawn[preview.drawn.length - 1][0];
-    // Zoomed in to 2 about the centre: the square is 768 of the 2048x1536 working copy, at (640, 384).
+    // Zoomed in to 2 about the centre: the square is 768 of the 2048x1536 picture, at (640, 384).
     p.parts["[data-crop-zoom]"].value = "2";
     p.parts["[data-crop-zoom]"].fire("input");
     const made = p.canvases.length;
     p.parts["[data-crop-save]"].fire("click");
     await settle();
-    const drawn = p.canvases.slice(made);
-    assert.strictEqual(drawn.length, 1);
-    assert.deepStrictEqual(drawn[0].drawn, [[work, 640, 384, 768, 768, 0, 0, 512, 512]]);
-    assert.strictEqual(drawn[0].smoothing, "high");
-    assert.strictEqual(p.blobs.length, 1);
-    assert.deepStrictEqual(p.blobs[0], { type: "image/jpeg", quality: 0.95, side: 512 });
+    assert.strictEqual(p.canvases.length, made, "nothing drawn: the server cuts the square");
+    assert.deepStrictEqual(p.blobs, []);
     assert.strictEqual(p.submitted.length, 1);
-    const files = p.submitted[0];
-    assert.strictEqual(files.length, 1);
-    assert.strictEqual(files[0].name, "photo.jpg");
-    assert.strictEqual(files[0].type, "image/jpeg");
-    assert.strictEqual(files[0].parts[0].fake, "jpeg");
+    const sent = p.submitted[0];
+    assert.strictEqual(sent.files[0].name, "IMG_1234.jpg");
+    assert.strictEqual(sent.view, "0.312500,0.250000,0.375000,0.500000");
+    assert.strictEqual(sent.original, "");
     assert.strictEqual(p.dialog.hidden, true);
-    // A change the new file might fire starts nothing.
+    // A change the input might fire starts nothing.
     p.input.fire("change");
     assert.strictEqual(p.dialog.hidden, true);
 });
 
-test("no draw shrinks by more than 2x: cover's 1536 px square goes to 512 through 768", async () => {
-    const p = fakePage({ size: [2048, 1536] });
+test("a photo past the server's decoder goes up as its copy at the original's size, with the view", async () => {
+    // 54 MP: the working copy is 3464x2309, the original the server would keep 2048x1365.
+    const p = fakePage({ size: [9000, 6000] });
     pick(p);
     await settle();
+    const preview = p.parts["[data-crop-canvas]"];
+    const work = preview.drawn[preview.drawn.length - 1][0];
     const made = p.canvases.length;
     p.parts["[data-crop-save]"].fire("click");
     await settle();
-    const draws = p.canvases.slice(made).map((c) => c.drawn[0]);
-    assert.deepStrictEqual(draws.map((d) => d.slice(1)), [
-        [256, 0, 1536, 1536, 0, 0, 768, 768],
-        [0, 0, 768, 768, 0, 0, 512, 512],
-    ]);
+    const drawn = p.canvases.slice(made);
+    assert.deepStrictEqual(drawn.map((c) => c.drawn[0]), [[work, 0, 0, 3464, 2309, 0, 0, 2048, 1365]]);
+    assert.strictEqual(drawn[0].smoothing, "high");
+    assert.deepStrictEqual(p.blobs, [{ type: "image/jpeg", quality: 0.95, side: 2048 }]);
+    const sent = p.submitted[0];
+    assert.strictEqual(sent.files.length, 1);
+    assert.strictEqual(sent.files[0].name, "photo.jpg");
+    assert.strictEqual(sent.files[0].parts[0].fake, "jpeg");
+    assert.strictEqual(sent.view, viewText(centred(3464, 2309), 3464, 2309));
+});
+
+test("a picked photo zooms only as far as the square stays 230 px of the original the server keeps", async () => {
+    const small = fakePage({ size: [1000, 750] });
+    pick(small);
+    await settle();
+    assert.strictEqual(small.parts["[data-crop-zoom]"].max, "3.26");
+    // The working copy is 3266x2449, the original 2048x1536: 6.7x, so the slider's own limit.
+    const big = fakePage({ size: [4000, 3000] });
+    pick(big);
+    await settle();
+    assert.strictEqual(big.parts["[data-crop-zoom]"].max, String(crop.MAX_ZOOM));
 });
 
 test("toBlob failing: a picked photo goes up as it is, an adjust stays open to try again", async () => {
-    const p = fakePage();
+    // Past the decoder's limits, so its copy would have gone instead.
+    const p = fakePage({ size: [9000, 6000] });
     page.noBlob = true;
     pick(p);
     await settle();
     p.parts["[data-crop-save]"].fire("click");
     await settle();
     assert.strictEqual(p.submitted.length, 1);
-    assert.strictEqual(p.submitted[0][0].name, "IMG_1234.jpg");
+    assert.strictEqual(p.submitted[0].files[0].name, "IMG_1234.jpg");
+    assert.strictEqual(p.blobs.length, 1);
 
     const a = fakePage({ size: [512, 512] });
     page.noBlob = true;
@@ -337,8 +384,9 @@ test("the focus stays in the dialog: Tab from Save goes back to the frame, Shift
     assert.strictEqual(p.doc.activeElement, p.parts["[data-crop-save]"]);
 });
 
-test("Adjust crop opens the stored photo, zooms only to a 230 px square, and saves the same way", async () => {
+test("Adjust crop of a photo from before 0123 opens the stored square, zooms only to 230 px, uploads the square", async () => {
     const p = fakePage({ size: [512, 512] });
+    p.view.value = "stale";
     p.adjust.fire("click");
     await settle();
     assert.deepStrictEqual(p.loaded, ["/contact-photos/abc"]);
@@ -349,7 +397,34 @@ test("Adjust crop opens the stored photo, zooms only to a 230 px square, and sav
     await settle();
     assert.strictEqual(p.blobs[0].side, 230);
     assert.strictEqual(p.submitted.length, 1);
-    assert.strictEqual(p.submitted[0][0].type, "image/jpeg");
+    assert.strictEqual(p.submitted[0].files[0].type, "image/jpeg");
+    // The square is the file: no view (the server keeps it whole), no original.
+    assert.strictEqual(p.submitted[0].view, "");
+    assert.strictEqual(p.submitted[0].original, "");
+});
+
+test("Adjust crop of a kept original starts at its saved view, can zoom out to cover, and sends only the view", async () => {
+    const p = fakePage({ size: [2048, 1536], kept: { hash: "def", view: "0.312500,0.250000,0.375000,0.500000" } });
+    p.input.value = "C:\\fakepath\\old.jpg";
+    p.adjust.fire("click");
+    await settle();
+    assert.deepStrictEqual(p.loaded, ["/contact-photos/original/def"]);
+    // The saved square: zoom 2 about (1024, 768), the slider up to the 230 px limit (6.7x, so 4).
+    assert.strictEqual(p.parts["[data-crop-zoom]"].value, "2");
+    assert.strictEqual(p.parts["[data-crop-zoom]"].max, "4");
+    const preview = p.parts["[data-crop-canvas]"];
+    assert.deepStrictEqual(preview.drawn[preview.drawn.length - 1].slice(1, 5), [640, 384, 768, 768]);
+    // Out to cover: wider than the saved square, the whole short side.
+    p.parts["[data-crop-zoom]"].value = "1";
+    p.parts["[data-crop-zoom]"].fire("input");
+    const made = p.canvases.length;
+    p.parts["[data-crop-save]"].fire("click");
+    await settle();
+    assert.strictEqual(p.canvases.length, made, "nothing drawn: the server cuts again");
+    assert.deepStrictEqual(p.blobs, []);
+    assert.deepStrictEqual(p.submitted, [
+        { files: [], value: "", view: "0.125000,0.000000,0.750000,1.000000", original: "def" },
+    ]);
 });
 
 test("a photo the browser can't read, or one over the limit, goes up as it is", async () => {
@@ -358,13 +433,14 @@ test("a photo the browser can't read, or one over the limit, goes up as it is", 
     await settle();
     assert.strictEqual(p.dialog.hidden, true);
     assert.strictEqual(p.submitted.length, 1);
-    assert.strictEqual(p.submitted[0][0].name, "IMG_1234.jpg");
+    assert.strictEqual(p.submitted[0].files[0].name, "IMG_1234.jpg");
+    assert.strictEqual(p.submitted[0].view, "", "no view: the server cuts cover, centred");
 
     const big = fakePage();
     pick(big, { name: "huge.jpg", size: 11 * 1024 * 1024 });
     assert.strictEqual(big.dialog.hidden, true);
     assert.strictEqual(big.submitted.length, 1);
-    assert.strictEqual(big.submitted[0][0].name, "huge.jpg");
+    assert.strictEqual(big.submitted[0].files[0].name, "huge.jpg");
 });
 
 test("without a settable file input nothing changes: the input autosaves, Adjust crop stays hidden", () => {

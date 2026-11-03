@@ -172,9 +172,18 @@
                                 <span class="row-label">{% if contact.photo.is_some() %}{{ self.t("device.calls.new_photo") }}{% else %}{{ self.t("device.calls.add_photo") }}{% endif %}</span>
                                 <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave data-photo-crop{% if let Some((field, _)) = contact.error %}{% if *field == "photo" %} aria-invalid="true" aria-describedby="photo-{{ contact.id }}-error"{% endif %}{% endif %}>
                             </label>
+                            {#- The crop the cropper chose (`photos::View`, "x,y,w,h" in the original) and, for an adjust, the
+                                original it was chosen on; empty without JS: the server cuts cover, centred. -#}
+                            <input type="hidden" name="view" value="" data-photo-view>
+                            <input type="hidden" name="original" value="" data-photo-original>
                             {% if let Some(photo) = contact.photo %}
-                            {#- The stored square in the crop dialog again (static/photo-crop.js shows it; nothing without JS). -#}
+                            {#- The kept original at its saved view in the crop dialog again, or a photo from before
+                                migration 0123 its stored square (static/photo-crop.js shows it; nothing without JS). -#}
+                            {% if let Some((original, view)) = contact.original %}
+                            <button type="button" class="row row-button" data-photo-adjust="/contact-photos/original/{{ original }}" data-photo-original="{{ original }}" data-photo-view="{{ view }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
+                            {% else %}
                             <button type="button" class="row row-button" data-photo-adjust="/contact-photos/{{ photo }}" hidden>{{ self.t("device.calls.adjust_crop") }}</button>
+                            {% endif %}
                             {% endif %}
                             {% if let Some((field, why)) = contact.error %}{% if *field == "photo" %}<p class="field-error contact-photo-error" id="photo-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% endif %}
                             <noscript><button type="submit" class="row row-button">{{ self.t("device.calls.upload") }}</button></noscript>
@@ -228,20 +237,22 @@
             </details>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.calls.contacts_footer") }}</p>
+        <p class="group-footer">{{ self.t("device.calls.contacts_footer") }} {{ self.t("device.calls.photo_privacy") }}</p>
     </section>
     {% if auto_refresh %}
     <script src="/static/auto-reload.js?v=5" defer></script>
     {% endif %}
     {% if !contacts.is_empty() %}
-    <script src="/static/photo-crop.js?v=1" defer></script>
+    <script src="/static/photo-crop.js?v=2" defer></script>
     {% endif %}
 </main>
-{#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s stored one, in the phone's
-    circle; Save puts the square into the contact's file input and submits its form. Outside <main>, so a touch on
-    it never scrolls the page. Hidden for good without JS. -#}
+{#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s kept original (or a photo
+    from before migration 0123 its stored square), in the phone's circle; Save puts the chosen square into the
+    form's `view` and submits it with the photo (an adjust: with `original` and no file; a pre-0123 one: the cut
+    square as the file). The original's sizes and the decoder's limits come from `photos`. Outside <main>, so a touch
+    on it never scrolls the page. Hidden for good without JS. -#}
 {% if !contacts.is_empty() %}
-<div class="crop-backdrop" data-crop-dialog data-side="{{ crate::photos::MAX_SIDE }}" data-max-bytes="{{ crate::photos::MAX_UPLOAD_BYTES }}" hidden>
+<div class="crop-backdrop" data-crop-dialog data-side="{{ crate::photos::MAX_SIDE }}" data-max-bytes="{{ crate::photos::MAX_UPLOAD_BYTES }}" data-original-long="{{ crate::photos::ORIGINAL_LONG }}" data-original-short="{{ crate::photos::ORIGINAL_SHORT }}" data-original-pixels="{{ crate::photos::ORIGINAL_PIXELS }}" data-max-input-side="{{ crate::photos::MAX_INPUT_SIDE }}" data-max-input-pixels="{{ crate::photos::MAX_INPUT_PIXELS }}" hidden>
     <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title" aria-describedby="crop-hint">
         <h2 class="crop-title" id="crop-title">{{ self.t("device.calls.crop.title") }}</h2>
         <p class="crop-hint" id="crop-hint">{{ self.t("device.calls.crop.hint") }}</p>

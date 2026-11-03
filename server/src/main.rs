@@ -112,6 +112,9 @@ pub struct AppState {
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The contact photos' kept originals (`data/contact_photo_originals`; a temp dir in tests) - their own
+    /// directory (`photos::CONTACT_ORIGINALS`, migration 0123), the parent's alone: never served to a phone.
+    pub photo_original_dir: std::sync::Arc<std::path::PathBuf>,
     /// Each DNS blocklist feed's last good domains (`dns_engine`, QA of the security wave, Low 8):
     /// a feed that can't be downloaded after a restart is loaded from here.
     pub dns_feed_dir: std::sync::Arc<std::path::PathBuf>,
@@ -476,6 +479,9 @@ async fn main() {
         config: std::sync::Arc::new(fork_config),
         data_dir: std::sync::Arc::new(std::path::PathBuf::from("data")),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
+        photo_original_dir: std::sync::Arc::new(std::path::PathBuf::from(
+            "data/contact_photo_originals",
+        )),
         dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
         avatar_dir: std::sync::Arc::new(std::path::PathBuf::from("data/device_avatars")),
@@ -1187,6 +1193,12 @@ pub fn build_admin_router(
             post(handlers::calls::remove_photo),
         )
         .route("/contact-photos/{hash}", get(handlers::calls::view_photo))
+        // A contact photo's kept original (migration 0123), for "Adjust crop": the parent's alone, behind the
+        // session like every page, only while a contact names it - never on the phones' routes.
+        .route(
+            "/contact-photos/original/{hash}",
+            get(handlers::calls::view_photo_original),
+        )
         // The phone's own picture (server round C), from its summary's header.
         .route(
             "/devices/{id}/avatar",

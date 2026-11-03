@@ -13,6 +13,14 @@
 //! 9:20 shape and shrunk to at most 1080×2400; they live in their own directory
 //! (`AppState.wallpaper_dir`) with their own lock, prune, backup prefix and recovery
 //! ([WALLPAPERS]) - a prune of one store never looks at the other's files.
+//!
+//! A contact photo also keeps a downscaled original ([CONTACT_ORIGINALS], migration 0123; the user, 2026-11-03):
+//! [process_contact] turns the upload upright, shrinks it to [original_size] (at most [ORIGINAL_LONG] on the long
+//! side, a panorama's short side kept up to [ORIGINAL_SHORT] within [ORIGINAL_PIXELS]) and re-encodes it as JPEG -
+//! no EXIF, GPS or camera data, as every stored picture - then cuts the contact's square from it at the parent's
+//! [View] (validated by [view_square]). "Adjust crop" sends only a new view and [recut] cuts again from that
+//! original, so a re-crop can widen again and never loses a generation. The original is the parent's alone: served
+//! on the admin session, never named in a policy or served to a phone, which only ever gets the square.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -30,14 +38,31 @@ pub const WALLPAPER_WIDTH: u32 = 1080;
 pub const WALLPAPER_HEIGHT: u32 = 2400;
 /// Largest stored wallpaper: the phone refuses anything bigger (`WallpaperCache`, 3 MB).
 pub const MAX_WALLPAPER_BYTES: usize = 3 * 1024 * 1024;
-const MAX_INPUT_SIDE: u32 = 8000;
+/// The decoder's limits, which the cropper also reads (`data-max-input-*`): a bigger photo goes up as its copy.
+pub const MAX_INPUT_SIDE: u32 = 8000;
 /// 40 megapixels - more than any phone camera's default, and checked before decoding.
-const MAX_INPUT_PIXELS: u64 = 40_000_000;
+pub const MAX_INPUT_PIXELS: u64 = 40_000_000;
 /// The decoder's own buffer (a 40 MP RGB JPEG is 120 MB). Everything after it works on the
 /// ≤ 512 px crop, so this is about the peak per upload - and [PROCESSING] allows one at a time.
 const MAX_DECODE_ALLOC: u64 = 128 * 1024 * 1024;
 /// Biggest stored contact photo accepted back from a backup zip ([recover_missing]).
 const MAX_STORED_BYTES: u64 = 2 * 1024 * 1024;
+/// A contact photo's kept original ([original_size]): its long side at most this...
+pub const ORIGINAL_LONG: u32 = 2048;
+/// ...unless that would squeeze a panorama's short side below this (as far as [ORIGINAL_PIXELS] allows).
+pub const ORIGINAL_SHORT: u32 = 1024;
+/// The original's pixels at most: a 4:3 photo at [ORIGINAL_LONG].
+pub const ORIGINAL_PIXELS: u64 = 2048 * 1536;
+/// The original is the source of every later cut: a little finer than the square's [JPEG_QUALITY].
+const ORIGINAL_QUALITY: u8 = 90;
+/// Biggest kept original accepted back from a backup zip (a noisy 3 MP JPEG at q90 is 2-3 MB).
+const MAX_ORIGINAL_BYTES: u64 = 8 * 1024 * 1024;
+/// The least side, in the original's pixels, of a chosen square: the phone's 76 dp circle at 3x. The cropper
+/// stops at 230 (`static/photo-crop.js`, `MIN_ADJUST_SIDE`), so its rounding never trips this. An original
+/// smaller than this can only be cut at cover.
+pub const MIN_VIEW_SIDE: u32 = 228;
+/// How far, in the original's pixels, a view may miss (the cropper works on its own copy's pixels).
+const VIEW_SLACK: f64 = 2.0;
 
 /// One photo is decoded at a time: a Pi has little memory and uploads are rare.
 static PROCESSING: Semaphore = Semaphore::const_new(1);
@@ -72,9 +97,30 @@ pub static CONTACT_PHOTOS: Store = Store {
     what: "contact photo",
     lock: &FILES,
     referenced_sql: "SELECT DISTINCT photo_hash FROM contacts WHERE photo_hash IS NOT NULL",
-    forget_sql: &["UPDATE contacts SET photo_hash = NULL WHERE photo_hash = ?"],
+    // The original and its view go with the square: no Adjust crop without a photo.
+    forget_sql: &[
+        "UPDATE contacts SET photo_hash = NULL, photo_original_hash = NULL, photo_view = NULL \
+         WHERE photo_hash = ?",
+    ],
     zip_prefix: "contact_photos",
     max_stored_bytes: MAX_STORED_BYTES,
+};
+
+/// A contact photo's kept original (`AppState.photo_original_dir`, `contacts.photo_original_hash`, migration 0123):
+/// the upright, re-encoded, downscaled upload the square is cut from. Its own directory, but the contact photos'
+/// lock, so a store of both files and their commit is one step for [prune] and [recover_missing]. Backed up; a lost
+/// one is forgotten with its view (the square stays, an adjust refines it as before 0123).
+pub static CONTACT_ORIGINALS: Store = Store {
+    what: "contact photo original",
+    lock: &FILES,
+    referenced_sql: "SELECT DISTINCT photo_original_hash FROM contacts \
+                     WHERE photo_original_hash IS NOT NULL",
+    forget_sql: &[
+        "UPDATE contacts SET photo_original_hash = NULL, photo_view = NULL \
+         WHERE photo_original_hash = ?",
+    ],
+    zip_prefix: "contact_photo_originals",
+    max_stored_bytes: MAX_ORIGINAL_BYTES,
 };
 
 /// Wallpaper images (`AppState.wallpaper_dir`, `wallpapers.image_hash`). A wallpaper whose image
@@ -222,12 +268,9 @@ fn decode_error(err: ImageError) -> PhotoError {
     }
 }
 
-/// Decodes, normalises and re-encodes an upload. CPU-heavy on a Pi: use [process_limited].
-/// Memory: the decoded image once (≤ [MAX_DECODE_ALLOC]); the crop is a view, shrunk straight
-/// to its target size, and only that small image is turned upright. That is correct for both
-/// shapes because a *centred* crop commutes with every EXIF orientation: the crop is computed on
-/// the upright size (width and height swapped for the 90° orientations, QA 08 #3) and mapped back.
-pub fn process(bytes: &[u8], shape: Shape) -> Result<ProcessedPhoto, PhotoError> {
+/// An upload decoded within the limits (format sniffed from the bytes), and its EXIF orientation - not yet
+/// applied: the callers shrink first and turn only the small image.
+fn decode(bytes: &[u8]) -> Result<(DynamicImage, image::metadata::Orientation), PhotoError> {
     if bytes.is_empty() {
         return Err(PhotoError::Empty);
     }
@@ -256,6 +299,17 @@ pub fn process(bytes: &[u8], shape: Shape) -> Result<ProcessedPhoto, PhotoError>
     }
     let orientation = decoder.orientation().map_err(decode_error)?;
     let image = DynamicImage::from_decoder(decoder).map_err(decode_error)?;
+    Ok((image, orientation))
+}
+
+/// Decodes, normalises and re-encodes an upload. CPU-heavy on a Pi: use [process_limited].
+/// Memory: the decoded image once (≤ [MAX_DECODE_ALLOC]); the crop is a view, shrunk straight
+/// to its target size, and only that small image is turned upright. That is correct for both
+/// shapes because a *centred* crop commutes with every EXIF orientation: the crop is computed on
+/// the upright size (width and height swapped for the 90° orientations, QA 08 #3) and mapped back.
+pub fn process(bytes: &[u8], shape: Shape) -> Result<ProcessedPhoto, PhotoError> {
+    let (image, orientation) = decode(bytes)?;
+    let (width, height) = (image.width(), image.height());
 
     let swaps = swaps_axes(orientation);
     let (upright_w, upright_h) = if swaps {
@@ -301,16 +355,256 @@ pub fn process(bytes: &[u8], shape: Shape) -> Result<ProcessedPhoto, PhotoError>
         Shape::Portrait => MAX_WALLPAPER_BYTES,
     };
     for quality in [JPEG_QUALITY, 75, 65] {
-        let mut jpeg = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality)
-            .encode_image(&rgb)
-            .map_err(|_| PhotoError::Undecodable)?;
-        if jpeg.len() <= limit {
-            let hash = hex::encode(Sha256::digest(&jpeg));
-            return Ok(ProcessedPhoto { jpeg, hash });
+        let photo = encode_jpeg(&rgb, quality)?;
+        if photo.jpeg.len() <= limit {
+            return Ok(photo);
         }
     }
     Err(PhotoError::TooDetailed)
+}
+
+/// `rgb` as a JPEG (nothing but pixels) and its hash.
+fn encode_jpeg(rgb: &image::RgbImage, quality: u8) -> Result<ProcessedPhoto, PhotoError> {
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality)
+        .encode_image(rgb)
+        .map_err(|_| PhotoError::Undecodable)?;
+    let hash = hex::encode(Sha256::digest(&jpeg));
+    Ok(ProcessedPhoto { jpeg, hash })
+}
+
+/// The size a contact photo's original is kept at, from its upright `w`×`h`: never enlarged; the long side at most
+/// [ORIGINAL_LONG], unless that squeezes the short side below [ORIGINAL_SHORT] (a panorama, a banner) - then the
+/// short side is kept up to [ORIGINAL_SHORT], within [ORIGINAL_PIXELS]. The cropper mirrors it
+/// (`static/photo-crop.js`, `originalSize`) for its zoom limit.
+pub fn original_size(w: u32, h: u32) -> (u32, u32) {
+    let (wf, hf) = (f64::from(w.max(1)), f64::from(h.max(1)));
+    let by_long = f64::from(ORIGINAL_LONG) / wf.max(hf);
+    let by_short = f64::from(ORIGINAL_SHORT) / wf.min(hf);
+    let by_area = (ORIGINAL_PIXELS as f64 / (wf * hf)).sqrt();
+    let scale = by_long.max(by_short.min(by_area)).min(1.0);
+    let side = |n: f64| ((n * scale).round() as u32).max(1);
+    (side(wf), side(hf))
+}
+
+/// The square the parent chose in a contact photo's original: its left, top and side as fractions of the
+/// original's width and height (`x,y,w,h`; the square's side is `w` of the width and `h` of the height). That way
+/// it means the same square in the cropper's own copy and in the original, whatever their pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// Why a view was refused (each a line under the photo, `ViewError::key`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewError {
+    /// Not four numbers.
+    Malformed,
+    /// Past the photo's edge.
+    OutOfBounds,
+    NotSquare,
+    /// Under [MIN_VIEW_SIDE] of the original (or under its short side, when that is smaller).
+    TooSmall,
+}
+
+impl ViewError {
+    /// The i18n key of the line under the photo.
+    pub fn key(self) -> &'static str {
+        match self {
+            ViewError::Malformed => "device.calls.crop.bad_view",
+            ViewError::OutOfBounds => "device.calls.crop.outside",
+            ViewError::NotSquare => "device.calls.crop.not_square",
+            ViewError::TooSmall => "device.calls.crop.too_small",
+        }
+    }
+}
+
+impl View {
+    /// `x,y,w,h`: four finite numbers, nothing else. The geometry is [view_square]'s to judge.
+    pub fn parse(text: &str) -> Result<View, ViewError> {
+        let numbers: Vec<f64> = text
+            .split(',')
+            .map(|part| part.trim().parse::<f64>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| ViewError::Malformed)?;
+        match numbers[..] {
+            [x, y, w, h] if numbers.iter().all(|n| n.is_finite()) => Ok(View { x, y, w, h }),
+            _ => Err(ViewError::Malformed),
+        }
+    }
+
+    /// The square `(left, top, side)` of a `width`×`height` original as a view (what `contacts.photo_view` keeps).
+    pub fn of_square(left: u32, top: u32, side: u32, width: u32, height: u32) -> View {
+        let (w, h) = (f64::from(width), f64::from(height));
+        View {
+            x: f64::from(left) / w,
+            y: f64::from(top) / h,
+            w: f64::from(side) / w,
+            h: f64::from(side) / h,
+        }
+    }
+
+    /// The stored and wire form, `x,y,w,h` to six places.
+    pub fn text(&self) -> String {
+        format!("{:.6},{:.6},{:.6},{:.6}", self.x, self.y, self.w, self.h)
+    }
+}
+
+/// A view as a square of a `width`×`height` original: `(left, top, side)` in its pixels, always inside it. `None`
+/// is cover, centred - the server's own crop (an upload without the cropper). Refused: a square that leaves the
+/// photo, isn't a square, or is under [MIN_VIEW_SIDE] (cover only, for an original smaller than that) - each by
+/// more than [VIEW_SLACK] px, which the cropper's rounding never reaches.
+pub fn view_square(
+    view: Option<&View>,
+    width: u32,
+    height: u32,
+) -> Result<(u32, u32, u32), ViewError> {
+    let short = width.min(height);
+    let Some(view) = view else {
+        return Ok(((width - short) / 2, (height - short) / 2, short));
+    };
+    let (w, h) = (f64::from(width), f64::from(height));
+    let (left, top) = (view.x * w, view.y * h);
+    let (side_x, side_y) = (view.w * w, view.h * h);
+    if side_x <= 0.0 || side_y <= 0.0 {
+        return Err(ViewError::TooSmall);
+    }
+    if left < -VIEW_SLACK
+        || top < -VIEW_SLACK
+        || left + side_x > w + VIEW_SLACK
+        || top + side_y > h + VIEW_SLACK
+    {
+        return Err(ViewError::OutOfBounds);
+    }
+    if (side_x - side_y).abs() > VIEW_SLACK {
+        return Err(ViewError::NotSquare);
+    }
+    let side_f = (side_x + side_y) / 2.0;
+    if side_f + VIEW_SLACK < f64::from(MIN_VIEW_SIDE.min(short)) {
+        return Err(ViewError::TooSmall);
+    }
+    let side = (side_f.round() as u32).clamp(1, short);
+    let left = (left.round().max(0.0) as u32).min(width - side);
+    let top = (top.round().max(0.0) as u32).min(height - side);
+    Ok((left, top, side))
+}
+
+/// What [process_contact] and [recut] give: the contact's square, and its view as stored (`contacts.photo_view`).
+pub struct ContactCut {
+    pub square: ProcessedPhoto,
+    pub view: String,
+}
+
+/// A contact photo upload: the original as kept ([CONTACT_ORIGINALS]) and the square cut from it at `view`.
+pub struct ContactPhoto {
+    pub original: ProcessedPhoto,
+    pub cut: ContactCut,
+}
+
+/// Why a contact photo couldn't be stored: the picture, or the chosen view.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ContactPhotoError {
+    Photo(PhotoError),
+    View(ViewError),
+}
+
+impl From<PhotoError> for ContactPhotoError {
+    fn from(err: PhotoError) -> Self {
+        ContactPhotoError::Photo(err)
+    }
+}
+
+/// A contact photo upload (CPU-heavy, [process_contact_limited]): decoded within the limits, shrunk to
+/// [original_size] (only that small copy is turned upright), flattened on white and re-encoded at
+/// [ORIGINAL_QUALITY] - the kept original, no metadata - and the square cut from it at `view` (`None`: cover,
+/// centred). The view is judged on the original's size before anything is shrunk.
+pub fn process_contact(
+    bytes: &[u8],
+    view: Option<&View>,
+) -> Result<ContactPhoto, ContactPhotoError> {
+    let (image, orientation) = decode(bytes)?;
+    let (width, height) = (image.width(), image.height());
+    let swaps = swaps_axes(orientation);
+    let (upright_w, upright_h) = if swaps {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let (out_w, out_h) = original_size(upright_w, upright_h);
+    let square = view_square(view, out_w, out_h).map_err(ContactPhotoError::View)?;
+    let (raw_w, raw_h) = if swaps {
+        (out_h, out_w)
+    } else {
+        (out_w, out_h)
+    };
+    let mut small = if (raw_w, raw_h) != (width, height) {
+        let small = DynamicImage::ImageRgba8(imageops::thumbnail(&image, raw_w, raw_h));
+        drop(image);
+        small
+    } else {
+        image
+    };
+    small.apply_orientation(orientation);
+    let rgb = flatten_on_white(small);
+    let original = encode_jpeg(&rgb, ORIGINAL_QUALITY)?;
+    let cut = cut_square(&rgb, square)?;
+    Ok(ContactPhoto { original, cut })
+}
+
+/// A new square from a kept original (its JPEG bytes) at `view`: "Adjust crop" sends only the view.
+pub fn recut(original: &[u8], view: &View) -> Result<ContactCut, ContactPhotoError> {
+    let (image, _) = decode(original)?;
+    let rgb = flatten_on_white(image);
+    let square =
+        view_square(Some(view), rgb.width(), rgb.height()).map_err(ContactPhotoError::View)?;
+    cut_square(&rgb, square).map_err(ContactPhotoError::Photo)
+}
+
+/// The square `(left, top, side)` of an upright original, shrunk to at most [MAX_SIDE] (never enlarged), JPEG at
+/// [JPEG_QUALITY], and its view.
+fn cut_square(
+    rgb: &image::RgbImage,
+    (left, top, side): (u32, u32, u32),
+) -> Result<ContactCut, PhotoError> {
+    let part = imageops::crop_imm(rgb, left, top, side, side);
+    let target = side.min(MAX_SIDE);
+    let small = if target != side {
+        imageops::thumbnail(&*part, target, target)
+    } else {
+        part.to_image()
+    };
+    Ok(ContactCut {
+        square: encode_jpeg(&small, JPEG_QUALITY)?,
+        view: View::of_square(left, top, side, rgb.width(), rgb.height()).text(),
+    })
+}
+
+/// [process_contact] on a blocking thread, one at a time with every other upload ([process_limited]).
+pub async fn process_contact_limited(
+    bytes: axum::body::Bytes,
+    view: Option<View>,
+) -> Result<ContactPhoto, ContactPhotoError> {
+    let _permit = PROCESSING.acquire().await.expect("semaphore never closed");
+    tokio::task::spawn_blocking(move || process_contact(&bytes, view.as_ref()))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(%err, "photo processing task failed");
+            Err(ContactPhotoError::Photo(PhotoError::Undecodable))
+        })
+}
+
+/// [recut] on a blocking thread, one at a time with every upload.
+pub async fn recut_limited(original: Vec<u8>, view: View) -> Result<ContactCut, ContactPhotoError> {
+    let _permit = PROCESSING.acquire().await.expect("semaphore never closed");
+    tokio::task::spawn_blocking(move || recut(&original, &view))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(%err, "photo processing task failed");
+            Err(ContactPhotoError::Photo(PhotoError::Undecodable))
+        })
 }
 
 /// Whether an EXIF orientation turns the image by 90° (upright width = stored height).
@@ -381,11 +675,14 @@ pub async fn store(dir: &Path, photo: &ProcessedPhoto) -> std::io::Result<()> {
     tokio::fs::rename(&tmp, &path).await
 }
 
-/// Deletes every stored photo no contact references any more (after a replace, a remove, or a
+/// Deletes every stored photo and kept original no contact references any more (after a replace, a remove, or a
 /// contact/device delete). Best effort: a failure is logged, never an error for the parent.
-/// Holds the file lock, so it never runs between another request's store and its commit.
+/// Holds the file lock (one for both), so it never runs between another request's store and its commit.
 pub async fn prune(state: &crate::AppState) {
     CONTACT_PHOTOS.prune(&state.db, &state.photo_dir).await;
+    CONTACT_ORIGINALS
+        .prune(&state.db, &state.photo_original_dir)
+        .await;
 }
 
 /// Zip entry name of a stored photo in a backup.
@@ -404,8 +701,12 @@ pub fn add_to_zip<W: std::io::Write + std::io::Seek>(
 
 /// After a restore (or any start): see [Store::recover_missing]. Run at startup for every store.
 pub async fn recover_missing(state: &crate::AppState, backup_dir: &Path) {
+    // The squares first: a lost one forgets its original too.
     CONTACT_PHOTOS
         .recover_missing(&state.db, &state.photo_dir, backup_dir)
+        .await;
+    CONTACT_ORIGINALS
+        .recover_missing(&state.db, &state.photo_original_dir, backup_dir)
         .await;
     WALLPAPERS
         .recover_missing(&state.db, &state.wallpaper_dir, backup_dir)
@@ -855,6 +1156,112 @@ mod tests {
         assert!(same_picture(a, a ^ 0b1_1111));
         assert!(!same_picture(a, a ^ 0b11_1111));
         assert_eq!(print_distance(a, a ^ i64::MIN), 1, "the sign bit counts");
+    }
+
+    #[test]
+    fn the_original_keeps_2048_on_the_long_side_and_a_panoramas_short_side() {
+        // The cropper's mirror (`originalSize`, jstest/photo-crop.test.js) pins the same rows.
+        assert_eq!(original_size(4000, 3000), (2048, 1536));
+        assert_eq!(original_size(4000, 2250), (2048, 1152));
+        assert_eq!(original_size(8000, 1000), (5017, 627));
+        assert_eq!(original_size(600, 600), (600, 600));
+        assert_eq!(original_size(1, 1), (1, 1));
+    }
+
+    #[test]
+    fn a_view_must_be_inside_square_and_big_enough() {
+        let view = |text: &str| View::parse(text).unwrap();
+        // Cover, centred, without a view; a chosen square, snapped to pixels.
+        assert_eq!(view_square(None, 2048, 1536), Ok((256, 0, 1536)));
+        assert_eq!(
+            view_square(Some(&view("0.3125,0.25,0.375,0.5")), 2048, 1536),
+            Ok((640, 384, 768))
+        );
+        // The cropper's rounding (its own copy's pixels) is within the slack, and clamped inside.
+        assert_eq!(
+            view_square(Some(&view("0.6255,0.0005,0.375,0.5")), 2048, 1536),
+            Ok((1280, 1, 768))
+        );
+        for (text, err) in [
+            ("0.7,0,0.375,0.5", ViewError::OutOfBounds),
+            ("-0.1,0,0.375,0.5", ViewError::OutOfBounds),
+            ("0,0.6,0.375,0.5", ViewError::OutOfBounds),
+            ("0,0,0.375,0.4", ViewError::NotSquare),
+            ("0,0,0.5,0.5", ViewError::NotSquare),
+            ("0,0,0.1,0.133333", ViewError::TooSmall),
+            ("0,0,0,0", ViewError::TooSmall),
+        ] {
+            assert_eq!(
+                view_square(Some(&view(text)), 2048, 1536),
+                Err(err),
+                "{text}"
+            );
+        }
+        // A small original can only be cut at cover.
+        assert_eq!(
+            view_square(Some(&view("0,0,0.5,0.5")), 200, 200),
+            Err(ViewError::TooSmall)
+        );
+        assert_eq!(
+            view_square(Some(&view("0,0,1,1")), 200, 200),
+            Ok((0, 0, 200))
+        );
+        for bad in [
+            "",
+            "1,2,3",
+            "1,2,3,4,5",
+            "a,b,c,d",
+            "NaN,0,1,1",
+            "inf,0,1,1",
+        ] {
+            assert_eq!(View::parse(bad), Err(ViewError::Malformed), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_square_is_cut_from_the_kept_original_at_512() {
+        // 2400x1200, left half red, right half blue: kept at 2048x1024, the right square is blue.
+        let photo = DynamicImage::ImageRgb8(image::RgbImage::from_fn(2400, 1200, |x, _| {
+            if x < 1200 {
+                image::Rgb([220, 0, 0])
+            } else {
+                image::Rgb([0, 0, 220])
+            }
+        }));
+        let png = encode(&photo, ImageFormat::Png);
+        let right = View::parse("0.5,0,0.5,1").unwrap();
+        let made = process_contact(&png, Some(&right)).unwrap();
+        let original = image::load_from_memory(&made.original.jpeg).unwrap();
+        assert_eq!((original.width(), original.height()), (2048, 1024));
+        assert_eq!(
+            made.original.hash,
+            hex::encode(Sha256::digest(&made.original.jpeg))
+        );
+        let square = image::load_from_memory(&made.cut.square.jpeg)
+            .unwrap()
+            .into_rgb8();
+        assert_eq!(square.dimensions(), (MAX_SIDE, MAX_SIDE));
+        // Away from the edge the halves meet at (the shrink and JPEG blur it a little).
+        let inner = |square: &image::RgbImage, test: &dyn Fn([u8; 3]) -> bool| {
+            square
+                .enumerate_pixels()
+                .filter(|(x, _, _)| (8..MAX_SIDE - 8).contains(x))
+                .all(|(_, _, p)| test(p.0))
+        };
+        assert!(inner(&square, &|[r, _, b]| b > 180 && r < 40), "all blue");
+        assert_eq!(made.cut.view, "0.500000,0.000000,0.500000,1.000000");
+        // Cut again from the original, wider than before is no question: the left square, red, at 512.
+        let left = recut(&made.original.jpeg, &View::parse("0,0,0.5,1").unwrap()).unwrap();
+        let square = image::load_from_memory(&left.square.jpeg)
+            .unwrap()
+            .into_rgb8();
+        assert_eq!(square.dimensions(), (MAX_SIDE, MAX_SIDE));
+        assert!(inner(&square, &|[r, _, b]| r > 180 && b < 40), "all red");
+        // A view the original refuses changes nothing.
+        assert_eq!(
+            process_contact(&png, Some(&View::parse("0.6,0,0.5,1").unwrap())).err(),
+            Some(ContactPhotoError::View(ViewError::OutOfBounds))
+        );
     }
 
     #[test]
