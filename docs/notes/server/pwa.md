@@ -1517,6 +1517,24 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
   `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
   `music::storage`'s sizes - and the summary's Music row and Attention (`OlderApps::title` stays English there).
+- **Slice 3e, part A (Settings' core pages)**: the Settings hub, Notifications (the inbox) and Notification
+  Settings, Time Rules, a rule's editor and Daily Limit, Web Filter, Blocked Activity, Wallpapers, Software Updates,
+  Backups and Phone Setup are worded (`settings.*`, the shared `settings.schedule.*` and `settings.hint_*`), with the
+  handlers' titles, rows, flashes, field refusals and error bodies (`i18n::error`). The hub's values (`t_count`,
+  `settings_hub::blocked_today`, `backup_label` through the `Zone`), the inbox's delivery lines
+  (`notifications::delivery_line(lang, …)`) and Getting Notifications' rows and badges (`device_row`, so
+  `subscriptions.json` is worded in the request's language) come in the reader's language; the Notify Me About
+  switches are worded by column (`switch_key`, `every_switch_is_worded`). Time Rules' day and limit words
+  (`days_summary`, `budget_summary`; nb lower-case days, the first capitalised) also word Device › Time; the
+  rule, bedtime and limit refusals take `lang` (`parse_rule_form`, `parse_exempt_apps_form`,
+  `parse_budget_form`). The Web Filter's address refusals and backup reasons are keys the page words
+  (`refusal_text`), its phone lines are in the `Zone`'s language, `FeedState::problem(lang)` also words Device ›
+  Web Filter's list rows; `config::check_server_url` answers a key (`Refused`) or the host (`PlainHttp`), worded by
+  Phone Setup and the setup QR (`provisioning::plain_http_warning(lang, …)`). `backups::WEEKDAYS` holds keys.
+  `static/notifications.js` (`?v=4`) reads This Device's state words from its form's `data-w-*`. Left for slice 4:
+  `backups::human_size` (the typed size of Format must match it), `photos::PhotoError::message` (an upload's
+  refusal), a push failure's text (`push::Subscription::failure`) and the built-in wallpapers' and seeded lists'
+  names (data).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

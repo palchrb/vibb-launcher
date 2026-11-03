@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse};
 use crate::AppState;
 use crate::handlers::settings::Flash;
 use crate::handlers::{system_maintenance, system_update};
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_params};
 
 #[derive(Template)]
 #[template(path = "updates.html")]
@@ -63,7 +63,7 @@ pub(crate) fn page(
     Html(
         UpdatesTemplate {
             lang,
-            title: "Software Updates".to_string(),
+            title: t(lang, "settings.updates.title").to_string(),
             flash,
             os,
             app,
@@ -131,23 +131,17 @@ impl Done {
         Done::ALL.into_iter().find(|done| done.code() == code)
     }
 
-    pub(crate) fn flash(self) -> Flash {
-        let text = match self {
-            Done::Update => {
-                "Update started. The server downloads the new version and restarts by itself; \
-                 reload this page in a minute."
-            }
-            Done::Restart => "Restart started. Reload this page in a few seconds.",
-            Done::OsCheck => "Checking for updates. Reload this page in a few seconds.",
-            Done::OsUpgrade => {
-                "Installing updates. A Pi's first upgrade can take a long time; reload this page \
-                 later."
-            }
-            Done::Tailscale => "Updating Tailscale. Reload this page in a few seconds.",
-            Done::Reboot => "The Pi is restarting. Reload this page in about a minute.",
-            Done::AppSchedule | Done::OsSchedule => "Schedule saved.",
+    pub(crate) fn flash(self, lang: Lang) -> Flash {
+        let key = match self {
+            Done::Update => "settings.updates.done.update",
+            Done::Restart => "settings.updates.done.restart",
+            Done::OsCheck => "settings.updates.done.os_check",
+            Done::OsUpgrade => "settings.updates.done.os_upgrade",
+            Done::Tailscale => "settings.updates.done.tailscale",
+            Done::Reboot => "settings.updates.done.reboot",
+            Done::AppSchedule | Done::OsSchedule => "settings.schedule.saved",
         };
-        Flash::done(self.group(), text)
+        Flash::done(self.group(), t(lang, key))
     }
 
     pub(crate) fn redirect(self) -> axum::response::Response {
@@ -169,7 +163,7 @@ pub(crate) async fn request_action(
 ) -> axum::response::Response {
     let path = state.data_dir.join(crate::handlers::backups::FLAG_FILE);
     if tokio::fs::write(path, action).await.is_err() {
-        let page = render_page(state, Some(not_requested(done.group())), lang).await;
+        let page = render_page(state, Some(not_requested(lang, done.group())), lang).await;
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
     crate::security::record_security_event(
@@ -184,11 +178,14 @@ pub(crate) async fn request_action(
 }
 
 /// The root helper's request file couldn't be written: nothing starts, and why is behind ⓘ.
-pub(crate) fn not_requested(at: &'static str) -> Flash {
-    Flash::refused(at, "Nothing was started").because(
-        "The server couldn't ask its helper on the Pi (the request file couldn't be written). \
-         Re-running the installer sets the helper up again.",
-    )
+pub(crate) fn not_requested(lang: Lang, at: &'static str) -> Flash {
+    Flash::refused(at, t(lang, "settings.updates.not_started"))
+        .because(t(lang, "settings.updates.not_started_why"))
+}
+
+/// "The time must look like 04:00 - nothing was saved." (a schedule's refused time; `example` is its default).
+pub(crate) fn bad_time(lang: Lang, example: &str) -> String {
+    t_params(lang, "settings.schedule.bad_time", &[("example", example)])
 }
 
 /// The page; `?done=<code>` (a form that worked, [Done]) shows its line in its group.
@@ -200,6 +197,6 @@ pub async fn show_updates_page(
     let flash = query
         .get("done")
         .and_then(|code| Done::parse(code))
-        .map(Done::flash);
+        .map(|done| done.flash(lang));
     render_page(&state, flash, lang).await
 }

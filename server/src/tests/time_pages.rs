@@ -188,7 +188,7 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
         .await
         .unwrap();
     let html = app.get_page("/schedules", &cookie).await.text();
-    assert!(section(&html, "screen-time").contains("Can't be read"));
+    assert!(section(&html, "screen-time").contains("Can&#39;t be read"));
 }
 
 /// L5: an old per-phone bookmark goes to the phone's Time page; anything else in `device` is
@@ -374,7 +374,7 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
     assert!(html.contains(&format!(
         "<a class=\"nav-back\" href=\"/devices/{id}/time\">"
     )));
-    assert!(section(&html, "delete").contains("Anna's phone is no longer locked by it."));
+    assert!(section(&html, "delete").contains("Anna&#39;s phone is no longer locked by it."));
 
     // Unknown rule, unknown phone.
     let res = app.get_page("/schedules/rules/9999", &cookie).await;

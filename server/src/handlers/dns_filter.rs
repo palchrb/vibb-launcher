@@ -23,7 +23,7 @@ use crate::AppState;
 use crate::display_time::Zone;
 use crate::dns_engine;
 use crate::dns_server::{self, DnsServer, Refusal};
-use crate::i18n::{Lang, Words};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{Device, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
 use crate::security::CurrentAdmin;
 use crate::streams::ConnectionState;
@@ -88,29 +88,31 @@ impl FeedState<'_> {
         }
     }
 
-    /// A list's row: the problem in at most 4 words, `None` while the list is loaded.
-    pub(crate) fn problem(&self) -> Option<&'static str> {
+    /// A list's row: the problem in at most 4 words, in `lang`; `None` while the list is loaded.
+    pub(crate) fn problem(&self, lang: Lang) -> Option<&'static str> {
         match self {
             FeedState::Loaded(_) => None,
-            FeedState::Failing { .. } => Some("Last download failed"),
-            FeedState::NotLoaded(_) => Some("Not loaded yet"),
+            FeedState::Failing { .. } => Some(t(lang, "settings.web_filter.download_failed")),
+            FeedState::NotLoaded(_) => Some(t(lang, "settings.web_filter.not_loaded")),
         }
     }
 
-    /// What happened, for the ⓘ of a list with a problem (the download error in brackets).
-    fn detail(&self) -> Option<String> {
+    /// What happened, for the ⓘ of a list with a problem (the download error in brackets, as the download said it).
+    fn detail(&self, lang: Lang) -> Option<String> {
         match self {
             FeedState::Loaded(_) => None,
-            FeedState::Failing { count, error } => Some(format!(
-                "The last download failed ({error}); its previous {count} domains are kept. It is \
-                 tried again every 5 minutes."
+            FeedState::Failing { count, error } => Some(t_params(
+                lang,
+                "settings.web_filter.download_failed_detail",
+                &[("error", error), ("domains", &count.to_string())],
             )),
             FeedState::NotLoaded(None) => {
-                Some("Not loaded yet: it is downloaded within 5 minutes.".to_string())
+                Some(t(lang, "settings.web_filter.not_loaded_detail").to_string())
             }
-            FeedState::NotLoaded(Some(error)) => Some(format!(
-                "Not loaded yet ({error}). Phones get the other lists and your own domains \
-                 without it until it loads; it is tried again every 5 minutes."
+            FeedState::NotLoaded(Some(error)) => Some(t_params(
+                lang,
+                "settings.web_filter.not_loaded_error",
+                &[("error", error)],
             )),
         }
     }
@@ -139,18 +141,18 @@ fn back_to(form: &HashMap<String, String>, device: Option<i64>, group: &str) -> 
 
 /// A write that failed: logged, and the parent is told nothing changed. An unknown phone or list
 /// (a foreign key) is a 404.
-fn write_failed(err: sqlx::Error) -> Response {
+fn write_failed(lang: Lang, err: sqlx::Error) -> Response {
     if let sqlx::Error::Database(db) = &err
         && db.is_foreign_key_violation()
     {
-        return (StatusCode::NOT_FOUND, "Phone or list not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.phone_or_list_not_found");
     }
     tracing::error!(%err, "couldn't save a web filter change");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
+        "error.save_failed_log",
     )
-        .into_response()
 }
 
 #[derive(Template)]
@@ -198,6 +200,7 @@ struct ServerGroup {
     /// is stored, or what a refused save typed.
     typed_server: String,
     typed_backup: String,
+    /// The reasons' keys, worded by the page.
     server_error: Option<&'static str>,
     backup_error: Option<&'static str>,
     /// Forget was ticked in a refused save.
@@ -224,45 +227,40 @@ struct CustomRefusal {
 /// the only value ever rendered into either input. Over DNS-over-HTTPS (port 443), so it also
 /// answers on a network that blocks DNS-over-TLS's port 853 (design 36 §10.1 addendum).
 const BACKUP_PREFILL: &str = "https://1.1.1.3/dns-query";
-const TYPE_YOURS_FIRST: &str = "Type your server's address first.";
-const BACKUP_NEEDED: &str =
-    "Custom needs a backup server: https://1.1.1.3/dns-query is Cloudflare for Families.";
-const BACKUP_SAME: &str = "The backup must be another server than yours.";
+const TYPE_YOURS_FIRST: &str = "settings.web_filter.refusal.type_yours_first";
+const BACKUP_NEEDED: &str = "settings.web_filter.refusal.backup_needed";
+const BACKUP_SAME: &str = "settings.web_filter.refusal.backup_same";
 
-/// Why a typed address isn't taken, under its field.
+/// Why a typed address isn't taken, under its field: the key of its words.
 fn refusal_text(why: Refusal) -> &'static str {
     match why {
         Refusal::Empty => TYPE_YOURS_FIRST,
-        Refusal::TooLong => "That's longer than a server's address can be.",
-        Refusal::Spaces => "Remove the spaces.",
-        Refusal::NotAscii => "Type the name in its xn-- form.",
-        Refusal::Plaintext => "Not encrypted: use the https:// address.",
-        Refusal::OtherScheme => {
-            "Use the https:// (DNS-over-HTTPS) or tls:// (DNS-over-TLS) address."
-        }
-        Refusal::DohPortWithoutScheme => "That's a DNS-over-HTTPS port: add https://.",
-        Refusal::UserInfo => "No user name or password in the address.",
-        Refusal::QueryOrFragment => "Remove what follows ? or #.",
-        Refusal::PathOnDot => "A DNS-over-TLS address has no path.",
-        Refusal::UnencryptedPort => "Port 53 and 80 aren't encrypted.",
-        Refusal::BadPort => "Not a port number: use 1 to 65535.",
-        Refusal::BadPath => {
-            "The path takes letters, digits, - . _ ~ / and %XX, at most 256 characters."
-        }
-        Refusal::NotAnAddress => "Not a server's address.",
-        Refusal::NeverAServer => "That address can't be a DNS server.",
+        Refusal::TooLong => "settings.web_filter.refusal.too_long",
+        Refusal::Spaces => "settings.web_filter.refusal.spaces",
+        Refusal::NotAscii => "settings.web_filter.refusal.not_ascii",
+        Refusal::Plaintext => "settings.web_filter.refusal.plaintext",
+        Refusal::OtherScheme => "settings.web_filter.refusal.other_scheme",
+        Refusal::DohPortWithoutScheme => "settings.web_filter.refusal.doh_port",
+        Refusal::UserInfo => "settings.web_filter.refusal.user_info",
+        Refusal::QueryOrFragment => "settings.web_filter.refusal.query",
+        Refusal::PathOnDot => "settings.web_filter.refusal.path_on_dot",
+        Refusal::UnencryptedPort => "settings.web_filter.refusal.unencrypted_port",
+        Refusal::BadPort => "settings.web_filter.refusal.bad_port",
+        Refusal::BadPath => "settings.web_filter.refusal.bad_path",
+        Refusal::NotAnAddress => "settings.web_filter.refusal.not_an_address",
+        Refusal::NeverAServer => "settings.web_filter.refusal.never_a_server",
     }
 }
 
-/// Why a phone is on the backup, for its line.
+/// Why a phone is on the backup, for its line: the key of its words.
 fn backup_reason_text(reason: &str) -> Option<&'static str> {
     Some(match reason {
-        "bootstrap" => "your server's address couldn't be looked up",
-        "connect" => "can't reach your server from where the phone is",
-        "tls" => "your server's certificate wasn't accepted",
-        "http" => "your server didn't answer as a DNS-over-HTTPS server",
-        "refused" => "your server refused this phone - check its allowed clients",
-        "timeout" => "your server didn't answer in time",
+        "bootstrap" => "settings.web_filter.backup_reason.bootstrap",
+        "connect" => "settings.web_filter.backup_reason.connect",
+        "tls" => "settings.web_filter.backup_reason.tls",
+        "http" => "settings.web_filter.backup_reason.http",
+        "refused" => "settings.web_filter.backup_reason.refused",
+        "timeout" => "settings.web_filter.backup_reason.timeout",
         _ => return None,
     })
 }
@@ -295,34 +293,42 @@ enum Lookups<'a> {
 /// Phone line says what to do. Server only, no contract.
 /// Opera (a Chromium fork) also gets the managed config (`BROWSER_DOH_PACKAGES`), but whether it
 /// reads it is not checked yet (E3), so it keeps its line until then.
-pub(crate) const DOH_IGNORING_BROWSERS: [(&str, &str); 7] = [
+/// Each: the package, the browser's name, the key of its line.
+pub(crate) const DOH_IGNORING_BROWSERS: [(&str, &str, &str); 7] = [
     (
         "org.cromite.cromite",
-        "Cromite: set its Secure DNS to Off on the phone, or it won't load pages",
+        "Cromite",
+        "settings.web_filter.browser.cromite",
     ),
     (
         "org.mozilla.firefox",
-        "Firefox: its own secure DNS can get around the filter",
+        "Firefox",
+        "settings.web_filter.browser.can_bypass",
     ),
     (
         "org.mozilla.firefox_beta",
-        "Firefox Beta: its own secure DNS can get around the filter",
+        "Firefox Beta",
+        "settings.web_filter.browser.can_bypass",
     ),
     (
         "org.mozilla.fenix",
-        "Firefox Nightly: its own secure DNS can get around the filter",
+        "Firefox Nightly",
+        "settings.web_filter.browser.can_bypass",
     ),
     (
         "org.mozilla.fennec_fdroid",
-        "Fennec: its own secure DNS can get around the filter",
+        "Fennec",
+        "settings.web_filter.browser.can_bypass",
     ),
     (
         "org.ironfoxoss.ironfox",
-        "IronFox: its own secure DNS can get around the filter",
+        "IronFox",
+        "settings.web_filter.browser.can_bypass",
     ),
     (
         "com.opera.browser",
-        "Opera: its own secure DNS may get around the filter",
+        "Opera",
+        "settings.web_filter.browser.may_bypass",
     ),
 ];
 
@@ -354,16 +360,19 @@ fn ended_outage(
     let since = at(state.unreachable_since_ms)?;
     let until = at(state.unreachable_until_ms)?;
     (now - until < ENDED_OUTAGE_SHOWN && until - since >= MIN_ENDED_OUTAGE).then(|| {
-        format!(
-            "couldn't be reached {}-{}",
-            zone.when(since, now),
-            zone.when(until, now)
+        t_params(
+            zone.lang(),
+            "settings.web_filter.line.ended",
+            &[
+                ("from", &zone.when(since, now)),
+                ("until", &zone.when(until, now)),
+            ],
         )
     })
 }
 
 /// One phone's line under the DNS Server group (design 36 §6.3, design 67 §3.3), from its filter
-/// switch and its last report (`None` before the first). With the parent's servers every phone
+/// switch and its last report (`None` before the first), in the [Zone]'s language. With the parent's servers every phone
 /// has one; with a provider only a phone whose DNS can't be reached, or couldn't within 24 h.
 /// An ended outage shows whatever the report's rev or mode (the fixed servers bumped it), and
 /// nothing shows for a phone whose filter is off but that.
@@ -375,9 +384,15 @@ fn phone_line(
     zone: &Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<String> {
+    let lang = zone.lang();
     if !filter_on {
-        return matches!(lookups, Lookups::Custom { .. })
-            .then(|| format!("{name} · Web filter off"));
+        return matches!(lookups, Lookups::Custom { .. }).then(|| {
+            t_params(
+                lang,
+                "settings.web_filter.line.filter_off",
+                &[("name", name)],
+            )
+        });
     }
     let state = report
         .as_ref()
@@ -388,46 +403,68 @@ fn phone_line(
     let at_last_report = report
         .as_ref()
         .and_then(|report| report.stale_since)
-        .map(|t| format!(" · at last report ({})", zone.relative(t, now)))
+        .map(|at| {
+            format!(
+                " · {}",
+                t_params(
+                    lang,
+                    "settings.web_filter.line.at_last_report",
+                    &[("when", &zone.relative(at, now))],
+                )
+            )
+        })
         .unwrap_or_default();
     let what = match lookups {
         Lookups::Provider(provider) => state
             .as_ref()
             .filter(|state| state.in_use == "provider")
             .and_then(outage_since)
-            .map(|t| {
-                format!(
-                    "DNS can't be reached since {} - {provider} doesn't answer from where the phone is{at_last_report}",
-                    when(t)
-                )
+            .map(|since| {
+                let line = t_params(
+                    lang,
+                    "settings.web_filter.line.provider_down",
+                    &[("since", &when(since)), ("provider", provider)],
+                );
+                format!("{line}{at_last_report}")
             }),
         Lookups::Custom { rev } => Some(match (&report, &state) {
             (Some(report), _) if !report.claims(dns_server::DNS_CUSTOM_CAPABILITY) => {
-                "Cloudflare - update Vibb One on this phone to use your server".to_string()
+                t(lang, "settings.web_filter.line.update_for_custom").to_string()
             }
             // A provider report while Custom is in force (even at rev 0) is never the backup.
             (Some(_), Some(state)) if state.rev == rev && state.in_use != "provider" => {
                 match outage_since(state) {
-                    Some(t) => format!(
-                        "DNS can't be reached since {} - neither your server nor the backup answers{at_last_report}",
-                        when(t)
-                    ),
-                    None if state.in_use == "custom" => "Your server in use".to_string(),
+                    Some(since) => {
+                        let line = t_params(
+                            lang,
+                            "settings.web_filter.line.custom_down",
+                            &[("since", &when(since))],
+                        );
+                        format!("{line}{at_last_report}")
+                    }
+                    None if state.in_use == "custom" => {
+                        t(lang, "settings.web_filter.line.custom_in_use").to_string()
+                    }
                     None => {
-                        let since = at(state.since_ms)
-                            .map(|t| format!(" since {}", when(t)))
-                            .unwrap_or_default();
+                        let backup = match at(state.since_ms) {
+                            Some(since) => t_params(
+                                lang,
+                                "settings.web_filter.line.backup_since",
+                                &[("when", &when(since))],
+                            ),
+                            None => t(lang, "settings.web_filter.line.backup").to_string(),
+                        };
                         let why = state
                             .reason
                             .as_deref()
                             .and_then(backup_reason_text)
-                            .map(|why| format!(" - {why}"))
+                            .map(|why| format!(" - {}", t(lang, why)))
                             .unwrap_or_default();
-                        format!("Backup server{since}{why}")
+                        format!("{backup}{why}")
                     }
                 }
             }
-            _ => "Waiting for the phone".to_string(),
+            _ => t(lang, "settings.web_filter.line.waiting").to_string(),
         }),
     };
     let ended = state
@@ -443,8 +480,9 @@ fn phone_line(
 
 /// A phone's lines under the Each Phone group (design 67 §2.4), only while its filter is on and
 /// only what is owed: an update while its last report lacks `dns_bypass_v1`, and a line for each
-/// allowed browser in [DOH_IGNORING_BROWSERS].
+/// allowed browser in [DOH_IGNORING_BROWSERS]; in `lang`.
 fn bypass_lines(
+    lang: Lang,
     name: &str,
     filter_on: bool,
     report: Option<&LastReport>,
@@ -455,15 +493,18 @@ fn bypass_lines(
     }
     let mut lines = Vec::new();
     if report.is_some_and(|report| !report.claims(dns_server::DNS_BYPASS_CAPABILITY)) {
-        lines.push(format!(
-            "{name} · Update Vibb One to close the secure-DNS bypass"
+        lines.push(t_params(
+            lang,
+            "settings.web_filter.line.update_for_bypass",
+            &[("name", name)],
         ));
     }
     let allowed: Vec<String> = allowlist
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
-    for (package, words) in DOH_IGNORING_BROWSERS {
+    for (package, browser, key) in DOH_IGNORING_BROWSERS {
         if allowed.iter().any(|allowed| allowed == package) {
+            let words = t_params(lang, key, &[("browser", browser)]);
             lines.push(format!("{name} · {words}"));
         }
     }
@@ -514,7 +555,13 @@ async fn phone_lines(
             dns_upstream: upstream.as_deref(),
             stale_since: crate::display_time::parse_db_utc(at).filter(|_| stale),
         });
-        let lines = bypass_lines(name, *filter_on, report.as_ref(), allowlist.as_deref());
+        let lines = bypass_lines(
+            lang,
+            name,
+            *filter_on,
+            report.as_ref(),
+            allowlist.as_deref(),
+        );
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
         if let Some(line) = phone_line(name, *filter_on, report, lookups, &zone, now) {
             server.push((*id, line));
@@ -542,13 +589,13 @@ fn old_device_param(params: &HashMap<String, String>) -> Option<i64> {
     params.get("device").and_then(|s| s.parse::<i64>().ok())
 }
 
-fn read_failed(err: sqlx::Error) -> Response {
+fn read_failed(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "couldn't read the web filter");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the web filter - check the server log.",
+        "error.read_web_filter",
     )
-        .into_response()
 }
 
 /// The page. Every read is a 500 on a DB error, never an empty list (Remove and the switches would
@@ -605,7 +652,7 @@ async fn render_page(
     .await;
     let (settings, blocklists, custom, devices, overrides) = match read {
         Ok(read) => read,
-        Err(err) => return read_failed(err),
+        Err(err) => return read_failed(lang, err),
     };
     let (blocked_domains, allowed_domains): (Vec<_>, Vec<_>) =
         custom.into_iter().partition(|d| d.list_type == "block");
@@ -616,10 +663,11 @@ async fn render_page(
             .into_iter()
             .map(|list| {
                 let feed = FeedState::of(&compiled, list.id);
-                let sub = match (&feed, feed.problem()) {
+                let sub = match (&feed, feed.problem(lang)) {
                     (_, Some(problem)) => problem.to_string(),
-                    (FeedState::Loaded(1), None) => "1 domain".to_string(),
-                    (FeedState::Loaded(n), None) => format!("{n} domains"),
+                    (FeedState::Loaded(n), None) => {
+                        t_count(lang, "settings.web_filter.domains", *n as i64, &[])
+                    }
                     (_, None) => String::new(),
                 };
                 let others: Vec<&str> = overrides
@@ -629,8 +677,8 @@ async fn render_page(
                     .collect();
                 FeedRow {
                     scope: list_scope(lang, list.enabled, &others),
-                    failing: feed.problem().is_some(),
-                    detail: feed.detail(),
+                    failing: feed.problem(lang).is_some(),
+                    detail: feed.detail(lang),
                     sub,
                     list,
                 }
@@ -662,7 +710,7 @@ async fn render_page(
     };
     let (phones, bypass) = match phone_lines(state, lookups, &devices, lang).await {
         Ok(lines) => lines,
-        Err(err) => return read_failed(err),
+        Err(err) => return read_failed(lang, err),
     };
     let stored_server = dns_server::parse_dns_server(&settings.custom_server).ok();
     let stored_backup = dns_server::parse_dns_server(&settings.custom_backup).ok();
@@ -700,7 +748,7 @@ async fn render_page(
     };
     let page = DnsFilterTemplate {
         lang,
-        title: "Web Filter".to_string(),
+        title: t(lang, "settings.web_filter.title").to_string(),
         blocklists,
         blocked_domains,
         allowed_domains,
@@ -755,11 +803,11 @@ pub async fn set_upstream(
         Some("quad9") => "quad9",
         Some("cloudflare") => "cloudflare",
         Some("custom") => "custom",
-        _ => return (StatusCode::BAD_REQUEST, "Unknown DNS server").into_response(),
+        _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_dns_server"),
     };
     let settings = match load_settings(&state).await {
         Ok(settings) => settings,
-        Err(err) => return read_failed(err),
+        Err(err) => return read_failed(lang, err),
     };
     if upstream == "custom"
         && let Err((server_error, backup_error)) = check_custom("", "", &settings)
@@ -792,7 +840,7 @@ pub async fn set_upstream(
             server_changed(&state, &admin.username, &detail).await;
         }
         Ok(_) => {}
-        Err(err) => return write_failed(err),
+        Err(err) => return write_failed(lang, err),
     }
     Redirect::to("/dns#server").into_response()
 }
@@ -836,7 +884,7 @@ pub async fn set_custom(
     let forget = form.contains_key("forget_custom");
     let settings = match load_settings(&state).await {
         Ok(settings) => settings,
-        Err(err) => return read_failed(err),
+        Err(err) => return read_failed(lang, err),
     };
     let stored = !settings.custom_server.is_empty() || !settings.custom_backup.is_empty();
 
@@ -851,7 +899,7 @@ pub async fn set_custom(
         .execute(&state.db)
         .await;
         if let Err(err) = result {
-            return write_failed(err);
+            return write_failed(lang, err);
         }
         if stored {
             let upstream = match settings.upstream.as_str() {
@@ -893,7 +941,7 @@ pub async fn set_custom(
     .execute(&state.db)
     .await;
     if let Err(err) = result {
-        return write_failed(err);
+        return write_failed(lang, err);
     }
     if settings.upstream != "custom"
         || settings.custom_server != server
@@ -948,6 +996,7 @@ fn backup_prefill(settings: &DnsFilterSettings) -> String {
 /// the page reopens Add a List… with why (`?notice=bad_list#lists`).
 pub async fn create_blocklist(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let name = form.get("name").map(|s| s.trim()).unwrap_or_default();
@@ -966,7 +1015,7 @@ pub async fn create_blocklist(
         .execute(&state.db)
         .await;
     if let Err(err) = result {
-        return write_failed(err);
+        return write_failed(lang, err);
     }
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     nudge(&state, None).await;
@@ -977,6 +1026,7 @@ pub async fn create_blocklist(
 /// unknown list. Back to `#lists`.
 pub async fn toggle_blocklist(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -988,10 +1038,10 @@ pub async fn toggle_blocklist(
         .await;
     match result {
         Ok(done) if done.rows_affected() == 0 => {
-            return (StatusCode::NOT_FOUND, "List not found").into_response();
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.list_not_found");
         }
         Ok(_) => {}
-        Err(err) => return write_failed(err),
+        Err(err) => return write_failed(lang, err),
     }
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     nudge(&state, None).await;
@@ -1006,6 +1056,7 @@ pub async fn toggle_blocklist(
 /// that list is kept once; an unknown phone is a 404. Back to `back` ([back_to]).
 pub async fn create_custom_domain(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let domain = form.get("domain").map(String::as_str).unwrap_or_default();
@@ -1019,7 +1070,9 @@ pub async fn create_custom_domain(
         None | Some("") => None,
         Some(id) => match id.parse::<i64>() {
             Ok(id) => Some(id),
-            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown phone").into_response(),
+            Err(_) => {
+                return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_phone");
+            }
         },
     };
     if !dns_engine::looks_like_a_domain(&domain) {
@@ -1048,7 +1101,7 @@ pub async fn create_custom_domain(
     .execute(&state.db)
     .await;
     if let Err(err) = result {
-        return write_failed(err);
+        return write_failed(lang, err);
     }
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     nudge(&state, device_id).await;
@@ -1082,6 +1135,7 @@ pub(crate) fn doh_allowed_notice(params: &HashMap<String, String>) -> Option<Str
 /// ([back_to]).
 pub async fn set_device_blocklist_override(
     State(state): State<AppState>,
+    lang: Lang,
     Path((device_id, blocklist_id)): Path<(i64, i64)>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -1089,7 +1143,9 @@ pub async fn set_device_blocklist_override(
         Some("default") => None,
         Some("on") => Some(true),
         Some("off") => Some(false),
-        Some(_) => return (StatusCode::BAD_REQUEST, "Unknown setting").into_response(),
+        Some(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_setting");
+        }
         None if form.contains_key("clear") => None,
         None => Some(form.contains_key("enabled")),
     };
@@ -1108,9 +1164,13 @@ pub async fn set_device_blocklist_override(
             match known {
                 Ok(true) => {}
                 Ok(false) => {
-                    return (StatusCode::NOT_FOUND, "Phone or list not found").into_response();
+                    return crate::i18n::error(
+                        lang,
+                        StatusCode::NOT_FOUND,
+                        "error.phone_or_list_not_found",
+                    );
                 }
-                Err(err) => return write_failed(err),
+                Err(err) => return write_failed(lang, err),
             }
             sqlx::query(
                 "DELETE FROM device_blocklist_overrides WHERE device_id = ? AND blocklist_id = ?",
@@ -1134,7 +1194,7 @@ pub async fn set_device_blocklist_override(
         }
     };
     if let Err(err) = result {
-        return write_failed(err);
+        return write_failed(lang, err);
     }
     nudge(&state, Some(device_id)).await;
     Redirect::to(&back_to(&form, Some(device_id), "phones")).into_response()
@@ -1144,7 +1204,7 @@ pub async fn set_device_blocklist_override(
 struct LogPhone {
     id: i64,
     name: String,
-    /// "Off", "None today", "12 today".
+    /// "Off", "None today", "12 today" (in the reader's language).
     value: String,
 }
 
@@ -1186,26 +1246,26 @@ pub async fn show_dns_log(
             .map(|(id, name, on, today)| LogPhone {
                 id,
                 name,
-                value: match (on == Some(true), today) {
-                    (false, _) => "Off".to_string(),
-                    (true, 0) => "None today".to_string(),
-                    (true, n) => format!("{n} today"),
+                value: if on == Some(true) {
+                    crate::handlers::settings_hub::blocked_today(lang, today)
+                } else {
+                    t(lang, "common.off").to_string()
                 },
             })
             .collect(),
         Err(err) => {
             tracing::error!(%err, "couldn't list the phones for Blocked Activity");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read the phones - check the server log.",
-            )
-                .into_response();
+                "error.read_phones",
+            );
         }
     };
     Html(
         DnsLogTemplate {
             lang,
-            title: "Blocked Activity".to_string(),
+            title: t(lang, "settings.dns_log.title").to_string(),
             phones,
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
         }
@@ -1222,6 +1282,7 @@ pub async fn show_dns_log(
 /// its group, `/devices/{id}/filter#log` (§5.1.4).
 pub async fn set_dns_log(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(device_id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -1249,7 +1310,7 @@ pub async fn set_dns_log(
     }
     .await;
     match result {
-        Ok(0) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(0) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Ok(_) => {
             crate::security::record_security_event(
                 &state.db,
@@ -1274,11 +1335,7 @@ pub async fn set_dns_log(
         }
         Err(err) => {
             tracing::error!(device_id, %err, "couldn't save the blocked-domain log switch");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save - nothing was changed.",
-            )
-                .into_response()
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
         }
     }
 }
@@ -1290,6 +1347,7 @@ pub async fn set_dns_log(
 /// and `list_type` say (qa-31-s5-code M1): with nothing written, they only build the redirect.
 pub async fn delete_custom_domain(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -1306,7 +1364,7 @@ pub async fn delete_custom_domain(
             let group = domain_group(form.get("list_type").map_or("", String::as_str));
             return Redirect::to(&back_to(&form, page, group)).into_response();
         }
-        Err(err) => return write_failed(err),
+        Err(err) => return write_failed(lang, err),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     nudge(&state, device_id).await;
@@ -1338,7 +1396,7 @@ pub async fn run_blocklist_refresh(state: AppState) {
 mod tests {
     use super::*;
 
-    /// Every refusal has its own sentence (the grammar is `dns_server::tests`'; the page only
+    /// Every refusal has its own sentence in both languages (the grammar is `dns_server::tests`'; the page only
     /// words a `Refusal`).
     #[test]
     fn every_refusal_has_its_own_text() {
@@ -1360,12 +1418,18 @@ mod tests {
             NotAnAddress,
             NeverAServer,
         ];
-        let texts: std::collections::BTreeSet<&str> = all.into_iter().map(refusal_text).collect();
-        assert_eq!(texts.len(), all.len());
-        assert!(
-            texts
-                .iter()
-                .all(|text| text.ends_with('.') && text.len() > 10)
-        );
+        for lang in Lang::ALL {
+            let texts: std::collections::BTreeSet<&str> = all
+                .into_iter()
+                .map(|why| t(lang, refusal_text(why)))
+                .collect();
+            assert_eq!(texts.len(), all.len());
+            assert!(
+                texts.iter().all(|text| text.ends_with('.')
+                    && text.len() > 10
+                    && !text.starts_with("settings.")),
+                "{texts:?}"
+            );
+        }
     }
 }

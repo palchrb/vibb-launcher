@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -10,36 +10,36 @@
 {% let tab = "" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/notifications{{ query }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Notifications</a>
-    <h1 class="page-title">Notification Settings</h1>
+    <a class="nav-back" href="/notifications{{ query }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("settings.notifications.title") }}</a>
+    <h1 class="page-title">{{ self.t("settings.notifications.settings_title") }}</h1>
 
     {#- The server-level warning (§4.4): only while it applies. -#}
     {% if clock_warning %}
     <div class="attention attention-alarm" id="clock-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <div class="attention-text">The push service refused the server's signature - check the server's clock<div class="attention-sub">Without the right time no notification gets through. The Pi has no clock of its own: it needs the internet (NTP) after a power cut.</div></div>
+        <div class="attention-text">{{ self.t("settings.notifications.clock_warning") }}<div class="attention-sub">{{ self.t("settings.notifications.clock_warning_sub") }}</div></div>
     </div>
     {% endif %}
 
     {#- Web Push on this browser (§5.2): static/notifications.js decides the state and subscribes
         from the tap; the forms post the subscription (or its end) and come back here. -#}
     <section id="this-device" aria-labelledby="this-device-title">
-        <h2 class="group-header" id="this-device-title">This Device</h2>
+        <h2 class="group-header" id="this-device-title">{{ self.t("settings.notifications.this_device") }}</h2>
         {% if let Some(key) = push_key %}
-        <form method="post" action="/notifications/subscriptions#this-device" class="group" id="push-on-form" data-key="{{ key }}" data-subscribed="{{ subscribed }}">
+        <form method="post" action="/notifications/subscriptions#this-device" class="group" id="push-on-form" data-key="{{ key }}" data-subscribed="{{ subscribed }}" data-w-home-screen="{{ self.t("settings.notifications.js.home_screen") }}" data-w-not-available="{{ self.t("settings.notifications.js.not_available") }}" data-w-blocked="{{ self.t("settings.notifications.js.blocked") }}" data-w-off="{{ self.t("common.off") }}" data-w-on="{{ self.t("common.on") }}" data-w-on-failed="{{ self.t("settings.notifications.js.on_failed") }}" data-w-off-failed="{{ self.t("settings.notifications.js.off_failed") }}">
             <input type="hidden" name="from" value="{{ back.0 }}">
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <input type="hidden" name="endpoint" value="">
             <input type="hidden" name="p256dh" value="">
             <input type="hidden" name="auth" value="">
             <div class="row">
-                <span class="row-label">Notifications</span>
-                <span class="row-value" id="push-state">Needs JavaScript</span>
+                <span class="row-label">{{ self.t("settings.notifications.title") }}</span>
+                <span class="row-value" id="push-state">{{ self.t("settings.notifications.needs_js") }}</span>
             </div>
-            <p class="row row-note" id="push-home-screen" hidden>In Safari, tap Share, then Add to Home Screen. Open Vibb Phone from the Home Screen and turn notifications on there.</p>
-            <p class="row row-note" id="push-blocked" hidden>Allow notifications for Vibb Phone in this device's Settings, then come back here.</p>
-            <button type="button" class="row row-button" id="push-on" hidden disabled>Turn On Notifications</button>
-            <button type="button" class="row row-button" id="push-off" hidden>Turn Off on This Device</button>
+            <p class="row row-note" id="push-home-screen" hidden>{{ self.t("settings.notifications.home_screen") }}</p>
+            <p class="row row-note" id="push-blocked" hidden>{{ self.t("settings.notifications.blocked") }}</p>
+            <button type="button" class="row row-button" id="push-on" hidden disabled>{{ self.t("settings.notifications.turn_on") }}</button>
+            <button type="button" class="row row-button" id="push-off" hidden>{{ self.t("settings.notifications.turn_off") }}</button>
             {% if let Some((text, error)) = this_notice %}
             <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
             {% endif %}
@@ -49,10 +49,10 @@
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <input type="hidden" name="endpoint" value="">
         </form>
-        <p class="group-footer">Each device turns notifications on for itself.<noscript> Notifications need JavaScript.</noscript></p>
+        <p class="group-footer">{{ self.t("settings.notifications.this_device_footer") }}<noscript> {{ self.t("settings.notifications.needs_js_footer") }}</noscript></p>
         {% else %}
         <div class="group">
-            <p class="row row-note">Notifications are off on this server: its key couldn't be read. The server log says which file.</p>
+            <p class="row row-note">{{ self.t("settings.notifications.no_key") }}</p>
         </div>
         {% endif %}
     </section>
@@ -61,7 +61,7 @@
         a Test, notifications.js polls subscriptions.json and re-renders the badge and sub-line in
         place (server round 5 §5). -#}
     <section id="devices" aria-labelledby="devices-title">
-        <h2 class="group-header" id="devices-title">Getting Notifications</h2>
+        <h2 class="group-header" id="devices-title">{{ self.t("settings.notifications.getting") }}</h2>
         {% for d in devices %}
         <div class="group" data-subscription="{{ d.id }}">
             <div class="row">
@@ -72,16 +72,16 @@
             <form method="post" action="/notifications/subscriptions/{{ d.id }}/test#devices" class="cell">
                 <input type="hidden" name="from" value="{{ back.0 }}">
                 {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-                <button type="submit" class="row row-button">Send a Test</button>
+                <button type="submit" class="row row-button">{{ self.t("settings.notifications.send_test") }}</button>
             </form>
             {% endif %}
             <details class="confirm cell">
-                <summary class="row">Remove&hellip;</summary>
+                <summary class="row">{{ self.t("settings.notifications.remove") }}&hellip;</summary>
                 <form method="post" action="/notifications/subscriptions/{{ d.id }}/delete#devices" class="confirm-body">
                     <input type="hidden" name="from" value="{{ back.0 }}">
                     {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-                    <p>Stop notifications to {{ d.label }}? It can turn them on again under This Device.</p>
-                    <button type="submit" class="button-destructive">Remove</button>
+                    <p>{{ self.tp("settings.notifications.remove_confirm", [("label", d.label.as_str())]) }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("settings.notifications.remove") }}</button>
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
@@ -91,23 +91,23 @@
         </div>
         {% else %}
         <div class="group">
-            <p class="row row-note">No device gets notifications yet. Turn them on under This Device, on each device you want them on.</p>
+            <p class="row row-note">{{ self.t("settings.notifications.no_devices") }}</p>
         </div>
         {% endfor %}
         {#- 2026-10-25: a new Home Screen copy is a new web app without the permission, while the old
             copy's subscription lives on at Apple (accepted, never shown: the health rule marks it). -#}
-        <div class="group-footer">Shown: the device confirmed it showed the notification.{% if !devices.is_empty() %} <span data-note="added-again">Added the app to the Home Screen again? Turn notifications on in the new copy and remove the old device here.</span>{% endif %}</div>
+        <div class="group-footer">{{ self.t("settings.notifications.shown_footer") }}{% if !devices.is_empty() %} <span data-note="added-again">{{ self.t("settings.notifications.added_again") }}</span>{% endif %}</div>
     </section>
 
     {#- One form, the handler writes every switch (a missing one is off). The switches govern the
         push only: every event is in the inbox. -#}
     <section id="events" aria-labelledby="events-title">
-        <h2 class="group-header" id="events-title">Notify Me About</h2>
+        <h2 class="group-header" id="events-title">{{ self.t("settings.notifications.notify_about") }}</h2>
         <form method="post" action="/notifications/settings#events" class="group">
             <input type="hidden" name="from" value="{{ back.0 }}">
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <label class="row">
-                <span class="row-label">Emergency call<span class="row-sub">Always on</span></span>
+                <span class="row-label">{{ self.t("settings.notifications.emergency_call") }}<span class="row-sub">{{ self.t("settings.notifications.always_on") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" checked disabled><span class="knob" aria-hidden="true"></span>
             </label>
             {% for s in switches %}
@@ -116,11 +116,11 @@
                 <input type="checkbox" role="switch" class="sw" name="{{ s.name }}" value="on"{% if s.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% endfor %}
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">Just for you - each parent chooses their own. Off: still in the inbox, no notification. Events arrive as soon as the phone next reports.</p>
+        <p class="group-footer">{{ self.t("settings.notifications.events_footer") }}</p>
     </section>
 </main>
-{% if push_key.is_some() %}<script src="/static/notifications.js?v=3" defer></script>{% endif %}
+{% if push_key.is_some() %}<script src="/static/notifications.js?v=4" defer></script>{% endif %}
 </body>
 </html>

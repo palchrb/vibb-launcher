@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,69 +7,69 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Phone Setup</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("settings.provisioning.title") }}</h1>
 
     {#- One form (§5.6: the handler writes every field). A refusal renders in the POST's answer at
         #setup; a save comes back to the flash under Save (#saved). -#}
     <form method="post" action="/settings/provisioning#setup" id="setup">
         <div class="group form-group">
             <div class="field">
-                <label class="field-label" for="server_url">Server address</label>
-                <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="{% if let Some(env) = env_server_url %}{{ env }}{% else %}https://vibb.your-tailnet.ts.net{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if let Some((field, _)) = error %}{% if *field == "server_url" %} aria-invalid="true" aria-describedby="server_url-error" autofocus{% endif %}{% endif %}>
-                {% if let Some((field, why)) = error %}{% if *field == "server_url" %}<p class="field-error" id="server_url-error">{{ why }}</p>{% endif %}{% endif %}
+                <label class="field-label" for="server_url">{{ self.t("settings.provisioning.server_url") }}</label>
+                <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="{% if let Some(env) = env_server_url %}{{ env }}{% else %}{{ self.t("settings.provisioning.server_url_example") }}{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if let Some((field, _)) = error %}{% if *field == "server_url" %} aria-invalid="true" aria-describedby="server_url-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "server_url" %}<p class="field-error" id="server_url-error">{{ self.t(why) }}</p>{% endif %}{% endif %}
                 {% if let Some(why) = url_warning %}<p class="field-error" data-warning="plain-http">{{ why }}</p>{% endif %}
                 {#- Where the QR's address comes from (Q25): saved here wins over .env's PHONE_SERVER_URL. -#}
                 {% if let Some(env) = env_server_url %}
-                {% if entered.server_url.is_empty() %}<p class="field-hint" data-source="env">From .env (PHONE_SERVER_URL): {{ env }}. An address saved here wins.</p>
-                {% else %}<p class="field-hint" data-source="saved">Saved here; it wins over .env's {{ env }}. Empty the field to use that.</p>{% endif %}
-                {% else %}<p class="field-hint">This server's https address, as the phones reach it (plain http only to a private address, and safe only through an encrypted tunnel).</p>{% endif %}
+                {% if entered.server_url.is_empty() %}<p class="field-hint" data-source="env">{{ self.tp("settings.provisioning.from_env", [("url", env.as_str())]) }}</p>
+                {% else %}<p class="field-hint" data-source="saved">{{ self.tp("settings.provisioning.saved_wins", [("url", env.as_str())]) }}</p>{% endif %}
+                {% else %}<p class="field-hint">{{ self.t("settings.provisioning.server_url_hint") }}</p>{% endif %}
             </div>
             <div class="field">
-                <label class="field-label" for="tailscale_auth_key">Tailscale key</label>
-                <details class="info field-info"><summary aria-label="About the Tailscale key"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>A one-time, pre-approved key tagged tag:kid, from the Tailscale admin console; without one, you type it on each phone. Leave the field empty to keep the saved one.</p></div></details>
-                <p class="field-hint" data-row="key">{% if let Some(hint) = tailscale_key_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-                <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Paste a new key to replace it{% else %}Paste the key{% endif %}" autocomplete="off"{% if entered.key_dropped %} aria-invalid="true" aria-describedby="key-error"{% endif %}>
-                {% if entered.key_dropped %}<p class="field-error" id="key-error">The new key wasn't saved. Paste it again.</p>{% else %}<p class="field-hint">Make a new one-time key before each phone setup.</p>{% endif %}
+                <label class="field-label" for="tailscale_auth_key">{{ self.t("settings.provisioning.key") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("settings.provisioning.key_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.key_info") }}</p></div></details>
+                <p class="field-hint" data-row="key">{% if let Some(hint) = tailscale_key_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
+                <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}{{ self.t("settings.provisioning.key_replace") }}{% else %}{{ self.t("settings.provisioning.key_paste") }}{% endif %}" autocomplete="off"{% if entered.key_dropped %} aria-invalid="true" aria-describedby="key-error"{% endif %}>
+                {% if entered.key_dropped %}<p class="field-error" id="key-error">{{ self.t("settings.provisioning.key_dropped") }}</p>{% else %}<p class="field-hint">{{ self.t("settings.provisioning.key_hint") }}</p>{% endif %}
                 {% if tailscale_key_hint.is_some() %}
                 <label class="checkbox-row">
                     <input type="checkbox" name="clear_tailscale_auth_key" value="on"{% if entered.clear_key %} checked{% endif %}>
-                    <span>Remove the stored key</span>
+                    <span>{{ self.t("settings.provisioning.key_clear") }}</span>
                 </label>
                 {% endif %}
             </div>
             <div class="field">
-                <label class="field-label" for="locale">Phone language</label>
-                <details class="info field-info"><summary aria-label="About the phone language"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Set during QR setup, in the form nb_NO. Blank keeps the phone's own.</p></div></details>
-                <input type="text" id="locale" name="locale" value="{{ entered.locale }}" placeholder="nb_NO" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "locale" %} aria-invalid="true" aria-describedby="locale-error" autofocus{% endif %}{% endif %}>
-                {% if let Some((field, why)) = error %}{% if *field == "locale" %}<p class="field-error" id="locale-error">{{ why }}</p>{% endif %}{% endif %}
+                <label class="field-label" for="locale">{{ self.t("settings.provisioning.locale") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("settings.provisioning.locale_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.locale_info") }}</p></div></details>
+                <input type="text" id="locale" name="locale" value="{{ entered.locale }}" placeholder="{{ self.t("settings.provisioning.locale_example") }}" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "locale" %} aria-invalid="true" aria-describedby="locale-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "locale" %}<p class="field-error" id="locale-error">{{ self.t(why) }}</p>{% endif %}{% endif %}
             </div>
             <div class="field">
-                <label class="field-label" for="time_zone">Time zone</label>
-                <details class="info field-info"><summary aria-label="About the time zone"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Set during QR setup; blank keeps the phone's own. This app shows its times in this zone too (UTC when blank).</p></div></details>
-                <input type="text" id="time_zone" name="time_zone" value="{{ entered.time_zone }}" placeholder="Europe/Oslo" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "time_zone" %} aria-invalid="true" aria-describedby="time_zone-error" autofocus{% endif %}{% endif %}>
-                {% if let Some((field, why)) = error %}{% if *field == "time_zone" %}<p class="field-error" id="time_zone-error">{{ why }}</p>{% endif %}{% endif %}
+                <label class="field-label" for="time_zone">{{ self.t("settings.provisioning.time_zone") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("settings.provisioning.time_zone_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.time_zone_info") }}</p></div></details>
+                <input type="text" id="time_zone" name="time_zone" value="{{ entered.time_zone }}" placeholder="{{ self.t("settings.provisioning.time_zone_example") }}" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "time_zone" %} aria-invalid="true" aria-describedby="time_zone-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "time_zone" %}<p class="field-error" id="time_zone-error">{{ self.t(why) }}</p>{% endif %}{% endif %}
             </div>
-            <button type="submit" class="button-wide">Save</button>
+            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </div>
-        <p class="group-footer">The setup QR code carries these to each new phone.</p>
-        {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="setup" role="status">Saved. Phones set up from now on get these.</p></div>{% endif %}
+        <p class="group-footer">{{ self.t("settings.provisioning.footer") }}</p>
+        {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="setup" role="status">{{ self.t("settings.provisioning.saved") }}</p></div>{% endif %}
     </form>
 
     {#- The second form (design 31 L6): it posts to /settings/calls and comes back to its own
         flash (#country-code); a refusal renders here (400) with what was typed. -#}
     <section id="country-code" aria-labelledby="country-code-title">
-        <h2 class="group-header" id="country-code-title">Phone Numbers</h2>
+        <h2 class="group-header" id="country-code-title">{{ self.t("settings.provisioning.numbers") }}</h2>
         <form method="post" action="/settings/calls#country-code" class="group form-group">
             <div class="field">
-                <label class="field-label" for="default_country_code">Country code</label>
+                <label class="field-label" for="default_country_code">{{ self.t("settings.provisioning.country_code") }}</label>
                 <input type="text" id="default_country_code" name="default_country_code" value="{{ country_code.value }}" inputmode="numeric" pattern="\+?[1-9][0-9]{0,2}" maxlength="4" autocomplete="off"{% if country_code.error.is_some() %} aria-invalid="true" aria-describedby="country-code-error" autofocus{% endif %}>
-                {% if let Some(why) = country_code.error %}<p class="field-error" id="country-code-error">{{ why }}</p>{% else %}<p class="field-hint">A number added without one gets +{{ country_code.value }}.</p>{% endif %}
+                {% if let Some(why) = country_code.error %}<p class="field-error" id="country-code-error">{{ self.t(why) }}</p>{% else %}<p class="field-hint">{{ self.tp("settings.provisioning.country_code_hint", [("code", country_code.value.as_str())]) }}</p>{% endif %}
             </div>
-            <button type="submit" class="button-wide">Save</button>
+            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
-        <p class="group-footer">For every phone. Numbers already saved keep theirs.</p>
-        {% if country_code.saved %}<div class="group"><p class="flash" data-flash="country-code" role="status">Saved. Each phone gets it when it is next online.</p></div>{% endif %}
+        <p class="group-footer">{{ self.t("settings.provisioning.numbers_footer") }}</p>
+        {% if country_code.saved %}<div class="group"><p class="flash" data-flash="country-code" role="status">{{ self.t("settings.provisioning.country_code_saved") }}</p></div>{% endif %}
     </section>
 </main>
 </body>

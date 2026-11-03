@@ -51,10 +51,14 @@ pub(crate) fn saved_refused(saved: &str) -> bool {
     )
 }
 
-/// The plain-http warning for the QR's address, if it has one (`config::ServerUrl::PlainHttp`).
-pub(crate) fn plain_http_warning(url: &str) -> Option<String> {
+/// The plain-http warning for the QR's address in `lang`, if it has one (`config::ServerUrl::PlainHttp`).
+pub(crate) fn plain_http_warning(lang: crate::i18n::Lang, url: &str) -> Option<String> {
     match crate::config::check_server_url(url) {
-        crate::config::ServerUrl::PlainHttp(why) => Some(why),
+        crate::config::ServerUrl::PlainHttp(host) => Some(crate::i18n::t_params(
+            lang,
+            "settings.provisioning.plain_http",
+            &[("host", &host)],
+        )),
         _ => None,
     }
 }
@@ -183,7 +187,7 @@ impl ProvisionQrTemplate {
             device,
             qr_svg: String::new(),
             missing_server_url: server_url(settings, &state.config).is_empty(),
-            url_warning: plain_http_warning(server_url(settings, &state.config)),
+            url_warning: plain_http_warning(lang, server_url(settings, &state.config)),
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
             wifi_ssid: String::new(),
             until: None,

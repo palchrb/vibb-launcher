@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -11,18 +11,18 @@
 {% include "partials/tab_bar.html" %}
 <main class="container">
     <div class="title-bar title-bar-split">
-        <a class="nav-back" href="{{ back.1 }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back.2 }}</a>
+        <a class="nav-back" href="{{ back.1 }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t(back.2) }}</a>
         {#- The gear in the bell's place (the same 44 px icon button); `data-unread` is the app
             badge's source on this page (register-sw.js), as the bell's on the tab pages. -#}
-        <a class="title-action title-bell" href="/notifications/settings{{ query }}" id="notification-settings" data-unread="{{ badge }}" aria-label="Notification settings"><svg viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M9.9 5.4L10.9 5.1L11.5 2.5L14.5 2.5L15.1 5.1L16.1 5.4L17.1 5.9L19.3 4.5L21.5 6.7L20.1 8.9L20.6 9.9L20.9 10.9L23.5 11.5L23.5 14.5L20.9 15.1L20.6 16.1L20.1 17.1L21.5 19.3L19.3 21.5L17.1 20.1L16.1 20.6L15.1 20.9L14.5 23.5L11.5 23.5L10.9 20.9L9.9 20.6L8.9 20.1L6.7 21.5L4.5 19.3L5.9 17.1L5.4 16.1L5.1 15.1L2.5 14.5L2.5 11.5L5.1 10.9L5.4 9.9L5.9 8.9L4.5 6.7L6.7 4.5L8.9 5.9Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="13" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></a>
+        <a class="title-action title-bell" href="/notifications/settings{{ query }}" id="notification-settings" data-unread="{{ badge }}" aria-label="{{ self.t("settings.notifications.settings_label") }}"><svg viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M9.9 5.4L10.9 5.1L11.5 2.5L14.5 2.5L15.1 5.1L16.1 5.4L17.1 5.9L19.3 4.5L21.5 6.7L20.1 8.9L20.6 9.9L20.9 10.9L23.5 11.5L23.5 14.5L20.9 15.1L20.6 16.1L20.1 17.1L21.5 19.3L19.3 21.5L17.1 20.1L16.1 20.6L15.1 20.9L14.5 23.5L11.5 23.5L10.9 20.9L9.9 20.6L8.9 20.1L6.7 21.5L4.5 19.3L5.9 17.1L5.4 16.1L5.1 15.1L2.5 14.5L2.5 11.5L5.1 10.9L5.4 9.9L5.9 8.9L4.5 6.7L6.7 4.5L8.9 5.9Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="13" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></a>
     </div>
-    <h1 class="page-title">Notifications</h1>
+    <h1 class="page-title">{{ self.t("settings.notifications.title") }}</h1>
 
     {#- The warnings (§4.4, §6), only while one applies: each leads to the settings page. -#}
     {% if clock_warning %}
     <a class="attention attention-action" href="/notifications/settings{{ query }}#clock-warning" id="clock-warning-row">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span class="attention-text">The push service refused the server's signature - check the server's clock</span>
+        <span class="attention-text">{{ self.t("settings.notifications.clock_warning") }}</span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% endif %}
@@ -36,26 +36,26 @@
 
     {#- A row is a form: its POST marks the event read and goes to where it happened. Mark All as
         Read and the picker come back here (#inbox). -#}
-    <section id="inbox" aria-label="Inbox">
+    <section id="inbox" aria-label="{{ self.t("settings.notifications.inbox") }}">
         {% if phones.len() > 1 %}
         <form method="get" action="/notifications#inbox" class="group">
             <input type="hidden" name="from" value="{{ back.0 }}">
             <label class="row">
-                <span class="row-label">Show</span>
+                <span class="row-label">{{ self.t("settings.notifications.show") }}</span>
                 <select class="pick" name="device" data-autosave>
-                    <option value=""{% if device.is_none() %} selected{% endif %}>All phones</option>
+                    <option value=""{% if device.is_none() %} selected{% endif %}>{{ self.t("settings.notifications.all_phones") }}</option>
                     {% for (id, name, selected) in phones %}
                     <option value="{{ id }}"{% if *selected %} selected{% endif %}>{{ name }}</option>
                     {% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
-            <noscript><button type="submit" class="row row-button">Show</button></noscript>
+            <noscript><button type="submit" class="row row-button">{{ self.t("settings.notifications.show") }}</button></noscript>
         </form>
         {% endif %}
         <div class="group group-avatars">
             {% if paged %}
             <a class="row" href="/notifications{{ query }}#inbox" data-row="newest">
-                <span class="row-label">Newest</span>
+                <span class="row-label">{{ self.t("settings.notifications.newest") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
@@ -65,16 +65,16 @@
                 {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
                 <button type="submit" class="row inbox-row{% if e.unread %} inbox-unread{% endif %}" data-event="{{ e.id }}">
                     <span class="avatar {{ e.avatar }}" aria-hidden="true">{{ e.initial }}{% if let Some(src) = e.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
-                    <span class="row-label"><span class="inbox-title">{% if e.unread %}<span class="unread-dot" aria-hidden="true"></span><span class="visually-hidden">Unread: </span>{% endif %}{{ e.title }}</span><span class="row-sub">{% if !e.summary.is_empty() %}{{ e.summary }} · {% endif %}<span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span>{% if let Some(line) = e.delivery %}<span class="row-sub inbox-delivery">{{ line }}</span>{% endif %}</span>
+                    <span class="row-label"><span class="inbox-title">{% if e.unread %}<span class="unread-dot" aria-hidden="true"></span><span class="visually-hidden">{{ self.t("settings.notifications.unread") }} </span>{% endif %}{{ e.title }}</span><span class="row-sub">{% if !e.summary.is_empty() %}{{ e.summary }} · {% endif %}<span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span>{% if let Some(line) = e.delivery %}<span class="row-sub inbox-delivery">{{ line }}</span>{% endif %}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
             </form>
             {% else %}
-            <p class="row row-note">Nothing yet - what the phones report shows up here</p>
+            <p class="row row-note">{{ self.t("settings.notifications.empty") }}</p>
             {% endfor %}
             {% if let Some(id) = older_than %}
             <a class="row" href="/notifications{{ query }}&amp;before={{ id }}#inbox" data-row="older">
-                <span class="row-label">Show older</span>
+                <span class="row-label">{{ self.t("settings.notifications.older") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
@@ -83,10 +83,10 @@
         <form method="post" action="/notifications/read-all#inbox" class="group">
             <input type="hidden" name="from" value="{{ back.0 }}">
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-            <button type="submit" class="row row-button">Mark all {{ unread_after }} as read</button>
+            <button type="submit" class="row row-button">{{ self.tc("settings.notifications.mark_read", unread_after, []) }}</button>
         </form>
         {% endif %}
-        {% if !rows.is_empty() %}<p class="group-footer">Newest first, kept 90 days.</p>{% endif %}
+        {% if !rows.is_empty() %}<p class="group-footer">{{ self.t("settings.notifications.footer") }}</p>{% endif %}
     </section>
 </main>
 </body>

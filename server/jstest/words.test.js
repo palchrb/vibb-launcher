@@ -37,6 +37,8 @@ const MOVED = {
     ],
     // 3d: Music (the status blocks come worded from /music/cards): a selector.
     "music-cards.js": [".music-card, .card"],
+    // 3e: Settings (subscriptions.json's rows come worded): an API's name, a media query, an error's message.
+    "notifications.js": ["PushManager", "(display-mode: standalone)", "status "],
     // Design 74: DOM exception names, a header and selectors.
     "passkey.js": [
         "NotAllowedError",

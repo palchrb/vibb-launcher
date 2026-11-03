@@ -761,7 +761,7 @@ async fn an_empty_inbox_and_older_pages() {
     let html = app.get_page("/notifications", &cookie).await.text();
     assert_eq!(html.matches("data-event=").count(), 100);
     assert!(!html.contains("Event 0."));
-    assert!(html.contains("Mark all 1 as read"), "{html}");
+    assert!(html.contains("Mark 1 as read"), "{html}");
     assert!(html.contains("data-unread=\"1\""));
     let start = html.find("data-row=\"older\"").expect("Show older");
     let href = &html[..start];

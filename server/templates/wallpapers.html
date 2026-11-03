@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,42 +7,42 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Wallpapers</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("settings.wallpapers.title") }}</h1>
 
     {#- Every form returns to its own place (design 31 §5.1): an upload to the new photo's row (a
         refusal renders at #add), a photo's switch to its row, a delete to the list. -#}
     <section id="add" aria-labelledby="add-title">
-        <h2 class="group-header" id="add-title">Add a Photo</h2>
+        <h2 class="group-header" id="add-title">{{ self.t("settings.wallpapers.add") }}</h2>
         <form method="post" action="/wallpapers#add" enctype="multipart/form-data" class="group form-group">
             <div class="field">
-                <label class="field-label" for="wallpaper_label">Name</label>
-                <input id="wallpaper_label" type="text" name="label" maxlength="40" placeholder="Photo">
-                <p class="field-hint">Read out to your child.</p>
+                <label class="field-label" for="wallpaper_label">{{ self.t("settings.wallpapers.name") }}</label>
+                <input id="wallpaper_label" type="text" name="label" maxlength="40" placeholder="{{ self.t("settings.wallpapers.photo") }}">
+                <p class="field-hint">{{ self.t("settings.wallpapers.name_hint") }}</p>
             </div>
             <label class="row field-switch">
-                <span class="row-label">Also on the lock screen<span class="row-sub">Anyone holding the locked phone sees it.</span></span>
+                <span class="row-label">{{ self.t("settings.wallpapers.lock_screen") }}<span class="row-sub">{{ self.t("settings.wallpapers.lock_screen_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="lock_screen" value="on"><span class="knob" aria-hidden="true"></span>
             </label>
             <div class="field">
-                <label class="field-label" for="wallpaper_image">Photo</label>
+                <label class="field-label" for="wallpaper_image">{{ self.t("settings.wallpapers.photo") }}</label>
                 <input id="wallpaper_image" type="file" name="image" accept="image/jpeg,image/png,image/webp" required{% if upload_error.is_some() %} aria-invalid="true" aria-describedby="upload-error" autofocus{% endif %}>
                 {% if let Some(error) = upload_error %}<p class="field-error" id="upload-error">{{ error }}</p>{% endif %}
             </div>
-            <button type="submit" class="button-wide">Upload</button>
+            <button type="submit" class="button-wide">{{ self.t("settings.wallpapers.upload") }}</button>
         </form>
-        <div class="group-footer">A new photo is on no phone until you tick it on that phone's Home Screen.
+        <div class="group-footer">{{ self.t("settings.wallpapers.add_footer") }}
             <details class="info">
-                <summary aria-label="About photos"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("settings.wallpapers.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>JPEG, PNG or WebP, up to 10 MB, cut to the phone's screen; where it was taken is removed. Without "Also on the lock screen", the lock shows a colour instead.</p>
+                    <p>{{ self.t("settings.wallpapers.info") }}</p>
                 </div>
             </details>
         </div>
     </section>
 
     <section id="all" aria-labelledby="all-title">
-        <h2 class="group-header" id="all-title">All Wallpapers</h2>
+        <h2 class="group-header" id="all-title">{{ self.t("settings.wallpapers.all") }}</h2>
         <div class="group">
             {% for w in wallpapers %}
             <div class="cell wallpaper-item" id="wallpaper-{{ w.id }}" data-wallpaper="{{ w.id }}">
@@ -52,21 +52,21 @@
                     {% else %}
                     <span class="wallpaper-thumb" style="background: {{ w.background }}" aria-hidden="true"></span>
                     {% endif %}
-                    <span class="row-label">{{ w.label }}<span class="row-sub">{% if w.builtin %}Built in{% else %}Photo{% endif %} · on {{ w.devices }} phone{% if w.devices != 1 %}s{% endif %}</span></span>
+                    <span class="row-label">{{ w.label }}<span class="row-sub">{% if w.builtin %}{{ self.t("settings.wallpapers.built_in") }}{% else %}{{ self.t("settings.wallpapers.photo") }}{% endif %} · {{ self.tc("settings.wallpapers.on_phones", w.devices, []) }}</span></span>
                 </div>
                 {% if !w.builtin %}
                 <form method="post" action="/wallpapers/{{ w.id }}/lock-screen#wallpaper-{{ w.id }}" class="cell">
                     <label class="row">
-                        <span class="row-label">Also on the lock screen</span>
+                        <span class="row-label">{{ self.t("settings.wallpapers.lock_screen") }}</span>
                         <input type="checkbox" role="switch" class="sw" name="lock_screen" value="on"{% if w.lock_screen %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
-                    <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                 </form>
                 <details class="confirm cell">
-                    <summary class="row">Delete Photo…</summary>
+                    <summary class="row">{{ self.t("settings.wallpapers.delete") }}…</summary>
                     <form method="post" action="/wallpapers/{{ w.id }}/delete#all" class="confirm-body">
-                        <p>Delete "{{ w.label }}" from this server and every phone?</p>
-                        <button type="submit" class="button-destructive">Delete Photo</button>
+                        <p>{{ self.tp("settings.wallpapers.delete_confirm", [("name", w.label.as_str())]) }}</p>
+                        <button type="submit" class="button-destructive">{{ self.t("settings.wallpapers.delete") }}</button>
                         {% include "partials/confirm_cancel.html" %}
                     </form>
                 </details>
@@ -74,7 +74,7 @@
             </div>
             {% endfor %}
         </div>
-        <p class="group-footer">Choose which ones a phone may use on its Home Screen.</p>
+        <p class="group-footer">{{ self.t("settings.wallpapers.all_footer") }}</p>
     </section>
 </main>
 </body>

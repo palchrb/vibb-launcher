@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,8 +7,8 @@
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Web Filter</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
+    <h1 class="page-title">{{ self.t("settings.web_filter.title") }}</h1>
 
     {#- Every form returns to its own group (design 31 §5.1), so a save never lands at the top, with
         or without JS. The switches and the picker save on change (autosave.js), with a <noscript>
@@ -22,34 +22,34 @@
                     <span class="row-label">{{ row.list.name }}<span class="row-sub" data-scope>{{ row.scope }}</span>{% if !row.sub.is_empty() %}<span class="row-sub{% if row.failing %} text-alarm{% endif %}">{{ row.sub }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="enabled" value="on"{% if row.list.enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             {% if let Some(detail) = row.detail %}
             <details class="info cell" data-list-problem="{{ row.list.id }}">
-                <summary class="row"><span class="row-label row-label-quiet">What happened</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why {{ row.list.name }} has a problem" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary class="row"><span class="row-label row-label-quiet">{{ self.t("settings.web_filter.what_happened") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.tp("settings.web_filter.problem_label", [("name", row.list.name.as_str())]) }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel"><p>{{ detail }}</p></div>
             </details>
             {% endif %}
             {% else %}
-            <p class="row row-note">No lists yet.</p>
+            <p class="row row-note">{{ self.t("device.filter.no_lists") }}</p>
             {% endfor %}
             {#- Design 67 §2.2: built into the phone, no switch - the Web Filter switch lifts it. -#}
             <div class="row" data-list="builtin-doh">
-                <span class="row-label">Secure DNS servers<span class="row-sub">Built into Vibb One, on with the filter</span></span>
+                <span class="row-label">{{ self.t("settings.web_filter.doh_servers") }}<span class="row-sub">{{ self.t("settings.web_filter.doh_servers_sub") }}</span></span>
             </div>
             <details class="disclosure cell" id="add-list"{% if refused == "lists" %} open{% endif %}>
-                <summary class="row row-button">Add a List…</summary>
+                <summary class="row row-button">{{ self.t("settings.web_filter.add_list") }}</summary>
                 <form method="post" action="/dns/blocklists/new#lists" class="form-group">
                     <div class="field">
-                        <label class="field-label" for="bl_name">Name</label>
-                        <input type="text" id="bl_name" name="name" value="{{ typed_name }}" maxlength="100" placeholder="My list" required>
+                        <label class="field-label" for="bl_name">{{ self.t("settings.web_filter.list_name") }}</label>
+                        <input type="text" id="bl_name" name="name" value="{{ typed_name }}" maxlength="100" placeholder="{{ self.t("settings.web_filter.list_name_example") }}" required>
                     </div>
                     <div class="field">
-                        <label class="field-label" for="bl_url">Address</label>
-                        <input type="url" id="bl_url" name="url" value="{{ typed_url }}" placeholder="https://…" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
-                        {% if refused == "lists" %}<p class="field-error" id="list-error">Give it a name and an address starting with https://. Nothing was added.</p>{% else %}<p class="field-hint">A list of domains, one per line, as in a hosts file.</p>{% endif %}
+                        <label class="field-label" for="bl_url">{{ self.t("settings.web_filter.list_url") }}</label>
+                        <input type="url" id="bl_url" name="url" value="{{ typed_url }}" placeholder="{{ self.t("settings.web_filter.url_example") }}" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
+                        {% if refused == "lists" %}<p class="field-error" id="list-error">{{ self.t("settings.web_filter.bad_list") }}</p>{% else %}<p class="field-hint">{{ self.t("settings.web_filter.list_hint") }}</p>{% endif %}
                     </div>
-                    <button type="submit" class="button-wide">Add List</button>
+                    <button type="submit" class="button-wide">{{ self.t("settings.web_filter.add_list_button") }}</button>
                 </form>
             </details>
         </div>
@@ -57,58 +57,58 @@
     </section>
 
     <section id="blocked" aria-labelledby="blocked-title">
-        <h2 class="group-header" id="blocked-title">Blocked Domains</h2>
+        <h2 class="group-header" id="blocked-title">{{ self.t("settings.web_filter.blocked") }}</h2>
         <div class="group">
             {% for d in blocked_domains %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
                 <form method="post" action="/dns/domains/{{ d.id }}/delete#blocked" class="row-end">
                     <input type="hidden" name="list_type" value="block">
-                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.filter.remove_label", [("domain", d.domain.as_str())]) }}">{{ self.t("device.filter.remove") }}</button>
                 </form>
             </div>
             {% endfor %}
             <form method="post" action="/dns/domains/new#blocked" class="cell">
                 <input type="hidden" name="list_type" value="block">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" value="{% if refused == "blocked" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to block on every phone"{% if refused == "blocked" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-                    <button type="submit" class="row-action">Block</button>
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "blocked" %}{{ typed }}{% endif %}" placeholder="{{ self.t("device.filter.domain_example") }}" aria-label="{{ self.t("settings.web_filter.block_label") }}"{% if refused == "blocked" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="{{ self.t("device.filter.domain_title") }}">
+                    <button type="submit" class="row-action">{{ self.t("device.filter.block") }}</button>
                 </div>
             </form>
-            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
         </div>
-        <p class="group-footer">Blocked on every phone, also when no list has it.</p>
+        <p class="group-footer">{{ self.t("settings.web_filter.blocked_footer") }}</p>
     </section>
 
     <section id="allowed" aria-labelledby="allowed-title">
-        <h2 class="group-header" id="allowed-title">Allowed Domains</h2>
+        <h2 class="group-header" id="allowed-title">{{ self.t("settings.web_filter.allowed") }}</h2>
         <div class="group">
             {% for d in allowed_domains %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
                 <form method="post" action="/dns/domains/{{ d.id }}/delete#allowed" class="row-end">
                     <input type="hidden" name="list_type" value="allow">
-                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.filter.remove_label", [("domain", d.domain.as_str())]) }}">{{ self.t("device.filter.remove") }}</button>
                 </form>
             </div>
             {% endfor %}
             <form method="post" action="/dns/domains/new#allowed" class="cell">
                 <input type="hidden" name="list_type" value="allow">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" value="{% if refused == "allowed" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to allow on every phone"{% if refused == "allowed" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-                    <button type="submit" class="row-action">Allow</button>
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "allowed" %}{{ typed }}{% endif %}" placeholder="{{ self.t("device.filter.domain_example") }}" aria-label="{{ self.t("settings.web_filter.allow_label") }}"{% if refused == "allowed" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="{{ self.t("device.filter.domain_title") }}">
+                    <button type="submit" class="row-action">{{ self.t("device.filter.allow") }}</button>
                 </div>
             </form>
-            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
-            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ host }} is a secure-DNS server and stays blocked.</p>{% endif %}
+            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
+            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ self.tp("device.filter.doh_allowed", [("host", host.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">Let through even when a list blocks it - not the secure-DNS servers built into Vibb One, which stay blocked.</p>
+        <p class="group-footer">{{ self.t("device.filter.allowed_footer") }}</p>
     </section>
 
     {#- Design 31 step 5: a phone's own lists, domains and log are on its Web Filter page. -#}
     {% if !devices.is_empty() %}
     <section id="phones" aria-labelledby="phones-title">
-        <h2 class="group-header" id="phones-title">Each Phone</h2>
+        <h2 class="group-header" id="phones-title">{{ self.t("settings.web_filter.each_phone") }}</h2>
         <div class="group">
             {% for d in devices %}
             <a class="row" href="/devices/{{ d.id }}/filter" data-phone="{{ d.id }}">
@@ -117,7 +117,7 @@
             </a>
             {% endfor %}
         </div>
-        <div class="group-footer">A list off for one phone, its own domains, and its log.
+        <div class="group-footer">{{ self.t("settings.web_filter.each_phone_footer") }}
             {% if !bypass.is_empty() %}
             <ul class="phone-lines">
                 {% for (id, line) in bypass %}<li data-bypass-phone="{{ id }}">{{ line }}</li>{% endfor %}
@@ -128,59 +128,59 @@
     {% endif %}
 
     <section id="server" aria-labelledby="server-title">
-        <h2 class="group-header" id="server-title">DNS Server</h2>
+        <h2 class="group-header" id="server-title">{{ self.t("settings.web_filter.dns_server") }}</h2>
         {#- Design 36 §6: the picker saves itself; Custom Server is one form whose two fields are
             write-only (never filled from storage). A refused save renders in place (400) at
             #server with the typed values and each reason under its field. -#}
         <div class="group">
             <form method="post" action="/dns/upstream#server" class="cell">
                 <label class="row" for="upstream">
-                    <span class="row-label">Look-ups go to</span>
+                    <span class="row-label">{{ self.t("settings.web_filter.lookups_go_to") }}</span>
                     <select id="upstream" name="upstream" class="pick" data-autosave>
-                        <option value="cloudflare"{% if server.choice == "cloudflare" %} selected{% endif %}>Cloudflare</option>
-                        <option value="quad9"{% if server.choice == "quad9" %} selected{% endif %}>Quad9</option>
-                        <option value="custom"{% if server.choice == "custom" %} selected{% endif %}>Custom server</option>
+                        <option value="cloudflare"{% if server.choice == "cloudflare" %} selected{% endif %}>{{ self.t("settings.web_filter.cloudflare") }}</option>
+                        <option value="quad9"{% if server.choice == "quad9" %} selected{% endif %}>{{ self.t("settings.web_filter.quad9") }}</option>
+                        <option value="custom"{% if server.choice == "custom" %} selected{% endif %}>{{ self.t("settings.web_filter.custom_option") }}</option>
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             <details class="disclosure cell" id="custom-server"{% if server.open %} open{% endif %}>
-                <summary class="row"><span class="row-label">Custom Server<span class="row-sub">{% if let Some(hint) = server.server_hint %}{{ hint }}{% else %}Not set{% endif %}</span></span></summary>
+                <summary class="row"><span class="row-label">{{ self.t("settings.web_filter.custom") }}<span class="row-sub">{% if let Some(hint) = server.server_hint %}{{ hint }}{% else %}{{ self.t("settings.web_filter.not_set") }}{% endif %}</span></span></summary>
                 <form method="post" action="/dns/upstream/custom#server" class="form-group">
                     <div class="field">
-                        <label class="field-label" for="custom_server">Your server</label>
-                        <p class="field-hint" data-hint="server">{% if let Some(hint) = server.server_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-                        <input type="text" id="custom_server" name="custom_server" value="{{ server.typed_server }}" placeholder="https://… or a host name" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.server_error.is_some() %} aria-invalid="true" aria-describedby="custom_server-error" autofocus{% endif %}>
-                        {% if let Some(why) = server.server_error %}<p class="field-error" id="custom_server-error">{{ why }}</p>{% endif %}
+                        <label class="field-label" for="custom_server">{{ self.t("settings.web_filter.your_server") }}</label>
+                        <p class="field-hint" data-hint="server">{% if let Some(hint) = server.server_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
+                        <input type="text" id="custom_server" name="custom_server" value="{{ server.typed_server }}" placeholder="{{ self.t("settings.web_filter.server_example") }}" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.server_error.is_some() %} aria-invalid="true" aria-describedby="custom_server-error" autofocus{% endif %}>
+                        {% if let Some(why) = server.server_error %}<p class="field-error" id="custom_server-error">{{ self.t(why) }}</p>{% endif %}
                     </div>
                     <div class="field">
-                        <label class="field-label" for="custom_backup">Backup server</label>
-                        <p class="field-hint" data-hint="backup">{% if let Some(hint) = server.backup_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-                        <input type="text" id="custom_backup" name="custom_backup" value="{{ server.typed_backup }}" placeholder="https://1.1.1.3/dns-query" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.backup_error.is_some() %} aria-invalid="true" aria-describedby="custom_backup-error"{% if server.server_error.is_none() %} autofocus{% endif %}{% endif %}>
-                        {% if let Some(why) = server.backup_error %}<p class="field-error" id="custom_backup-error">{{ why }}</p>{% endif %}
-                        <p class="field-hint">Answers while your server can't be reached. https://1.1.1.3/dns-query is Cloudflare for Families, over DNS-over-HTTPS, so it also answers on networks that block DNS-over-TLS.</p>
-                        {% if server.both_names %}<p class="field-hint" data-hint="backup-ip">Give the backup as an IP address and no look-up ever leaves for anyone else.</p>{% endif %}
+                        <label class="field-label" for="custom_backup">{{ self.t("settings.web_filter.backup") }}</label>
+                        <p class="field-hint" data-hint="backup">{% if let Some(hint) = server.backup_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
+                        <input type="text" id="custom_backup" name="custom_backup" value="{{ server.typed_backup }}" placeholder="{{ self.t("settings.web_filter.backup_example") }}" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.backup_error.is_some() %} aria-invalid="true" aria-describedby="custom_backup-error"{% if server.server_error.is_none() %} autofocus{% endif %}{% endif %}>
+                        {% if let Some(why) = server.backup_error %}<p class="field-error" id="custom_backup-error">{{ self.t(why) }}</p>{% endif %}
+                        <p class="field-hint">{{ self.t("settings.web_filter.backup_hint") }}</p>
+                        {% if server.both_names %}<p class="field-hint" data-hint="backup-ip">{{ self.t("settings.web_filter.backup_ip") }}</p>{% endif %}
                     </div>
                     {% if server.stored %}
                     <label class="checkbox-row">
                         <input type="checkbox" name="forget_custom" value="on"{% if server.forget %} checked{% endif %}>
-                        <span>Forget Custom Server</span>
+                        <span>{{ self.t("settings.web_filter.forget") }}</span>
                     </label>
                     {% endif %}
-                    <button type="submit" class="button-wide">Save</button>
+                    <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
                 </form>
             </details>
         </div>
-        <div class="group-footer">{% if server.stale %}The saved addresses aren't accepted any more: type them again. Until then the phones use Cloudflare.{% else %}Where the phones look up sites that aren't blocked, encrypted.{% endif %}
+        <div class="group-footer">{% if server.stale %}{{ self.t("settings.web_filter.stale") }}{% else %}{{ self.t("settings.web_filter.server_footer") }}{% endif %}
             {% if !server.phones.is_empty() %}
             <ul class="phone-lines">
                 {% for (id, line) in server.phones %}<li data-dns-phone="{{ id }}">{{ line }}</li>{% endfor %}
             </ul>
             {% endif %}
             <details class="info">
-                <summary aria-label="About the DNS server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("settings.web_filter.server_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>A custom server: type a name for DNS-over-TLS, or an https:// address for DNS-over-HTTPS. The phone reaches it directly, not through Tailscale, so a server at home works only on the home Wi-Fi.</p>
+                    <p>{{ self.t("settings.web_filter.server_info") }}</p>
                 </div>
             </details>
         </div>
