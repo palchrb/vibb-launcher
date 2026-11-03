@@ -146,3 +146,39 @@ right; step 1 alone is harmless. i18n is complete but for L5. The PWA switch reu
 anchor with `scroll-restore.js`, and the two notes appear under the switch, so a save never jumps. The symbol
 script's licence handling (pinned commit, manifest hash, per-file notice, "changes made", the licence text in the
 launcher's assets and NOTICE.md) is sound.
+
+## Revision check (689bb9cb)
+
+Against the revised note and §11's map. **All of H1 and M1-M5 are closed** and none adds a defect:
+
+- H1: the erase is `weather_cache::erase` in `update_location_policy`, only on the change to `off` (old mode read
+  first); prune touches the weather tables by age only.
+- M1: `weather_places.asked_at`, pruned at the longest `location_retention_days` (default 7, `retention.rs:16`).
+- M2: Kartverket is spawned after the answer, on its own ungated client, one lookup per cell, 2 + 2 pages.
+- M3: `nowcast_line(steps, now, ..)` runs at each `/now` answer.
+- M4: the `warn!` when `MET_CONTACT` is unset, DEPLOY.md, and `net.rs`'s doc.
+- M5: every input is defined in D4, sleet → `maybe_rain`, `thunder_pop` gone.
+
+The Lows I spot-checked are in too: the dusk after solar noon at 17:02, `Expires − Date`, `COALESCE(mock, 0)`, one
+lock, the words. O1 holds as well: the server sends MET's code, and `weather.json` is the one contract file left
+(CI paths updated, `music.yml` untouched).
+
+**D5's source order** is sound. The zone is the parent's own place, not a trail, so using it with Location Off is
+right, and the Off erase followed by a re-fetch of the zone's cell is fine. A deleted zone clears the column: foreign
+keys are on (`main.rs:1804`), zones are hard-deleted (`handlers/zones.rs:686`), and a phone's delete cascades to its
+zones. Two Lows:
+- **R1.** A deleted zone leaves the phone showing that zone's weather until its next pull, and the answer lives up to
+  3 h. Fix: the zone delete nudges the phone (`command_notify`) when it cleared a `weather_zone_id`; the `no_position`
+  answer then clears the store (§5.4).
+- **R2.** Migrations run with foreign keys on (`0099`'s note). A future rebuild of `device_zones` (copy, drop,
+  rename) would set every `weather_zone_id` to NULL without a word. Say so in 0122's comment and in the zones note,
+  so such a rebuild saves and restores the column.
+
+**Step 3** is sound as designed: integers checked, used only with its switch on and the mode `on_request`, kept only
+as the cache key, and covered by the Off erase. One Low:
+- **R3.** Send the cell in a request header (e.g. `X-Vibb-Cell`), not `?cell=`. URLs land in reverse-proxy access
+  logs (Caddy, nginx, Tailscale serve); a header doesn't.
+
+Whether the indicator wording is honest is the launcher review's question.
+
+**Verdict: ready for the brief.** The three Lows can go in during the build.
