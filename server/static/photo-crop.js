@@ -295,6 +295,8 @@
                 if (frame.setPointerCapture) frame.setPointerCapture(e.pointerId);
             } catch (err) {}
             pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+            // The frame's width again: the phone may have turned since the dialog opened.
+            session.frame = frame.getBoundingClientRect().width || session.frame;
         });
 
         frame.addEventListener("pointermove", function (e) {
