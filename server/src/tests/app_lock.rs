@@ -381,6 +381,17 @@ async fn past_its_time_the_app_is_locked() {
     assert!(!html.contains("parent"), "the name shows: {html}");
     assert!(html.contains("value=\"/devices/3?push=ab12\""));
     assert!(html.contains("action=\"/logout\""));
+    // The whole screen is Unlock (§6.5, the user's pick A "Pust", 2026-11-03), the breathing mark inline; Sign Out is
+    // its own form after the unlock form, so it never starts the prompt.
+    assert!(html.contains("<h1 class=\"lock-title\">Vibb is locked</h1>"));
+    assert!(html.contains("<svg class=\"vibb-breath\""));
+    let tap = html
+        .find("data-passkey-unlock-button")
+        .expect("the tap target");
+    assert!(html[..tap].contains("id=\"unlock\""));
+    assert!(html[tap..].contains("aria-label=\"Unlock\""));
+    let unlock_end = tap + html[tap..].find("</form>").unwrap();
+    assert!(html[unlock_end..].contains("action=\"/logout\""));
     // An open redirect in `next` is dropped.
     let html = browse(
         &app,

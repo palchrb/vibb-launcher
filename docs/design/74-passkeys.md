@@ -439,6 +439,11 @@ anchors. Manual QA: iPhone PWA, Android Chrome WebAPK, Mac Safari, a security ke
    choice):* D3.5's "always waits for a tap" is gone - `/lock` starts the modal prompt on its own once per page load,
    with the passkey this browser unlocked with last as `/lock/options`' `hint` (narrowed only within the parent's own
    passkeys here); refused or cancelled, the button asks on a tap with every passkey (branch `lock-faceid`).
+   *Changed again 2026-11-03 (the user's pick A "Pust": "lås opp skjermen kulere og sleekere"):* nothing starts on its
+   own any more - WebKit put its own "Continue" sheet before the automatic prompt. The screen is vibb's night with the
+   breathing Vibb mark, "Vibb er låst" and the hint "Trykk hvor som helst for å låse opp"; the whole screen is the
+   Unlock button. The first tap asks with the hint, every tap after a cancel or a failure with every passkey; the red
+   line then sits over the hint "Trykk for å prøve igjen" (branch `lock-pust`).
    `docs/notes/server/connectivity.md`, "The app lock".
 
 ## 8. Open for the user

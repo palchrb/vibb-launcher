@@ -1117,7 +1117,8 @@ fn the_app_shell_scrolls_main_not_the_document() {
         auth.contains("height: auto;") && auth.contains("overflow: visible;"),
         "{auth}"
     );
-    // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card).
+    // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card; the lock screen adds its
+    // own classes to both).
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
         if !text.contains("<body") {
@@ -1125,8 +1126,8 @@ fn the_app_shell_scrolls_main_not_the_document() {
         }
         assert!(
             text.contains("<main class=\"container")
-                || (text.contains("<body class=\"auth-page\">")
-                    && text.contains("<main class=\"auth-card\">")),
+                || (text.contains("<body class=\"auth-page")
+                    && text.contains("<main class=\"auth-card")),
             "{} is neither in the shell nor an auth page",
             path.display()
         );

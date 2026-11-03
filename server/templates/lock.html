@@ -3,38 +3,46 @@
 <head>
 {% include "partials/head.html" %}
 </head>
-{#- Design 74 §6.5, D3.5: the lock screen. No tab bar, nothing private - no name, no phone, no count, nothing from the
-    page behind. static/passkey.js starts the prompt on its own once per page load (the passkey this browser used last
-    alone); refused or cancelled, "Unlock" asks again on a tap with every passkey (its challenge fetched ahead, so the
-    prompt opens within the tap - iOS needs the gesture) and replaces this page with the one it was opened for; a
-    refused unlock or a cancelled tap shows the red line. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
-    sign-in page keeps where the parent was going. -#}
-<body class="auth-page">
+{#- Design 74 §6.5, D3.5: the lock screen, the night ground edge to edge in both schemes (the user's pick A "Pust",
+    2026-11-03): the Vibb mark breathing, "Vibb is locked", the hint at the bottom and Sign Out under it. No tab bar,
+    nothing private - no name, no phone, no count, nothing from the page behind. The whole screen is the Unlock button
+    (`.lock-tap`, over everything but Sign Out); nothing starts on its own - a prompt without a tap gets iOS's own
+    "Continue" sheet. static/passkey.js: the first tap asks for the passkey this browser used last (its challenge fetched
+    ahead, so the prompt opens within the tap and iOS goes straight to Face ID); a cancel or a refused unlock shows the
+    red line, the hint says "Tap to try again", and the next tap asks with every passkey. A done unlock replaces this
+    page with the one it was opened for. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
+    sign-in page keeps where the parent was going. Without a passkey here or without WebAuthn there is no tap target,
+    only the note. -#}
+<body class="auth-page lock-page">
 {% include "partials/js_words.html" %}
-<main class="auth-card">
-<div class="lock-card">
-    <img class="lock-mark" src="/static/icons/icon-192.png" width="64" height="64" alt="" decoding="async">
-    <h1 class="lock-title">{{ self.t("lock.page.title") }}</h1>
-    <p class="lock-sub">{{ self.t("lock.page.sub") }}</p>
+<main class="auth-card lock-screen">
     <form method="post" action="/lock" id="unlock" class="lock-form" data-passkey-unlock>
         <input type="hidden" name="next" value="{{ next }}">
         <input type="hidden" name="assertion" value="">
-        <p class="lock-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("lock.page.failed") }}"></p>
         {%- if passkey_here %}
-        <button type="button" class="button-wide" data-passkey-ui data-passkey-unlock-button hidden>{{ self.t("lock.page.unlock") }}</button>
-        <p class="lock-note" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"></p>
-        <noscript><p class="lock-note">{{ self.t("passkeys.no_browser") }}</p></noscript>
-        {%- else %}
-        <p class="lock-note">{{ self.t("passkeys.reauth.none_here") }}</p>
+        <button type="button" class="lock-tap" data-passkey-ui data-passkey-unlock-button hidden aria-label="{{ self.t("lock.page.unlock") }}"></button>
         {%- endif %}
+        <div class="lock-centre">
+            {% include "partials/vibb_breath.html" %}
+            <h1 class="lock-title">{{ self.t("lock.page.title") }}</h1>
+        </div>
+        <div class="lock-foot">
+            <p class="lock-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("lock.page.failed") }}"></p>
+            {%- if passkey_here %}
+            <p class="lock-hint" data-passkey-ui data-passkey-unlock-hint hidden data-w-retry="{{ self.t("lock.page.retry") }}">{{ self.t("lock.page.hint") }}</p>
+            <p class="lock-note" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"></p>
+            <noscript><p class="lock-note">{{ self.t("passkeys.no_browser") }}</p></noscript>
+            {%- else %}
+            <p class="lock-note">{{ self.t("passkeys.reauth.none_here") }}</p>
+            {%- endif %}
+        </div>
     </form>
     <form method="post" action="/logout" class="lock-out" data-sign-out>
         <input type="hidden" name="endpoint" value="">
         <input type="hidden" name="next" value="{{ next }}">
-        <button type="submit" class="button-plain">{{ self.t("lock.page.sign_out") }}</button>
+        <button type="submit" class="lock-out-button">{{ self.t("lock.page.sign_out") }}</button>
     </form>
-</div>
 </main>
-<script src="/static/passkey.js?v=6" defer></script>
+<script src="/static/passkey.js?v=7" defer></script>
 </body>
 </html>

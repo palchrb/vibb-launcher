@@ -103,6 +103,11 @@
     --brand-word: #FFFFFF;
     --night-action: #F0A884;
     --night-action-hover: #F6C4AA;
+    /* Words on the night ground, both schemes (the lock screen): cream 16.2:1, the second line 8.4:1, a failure's pale
+       red 11.4:1. */
+    --night-text: #F6E7E0;
+    --night-text-2: #B4A8A2;
+    --night-error: #F2B8B5;
     --avatar-bg: #F0A884;
     --avatar-text: #0C0C14;
     /* The Locate map's trail (static/locate.js): on OSM's light tiles in both schemes. */
@@ -2722,16 +2727,72 @@ a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
    ground stays. The lock is the server's; this only keeps the page from flashing up first (D3.3). */
 html.locked body > *,
 html.veiled body > * { visibility: hidden !important; }
-/* The lock screen (§6.5): the Vibb mark, the large title, the sub, one wide filled Unlock, Sign Out as plain text at the
-   bottom; centred in one narrow column. */
-.lock-card { display: flex; flex-direction: column; align-items: center; max-width: 320px; margin: 0 auto; text-align: center; }
-.lock-mark { display: block; width: 64px; height: 64px; border-radius: 16px; margin: 0 0 12px; }
-.lock-title { margin: 0 0 6px; font-family: var(--font-display); font-size: 1.9rem; font-weight: 800; line-height: 1.15; }
-.lock-sub { margin: 0 0 22px; font-size: 1rem; color: var(--label-2); }
-.lock-form { width: 100%; }
-.lock-error { margin: 0 0 14px; font-size: 0.9375rem; line-height: 1.4; color: var(--red-text); }
-.lock-note { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
-.lock-out { margin-top: 32px; }
-.button-plain,
-.button-plain:hover { padding: 10px 16px; border: 0; background: transparent; color: var(--tint); font-size: 1rem; }
+/* The lock screen (§6.5; the user's pick A "Pust", 2026-11-03): vibb's night edge to edge in both schemes, the Vibb mark
+   breathing in the optical centre (the middle of the screen above Sign Out, so the red line never moves it), "Vibb is
+   locked" in Nunito under it, the hint at the bottom and Sign Out under the hint. The whole screen is the Unlock
+   button: `.lock-tap` covers the body (absolute in it, never the viewport - design 43), under Sign Out alone; the
+   words show through it. On night: cream 16.2:1, the hint and Sign Out 8.4:1, the red line pale red 11.4:1. */
+.lock-page {
+    flex-direction: column;
+    align-items: center;
+    background: var(--night);
+    color: var(--night-text);
+    color-scheme: dark;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.lock-screen { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 420px; text-align: center; }
+.lock-form { flex: 1 0 auto; display: grid; grid-template-rows: 1fr auto 1fr; justify-items: center; width: 100%; }
+.lock-centre { grid-row: 2; padding: 24px 0; display: flex; flex-direction: column; align-items: center; }
+.lock-title { margin: 26px 0 0; font-family: var(--font-display); font-size: 1.625rem; font-weight: 800; line-height: 1.2; letter-spacing: 0.01em; color: var(--night-text); }
+.lock-foot { grid-row: 3; align-self: end; width: 100%; }
+.lock-error { margin: 0 auto 12px; max-width: 300px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-error); }
+.lock-hint { margin: 0; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }
+.lock-note { margin: 0 auto; max-width: 320px; font-size: 0.9375rem; line-height: 1.4; color: var(--night-text-2); }
+.lock-tap,
+.lock-tap:hover {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.lock-tap:focus-visible { outline: 2px solid var(--night-action); outline-offset: -10px; border-radius: 28px; }
+.lock-out { position: relative; z-index: 2; margin-top: 4px; }
+.lock-out-button,
+.lock-out-button:hover { padding: 10px 18px; border: 0; background: transparent; color: var(--night-text-2); font-size: 0.9375rem; font-weight: 600; }
+.lock-out-button:hover { color: var(--night-text); }
+.lock-out-button:focus { outline-color: var(--night-action); }
+/* The Vibb mark (partials/vibb_breath.html, from launcher/scripts/vibb-icon.py): the breath of the pust SVG, its 4 s loop
+   as CSS keyframes - rings 0.94 -> 1.04 -> 0.94 and 0.55 -> 1 -> 0.55, the outer ring first (each ring's lead is its
+   animation-delay in the partial), the core 0.9 -> 1.08; every half its keySplines 0.42 0 0.58 1. Each shape scales
+   about its own box's centre (the rings are hand-shaped: within 0.3 units, 0.04 px here, of the SVG's 0,0). Under
+   prefers-reduced-motion the mark stands still, whole. */
+.vibb-breath { display: block; width: 130px; height: 130px; overflow: visible; }
+.vibb-breath-ring,
+.vibb-breath-core {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: vibb-breathe 4s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+.vibb-breath-core { animation-name: vibb-breathe-core; }
+@keyframes vibb-breathe {
+    0%, 100% { transform: scale(0.94); opacity: 0.55; }
+    50% { transform: scale(1.04); opacity: 1; }
+}
+@keyframes vibb-breathe-core {
+    0%, 100% { transform: scale(0.9); }
+    50% { transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .vibb-breath-ring,
+    .vibb-breath-core { animation: none; }
+}
 .lock-field-error { margin: 4px 16px 10px; }

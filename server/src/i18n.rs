@@ -609,8 +609,9 @@ mod tests {
         "partials/music_status.html",
         "partials/music_status_only.html",
         "partials/spotify_setup.html",
-        // Design 74 step 3: the lock screen.
+        // Design 74 step 3: the lock screen (and its breathing Vibb mark, 2026-11-03).
         "lock.html",
+        "partials/vibb_breath.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,
@@ -660,7 +661,8 @@ mod tests {
         let text = regex::Regex::new(r"&#?[a-zA-Z0-9]+;")
             .unwrap()
             .replace_all(&text, " ");
-        // The names: "Vibb Phone", "Vibb One", the brand row's "vibb" and the lock screen's title "Vibb" (design 74 §6.5).
+        // The names: "Vibb Phone", "Vibb One", the brand row's "vibb" and the lock screen's head title "Vibb" (design 74
+        // §6.5; its page title "Vibb is locked" is the catalog's).
         regex::Regex::new(r"\b(Vibb Phone|Vibb One|Vibb|vibb)\b")
             .unwrap()
             .replace_all(&text, " ")
