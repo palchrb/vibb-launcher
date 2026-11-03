@@ -75,3 +75,21 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `BluetoothDevice.connect`/`disconnect`), no `CountDownLatch`/`runBlocking`/`.await(` in the Bluetooth sources, the log
   lines, the grant order and the broadcasts.
 - Not device-tested: design 52 §4 (the emulator checks on API 34/35/36 and the Jelly Star with real headphones).
+
+## The kid's hidden apps in Kid Settings (the user, 2026-11-03, branch `kid-unhide`)
+
+- **What**: Home's long-press "Skjul" (`ContextMenuActions.toggleHidden`, the local `LauncherPreferences.apps().hidden()`)
+  could be undone only by the snackbar's "Angre" or in the PIN-gated Settings › Skjulte apper (kept as it was). Kid
+  Settings now has a card "Skjulte apper" / "Hidden apps" under the switches, shown only while the kid has hidden an
+  app Home would otherwise show; its row opens the list in the card (chevron turned down, `stateDescription`
+  "Utvidet"/"Lukket" for TalkBack), each app with its icon as Home draws it (`KidAvatars.renderAppIcon`, 40 dp), the
+  name the kid sees (`getCustomLabel`) and "Vis"; a tap takes only that app off `hidden()` at once (TalkBack: "Vis
+  <name> igjen"), Home and the drawer follow the preference, and the card goes when the last one is shown.
+- **One filter**: `ui/home/HomeApps.kt` `homeApps(context, all, visibility)` is Home's grid filter (`AppFilter`, not
+  Vibb One, the Play Store only in install mode), used by `HomeActivity.refreshApps` (`HIDDEN`) and by Kid Settings
+  (`EXCLUSIVE`: the hidden set taken instead of left out), off the main thread. So the parent's off-Home apps
+  (`app_display.on_home: false`) are not listed - except in a parent window, where Home shows them too. Pure
+  `ui/kidsettings/HiddenApps.kt` `hiddenAppsView` (no row without an app; the list closes with its last app);
+  `HiddenAppsTest`. The list is filtered again on every resume, policy and change of the hidden set.
+- Not device-tested: the card in nb/en at font scale 1.0/2.0, TalkBack on the row and the apps, a hide on Home then
+  the swipe left.

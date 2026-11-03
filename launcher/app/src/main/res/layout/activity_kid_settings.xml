@@ -311,6 +311,59 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- The kid's hidden apps (the user, 2026-11-03): only while the kid has hidden an app with Home's long-press
+             "Skjul" that Home would otherwise show (homeApps with EXCLUSIVE - the parent's off-Home apps never). The
+             row opens the list in the card (its state for TalkBack in code); a tap on an app shows it on Home again
+             at once. The list's rows are item_kid_hidden_app. -->
+        <LinearLayout
+            android:id="@+id/kid_settings_hidden_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_kid_card"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/kid_settings_hidden_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="52dp"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="10dp">
+
+                <TextView
+                    android:id="@+id/kid_settings_hidden_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="@font/nunito_bold"
+                    android:text="@string/kid_settings_hidden_apps"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="16sp" />
+
+                <ImageView
+                    android:id="@+id/kid_settings_hidden_chevron"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginStart="8dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_kid_chevron" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/kid_settings_hidden_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone" />
+        </LinearLayout>
+
         <!-- Design 64 step 2 (the user's decision 6): one calm line, no control, while the phone
              shares its location (sharesLocation) - the wallpaper caption's look. -->
         <TextView
