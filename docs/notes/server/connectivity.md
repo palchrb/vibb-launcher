@@ -401,16 +401,25 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   in both schemes, the breathing Vibb mark (`partials/vibb_breath.html`, written by `launcher/scripts/vibb-icon.py`
   from the pust SVG; CSS keyframes, still under `prefers-reduced-motion`), "Vibb is locked", the hint "Tap anywhere to
   unlock" and Sign Out. The whole screen is the Unlock button (`.lock-tap`, a full-screen `<button>`, aria-label
-  "Unlock"; Sign Out is its own form above it). Nothing starts without a tap - the same day's automatic prompt is gone:
-  WebKit shows its own "Continue" sheet before a prompt that starts without a gesture. The first tap asks with `hint` =
-  the passkey this browser unlocked with last (localStorage `handy-lock-passkey`, its `rawId`, kept after an unlock):
-  `handlers::lock::offered` narrows `allowCredentials` to it only when it is one of the parent's passkeys here, else
-  all (another parent's, unknown, junk, over the route's 1 KiB). Cancelled, timed out or refused, the red line shows
-  over the hint, which turns to "Tap to try again", and every tap after asks with every passkey. Each tap's challenge
-  is fetched ahead, so the prompt opens within the tap (iOS goes straight to Face ID). A tap while a try is open is
-  dropped, unless the page was hidden and shown since (a prompt WebKit never settles): that tap aborts the old try,
-  whose end is then ignored, and asks afresh. The button's `aria-describedby` reads the title, the red line and the
-  hint. Without a passkey here or
+  "Unlock"; Sign Out is its own form above it). Each showing asks once on its own (since server 0.65.1, back from Pust's
+  tap-first: on the user's iPhone iOS's own passkey sheet came after the tap anyway, so the tap only added one): on load
+  while visible, else the first time the page is shown, and again after it was hidden with no try open, or back from
+  the back-forward cache (`pagehide`, then the first of `visibilitychange` and `pageshow` takes the showing). A passkey
+  sheet that hides the page while its try is open is no new showing, so a cancel there never loops. The automatic try
+  asks with `hint` = the passkey this browser unlocked with last (localStorage `handy-lock-passkey`, its `rawId`, kept
+  after an unlock): `handlers::lock::offered` narrows `allowCredentials` to it only when it is one of the parent's
+  passkeys here, else all (another parent's, unknown, junk, over the route's 1 KiB). Cancelled, timed out or refused
+  for want of a gesture it stays quiet: no red line, "Tap anywhere to unlock" stays. Safari (16 on) gives each tab one
+  `credentials.get` without a gesture and refuses the later ones with `NotAllowedError` (Apple in w3c/webauthn#1293,
+  2022-10-21: "Each tab gets a 'freebie' attempt"), so the automatic try of a later showing in the same document may be
+  refused - quietly, and the tap works. The tap always asks with every passkey (a removed or lost one never strands the
+  parent); its challenge is fetched ahead, so its prompt opens within the tap. A tap's cancel or failure, or a refused
+  unlock (the automatic try's too), shows the red line over the hint, which turns to "Tap to try again"; the next
+  showing clears both. A tap while the automatic try waits for its answer aborts it (its end is then ignored) and asks
+  itself - never two prompts; a tap while a tap's try is open, or while an answered one posts, is dropped, unless the
+  page was hidden and shown since (a prompt WebKit never settles): that tap aborts the old try and asks afresh. A
+  showing with a try open starts nothing on its own and aborts nothing (on Android the sheet can hide the page). The
+  button's `aria-describedby` reads the title, the red line and the hint. Without a passkey here or
   without WebAuthn the note shows and there is no tap target.
   The sign-in pages never start a prompt on their own.
   `POST /lock` (`assertion`, `next`): the parent's own credential only (`passkeys::unlock`); done: `record_reauth`
@@ -418,7 +427,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `lock::local_next`: one leading `/`, printable ASCII, never `/lock`, `/login`, `/logout`, `/auth/…`; else `/`) and
   the page replaces itself with it; a bad assertion is `app_unlock_failed` (its code; a copied counter also
   `passkey_cloned`) and counts in `reauth_wrong` (the third ends every session: `{signed_out: true}`). The red line
-  shows after a failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`: `/logout` then answers
+  shows after a tap's failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`: `/logout` then answers
   `/login?next=…`, and the passkey sign-in (`POST /auth/passkey`'s `next`, the sign-in page's hidden field) goes on
   there (step 3: D1.5's Devices only without one). The unlock is no sign-in: `SIGNED_IN_AT_KEY` stays.
 - **The fix round** (`docs/review/qa-passkeys-3-*`, the coordinator's copies in the scratchpad): a lock-on session's
@@ -434,5 +443,5 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - No migration (the lock lives in the session and the cookie).
 - Tests: `src/tests/app_lock.rs`, `lock::tests`, `jstest/app-lock.test.js`, and the lock's cases in
   `jstest/{reconnect,auto-reload,install-now,pull-refresh,passkey}.test.js`. Owed by hand: the iPhone PWA (the app
-  switcher's picture under the veil, the back-forward cache, the standalone WebAuthn prompt from the tap), Android
+  switcher's picture under the veil, the back-forward cache, the standalone WebAuthn prompt on its own at each showing and from the tap), Android
   Chrome's WebAPK, Mac Safari.
