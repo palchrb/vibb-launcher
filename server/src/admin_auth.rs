@@ -987,7 +987,45 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
         // Not no-store: the back-forward cache and the PWA's scroll restore stay.
         set(headers, header::CACHE_CONTROL, "private, no-cache");
     }
+    if !no_store_path(&path) {
+        response.extensions_mut().insert(Compressible);
+    }
     response
+}
+
+/// An admin answer [admin_headers] lets the admin listener gzip (2026-11-03: Security Log was
+/// ~190 KB of HTML): every one but the device API and the [no_store_path] pages, which carry the
+/// secrets - the setup QR and enrollment code, the Child PIN, 2FA setup, a reset's one-time
+/// password, backups. BREACH needs the attacker to make the parent's browser fetch a page with a
+/// secret and with words the attacker chose; the session cookie is SameSite=Strict (no cross-site
+/// request carries it) and CSRF is header-based (no token in any page), so leaving those pages
+/// out is defence in depth.
+#[derive(Clone, Copy)]
+pub struct Compressible;
+
+/// [Compressible] text (and the PWA's JSON): never an image, audio, a zip or an event stream.
+pub fn compress_when(
+    _: StatusCode,
+    _: axum::http::Version,
+    headers: &HeaderMap,
+    extensions: &axum::http::Extensions,
+) -> bool {
+    let text = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| {
+            [
+                "text/",
+                "application/javascript",
+                "application/json",
+                "application/manifest+json",
+                "image/svg+xml",
+            ]
+            .iter()
+            .any(|kind| t.starts_with(kind))
+                && !t.starts_with("text/event-stream")
+        });
+    text && extensions.get::<Compressible>().is_some()
 }
 
 #[cfg(test)]

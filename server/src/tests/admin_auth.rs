@@ -1555,3 +1555,57 @@ fn no_template_has_inline_script() {
         .collect();
     assert_eq!(script_src, ["script-src 'self'"]);
 }
+
+/// The admin listener gzips text when the browser asks (2026-11-03), never a page with a secret
+/// (`admin_auth::Compressible`), an image or the phones' API.
+#[tokio::test]
+async fn admin_text_is_gzipped_but_never_a_secret_page_or_an_image() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let get = |uri: &str, auth: Option<&str>| {
+        let mut request = Request::builder()
+            .uri(uri)
+            .header(header::ACCEPT_ENCODING, "gzip, deflate, br")
+            .header(header::COOKIE, &cookie);
+        if let Some(token) = auth {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        request.body(Body::empty()).unwrap()
+    };
+    let encoding = |res: &TestResponse| {
+        assert_eq!(res.status, StatusCode::OK);
+        res.headers
+            .get(header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap().to_string())
+    };
+
+    let page = app.send(get("/security", None)).await;
+    assert_eq!(encoding(&page).as_deref(), Some("gzip"));
+    let mut html = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&page.body[..]), &mut html)
+        .unwrap();
+    assert!(html.contains("Security Log"), "{html}");
+    assert!(page.headers.get(header::VARY).is_some());
+    let css = app.send(get("/static/style.css", None)).await;
+    assert_eq!(encoding(&css).as_deref(), Some("gzip"));
+    // Not asked: as before.
+    let plain = app.get_page("/security", &cookie).await;
+    assert_eq!(encoding(&plain), None);
+    assert!(plain.text().contains("Security Log"));
+
+    for secret in ["/account".to_string(), format!("/devices/{id}/lock")] {
+        let res = app.send(get(&secret, None)).await;
+        assert_eq!(encoding(&res), None, "{secret}");
+    }
+    let image = app.send(get("/static/icons/icon-512.png", None)).await;
+    assert_eq!(encoding(&image), None);
+    let policy = app
+        .send_via(
+            &app.device_router(),
+            LOOPBACK_PEER,
+            get("/api/devices/policy", Some(&token)),
+        )
+        .await;
+    assert_eq!(encoding(&policy), None);
+}

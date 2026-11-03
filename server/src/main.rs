@@ -78,6 +78,7 @@ use axum::routing::{get, post};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
+use tower_http::compression::Predicate as _;
 use tower_http::services::ServeDir;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions::session_store::ExpiredDeletion;
@@ -1765,6 +1766,13 @@ pub fn build_admin_router(
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
         .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         .layer(axum::middleware::from_fn(admin_auth::admin_headers))
+        // Text answers gzip'd, never a page with a secret (`admin_auth::Compressible`).
+        .layer(
+            tower_http::compression::CompressionLayer::new().compress_when(
+                tower_http::compression::predicate::SizeAbove::new(1024)
+                    .and(admin_auth::compress_when),
+            ),
+        )
         // Outermost: a refused request never reaches the session store.
         .layer(from_fn_with_state(state, gate::admin_gate))
 }
