@@ -905,12 +905,13 @@ class HomeActivity : UIObjectActivity() {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
             val emergency = CallSystem.isEmergencyOutgoing(this, contact.number)
             KidAvatars.sizeContact(item, layout.avatarDp)
-            PressFeedback.contact(item, KidAvatars.dp(this, layout.avatarDp.toFloat()))
+            PressFeedback.contact(item, KidAvatars.dp(this, layout.avatarDp.toFloat()), PressFeedback.HOME_AVATAR_ELEVATION_DP)
             KidAvatars.bindContact(
                 item.findViewById<ImageView>(R.id.contact_photo),
                 item.findViewById<TextView>(R.id.contact_initial),
                 contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
             )
+            KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
             KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)
             val missedCount = missed[contact.number]?.count ?: 0
             KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
