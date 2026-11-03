@@ -374,7 +374,7 @@ class LockGlanceTest {
         // The panel passes its kept card everywhere it lays out, and the list sits 14 dp under the card.
         val panel = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
         assertEquals(3, Regex("glanceLayout\\(tileUp, rows\\.size, clockUp, ruleCard != null\\)").findAll(panel).count())
-        assertTrue(panel.contains("layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP"))
+        assertTrue(panel.contains("layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule && !weather.cardOpen()) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP"))
     }
 
     @Test
@@ -650,8 +650,20 @@ class LockMediaGuardTest {
 
     @Test
     fun `the page's touchables are the tile controls, the rows and Nødsamtale - each wired, the swipe and the handle's action ask`() {
+        // Every <include> followed (launcher QA L8 of design 75): the included root under the include's id.
         fun parse(name: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
-            .parse(file("res/layout/$name.xml")).documentElement
+            .parse(file("res/layout/$name.xml")).documentElement.also { root ->
+                fun inline(e: Element) {
+                    for (child in (0 until e.childNodes.length).map { e.childNodes.item(it) }.filterIsInstance<Element>()) {
+                        if (child.tagName != "include") { inline(child); continue }
+                        val included = parse(child.getAttribute("layout").removePrefix("@layout/"))
+                        val copy = e.ownerDocument.importNode(included, true) as Element
+                        copy.setAttributeNS(ns, "android:id", child.getAttributeNS(ns, "id"))
+                        e.replaceChild(copy, child)
+                    }
+                }
+                inline(root)
+            }
         fun all(e: Element): List<Element> = listOf(e) + (0 until e.childNodes.length).map { e.childNodes.item(it) }.filterIsInstance<Element>().flatMap(::all)
         fun touchable(root: Element) = all(root).filter { it.tagName in setOf("Button", "ImageButton") || it.getAttributeNS(ns, "clickable") == "true" }
             .map { it.getAttributeNS(ns, "id").substringAfter("/") }.toSet()
@@ -663,9 +675,15 @@ class LockMediaGuardTest {
                 "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop",
                 // The user (2026-10-24): the "more" line leads to the keypad as a row without a target.
                 "lock_glance_more",
+                // Design 75 §5.5: the weather mark (beside the date, or on its own line) and its day's card - they open
+                // and fold the card, nothing else; neither keeps a swipe.
+                "lock_glance_weather", "lock_glance_weather_line", "lock_weather_card",
             ),
             touchable,
         )
+        val weather = file("java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
+        assertTrue(weather.contains("mark.root.setOnClickListener { guarded(\"tap\") { tap() } }"))
+        assertTrue(weather.contains("card.root.setOnClickListener { guarded(\"tap\") { tap() } }"))
         // The rows container holds only the panel's rows; a row is one touchable.
         val rows = all(root).single { it.getAttributeNS(ns, "id") == "@+id/lock_glance_rows" }
         assertEquals(0, rows.childNodes.length.let { n -> (0 until n).count { rows.childNodes.item(it) is Element } })
@@ -700,7 +718,11 @@ class LockMediaGuardTest {
         // JL-4 (a): the controls that keep their touch are exactly the layout's touchables less the page itself, the
         // timer tile and the "more" line (both lead to the unlock, as a row) - a new control in the layout must join them.
         val controls = Regex("""glance\.(\w+)""").findAll(glance.substringAfter("private fun swipeControls(): List<View> = listOf(").substringBefore(")")).map { it.groupValues[1] }.toSet()
-        assertEquals((touchable - setOf("lock_glance_root", "lock_timer_tile", "lock_glance_more")).map(::binding).toSet(), controls)
+        assertEquals(
+            (touchable - setOf("lock_glance_root", "lock_timer_tile", "lock_glance_more", "lock_glance_weather", "lock_glance_weather_line", "lock_weather_card"))
+                .map(::binding).toSet(),
+            controls,
+        )
         // JL-1, JL-4 (b): the DOWN passes while leaving, covered or off the page; in ASK (the page shown under the pad) a
         // swipe asks again, as the button's second tap did.
         val down = glance.substringAfter("if (action == MotionEvent.ACTION_DOWN) {").substringBefore("return SwipeTouch.PASS")
@@ -815,7 +837,8 @@ class LockGlanceLayoutTest {
     private fun partsAt(font: Float, textLines: Int = defaultTextLines) = Parts(
         bottom = withMargins("lock_glance_bottom", font),
         clock = root.byId("lock_glance_clock").dim("textSize") * 1.4f * font,
-        date = withMargins("lock_glance_date", font),
+        // Design 75 §5.5: the date with the weather mark beside it, one baseline row (the mark gone in the XML).
+        date = withMargins("lock_glance_date_row", font),
         alarm = withMargins("lock_glance_alarm", font),
         tileFull = withMargins("lock_media_tile", font),
         tileCompact = withMargins("lock_media_compact", font),
@@ -1253,7 +1276,7 @@ class LockGlanceLayoutTest {
     fun `the profile is the phone's own, its clock in Nunito Light, the date and alarm at its start`() {
         // Launcher round L6: the clock face moved out of the panel into LockClockFace, shared by both lock screens.
         val glancePanel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext), logTag = LOG_TAG,"))
+        assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,"))
         assertTrue(glancePanel.contains("val pill = glanceHandle(profile)") && glancePanel.contains("private val profile: ClockGeometry? = clockFace.profile"))
         val panel = file("java/com/kidslauncher/mdm/lock/LockClockFace.kt").readText()
         assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp)"))
@@ -1273,8 +1296,9 @@ class LockGlanceLayoutTest {
         val light = main.walkTopDown().filter { it.extension == "kt" && "R.font.nunito_light" in it.readText() }.map { it.name }.toList()
         assertEquals(listOf("LockClockFace.kt"), light)
         assertTrue(look, look.contains("date.transformationMethod = FirstCapital(locale)"))
-        assertTrue(look, look.contains("for (view in listOf(clock, date, alarm) + extra) {"))
-        assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))"))
+        assertTrue(look, look.contains("for (view in listOf(clock, dateBox, alarm) + extra) {"))
+        assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(short))"))
+        assertTrue(panel.contains("datePattern(short = profile != null)"))
         val place = panel.substringAfter("private fun placeProfile(").substringBefore("private fun margins(")
         assertTrue(place, place.contains("floorPx = -descent"))
         // The glance-topinset round: the baselines under the keyguard's status bar, read from the window's own insets
@@ -1284,7 +1308,9 @@ class LockGlanceLayoutTest {
         assertTrue(place, place.contains("val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)\n"))
         assertTrue(place, place.contains("val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)\n"))
         assertTrue(place, place.contains("baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(),"))
-        assertTrue(place, place.contains("baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(),"))
+        // Design 75 §5.5: the glance's date row is placed as the date was - its baseline is the date's.
+        assertTrue(place, place.contains("baselineMarginPx(dateTarget, clockBottom, baseline.toFloat(),"))
+        assertTrue(place, place.contains("val baseline = if (box === date) date.baseline else box.baseline.takeIf { it >= 0 } ?: date.baseline"))
         assertTrue(place, place.contains("insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top"))
         assertTrue(place, place.contains("insets?.getInsets(WindowInsets.Type.displayCutout())?.top"))
         // The first digit's ink at the profile's start, whatever its side bearing - again when the text changes. The

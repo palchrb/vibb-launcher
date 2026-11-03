@@ -130,7 +130,7 @@ class GlancePanel(
      * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). */
     private val clockFace = LockClockFace(
         activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,
-        extra = listOf(glance.lockGlanceNext), logTag = LOG_TAG,
+        extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,
     )
     private val profile: ClockGeometry? = clockFace.profile
 
@@ -169,6 +169,9 @@ class GlancePanel(
     private var clockDirty = false
     private val music = MusicLockPanel(activity, glance) { musicDirty = true; tileChanges.request() }
     private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }
+
+    /** The weather by the date and its day's card (design 75 §5.5): its own glue, as the tiles have theirs. */
+    private val weather = WeatherLockPanel(activity, glance, clockFace, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
     private var started = false
 
     /** The stage (memory only). */
@@ -277,6 +280,7 @@ class GlancePanel(
             torch?.addListener(torchChanged)
             music.start()
             clock.start()
+            weather.start()
             ContextCompat.registerReceiver(
                 activity, alarmChanged, IntentFilter(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
             )
@@ -317,10 +321,13 @@ class GlancePanel(
             state = glanceStageStep(state, GlanceStageEvent.LockUp)
             dropTargetIfGone()
             onStage()
+            // Design 75 D15: the weather's card folds and its place is decided again at every lock-up.
+            weather.lockUp()
         } else {
             // The user (2026-10-24): back from a call, the emergency dialer, an alarm or an app over the lock, the glance
             // is the face again - from the top.
             backToTop()
+            weather.resume()
         }
         ruleCard = currentRuleCard()
         renderNow()
@@ -370,6 +377,8 @@ class GlancePanel(
         handle.importantForAccessibility =
             if (up) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_YES
         if (up) dropDrag(smooth = false) else backToTop()
+        // Design 75: the weather's card folds under the ring card.
+        if (up) weather.voip()
     }
 
     /** The VoIP ring card is up ([covered]). */
@@ -382,6 +391,7 @@ class GlancePanel(
         icons.cancel()
         music.stop()
         clock.stop()
+        weather.stop()
         if (!started) return@guarded
         try {
             activity.unregisterReceiver(alarmChanged)
@@ -411,6 +421,7 @@ class GlancePanel(
         placedFor = 0
         laidOut = null
         layoutNow()
+        weather.refit()
         glance.root.requestLayout()
     }
 
@@ -1012,6 +1023,8 @@ class GlancePanel(
         state = glanceStageStep(state, event, face())
         // The user (2026-10-24): back on the glance from the keypad or Android's pad, the page starts at the top.
         if (glanceBackToTop(from, state.stage)) backToTop()
+        // Design 75: the weather's card folds when the page goes (the keypad, Android's pad).
+        if (!glancePageShown(state.stage)) weather.leftPage()
         dropTargetIfGone()
         renderNow()
         onStage()
@@ -1157,7 +1170,8 @@ class GlancePanel(
                     view = view.parent as? View ?: break
                 }
                 val shown = if (line.visibility == View.VISIBLE) line.height + (line.layoutParams as ViewGroup.MarginLayoutParams).topMargin else 0
-                (top - shown) / activity.resources.displayMetrics.density
+                // Design 75 §5.5: measured with the weather's open card taken out, so opening it never hides the line.
+                (top - shown - weather.cardHeight()) / activity.resources.displayMetrics.density
             }
             glanceNextFits(glance.lockGlanceScroll.height / activity.resources.displayMetrics.density, thirdTop, lineDp)
         }
@@ -1542,6 +1556,14 @@ class GlancePanel(
         if (layout != laidOut || moved) refitPending = true
         laidOut = layout
         apply(layout)
+        // Design 75 D15: a new page width decides the weather mark's place again.
+        weather.resume()
+    }
+
+    /** The weather's card opened or folded, or its own line came or went: the list's margin and the "Neste" line. */
+    private fun weatherChanged() {
+        laidOut?.let { placeList(it) }
+        fitNext()
     }
 
     /** The layout's log line - counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw. */
@@ -1570,7 +1592,8 @@ class GlancePanel(
     private fun placeList(layout: GlanceLayout) {
         val list = glance.lockGlanceList
         list.visibility = if (layout.rows > 0) View.VISIBLE else View.GONE
-        val top = dp(if (layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
+        // Design 75 (launcher QA L6): an open weather card counts as a tile here - the rows sit 14 dp under it.
+        val top = dp(if (layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule && !weather.cardOpen()) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
         (list.layoutParams as ViewGroup.MarginLayoutParams).let {
             if (it.topMargin != top) list.layoutParams = it.apply { topMargin = top }
         }

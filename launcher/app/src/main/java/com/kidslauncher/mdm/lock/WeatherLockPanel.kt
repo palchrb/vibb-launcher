@@ -1,0 +1,577 @@
+package com.kidslauncher.mdm.lock
+
+import android.animation.ValueAnimator
+import android.graphics.Rect
+import android.os.Bundle
+import android.os.SystemClock
+import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.util.Log
+import android.util.TypedValue
+import android.view.TouchDelegate
+import android.view.View
+import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
+import com.kidslauncher.mdm.databinding.ViewLockWeatherMarkBinding
+import com.kidslauncher.mdm.server.dto.WeatherAnswer
+import com.kidslauncher.mdm.ui.ClockFormat
+import com.kidslauncher.mdm.weather.WEATHER_NOW_INSERT_MS
+import com.kidslauncher.mdm.weather.WeatherCard
+import com.kidslauncher.mdm.weather.WeatherEvent
+import com.kidslauncher.mdm.weather.WeatherLine
+import com.kidslauncher.mdm.weather.WeatherPlace
+import com.kidslauncher.mdm.weather.WeatherPull
+import com.kidslauncher.mdm.weather.WeatherStore
+import com.kidslauncher.mdm.weather.WeatherSymbols
+import com.kidslauncher.mdm.weather.WeatherWords
+import com.kidslauncher.mdm.weather.WeatherWordsKey
+import com.kidslauncher.mdm.weather.beside
+import com.kidslauncher.mdm.weather.weatherCard
+import com.kidslauncher.mdm.weather.weatherDegrees
+import com.kidslauncher.mdm.weather.weatherFold
+import com.kidslauncher.mdm.weather.weatherHour
+import com.kidslauncher.mdm.weather.weatherLine
+import com.kidslauncher.mdm.weather.weatherMm
+import com.kidslauncher.mdm.weather.weatherNowLine
+import com.kidslauncher.mdm.weather.weatherNowShown
+import com.kidslauncher.mdm.weather.weatherNumber
+import com.kidslauncher.mdm.weather.weatherPlace
+import com.kidslauncher.mdm.weather.weatherWordsFit
+import kotlinx.coroutines.launch
+import java.time.ZoneId
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.roundToInt
+
+/**
+ * The weather on the lock's glance (design 75 §5.5), the glue under [GlancePanel] as `MusicLockPanel` is: the mark by
+ * the date or on its own line under it (two instances, at most one shown, nothing reparented - launcher QA L5), the
+ * day's card, the open state and the mark's 48 dp hit area. The model is the pure `weather/WeatherModel.kt`'s.
+ *
+ * - **The place** (D15) is decided only at a lock-up, a refit (font scale), a change of the page's width and the first
+ *   bind ([decidePlace]), from the widest words of the answer's four entries but never less than "Regn fra kl. 14" in
+ *   this catalog; between those moments a model whose words don't fit the place shows without them - the mark never
+ *   moves while the screen is on, and words are never cut.
+ * - **The card** opens and folds by [weatherFold]: a tap on the mark or the card; a lock-up, leaving the glance, `stop`,
+ *   the line hiding, the card going and the VoIP ring card fold it. Opening asks for the nowcast line (3 s), inserted
+ *   only within [WEATHER_NOW_INSERT_MS] of the open, for the card opened, with no finger on the rows ([weatherNowShown]).
+ * - **Re-picks** at every minute of the clock and at resume ([repick]); a bind only when the model changed.
+ *
+ * Opens nothing, unlocks nothing, asks no host itself (`WeatherGuardTest`; the nowcast goes through [WeatherPull], our
+ * server's client). Every entry point catches everything and logs the class (a weather fault never trips the lock's
+ * crash guard). Logs carry no place, temperature or time.
+ */
+class WeatherLockPanel(
+    private val activity: AppCompatActivity,
+    private val glance: ViewLockGlanceBinding,
+    private val face: LockClockFace,
+    /** A finger is on the rows (the glance's dismiss): the nowcast line waits. */
+    private val rowsHeld: () -> Boolean,
+    /** The card opened or folded, or the own line came or went: the glance places the list and the "Neste" line. */
+    private val onChanged: () -> Unit,
+) {
+    private val beside: ViewLockWeatherMarkBinding = glance.lockGlanceWeather
+    private val ownLine: ViewLockWeatherMarkBinding = glance.lockGlanceWeatherLine
+    private val card = glance.lockWeatherCard
+    private val columns = listOf(
+        Column(card.weatherCol0, card.weatherCol0Part, card.weatherCol0Symbol, card.weatherCol0Temp, card.weatherCol0Mm),
+        Column(card.weatherCol1, card.weatherCol1Part, card.weatherCol1Symbol, card.weatherCol1Temp, card.weatherCol1Mm),
+        Column(card.weatherCol2, card.weatherCol2Part, card.weatherCol2Symbol, card.weatherCol2Temp, card.weatherCol2Mm),
+    )
+
+    private class Column(val root: View, val part: TextView, val symbol: ImageView, val temp: TextView, val mm: TextView)
+
+    private var started = false
+    private var line: WeatherLine? = null
+    private var shownFor: Any? = null
+    private var place: WeatherPlace? = null
+    private var placedWidth = 0
+    private var open = false
+
+    /** Bumped at every fold, lock-up and stop: a late nowcast answer for an older open is never inserted. */
+    private var generation = 0
+
+    /** The own line's slot held (INVISIBLE) through a screen-on pull (launcher QA L2 of the design review): a line
+     * that comes a second after the lock-up never moves the rows. Until the next lock-up. */
+    private var slotHeld = false
+
+    private val changed: () -> Unit = { guarded("store") { repick() } }
+
+    init {
+        for (mark in listOf(beside, ownLine)) {
+            mark.root.setOnClickListener { guarded("tap") { tap() } }
+            mark.weatherMarkText.setHorizontallyScrolling(true)
+            markAccessibility(mark.root)
+        }
+        // The own line keeps no gap of its own; beside the date the mark stands 8 dp off it.
+        (beside.root.layoutParams as? ViewGroup.MarginLayoutParams)?.let {
+            beside.root.layoutParams = it.apply { marginStart = dp(GAP_DP) }
+        }
+        card.root.setOnClickListener { guarded("tap") { tap() } }
+        // A new minute: the line's entry for this hour (D2), and the line hiding past its age.
+        glance.lockGlanceClock.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) = guarded("tick") { if (started) repick() }
+        })
+        // The hit area follows the mark wherever the layout puts it.
+        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> guarded("hit") { hitArea() } }
+    }
+
+    /** onStart: watching the store. */
+    fun start() = guarded("start") {
+        if (started) return@guarded
+        started = true
+        WeatherStore.addListener(changed)
+    }
+
+    /** onStop: nothing watched; the card folds. */
+    fun stop() = guarded("stop") {
+        fold(WeatherEvent.STOP)
+        if (!started) return@guarded
+        started = false
+        WeatherStore.removeListener(changed)
+    }
+
+    /** Every lock-up: the card folds, the place is decided again, a line held for the screen-on pull reserves its slot. */
+    fun lockUp() = guarded("lock-up") {
+        fold(WeatherEvent.LOCK_UP)
+        place = null
+        // Only a line that was there and went stale: a phone whose weather never comes keeps no empty room.
+        slotHeld = WeatherStore.policyOn && WeatherStore.answer?.status == "ok" && WeatherPull.let { it.running() || it.due() }
+        shownFor = null
+        repick()
+    }
+
+    /** Resume (no lock-up): the line again, before the first frame (a line stale for 3 h hides; launcher QA L12). */
+    fun resume() = guarded("resume") { repick() }
+
+    /** The font scale changed: the mark's size and its place again. */
+    fun refit() = guarded("refit") {
+        place = null
+        shownFor = null
+        repick()
+    }
+
+    /** The glance's stage left the page (the keypad, Android's pad) or the VoIP ring card came: the card folds. */
+    fun leftPage() = guarded("leave") { fold(WeatherEvent.STAGE_LEFT) }
+
+    fun voip() = guarded("voip") { fold(WeatherEvent.VOIP) }
+
+    /** The open card's height with its margin (the glance's "Neste" rule measures without it), 0 while folded. */
+    fun cardHeight(): Int {
+        val view = card.root
+        if (view.visibility != View.VISIBLE) return 0
+        return view.height + ((view.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0)
+    }
+
+    /** Whether the card is open (the glance's list sits 14 dp under it). */
+    fun cardOpen(): Boolean = open
+
+    // ---- the model ------------------------------------------------------------------------------
+
+    private fun repick() {
+        val now = System.currentTimeMillis()
+        face.shortDate(WeatherStore.policyOn)
+        val answer = WeatherStore.answer
+        val picked = weatherLine(answer, WeatherStore.policyOn, now)
+        val cardModel = picked?.let { l -> answer?.let { weatherCard(it, l, now, ZoneId.systemDefault()) } }
+        val key = listOf(picked, cardModel, open, place, contentWidth(), slotHeld, answer?.checkedAtMs)
+        if (picked == null && line != null) fold(WeatherEvent.LINE_GONE)
+        if (picked != null && cardModel == null && open) fold(WeatherEvent.CARD_GONE)
+        line = picked
+        if (key == shownFor) return
+        shownFor = key
+        bind(picked, cardModel, answer, now)
+    }
+
+    private fun bind(model: WeatherLine?, cardModel: WeatherCard?, answer: WeatherAnswer?, now: Long) {
+        val width = contentWidth()
+        if (width > 0 && width != placedWidth) {
+            placedWidth = width
+            place = null
+        }
+        if (place == null && width > 0 && (model != null || slotHeld)) place = decidePlace(answer)
+        if (model == null) {
+            beside.root.visibility = View.GONE
+            // A line due from the screen-on pull keeps its own line's room until it lands (or the next lock-up).
+            ownLine.root.visibility = if (slotHeld && place?.beside() == false) View.INVISIBLE else View.GONE
+            card.root.visibility = View.GONE
+            onChanged()
+            return
+        }
+        // Not laid out yet: nothing shown until the place is known (the mark never shows in one place and moves).
+        val at = place ?: run {
+            beside.root.visibility = View.GONE
+            ownLine.root.visibility = View.GONE
+            return
+        }
+        val mark = if (at.beside()) beside else ownLine
+        val other = if (at.beside()) ownLine else beside
+        other.root.visibility = View.GONE
+        bindMark(mark, model, at, cardModel != null)
+        mark.root.visibility = View.VISIBLE
+        slotHeld = false
+        if (open && cardModel != null) bindCard(cardModel, now) else card.root.visibility = View.GONE
+        onChanged()
+    }
+
+    /** The mark: the symbol (1.4 x the text size, at least 22 dp), the degrees in the ink, the dot and the words when the
+     * place takes them and they fit, the chevron with a card; the date's colour and size. */
+    private fun bindMark(mark: ViewLockWeatherMarkBinding, model: WeatherLine, at: WeatherPlace, hasCard: Boolean) {
+        val text = mark.weatherMarkText
+        text.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
+        val symbolPx = maxOf(ceil(glance.lockGlanceDate.textSize * SYMBOL_SCALE).toInt(), dp(SYMBOL_MIN_DP))
+        mark.weatherMarkSymbol.layoutParams = mark.weatherMarkSymbol.layoutParams.apply { width = symbolPx; height = symbolPx }
+        val drawable = model.symbol?.let { WeatherSymbols.drawable(it) }
+        if (drawable != null) mark.weatherMarkSymbol.setImageResource(drawable)
+        mark.weatherMarkSymbol.visibility = if (drawable != null) View.VISIBLE else View.GONE
+        val words = model.words?.let(::wordsText)
+        val shownWords = words?.takeIf { w ->
+            val laid = lineMeasure(mark) ?: return@takeIf false
+            weatherWordsFit(at, laid.lineDp, laid.dateDp, GAP_DP, laid.coreDp, wordsDp(mark, w))
+        }
+        val built = SpannableStringBuilder()
+        model.temp?.let {
+            built.append(weatherDegrees(it))
+            built.setSpan(ForegroundColorSpan(activity.getColor(R.color.kid_ink)), 0, built.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (shownWords != null) {
+            val start = built.length
+            built.append(if (built.isEmpty()) shownWords else "$DOT$shownWords")
+            built.setSpan(RelativeSizeSpan(WORDS_SCALE), start, built.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        text.text = built
+        mark.weatherMarkChevron.visibility = if (hasCard) View.VISIBLE else View.GONE
+        mark.weatherMarkChevron.rotation = if (open) 180f else 0f
+        mark.root.isClickable = hasCard
+        mark.root.isFocusable = hasCard
+        mark.root.contentDescription = spokenMark(model, shownWords)
+        mark.root.stateDescription = if (hasCard) activity.getString(if (open) R.string.weather_expanded else R.string.weather_collapsed) else null
+        mark.root.tag = hasCard
+    }
+
+    private fun wordsText(words: WeatherWordsKey): String? {
+        val res = WeatherWords.res(words.key, words.form) ?: return null
+        return if (words.form == "from") {
+            val at = words.atMs ?: return null
+            activity.getString(res, hourText(at))
+        } else {
+            activity.getString(res)
+        }
+    }
+
+    private fun hourText(atMs: Long): String =
+        weatherHour(atMs, ZoneId.systemDefault(), ClockFormat.is24(activity), catalogNb())
+
+    private fun catalogNb(): Boolean = activity.resources.configuration.locales[0]?.language in setOf("nb", "no", "nn")
+
+    // ---- the place (D15) ---------------------------------------------------------------------------
+
+    private class LineMeasure(val lineDp: Float, val dateDp: Float, val coreDp: Float)
+
+    /** The room on the date's line and the date's and the core's widths, at the mark's paint (launcher QA L3:
+     * `getDesiredWidth` of what is shown, plus slack). */
+    private fun lineMeasure(mark: ViewLockWeatherMarkBinding): LineMeasure? {
+        val width = contentWidth().takeIf { it > 0 } ?: return null
+        val density = activity.resources.displayMetrics.density
+        val date = glance.lockGlanceDate
+        val shownDate = date.transformationMethod?.getTransformation(date.text, date) ?: date.text
+        val dateDp = Layout.getDesiredWidth(shownDate, date.paint) / density + SLACK_DP
+        val start = if (face.profile != null) ((glance.lockGlanceDateRow.layoutParams as? ViewGroup.MarginLayoutParams)?.marginStart ?: 0) else 0
+        val lineDp = (width - start) / density
+        val paint = mark.weatherMarkText.paint
+        val widestDegrees = listOf("${WEATHER_MINUS_SAMPLE}°", line?.temp?.let(::weatherDegrees) ?: "").maxOf { Layout.getDesiredWidth(it, paint) }
+        val symbolDp = maxOf(date.textSize * SYMBOL_SCALE / density, SYMBOL_MIN_DP)
+        val coreDp = symbolDp + 4f + widestDegrees / density + 4f + CHEVRON_DP + SLACK_DP
+        return LineMeasure(lineDp, dateDp, coreDp)
+    }
+
+    /** The dot and [words] at the words' size, in dp (plus slack). */
+    private fun wordsDp(mark: ViewLockWeatherMarkBinding, words: String): Float {
+        val paint = android.text.TextPaint(mark.weatherMarkText.paint).apply { textSize = mark.weatherMarkText.textSize * WORDS_SCALE }
+        return Layout.getDesiredWidth("$DOT$words", paint) / activity.resources.displayMetrics.density + SLACK_DP
+    }
+
+    /** D15: the place from the widest words of the answer's entries, never less than the reference "Regn fra kl. 14". */
+    private fun decidePlace(answer: WeatherAnswer?): WeatherPlace? {
+        val mark = beside
+        mark.weatherMarkText.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
+        val measure = lineMeasure(mark) ?: return null
+        val reference = activity.getString(R.string.weather_rain_from, hourText(referenceHourMs()))
+        val texts = answer?.hours.orEmpty().mapNotNull { h -> h.words?.let { wordsText(WeatherWordsKey(it.key, it.form, it.atMs)) } } + reference
+        val wordsDp = texts.maxOf { wordsDp(mark, it) }
+        return weatherPlace(measure.lineDp, measure.dateDp, GAP_DP, measure.coreDp, wordsDp).also {
+            Log.i(LOG_TAG, "Weather mark: $it (line ${measure.lineDp.roundToInt()} dp)")
+        }
+    }
+
+    /** 14:00 today, the reference's hour. */
+    private fun referenceHourMs(): Long =
+        java.time.LocalDate.now().atTime(14, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun contentWidth(): Int {
+        val top = glance.lockGlanceTop
+        return top.width - top.paddingStart - top.paddingEnd
+    }
+
+    // ---- the card --------------------------------------------------------------------------------
+
+    private fun bindCard(model: WeatherCard, now: Long) {
+        val view = card.root
+        card.weatherCardTomorrow.visibility = if (model.tomorrow) View.VISIBLE else View.GONE
+        val anyMm = model.columns.any { (it.mm ?: 0.0) >= 0.1 }
+        val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
+        columns.forEachIndexed { i, col ->
+            val c = model.columns.getOrNull(i)
+            col.root.visibility = if (c != null) View.VISIBLE else View.GONE
+            if (c == null) return@forEachIndexed
+            col.part.text = WeatherWords.partRes(c.part)?.let(activity::getString).orEmpty()
+            val symbol = c.symbol?.let { WeatherSymbols.drawable(it) }
+            if (symbol != null) col.symbol.setImageResource(symbol) else col.symbol.setImageDrawable(null)
+            col.temp.text = c.temp?.let(::weatherDegrees) ?: "–"
+            val mm = c.mm?.let { weatherMm(it, locale) }
+            col.mm.text = mm?.let { activity.getString(R.string.weather_mm, it) }.orEmpty()
+            // Under 0.1 mm while any column has some: kept in its place (the card's height holds within a day).
+            col.mm.visibility = when {
+                !anyMm -> View.GONE
+                mm == null -> View.INVISIBLE
+                else -> View.VISIBLE
+            }
+            col.root.setBackgroundResource(if (c.current) R.drawable.bg_weather_now else 0)
+        }
+        val lowHigh = if (model.low != null && model.high != null) {
+            activity.getString(R.string.weather_low_high, weatherDegrees(model.low), weatherDegrees(model.high))
+        } else null
+        card.weatherCardFoot.text = when {
+            model.place != null && lowHigh != null -> activity.getString(R.string.weather_foot, model.place, lowHigh)
+            else -> model.place ?: lowHigh.orEmpty()
+        }
+        card.weatherCardDark.text = darkText(model).orEmpty()
+        val updated = model.updatedAtMs
+        card.weatherCardUpdated.visibility = if (updated != null) View.VISIBLE else View.GONE
+        if (updated != null) card.weatherCardUpdated.text = activity.getString(R.string.weather_updated, ClockFormat.formatClock(activity, updated))
+        view.visibility = View.VISIBLE
+        view.contentDescription = withNow(spokenCard(model, lowHigh != null))
+        view.stateDescription = activity.getString(R.string.weather_expanded)
+    }
+
+    private fun darkText(model: WeatherCard): String? {
+        val dark = model.dark ?: return null
+        return when (dark.kind) {
+            "at" -> dark.atMs?.let { activity.getString(R.string.weather_dark_at, ClockFormat.formatClock(activity, it)) }
+            "never" -> activity.getString(R.string.weather_dark_never)
+            "all_day" -> activity.getString(R.string.weather_dark_all_day)
+            else -> null
+        }
+    }
+
+    private fun tap() {
+        val hasCard = line?.card != null && WeatherStore.answer?.let { a -> line?.let { weatherCard(a, it, System.currentTimeMillis(), ZoneId.systemDefault()) } } != null
+        val next = weatherFold(open, WeatherEvent.TAP, hasCard)
+        if (next == open) return
+        if (next) openCard() else fold(WeatherEvent.TAP)
+    }
+
+    private fun openCard() {
+        open = true
+        generation++
+        val opened = SystemClock.elapsedRealtime()
+        val asked = generation
+        card.weatherCardNow.visibility = View.GONE
+        shownFor = null
+        repick()
+        turnChevron()
+        // The open card below the fold comes into view (no animation).
+        card.root.post { guarded("scroll") { card.root.requestRectangleOnScreen(Rect(0, 0, card.root.width, card.root.height), true) } }
+        // The nowcast (D9, launcher QA M2): a kept answer of the last 2 min at once, else asked - inserted only within 1 s.
+        val kept = WeatherStore.freshNow()
+        if (kept != null) {
+            showNow(kept)
+            return
+        }
+        activity.lifecycleScope.launch {
+            guarded("nowcast") {
+                val got = WeatherPull.nowcast()
+                WeatherStore.nowAnswered(got)
+                if (open && weatherNowShown(opened, SystemClock.elapsedRealtime(), asked, generation, rowsHeld())) showNow(got)
+            }
+        }
+    }
+
+    private fun showNow(answer: com.kidslauncher.mdm.server.dto.WeatherNow?) {
+        val (key, minutes) = weatherNowLine(answer) ?: return
+        val res = WeatherWords.nowRes(key) ?: return
+        card.weatherCardNow.text = if (key.endsWith("_in")) activity.getString(res, minutes ?: 0) else activity.getString(res)
+        card.weatherCardNow.visibility = View.VISIBLE
+        card.root.contentDescription = withNow(lastSpokenCard)
+        onChanged()
+    }
+
+    /** The card's spoken text without the nowcast line (kept for [showNow]). */
+    private var lastSpokenCard = ""
+
+    /** The nowcast line's sentence first when it shows. */
+    private fun withNow(spoken: String): String {
+        lastSpokenCard = spoken
+        val now = card.weatherCardNow.takeIf { it.visibility == View.VISIBLE }?.text?.toString()
+        return listOfNotNull(now?.let(::sentence), spoken).joinToString(" ")
+    }
+
+    private fun fold(event: WeatherEvent) {
+        val next = weatherFold(open, event, line?.card != null)
+        if (!open && !next) {
+            if (event != WeatherEvent.TAP) generation++
+            return
+        }
+        open = next
+        generation++
+        card.root.visibility = View.GONE
+        card.weatherCardNow.visibility = View.GONE
+        shownFor = null
+        turnChevron()
+        for (mark in listOf(beside, ownLine)) {
+            if (mark.root.tag == true) mark.root.stateDescription = activity.getString(R.string.weather_collapsed)
+        }
+        onChanged()
+    }
+
+    /** The chevron's turn (150 ms; none with "Remove animations"). */
+    private fun turnChevron() {
+        val to = if (open) 180f else 0f
+        for (mark in listOf(beside, ownLine)) {
+            val chevron = mark.weatherMarkChevron
+            if (ValueAnimator.areAnimatorsEnabled() && mark.root.isShown) chevron.animate().rotation(to).setDuration(TURN_MS).start()
+            else chevron.rotation = to
+        }
+    }
+
+    // ---- the hit area (launcher QA H1) -------------------------------------------------------------
+
+    /** The visible mark's touch rectangle: at least 48 dp tall - its bounds extended evenly, the top capped at the
+     * clock's baseline above (the design review's L1: the rest goes below) - and 8 dp wider at each side, through one
+     * [TouchDelegate] on the page's top block; the layout and the rows don't move. */
+    private fun hitArea() {
+        val top = glance.lockGlanceTop
+        val mark = listOf(beside, ownLine).firstOrNull { it.root.visibility == View.VISIBLE && it.root.isClickable }?.root
+        if (mark == null || mark.width == 0) {
+            if (top.touchDelegate != null) top.touchDelegate = null
+            return
+        }
+        val rect = Rect(0, 0, mark.width, mark.height)
+        top.offsetDescendantRectToMyCoords(mark, rect)
+        val clock = glance.lockGlanceClock
+        val capTop = clock.top + clock.baseline
+        val area = weatherHitRect(rect.left, rect.top, rect.right, rect.bottom, dp(HIT_MIN_DP), dp(HIT_SIDE_DP), capTop)
+        top.touchDelegate = TouchDelegate(Rect(area[0], area[1], area[2], area[3]), mark)
+    }
+
+    // ---- TalkBack (launcher QA M5) -------------------------------------------------------------------
+
+    private fun sentence(text: String): String = activity.getString(R.string.weather_spoken_sentence, text)
+
+    private fun spokenMark(model: WeatherLine, words: String?): String {
+        val parts = mutableListOf<String>()
+        val name = model.symbol?.let { WeatherSymbols.name(it) }?.let(activity::getString)
+        parts += if (name != null) activity.getString(R.string.weather_spoken_now, name) else activity.getString(R.string.weather_spoken_now_plain)
+        model.temp?.let { parts += activity.resources.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
+        words?.let { parts += sentence(it) }
+        return parts.joinToString(" ")
+    }
+
+    private fun spokenCard(model: WeatherCard, lowHigh: Boolean): String {
+        val res = activity.resources
+        val locale = res.configuration.locales[0] ?: Locale.getDefault()
+        val parts = mutableListOf<String>()
+        if (model.tomorrow) parts += sentence(activity.getString(R.string.weather_card_tomorrow))
+        for (c in model.columns) {
+            val label = WeatherWords.partRes(c.part)?.let(activity::getString) ?: continue
+            parts += activity.getString(R.string.weather_spoken_period, label)
+            c.symbol?.let { WeatherSymbols.name(it) }?.let { parts += sentence(activity.getString(it)) }
+            c.temp?.let { parts += res.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
+            c.mm?.let { weatherMm(it, locale) }?.let { parts += activity.getString(R.string.weather_spoken_mm, it) }
+        }
+        model.place?.let { parts += sentence(it) }
+        if (lowHigh) {
+            model.low?.let { parts += res.getQuantityString(R.plurals.weather_spoken_low, abs(it), weatherNumber(it)) }
+            model.high?.let { parts += res.getQuantityString(R.plurals.weather_spoken_high, abs(it), weatherNumber(it)) }
+        }
+        darkText(model)?.let { parts += sentence(it) }
+        return parts.joinToString(" ")
+    }
+
+    /** The mark is a button with expand/collapse actions and its state (launcher QA M5). */
+    private fun markAccessibility(view: View) {
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                if (host.tag != true) return
+                info.className = android.widget.Button::class.java.name
+                info.addAction(
+                    if (open) AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE else AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND,
+                )
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, activity.getString(if (open) R.string.weather_card_close else R.string.weather_card_hint)))
+            }
+
+            override fun performAccessibilityAction(host: View, action: Int, args: Bundle?): Boolean {
+                val id = when (action) {
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND.id -> !open
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE.id -> open
+                    else -> null
+                } ?: return super.performAccessibilityAction(host, action, args)
+                if (id) guarded("tap") { tap() }
+                return true
+            }
+        }
+    }
+
+    private fun dp(value: Float): Int = (value * activity.resources.displayMetrics.density).roundToInt()
+
+    private inline fun guarded(what: String, work: () -> Unit) {
+        try {
+            work()
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "Weather $what failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private companion object {
+        const val LOG_TAG = "WeatherLockPanel"
+        const val GAP_DP = 8f
+        const val SYMBOL_SCALE = 1.4f
+        const val SYMBOL_MIN_DP = 22f
+        const val CHEVRON_DP = 14f
+        const val SLACK_DP = 2f
+        const val WORDS_SCALE = 0.93f
+        const val HIT_MIN_DP = 48f
+        const val HIT_SIDE_DP = 8f
+        const val TURN_MS = 150L
+        const val DOT = " · "
+
+        /** The widest degrees a day plans for. */
+        const val WEATHER_MINUS_SAMPLE = "−88"
+    }
+}
+
+/**
+ * The mark's touch rectangle (launcher QA H1, the design review's L1), pure: [left]..[bottom] the mark in the top
+ * block's coordinates; at least [minHeight] tall - extended evenly, but never above [capTop] (the clock's baseline;
+ * what can't go above goes below) - and [side] wider at each side. Returns left, top, right, bottom.
+ */
+fun weatherHitRect(left: Int, top: Int, right: Int, bottom: Int, minHeight: Int, side: Int, capTop: Int): IntArray {
+    val need = maxOf(0, minHeight - (bottom - top))
+    var up = need / 2
+    if (top - up < capTop) up = maxOf(0, top - capTop)
+    val down = need - up
+    return intArrayOf(left - side, top - up, right + side, bottom + down)
+}

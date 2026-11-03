@@ -910,3 +910,14 @@ None. The one open question (the phone's last-known position, D18) was answered 
   (L1, L2); a cell lives at most the longest location retention (L3); the converter's four gaps are closed (launcher M2,
   §4.1 - the 83 drawings unchanged), `weather_symbol_keys.json` and `WeatherSymbols.CODES` are gone (launcher L2), and
   the self-test runs in the always-run changes job with a vendored upstream symbol as its drift check (L1, L6).
+- **Step 2's build** (the launcher): **R1** - a zone's save or delete only nudges, and nothing in the policy changes,
+  so a sync the server nudged (`SyncRunner`'s reason `sse`) pulls the weather when the last try is at least
+  `WEATHER_NUDGE_GAP_MS` (3 min) old, under the one in-flight guard (the coordinator's lean; the cheapest correct
+  fix - no new policy key). The launcher review's **L1**: the hit area's top is capped at the clock's baseline and
+  the rest goes below (`weatherHitRect`). **L2**: the own line's room is held (INVISIBLE) from a lock-up while a line
+  that had gone stale is being pulled again, until the next lock-up - the rows never move when it lands. **L3**:
+  `weather_spoken_mm` is a plain string, plural in English ("1.0 millimetres": the value always shows a decimal).
+  `weatherKeep` is split into `weatherKeep` (the pull's result) and `weatherPolicyStep` (the policy's change); the
+  hour's patterns live in `ClockFormat.weatherHour` (the one place a time pattern may be spelled); the mark is hidden
+  until its place is known; `legal_info_weather` is English like the other licence paragraphs
+  (`donottranslate.xml`).

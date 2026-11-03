@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The lock weather's day (design 75 §5.5, mockup v7), folded out under the clock face's lines by a tap on the mark:
+     at its top the nowcast's one line of text only when rain is due or falling within ~90 min (gone otherwise - no
+     bars, no radar), "I morgen" when the card is tomorrow's, then morning / afternoon / evening (the part, yr's symbol,
+     the degrees, the period's summed precipitation in the rain blue; the current period on the raised tone), then the
+     foot "Nydalen · 2° / 7°" with "Mørkt kl. 17:02" at its end, and "Oppdatert kl." under it when the answer is more
+     than an hour old. The compact tile's ground and the rule card's 12 dp padding; calm - no colour field, no motion.
+     The whole card is its own target: a tap folds it. One TalkBack node (lock.WeatherLockPanel describes it). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="14dp"
+    android:background="@drawable/bg_glance_compact_tile"
+    android:clickable="true"
+    android:focusable="true"
+    android:importantForAccessibility="yes"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:visibility="gone">
+
+    <TextView
+        android:id="@+id/weather_card_now"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:fontFamily="@font/nunito_extrabold"
+        android:importantForAccessibility="no"
+        android:maxLines="2"
+        android:textColor="@color/kid_ink"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/weather_card_tomorrow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"
+        android:fontFamily="@font/nunito_bold"
+        android:importantForAccessibility="no"
+        android:maxLines="1"
+        android:text="@string/weather_card_tomorrow"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/weather_card_columns"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:importantForAccessibility="no"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/weather_col_0"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_horizontal"
+            android:importantForAccessibility="no"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/weather_col_0_part"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="12sp" />
+
+            <ImageView
+                android:id="@+id/weather_col_0_symbol"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="2dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/weather_col_0_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="@font/nunito_extrabold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/weather_col_0_mm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_rain"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/weather_col_1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_horizontal"
+            android:importantForAccessibility="no"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/weather_col_1_part"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="12sp" />
+
+            <ImageView
+                android:id="@+id/weather_col_1_symbol"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="2dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/weather_col_1_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="@font/nunito_extrabold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/weather_col_1_mm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_rain"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/weather_col_2"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_horizontal"
+            android:importantForAccessibility="no"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/weather_col_2_part"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="12sp" />
+
+            <ImageView
+                android:id="@+id/weather_col_2_symbol"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="2dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/weather_col_2_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="@font/nunito_extrabold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/weather_col_2_mm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/nunito_bold"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_rain"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:importantForAccessibility="no"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/weather_card_foot"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/weather_card_dark"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/nunito_bold"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/kid_ink"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/weather_card_updated"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:fontFamily="@font/nunito_bold"
+        android:importantForAccessibility="no"
+        android:maxLines="1"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="12sp"
+        android:visibility="gone" />
+</LinearLayout>
