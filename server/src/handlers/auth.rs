@@ -15,12 +15,12 @@ use crate::{AppState, admin_auth};
 /// Usernames in the security log are cut to this many characters (security review M7).
 const MAX_LOGGED_USERNAME: usize = 64;
 
-const BANNED_MESSAGE: &str =
-    "Too many failed attempts from your network. Try again in about an hour.";
+/// The sign-in pages' line for an address the ban holds.
+const BANNED_MESSAGE: &str = "auth.banned";
 
 /// A right password past the one-time password's 72 hours (design 62 §4.1; it names no one, and
 /// fits an invitee who already set their own password - qa-62-revision-check N5).
-pub(crate) const INVITE_EXPIRED: &str = "This invitation has expired - ask for a new one.";
+const INVITE_EXPIRED: &str = "auth.invite_expired";
 
 #[derive(Template)]
 #[template(path = "login.html")]
@@ -118,7 +118,7 @@ pub(crate) fn render_login_next(
     Html(
         LoginTemplate {
             lang,
-            title: "Sign In".to_string(),
+            title: t(lang, "auth.login.title").to_string(),
             error,
             passkeys_here: view.passkeys_here,
             passwords_off: view.passwords_off,
@@ -137,16 +137,13 @@ pub(crate) fn login_hash(admin: Option<&AdminUser>) -> Option<&str> {
         .map(|a| a.password_hash.as_str())
 }
 
-fn locked_message(minutes: i64) -> String {
+fn locked_message(lang: Lang, minutes: i64) -> String {
     let wait = if minutes >= 120 {
-        format!("about {} hours", (minutes + 59) / 60)
+        t_count(lang, "auth.locked.hours", (minutes + 59) / 60, &[])
     } else {
-        format!("about {minutes} minutes")
+        t_count(lang, "auth.locked.minutes", minutes, &[])
     };
-    format!(
-        "This account is locked after too many wrong two-factor codes. Try again in {wait}. If \
-         that wasn't you, your password is known: change it after signing in."
-    )
+    t_params(lang, "auth.locked.text", &[("wait", &wait)])
 }
 
 /// The password step (design 22 §3.2.1): the per-IP ban as before (on the resolved client's key),
@@ -177,7 +174,11 @@ pub async fn login(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_login(Some(BANNED_MESSAGE.to_string()), lang, here().await),
+            render_login(
+                Some(t(lang, BANNED_MESSAGE).to_string()),
+                lang,
+                here().await,
+            ),
         )
             .into_response();
     }
@@ -239,7 +240,7 @@ pub async fn login(
     let Some(admin) = admin.filter(|a| valid && !a.passkey_only) else {
         security::check_and_ban_ip_if_needed(&state.db, &ip).await;
         return render_login(
-            Some("Incorrect username or password.".to_string()),
+            Some(t(lang, "auth.login.wrong").to_string()),
             lang,
             here().await,
         )
@@ -262,7 +263,12 @@ pub async fn login(
             )),
         )
         .await;
-        return render_login(Some(INVITE_EXPIRED.to_string()), lang, here().await).into_response();
+        return render_login(
+            Some(t(lang, INVITE_EXPIRED).to_string()),
+            lang,
+            here().await,
+        )
+        .into_response();
     }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
@@ -273,7 +279,8 @@ pub async fn login(
             Some(security::Detail::words("security.detail.login_locked", &[])),
         )
         .await;
-        return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
+        return render_login(Some(locked_message(lang, minutes)), lang, here().await)
+            .into_response();
     }
 
     // A new id or no sign-in (qa-passkeys-1 A-N3: never the id the browser came with).
@@ -348,7 +355,7 @@ async fn pending_admin(session: &Session) -> Option<i64> {
     admin_auth::pending_fresh(at, admin_auth::now_secs()).then_some(id)
 }
 
-const PENDING_EXPIRED: &str = "Sign-in timed out - enter your password again.";
+const PENDING_EXPIRED: &str = "auth.pending_expired";
 
 pub async fn verify_2fa_form(lang: Lang, session: Session) -> impl IntoResponse {
     if pending_admin(&session).await.is_none() {
@@ -362,7 +369,7 @@ fn render_verify(error: Option<String>, lang: Lang) -> Html<String> {
     Html(
         Verify2faTemplate {
             lang,
-            title: "Two-Factor Code".to_string(),
+            title: t(lang, "auth.verify.title").to_string(),
             error,
         }
         .render()
@@ -396,14 +403,19 @@ pub async fn verify_2fa(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_verify(Some(BANNED_MESSAGE.to_string()), lang),
+            render_verify(Some(t(lang, BANNED_MESSAGE).to_string()), lang),
         )
             .into_response();
     }
 
     let Some(admin_id) = pending_admin(&session).await else {
         session.flush().await.ok();
-        return render_login(Some(PENDING_EXPIRED.to_string()), lang, here().await).into_response();
+        return render_login(
+            Some(t(lang, PENDING_EXPIRED).to_string()),
+            lang,
+            here().await,
+        )
+        .into_response();
     };
 
     let admin = sqlx::query_as::<_, AdminUser>(concat!(
@@ -435,7 +447,8 @@ pub async fn verify_2fa(
                 .await
                 .unwrap_or(1);
             session.flush().await.ok();
-            return render_login(Some(locked_message(minutes)), lang, here().await).into_response();
+            return render_login(Some(locked_message(lang, minutes)), lang, here().await)
+                .into_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't count the 2FA attempt");
@@ -468,10 +481,10 @@ pub async fn verify_2fa(
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
                 session.flush().await.ok();
-                return render_login(Some(locked_message(minutes)), lang, here().await)
+                return render_login(Some(locked_message(lang, minutes)), lang, here().await)
                     .into_response();
             }
-            return render_verify(Some("That code didn't match. Try again.".to_string()), lang)
+            return render_verify(Some(t(lang, "auth.code_wrong").to_string()), lang)
                 .into_response();
         }
         Err(err) => {
@@ -593,7 +606,7 @@ pub async fn change_password_form(
     Html(
         ChangePasswordTemplate {
             lang,
-            title: "New Password".to_string(),
+            title: t(lang, "auth.change_password.title").to_string(),
             error: None,
         }
         .render()
@@ -619,12 +632,12 @@ pub async fn change_password(
     if admin.passkey_only {
         return passkey_only_refusal();
     }
-    let render_error = |msg: &str| -> axum::response::Response {
+    let render_error = |key: &str| -> axum::response::Response {
         Html(
             ChangePasswordTemplate {
                 lang,
-                title: "New Password".to_string(),
-                error: Some(msg.to_string()),
+                title: t(lang, "auth.change_password.title").to_string(),
+                error: Some(t(lang, key).to_string()),
             }
             .render()
             .unwrap(),
@@ -633,10 +646,10 @@ pub async fn change_password(
     };
 
     if form.new_password.len() < security::MIN_PASSWORD_LEN {
-        return render_error("New password must be at least 12 characters.");
+        return render_error("auth.change_password.too_short");
     }
     if form.new_password != form.confirm_password {
-        return render_error("New passwords don't match.");
+        return render_error("auth.change_password.mismatch");
     }
     let changed = match state
         .passwords
@@ -669,12 +682,10 @@ pub async fn change_password(
     let new_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left: 1 }, _) => {
-            return render_error(
-                "Current password is incorrect. One more wrong one signs you out.",
-            );
+            return render_error("auth.change_password.wrong_last");
         }
         (admin_auth::Reauth::Wrong { .. }, _) => {
-            return render_error("Current password is incorrect.");
+            return render_error("auth.change_password.wrong");
         }
         _ => return admin_auth::signed_out_response(),
     };
@@ -698,11 +709,11 @@ pub async fn change_password(
         }
         Err(err) => {
             tracing::error!(%err, "couldn't save the first password");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't save the new password - nothing was changed. Check the server log.",
-            )
-                .into_response();
+                "account.password.failed",
+            );
         }
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
@@ -803,7 +814,7 @@ pub async fn setup_2fa_form(
     Html(
         Setup2faTemplate {
             lang,
-            title: "Two-Factor Login".to_string(),
+            title: t(lang, "account.totp.title").to_string(),
             qr_base64,
             secret_base32: secret,
             error: None,
@@ -858,10 +869,10 @@ pub async fn setup_2fa_verify(
         return Html(
             Setup2faTemplate {
                 lang,
-                title: "Two-Factor Login".to_string(),
+                title: t(lang, "account.totp.title").to_string(),
                 qr_base64,
                 secret_base32: secret,
-                error: Some("That code didn't match. Try again.".to_string()),
+                error: Some(t(lang, "auth.code_wrong").to_string()),
             }
             .render()
             .unwrap(),
@@ -1652,5 +1663,21 @@ pub async fn set_language(
             tracing::error!(%err, "couldn't save the account's language");
             crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "common.not_saved")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The lock's wait in the reader's language, a minute or hours (design 70 §5, slice 3e).
+    #[test]
+    fn the_locked_line_counts_in_both_languages() {
+        assert!(locked_message(Lang::En, 1).contains("Try again in about 1 minute. If"));
+        assert!(locked_message(Lang::En, 150).contains("Try again in about 3 hours."));
+        assert!(locked_message(Lang::Nb, 1).contains("Prøv igjen om omtrent 1 minutt."));
+        assert!(locked_message(Lang::Nb, 45).starts_with(
+            "Kontoen er sperret etter for mange feil tofaktorkoder. Prøv igjen om omtrent 45 minutter."
+        ));
     }
 }

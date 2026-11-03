@@ -37,6 +37,8 @@ const MOVED = {
     ],
     // 3d: Music (the status blocks come worded from /music/cards): a selector.
     "music-cards.js": [".music-card, .card"],
+    // 3e: Settings (subscriptions.json's rows come worded): an API's name, a media query, an error's message.
+    "notifications.js": ["PushManager", "(display-mode: standalone)", "status "],
     // Design 74: DOM exception names, a header and selectors.
     "passkey.js": [
         "NotAllowedError",
@@ -46,6 +48,10 @@ const MOVED = {
         "input[name=\"current_password\"], input[name=\"password\"]",
         "input[required], select[required], textarea[required]",
     ],
+    // 3e-b: the app lock (the locked page's tab title is the name, design 74 §6.5) and the title rule preview (a
+    // header).
+    "app-lock.js": ["Vibb"],
+    "calendar-preview.js": ["Content-Type"],
 };
 
 /** Every string literal outside comments, in order. */

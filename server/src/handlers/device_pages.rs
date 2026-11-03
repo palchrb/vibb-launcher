@@ -1594,7 +1594,8 @@ pub async fn view_filter(
                     Some(false) => "off",
                 },
                 everyone_on,
-                problem: crate::handlers::dns_filter::FeedState::of(&compiled, list_id).problem(),
+                problem: crate::handlers::dns_filter::FeedState::of(&compiled, list_id)
+                    .problem(lang),
                 id: list_id,
                 name,
             })

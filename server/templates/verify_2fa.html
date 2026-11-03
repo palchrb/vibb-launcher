@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,8 +7,8 @@
 {% include "partials/js_words.html" %}
 <main class="auth-card">
     <p class="auth-brand">Vibb Phone</p>
-    <h1 class="auth-title">Two-Factor Code</h1>
-    <p class="auth-sub">Enter the 6-digit code from your authenticator app.</p>
+    <h1 class="auth-title">{{ self.t("auth.verify.title") }}</h1>
+    <p class="auth-sub">{{ self.t("auth.verify.sub") }}</p>
 
     {% if let Some(e) = error %}
     <p class="flash flash-error auth-error" role="alert">{{ e }}</p>
@@ -17,11 +17,11 @@
     <form method="post" action="/auth/verify-2fa">
         <div class="group form-group">
             <div class="field">
-                <label class="field-label" for="code">Code</label>
+                <label class="field-label" for="code">{{ self.t("password_on.code") }}</label>
                 <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
             </div>
         </div>
-        <button type="submit" class="button-wide">Sign In</button>
+        <button type="submit" class="button-wide">{{ self.t("auth.login.submit") }}</button>
     </form>
 </main>
 </body>

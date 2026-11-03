@@ -1862,9 +1862,9 @@ async fn language_is_each_parents() {
     assert!(once.contains(r#"<option value="en" lang="en" selected>English</option>"#));
     assert!(!once.contains(r#"lang="nb" selected"#));
     assert_eq!(stored("pappa").await.as_deref(), Some("en"));
-    // A page not moved yet keeps lang="en" over its English words (qa-s-i18n-1-code L1).
-    let unmoved = get_in(&app, "/settings?lang=nb", &pappa, None).await.text();
-    assert!(unmoved.contains(r#"<html lang="en">"#));
+    // Settings is moved (slice 3e).
+    let settings = get_in(&app, "/settings?lang=nb", &pappa, None).await.text();
+    assert!(settings.contains(r#"<html lang="nb">"#) && settings.contains("Innstillinger"));
     // Music is moved (slice 3d).
     let music = get_in(&app, "/music?lang=nb", &pappa, None).await.text();
     assert!(music.contains(r#"<html lang="nb">"#) && music.contains("Bibliotek"));
@@ -1986,8 +1986,12 @@ async fn the_env_default_language_comes_before_the_browsers() {
         .await
         .unwrap();
     let nb = Some("nb-NO,nb;q=0.9");
-    // Before any account (the sign-in pages' language; the login template's own words aren't moved yet, so the
-    // CSRF refusal, which asks `Lang::of_request` with no account, shows it): English; `?lang=nb` still wins.
+    // Before any account (the sign-in pages' language, and the CSRF refusal's, which asks `Lang::of_request` with no
+    // account): English; `?lang=nb` still wins.
+    let login = get_in(&app, "/login", "", nb).await.text();
+    assert!(login.contains(r#"<html lang="en">"#) && login.contains(">Sign In</button>"));
+    let login = get_in(&app, "/login?lang=nb", "", nb).await.text();
+    assert!(login.contains(r#"<html lang="nb">"#) && login.contains(">Logg inn</button>"));
     let refused = |uri: &'static str| {
         let app = &app;
         async move {

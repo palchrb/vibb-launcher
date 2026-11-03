@@ -30,10 +30,10 @@ struct EventRow {
     exact: String,
 }
 
-/// A blocked address: until when (local) and why.
+/// A blocked address: until when (local; `None` when the stored time can't be read) and why.
 struct BanRow {
     ip: String,
-    until: String,
+    until: Option<String>,
     exact: String,
     reason: Option<String>,
 }
@@ -117,18 +117,21 @@ fn event_row(
     EventRow {
         label: event_label(zone.lang(), &event.event_type),
         sub,
-        when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+        when: at.map_or_else(
+            || crate::i18n::t(zone.lang(), "security_log.time_unknown").to_string(),
+            |t| zone.when(t, now),
+        ),
         exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
     }
 }
 
-fn server_error(err: sqlx::Error) -> Response {
+fn server_error(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "couldn't read the security log");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the security log - check the server log.",
+        "error.read_security_log",
     )
-        .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -156,7 +159,7 @@ pub async fn security_log(
     .await;
     let events = match events {
         Ok(events) => events,
-        Err(err) => return server_error(err),
+        Err(err) => return server_error(lang, err),
     };
     let older_than = (events.len() as i64 == EVENTS_PER_PAGE)
         .then(|| events.last().map(|event| event.id))
@@ -169,12 +172,12 @@ pub async fn security_log(
     .await;
     let bans = match bans {
         Ok(bans) => bans,
-        Err(err) => return server_error(err),
+        Err(err) => return server_error(lang, err),
     };
 
     let names = match crate::parents::Names::load(&state.db).await {
         Ok(names) => names,
-        Err(err) => return server_error(err),
+        Err(err) => return server_error(lang, err),
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
@@ -184,7 +187,7 @@ pub async fn security_log(
             let until = parse_db_utc(&ban.banned_until);
             BanRow {
                 ip: ban.ip_address,
-                until: until.map_or_else(|| "a while".to_string(), |t| zone.until(t, now)),
+                until: until.map(|t| zone.until(t, now)),
                 exact: until.map(|t| zone.exact(t)).unwrap_or_default(),
                 // Words since design 70 (a sentence's JSON), prose on a ban from before.
                 reason: ban
@@ -199,7 +202,7 @@ pub async fn security_log(
         .filter(|ip| !ip.is_empty() && !bans.iter().any(|ban| &ban.ip == ip));
     let page = SecurityTemplate {
         lang,
-        title: "Security Log".to_string(),
+        title: crate::i18n::t(lang, "security_log.title").to_string(),
         events: events
             .into_iter()
             .map(|event| event_row(event, &names, &zone, now))
@@ -220,7 +223,11 @@ pub struct UnbanForm {
 /// A form field, not a path segment: a ban's key may be an IPv6 /56 ("2001:db8:1:200::/56"). Back
 /// to Blocked Addresses (`#banned`), with the address in the flash only when a ban was lifted; a
 /// DB error is a 500.
-pub async fn unban_ip(State(state): State<AppState>, Form(form): Form<UnbanForm>) -> Response {
+pub async fn unban_ip(
+    State(state): State<AppState>,
+    lang: Lang,
+    Form(form): Form<UnbanForm>,
+) -> Response {
     let result = sqlx::query("DELETE FROM banned_ips WHERE ip_address = ?")
         .bind(&form.ip)
         .execute(&state.db)
@@ -229,11 +236,7 @@ pub async fn unban_ip(State(state): State<AppState>, Form(form): Form<UnbanForm>
         Ok(done) => done.rows_affected() > 0,
         Err(err) => {
             tracing::error!(%err, "couldn't unban an address");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't unban it - nothing was changed. Check the server log.",
-            )
-                .into_response();
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.unban");
         }
     };
     if !lifted {

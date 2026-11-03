@@ -11,10 +11,16 @@
 // subscriptions.json every 3 s for 30 s and re-render their badge and sub-line in place - no
 // reload, no scroll - stopping once the tested row's sub-line changed (server round 5 §5).
 // Lives on /notifications/settings (design 45 §1.7), and on Devices for the first opening's offer
-// (`offer` below).
+// (`offer` below). The state words come from the form's own data-w-* attributes (design 70 §5.3), set with
+// textContent.
 // Tests: jstest/notifications.test.js.
 (function (root) {
     "use strict";
+
+    // A word from the page; a missing one shows its name.
+    function w(el, name) {
+        return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
+    }
 
     // base64url -> Uint8Array (older Safari takes no string as applicationServerKey).
     function decodeKey(text, win) {
@@ -245,24 +251,24 @@
         var registration = null;
         var current = null;
 
-        function show(text, note) {
-            stateText.textContent = text;
+        function show(word, note) {
+            stateText.textContent = w(form, word);
             if (note) doc.getElementById(note).hidden = false;
         }
 
         if (nav.standalone === false) {
-            show("Add to the Home Screen first", "push-home-screen");
+            show("home-screen", "push-home-screen");
             return;
         }
         if (!("PushManager" in win) || !win.isSecureContext || !nav.serviceWorker) {
-            show("Not available in this browser");
+            show("not-available");
             return;
         }
         if (win.Notification && win.Notification.permission === "denied") {
-            show("Blocked", "push-blocked");
+            show("blocked", "push-blocked");
             return;
         }
-        show("Off");
+        show("off");
         onButton.hidden = false;
         onButton.disabled = true;
 
@@ -288,7 +294,7 @@
             });
         }).then(function (on) {
             if (on) {
-                show("On");
+                show("on");
                 onButton.hidden = true;
                 offButton.hidden = false;
             } else {
@@ -312,9 +318,9 @@
             }, function () {
                 if (win.Notification && win.Notification.permission === "denied") {
                     onButton.hidden = true;
-                    show("Blocked", "push-blocked");
+                    show("blocked", "push-blocked");
                 } else {
-                    show("Couldn't turn on - try again");
+                    show("on-failed");
                 }
             });
         });
@@ -326,7 +332,7 @@
                 offForm.elements.endpoint.value = endpoint;
                 offForm.submit();
             }, function () {
-                show("Couldn't turn off - try again");
+                show("off-failed");
             });
         });
     }

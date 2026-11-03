@@ -550,8 +550,7 @@ mod tests {
     /// The templates whose words are in the catalogs (design 70 §5.2): each slice-3 PR adds its files, 3e every file
     /// in `templates/` and `templates/partials/`.
     const MOVED: &[&str] = &[
-        // Device › Calendar and Settings › Account (design 69, slice 1).
-        // (Their pages keep a few examples and a command: `device_calendar*.html` and `account.html` join in 3e.)
+        // Device › Calendar and Settings › Account (design 69, slice 1; their pages joined in 3e-b).
         "partials/calendar_preview.html",
         // 3a: Devices.
         "devices_list.html",
@@ -609,9 +608,39 @@ mod tests {
         "partials/music_status.html",
         "partials/music_status_only.html",
         "partials/spotify_setup.html",
+        // 3e-a: Settings' core pages.
+        "settings_hub.html",
+        "notifications.html",
+        "notifications_settings.html",
+        "schedules.html",
+        "schedule_rule.html",
+        "schedule_budget.html",
+        "dns_filter.html",
+        "dns_log.html",
+        "wallpapers.html",
+        "updates.html",
+        "backups.html",
+        "provisioning_settings.html",
         // Design 74 step 3: the lock screen (and its breathing Vibb mark, 2026-11-03).
         "lock.html",
         "partials/vibb_breath.html",
+        // 3e-b: accounts, sign-in, security and Device › Calendar.
+        "account.html",
+        "change_password.html",
+        "login.html",
+        "password_sign_in.html",
+        "setup_2fa.html",
+        "verify_2fa.html",
+        "security.html",
+        "partials/key_icon.html",
+        "partials/passkey_confirm.html",
+        "partials/passkeys_still_work.html",
+        "partials/reauth_passkey.html",
+        "device_calendar.html",
+        "device_calendar_add.html",
+        "device_calendar_caldav.html",
+        "device_calendar_link.html",
+        "device_calendar_rule.html",
     ];
 
     /// What a reader sees of a template: its text and the attributes read out or shown (`title`, `aria-label`,
@@ -688,6 +717,27 @@ mod tests {
             })
             .filter(|text| words.is_match(text))
             .collect()
+    }
+
+    /// Since 3e every template is moved (design 70 §5.2): a new one joins `MOVED` with its words in the catalogs.
+    #[test]
+    fn every_template_is_moved() {
+        let mut here = Vec::new();
+        for (dir, prefix) in [("templates", ""), ("templates/partials", "partials/")] {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let name = entry.unwrap().file_name().into_string().unwrap();
+                if name.ends_with(".html") {
+                    here.push(format!("{prefix}{name}"));
+                }
+            }
+        }
+        here.sort();
+        let mut moved: Vec<String> = MOVED.iter().map(|name| name.to_string()).collect();
+        moved.sort();
+        assert_eq!(
+            here, moved,
+            "every template is in MOVED, and only templates"
+        );
     }
 
     /// A moved template has no word of its own (design 70 §5.2), and no word of the catalog's gets `|safe`.

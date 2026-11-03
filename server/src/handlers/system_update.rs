@@ -88,13 +88,15 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// Why an update request must not be written right now, if it mustn't: the root-side scripts
 /// are older than this app needs. A pre-monorepo `actions.sh` would fetch the old repo's
 /// update.sh and install the old repo's last release over a database this version migrated.
-async fn update_blocked_reason(state: &AppState) -> Option<String> {
+async fn update_blocked_reason(state: &AppState, lang: Lang) -> Option<String> {
     security::watcher_needs_update().await.then(|| {
-        format!(
-            "Not updating: the system helper scripts on this Pi are too old to update this \
-             version safely. Re-run the installer over SSH first (it keeps your settings and \
-             data): {}",
-            security::reinstall_hint(&state.config.server_release_repo)
+        crate::i18n::t_params(
+            lang,
+            "settings.updates.blocked_reason",
+            &[(
+                "hint",
+                &security::reinstall_hint(&state.config.server_release_repo),
+            )],
         )
     })
 }
@@ -283,8 +285,12 @@ pub async fn trigger_update(
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    if let Some(reason) = update_blocked_reason(&state).await {
-        let flash = Flash::refused("app", "Run the installer again first").because(reason);
+    if let Some(reason) = update_blocked_reason(&state, lang).await {
+        let flash = Flash::refused(
+            "app",
+            crate::i18n::t(lang, "settings.updates.reinstall_first"),
+        )
+        .because(reason);
         return updates::render_page(&state, Some(flash), lang)
             .await
             .into_response();
@@ -294,10 +300,13 @@ pub async fn trigger_update(
     if let Some(latest) = refresh_release(&state).await
         && !is_newer(&latest, crate::APP_VERSION)
     {
-        let flash = Flash::refused("app", "Already on the newest version").because(format!(
-            "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
-            crate::APP_VERSION
-        ));
+        let flash = Flash::refused("app", crate::i18n::t(lang, "settings.updates.newest")).because(
+            crate::i18n::t_params(
+                lang,
+                "settings.updates.not_newer",
+                &[("latest", &latest), ("current", crate::APP_VERSION)],
+            ),
+        );
         return updates::render_page(&state, Some(flash), lang)
             .await
             .into_response();
@@ -361,10 +370,7 @@ pub async fn save_app_update_schedule(
     } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
     } else {
-        let flash = Flash::refused(
-            "app-schedule",
-            "The time must look like 04:00 - nothing was saved.",
-        );
+        let flash = Flash::refused("app-schedule", updates::bad_time(lang, "04:00"));
         return (
             axum::http::StatusCode::BAD_REQUEST,
             updates::render_page(&state, Some(flash), lang).await,
@@ -387,7 +393,10 @@ pub async fn save_app_update_schedule(
     .await
     .is_err()
     {
-        let flash = Flash::refused("app-schedule", "Couldn't save the schedule.");
+        let flash = Flash::refused(
+            "app-schedule",
+            crate::i18n::t(lang, "settings.schedule.save_failed"),
+        );
         let page = updates::render_page(&state, Some(flash), lang).await;
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
@@ -429,7 +438,7 @@ pub async fn run_scheduled_app_update_check(state: AppState) {
             continue;
         }
 
-        if let Some(reason) = update_blocked_reason(&state).await {
+        if let Some(reason) = update_blocked_reason(&state, Lang::En).await {
             tracing::warn!("auto-update skipped: {reason}");
             continue;
         }

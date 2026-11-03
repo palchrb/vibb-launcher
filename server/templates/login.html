@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -7,7 +7,7 @@
 {% include "partials/js_words.html" %}
 <main class="auth-card">
     <h1 class="auth-title">Vibb Phone</h1>
-    <p class="auth-sub">Sign in to look after your family's phones.</p>
+    <p class="auth-sub">{{ self.t("auth.login.sub") }}</p>
 
     {% if let Some(e) = error %}
     <p class="flash flash-error auth-error" role="alert">{{ e }}</p>
@@ -36,15 +36,15 @@
     <form method="post" action="/login">
         <div class="group form-group">
             <div class="field">
-                <label class="field-label" for="username">Username</label>
+                <label class="field-label" for="username">{{ self.t("auth.login.username") }}</label>
                 <input type="text" id="username" name="username" autocomplete="{% if passkeys_here %}username webauthn{% else %}username{% endif %}" autocapitalize="none" spellcheck="false" required autofocus>
             </div>
             <div class="field">
-                <label class="field-label" for="password">Password</label>
+                <label class="field-label" for="password">{{ self.t("auth.login.password") }}</label>
                 <input type="password" id="password" name="password" autocomplete="current-password" required>
             </div>
         </div>
-        <button type="submit" class="button-wide">Sign In</button>
+        <button type="submit" class="button-wide">{{ self.t("auth.login.submit") }}</button>
     </form>
     {%- if passkeys_here %}
     {#- Design 74 D1.4, §6.4: shown by static/passkey.js whenever the browser can use passkeys (D4.3) - never
