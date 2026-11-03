@@ -869,7 +869,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   way, an open `<details>`, a typed field, a POST's answer: nothing happens, as for the reload). Already on `/`: only
   the reload in place. Between 1 and 10 minutes: the reload in place, unchanged. The lock screen is left alone as
   before; a **due app lock** after more than 10 minutes goes to `/lock?next=/` (a ping answered 423 too), so after the
-  passkey the parent lands on Devices; after less its `next` is the page they were on. Back from the back-forward cache
+  passkey the parent lands on Devices; after less its `next` is the page they were on. **app-lock.js picks that `next`**
+  (`static/app-lock.js?v=4`, QA M1): it is not deferred, so its own `visibilitychange`/`pageshow` handler runs before
+  reconnect.js's and locks first (`going`), after which a later `lock(next)` is a no-op; so it keeps its own hidden-since
+  (set by the veil) and calls `lock("/")` when that was over `HOME_AFTER`. The ten minutes are its one constant,
+  `HOME_AFTER`, which reconnect.js reads as `window.handyLock.homeAfter` for its own return to `/` (without it nothing goes
+  home; the head always loads app-lock.js). A hidden page whose timer fires and locks while hidden (a browser that runs
+  hidden timers; a phone holds them) is already on `/lock?next=<its page>` by the return. Back from the back-forward cache
   counts the same (`pageshow` with `persisted`). `reconnect.js?v=10`; tests in `jstest/reconnect.test.js`. `admin_auth::mark_post_answer` (a layer on the admin
   router) puts `data-post-answer` on the `<body>` of every HTML answer to a POST outside the device API, whatever its
   status (the setup code, a refused form shown again, the sign-in steps' errors, a music import's preview - about 45

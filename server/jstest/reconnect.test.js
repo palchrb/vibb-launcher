@@ -4,7 +4,10 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const rc = require("../static/reconnect.js");
-const { install, navigationTarget, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS, HOME_AFTER } = rc;
+// The ten minutes are app-lock.js's (it runs first and picks the lock's `next` itself); reconnect.js reads them from
+// `window.handyLock.homeAfter`.
+const { HOME_AFTER } = require("../static/app-lock.js");
+const { install, navigationTarget, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
 
 const HERE = "https://pi.example.ts.net/devices/1?tab=apps#apps";
 
@@ -77,6 +80,7 @@ function fakeWindow({ openForm = false, postAnswer = false, href = "https://pi.e
     const pings = [];
     const view = { bar: false, chip: false, retry: null, marked: new Set() };
     const win = {
+        handyLock: { homeAfter: HOME_AFTER, due: () => false },
         assigned: [],
         reloads: 0,
         openForm,
@@ -955,6 +959,7 @@ test("a ping redirected to the sign-in page asks /api/session before it counts",
 function withLock(win, due) {
     win.locks = [];
     win.handyLock = {
+        homeAfter: HOME_AFTER,
         due: () => win.lockDue,
         lock: (next) => win.locks.push(next === undefined ? null : next),
     };
@@ -1002,7 +1007,7 @@ test("the lock: after over 10 minutes away its next is Devices (`/`), after less
 
     // The bare redirect (no app-lock.js): /lock?next=/
     const bare = fakeWindow();
-    bare.handyLock = { due: () => true };
+    bare.handyLock = { homeAfter: HOME_AFTER, due: () => true };
     bare.install();
     bare.hide();
     bare.advance(11 * 60 * 1000);
@@ -1020,6 +1025,27 @@ test("the lock: due by the time the return ping is answered, the lock instead of
     await answer(win);
     assert.strictEqual(win.reloads, 0);
     assert.deepStrictEqual(win.locks, ["/devices/1"]);
+});
+
+test("the lock: a 423 during the wait of a return after over 10 minutes goes to the lock with next `/`", async () => {
+    const win = withLock(fakeWindow(), false);
+    win.install();
+    win.hide();
+    win.advance(11 * 60 * 1000);
+    win.show();
+    await answer(win, 423);
+    assert.deepStrictEqual(win.locks, ["/"]);
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.assigned, []);
+
+    // And after 9 minutes it is the page they were on.
+    const nine = withLock(fakeWindow(), false);
+    nine.install();
+    nine.hide();
+    nine.advance(9 * 60 * 1000);
+    nine.show();
+    await answer(nine, 423);
+    assert.deepStrictEqual(nine.locks, ["/devices/1"]);
 });
 
 test("the lock: a ping answered 423 (the server's lock) goes to the lock, with or without app-lock.js", async () => {

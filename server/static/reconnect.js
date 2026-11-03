@@ -21,11 +21,12 @@
 //   <body data-post-answer>, `admin_auth::mark_post_answer`); then the page stays as it is. Before
 //   any reload the entry is made a GET of the address (`replaceState`), so a reload never resends
 //   a form;
-// - after more than 10 minutes hidden (HOME_AFTER, 2026-11-03) the same wait ends on Devices, `/`, instead of the
+// - after more than 10 minutes hidden (app-lock.js's HOME_AFTER, 2026-11-03) the same wait ends on Devices, `/`, instead of the
 //   reload in place (the PWA "opens" on its start page after a long time away), under exactly the rules above: a save
 //   on its way, an open <details>, a typed field and a POST's answer keep it where it is, and a page that is already
 //   `/` is only reloaded in place. A due lock after that long goes to /lock with `next=/` (after the passkey the parent
-//   lands on Devices); after a shorter time its `next` stays the page they were on;
+//   lands on Devices; app-lock.js, which runs first and locks by itself, picks that `next` from its own hidden time,
+//   reconnect.js only for the page without it); after a shorter time its `next` stays the page they were on;
 // - clears everything on `pageshow` (a page back from the back-forward cache is never left
 //   "loading");
 // - on the sign-in page (2026-10-25: after a Tailscale outage the return reload showed the login
@@ -48,9 +49,10 @@
     var STUCK_AFTER = 12000;
     // 1 minute (the user, 2026-10-24; 10 minutes until then): back from the background after that long = a reload in place.
     var AWAY_MS = 60 * 1000;
-    // Away that long (the user, 2026-11-03: "10 minutter er bra") = the PWA opens on Devices, `/` (the manifest's
-    // start_url), not on the page it was left on: through the same wait, and as the lock's `next`.
-    var HOME_AFTER = 10 * 60 * 1000;
+    // Away longer than app-lock.js's `HOME_AFTER` (10 minutes; the user, 2026-11-03: "10 minutter er bra") = the PWA
+    // opens on Devices, `/` (the manifest's start_url), not on the page it was left on: through the same wait. The one
+    // number is app-lock.js's (not deferred, so it runs first and puts the lock's `next` at "/" itself, which a later
+    // script can no longer change); read here as `window.handyLock.homeAfter`, and without it nothing goes home.
     var HOME_PATH = "/";
     var PING_URL = "/ping";
     // Is this request's session signed in? 204 / 401, no body (2026-10-25, security::session_check).
@@ -163,6 +165,12 @@
     function herePath(win) {
         var l = win.location;
         return (l.pathname || "/") + (l.search || "") + (l.hash || "");
+    }
+
+    /** How long away the PWA opens on Devices (app-lock.js's `HOME_AFTER`), 0 when this page has no such number. */
+    function homeAfter(win) {
+        var lock = win.handyLock;
+        return lock && lock.homeAfter > 0 ? lock.homeAfter : 0;
     }
 
     /** Whether app-lock.js says the lock is due (design 74 D3.3). */
@@ -743,7 +751,8 @@
 
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
-            var home = hiddenAt !== null && now() - hiddenAt > HOME_AFTER;
+            var after = homeAfter(win);
+            var home = after > 0 && hiddenAt !== null && now() - hiddenAt > after;
             hiddenAt = null;
             // The lock screen is left alone on a return: its own showing asks for the passkey (passkey.js), and a
             // reload or the 423's way to the lock would replace the page under that prompt (qa-lock-auto M2). A dead
@@ -831,7 +840,6 @@
         OFFER_AFTER: OFFER_AFTER,
         STUCK_AFTER: STUCK_AFTER,
         AWAY_MS: AWAY_MS,
-        HOME_AFTER: HOME_AFTER,
         w: w
     };
     if (typeof module !== "undefined" && module.exports) {

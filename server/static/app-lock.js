@@ -31,6 +31,11 @@
     var BEACON_URL = "/api/used";
     var LOCK_PATH = "/lock";
     var REST_MARK = "/static/vibb-rest.svg";
+    // Away (hidden) longer than this, the PWA opens on Devices (2026-11-03): a lock due on the return goes to /lock with
+    // `next` = "/", not the page left. The one rule of it: reconnect.js reads it as `window.handyLock.homeAfter` for its
+    // own return to "/", so the two never differ. This script decides first (it is not deferred), hence it applies it.
+    var HOME_AFTER = 10 * 60 * 1000;
+    var HOME_PATH = "/";
 
     /** The lock screen's address for `next` (a path of this app). */
     function lockUrl(next) {
@@ -123,7 +128,8 @@
 
         var api = {
             due: function () { return false; },
-            lock: lock
+            lock: lock,
+            homeAfter: HOME_AFTER
         };
         win.handyLock = api;
 
@@ -228,10 +234,15 @@
             lastWall = at;
         }
 
+        // When the page was hidden (the veil), for the lock's `next` after a long time away.
+        var hiddenAt = null;
+
         function shown() {
+            var home = hiddenAt !== null && now() - hiddenAt > HOME_AFTER;
+            hiddenAt = null;
             reread();
             if (due()) {
-                lock();
+                lock(home ? HOME_PATH : undefined);
                 return;
             }
             removeClass(html, "veiled");
@@ -240,6 +251,7 @@
         }
 
         function veil() {
+            if (hiddenAt === null) hiddenAt = now();
             addClass(html, "veiled");
             hideTitle();
         }
@@ -268,6 +280,7 @@
         install: install,
         lockUrl: lockUrl,
         here: here,
+        HOME_AFTER: HOME_AFTER,
         USED_KEY: USED_KEY,
         SENT_KEY: SENT_KEY,
         BEACON_EVERY: BEACON_EVERY,

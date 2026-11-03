@@ -5,6 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const al = require("../static/app-lock.js");
+const reconnect = require("../static/reconnect.js");
 const { install, BEACON_EVERY, USED_KEY, SENT_KEY } = al;
 
 const MIN = 60 * 1000;
@@ -386,4 +387,33 @@ test("a script's synthetic event is no use (isTrusted)", () => {
     assert.strictEqual(win.fetches.length, 0);
     win.advance(MIN + 1000);
     assert.deepStrictEqual(win.replaced, [LOCK]);
+});
+
+// The real app-lock.js and reconnect.js on one page (app-lock.js first, as the head loads them): the lock's `next` after a
+// long time away is app-lock.js's to pick, since it locks first and reconnect.js's later lock() is then a no-op.
+test("a lock due on the return: next is Devices (`/`) after over 10 minutes away, the page they were on after less", () => {
+    const { HOME_AFTER } = al;
+    assert.strictEqual(HOME_AFTER, 10 * MIN);
+    for (const [away, next] of [[11 * MIN, "/"], [9 * MIN, "/devices/1?tab=apps"]]) {
+        for (const via of ["visibility", "pageshow"]) {
+            const win = fakeWindow({ lockMs: 5 * MIN });
+            win.install();
+            assert.strictEqual(win.handyLock.homeAfter, HOME_AFTER);
+            const view = { bar() {}, chip() {}, offer() {}, mark() {} };
+            reconnect.install(win, { now: () => win.now() + win.wallShift, view });
+            if (via === "visibility") {
+                win.hide();
+                win.wallShift += away; // a phone holds a hidden page's timers: the time passes, no timer runs
+                win.show();
+            } else {
+                win.fire("win", "pagehide", { persisted: true });
+                win.visibility = "hidden";
+                win.fire("doc", "visibilitychange");
+                win.wallShift += away;
+                win.visibility = "visible";
+                win.fire("win", "pageshow", { persisted: true });
+            }
+            assert.deepStrictEqual(win.replaced, ["/lock?next=" + encodeURIComponent(next)], `${away / MIN} min via ${via}`);
+        }
+    }
 });
