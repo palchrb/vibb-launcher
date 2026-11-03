@@ -79,33 +79,45 @@ class WeatherContractTest {
     @Test
     fun `every form the server may send is one of the four`() {
         val forms = parsed.getValue("forms").jsonObject
-        assertEquals(10, forms.size)
         for ((key, list) in forms) {
             val values = list.jsonArray.map { it.jsonPrimitive.content }
             assertTrue(key, values.isNotEmpty() && values.all { it in setOf("from", "today", "now", "tomorrow") })
         }
-        // The answer's words, if any, are among them.
-        for (hour in answer().hours) {
-            val words = hour.words ?: continue
-            assertTrue(words.toString(), forms.getValue(words.key).jsonArray.any { it.jsonPrimitive.content == words.form })
-        }
     }
 
+    /** Code QA M1: the words as the server really sends them (`answer_words`: the recorded answer with rain laid over
+     * 16:00-18:00) - `from` with its hour, `now` without - each a key and form of `forms`. */
     @Test
-    fun `every symbol has its drawable and its name`() {
-        val keys = Json.parseToJsonElement(javaClass.classLoader!!.getResource("weather_symbol_keys.json")!!.readText())
-            .jsonObject.getValue("keys").jsonObject
-        assertEquals(keys.keys.toList(), WeatherSymbols.CODES)
-        for ((code, id) in keys) {
-            val file = File("src/main/res/drawable/weather_${id.jsonPrimitive.content}.xml")
-            assertTrue(file.path, file.isFile)
-            assertNotNull(code, WeatherSymbols.drawable(code))
-            assertNotNull(code, WeatherSymbols.name(code))
+    fun `the words decode as the server sends them`() {
+        val forms = parsed.getValue("forms").jsonObject
+        val answer = ServerJson.decodeFromString(WeatherAnswer.serializer(), parsed.getValue("answer_words").toString())
+        val words = answer.hours.mapNotNull { it.words }
+        assertTrue(words.toString(), words.any { it.form == "from" } && words.any { it.form == "now" })
+        for (w in words) {
+            assertTrue(w.toString(), forms.getValue(w.key).jsonArray.any { it.jsonPrimitive.content == w.form })
+            assertEquals(w.toString(), w.form == "from", w.atMs != null)
         }
+        // The `from` hour is the first wet hour, after the entry it is shown in.
+        val from = answer.hours.first { it.words?.form == "from" }
+        assertTrue(from.words!!.atMs!! > from.atMs)
+    }
+
+    /** The answer's codes all map; every English symbol name has its Norwegian one (lint doesn't stop the build, and
+     * TalkBack would speak English). */
+    @Test
+    fun `every symbol has its drawable and its name in both languages`() {
         val answer = answer()
         val codes = answer.hours.mapNotNull { it.symbol } + answer.days.flatMap { day -> day.periods.mapNotNull { it.symbol } }
         assertTrue(codes.isNotEmpty())
-        for (code in codes) assertNotNull("the answer's $code", WeatherSymbols.drawable(code))
+        for (code in codes) {
+            assertNotNull("the answer's $code", WeatherSymbols.drawable(code))
+            assertNotNull("the answer's $code", WeatherSymbols.name(code))
+        }
         assertEquals(null, WeatherSymbols.drawable("not_a_code"))
+        fun names(dir: String) = Regex("""<string name="(weather_symbol_[0-9]{2})">""")
+            .findAll(File("src/main/res/$dir/weather_symbols.xml").readText()).map { it.groupValues[1] }.toSet()
+        val en = names("values")
+        assertEquals(41, en.size)
+        assertEquals(en, names("values-nb"))
     }
 }

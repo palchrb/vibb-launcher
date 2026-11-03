@@ -160,7 +160,9 @@ pub async fn forecast(
         Err(err) => return failed(device.id, err),
     };
     let row = match weather_cache::forecast(&state, cell).await {
-        Ok(row) => row,
+        Ok(Some(row)) => row,
+        // A Location Off erase took the cell while this ask ran.
+        Ok(None) => return answer(&headers, &weather::status("unavailable")),
         Err(err) => return failed(device.id, err),
     };
     let hours = row.hours();

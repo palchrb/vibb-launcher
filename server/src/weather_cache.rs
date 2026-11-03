@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
@@ -31,7 +31,8 @@ pub const NOWCAST_WAIT: StdDuration = StdDuration::from_secs(3);
 /// A phone's asks a rolling hour: the forecast (it pulls about hourly) and the card's nowcast.
 pub const FORECAST_ASKS_AN_HOUR: usize = 20;
 pub const NOWCAST_ASKS_AN_HOUR: usize = 60;
-/// A cell nobody asked for in this long goes (`retention::prune`).
+/// A cell nobody asked for in this long goes (`retention::prune`), or within the longest location retention when
+/// that is shorter (a 1-day history: D13, the cache lives no longer than the fixes it came from).
 pub const CELL_HOURS: i64 = 48;
 /// A fetched forecast is never asked again before this (MET's `Expires` is ~30 min).
 const FORECAST_FLOOR_MINUTES: i64 = 30;
@@ -58,6 +59,11 @@ pub struct Weather {
     lookup_failed: std::sync::Mutex<HashMap<Cell, DateTime<Utc>>>,
     deprecation_warned: std::sync::Mutex<Option<NaiveDate>>,
     contact_warned: AtomicBool,
+    /// Bumped by [erase] (Location Off, code QA L1): a place lookup or a nowcast fill that started before it never
+    /// writes back what it found.
+    erased: AtomicU64,
+    /// Held by [erase] and by a place lookup's check-and-write, so neither lands between the other's halves.
+    place_writes: tokio::sync::Mutex<()>,
     /// The tests' clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
 }
@@ -88,6 +94,8 @@ impl Weather {
             lookup_failed: Default::default(),
             deprecation_warned: Default::default(),
             contact_warned: AtomicBool::new(false),
+            erased: AtomicU64::new(0),
+            place_writes: Default::default(),
             clock: Default::default(),
         }
     }
@@ -186,20 +194,22 @@ impl CellRow {
     }
 }
 
-async fn read_row(db: &sqlx::SqlitePool, cell: Cell) -> Result<CellRow, sqlx::Error> {
+/// The cell's row; none when a Location Off erase took it meanwhile.
+async fn read_row(db: &sqlx::SqlitePool, cell: Cell) -> Result<Option<CellRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, hours_json, last_modified, checked_at, next_fetch_at, failures \
          FROM weather_cells WHERE lat_i = ? AND lon_i = ?",
     )
     .bind(cell.lat_i)
     .bind(cell.lon_i)
-    .fetch_one(db)
+    .fetch_optional(db)
     .await
 }
 
 /// The cell's forecast for a phone's ask: `asked_at` moved, then the row - after a fetch when it is due, awaited at
-/// most `forecast_wait` (the fetch carries on past it and fills the row for the next ask).
-pub async fn forecast(state: &AppState, cell: Cell) -> Result<CellRow, sqlx::Error> {
+/// most `forecast_wait` (the fetch carries on past it and fills the row for the next ask). `None` when an erase took
+/// the row while the ask ran (code QA L1: the answer is `unavailable`, never a 500).
+pub async fn forecast(state: &AppState, cell: Cell) -> Result<Option<CellRow>, sqlx::Error> {
     let now = state.weather.now();
     sqlx::query(
         "INSERT INTO weather_cells (lat_i, lon_i, asked_at) VALUES (?, ?, ?) \
@@ -210,9 +220,11 @@ pub async fn forecast(state: &AppState, cell: Cell) -> Result<CellRow, sqlx::Err
     .bind(stamp(now))
     .execute(&state.db)
     .await?;
-    let row = read_row(&state.db, cell).await?;
+    let Some(row) = read_row(&state.db, cell).await? else {
+        return Ok(None);
+    };
     if !row.due(now) {
-        return Ok(row);
+        return Ok(Some(row));
     }
     let task = tokio::spawn(fill_forecast(state.clone(), cell));
     let _ = tokio::time::timeout(state.weather.forecast_wait, task).await;
@@ -239,7 +251,8 @@ enum Fetched {
 async fn fill_forecast(state: AppState, cell: Cell) {
     let _one = state.weather.forecast_lock.lock().await;
     let row = match read_row(&state.db, cell).await {
-        Ok(row) => row,
+        Ok(Some(row)) => row,
+        Ok(None) => return,
         Err(err) => {
             tracing::error!(%err, "weather: couldn't read a cell before its fetch");
             return;
@@ -299,10 +312,10 @@ async fn fill_forecast(state: AppState, cell: Cell) {
                             last_modified: response.last_modified.clone(),
                             next: next_after(response),
                         },
-                        Err(_) => failed(&row, "unreadable", now, None),
+                        Err(_) => unusable(&row, now, next_after(response)),
                     }
                 }
-                None => failed(&row, "unreadable", now, None),
+                None => unusable(&row, now, next_after(response)),
             }
         }
         Ok(response) if response.status == 304 => Fetched::NotModified {
@@ -370,6 +383,18 @@ async fn fill_forecast(state: AppState, cell: Cell) {
     }
 }
 
+/// A 200/203 we can't use (a changed shape, cut at the size cap): `unreadable` with its backoff, but never before
+/// the `Expires` MET sent with it (code QA M2: MET's terms forbid repeating a request before it).
+fn unusable(row: &CellRow, now: DateTime<Utc>, not_before: DateTime<Utc>) -> Fetched {
+    match failed(row, "unreadable", now, None) {
+        Fetched::Failed { code, next } => Fetched::Failed {
+            code,
+            next: next.max(not_before),
+        },
+        other => other,
+    }
+}
+
 /// A failed fetch's backoff: a 429 `Retry-After` but at least 10 min doubling per failure to 2 h; a 403 6 h; else
 /// 5, 10, 20, 40, 60 min by the failures so far.
 fn failed(
@@ -431,6 +456,7 @@ pub async fn nowcast(state: &AppState, cell: Cell) -> Option<NowLine> {
 
 async fn fill_nowcast(state: AppState, cell: Cell) {
     let _one = state.weather.nowcast_lock.lock().await;
+    let generation = state.weather.erased.load(Ordering::SeqCst);
     let old = {
         let now = state.weather.now();
         let map = state
@@ -477,8 +503,13 @@ async fn fill_nowcast(state: AppState, cell: Cell) {
                     }
                 }
                 None => {
+                    // Never again before the `Expires` it came with (code QA M2).
                     tracing::warn!("weather: MET's nowcast was unreadable");
-                    keep(now + Duration::minutes(2), None)
+                    let floor = now + Duration::minutes(2);
+                    keep(
+                        expires_in(response).map_or(floor, |left| (now + left).max(floor)),
+                        None,
+                    )
                 }
             }
         }
@@ -508,6 +539,10 @@ async fn fill_nowcast(state: AppState, cell: Cell) {
         .nowcasts
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    // An erase while the fetch ran: what it found isn't kept (code QA L1).
+    if state.weather.erased.load(Ordering::SeqCst) != generation {
+        return;
+    }
     map.insert(cell, entry);
     let hour_ago = now - Duration::hours(1);
     map.retain(|_, e| e.next_fetch_at > hour_ago || e.fetched_at.is_some_and(|at| at > hour_ago));
@@ -565,7 +600,8 @@ pub async fn place(state: &AppState, cell: Cell) -> Result<Option<String>, sqlx:
             return Ok(None);
         }
     }
-    tokio::spawn(look_up(state.clone(), cell));
+    let generation = state.weather.erased.load(Ordering::SeqCst);
+    tokio::spawn(look_up(state.clone(), cell, generation));
     Ok(None)
 }
 
@@ -583,22 +619,32 @@ async fn store_place(state: &AppState, cell: Cell, name: Option<&str>) -> Result
     .map(|_| ())
 }
 
-async fn look_up(state: AppState, cell: Cell) {
+/// One lookup, started at erase `generation`: an erase since then (Location Off) keeps its answer from being
+/// written (code QA L1).
+async fn look_up(state: AppState, cell: Cell, generation: u64) {
     let found = find_place(state.weather.place_fetch.as_ref(), cell).await;
-    match found {
-        Ok(name) => {
-            if let Err(err) = store_place(&state, cell, name.as_deref()).await {
-                tracing::error!(%err, "weather: couldn't store a place name");
+    let weather = &state.weather;
+    {
+        let _writes = weather.place_writes.lock().await;
+        if weather.erased.load(Ordering::SeqCst) == generation {
+            match found {
+                Ok(name) => {
+                    if let Err(err) = store_place(&state, cell, name.as_deref()).await {
+                        tracing::error!(%err, "weather: couldn't store a place name");
+                    }
+                }
+                Err(code) => {
+                    tracing::warn!(code, "weather: Kartverket's place lookup failed");
+                    let now = weather.now();
+                    let mut failed = weather
+                        .lookup_failed
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    // Only the failures still in their retry gap are kept (code QA L2).
+                    failed.retain(|_, at| now - *at < Duration::minutes(LOOKUP_RETRY_MINUTES));
+                    failed.insert(cell, now);
+                }
             }
-        }
-        Err(code) => {
-            tracing::warn!(code, "weather: Kartverket's place lookup failed");
-            state
-                .weather
-                .lookup_failed
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(cell, state.weather.now());
         }
     }
     state
@@ -699,8 +745,17 @@ pub fn clean_name(raw: &str) -> Option<String> {
 
 // ---- erase --------------------------------------------------------------------------------------
 
-/// A phone's Location turned Off (D13): every weather cache goes - the cells, the places, the nowcasts.
+/// A phone's Location turned Off (D13): every weather cache goes - the cells, the places, the nowcasts and the
+/// failed lookups' cells; a lookup or a nowcast fill in flight writes nothing back (code QA L1, L2).
 pub async fn erase(state: &AppState) -> Result<(), sqlx::Error> {
+    let _writes = state.weather.place_writes.lock().await;
+    state.weather.erased.fetch_add(1, Ordering::SeqCst);
+    state
+        .weather
+        .lookup_failed
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
     sqlx::query("DELETE FROM weather_cells")
         .execute(&state.db)
         .await?;
@@ -721,5 +776,10 @@ impl Weather {
     /// The nowcast map's cells (the tests).
     pub fn nowcast_cells(&self) -> usize {
         self.nowcasts.lock().unwrap().len()
+    }
+
+    /// Place lookups running (the tests).
+    pub fn lookups_running(&self) -> usize {
+        self.looking_up.lock().unwrap().len()
     }
 }

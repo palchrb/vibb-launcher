@@ -480,6 +480,23 @@ async fn failures_back_off_and_keep_the_old_hours() {
     let (_, next, _, error) = cell_row(&app).await;
     assert_eq!(error.as_deref(), Some("status_403"));
     assert_eq!(at(&next), t + Duration::hours(6));
+    // A 200 we can't read waits at least until the `Expires` it came with (code QA M2), 45 min here.
+    let t = at(&next);
+    app.state.weather.set_now(t);
+    app.fetch.canned_once(
+        MET,
+        Canned {
+            status: 200,
+            body: b"<html>".to_vec(),
+            date: Some("Tue, 03 Nov 2026 22:00:00 GMT".to_string()),
+            expires: Some("Tue, 03 Nov 2026 22:45:00 GMT".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(weather(&app, &token).await["status"], "ok", "the old hours");
+    let (_, next, _, error) = cell_row(&app).await;
+    assert_eq!(error.as_deref(), Some("unreadable"));
+    assert!(at(&next) >= t + Duration::minutes(45), "{next:?}");
 }
 
 /// D7: a phone waits at most the fetch's budget (6 s in the server, 500 ms here); the fetch carries on and fills the
@@ -712,9 +729,14 @@ async fn a_failed_fetch_keeps_only_a_code() {
     ] {
         let source = std::fs::read_to_string(file).unwrap();
         for (n, _) in source.match_indices("tracing::") {
-            // What a log prints besides its fixed words: its fields, before the message.
+            // The whole call (code QA L4): its fields before the message, the message's own `{...}` captures and
+            // any format arguments after it are what a log prints besides its fixed words.
             let call = &source[n..];
-            let fields = &call[..call.find('"').unwrap_or(call.len())];
+            let call = &call[..call.find(");").unwrap_or(call.len())];
+            let (Some(first), Some(last)) = (call.find('"'), call.rfind('"')) else {
+                panic!("{file} at byte {n}: a log without a message: {call}");
+            };
+            let (fields, message, tail) = (&call[..first], &call[first..=last], &call[last + 1..]);
             for word in [
                 "lat",
                 "lon",
@@ -728,11 +750,216 @@ async fn a_failed_fetch_keeps_only_a_code() {
             ] {
                 assert!(
                     !fields.contains(word),
-                    "{file} at byte {n}: a log may print {word:?}: {fields}"
+                    "{file} at byte {n}: a log may print {word:?}: {call}"
                 );
             }
+            assert!(
+                !message.contains('{'),
+                "{file} at byte {n}: a log's message formats something: {call}"
+            );
+            assert!(
+                tail.trim_matches(|c: char| c.is_whitespace() || c == ',')
+                    .is_empty(),
+                "{file} at byte {n}: a log formats arguments: {call}"
+            );
         }
     }
+}
+
+/// Code QA L5: two phones of one cell asking at once make one MET request.
+#[tokio::test]
+async fn two_asks_at_once_make_one_fetch() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    outside(&app);
+    let (a, first) = phone(&app, "a", true, "interval").await;
+    let (b, second) = phone(&app, "b", true, "interval").await;
+    fix(&app, a, 59.9412, 10.7598, Duration::minutes(5), None).await;
+    fix(&app, b, 59.9399, 10.7601, Duration::minutes(5), None).await;
+    app.fetch.delay(300);
+    let (one, two) = tokio::join!(weather(&app, &first), weather(&app, &second));
+    assert_eq!(
+        (one["status"].as_str(), two["status"].as_str()),
+        (Some("ok"), Some("ok"))
+    );
+    assert_eq!(met_asks(&app), 1);
+}
+
+/// Code QA L5: a cell outside Kartverket's box stores no name at once and asks nothing; an empty 2000 m search asks
+/// again at 5000 m.
+#[tokio::test]
+async fn kartverkets_edges() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    let copenhagen =
+        "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=55.68&lon=12.56";
+    app.fetch.canned(
+        copenhagen,
+        met_ok(
+            "Tue, 03 Nov 2026 14:00:22 GMT",
+            "Tue, 03 Nov 2026 14:29:48 GMT",
+        ),
+    );
+    let (id, token) = phone(&app, "k", true, "interval").await;
+    fix(&app, id, 55.676, 12.568, Duration::minutes(5), None).await;
+    assert_eq!(weather(&app, &token).await["status"], "ok");
+    let stored: Vec<(i64, i64, Option<String>)> =
+        sqlx::query_as("SELECT lat_i, lon_i, name FROM weather_places")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, [(2784, 314, None)]);
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.contains("kartverket"))
+    );
+
+    let fetch = super::music::CannedFetch::default();
+    let cell = crate::weather::Cell::of(59.94, 10.76).unwrap();
+    let hit = |kind: &str, name: &str, metres: u32| json!({"meterFraPunkt": metres, "navneobjekttype": kind, "stedsnavn": [{"skrivemåte": name}]});
+    fetch.answer(
+        &kartverket(2000, 1, "59.94", "10.76"),
+        200,
+        json!({"metadata": {"totaltAntallTreff": 1}, "navn": [hit("Adressenavn", "Vei 1", 40)]})
+            .to_string(),
+    );
+    fetch.answer(
+        &kartverket(5000, 1, "59.94", "10.76"),
+        200,
+        json!({"metadata": {"totaltAntallTreff": 2},
+               "navn": [hit("Grend", "Lia", 2500), hit("Tettsted", "Nydalen", 3000)]})
+        .to_string(),
+    );
+    assert_eq!(
+        crate::weather_cache::find_place(&fetch, cell).await,
+        Ok(Some("Nydalen".to_string()))
+    );
+    assert_eq!(
+        fetch.count(),
+        2,
+        "one page each, no second page under 500 hits"
+    );
+    fetch.answer(
+        &kartverket(5000, 1, "59.94", "10.76"),
+        200,
+        json!({"metadata": {"totaltAntallTreff": 0}, "navn": []}).to_string(),
+    );
+    assert_eq!(
+        crate::weather_cache::find_place(&fetch, cell).await,
+        Ok(None)
+    );
+}
+
+/// Waits until no place lookup is running.
+async fn lookups_done(app: &TestApp) {
+    for _ in 0..500 {
+        if app.state.weather.lookups_running() == 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("a place lookup never finished");
+}
+
+/// Code QA L1, L2: what was in flight when Location went Off writes nothing back - a place lookup, a nowcast fill,
+/// a forecast ask (which answers `unavailable`, never a 500) - and the failed lookups' cells go with the erase.
+#[tokio::test]
+async fn an_erase_keeps_what_was_in_flight_from_writing_back() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    outside(&app);
+    let state = app.state.clone();
+    let cell = crate::weather::Cell::of(59.94, 10.76).unwrap();
+    // A place lookup held at Kartverket while the erase runs.
+    app.fetch.hold();
+    assert_eq!(
+        crate::weather_cache::place(&state, cell).await.unwrap(),
+        None
+    );
+    app.fetch.wait_in_flight().await;
+    crate::weather_cache::erase(&state).await.unwrap();
+    app.fetch.release();
+    lookups_done(&app).await;
+    assert_eq!(
+        weather_rows(&app).await,
+        (0, 0),
+        "the lookup's row isn't written back"
+    );
+    // A forecast ask, then a nowcast fill, each held at MET while the erase runs.
+    app.fetch.hold();
+    let forecast_task = tokio::spawn({
+        let state = state.clone();
+        async move { crate::weather_cache::forecast(&state, cell).await }
+    });
+    app.fetch.wait_in_flight().await;
+    crate::weather_cache::erase(&state).await.unwrap();
+    app.fetch.release();
+    assert!(
+        forecast_task.await.unwrap().unwrap().is_none(),
+        "the row went: unavailable, not a 500"
+    );
+    app.fetch.hold();
+    let now_task = tokio::spawn({
+        let state = state.clone();
+        async move { crate::weather_cache::nowcast(&state, cell).await }
+    });
+    app.fetch.wait_in_flight().await;
+    crate::weather_cache::erase(&state).await.unwrap();
+    app.fetch.release();
+    assert_eq!(now_task.await.unwrap(), None);
+    assert_eq!(state.weather.nowcast_cells(), 0);
+    // A failed lookup waits an hour - until an erase forgets it.
+    let kart = kartverket(2000, 1, "59.94", "10.76");
+    app.fetch.fail(&kart, crate::music_net::FetchError::Timeout);
+    crate::weather_cache::place(&state, cell).await.unwrap();
+    lookups_done(&app).await;
+    let asks = |app: &TestApp| {
+        app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|u| **u == kart)
+            .count()
+    };
+    assert_eq!(asks(&app), 2);
+    crate::weather_cache::place(&state, cell).await.unwrap();
+    lookups_done(&app).await;
+    assert_eq!(asks(&app), 2, "not again within the hour");
+    crate::weather_cache::erase(&state).await.unwrap();
+    crate::weather_cache::place(&state, cell).await.unwrap();
+    lookups_done(&app).await;
+    assert_eq!(asks(&app), 3, "the erase forgot the failure");
+}
+
+/// Code QA L3: with every phone's location history at one day, a cell goes after a day, not two.
+#[tokio::test]
+async fn a_one_day_history_prunes_cells_after_a_day() {
+    let app = TestApp::new().await;
+    let (id, _) = phone(&app, "d", true, "interval").await;
+    sqlx::query("UPDATE device_policy SET location_retention_days = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for (lat, hours) in [(1, 23), (2, 25)] {
+        sqlx::query("INSERT INTO weather_cells (lat_i, lon_i, asked_at) VALUES (?, 0, ?)")
+            .bind(lat)
+            .bind((Utc::now() - Duration::hours(hours)).to_rfc3339_opts(SecondsFormat::Secs, true))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    crate::retention::prune(&app.db).await;
+    let left: Vec<i64> = sqlx::query_scalar("SELECT lat_i FROM weather_cells")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [1]);
 }
 
 // ---- Device › Weather -----------------------------------------------------------------------------

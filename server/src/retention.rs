@@ -215,8 +215,8 @@ fn rows(
 ///   window; an acknowledged or cancelled one is done (design 48 §1.6);
 /// - extra-time grants [LIFT_DAYS] after they ended, IP bans once they expired, a download's
 ///   progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
-/// - a weather cell no phone asked for in `weather_cache::CELL_HOURS`, and a cell's place name none asked for within
-///   the longest `location_retention_days` of any phone (design 75 §3.1; by age only - Location Off's erase is
+/// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
+///   phone, when that is shorter: code QA L3), and a cell's place name none asked for within that longest retention (design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
@@ -478,9 +478,12 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         failed,
         "weather_cells",
         sqlx::query(
-            "DELETE FROM weather_cells WHERE datetime(asked_at) < datetime('now', '-' || ? || ' hours')",
+            "DELETE FROM weather_cells WHERE datetime(asked_at) < datetime('now', '-' || \
+             MIN(?1, 24 * MAX(1, COALESCE((SELECT MAX(location_retention_days) FROM device_policy), ?2))) \
+             || ' hours')",
         )
         .bind(crate::weather_cache::CELL_HOURS)
+        .bind(DEFAULT_LOCATION_RETENTION_DAYS)
         .execute(db)
         .await,
     ) + rows(

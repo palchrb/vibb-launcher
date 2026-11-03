@@ -433,7 +433,8 @@ fn hour_containing(hours: &[Hour], tz: Tz, at: NaiveDateTime) -> Option<&Hour> {
 
 /// Morning 06-12, afternoon 12-18 and evening 18-24 of `date`: the symbol of the hour containing the start
 /// (`next_6_hours`), the temperature of the hour containing the middle (09, 15, 21), the hours' precipitation summed
-/// and rounded to 0.1. A period with none of its hours has all three null.
+/// and rounded to 0.1. Without the start's symbol or the middle's temperature, the period's first hour we have gives
+/// them (its `next_6_hours`, else its `next_1_hours`). A period with none of its hours has all three null.
 pub fn periods(hours: &[Hour], tz: Tz, date: NaiveDate) -> [Period; 3] {
     let period = |part: &'static str, from: u32, to: u32| {
         let start = at_hour(date, from);
@@ -460,9 +461,14 @@ pub fn periods(hours: &[Hour], tz: Tz, date: NaiveDate) -> [Period; 3] {
         let mm: f64 = inside.iter().map(|h| f64::from(h.mm.unwrap_or(0.0))).sum();
         Period {
             part,
-            symbol: hour_containing(hours, tz, start).and_then(|h| h.sym6.clone()),
+            // A cell's first fetch starts at the current hour: the period now running has lost its start (and
+            // maybe its middle) - its first hour we have stands in (code QA M1).
+            symbol: hour_containing(hours, tz, start)
+                .and_then(|h| h.sym6.clone())
+                .or_else(|| inside[0].sym6.clone().or_else(|| inside[0].sym.clone())),
             temp: hour_containing(hours, tz, at_hour(date, (from + to) / 2))
                 .and_then(|h| h.temp)
+                .or(inside[0].temp)
                 .map(degrees),
             precip_mm: Some((mm * 10.0).round() / 10.0),
         }

@@ -320,7 +320,9 @@ CREATE TABLE weather_places (
 - `periods(hours, zone, date) -> [Period; 3]`: morning 06-12, afternoon 12-18, evening 18-24 local; each `symbol` =
   `sym6` of the forecast hour containing the period's start, `temp` = the temperature at the hour containing its middle
   (09, 15, 21 - what the kid meets out of the door, not the period's extreme), `precip_mm` = the sum of its hours' `mm`
-  rounded to 0.1. A period without its hours has all three `null`.
+  rounded to 0.1. Without the start's `sym6` or the middle's temperature (a cell's first fetch starts at the current
+  hour, so the period now running has lost its start), the period's first hour we have gives them (its `sym6`, else
+  its `sym`; its `temp`; §12). A period without its hours has all three `null`.
 - `day(hours, zone, date, cell)`: the periods, `low`/`high` (min/max hourly `temp` of the local date's hours we have),
   `dark` (`dusk(cell.centre(), date, zone)`).
 - `dusk(lat, lon, date, zone) -> Dark { At(DateTime) | Never | AllDay }`: D10. The same function at −0.833° gives the
@@ -448,20 +450,23 @@ Pattern `scripts/material-symbols.sh`: pinned upstream, checked, converted, ever
   applied to the coordinates, anything else (skew, rotation, non-uniform scale) fails; a `clipPath` that is the whole
   viewBox (`M0 0h100v100H0z`, 16 of 18 sampled files) is dropped, any other → `<clip-path>` at the start of a
   `<group>`; `g` with translate/scale/matrix → a group; `style=""` is parsed for `mix-blend-mode`, `opacity` and
-  `fill`. **Changed**, each reported per file on stdout: groups with `filter` (upstream's soft drop shadows) are
-  dropped; a `mix-blend-mode:multiply` path whose `d` repeats an earlier solid path's exactly (every one in the sample)
-  is **baked** into that path - its gradient's stops become `stop × fill` blended at the layer's opacity over the fill,
+  `fill`. **Changed**, each reported per file on stdout: groups with `filter` (upstream's soft blurred cloud
+  shading: a faint multiply layer of one path under a filter of `feFlood`/`feBlend`/`feGaussianBlur` only - any other
+  filtered group fails) are dropped; a `mix-blend-mode:multiply` path whose `d` repeats the solid path right before it
+  exactly (every one in the sample) is **baked** into that path - its gradient's stops become `stop × fill` blended at the layer's opacity over the fill,
   so yr's cloud shading stays; any other blend layer is dropped. **Anything else** (`mask`, `circle`, text, `use`, an
-  unknown attribute that changes the picture) fails the run.
+  unknown attribute that changes the picture, a gradient that leaves `x2`/`y2`/`cx`/`cy`/`r` to their defaults, a radius
+  that isn't positive, a `weatherSymbolKeys` line the reader doesn't take) fails the run.
 - **Writes**: `launcher/app/src/main/res/drawable/weather_<id>.xml` (`weather_03d`; each starts with a comment: the
-  upstream path and commit, "© Yr/NRK, CC BY 4.0, converted to a VectorDrawable; shadows removed, blend layers merged"
+  upstream path and commit, "© Yr/NRK, CC BY 4.0, converted to a VectorDrawable; the soft blurred cloud shading removed, blend
+  layers merged"
   - CC BY's "indicate if changes were made"); `launcher/app/src/main/java/com/kidslauncher/mdm/weather/
   WeatherSymbols.kt` (MET's `symbol_code` → the drawable and the name resource, from `weatherSymbolKeys`);
   `launcher/app/src/main/res/values/weather_symbols.xml` and `values-nb/` (the names, `weather_symbol_03`, one per
-  number); `launcher/app/src/test/resources/weather_symbol_keys.json` (the mapping as read, for the launcher's own
-  test - not a server contract); `launcher/app/src/main/assets/licenses/CC-BY-4.0.txt` (upstream's LICENSE text).
-  `--selftest` converts a built-in tiny SVG with each supported, baked and dropped feature and checks the output (run
-  by `launcher.yml` when the script changes). Nothing goes to `server/`.
+  number); `launcher/app/src/main/assets/licenses/CC-BY-4.0.txt` (upstream's LICENSE text). `--selftest` converts a
+  built-in tiny SVG with each supported, baked and dropped feature and checks the output, and converts the vendored
+  `scripts/yr-symbols-11.svg` (upstream's `11.svg`, unchanged) to exactly the committed `weather_11.xml` (run by
+  `launcher.yml`'s always-run changes job). Nothing goes to `server/`.
 
 ### 4.2 Accessibility names
 
@@ -787,8 +792,8 @@ contract test (§7.3) checks every key/form pair the server can send has both st
   24 h and 12 h, a :30 start; `weatherMm` nb/en and under 0.1; `weatherPlace` and `weatherWordsFit` at §5.3's table.
 - `WeatherContractTest`: the file equals the server's copy; `answer` and `now_answers` decode and give `answer_line` at
   `answer_now_ms`; every `forms` pair and `now_keys` key maps through `WeatherWords` to a string in `values` and
-  `values-nb` with the placeholder it needs; every code in `weather_symbol_keys.json` has `weather_<id>.xml` and a name
-  string; every code in `answer` maps.
+  `values-nb` with the placeholder it needs; every code in `answer` maps to a drawable and a name; `values-nb` names
+  every `weather_symbol_*` of `values`; `answer_words` carries `from` (with `at_ms`) and `now`.
 - `PolicyResponseCompatTest`: `lock_weather` read, missing = false.
 - `LockGlanceLayoutTest`: the date row's parts from the XML; the own-line slot's line in the 473 / 497 dp cases (and
   "Neste" yielding there); the open card's height in the model scrolls, never clips; the profile clock's date baseline
@@ -897,3 +902,11 @@ None. The one open question (the phone's last-known position, D18) was answered 
 - **The server QA's R1 and R2**: a zone's delete already nudges the phone (`handlers::zones::saved`), and the foreign
   key clears `weather_zone_id` (a test pins both); 0122's comment and `docs/notes/server/zones.md` say that rebuilding
   `device_zones` would clear every weather zone.
+- **Code QA fix round** (`docs/review/qa-75-code-server.md`, `qa-75-code-launcher.md`): the period now running takes
+  its symbol and degrees from its first hour we have when its start (or middle) is gone (server M1, §3.2); the contract
+  gains `answer_words` (the recorded answer with rain laid over 16:00-18:00), so the words' wire shape is pinned on both
+  sides (launcher M1); an unusable 200/203 waits at least until its `Expires` (server M2); an erase keeps a lookup or a
+  nowcast in flight from writing back, forgets the failed lookups, and an ask that overlaps it answers `unavailable`
+  (L1, L2); a cell lives at most the longest location retention (L3); the converter's four gaps are closed (launcher M2,
+  §4.1 - the 83 drawings unchanged), `weather_symbol_keys.json` and `WeatherSymbols.CODES` are gone (launcher L2), and
+  the self-test runs in the always-run changes job with a vendored upstream symbol as its drift check (L1, L6).

@@ -1,5 +1,5 @@
 {
-  "about": "Design 75's contract, byte-identical in server/testdata/ and launcher/app/src/test/resources/. Times in words, periods and nowcast are local wall times in the row's zone; nowcast minutes count from 2026-11-03T14:00:00Z. forms, now_keys, dark[].expect, answer, answer_now_ms, answer_line, now_answers and statuses are written by the server's weather::tests::the_contract (WEATHER_CONTRACT_WRITE=1).",
+  "about": "Design 75's contract, byte-identical in server/testdata/ and launcher/app/src/test/resources/. Times in words, periods and nowcast are local wall times in the row's zone; nowcast minutes count from 2026-11-03T14:00:00Z. forms, now_keys, dark[].expect, answer, answer_now_ms, answer_line, answer_words (the same answer with rain laid over 16:00-18:00), now_answers and statuses are written by the server's weather::tests::the_contract (WEATHER_CONTRACT_WRITE=1).",
   "answer": {
     "checked_at_ms": 1793714422000,
     "days": [
@@ -21,7 +21,7 @@
           {
             "part": "afternoon",
             "precip_mm": 0.0,
-            "symbol": null,
+            "symbol": "partlycloudy_day",
             "temp": 7
           },
           {
@@ -109,6 +109,116 @@
     "words": null
   },
   "answer_now_ms": 1793715600000,
+  "answer_words": {
+    "checked_at_ms": 1793714422000,
+    "days": [
+      {
+        "dark": {
+          "at_ms": 1793721720000,
+          "kind": "at"
+        },
+        "date": "2026-11-03",
+        "high": 7,
+        "low": 3,
+        "periods": [
+          {
+            "part": "morning",
+            "precip_mm": null,
+            "symbol": null,
+            "temp": null
+          },
+          {
+            "part": "afternoon",
+            "precip_mm": 1.6,
+            "symbol": "partlycloudy_day",
+            "temp": 7
+          },
+          {
+            "part": "evening",
+            "precip_mm": 0.0,
+            "symbol": "partlycloudy_night",
+            "temp": 3
+          }
+        ]
+      },
+      {
+        "dark": {
+          "at_ms": 1793808000000,
+          "kind": "at"
+        },
+        "date": "2026-11-04",
+        "high": 7,
+        "low": 1,
+        "periods": [
+          {
+            "part": "morning",
+            "precip_mm": 0.0,
+            "symbol": "fair_day",
+            "temp": 2
+          },
+          {
+            "part": "afternoon",
+            "precip_mm": 0.0,
+            "symbol": "partlycloudy_day",
+            "temp": 7
+          },
+          {
+            "part": "evening",
+            "precip_mm": 0.0,
+            "symbol": "clearsky_night",
+            "temp": 4
+          }
+        ]
+      }
+    ],
+    "hours": [
+      {
+        "at_ms": 1793714400000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "partlycloudy_day",
+        "temp": 7,
+        "words": {
+          "at_ms": 1793718000000,
+          "form": "from",
+          "key": "rain"
+        }
+      },
+      {
+        "at_ms": 1793718000000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "rain",
+        "temp": 6,
+        "words": {
+          "form": "now",
+          "key": "rain"
+        }
+      },
+      {
+        "at_ms": 1793721600000,
+        "card": "2026-11-03",
+        "current": 1,
+        "symbol": "rain",
+        "temp": 5,
+        "words": {
+          "form": "now",
+          "key": "rain"
+        }
+      },
+      {
+        "at_ms": 1793725200000,
+        "card": "2026-11-04",
+        "current": null,
+        "symbol": "partlycloudy_night",
+        "temp": 5,
+        "words": null
+      }
+    ],
+    "place": "Bjølsen",
+    "status": "ok",
+    "v": 1
+  },
   "cells": [
     {
       "cell": [
@@ -1386,6 +1496,50 @@
           "from": "18:00",
           "mm": 0.25,
           "to": "20:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "partlycloudy_day",
+        "temp": 4
+      },
+      "date": "2026-11-04",
+      "drop_until": "16:00",
+      "expect": [
+        {
+          "part": "morning",
+          "precip_mm": null,
+          "symbol": null,
+          "temp": null
+        },
+        {
+          "part": "afternoon",
+          "precip_mm": 0.3,
+          "symbol": "lightrain",
+          "temp": 9
+        },
+        {
+          "part": "evening",
+          "precip_mm": 0.0,
+          "symbol": "partlycloudy_day",
+          "temp": 4
+        }
+      ],
+      "name": "a cell's first fetch at 16:20: the afternoon from its first hour",
+      "now": "2026-11-04T16:20",
+      "set": [
+        {
+          "from": "16:00",
+          "mm": 0.3,
+          "sym": "rain",
+          "sym6": "lightrain",
+          "temp": 9,
+          "to": "17:00"
         }
       ],
       "zone": "Europe/Oslo"

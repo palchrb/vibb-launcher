@@ -323,6 +323,29 @@ fn the_contract() {
         })
         .cloned()
         .unwrap();
+    // The same answer with rain laid over 16:00-18:00 (the recorded day is dry): words a phone decodes - `from` with
+    // its hour at 15:20, `now` from 16:00 (code QA M1 of the launcher review).
+    let mut wet = recorded_hours();
+    for hour in &mut wet {
+        let at = local(oslo, hour.start());
+        if at.date() == row_date("2026-11-03") && (16..18).contains(&at.hour()) {
+            hour.sym = Some("rain".to_string());
+            hour.mm = Some(0.8);
+            hour.pop = Some(80.0);
+        }
+    }
+    let answer_words =
+        crate::weather::answer(&wet, oslo, now, utc(CHECKED_AT), place.as_deref(), cell);
+    let forms_sent: Vec<&str> = answer_words["hours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["words"]["form"].as_str())
+        .collect();
+    assert!(
+        forms_sent.contains(&"from") && forms_sent.contains(&"now"),
+        "{forms_sent:?}"
+    );
     let recorded_now =
         parse_nowcast(&std::fs::read("testdata/weather/met_nowcast.json").unwrap()).unwrap();
     let rows = contract["nowcast"].as_array().unwrap().clone();
@@ -349,6 +372,7 @@ fn the_contract() {
         contract["answer"] = answer.clone();
         contract["answer_now_ms"] = now.timestamp_millis().into();
         contract["answer_line"] = line.clone();
+        contract["answer_words"] = answer_words.clone();
         contract["now_answers"] = now_answers.clone();
         contract["statuses"] = statuses.clone();
         std::fs::write(
@@ -370,10 +394,16 @@ fn the_contract() {
         "{changed}"
     );
     assert_eq!(contract["answer_line"], line, "{changed}");
+    assert_eq!(contract["answer_words"], answer_words, "{changed}");
     assert_eq!(contract["now_answers"], now_answers, "{changed}");
     assert_eq!(contract["statuses"], statuses, "{changed}");
     // Every key and form the answer sends is one the phone knows.
-    for entry in answer["hours"].as_array().unwrap() {
+    for entry in answer["hours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(answer_words["hours"].as_array().unwrap())
+    {
         if let Some(words) = entry["words"].as_object() {
             let forms = &contract["forms"][words["key"].as_str().unwrap()];
             assert!(forms.as_array().unwrap().contains(&words["form"]));
