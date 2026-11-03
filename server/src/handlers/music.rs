@@ -1118,7 +1118,13 @@ pub async fn add_link(
     let link = match music::parse_link(&link_text) {
         Ok(link) => link,
         Err(error) => {
-            return refused_add(&state, admin.id, refuse(error.to_string()), lang).await;
+            return refused_add(
+                &state,
+                admin.id,
+                refuse(crate::i18n::t(lang, error).to_string()),
+                lang,
+            )
+            .await;
         }
     };
     let full = || {

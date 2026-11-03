@@ -1509,12 +1509,14 @@ man er inne på en device". Branch `pwa-fixes-b`.
   phones' lines, the Spotify card's notes) come in the `Zone`'s language; `music::kind_key` gives a kind's key,
   `ORDERS` holds keys, the offline choices are worded by `cache_label`/`storytel_caches`, the category icons and
   colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice and
-  `OlderApps::title_key` Device › Music's update warning. `static/music-cards.js` (`?v=4`) asks `/music/cards` in
-  the page's `<html lang>` (`cardsUrl`). Left for slice 4: the helpers' sentences inside those lines -
-  `music::sweep_error_text`, `CheckError::message`, `entry_error_text`, `StorytelError::message`, the Spotify link
-  and add refusals (`spotify::*::message`, `add_refusal`), `music::parse_link`/`check_link`'s refusals,
-  `music_import`'s skip reasons and parse errors, `photos::PhotoError::message`, `music::storage`'s sizes - and the
-  summary's Music row and Attention (`OlderApps::title` stays English there).
+  `OlderApps::title_key` Device › Music's update warning. `music::parse_link` (the Add-link form) and
+  `music_import::parse` (the Import form) refuse with a key (`music.link.*`, `music.import.not_json`/`no_sections`)
+  the handler words; the import's skip reasons word `parse_link`'s keys in English until slice 4.
+  `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4:
+  the helpers' sentences inside those lines - `music::sweep_error_text`, `CheckError::message`, `entry_error_text`,
+  `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
+  `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
+  `music::storage`'s sizes - and the summary's Music row and Attention (`OlderApps::title` stays English there).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
   siden", "i går 21:40", "i morgen 00:05", "man. 14:30", "27. okt." (en as before, 24 h in both); `Zone::date_of`

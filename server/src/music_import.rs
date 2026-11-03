@@ -154,7 +154,9 @@ fn classify(target: &str, spotify_user: bool) -> Result<music::Link, Skip> {
     if trimmed.starts_with('/') {
         return Err(Skip::Folder);
     }
-    music::parse_link(trimmed).map_err(Skip::BadLink)
+    // The import's skip reasons stay English until design 70's slice 4.
+    music::parse_link(trimmed)
+        .map_err(|key| Skip::BadLink(crate::i18n::t(crate::i18n::Lang::En, key)))
 }
 
 fn row_of(entry: &serde_json::Map<String, Value>, spotify_user: bool) -> Row {
@@ -213,16 +215,11 @@ fn row_of(entry: &serde_json::Map<String, Value>, spotify_user: bool) -> Row {
 
 /// Reads a Vibb library file. `Err` is the parent-facing reason (not JSON, no `sections` list).
 /// Unknown fields are ignored; at most [MAX_SECTIONS] sections and [MAX_ROWS] entries are read.
-pub fn parse(bytes: &[u8]) -> Result<Vec<Section>, String> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|_| {
-        "That file isn't JSON - pick the Vibb box's library.json (see below).".to_string()
-    })?;
+pub fn parse(bytes: &[u8]) -> Result<Vec<Section>, &'static str> {
+    // `Err` is the key of the reason the Import page words.
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| "music.import.not_json")?;
     let Some(sections) = value.get("sections").and_then(Value::as_array) else {
-        return Err(
-            "That file isn't a Vibb library: it has no \"sections\" list. Pick the Vibb box's \
-             library.json."
-                .to_string(),
-        );
+        return Err("music.import.no_sections");
     };
     let mut rows_read = 0;
     let mut out = Vec::new();
@@ -446,13 +443,12 @@ mod tests {
 
     #[test]
     fn files_that_arent_a_library_are_refused() {
-        assert!(parse(b"not json").unwrap_err().contains("isn't JSON"));
-        assert!(
-            parse(b"{\"entries\": []}")
-                .unwrap_err()
-                .contains("no \"sections\"")
+        assert_eq!(parse(b"not json").unwrap_err(), "music.import.not_json");
+        assert_eq!(
+            parse(b"{\"entries\": []}").unwrap_err(),
+            "music.import.no_sections"
         );
-        assert!(parse(b"[1, 2]").unwrap_err().contains("no \"sections\""));
+        assert_eq!(parse(b"[1, 2]").unwrap_err(), "music.import.no_sections");
         // Odd sections and entries are passed over, not fatal.
         let sections =
             parse(br#"{"sections": [5, {"name": 3, "entries": [7, {"target": 1}]}]}"#).unwrap();

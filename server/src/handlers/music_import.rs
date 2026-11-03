@@ -275,7 +275,13 @@ pub async fn preview(
     let sections = match music_import::parse(&bytes) {
         Ok(sections) => sections,
         Err(error) => {
-            return render_import(&state, StatusCode::BAD_REQUEST, refused(error), lang).await;
+            return render_import(
+                &state,
+                StatusCode::BAD_REQUEST,
+                refused(t(lang, error)),
+                lang,
+            )
+            .await;
         }
     };
     match preview_card(&state, sections, None, lang).await {

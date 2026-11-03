@@ -369,10 +369,10 @@ pub fn entry_link(source: &str, target: &str) -> Option<Link> {
     }
 }
 
-/// The generic add form's answer to a Spotify link (design 26c §3.1): Spotify entries are made on
-/// their own page, which reads the link with the Web API and ticks the phones that play Spotify.
-pub const SPOTIFY_ON_ITS_PAGE: &str = "Spotify links are added on the Spotify page (/music/spotify) - its link is in the Spotify \
-     card below.";
+/// The generic add form's answer to a Spotify link (design 26c §3.1), a key: Spotify entries are
+/// made on their own page, which reads the link with the Web API and ticks the phones that play
+/// Spotify.
+pub const SPOTIFY_ON_ITS_PAGE: &str = "music.link.spotify";
 
 /// A Spotify link in any of its forms (a URI, `open.spotify.com`, a short link), or a link to a
 /// Spotify host.
@@ -394,15 +394,15 @@ fn spotify_form(trimmed: &str) -> bool {
     })
 }
 
-/// Parses a pasted link. `Err` is the parent-facing reason; a Spotify link is pointed to the
-/// Spotify page ([SPOTIFY_ON_ITS_PAGE]).
+/// Parses a pasted link. `Err` is the key of the parent-facing reason (the page words it in the
+/// reader's language); a Spotify link is pointed to the Spotify page ([SPOTIFY_ON_ITS_PAGE]).
 pub fn parse_link(input: &str) -> Result<Link, &'static str> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err("Paste a link first.");
+        return Err("music.link.empty");
     }
     if trimmed.len() > 2000 || trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err("That doesn't look like a link.");
+        return Err("music.link.not_a_link");
     }
     if spotify_form(trimmed) {
         return Err(SPOTIFY_ON_ITS_PAGE);
@@ -411,28 +411,26 @@ pub fn parse_link(input: &str) -> Result<Link, &'static str> {
     let with_scheme = if lower.starts_with("http://") || lower.starts_with("https://") {
         trimmed.to_string()
     } else if lower.contains("://") {
-        return Err("Only http and https links work.");
+        return Err("music.link.scheme");
     } else {
         format!("https://{trimmed}")
     };
-    let mut url =
-        reqwest::Url::parse(&with_scheme).map_err(|_| "That doesn't look like a link.")?;
+    let mut url = reqwest::Url::parse(&with_scheme).map_err(|_| "music.link.not_a_link")?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err("Only http and https links work.");
+        return Err("music.link.scheme");
     }
     let Some(host) = url.host_str().map(str::to_string) else {
-        return Err("That doesn't look like a link.");
+        return Err("music.link.not_a_link");
     };
     if !url.username().is_empty() || url.password().is_some() {
-        return Err("Leave the user name and password out of the link.");
+        return Err("music.link.credentials");
     }
     if host == "radio.nrk.no" {
         let segments: Vec<&str> = url
             .path_segments()
             .map(|s| s.filter(|p| !p.is_empty()).collect())
             .unwrap_or_default();
-        const NOT_NRK: &str = "That NRK link is neither a podcast (radio.nrk.no/podkast/...) nor a \
-                               series (radio.nrk.no/serie/...).";
+        const NOT_NRK: &str = "music.link.not_nrk";
         return match segments.as_slice() {
             ["podkast", slug, ..] => Ok(Link::NrkPodcast {
                 slug: nrk_slug(slug).ok_or(NOT_NRK)?,
@@ -2687,7 +2685,9 @@ mod tests {
         ] {
             assert_eq!(parse_link(&pasted), Err(SPOTIFY_ON_ITS_PAGE), "{pasted}");
         }
-        assert!(SPOTIFY_ON_ITS_PAGE.contains("/music/spotify"));
+        assert!(
+            crate::i18n::t(crate::i18n::Lang::En, SPOTIFY_ON_ITS_PAGE).contains("/music/spotify")
+        );
         // Not Spotify's hosts: as before.
         assert!(matches!(
             parse_link("https://open.spotify.com.example.org/feed.rss"),

@@ -5992,7 +5992,7 @@ async fn the_music_tab_speaks_norwegian() {
             "Fortsett der den stoppet",
             "Ikke rapportert ennå",
             "Slett innslag",
-            "Lastet ned (nyeste episoder)",
+            "Nedlastet (nyeste episoder)",
             "<option value=\"0\">Ingen</option>",
         ],
     );
@@ -6060,6 +6060,22 @@ async fn the_music_tab_speaks_norwegian() {
         .await
         .text();
     assert!(cards.contains("Venter på første sjekk"), "{cards}");
+
+    // The Add-link form's refusal (`music::parse_link`'s key) in the reader's language.
+    let refused = app
+        .request_form(
+            Method::POST,
+            "/music?lang=nb",
+            Some(&cookie),
+            &[("link", "ftp://example.org/x")],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused
+            .text()
+            .contains("Bare http- og https-lenker virker.")
+    );
 
     let missing = app.get_page("/music/entries/9999?lang=nb", &cookie).await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);

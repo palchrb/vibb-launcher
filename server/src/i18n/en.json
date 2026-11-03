@@ -2848,5 +2848,13 @@
   "music.login.expired": "That login wasn't started in this browser, was started at another address of this server, was already used, or took longer than 10 minutes - log in again.",
   "music.login.off": "Spotify isn't set up on this server any more - nothing was stored.",
   "music.login.error": "The login couldn't be saved - check the server log.",
-  "music.import.scp": "scp BOX:/etc/vibb/library.json ."
+  "music.import.scp": "scp BOX:/etc/vibb/library.json .",
+  "music.link.empty": "Paste a link first.",
+  "music.link.not_a_link": "That doesn't look like a link.",
+  "music.link.scheme": "Only http and https links work.",
+  "music.link.credentials": "Leave the user name and password out of the link.",
+  "music.link.not_nrk": "That NRK link is neither a podcast (radio.nrk.no/podkast/...) nor a series (radio.nrk.no/serie/...).",
+  "music.link.spotify": "Spotify links are added on the Spotify page (/music/spotify) - its link is in the Spotify card below.",
+  "music.import.not_json": "That file isn't JSON - pick the Vibb box's library.json (see below).",
+  "music.import.no_sections": "That file isn't a Vibb library: it has no \"sections\" list. Pick the Vibb box's library.json."
 }
