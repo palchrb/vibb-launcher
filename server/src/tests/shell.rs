@@ -1118,7 +1118,13 @@ fn the_app_shell_scrolls_main_not_the_document() {
         "{auth}"
     );
     // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card; the lock screen adds its
-    // own classes to both).
+    // own classes to both - each matched as a whole class).
+    let has_class = |text: &str, tag: &str, class: &str| {
+        regex::Regex::new(&format!(r#"<{tag} class="([^"]*)""#))
+            .unwrap()
+            .captures(text)
+            .is_some_and(|caps| caps[1].split_whitespace().any(|c| c == class))
+    };
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
         if !text.contains("<body") {
@@ -1126,8 +1132,7 @@ fn the_app_shell_scrolls_main_not_the_document() {
         }
         assert!(
             text.contains("<main class=\"container")
-                || (text.contains("<body class=\"auth-page")
-                    && text.contains("<main class=\"auth-card")),
+                || (has_class(&text, "body", "auth-page") && has_class(&text, "main", "auth-card")),
             "{} is neither in the shell nor an auth page",
             path.display()
         );

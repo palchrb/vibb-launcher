@@ -407,7 +407,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `handlers::lock::offered` narrows `allowCredentials` to it only when it is one of the parent's passkeys here, else
   all (another parent's, unknown, junk, over the route's 1 KiB). Cancelled, timed out or refused, the red line shows
   over the hint, which turns to "Tap to try again", and every tap after asks with every passkey. Each tap's challenge
-  is fetched ahead, so the prompt opens within the tap (iOS goes straight to Face ID). Without a passkey here or
+  is fetched ahead, so the prompt opens within the tap (iOS goes straight to Face ID). A tap while a try is open is
+  dropped, unless the page was hidden and shown since (a prompt WebKit never settles): that tap aborts the old try,
+  whose end is then ignored, and asks afresh. The button's `aria-describedby` reads the title, the red line and the
+  hint. Without a passkey here or
   without WebAuthn the note shows and there is no tap target.
   The sign-in pages never start a prompt on their own.
   `POST /lock` (`assertion`, `next`): the parent's own credential only (`passkeys::unlock`); done: `record_reauth`

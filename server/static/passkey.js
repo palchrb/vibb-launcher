@@ -482,15 +482,19 @@
     }
 
     // The prompt for `challenge`'s options: at once when they are ready (within the tap), else after fetching them.
-    function promptWith(win, challenge) {
+    // `signal` (optional) aborts it.
+    function promptWith(win, challenge, signal) {
         function get(json) {
-            return win.navigator.credentials.get({ publicKey: requestOptions(json) });
+            var request = { publicKey: requestOptions(json) };
+            if (signal) request.signal = signal;
+            return win.navigator.credentials.get(request);
         }
         var ready = challenge.ready();
         challenge.spend();
         if (ready) return get(ready);
         return challenge.fetch().then(function (json) {
             challenge.spend();
+            if (signal && signal.aborted) throw { name: "AbortError" };
             return get(json);
         });
     }
@@ -529,8 +533,12 @@
         var hint = lastPasskey(win);
         // The challenge the next tap uses: the kept passkey's first, every passkey's after a cancel or a failure.
         var current = hint ? ahead(win, "/lock/options", function () { return { hint: hint }; }) : every;
-        // A try is open: another tap waits for it (a quick double tap would start a second, refused prompt).
-        var busy = false;
+        // The open try ({controller, stale}) or null. A tap while it is open is dropped (a quick double tap would start
+        // a second, refused prompt) - unless the page was hidden and shown again since (`stale`): a PWA sent to the
+        // background during Face ID may get a prompt WebKit never settles, so that tap aborts it and asks afresh. An
+        // aborted or replaced try's result is ignored. Never aborted on the showing itself: on Android the passkey
+        // sheet can hide the page, and the try that brings it back must still unlock.
+        var open = null;
         function visible() {
             return win.document.visibilityState !== "hidden";
         }
@@ -565,13 +573,26 @@
         }
         // The tap (a click: Enter and Space too): the prompt at once, within the gesture.
         button.addEventListener("click", function () {
-            if (busy) return;
-            busy = true;
+            if (open && !open.stale) return;
+            if (open && open.controller) open.controller.abort();
+            var running = { controller: win.AbortController ? new win.AbortController() : null, stale: false };
+            open = running;
             show(error, "");
-            promptWith(win, current).then(unlockWith).then(function () {
-                busy = false;
+            var prompt;
+            try {
+                prompt = promptWith(win, current, running.controller ? running.controller.signal : null);
+            } catch (err) {
+                // A synchronous throw (options the browser can't read): the red line, never a dead screen.
+                prompt = win.Promise.reject(err);
+            }
+            prompt.then(function (cred) {
+                if (open !== running) return;
+                return unlockWith(cred);
+            }).then(function () {
+                if (open === running) open = null;
             }, function (err) {
-                busy = false;
+                if (open !== running) return;
+                open = null;
                 failed(err && err.name === "refused" ? err.message : "");
             });
         });
@@ -585,16 +606,20 @@
             if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
         }
         if (win.setTimeout) win.setTimeout(refresh, UNLOCK_REFRESH_MS);
-        // A page shown again (a phone holds a hidden one, or back from the back-forward cache): fresh options if the
-        // ready ones aged out.
+        // A page shown again (a phone holds a hidden one, or back from the back-forward cache): an open try may never
+        // settle now, so the next tap may replace it; fresh options if the ready ones aged out.
+        function shown() {
+            if (open) open.stale = true;
+            prefetch();
+        }
         if (win.document.addEventListener) {
             win.document.addEventListener("visibilitychange", function () {
-                if (visible()) prefetch();
+                if (visible()) shown();
             });
         }
         if (win.addEventListener) {
             win.addEventListener("pageshow", function (e) {
-                if (e && e.persisted) prefetch();
+                if (e && e.persisted) shown();
             });
         }
     }

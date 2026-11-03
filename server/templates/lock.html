@@ -6,11 +6,11 @@
 {#- Design 74 §6.5, D3.5: the lock screen, the night ground edge to edge in both schemes (the user's pick A "Pust",
     2026-11-03): the Vibb mark breathing, "Vibb is locked", the hint at the bottom and Sign Out under it. No tab bar,
     nothing private - no name, no phone, no count, nothing from the page behind. The whole screen is the Unlock button
-    (`.lock-tap`, over everything but Sign Out); nothing starts on its own - a prompt without a tap gets iOS's own
-    "Continue" sheet. static/passkey.js: the first tap asks for the passkey this browser used last (its challenge fetched
-    ahead, so the prompt opens within the tap and iOS goes straight to Face ID); a cancel or a refused unlock shows the
-    red line, the hint says "Tap to try again", and the next tap asks with every passkey. A done unlock replaces this
-    page with the one it was opened for. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
+    (`.lock-tap`, over everything but Sign Out; it reads the title, the red line and the hint as its description);
+    nothing starts on its own - a prompt without a tap gets iOS's own "Continue" sheet. static/passkey.js: the first
+    tap asks for the passkey this browser used last (its challenge fetched ahead, so the prompt opens within the tap
+    and iOS goes straight to Face ID); a cancel or a refused unlock shows the red line, the hint says "Tap to try
+    again", and the next tap asks with every passkey. A done unlock replaces this page with the one it was opened for. "Sign Out" is Settings' Sign Out (this browser's notifications too), and the
     sign-in page keeps where the parent was going. Without a passkey here or without WebAuthn there is no tap target,
     only the note. -#}
 <body class="auth-page lock-page">
@@ -20,16 +20,16 @@
         <input type="hidden" name="next" value="{{ next }}">
         <input type="hidden" name="assertion" value="">
         {%- if passkey_here %}
-        <button type="button" class="lock-tap" data-passkey-ui data-passkey-unlock-button hidden aria-label="{{ self.t("lock.page.unlock") }}"></button>
+        <button type="button" class="lock-tap" data-passkey-ui data-passkey-unlock-button hidden aria-label="{{ self.t("lock.page.unlock") }}" aria-describedby="lock-title lock-error lock-hint"></button>
         {%- endif %}
         <div class="lock-centre">
             {% include "partials/vibb_breath.html" %}
-            <h1 class="lock-title">{{ self.t("lock.page.title") }}</h1>
+            <h1 class="lock-title" id="lock-title">{{ self.t("lock.page.title") }}</h1>
         </div>
         <div class="lock-foot">
-            <p class="lock-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("lock.page.failed") }}"></p>
+            <p class="lock-error" id="lock-error" data-passkey-error role="alert" hidden data-w-failed="{{ self.t("lock.page.failed") }}"></p>
             {%- if passkey_here %}
-            <p class="lock-hint" data-passkey-ui data-passkey-unlock-hint hidden data-w-retry="{{ self.t("lock.page.retry") }}">{{ self.t("lock.page.hint") }}</p>
+            <p class="lock-hint" id="lock-hint" data-passkey-ui data-passkey-unlock-hint hidden data-w-retry="{{ self.t("lock.page.retry") }}">{{ self.t("lock.page.hint") }}</p>
             <p class="lock-note" data-passkey-unsupported hidden data-w-http="{{ self.t("passkeys.needs_https") }}" data-w-browser="{{ self.t("passkeys.no_browser") }}"></p>
             <noscript><p class="lock-note">{{ self.t("passkeys.no_browser") }}</p></noscript>
             {%- else %}

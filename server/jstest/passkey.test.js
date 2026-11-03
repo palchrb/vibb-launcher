@@ -627,7 +627,7 @@ test("the lock screen never prompts without a tap; the tap asks for the kept pas
     assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "the prompt before any fetch (iOS)");
     assert.strictEqual(gets(page)[0][1].mediation, undefined, "modal, not conditional");
     page.button.listeners.click();
-    assert.strictEqual(gets(page).length, 1, "a second tap waits for the open try");
+    assert.strictEqual(gets(page).length, 1, "a second tap while the try is open is dropped");
     await flush();
     await flush();
     const post = page.fetched.find((f) => f[0] === "/lock");
@@ -679,6 +679,60 @@ test("the lock screen: a refused unlock shows the server's line and keeps nothin
     assert.strictEqual(page.hint.textContent, "Tap to try again");
     assert.deepStrictEqual(page.win.replaced, []);
     assert.strictEqual(page.win.local[passkey.LAST_PASSKEY_KEY], undefined, "kept only after an unlock");
+});
+
+test("the lock screen: a try that never settles gives way to the first tap after the page is shown again (QA M1)", async () => {
+    const aborted = [];
+    let calls = 0;
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS, "/lock": { json: { next: "/devices/3" } } }, (o) =>
+        ++calls === 1
+            ? new Promise((resolve, reject) => o.signal.addEventListener("abort", () => { aborted.push(1); reject({ name: "AbortError" }); }))
+            : Promise.resolve(ASSERTION),
+    );
+    page.win.AbortController = AbortController;
+    passkey.install(page.win);
+    await flush();
+    page.button.listeners.click();
+    await flush();
+    page.button.listeners.click();
+    assert.strictEqual(gets(page).length, 1, "still open: dropped");
+    // Backgrounded during Face ID and back: WebKit never settles that prompt.
+    page.win.document.listeners.visibilitychange();
+    await flush();
+    assert.deepStrictEqual(aborted, [], "the showing alone aborts nothing");
+    page.button.listeners.click();
+    assert.strictEqual(page.fetched[page.fetched.length - 1][0], "get", "a fresh prompt within the tap");
+    assert.deepStrictEqual(aborted, [1]);
+    await flush();
+    await flush();
+    assert.strictEqual(page.error.hidden, true, "the aborted try's end is ignored");
+    assert.deepStrictEqual(page.win.replaced, ["/devices/3"]);
+    // Without AbortController (an older Safari) the tap after a showing asks again all the same.
+    const old = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => new Promise(() => {}));
+    passkey.install(old.win);
+    await flush();
+    old.button.listeners.click();
+    old.win.listeners.pageshow({ persisted: true });
+    old.button.listeners.click();
+    await flush();
+    await flush();
+    assert.strictEqual(gets(old).length, 2);
+});
+
+test("the lock screen: a prompt that throws at once shows the red line, and the next tap asks again (QA L2)", async () => {
+    let calls = 0;
+    const page = unlockPage({ "/lock/options": UNLOCK_OPTIONS }, () => {
+        calls++;
+        throw new TypeError("bad options");
+    });
+    passkey.install(page.win);
+    await flush();
+    page.button.listeners.click();
+    await flush();
+    assert.strictEqual(page.error.textContent, "Couldn't unlock");
+    await flush();
+    page.button.listeners.click();
+    assert.strictEqual(calls, 2, "not a dead screen");
 });
 
 test("the lock screen: storage that throws or holds junk changes nothing but the hint", async () => {
