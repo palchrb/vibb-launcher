@@ -84,6 +84,20 @@ class LockSessionPickTest {
         }
     }
 
+    /** QA M2 of lock-media-apps-2: a browser opens both a plain https and a plain http link; an app with only a host-less
+     * https filter is no browser. The probes are exactly those two links. */
+    @Test
+    fun `a browser answers both the https and the http probe`() {
+        val https = setOf("org.mozilla.firefox", "com.android.chrome", "com.example.fakebrowser")
+        val http = setOf("org.mozilla.firefox", "com.android.chrome", "com.example.httponly")
+        assertEquals(setOf("org.mozilla.firefox", "com.android.chrome"), lockBrowsers(https, http))
+        assertEquals(emptySet<String>(), lockBrowsers(https, emptySet()))
+        val sessions = java.io.File("src/main/java/com/kidslauncher/mdm/music/MusicSessions.kt").readText()
+        assertTrue(sessions.contains("lockBrowsers(handlers(BROWSER_PROBE_HTTPS), handlers(BROWSER_PROBE_HTTP))"))
+        assertTrue(sessions.contains("const val BROWSER_PROBE_HTTPS = \"https://example.invalid/\""))
+        assertTrue(sessions.contains("const val BROWSER_PROBE_HTTP = \"http://example.invalid/\""))
+    }
+
     @Test
     fun `another app's text is one cut line and its times are bounded`() {
         assertEquals("Line one line two", foreignText("  Line one\nline\ttwo\u0000"))

@@ -124,6 +124,40 @@ class ClockTileTest {
         assertNull("none", glanceAlarm(null, null, clocks, now))
         assertNull("past", glanceAlarm(now, ClockApp.PACKAGE, clocks, now))
     }
+
+    /** The calmer glance (2026-11-04, board D): only the evening's wake-up alarm - from 18:00, ringing before noon the
+     * next day - and on the date line only when it fits. */
+    @Test
+    fun `the wake-up alarm - from 18_00, before noon the next day, through midnight, in the phone's zone`() {
+        val oslo = java.time.ZoneId.of("Europe/Oslo")
+        fun at(day: Int, h: Int, m: Int = 0) = java.time.ZonedDateTime.of(2026, 11, day, h, m, 0, 0, oslo).toInstant().toEpochMilli()
+        fun alarm(ms: Long) = GlanceAlarm(ms, withWeekday = false)
+        val seven = alarm(at(5, 7))
+        // 17:59 nothing, 18:00 the alarm.
+        assertNull(glanceWakeAlarm(seven, at(4, 17, 59), oslo))
+        assertEquals(seven, glanceWakeAlarm(seven, at(4, 18), oslo))
+        // Before noon the next day: 11:59 yes, 12:00 never (a midday alarm).
+        assertEquals(alarm(at(5, 11, 59)), glanceWakeAlarm(alarm(at(5, 11, 59)), at(4, 20), oslo))
+        assertNull(glanceWakeAlarm(alarm(at(5, 12)), at(4, 20), oslo))
+        // During the day nothing - not even an alarm this afternoon (the user's "Alarm 13:35").
+        assertNull(glanceWakeAlarm(alarm(at(4, 13, 35)), at(4, 9), oslo))
+        assertNull(glanceWakeAlarm(seven, at(4, 12), oslo))
+        assertNull(glanceWakeAlarm(seven, at(4, 15), oslo))
+        // Through midnight until it rings: 23:59, 00:00, 06:59.
+        assertEquals(seven, glanceWakeAlarm(seven, at(4, 23, 59), oslo))
+        assertEquals(seven, glanceWakeAlarm(seven, at(5, 0), oslo))
+        assertEquals(seven, glanceWakeAlarm(seven, at(5, 6, 59), oslo))
+        // After midnight the cut is still that noon: an alarm at noon or one a day later never.
+        assertNull(glanceWakeAlarm(alarm(at(5, 12)), at(5, 0, 30), oslo))
+        assertNull(glanceWakeAlarm(alarm(at(6, 7)), at(5, 0, 30), oslo))
+        assertNull(glanceWakeAlarm(alarm(at(6, 7)), at(4, 20), oslo))
+        // The zone: 18:00 in Oslo is 17:00 UTC - the same instant is not evening there.
+        assertNull(glanceWakeAlarm(seven, at(4, 18), java.time.ZoneId.of("UTC")))
+        assertNull(glanceWakeAlarm(null, at(4, 20), oslo))
+        // The date line holds it, or it takes the line under the date.
+        assertTrue(glanceAlarmBeside(288f, 200f, 88f))
+        assertFalse(glanceAlarmBeside(288f, 200f, 88.5f))
+    }
 }
 
 /** Design 42 §1.1: the clock app is known by its package and its release signer. */

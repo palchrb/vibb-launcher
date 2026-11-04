@@ -306,21 +306,26 @@ object MusicSessions {
     }
 
     /**
-     * The web browsers ([lockMediaApp]): the apps that open a plain https link no app claims
-     * ([BROWSER_PROBE_URL], `CATEGORY_BROWSABLE`, every match - the launcher holds QUERY_ALL_PACKAGES).
-     * The default browser is one of them (RoleManager names another app's role only to a privileged
-     * caller). None on any failure.
+     * The web browsers ([lockMediaApp]): the apps that open both a plain https and a plain http link no app claims
+     * ([lockBrowsers] of [BROWSER_PROBE_HTTPS] and [BROWSER_PROBE_HTTP], `CATEGORY_BROWSABLE`, every match - the
+     * launcher holds QUERY_ALL_PACKAGES; QA M2 of lock-media-apps-2: a browser declares both, a faker with one
+     * host-less https filter drops out). The default browser is one of them (RoleManager names another app's role only
+     * to a privileged caller). None on any failure.
      */
     private fun browserPackages(context: Context): Set<String> = try {
-        val probe = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BROWSER_PROBE_URL)).addCategory(Intent.CATEGORY_BROWSABLE)
-        context.packageManager.queryIntentActivities(probe, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()))
-            .mapNotNull { it.activityInfo?.packageName }.toSet()
+        fun handlers(url: String): Set<String> {
+            val probe = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+            return context.packageManager.queryIntentActivities(probe, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()))
+                .mapNotNull { it.activityInfo?.packageName }.toSet()
+        }
+        lockBrowsers(handlers(BROWSER_PROBE_HTTPS), handlers(BROWSER_PROBE_HTTP))
     } catch (e: Exception) {
         emptySet()
     }
 
-    /** A link of the reserved `.invalid` domain: only an app that opens any https link resolves it. */
-    private const val BROWSER_PROBE_URL = "https://example.invalid/"
+    /** Links of the reserved `.invalid` domain: only an app that opens any https (any http) link resolves them. */
+    private const val BROWSER_PROBE_HTTPS = "https://example.invalid/"
+    private const val BROWSER_PROBE_HTTP = "http://example.invalid/"
 
     /**
      * Play or pause the live session (its transport controls - nothing is opened). A pause always

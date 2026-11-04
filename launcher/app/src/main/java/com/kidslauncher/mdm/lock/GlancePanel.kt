@@ -126,11 +126,13 @@ class GlancePanel(
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
-    /** The clock, the date and the alarm line (launcher round L6: one face with the time-rule screen's), with design
-     * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). */
+    /** The clock, the date and the alarm (launcher round L6: one face with the time-rule screen's), with design
+     * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). The alarm
+     * sits on the date line when it holds it (the calmer glance, 2026-11-04), else on the line under the date. */
     private val clockFace = LockClockFace(
         activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,
         extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,
+        dateAlarm = glance.lockGlanceDateAlarm,
     )
     private val profile: ClockGeometry? = clockFace.profile
 
@@ -1140,14 +1142,17 @@ class GlancePanel(
     /** The next alarm under the date (design 42 §1.3), the face's ([LockClockFace.bindAlarm]). */
     private fun bindAlarm() = clockFace.bindAlarm()
 
-    /** Dagen's "Neste" line (design 69 §5.1): the parent's switch, the next timed event today with its shown title; it
-     * yields while a reminder row is up (C names the event already) and when it doesn't fit ([fitNext]). */
+    /** Dagen's "Neste" line (design 69 §5.1): the parent's switch, the next timed event today with its shown title - in
+     * the evening, once today's last has started, tomorrow's first as "I morgen: …" (the calmer glance, 2026-11-04,
+     * `day.glanceNext`); it yields while a reminder row is up (C names the event already) and when it doesn't fit
+     * ([fitNext]). */
     private var nextWanted: String? = null
 
     private fun bindNext() {
         val next = calendar.next()
-        nextWanted = next?.takeIf { rows.none { it is GlanceCalendarRow } }?.let { (title, begin) ->
-            activity.getString(R.string.glance_next, title, ClockFormat.formatClock(activity, begin))
+        nextWanted = next?.takeIf { rows.none { it is GlanceCalendarRow } }?.let { line ->
+            val time = ClockFormat.formatClock(activity, line.row.begin)
+            activity.getString(if (line.tomorrow) R.string.glance_tomorrow else R.string.glance_next, line.row.title, time)
         }
         glance.lockGlanceNext.text = nextWanted
         fitNext()
@@ -1177,6 +1182,7 @@ class GlancePanel(
         }
         val wantedVisibility = if (show) View.VISIBLE else View.GONE
         if (line.visibility != wantedVisibility) line.visibility = wantedVisibility
+        spaceUnderCard()
     }
 
     /** Dagen's reminder row (design 69 §5.2): the calendar glyph in a peach disc - since 2026-10-27 the calendar's
@@ -1551,9 +1557,11 @@ class GlancePanel(
         placedFor = room
         // The no-profile clock's 56 sp, or the profile's clock placed under the keyguard status bar (the face's).
         val moved = clockFace.place(width)
+        // The calmer glance: the alarm on the date line or under it, by the line's room at this width.
+        val alarmMoved = clockFace.placeAlarm()
         val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         if (layout != laidOut || room != loggedFor) logLayout(layout, room)
-        if (layout != laidOut || moved) refitPending = true
+        if (layout != laidOut || moved || alarmMoved) refitPending = true
         laidOut = layout
         apply(layout)
         // Design 75 D15: a new page width decides the weather mark's place again.
@@ -1568,10 +1576,23 @@ class GlancePanel(
         return if (card > 0 && bare) card - dp(ROWS_TOP_NO_TILE_DP - ROWS_TOP_DP) else card
     }
 
-    /** The weather's card opened or folded, or its own line came or went: the list's margin and the "Neste" line. */
+    /** The weather's card opened or folded, or its own line came or went: the list's margin, the alarm's place on the
+     * date line (the weather beside the date takes room), the "Neste" line and the room under the card. */
     private fun weatherChanged() {
         laidOut?.let { placeList(it) }
+        clockFace.placeAlarm()
         fitNext()
+    }
+
+    /** The calmer glance (mockup board C): the open card stands under its line, and a line after it (the alarm's own,
+     * "Neste") keeps [CARD_LINE_GAP_DP] from it - the lines' own 2 dp would touch the card. */
+    private fun spaceUnderCard() {
+        val card = glance.lockWeatherCard.root
+        val lineAfter = glance.lockGlanceAlarm.visibility == View.VISIBLE || glance.lockGlanceNext.visibility == View.VISIBLE
+        val bottom = if (card.visibility == View.VISIBLE && lineAfter) dp(CARD_LINE_GAP_DP) else 0
+        (card.layoutParams as ViewGroup.MarginLayoutParams).let {
+            if (it.bottomMargin != bottom) card.layoutParams = it.apply { bottomMargin = bottom }
+        }
     }
 
     /** The layout's log line - counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw. */
@@ -1631,6 +1652,9 @@ class GlancePanel(
     private companion object {
         const val ROWS_TOP_DP = 14f
         const val ROWS_TOP_NO_TILE_DP = 22f
+
+        /** The open weather card to a line after it (the calmer glance): the lines' 2 dp margin and these 6. */
+        const val CARD_LINE_GAP_DP = 6f
 
         /** r11 §3.1: a row's slide off, its collapse and a spring-back, each (ms). */
         const val DISMISS_ANIM_MS = 150L

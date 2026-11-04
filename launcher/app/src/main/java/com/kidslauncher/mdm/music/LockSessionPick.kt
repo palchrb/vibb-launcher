@@ -70,6 +70,13 @@ fun lockAppUsable(
 fun lockMediaApp(category: Int, browser: Boolean): Boolean =
     browser || category == ApplicationInfo.CATEGORY_AUDIO || category == ApplicationInfo.CATEGORY_VIDEO
 
+/**
+ * The web browsers (QA M2 of lock-media-apps-2): the apps that open a plain https link no app claims ([https]) and
+ * a plain http one too ([http]) - a browser declares both; an app faking a browser with one host-less https filter
+ * drops out.
+ */
+fun lockBrowsers(https: Set<String>, http: Set<String>): Set<String> = https intersect http
+
 /** At most this many characters of another app's title or album on the lock (S-L8: its metadata is untrusted text). */
 const val FOREIGN_TEXT_MAX = 120
 
