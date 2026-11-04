@@ -8,7 +8,12 @@ import com.kidslauncher.mdm.server.DotPool
 import com.kidslauncher.mdm.server.LEAVE_TAILNET_COMMAND
 import com.kidslauncher.mdm.server.OddKind
 import com.kidslauncher.mdm.server.TSNET_DEATH_WINDOW_MS
+import com.kidslauncher.mdm.server.cachedFixMaxAgeMs
+import com.kidslauncher.mdm.server.cachedFixReportable
 import com.kidslauncher.mdm.server.crashStreakAfter
+import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.server.locationBackOff
+import com.kidslauncher.mdm.server.locationStaysOn
 import com.kidslauncher.mdm.server.deathAfterConnectIsCrash
 import com.kidslauncher.mdm.server.dotAnswers
 import com.kidslauncher.mdm.server.dotAttempt
@@ -186,5 +191,42 @@ class SecurityLowsBTest {
         val serverCopy = File("../../server/testdata/leave_tailnet.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
         assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
+    }
+
+    @Test
+    fun `P-L2 - Location goes back off after a fix unless the policy needs it, and a ring takes no fix`() {
+        val onRequest = LocationPolicy(mode = "on_request")
+        assertFalse(locationStaysOn(onRequest, hardeningForcesOn = false, zonesOn = false))
+        assertFalse(locationStaysOn(LocationPolicy(mode = "interval"), hardeningForcesOn = false, zonesOn = false))
+        assertTrue("Find my device's CONFIG_LOCATION switch", locationStaysOn(onRequest, hardeningForcesOn = true, zonesOn = false))
+        assertTrue("the zone watch's fences", locationStaysOn(LocationPolicy(mode = "interval"), hardeningForcesOn = false, zonesOn = true))
+        assertFalse("Off is off", locationStaysOn(LocationPolicy(mode = "off"), hardeningForcesOn = true, zonesOn = false))
+        assertTrue(locationBackOff(switchedOn = true, staysOn = false))
+        assertFalse("it was on before: left on", locationBackOff(switchedOn = false, staysOn = false))
+        assertFalse(locationBackOff(switchedOn = true, staysOn = true))
+        val sync = src("java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
+        assertTrue(sync.contains("val commandFix = ranCommand?.command == \"locate\""))
+        val locate = src("java/com/kidslauncher/mdm/server/LocateCommands.kt").readText()
+        val restore = locate.substringAfter("if (switchedOn) QuickControls.setLocationEnabled(dpm, admin, true)").substringBefore("\n    }\n")
+        assertTrue("restored in a finally", restore.contains("} finally {") && restore.contains("locationBackOff(switchedOn, staysOn)"))
+    }
+
+    @Test
+    fun `P-L3 - no cached fix older than the interval is reported, none kept under Off`() {
+        val half = LocationPolicy(mode = "interval", intervalMinutes = 30)
+        assertEquals(30 * 60_000L, cachedFixMaxAgeMs(half, still = false))
+        assertEquals("at least 10 min", 10 * 60_000L, cachedFixMaxAgeMs(LocationPolicy(mode = "interval", intervalMinutes = 1), still = false))
+        assertEquals("Only when asked: its interval", 30 * 60_000L, cachedFixMaxAgeMs(LocationPolicy(mode = "on_request"), still = false))
+        assertNull("the zone watch's still re-send", cachedFixMaxAgeMs(half, still = true))
+        assertTrue(cachedFixReportable(30 * 60_000L, 30 * 60_000L))
+        assertFalse("a day old", cachedFixReportable(24 * 3_600_000L, 30 * 60_000L))
+        assertTrue(cachedFixReportable(24 * 3_600_000L, null))
+        val sync = src("java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
+        assertTrue(sync.contains("if (locationPolicy?.mode == \"off\") LocateCommands.clearCachedFix(context)"))
+        // Every way a stored fix leaves currentLocation goes through the age check.
+        val locate = src("java/com/kidslauncher/mdm/server/LocateCommands.kt").readText()
+        val body = locate.substringAfter("suspend fun currentLocation(").substringBefore("fun clearCachedFix(")
+        assertEquals(2, Regex("""loadCachedFix\(\)\?\.takeIf\((::)?reportable\)""").findAll(body).count())
+        assertFalse(Regex("""loadCachedFix\(\)\s*(\n|$|\})""").containsMatchIn(body))
     }
 }

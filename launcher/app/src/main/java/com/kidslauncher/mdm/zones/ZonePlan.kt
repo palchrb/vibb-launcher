@@ -96,7 +96,7 @@ data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, 
  * `locationAction(policy, forced, now - lastOwnFix)` ([lastOwnFixMs]: the last attempt, as today) -
  * nothing of step 2 changes it; the heartbeat's still skip counts from [lastFreshFixMs], the last
  * genuinely fresh own fix (F-3). With zones: a
- * forced fix is the precise path for [precise] (`locate`/`ring`, a crossing's confirm) and the
+ * forced fix is the precise path for [precise] (`locate`, a crossing's confirm) and the
  * balanced one for a crossing's first fix; else [heartbeatDue] decides, a `FIX` taking the
  * balanced path.
  */

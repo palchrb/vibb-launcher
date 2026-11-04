@@ -38,8 +38,9 @@ private const val FRESH_LOCATION_TIMEOUT_MS = 15_000L
 // An active fetch (requestFreshFix) shows Android's location-in-use indicator and visibly slows
 // down the sync it runs in - confirmed live, reported as "Sync now takes longer and the green
 // location dot shows up every time." How often one happens is the parent's location policy now
-// (handy step 6: off / on request / every N >= 10 minutes - see locationAction); a `ring`/`locate`
-// command ("Update location now") always asks for a fresh fix unless location is off.
+// (handy step 6: off / on request / every N >= 10 minutes - see locationAction); a `locate`
+// command ("Update location now") always asks for a fresh fix unless location is off (security
+// review P-L2: a `ring` doesn't).
 private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 
 // Design 64 step 2 (Q-1): the kept slot - a passive or series fix kept for the next heartbeat or
@@ -77,20 +78,24 @@ object LocateCommands {
      * `LocationManager` returns nothing at all while it's off, regardless of any permission held
      * (the same platform-level gate discovered tonight while building the WiFi network picker,
      * except there it was a surprising side effect of scanning APIs; here it's simply what the
-     * Location toggle fundamentally controls). Unlike the WiFi picker's screen-scoped enable/restore,
-     * this leaves Location on rather than toggling it back off - Find My Device is an ongoing
-     * background feature, not a single screen visit, so there's nothing meaningful to "restore" to.
+     * Location toggle fundamentally controls). Security review P-L2: like the WiFi picker, a fix
+     * that had to switch Location on switches it back off afterwards, unless the policy needs it on
+     * ([staysOn], [locationStaysOn]). P-L3: a cached or last-known fix older than [maxCachedAgeMs]
+     * is never reported ([cachedFixMaxAgeMs]; `null` = any age).
      */
     suspend fun currentLocation(
         context: Context,
         dpm: DevicePolicyManager,
         admin: ComponentName,
         action: LocationAction,
+        staysOn: Boolean,
+        maxCachedAgeMs: Long?,
     ): Location? {
         // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
         if (action == LocationAction.NONE) return null
+        fun reportable(fix: Location) = cachedFixReportable(System.currentTimeMillis() - fix.time, maxCachedAgeMs)
         // Not due: our own cached fix only, no LocationManager call (no indicator, no slow sync).
-        if (action == LocationAction.CACHED) return loadCachedFix()
+        if (action == LocationAction.CACHED) return loadCachedFix()?.takeIf(::reportable)
 
         QuickControls.selfGrantPermission(
             context,
@@ -121,10 +126,21 @@ object LocateCommands {
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         Log.i(LOG_TAG, "currentLocation: ACCESS_BACKGROUND_LOCATION granted=$backgroundGranted")
 
-        if (!QuickControls.isLocationEnabled(context)) {
-            QuickControls.setLocationEnabled(dpm, admin, true)
+        val switchedOn = !QuickControls.isLocationEnabled(context)
+        if (switchedOn) QuickControls.setLocationEnabled(dpm, admin, true)
+        try {
+            return freshOrLastKnown(context, action, ::reportable)
+        } finally {
+            if (locationBackOff(switchedOn, staysOn)) {
+                Log.i(LOG_TAG, "Location back off after the fix")
+                QuickControls.setLocationEnabled(dpm, admin, false)
+            }
         }
+    }
 
+    /** [currentLocation]'s fix with Location on: a fresh one, else the newest last-known, else the cached one - the
+     * last two only when [reportable]. A fresh or last-known fix becomes the cached one. */
+    private suspend fun freshOrLastKnown(context: Context, action: LocationAction, reportable: (Location) -> Boolean): Location? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         // getLastKnownLocation is purely passive - it only ever returns a location if something
@@ -158,7 +174,7 @@ object LocateCommands {
                         null
                     }
                 }
-                .filter { ZoneWatch.accept(context, it) }
+                .filter { ZoneWatch.accept(context, it) && reportable(it) }
                 .maxByOrNull { it.time }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to read cached location", e)
@@ -168,7 +184,15 @@ object LocateCommands {
         if (fresh != null) {
             saveCachedFix(context, fresh)
         }
-        return fresh ?: loadCachedFix()
+        return fresh ?: loadCachedFix()?.takeIf(reportable)
+    }
+
+    /** Security review P-L3: location went "Off" - the cached (reported) fix and the kept one go, so nothing from
+     * before the switch is ever sent. */
+    fun clearCachedFix(context: Context) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val key = LauncherPreferences.mdm().keys().cachedLocationJson()
+        if (prefs.contains(key) || prefs.contains(KEPT_FIX_KEY)) prefs.edit().remove(key).remove(KEPT_FIX_KEY).commit()
     }
 
     private fun cachedFix(): CachedFix? {

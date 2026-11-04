@@ -104,3 +104,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
   points at the closed proxy, so the answer may wait in the outbox for the follow-up sync, which takes the direct
   path. Joining again takes a new key (Settings or a new setup QR). Not device-tested (needs the real aar): a joined
   phone leaves, Home resume and sync no longer start tsnet, the server still reachable directly.
+- **P-L2 + P-L3, Location after a fix and the cached fix** (`server/LocateCommands.kt`, pure rules in
+  `server/LocationPolicies.kt`): see `time-rules.md`, "Location policy". The server half of P-L3 needed no change:
+  `zones::store_fix` already skips a fix with the same `captured_at` and coordinates (pinned by
+  `zone_watch::here_now_counts_the_served_interval_and_a_still_re_send`'s "no new row").

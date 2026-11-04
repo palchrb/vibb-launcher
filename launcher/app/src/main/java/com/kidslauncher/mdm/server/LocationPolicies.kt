@@ -4,7 +4,7 @@ import com.kidslauncher.mdm.server.dto.LocationPolicy
 
 /*
  * When a location goes into the status report - pure, tested in LocationPolicyTest. The parent
- * picks per device (handy step 6): off, on request (only for a `locate`/`ring` command), or every
+ * picks per device (handy step 6): off, on request (only for a `locate` command), or every
  * N minutes. An active fix shows Android's location indicator and costs battery (CLAUDE.md
  * gotchas), so everything else uses our own cached fix or nothing.
  */
@@ -16,7 +16,7 @@ enum class LocationAction {
     /** Our own cached last fix (no LocationManager call). */
     CACHED,
 
-    /** A fresh fix now - the precise path, GPS first (a `locate`/`ring` command, a crossing's
+    /** A fresh fix now - the precise path, GPS first (a `locate` command, a crossing's
      * confirming fix). */
     FRESH,
 
@@ -40,7 +40,8 @@ const val ZONES_CAPABILITY = "zones_v1"
 val LEGACY_LOCATION_POLICY = LocationPolicy(mode = "interval", intervalMinutes = MIN_LOCATION_INTERVAL_MINUTES)
 
 /**
- * [forced]: a `locate`/`ring` command asked for the phone's location now. [sinceLastFreshMs]: wall
+ * [forced]: a `locate` command asked for the phone's location now (security review P-L2: a `ring` is no request for
+ * the location). [sinceLastFreshMs]: wall
  * time since the last active fetch (negative - the clock went back - counts as due).
  * An unknown mode is treated as "on_request".
  */
@@ -78,3 +79,29 @@ fun systemLocationTarget(policy: LocationPolicy?, hardeningForcesOn: Boolean): B
     hardeningForcesOn -> true
     else -> null
 }
+
+/**
+ * Security review P-L2: the system Location switch stays on after a fix only when the policy needs it on - the
+ * CONFIG_LOCATION hardening switch keeps it on for Find my device ([systemLocationTarget]), or the zone watch's fences
+ * need it. Otherwise a fix that had to switch it on switches it back off, so under "Only when asked" no app with a
+ * location permission can use it after a `locate`.
+ */
+fun locationStaysOn(policy: LocationPolicy?, hardeningForcesOn: Boolean, zonesOn: Boolean): Boolean =
+    systemLocationTarget(policy, hardeningForcesOn) == true || zonesOn
+
+/** The Location switch goes back off after the fix: this fix switched it on ([switchedOn]) and nothing needs it on. */
+fun locationBackOff(switchedOn: Boolean, staysOn: Boolean): Boolean = switchedOn && !staysOn
+
+/**
+ * Security review P-L3: the oldest cached fix the phone reports - the policy's interval (at least
+ * [MIN_LOCATION_INTERVAL_MINUTES]; "Only when asked" has one too, 30 min by default). Older, the report carries none
+ * rather than a fix hours or days old: neither a `CACHED` sync nor a fresh fix that failed falls back to it. [still]
+ * (the zone watch's heartbeat re-send while the motion sensor says the phone hasn't moved, design 64 Q-3, at most
+ * [com.kidslauncher.mdm.zones.STILL_SKIP_MAX_MS] after the last fresh fix) has no limit: the server counts that fix
+ * as current.
+ */
+fun cachedFixMaxAgeMs(policy: LocationPolicy?, still: Boolean): Long? =
+    if (still) null else (policy ?: LEGACY_LOCATION_POLICY).intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+
+/** A cached (or last-known) fix [ageMs] old may be reported under [maxAgeMs] (`null` = any age). */
+fun cachedFixReportable(ageMs: Long, maxAgeMs: Long?): Boolean = maxAgeMs == null || ageMs <= maxAgeMs
