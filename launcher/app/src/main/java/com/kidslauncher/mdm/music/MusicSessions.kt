@@ -35,7 +35,7 @@ private const val LOG_TAG = "MusicSessions"
  * ([Reading.live]) and picks its own (`lockTilePick`, 2026-11-04: any app the parent allowed and
  * that is usable now). Without notification-listener access (granted with adb at provisioning)
  * there are no media surfaces. Watched only while Home or the lock shows one ([addListener]); main
- * thread, except [pauseBeforeSuspend].
+ * thread, except [playingSessions] and [pauseBeforeSuspend].
  */
 object MusicSessions {
     /** One active session: [vibb] - Vibb music ([MusicTrust]); another app's [session] is already cut
@@ -289,18 +289,38 @@ object MusicSessions {
         if (live.isEmpty()) return emptySet()
         val allowlist by lazy { effectiveAllowlist(currentPolicyDecision().policy?.allowlist, WindowRelock.blockedPackages(context)) }
         val dpm by lazy { context.getSystemService(DevicePolicyManager::class.java) }
+        val browsers by lazy { browserPackages(context) }
         return live.filter { l ->
             val pkg = l.session.packageName
             usable(context, pkg) && (
                 l.vibb || try {
                     val hidden = dpm.isApplicationHidden(ComponentName(context, MdmDeviceAdminReceiver::class.java), pkg)
-                    lockAppUsable(pkg, vibb = false, suspended = false, hidden = hidden, allowlist = allowlist, ownPackage = context.packageName)
+                    val category = context.packageManager.getApplicationInfo(pkg, 0).category
+                    val media = lockMediaApp(category, browser = pkg in browsers)
+                    lockAppUsable(pkg, vibb = false, suspended = false, hidden = hidden, allowlist = allowlist, ownPackage = context.packageName, mediaApp = media)
                 } catch (e: Exception) {
                     false
                 }
                 )
         }.map { it.session.packageName }.toSet()
     }
+
+    /**
+     * The web browsers ([lockMediaApp]): the apps that open a plain https link no app claims
+     * ([BROWSER_PROBE_URL], `CATEGORY_BROWSABLE`, every match - the launcher holds QUERY_ALL_PACKAGES).
+     * The default browser is one of them (RoleManager names another app's role only to a privileged
+     * caller). None on any failure.
+     */
+    private fun browserPackages(context: Context): Set<String> = try {
+        val probe = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BROWSER_PROBE_URL)).addCategory(Intent.CATEGORY_BROWSABLE)
+        context.packageManager.queryIntentActivities(probe, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()))
+            .mapNotNull { it.activityInfo?.packageName }.toSet()
+    } catch (e: Exception) {
+        emptySet()
+    }
+
+    /** A link of the reserved `.invalid` domain: only an app that opens any https link resolves it. */
+    private const val BROWSER_PROBE_URL = "https://example.invalid/"
 
     /**
      * Play or pause the live session (its transport controls - nothing is opened). A pause always
@@ -349,21 +369,36 @@ object MusicSessions {
     }
 
     /**
-     * Before `AppEnforcer.apply()` suspends the music app (a time rule without it as an exempt
-     * app), its session is paused (21 §3) - one look at the active sessions, any thread. Without
-     * listener access the music app pauses itself on `MY_PACKAGE_SUSPENDED` (QA #8).
+     * Every app's playing sessions now, by package (`sessionPlay` PLAYING: buffering and skips too) -
+     * one look at the active sessions for an `apply()` pass that is about to suspend a package (any
+     * thread). Without listener access none: nothing is paused, and the music app pauses itself on
+     * `MY_PACKAGE_SUSPENDED` (QA #8).
      */
-    fun pauseBeforeSuspend(context: Context, pkg: String) {
-        if (!MusicTrust.trusted(context, pkg)) return
-        try {
-            val m = context.getSystemService(MediaSessionManager::class.java) ?: return
-            for (c in m.getActiveSessions(component(context)).filter { it.packageName == pkg }) {
-                if (sessionPlay(c.playbackState?.state) == SessionPlay.PLAYING) c.transportControls.pause()
+    fun playingSessions(context: Context): Map<String, List<MediaController>> = try {
+        val m = context.getSystemService(MediaSessionManager::class.java)
+        m?.getActiveSessions(component(context)).orEmpty()
+            .filter { sessionPlay(it.playbackState?.state) == SessionPlay.PLAYING }
+            .groupBy { it.packageName }
+    } catch (e: SecurityException) {
+        emptyMap()
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't read the media sessions before a suspension", e)
+        emptyMap()
+    }
+
+    /**
+     * Before `AppEnforcer.apply()` suspends an app (a time rule without it as an exempt app, the
+     * used-up budget), its playing [sessions] are paused (21 §3; every app's since 2026-11-04) - a
+     * pause only, on that app's own session; any thread. On a Sonos room the session's pause stays a
+     * Pause (design 26a §6.1).
+     */
+    fun pauseBeforeSuspend(sessions: List<MediaController>) {
+        for (c in sessions) {
+            try {
+                c.transportControls.pause()
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't pause ${c.packageName} before suspending it", e)
             }
-        } catch (e: SecurityException) {
-            // No listener access: the music app's own MY_PACKAGE_SUSPENDED receiver pauses it.
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't pause $pkg before suspending it", e)
         }
     }
 

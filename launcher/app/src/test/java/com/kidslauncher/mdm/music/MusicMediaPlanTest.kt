@@ -125,13 +125,15 @@ class MusicMediaPlanTest {
     }
 
     @Test
-    fun `a playing music app is paused before it is suspended, nothing else is`() {
-        assertTrue(pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = false))
-        assertTrue(pauseBeforeSuspend("me.vibb.music.debug", shouldBeSuspended = true, currentlySuspended = false, debugBuild = true))
-        assertFalse("already suspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = true))
-        assertFalse("unsuspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = false, currentlySuspended = true))
-        assertFalse("another app", pauseBeforeSuspend("org.other", shouldBeSuspended = true, currentlySuspended = false))
-        assertFalse("a release build never trusts the debug name (S-L8)", pauseBeforeSuspend("me.vibb.music.debug", true, false, debugBuild = false))
+    fun `every app's playing sessions are paused before it is suspended - only then`() {
+        // The user, 2026-11-04: every app, not only Vibb music.
+        val playing = mapOf("me.vibb.music" to listOf("vibb"), "com.spotify.music" to listOf("spotify-1", "spotify-2"))
+        assertEquals(listOf("spotify-1", "spotify-2"), sessionsToPause("com.spotify.music", shouldBeSuspended = true, currentlySuspended = false, playing))
+        assertEquals(listOf("vibb"), sessionsToPause("me.vibb.music", shouldBeSuspended = true, currentlySuspended = false, playing))
+        assertEquals("nothing plays there", emptyList<String>(), sessionsToPause("org.other", true, false, playing))
+        assertEquals("already suspended", emptyList<String>(), sessionsToPause("com.spotify.music", true, currentlySuspended = true, playing))
+        assertEquals("unsuspended", emptyList<String>(), sessionsToPause("com.spotify.music", false, currentlySuspended = true, playing))
+        assertEquals("the budget's Vibb music stays unsuspended: not paused", emptyList<String>(), sessionsToPause("me.vibb.music", false, false, playing))
     }
 
     @Test
@@ -250,10 +252,14 @@ class MusicSuspensionGuardTest {
     }
 
     @Test
-    fun `apply pauses a playing music app before it suspends it`() {
+    fun `apply pauses a playing app before it suspends it`() {
         val enforcer = file("server/AppEnforcer.kt")
         val block = enforcer.substringAfter("if (shouldBeSuspended != currentlySuspended) {").substringBefore("if (shouldBeHidden != currentlyHidden)")
-        val pause = block.indexOf("MusicSessions.pauseBeforeSuspend(context, packageName)")
+        val pause = block.indexOf("com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(")
+        assertTrue(block.contains("sessionsToPause(packageName, shouldBeSuspended, currentlySuspended, toPause)"))
+        // One read of the sessions per pass, lazily - only once a package is about to be suspended.
+        assertTrue(enforcer.contains("val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }"))
+        assertTrue(block.contains("val toPause = if (shouldBeSuspended && !currentlySuspended) playingSessions else emptyMap()"))
         val suspend = block.indexOf("dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)")
         assertTrue("pause at $pause, suspend at $suspend", pause in 0 until suspend)
     }

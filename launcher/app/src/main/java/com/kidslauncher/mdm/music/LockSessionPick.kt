@@ -1,5 +1,7 @@
 package com.kidslauncher.mdm.music
 
+import android.content.pm.ApplicationInfo
+
 /*
  * The PIN lock's media tile for any allowed app (the user, 2026-11-04: "mediekontroller for andre apper, men kun for
  * lock screen"): which live session the lock shows when several apps have one, whether an app may show there at all,
@@ -41,13 +43,32 @@ fun lockTilePick(access: Boolean, candidates: List<LockCandidate>, listening: Li
  * budget, the camera lock - so the budget's exemption stays Vibb music's alone: no other app is left unsuspended by it).
  * Vibb music needs nothing more (its rule before 2026-11-04). Another app also must not be ours, nor hidden by the
  * device owner, and must be on the [allowlist] when the phone has one (null: no allowlist - an unmanaged phone; the
- * pause and the offline override lift the hiding, not this).
+ * pause and the offline override lift the hiding, not this), and must be a [mediaApp] ([lockMediaApp]: the user,
+ * 2026-11-04 - "bare for musikk apper og evt videoer og musikk som spilles av i browser"; a messenger's voice message
+ * never shows on the lock).
  */
-fun lockAppUsable(pkg: String, vibb: Boolean, suspended: Boolean, hidden: Boolean, allowlist: Collection<String>?, ownPackage: String): Boolean = when {
+fun lockAppUsable(
+    pkg: String,
+    vibb: Boolean,
+    suspended: Boolean,
+    hidden: Boolean,
+    allowlist: Collection<String>?,
+    ownPackage: String,
+    mediaApp: Boolean,
+): Boolean = when {
     suspended -> false
     vibb -> true
-    else -> pkg != ownPackage && !hidden && (allowlist == null || pkg in allowlist)
+    else -> mediaApp && pkg != ownPackage && !hidden && (allowlist == null || pkg in allowlist)
 }
+
+/**
+ * Another app is a media app for the lock: its manifest declares `android:appCategory` audio or video
+ * (`ApplicationInfo.category`), or it is a web browser ([browser]: it opens a plain https link no app claims - music or
+ * a video playing in the browser). Every other category - social (messengers), games, productivity, maps, news, image,
+ * accessibility - and an undefined one never shows.
+ */
+fun lockMediaApp(category: Int, browser: Boolean): Boolean =
+    browser || category == ApplicationInfo.CATEGORY_AUDIO || category == ApplicationInfo.CATEGORY_VIDEO
 
 /** At most this many characters of another app's title or album on the lock (S-L8: its metadata is untrusted text). */
 const val FOREIGN_TEXT_MAX = 120
