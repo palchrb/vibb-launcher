@@ -201,6 +201,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// emergency menu 0114 sits between them). Design 72b's CalDAV write-back 0120 (0117 on its branch, renumbered past calendar-in-rules' 0119).
 /// A contact photo's kept original 0123, after design 75's lock weather 0122 (which reaches `main` first). Security
 /// review S-L5's Bluetooth switch 0124, the status report's `tailnet_joined` 0125, the weather's place name dropped 0126.
+/// Push never lost silently's Remove notes 0128 (0127 is another branch's).
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -263,7 +264,8 @@ fn migrations_from_73_in_order() {
             (123, "contact photo original".to_string()),
             (124, "bluetooth any device".to_string()),
             (125, "tailnet joined".to_string()),
-            (126, "weather no place".to_string())
+            (126, "weather no place".to_string()),
+            (128, "push removed".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

@@ -218,7 +218,18 @@ pub async fn unlock(
         )
         .await;
     }
-    match admin_auth::record_reauth(&state.db, &session, &admin, proved.is_ok()).await {
+    // Only the parent's own failed try counts toward the third that signs every session out (and ends every
+    // device's notifications): a challenge that expired or was dropped while the screen waited, or the server's own
+    // read error, is answered as a refusal and logged, never counted (Push never lost silently, 2026-11-04).
+    if let Err(why) = proved
+        && why.servers_own()
+    {
+        return json(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({ "error": t(lang, "lock.page.failed") }),
+        );
+    }
+    match admin_auth::record_reauth(&state, &session, &admin, proved.is_ok()).await {
         Reauth::Right => {}
         Reauth::SignedOut => {
             return json(

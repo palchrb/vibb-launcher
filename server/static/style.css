@@ -2948,6 +2948,13 @@ html.veiled body > * { visibility: hidden !important; }
 .lock-out-button:hover { padding: 10px 18px; border: 0; background: transparent; color: var(--night-text-2); font-size: 0.9375rem; font-weight: 600; }
 .lock-out-button:hover { color: var(--night-text); }
 .lock-out-button:focus { outline-color: var(--night-action); }
+.lock-out > summary.lock-out-button { display: inline-block; }
+.lock-out[open] > summary.lock-out-button { display: none; }
+.lock-out-confirm { max-width: 320px; margin: 0 auto; padding: 4px 0 8px; }
+.lock-out-confirm p { color: var(--night-text); }
+.lock-out-confirm .button-cancel,
+.lock-out-confirm .button-cancel:hover { color: var(--night-action); }
+.lock-out-confirm .button-cancel:hover { background: transparent; color: var(--night-action-hover); }
 /* A due page on its way to /lock (app-lock.js's html.locked; html.veiled while hidden): its content hidden as above,
    the ground night with the mark at rest on the screen's centre - the splash's picture, so a launch inside the
    server's minute of slack goes splash, this, the lock screen with nothing in between. */

@@ -816,7 +816,7 @@ async fn find(db: &sqlx::SqlitePool, credential_id: &[u8]) -> sqlx::Result<Optio
 /// A refusal that a database error caused (logged; the ceremony is refused).
 fn db_refused(err: sqlx::Error) -> Refused {
     tracing::error!(%err, "couldn't read or store a passkey");
-    Refused::UnknownCredential
+    Refused::Database
 }
 
 /// The stored credential's check and the use's store, after the account was found.

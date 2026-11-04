@@ -226,6 +226,10 @@ pub async fn off_without_passkey(
     true
 }
 
+/// `static/register-sw.js`'s POST at a page's load (Push never lost silently, 2026-11-04,
+/// `handlers::notifications::sync`): locked like every route, never a use ([Facts::is_use]).
+pub const PUSH_SYNC_ROUTE: &str = "/notifications/subscriptions/sync";
+
 /// What the lock needs to know of a request (D3.3, D3.4).
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
@@ -277,8 +281,12 @@ impl Facts {
         }
     }
 
-    /// A request the parent made: a user-activated navigation or a save (any unsafe method; the beacon is one).
+    /// A request the parent made: a user-activated navigation or a save (any unsafe method; the beacon is one) - but
+    /// the app's own check of this browser's notifications at a page's load ([PUSH_SYNC_ROUTE]), which no parent made.
     pub fn is_use(&self) -> bool {
+        if self.matched.as_deref() == Some(PUSH_SYNC_ROUTE) {
+            return false;
+        }
         self.user_activated || !matches!(self.method, Method::GET | Method::HEAD | Method::OPTIONS)
     }
 

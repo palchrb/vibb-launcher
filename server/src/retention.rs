@@ -41,8 +41,13 @@ pub const LIFT_DAYS: i64 = crate::parent_events::EVENT_DAYS;
 /// A download's progress (`device_install_progress`) is shown this long after the phone's last
 /// word (`devices::view_device`), then pruned (security review P6).
 pub const INSTALL_PROGRESS_MINUTES: i64 = 10;
-/// Web Push deliveries, and subscriptions after they were turned off (design 35 §2.4).
+/// Web Push deliveries (design 35 §2.4).
 pub const PUSH_DAYS: i64 = 30;
+/// A subscription a push service ended (`gone`, 404/410 or another server key) stays this long - shown on Devices
+/// and Getting Notifications until its device sends a new one or the parent removes it - and so does a parent's
+/// Remove/Turn Off note (`push_removed`): as long as the security log keeps the `push_subscription_gone` line about
+/// it (Push never lost silently, 2026-11-04; 30 days before).
+pub const PUSH_GONE_DAYS: i64 = SECURITY_EVENT_DAYS;
 /// The phones' commands (`device_commands`, design 48 §1.6), by when they were asked - except one
 /// that may still reach its phone.
 pub const COMMAND_DAYS: i64 = 30;
@@ -206,8 +211,8 @@ fn rows(
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
 /// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
 ///   by when they were stored; design 64 decision 6);
-/// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries and turned-off
-///   subscriptions after [PUSH_DAYS] (design 35 §2.4);
+/// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries after [PUSH_DAYS] (design 35 §2.4),
+///   subscriptions a push service ended and a parent's Remove notes after [PUSH_GONE_DAYS];
 /// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
 ///   delivered nor cancelled, and not an expiring kind (`models::EXPIRING_COMMANDS` - those are
 ///   past their hour) - a lost phone that comes back weeks later must still be wiped or locked
@@ -426,7 +431,12 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         "DELETE FROM push_subscriptions \
          WHERE state = 'gone' AND COALESCE(gone_at, created_at) < datetime('now', '-' || ? || ' days')",
     )
-    .bind(PUSH_DAYS)
+    .bind(PUSH_GONE_DAYS)
+    .execute(db)
+    .await) + rows(failed, "push_removed", sqlx::query(
+        "DELETE FROM push_removed WHERE removed_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(PUSH_GONE_DAYS)
     .execute(db)
     .await);
     let expiring = crate::models::EXPIRING_COMMANDS;

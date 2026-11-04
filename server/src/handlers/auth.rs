@@ -546,15 +546,29 @@ pub async fn logout(
         .find(|(name, _)| name == "endpoint")
         .map(|(_, value)| value.trim().to_string())
         .filter(|e| !e.is_empty() && e.len() <= 1024);
-    if let Some(endpoint) = endpoint
-        && let Err(err) =
-            sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ?")
-                .bind(&endpoint)
-                .bind(admin.id)
-                .execute(&state.db)
+    if let Some(endpoint) = endpoint {
+        let gone: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(
+            "DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ? RETURNING label",
+        )
+        .bind(&endpoint)
+        .bind(admin.id)
+        .fetch_all(&state.db)
+        .await;
+        match gone {
+            // Never silent (2026-11-04): the security log says which device's notifications went.
+            Ok(labels) => {
+                crate::handlers::notifications::log_turned_off(
+                    &state.db,
+                    &admin.username,
+                    &labels,
+                    "security.detail.push_signed_out",
+                )
                 .await
-    {
-        tracing::error!(%err, "couldn't delete this browser's notification subscription");
+            }
+            Err(err) => {
+                tracing::error!(%err, "couldn't delete this browser's notification subscription")
+            }
+        }
     }
     session.flush().await.ok();
     // The lock screen's Sign Out (design 74 §6.5) keeps where the parent was going: a passkey sign-in goes on there.
@@ -678,7 +692,7 @@ pub async fn change_password(
         )
         .await;
     }
-    let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
+    let reauth = admin_auth::record_reauth(&state, &session, &admin, changed.is_some()).await;
     let new_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left: 1 }, _) => {
@@ -1351,8 +1365,16 @@ pub async fn update_account_password(
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // A browser a stolen session turned notifications on in stops getting them too (security
-    // review M1), this one's as well: the parent turns them on again where they want them.
-    crate::push::forget_subscriptions(&state.db, admin.id).await;
+    // review M1); this browser keeps its own (Push never lost silently, 2026-11-04: the session that made the
+    // change is the parent's, and it goes on).
+    let this_browser = crate::push::this_browser(&session).await;
+    crate::push::forget_subscriptions(
+        &state,
+        &admin,
+        crate::push::Forget::Password,
+        this_browser.as_deref(),
+    )
+    .await;
     // The warning said to change the password: done.
     session
         .remove_value(admin_auth::LOGIN_WARNING_KEY)
@@ -1468,8 +1490,16 @@ pub async fn reset_totp(
         );
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
-    // Every device's notifications end with the other sessions (security review M1).
-    crate::push::forget_subscriptions(&state.db, admin.id).await;
+    // Every other device's notifications end with the other sessions (security review M1); this one, which goes
+    // on, keeps its own (2026-11-04).
+    let this_browser = crate::push::this_browser(&session).await;
+    crate::push::forget_subscriptions(
+        &state,
+        &admin,
+        crate::push::Forget::TotpReset,
+        this_browser.as_deref(),
+    )
+    .await;
 
     security::record_security_event(
         &state.db,
@@ -1503,8 +1533,15 @@ pub async fn sign_out_everywhere(
             "account.sessions.failed",
         );
     }
-    // A lost device stops getting notifications too (design 35 §7).
-    crate::push::forget_subscriptions(&state.db, admin.id).await;
+    // A lost device stops getting notifications too (design 35 §7). This session ends as well, so nothing is kept:
+    // a signed-out browser gets no titles; a new sign-in here sends its subscription again (static/register-sw.js).
+    crate::push::forget_subscriptions(
+        &state,
+        &admin,
+        crate::push::Forget::SignedOutEverywhere,
+        None,
+    )
+    .await;
     security::record_security_event(
         &state.db,
         "signed_out_everywhere",

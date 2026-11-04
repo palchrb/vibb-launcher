@@ -1611,6 +1611,7 @@ pub fn build_admin_router(
             "/notifications/subscriptions/unsubscribe",
             post(handlers::notifications::unsubscribe),
         )
+        .route(lock::PUSH_SYNC_ROUTE, post(handlers::notifications::sync))
         .route(
             "/notifications/subscriptions/{id}/test",
             post(handlers::notifications::send_test),

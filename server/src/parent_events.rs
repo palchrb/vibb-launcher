@@ -62,10 +62,14 @@ pub enum Kind {
     /// switch - and in each inbox, so a passkey a held session planted is seen. Told from its
     /// parameters ([PasskeyParams]).
     PasskeyAdded,
+    /// Push never lost silently (2026-11-04): the server ended a parent's subscriptions (an account change, three
+    /// wrong tries, a Reset) or a push service answered that one is gone (404/410). No phone; pushed to every parent's
+    /// remaining devices - no switch - and in each inbox. Told from its parameters ([PushOffParams]).
+    PushOff,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 14] = [
+    pub const ALL: [Kind; 15] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -80,6 +84,7 @@ impl Kind {
         Kind::AppUpdateAvailable,
         Kind::AppUpdated,
         Kind::PasskeyAdded,
+        Kind::PushOff,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -98,6 +103,7 @@ impl Kind {
             Kind::AppUpdateAvailable => "app_update_available",
             Kind::AppUpdated => "app_updated",
             Kind::PasskeyAdded => "passkey_added",
+            Kind::PushOff => "push_off",
         }
     }
 
@@ -135,8 +141,9 @@ impl Kind {
     /// `None` for the emergency call, which is always pushed.
     pub fn switch(self) -> Option<(&'static str, &'static str)> {
         match self {
-            // A new way into the account is always told (design 74 D1.2).
-            Kind::EmergencyCall | Kind::PasskeyAdded => None,
+            // A new way into the account is always told (design 74 D1.2), and a device that stopped getting
+            // notifications (2026-11-04: "å miste push sub er kritisk").
+            Kind::EmergencyCall | Kind::PasskeyAdded | Kind::PushOff => None,
             Kind::PinUsed => Some(("push_pin_used", "Parent PIN used")),
             Kind::PinLockout => Some(("push_pin_lockout", "Parent PIN locked")),
             Kind::ForeignAccess => Some(("push_foreign_access", "An app may read the PIN")),
@@ -1612,6 +1619,88 @@ fn passkey_told(
     (crate::audit::clip(&title, TITLE_MAX).to_string(), at)
 }
 
+/// Notifications ended on a parent's devices (2026-11-04): the parent's name and the devices' labels as they were,
+/// how many, why (`push::Forget::wire`), and when.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PushOffParams {
+    pub parent: String,
+    pub labels: Vec<String>,
+    pub reason: String,
+    pub at: String,
+}
+
+/// The server ended `labels` (one or more) of a parent's subscriptions for `why`: no phone, a key of its own per
+/// raise (the parent, the reason, the instant, the labels' hash), target the device list of Notification Settings.
+pub fn push_off(
+    admin_id: i64,
+    parent: &str,
+    labels: &[String],
+    why: crate::push::Forget,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = PushOffParams {
+        parent: parent.to_string(),
+        labels: labels.to_vec(),
+        reason: why.wire().to_string(),
+        at: instant(at),
+    };
+    let key = format!(
+        "{admin_id}-{}-{}-{}",
+        why.wire(),
+        at.timestamp_millis(),
+        crate::push::endpoint_hash(&labels.join("\n"))
+    );
+    NewEvent {
+        device_id: None,
+        kind: Kind::PushOff,
+        dedup_key: key,
+        title: String::new(),
+        summary: String::new(),
+        target: "/notifications/settings#devices".to_string(),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push: Push::Now,
+    }
+}
+
+/// "Notifications stopped on iPhone · Safari (Mamma)" / "14:02 · Password changed"; pushed "Mamma: notifications
+/// off on iPhone · Safari"; with more devices their count instead of the label.
+fn push_off_told(
+    form: Form,
+    p: &PushOffParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let count = p.labels.len().to_string();
+    let title = match p.labels.as_slice() {
+        [one] => {
+            let key = format!("events.push_off.{}.title", form.key());
+            fit_name(&p.parent, TITLE_MAX, |name| {
+                t_params(lang, &key, &[("name", name), ("label", one)])
+            })
+        }
+        _ => {
+            let key = format!("events.push_off.{}.many", form.key());
+            fit_name(&p.parent, TITLE_MAX, |name| {
+                t_params(lang, &key, &[("name", name), ("count", &count)])
+            })
+        }
+    };
+    let reason = crate::push::Forget::of(&p.reason).map(|why| t(lang, why.key()).to_string());
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let body = push_body(&at, reason);
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&body, SUMMARY_MAX).to_string(),
+    )
+}
+
 /// How an event is worded: the inbox's long form (and Activity's), or the push's short one (the
 /// shorter push texts, 2026-10-25: "<name>: <fact>" / the time and at most one number).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1701,6 +1790,9 @@ pub fn told_as(
         Kind::PasskeyAdded => params
             .and_then(|p| serde_json::from_str::<PasskeyParams>(p).ok())
             .map(|p| passkey_told(form, &p, zone, now)),
+        Kind::PushOff => params
+            .and_then(|p| serde_json::from_str::<PushOffParams>(p).ok())
+            .map(|p| push_off_told(form, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -2705,6 +2797,19 @@ mod tests {
                 "14:02",
                 "/account#parents",
             ),
+            // Push never lost silently (2026-11-04): no phone, told from its parameters.
+            (
+                push_off(
+                    7,
+                    "Mamma",
+                    &["iPhone · Safari".to_string()],
+                    crate::push::Forget::PasskeyOnly,
+                    two,
+                ),
+                "Notifications stopped on iPhone · Safari (Mamma)",
+                "14:02 · Passkey Only turned on",
+                "/notifications/settings#devices",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -3460,6 +3565,23 @@ mod tests {
             app_update_available(9, "Signal", "v7.2.0@41", Some("7.1.4"), "7.2.0", two),
             app_updated(3, &phone.name, 1, "Vibb One", 360_009, None, "0.36.0", two),
             passkey_added(7, &phone.name, "Security key", two),
+            push_off(
+                7,
+                &phone.name,
+                &["iPhone · Safari".to_string()],
+                crate::push::Forget::Gone,
+                two,
+            ),
+            push_off(
+                7,
+                &phone.name,
+                &[
+                    "iPhone · Safari".to_string(),
+                    "Android · Chrome".to_string(),
+                ],
+                crate::push::Forget::ReauthLockout,
+                two,
+            ),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

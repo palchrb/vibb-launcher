@@ -91,6 +91,8 @@ pub enum Refused {
     UnknownCredential,
     /// The account isn't ready (D2.2's predicate).
     NotReady,
+    /// The server couldn't read or store the passkey (a database error, logged where it happened).
+    Database,
 }
 
 impl Refused {
@@ -122,7 +124,17 @@ impl Refused {
             Refused::UserHandle => "user_handle",
             Refused::UnknownCredential => "unknown_credential",
             Refused::NotReady => "not_ready",
+            Refused::Database => "database",
         }
+    }
+
+    /// The server's own refusal, not a failed try of the parent's (Push never lost silently, 2026-11-04): the
+    /// challenge expired, was dropped from the session's store (its 8 newest), already used or bound to another
+    /// session or epoch - a lock screen shown again after a while, a prompt answered late -, or the server couldn't
+    /// read the passkey. The app lock's unlock doesn't count these toward `admin_auth::REAUTH_MAX_WRONG`; everything
+    /// else an assertion can be refused for is the browser's answer itself and counts.
+    pub fn servers_own(self) -> bool {
+        matches!(self, Refused::Challenge | Refused::Database)
     }
 }
 

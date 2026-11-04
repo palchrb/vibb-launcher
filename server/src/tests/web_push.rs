@@ -115,6 +115,30 @@ pub(super) async fn subscribe(app: &TestApp, cookie: &str, endpoint: &str) -> Te
     .await
 }
 
+/// The app's own check of this browser's subscription (Push never lost silently, 2026-11-04), as
+/// `static/register-sw.js` posts it.
+pub(super) async fn sync(app: &TestApp, cookie: &str, fields: &[(&str, &str)]) -> TestResponse {
+    post_as_browser(
+        app,
+        crate::lock::PUSH_SYNC_ROUTE,
+        Some(cookie),
+        Some(ORIGIN),
+        fields,
+    )
+    .await
+}
+
+/// `endpoint` with the RFC 8291 test browser's keys, and `more`.
+fn with_keys<'a>(endpoint: &'a str, more: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let mut fields = vec![
+        ("endpoint", endpoint),
+        ("p256dh", test_browser::UA_PUBLIC),
+        ("auth", test_browser::AUTH),
+    ];
+    fields.extend_from_slice(more);
+    fields
+}
+
 /// The inbox (the delivery lines, the warning rows) and Notification Settings (the device rows,
 /// the clock warning) as one text, for words that may be on either (design 45). Opening the inbox
 /// reads its rows.
@@ -459,7 +483,7 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
             assert!(!text.contains(secret), "{secret} is on the {page} page");
         }
     }
-    assert!(html.contains("<script src=\"/static/notifications.js?v=4\" defer></script>"));
+    assert!(html.contains("<script src=\"/static/notifications.js?v=5\" defer></script>"));
     assert!(!inbox.contains("notifications.js"));
     check_forms("/notifications/settings", &html);
     check_forms("/notifications", &inbox);
@@ -1252,7 +1276,7 @@ async fn the_first_opening_offers_notifications_on_devices() {
     );
     assert!(card.contains("<input type=\"hidden\" name=\"offer\" value=\"devices\">"));
     assert!(card.contains("Get notifications on this phone?") && card.contains("Not Now"));
-    assert!(html.contains("<script src=\"/static/notifications.js?v=4\" defer></script>"));
+    assert!(html.contains("<script src=\"/static/notifications.js?v=5\" defer></script>"));
     assert!(!html.contains("id=\"push-offer-done\""));
     // The page is in Norwegian for a Norwegian reader.
     let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
@@ -1355,6 +1379,16 @@ async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
         0
     );
+    // Never silent (2026-11-04): this session ended too, so nothing was kept; the log and the inbox say so.
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscriptions_cleared' \
+             AND params LIKE '%push.forget.signed_out_everywhere%' AND params NOT LIKE '%push_kept%'"
+        )
+        .await,
+        1
+    );
 
     let cookie = app.admin_cookie().await;
     subscribe(&app, &cookie, ENDPOINT).await;
@@ -1370,18 +1404,39 @@ async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
         0
     );
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscriptions_cleared' \
+             AND params LIKE '%push.forget.shell_reset%'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM parent_events WHERE kind = 'push_off'"
+        )
+        .await,
+        2
+    );
 }
 
-/// Security review M1: a new password and "Reset two-factor login" on Account delete every
-/// subscription of the account, as Sign Out Everywhere does - one a stolen session made too.
+/// Security review M1 and Push never lost silently (2026-11-04): a new password and "Reset two-factor login" on
+/// Account delete every other subscription of the account - one a stolen session made too - and keep this
+/// browser's, the session that made the change (its own record, `push::SESSION_ENDPOINT_KEY`), moved to the new
+/// epoch so the sender keeps sending to it. Each deletion is a security line and an inbox event pushed to the kept
+/// device.
 #[tokio::test]
-async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
+async fn a_new_password_and_a_2fa_reset_keep_only_this_browser() {
     const PASSWORD: &str = "correct horse battery staple";
     const NEW_PASSWORD: &str = "a brand new long password";
+    const STOLEN: &str = "https://web.push.apple.com/QK1-fake-stolen";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let stolen = app.admin_cookie().await;
-    let res = subscribe(&app, &stolen, "https://web.push.apple.com/QK1-fake-stolen").await;
+    let res = subscribe(&app, &stolen, STOLEN).await;
     assert!(res.location().unwrap().contains("notice=push_on"));
     subscribe(&app, &cookie, ENDPOINT).await;
     assert_eq!(
@@ -1402,24 +1457,55 @@ async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
         )
         .await;
     super::assert_redirect(&res, "/account?changed=password", Some("password"));
-    assert_eq!(
-        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
-        0
-    );
+    let left: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT s.endpoint, s.session_epoch = a.session_epoch FROM push_subscriptions s \
+         JOIN admin_users a ON a.id = s.admin_id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, [(ENDPOINT.to_string(), true)]);
     let page = app.get_page("/account?changed=password", &cookie).await;
     assert!(
-        page.text().contains("notifications are off"),
+        page.text()
+            .contains("notifications are off on every other device"),
         "{}",
         page.text()
     );
-
-    // This session goes on; it turns notifications on again, then resets two-factor login.
-    let res = subscribe(&app, &cookie, ENDPOINT).await;
-    assert!(res.location().unwrap().contains("notice=push_on"));
-    assert_eq!(
-        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
-        1
+    let line: (Option<String>, String) = sqlx::query_as(
+        "SELECT username, params FROM security_events WHERE event_type = 'push_subscriptions_cleared'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(line.0.as_deref(), Some("parent"));
+    assert!(line.1.contains("push.forget.password"), "{}", line.1);
+    assert!(line.1.contains("security.detail.push_kept"), "{}", line.1);
+    let security = app.get_page("/security", &cookie).await.text();
+    assert!(
+        security.contains("Notifications ended on 1 device (iPhone · Safari): Password changed"),
+        "{security}"
     );
+    assert!(security.contains("Kept on the device that made the change: iPhone · Safari"));
+    // The inbox says so, pushed to the device that is left.
+    assert!(app.state.push.woken().await);
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].endpoint, ENDPOINT);
+    let n = &payload(&requests[0])["notification"];
+    assert_eq!(n["title"], "parent: notifications off on iPhone · Safari");
+    assert!(
+        n["body"].as_str().unwrap().ends_with("Password changed"),
+        "{n}"
+    );
+    assert!(
+        pages(&app, &cookie)
+            .await
+            .contains("Notifications stopped on iPhone · Safari (parent)")
+    );
+
+    // This session goes on; resetting two-factor login keeps its browser again.
     let res = app
         .request_form(
             Method::POST,
@@ -1429,9 +1515,55 @@ async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
         )
         .await;
     assert_eq!(res.location(), Some("/auth/setup-2fa"));
+    let left: Vec<String> = sqlx::query_scalar("SELECT endpoint FROM push_subscriptions")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [ENDPOINT]);
+    // Nothing went, so nothing more is told.
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscriptions_cleared'"
+        )
+        .await,
+        1
+    );
+}
+
+/// A session that never turned notifications on in its browser keeps nothing: the explicit delete takes every row
+/// (the stolen session's too), and the browser that sends its subscription again afterwards is the one that is
+/// back.
+#[tokio::test]
+async fn a_change_from_a_session_without_its_browser_keeps_nothing() {
+    const PASSWORD: &str = "correct horse battery staple";
+    const NEW_PASSWORD: &str = "a brand new long password";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let other = app.admin_cookie().await;
+    subscribe(&app, &other, ENDPOINT).await;
+    app.request_form(
+        Method::POST,
+        "/account/password",
+        Some(&cookie),
+        &[
+            ("current_password", PASSWORD),
+            ("new_password", NEW_PASSWORD),
+            ("confirm_password", NEW_PASSWORD),
+        ],
+    )
+    .await;
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
         0
+    );
+    // The other session ended with the epoch: its sync gets no answer to act on.
+    let res = sync(&app, &other, &with_keys(ENDPOINT, &[])).await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0,
+        "a signed-out browser never comes back"
     );
 }
 
@@ -1638,6 +1770,50 @@ async fn a_re_auth_lockout_turns_notifications_off_at_once() {
     raise(&app, &anna.unseen_boot(1, None)).await;
     send(&app).await;
     assert!(app.pushes.take().is_empty());
+    // Never silent (2026-11-04): the log and the inbox say why.
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscriptions_cleared' \
+             AND params LIKE '%push.forget.reauth_lockout%'"
+        )
+        .await,
+        1
+    );
+    assert!(
+        pages(&app, &cookie)
+            .await
+            .contains("Notifications stopped on iPhone · Safari (parent)")
+    );
+}
+
+/// The other parent hears of a re-auth sign-out's ended notifications at once: the event is pushed to every parent's
+/// devices that still get them.
+#[tokio::test]
+async fn the_other_parent_hears_of_a_re_auth_lockout() {
+    const PAPPA: &str = "https://web.push.apple.com/QK1-fake-pappa";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    subscribe(&app, &pappa, PAPPA).await;
+    for _ in 0..crate::admin_auth::REAUTH_MAX_WRONG {
+        app.request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&cookie),
+            &[("current_password", "not the password")],
+        )
+        .await;
+    }
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].endpoint, PAPPA);
+    assert_eq!(
+        payload(&requests[0])["notification"]["title"],
+        "parent: notifications off on iPhone · Safari"
+    );
 }
 
 /// §4.1: the key file is made once, 0600; a damaged one turns push off and stays as it was; a
@@ -2229,4 +2405,302 @@ async fn inbox_delivery_line_is_each_parents() {
     assert!(pappas.is_empty(), "{pappas:?}");
     let mammas = lines(app.get_page("/notifications", &mamma).await.text());
     assert_eq!(mammas.len(), 1, "{mammas:?}");
+}
+
+/// Push never lost silently (2026-11-04): the sync route's answers. Nothing sent: the server's key and the banner's
+/// words (in the parent's language). A subscription for the server's key that the server lost is stored again in
+/// this session's epoch and noted as this session's browser; then it is known. Another key's, or one a push service
+/// ended, is answered so the browser makes a new one; its `replaces` deletes the dead row. No-store JSON.
+#[tokio::test]
+async fn the_sync_answers_and_stores_again() {
+    const NEW: &str = "https://web.push.apple.com/QK1-fake-new";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let key = app.state.push.key.as_ref().unwrap().public.clone();
+    let res = sync(&app, &cookie, &[]).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.headers[header::CACHE_CONTROL], "no-store");
+    let answer = res.json();
+    assert_eq!(answer["state"], "none");
+    assert_eq!(answer["key"], key.as_str());
+    assert_eq!(
+        answer["words"]["off"],
+        "Notifications are off on this phone"
+    );
+    assert_eq!(answer["words"]["on"], "Turn On");
+    let nb = post_as_browser(
+        &app,
+        "/notifications/subscriptions/sync?lang=nb",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[],
+    )
+    .await
+    .json();
+    assert_eq!(nb["words"]["off"], "Varsler er av på denne telefonen");
+    assert_eq!(nb["words"]["on"], "Slå på");
+
+    let mine = with_keys(ENDPOINT, &[("key", &key)]);
+    assert_eq!(sync(&app, &cookie, &mine).await.json()["state"], "stored");
+    let row: (String, bool) = sqlx::query_as(
+        "SELECT s.state, s.session_epoch = a.session_epoch FROM push_subscriptions s \
+         JOIN admin_users a ON a.id = s.admin_id WHERE s.endpoint = ?",
+    )
+    .bind(ENDPOINT)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(row, ("active".to_string(), true));
+    let line: String = sqlx::query_scalar(
+        "SELECT params FROM security_events WHERE event_type = 'push_subscribed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(line.contains("security.detail.push_resent"), "{line}");
+    assert_eq!(sync(&app, &cookie, &mine).await.json()["state"], "known");
+    // A browser that doesn't say its key is taken as the server's.
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await.json()["state"],
+        "known"
+    );
+    // Another key's: the browser makes a new one; nothing stored.
+    let other = with_keys(NEW, &[("key", "BOtherKeyThatIsNotTheServers")]);
+    let answer = sync(&app, &cookie, &other).await.json();
+    assert_eq!(answer["state"], "other_key");
+    assert_eq!(answer["key"], key.as_str());
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1
+    );
+    // A push service ended it: gone, and the new one replaces the dead row.
+    sqlx::query("UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(sync(&app, &cookie, &mine).await.json()["state"], "gone");
+    let fresh = with_keys(NEW, &[("key", &key), ("replaces", ENDPOINT)]);
+    assert_eq!(sync(&app, &cookie, &fresh).await.json()["state"], "stored");
+    let left: Vec<(String, String)> =
+        sqlx::query_as("SELECT endpoint, state FROM push_subscriptions")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(left, [(NEW.to_string(), "active".to_string())]);
+    // A refusal says why, in This Device's words.
+    let answer = sync(&app, &cookie, &with_keys("https://push.example.net/x", &[]))
+        .await
+        .json();
+    assert_eq!(answer["state"], "refused");
+    assert_eq!(answer["notice"], "push_service");
+    assert!(answer["words"].is_string());
+    // Signed out: no answer to act on, nothing stored.
+    app.request_form(Method::POST, "/logout", Some(&cookie), &[])
+        .await;
+    let res = sync(&app, &cookie, &mine).await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1
+    );
+}
+
+/// Another parent's subscription of a shared device is theirs: known, never taken over by the sync.
+#[tokio::test]
+async fn the_sync_leaves_another_parents_subscription() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &pappa, ENDPOINT).await;
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await.json()["state"],
+        "known"
+    );
+    let owner: String = sqlx::query_scalar(
+        "SELECT a.username FROM push_subscriptions s JOIN admin_users a ON a.id = s.admin_id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(owner, "pappa");
+}
+
+/// Every deletion a parent makes is logged (Turn Off, Remove, Sign Out), and a Remove or Turn Off is never undone by
+/// the app's own sync - only a tap on Turn On (This Device's form, or the banner's `asked`) brings it back.
+#[tokio::test]
+async fn a_parents_turn_off_is_logged_and_kept() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    async fn lines_of(app: &TestApp, how: &str) -> i64 {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_unsubscribed' \
+             AND params LIKE '%' || ? || '%'",
+        )
+        .bind(how)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    }
+    let lines = |how: &'static str| lines_of(&app, how);
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{id}/delete"),
+        Some(&cookie),
+        &[("from", "devices")],
+    )
+    .await;
+    assert_eq!(lines("security.detail.push_removed").await, 1);
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await.json()["state"],
+        "removed"
+    );
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+    // The banner's Turn On is a tap.
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[("asked", "1")]))
+            .await
+            .json()["state"],
+        "stored"
+    );
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM push_removed").await, 0);
+
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions/unsubscribe",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[("from", "devices"), ("endpoint", ENDPOINT)],
+    )
+    .await;
+    assert!(res.location().unwrap().contains("notice=push_off"));
+    assert_eq!(lines("security.detail.push_turned_off").await, 1);
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await.json()["state"],
+        "removed"
+    );
+    // This Device's Turn On lifts it.
+    subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM push_removed").await, 0);
+    assert_eq!(
+        sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await.json()["state"],
+        "known"
+    );
+
+    app.request_form(
+        Method::POST,
+        "/logout",
+        Some(&cookie),
+        &[("endpoint", ENDPOINT)],
+    )
+    .await;
+    assert_eq!(lines("security.detail.push_signed_out").await, 1);
+    let security = {
+        let cookie = app.admin_cookie().await;
+        app.get_page("/security", &cookie).await.text()
+    };
+    assert!(security.contains("A parent turned notifications off on a device"));
+    assert!(
+        security.contains("iPhone · Safari: Sign Out on that device"),
+        "{security}"
+    );
+}
+
+/// Push never lost silently (2026-11-04): a subscription a push service ended (410) shows on Devices and is told in
+/// the inbox, pushed to the other parent; once that device sends a new one (`replaces`), the warning ends.
+#[tokio::test]
+async fn a_gone_subscription_warns_and_is_told() {
+    const PAPPA: &str = "https://web.push.apple.com/QK1-fake-pappa";
+    const NEW: &str = "https://web.push.apple.com/QK1-fake-new";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    subscribe(&app, &pappa, PAPPA).await;
+    app.pushes.answer(410, None, None);
+    send(&app).await;
+    assert_eq!(app.pushes.take().len(), 1);
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(devices.contains("id=\"push-warning\""), "{devices}");
+    assert!(devices.contains("Notifications stopped on iPhone · Safari"));
+    let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
+    assert!(nb.contains("Varsler stoppet på iPhone · Safari"), "{nb}");
+    let gone: Option<String> = sqlx::query_scalar(
+        "SELECT username FROM security_events WHERE event_type = 'push_subscription_gone'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(gone.as_deref(), Some("parent"));
+    // Told in the inbox and pushed to the device that still gets them.
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].endpoint, PAPPA);
+    let n = &payload(&requests[0])["notification"];
+    assert_eq!(n["title"], "parent: notifications off on iPhone · Safari");
+    assert!(
+        n["body"]
+            .as_str()
+            .unwrap()
+            .contains("The phone or browser ended them"),
+        "{n}"
+    );
+    // The browser makes a new one, replacing the dead row: the warning ends.
+    let key = app.state.push.key.as_ref().unwrap().public.clone();
+    let res = sync(
+        &app,
+        &cookie,
+        &with_keys(NEW, &[("key", &key), ("replaces", ENDPOINT)]),
+    )
+    .await;
+    assert_eq!(res.json()["state"], "stored");
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(!devices.contains("id=\"push-warning\""), "{devices}");
+}
+
+/// A gone row and a Remove note stay as long as the security log keeps the line about them (180 days, 30 before).
+#[tokio::test]
+async fn gone_rows_stay_as_long_as_the_security_log() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    subscribe(&app, &cookie, "https://web.push.apple.com/QK1-fake-old").await;
+    sqlx::query(
+        "UPDATE push_subscriptions SET state = 'gone', gone_at = CASE WHEN endpoint = ? \
+           THEN datetime('now', '-179 days') ELSE datetime('now', '-181 days') END",
+    )
+    .bind(ENDPOINT)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO push_removed (endpoint_hash, admin_id, removed_at) \
+         SELECT 'aaaaaaaaaaaaaaaa', id, datetime('now', '-181 days') FROM admin_users \
+         UNION ALL SELECT 'bbbbbbbbbbbbbbbb', id, datetime('now', '-179 days') FROM admin_users",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::retention::PUSH_GONE_DAYS,
+        crate::retention::SECURITY_EVENT_DAYS
+    );
+    crate::retention::prune(&app.db).await;
+    let left: Vec<String> = sqlx::query_scalar("SELECT endpoint FROM push_subscriptions")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [ENDPOINT]);
+    let notes: Vec<String> = sqlx::query_scalar("SELECT endpoint_hash FROM push_removed")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(notes, ["bbbbbbbbbbbbbbbb"]);
 }

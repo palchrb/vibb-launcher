@@ -490,7 +490,7 @@ async fn the_server_waits_a_minute_past_the_page() {
 }
 
 /// D3.5, D3.7: the unlock - the parent's own passkey only (another parent's, a bad one: `app_unlock_failed`, counted
-/// in `reauth_wrong`, the third ends every session); done: `{next}` (a local one only), the use moved, the session id
+/// in `reauth_wrong`, the third ends every session; a challenge of another kind only logged); done: `{next}` (a local one only), the use moved, the session id
 /// cycled, the sign-in time kept, `app_unlocked` merged per hour.
 #[tokio::test]
 async fn the_unlock_takes_the_parents_own_passkey() {
@@ -560,13 +560,15 @@ async fn the_unlock_takes_the_parents_own_passkey() {
         .await,
         2
     );
+    // Pappa's passkey counts; the re-auth challenge is the server's own refusal (another kind's challenge, as an
+    // expired one) - logged, never counted (Push never lost silently, 2026-11-04).
     assert_eq!(
         scalar(
             &app,
             "SELECT reauth_wrong FROM admin_users WHERE username = 'parent'"
         )
         .await,
-        2
+        1
     );
 
     let res = unlock(&app, &cookie, &mut fake, "//evil.example").await;
@@ -939,6 +941,7 @@ async fn every_route_is_locked_or_exempt() {
                 "lock::BEACON_ROUTE" => crate::lock::BEACON_ROUTE.to_string(),
                 "lock::LOCK_ROUTE" => crate::lock::LOCK_ROUTE.to_string(),
                 "lock::OPTIONS_ROUTE" => crate::lock::OPTIONS_ROUTE.to_string(),
+                "lock::PUSH_SYNC_ROUTE" => crate::lock::PUSH_SYNC_ROUTE.to_string(),
                 other => panic!("a route named by {other}: teach this test its path"),
             }
         };
@@ -1191,5 +1194,165 @@ async fn a_locked_form_comes_back_to_its_page() {
         res.status,
         StatusCode::BAD_REQUEST,
         "read, refused - not too large"
+    );
+}
+
+/// Push never lost silently (2026-11-04): a refusal the server caused - a challenge that expired, was dropped from the
+/// session's store or was never issued (a lock screen shown again after a while) - is answered as a refusal and
+/// logged, but never counts toward the third that signs every session out (and ends every device's notifications).
+/// A real wrong passkey still counts: two of those after three stale ones leave the session; the third ends it.
+#[tokio::test]
+async fn a_stale_challenge_is_no_wrong_try() {
+    let app = TestApp::new().await;
+    let (cookie, _, mut fake) = locked_parent(&app, "5").await;
+    super::web_push::subscribe(&app, &cookie, super::web_push::ENDPOINT).await;
+    unused_for(&app, &cookie, 7 * 60).await;
+    for n in 0..4 {
+        let never_issued = [n as u8; 32];
+        let assertion = fake.assert(&never_issued, ORIGIN, HOST, false);
+        let res = send(
+            &app,
+            Method::POST,
+            "/lock",
+            HOST,
+            Some(&cookie),
+            &[("assertion", &assertion)],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
+        assert!(res.json()["error"].is_string());
+    }
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT reauth_wrong FROM admin_users WHERE username = 'parent'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'app_unlock_failed' \
+             AND detail = 'challenge'"
+        )
+        .await,
+        4,
+        "each one logged"
+    );
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1,
+        "notifications stay"
+    );
+    // A stranger's passkey is a real wrong try: it counts.
+    for left in [2, 1] {
+        let options = send(
+            &app,
+            Method::POST,
+            "/lock/options",
+            HOST,
+            Some(&cookie),
+            &[],
+        )
+        .await;
+        let mut stranger = FakeAuthenticator::es256(b"");
+        let assertion = stranger.assert(&challenge_of(&options), ORIGIN, HOST, false);
+        let res = send(
+            &app,
+            Method::POST,
+            "/lock",
+            HOST,
+            Some(&cookie),
+            &[("assertion", &assertion)],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            scalar(
+                &app,
+                "SELECT reauth_wrong FROM admin_users WHERE username = 'parent'"
+            )
+            .await,
+            3 - left
+        );
+    }
+    // The parent's own passkey with a live challenge unlocks.
+    let options = send(
+        &app,
+        Method::POST,
+        "/lock/options",
+        HOST,
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    let assertion = fake.assert(&challenge_of(&options), ORIGIN, HOST, false);
+    let res = send(
+        &app,
+        Method::POST,
+        "/lock",
+        HOST,
+        Some(&cookie),
+        &[("assertion", &assertion)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+/// The app's own check of this browser's notifications at a page's load is never a use: it can't hold the lock off.
+#[tokio::test]
+async fn the_push_sync_is_no_use() {
+    let app = TestApp::new().await;
+    let (cookie, _, _) = locked_parent(&app, "5").await;
+    unused_for(&app, &cookie, 60).await;
+    let before = used_at(&app, &cookie).await.unwrap();
+    let res = send(
+        &app,
+        Method::POST,
+        crate::lock::PUSH_SYNC_ROUTE,
+        HOST,
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(used_at(&app, &cookie).await, Some(before));
+    // Locked, it answers nothing to act on.
+    unused_for(&app, &cookie, 7 * 60).await;
+    let res = send(
+        &app,
+        Method::POST,
+        crate::lock::PUSH_SYNC_ROUTE,
+        HOST,
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::LOCKED);
+}
+
+/// The lock screen's Sign Out asks first, in the page (it ends this phone's notifications too).
+#[tokio::test]
+async fn the_lock_screens_sign_out_asks_first() {
+    let app = TestApp::new().await;
+    let (cookie, _, _) = locked_parent(&app, "5").await;
+    unused_for(&app, &cookie, 7 * 60).await;
+    let html = browse(&app, Method::GET, "/lock", &cookie, Way::Tap)
+        .await
+        .text();
+    let confirm = html
+        .find("<details class=\"confirm lock-out\">")
+        .expect("the confirm");
+    let form = confirm + html[confirm..].find("action=\"/logout\"").unwrap();
+    assert!(html[confirm..form].contains("<summary class=\"lock-out-button\">Sign Out</summary>"));
+    assert!(html[form..].contains("Sign out? Notifications on this phone are turned off too."));
+    assert!(html[form..].contains("data-confirm-cancel"));
+    let html = browse(&app, Method::GET, "/lock?lang=nb", &cookie, Way::Tap)
+        .await
+        .text();
+    assert!(
+        html.contains("Logge ut? Varsler på denne telefonen slås også av."),
+        "{html}"
     );
 }

@@ -106,7 +106,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere, a new password and "Reset Two-Factor Login" on Account (security
   review M1, `pwa-fixes-a`), the re-auth sign-out after three wrong passwords (`admin_auth::record_reauth`,
   qa-pwa-fixes-a-code Q-1) and the CLI's `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions
-  (`push::forget_subscriptions`), this browser's too; Account says "notifications are off everywhere". A parent's
+  (`push::forget_subscriptions`) - since 2026-11-04 every other device's, this browser's kept when the session that
+made the change goes on ("Push never lost silently" below); Account says "notifications are off on every other device". A parent's
   Reset and Remove delete them in their own transaction (`parents.rs`). Each subscription also keeps the
   `session_epoch` of the session that turned it on (0095, written at subscribe and on its upsert): every reader -
   Notification Settings' device list, This Device's `data-subscribed`, the 10-device cap, Send a Test, `queue` -
@@ -575,3 +576,83 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   turns the card's line into "blocked" and drops Turn On; any other failure says try again.
 - Tests: `web_push::the_first_opening_offers_notifications_on_devices`, `jstest/notifications.test.js` (the table,
   the card from the Home Screen and from `appinstalled`, the known and unknown subscription, Not Now, the refusals).
+
+## Push never lost silently (2026-11-04, branch `push-never-silent`, migration `0128_push_removed.sql`)
+
+- **Why** (the user, 2026-11-04: "å miste push sub er kritisk"): the parent's iPhone PWA (web.push.apple.com) lost its
+  subscription with no trace; the switch showed Off and Turn On worked at once. Both likely causes were silent: "Kun
+  passkey" on (`forget_subscriptions`, a one-time flash), or three refused app-lock unlocks (`record_reauth`'s epoch
+  bump and delete) - any refusal counted, an expired or dropped challenge too, and the count never decays. And
+  `notifications.js` then unsubscribed the browser itself, because the server's list no longer named it.
+- **The client never drops a subscription for the server's key** (`static/notifications.js` `reconcile`, This Device
+  and the Devices offer card): one the page's `data-subscribed` doesn't name is posted to
+  `POST /notifications/subscriptions/sync` again, which makes its row active in this session's epoch. It is dropped
+  only when it was made for another key (`subscription.options.applicationServerKey` against `data-key`; a browser
+  that doesn't say is taken as the server's key) or the server answers `gone`/`other_key` - then the form's hidden
+  `replaces` carries the dead endpoint and the next Turn On deletes its row.
+- **Re-subscribe on open** (`static/register-sw.js` `pushSync`, every page from the head): only on a signed-in page
+  (`nav.tab-bar[data-signed-in]`; the sign-in pages and the lock screen have no bar and clear the tab's note, so the
+  first signed-in page after a sign-in or an unlock checks at once), not on Notification Settings (This Device does
+  it), at most every 10 minutes per tab (sessionStorage `vibb.push-sync`), with `Notification.permission ===
+  "granted"` and no Turn Off in this browser (localStorage `vibb.push-off`, set by This Device's Turn Off and the
+  banner's Hide, cleared by any Turn On; storage that can't be read: nothing is done). The browser's subscription (or
+  nothing) goes to the sync; for `none`, `gone` or `other_key` the browser subscribes anew with the answer's key and
+  posts it (with `replaces`). A subscribe the browser refuses without a gesture (iOS) shows the app-wide quiet banner
+  (`.attention.push-banner`, the lowest Attention level, under the page title; a scrolled page keeps its place):
+  "Varsler er av på denne telefonen" / "Notifications are off on this phone", **Slå på** (subscribe first in the tap,
+  then the sync with `asked=1`) and **Skjul** (a Turn Off in this browser). Its words come in the sync's answer
+  (`push.banner.*`), in the parent's language.
+- **The sync route** (`handlers::notifications::sync`, full auth + CSRF + the app lock like every page, no-store JSON;
+  `lock::PUSH_SYNC_ROUTE` is never a use, so the page-load POST can't hold the lock off): `no_key`; `none` /
+  `other_key` / `gone` with the server's `key` and the banner's `words`; `known` (an active row of the current epoch -
+  this parent's is noted in the session, another parent's on a shared device is left theirs); `removed` (the endpoint
+  is in `push_removed`); `stored` (through `store_subscription`, This Device's checks and upsert, logged
+  `push_subscribed` "Sent again by the app on that device"); `refused` with This Device's notice. No insecure
+  fallback: a signed-out or locked browser gets a redirect or a 423, never a stored row - a lost device whose sessions
+  ended can't come back (security review M1).
+- **A deliberate Off is kept**: This Device's Turn Off and Getting Notifications' Remove note the endpoint's hash in
+  `push_removed` (0128: `endpoint_hash` 16 hex, never the endpoint; `admin_id`; `removed_at`), and the sync answers
+  `removed` without storing; This Device's Turn On (the form) and the banner's `asked=1` delete the note. Turn Off also
+  sets the browser's `vibb.push-off` (the next subscription would have another endpoint).
+- **The device that makes the account change keeps its notifications** (`push::forget_subscriptions(state, admin,
+  why, keep)`): a new password, Reset Two-Factor Login, a removed passkey and "Kun passkey" on pass `keep` =
+  `push::this_browser(session)`, the hash the server itself wrote into this session (`push::SESSION_ENDPOINT_KEY`) when
+  this session subscribed or its sync found its row - never a value the request names. That one row is moved to the
+  account's new epoch (`forget_stale` would delete it otherwise); every other row goes. Why it is safe: the session
+  that made the change goes on and is the parent's (it just passed the re-auth), so its browser getting titles is
+  what the parent has; whoever else held a session - the reason M1 deletes - loses theirs. Sign Out Everywhere ends
+  this session too, and the re-auth lockout and the CLI's `reset-2fa` are no change this session survives (whoever
+  guessed may hold it): they keep nothing, and this browser's subscription comes back at its next sign-in through the
+  sync (the browser still holds it). A parent's Reset and Remove (`parents.rs`) keep nothing either.
+- **Every deletion leaves a trace**: `push::trace_forgotten` (all of the above, the backstop `forget_stale`, and
+  `forget_other_keys` at startup) writes `push_subscriptions_cleared` ("Notifications ended on devices": the count,
+  the labels, `{reason}` = `push.forget.<why>`, and "Kept on the device that made the change: …"), and - but for a
+  Remove (the remover did it) and the backstop - raises the inbox event `push_off` (`parent_events::push_off`, no
+  phone, no switch: always told, like `passkey_added`; "Notifications stopped on iPhone · Safari (Mamma)" / "14:02 ·
+  Password changed", pushed "Mamma: notifications off on iPhone · Safari"; with more devices their count), queued to
+  every parent's remaining devices and the sender woken. A push service's 404/410 (`push::send_one`) keeps its
+  `push_subscription_gone` line (now with the parent's name) and raises `push_off` with "The phone or browser ended
+  them - turn them on again there". Turn Off, Remove and Sign Out with an endpoint log `push_unsubscribed` ("A parent
+  turned notifications off on a device": "{label}: Turn Off on that device" / "removed under Getting
+  Notifications" / "Sign Out on that device").
+- **Visible loss**: `notifications::warning_of` warns for `Health::Gone` too ("Notifications stopped on {label}" /
+  "Turn them on again on that device, or remove it under Notifications"), so the Devices list's `push-warning` shows
+  it; the many-devices title is "Notifications need a look on N devices". A gone row ends when its device's new
+  subscription names it in `replaces`, or the parent removes it.
+- **Retention** (`retention::PUSH_GONE_DAYS` = `SECURITY_EVENT_DAYS`, 180): a gone row and a `push_removed` note stay
+  as long as the security log keeps the `push_subscription_gone` line about it (30 days before); deliveries keep
+  `PUSH_DAYS` (30). The `push_off` inbox event keeps the inbox's 90 days (`parent_events::EVENT_DAYS`), the security
+  lines 180.
+- Account's words: a new password, the 2FA reset and "Kun passkey" say notifications are off "on every other device".
+  The lock screen's Sign Out is behind an in-page confirm (`templates/lock.html`, `details.confirm.lock-out`,
+  `static/confirm.js`'s Cancel): "Logge ut? Varsler på denne telefonen slås også av." / "Sign out? Notifications on
+  this phone are turned off too."
+- Tests: `tests::web_push` (`a_new_password_and_a_2fa_reset_keep_only_this_browser`,
+  `a_change_from_a_session_without_its_browser_keeps_nothing`, `the_other_parent_hears_of_a_re_auth_lockout`,
+  `the_sync_answers_and_stores_again`, `the_sync_leaves_another_parents_subscription`,
+  `a_parents_turn_off_is_logged_and_kept`, `a_gone_subscription_warns_and_is_told`,
+  `gone_rows_stay_as_long_as_the_security_log`, and the older deletion tests' traces), `tests::app_lock`
+  (`a_stale_challenge_is_no_wrong_try`, `the_push_sync_is_no_use`, `the_lock_screens_sign_out_asks_first`),
+  `parent_events::tests` (every kind), `jstest/register-sw.test.js` (the sync, the banner), `jstest/notifications.test.js`
+  (reconcile, Turn Off remembered). Owed by hand: the iPhone PWA - whether iOS lets `pushManager.subscribe` run
+  without a gesture once the permission is granted (else the banner), and the banner's Turn On.

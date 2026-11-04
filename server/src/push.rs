@@ -314,39 +314,307 @@ pub fn load_key(file: &std::path::Path) -> Result<VapidKey, String> {
 }
 
 /// Right after the key is loaded (§4.1): every active subscription made for another key can't be
-/// pushed to (a restore onto a new machine, a removed key file) - it is turned off.
+/// pushed to (a restore onto a new machine, a removed key file) - it is turned off. Each parent's
+/// count is a security line and an inbox event (Push never lost silently, 2026-11-04); the rows stay
+/// `gone`, so Devices warns until the browser makes a new one (its sync answers `other_key`) or the
+/// parent removes it.
 pub async fn forget_other_keys(db: &sqlx::SqlitePool, key: &VapidKey) {
-    let done = sqlx::query(
+    let done: Result<Vec<(i64, String)>, sqlx::Error> = sqlx::query_as(
         "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now') \
-         WHERE state = 'active' AND vapid_fp != ?",
+         WHERE state = 'active' AND vapid_fp != ? RETURNING admin_id, label",
     )
     .bind(&key.fingerprint)
-    .execute(db)
+    .fetch_all(db)
     .await;
     match done {
-        Ok(done) if done.rows_affected() > 0 => tracing::warn!(
-            "{} notification subscription(s) were made for another Web Push key and are turned \
-             off - turn notifications on again on those devices",
-            done.rows_affected()
-        ),
+        Ok(rows) if !rows.is_empty() => {
+            tracing::warn!(
+                "{} notification subscription(s) were made for another Web Push key and are turned \
+                 off - turn notifications on again on those devices",
+                rows.len()
+            );
+            let mut by_admin: Vec<(i64, Vec<String>)> = Vec::new();
+            for (admin_id, label) in rows {
+                match by_admin.iter_mut().find(|(id, _)| *id == admin_id) {
+                    Some((_, labels)) => labels.push(label),
+                    None => by_admin.push((admin_id, vec![label])),
+                }
+            }
+            for (admin_id, labels) in by_admin {
+                trace_forgotten(db, admin_id, Forget::OtherKey, &labels, None).await;
+            }
+        }
         Ok(_) => {}
         Err(err) => tracing::error!(%err, "can't check the subscriptions' key"),
     }
 }
 
-/// Deletes every subscription of an admin: Sign Out Everywhere, a new password and "Reset
-/// two-factor login" on Account, the re-auth sign-out after three wrong passwords
-/// (`admin_auth::record_reauth`) and the CLI's `reset-2fa` (§7, security review M1) - a lost
-/// device stops getting titles. A parent's Reset and Remove delete them in their own transaction
-/// (`parents.rs`). Each subscription also keeps the epoch of the session that made it, for
-/// [forget_stale] and [CURRENT_EPOCH].
-pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
-    if let Err(err) = sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
-        .bind(admin_id)
-        .execute(db)
+/// Why the server ended a parent's subscriptions (Push never lost silently, 2026-11-04): the security log's
+/// `push_subscriptions_cleared` line and the inbox's `push_off` event say it in words (`push.forget.*`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Forget {
+    /// A new password on Account.
+    Password,
+    /// "Reset Two-Factor Login" on Account.
+    TotpReset,
+    /// "Kun passkey" turned on.
+    PasskeyOnly,
+    /// A passkey removed on Account.
+    PasskeyRemoved,
+    /// Sign Out Everywhere.
+    SignedOutEverywhere,
+    /// The third wrong try in a row at a re-auth or the app lock's unlock (`admin_auth::record_reauth`).
+    ReauthLockout,
+    /// The CLI's `reset-2fa`/`reset-sign-in`.
+    ShellReset,
+    /// Another parent's Reset….
+    ParentReset,
+    /// Another parent's Remove….
+    ParentRemoved,
+    /// [forget_stale]'s backstop: made in a session signed out since.
+    Stale,
+    /// Made for another Web Push key ([forget_other_keys]).
+    OtherKey,
+    /// The push service answered 404/410 ([send_one]).
+    Gone,
+}
+
+impl Forget {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Forget::Password => "password",
+            Forget::TotpReset => "totp_reset",
+            Forget::PasskeyOnly => "passkey_only",
+            Forget::PasskeyRemoved => "passkey_removed",
+            Forget::SignedOutEverywhere => "signed_out_everywhere",
+            Forget::ReauthLockout => "reauth_lockout",
+            Forget::ShellReset => "shell_reset",
+            Forget::ParentReset => "parent_reset",
+            Forget::ParentRemoved => "parent_removed",
+            Forget::Stale => "stale",
+            Forget::OtherKey => "other_key",
+            Forget::Gone => "gone",
+        }
+    }
+
+    pub fn of(wire: &str) -> Option<Forget> {
+        [
+            Forget::Password,
+            Forget::TotpReset,
+            Forget::PasskeyOnly,
+            Forget::PasskeyRemoved,
+            Forget::SignedOutEverywhere,
+            Forget::ReauthLockout,
+            Forget::ShellReset,
+            Forget::ParentReset,
+            Forget::ParentRemoved,
+            Forget::Stale,
+            Forget::OtherKey,
+            Forget::Gone,
+        ]
+        .into_iter()
+        .find(|why| why.wire() == wire)
+    }
+
+    /// Its words' key (the security line's `{reason}`, the inbox event's line).
+    pub fn key(self) -> &'static str {
+        match self {
+            Forget::Password => "push.forget.password",
+            Forget::TotpReset => "push.forget.totp_reset",
+            Forget::PasskeyOnly => "push.forget.passkey_only",
+            Forget::PasskeyRemoved => "push.forget.passkey_removed",
+            Forget::SignedOutEverywhere => "push.forget.signed_out_everywhere",
+            Forget::ReauthLockout => "push.forget.reauth_lockout",
+            Forget::ShellReset => "push.forget.shell_reset",
+            Forget::ParentReset => "push.forget.parent_reset",
+            Forget::ParentRemoved => "push.forget.parent_removed",
+            Forget::Stale => "push.forget.stale",
+            Forget::OtherKey => "push.forget.other_key",
+            Forget::Gone => "push.forget.gone",
+        }
+    }
+
+    /// Told in the inbox too: everything but what the inbox would only repeat - a parent removed (the remover
+    /// did it, and the removed parent reads no inbox) and the backstop (it ends rows the explicit delete already
+    /// told, or a subscribe that raced it).
+    fn told(self) -> bool {
+        !matches!(self, Forget::ParentRemoved | Forget::Stale)
+    }
+}
+
+/// The session's record of the browser it turned notifications on in: the [endpoint_hash] of the subscription
+/// this session made or re-sent ([remember_this_browser]). Written only by the server, so an account change made in
+/// this session can keep that one subscription ([forget_subscriptions]'s `keep`).
+pub const SESSION_ENDPOINT_KEY: &str = "push_endpoint";
+
+/// Records `endpoint` as this session's browser's subscription ([SESSION_ENDPOINT_KEY]).
+pub async fn remember_this_browser(session: &tower_sessions::Session, endpoint: &str) {
+    if let Err(err) = session
+        .insert(SESSION_ENDPOINT_KEY, endpoint_hash(endpoint))
         .await
     {
-        tracing::error!(%err, "can't delete the notification subscriptions");
+        tracing::warn!(%err, "couldn't note this browser's subscription in the session");
+    }
+}
+
+/// This session's browser's subscription ([SESSION_ENDPOINT_KEY]), when it made or re-sent one.
+pub async fn this_browser(session: &tower_sessions::Session) -> Option<String> {
+    session
+        .get::<String>(SESSION_ENDPOINT_KEY)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Deletes an admin's subscriptions (§7, security review M1 - a lost device stops getting titles): Sign Out
+/// Everywhere, a new password, "Reset two-factor login", a removed passkey and "Kun passkey" on Account, the
+/// re-auth sign-out after three wrong tries (`admin_auth::record_reauth`) and the CLI's `reset-2fa`. `keep` is
+/// this session's own browser ([this_browser], the server's own record - never a value the request names): the
+/// device that made the change keeps its notifications, made current in the account's new epoch (Push never lost
+/// silently, 2026-11-04); only a change this session survives passes it. Every other row goes, and a deletion is
+/// never silent: [trace_forgotten] writes `push_subscriptions_cleared` and raises `push_off` (then the sender is
+/// woken). A parent's Reset and Remove delete them in their own transaction (`parents.rs`) and trace the same way.
+/// Each subscription also keeps the epoch of the session that made it, for [forget_stale] and [CURRENT_EPOCH].
+pub async fn forget_subscriptions(
+    state: &AppState,
+    admin: &crate::models::AdminUser,
+    why: Forget,
+    keep: Option<&str>,
+) {
+    if forget_in(&state.db, admin.id, why, keep).await {
+        state.push.wake();
+    }
+}
+
+/// [forget_subscriptions] on a pool alone (the CLI): whether an inbox event was raised.
+pub async fn forget_in(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+    why: Forget,
+    keep: Option<&str>,
+) -> bool {
+    let kept = match keep {
+        Some(hash) => keep_this_browser(db, admin_id, hash).await,
+        None => None,
+    };
+    let deleted: Result<Vec<(String, String)>, sqlx::Error> = sqlx::query_as(
+        "DELETE FROM push_subscriptions WHERE admin_id = ? AND id IS NOT ? RETURNING label, state",
+    )
+    .bind(admin_id)
+    .bind(kept.as_ref().map(|(id, _)| *id))
+    .fetch_all(db)
+    .await;
+    match deleted {
+        Ok(rows) => {
+            // A row already gone was told when it went.
+            let labels: Vec<String> = rows
+                .into_iter()
+                .filter(|(_, state)| state == "active")
+                .map(|(label, _)| label)
+                .collect();
+            trace_forgotten(db, admin_id, why, &labels, kept.map(|(_, label)| label)).await
+        }
+        Err(err) => {
+            tracing::error!(%err, "can't delete the notification subscriptions");
+            false
+        }
+    }
+}
+
+/// The active subscription of `admin_id` whose [endpoint_hash] is `hash`, moved to the account's epoch now (the
+/// change moved it first): `(id, label)`.
+async fn keep_this_browser(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+    hash: &str,
+) -> Option<(i64, String)> {
+    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, endpoint, label FROM push_subscriptions WHERE admin_id = ? AND state = 'active'",
+    )
+    .bind(admin_id)
+    .fetch_all(db)
+    .await
+    .inspect_err(|err| tracing::error!(%err, "can't read this browser's subscription"))
+    .ok()?;
+    let (id, _, label) = rows
+        .into_iter()
+        .find(|(_, endpoint, _)| endpoint_hash(endpoint) == hash)?;
+    sqlx::query(
+        "UPDATE push_subscriptions SET session_epoch = \
+         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id) WHERE id = ?",
+    )
+    .bind(id)
+    .execute(db)
+    .await
+    .inspect_err(|err| tracing::error!(%err, "can't keep this browser's subscription"))
+    .ok()?;
+    Some((id, label))
+}
+
+/// The trace of subscriptions the server ended (Push never lost silently, 2026-11-04): with any `labels` (the
+/// active ones that went), the security line `push_subscriptions_cleared` (how many, why, which one this browser
+/// kept) and - for a reason [Forget::told] - the inbox's `push_off`, pushed to every parent's remaining devices. A
+/// 404/410 is the sender's own line and event ([send_one]). Whether an event was raised.
+pub async fn trace_forgotten(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+    why: Forget,
+    labels: &[String],
+    kept: Option<String>,
+) -> bool {
+    if labels.is_empty() {
+        return false;
+    }
+    let who: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT username, display_name FROM admin_users WHERE id = ?")
+            .bind(admin_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+    let username = who.as_ref().map(|(username, _)| username.clone());
+    let name = who
+        .map(|(username, display)| display.unwrap_or(username))
+        .unwrap_or_default();
+    let count = labels.len() as i64;
+    let mut detail = crate::security::Detail::counted(
+        "security.detail.push_cleared",
+        count,
+        &[("labels", &labels.join(", "))],
+    )
+    .word("reason", why.key());
+    if let Some(kept) = &kept {
+        detail = detail.and("security.detail.push_kept", &[("label", kept)]);
+    }
+    crate::security::record_security_event(
+        db,
+        "push_subscriptions_cleared",
+        username.as_deref(),
+        None,
+        Some(detail),
+    )
+    .await;
+    if !why.told() {
+        return false;
+    }
+    let event = crate::parent_events::push_off(admin_id, &name, labels, why, Utc::now());
+    raise_on(db, &event).await
+}
+
+/// Raises `event` in its own transaction on `db` (`parent_events::raise_logged` without the wake: the caller wakes
+/// the sender when it has one).
+async fn raise_on(db: &sqlx::SqlitePool, event: &crate::parent_events::NewEvent) -> bool {
+    let raised = async {
+        let mut tx = db.begin().await?;
+        let id = crate::parent_events::raise(&mut tx, event).await?;
+        tx.commit().await.map(|()| id)
+    };
+    match raised.await {
+        Ok(id) => id.is_some(),
+        Err(err) => {
+            tracing::error!(%err, "can't store the notifications-off event");
+            false
+        }
     }
 }
 
@@ -360,20 +628,35 @@ pub const CURRENT_EPOCH: &str =
 /// M1), the backstop behind the explicit deletes ([forget_subscriptions]): a subscribe that was in
 /// flight while the account's sessions were signed out, or one left by a sign-out whose delete
 /// failed (a database error). Their deliveries go with them (`ON DELETE CASCADE`). [send_due] runs
-/// it first on every pass; until then [CURRENT_EPOCH] hides them.
+/// it first on every pass; until then [CURRENT_EPOCH] hides them. Each parent's active rows that go are a
+/// security line ([trace_forgotten], [Forget::Stale]).
 pub async fn forget_stale(db: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
-    let done = sqlx::query(
+    let done: Vec<(i64, String, String)> = sqlx::query_as(
         "DELETE FROM push_subscriptions WHERE session_epoch < \
-         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id)",
+         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id) \
+         RETURNING admin_id, label, state",
     )
-    .execute(db)
+    .fetch_all(db)
     .await?;
-    if done.rows_affected() > 0 {
+    if !done.is_empty() {
         tracing::info!(
             "{} notification subscription(s) were made in a session that has been signed out \
              since (turned on while the sessions ended, or left by a failed delete) - deleted",
-            done.rows_affected()
+            done.len()
         );
+        let mut by_admin: Vec<(i64, Vec<String>)> = Vec::new();
+        for (admin_id, label, state) in done {
+            if state != "active" {
+                continue;
+            }
+            match by_admin.iter_mut().find(|(id, _)| *id == admin_id) {
+                Some((_, labels)) => labels.push(label),
+                None => by_admin.push((admin_id, vec![label])),
+            }
+        }
+        for (admin_id, labels) in by_admin {
+            trace_forgotten(db, admin_id, Forget::Stale, &labels, None).await;
+        }
     }
     Ok(())
 }
@@ -920,19 +1203,25 @@ async fn send_one(
         }
         Outcome::Gone => {
             finish(state, delivery.id, "dropped", status, reason.as_deref()).await?;
-            let turned_off = sqlx::query(
+            let turned_off: Option<i64> = sqlx::query_scalar(
                 "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now') \
-                 WHERE id = ? AND state = 'active'",
+                 WHERE id = ? AND state = 'active' RETURNING admin_id",
             )
             .bind(delivery.subscription_id)
-            .execute(&state.db)
-            .await?
-            .rows_affected();
-            if turned_off == 1 {
+            .fetch_optional(&state.db)
+            .await?;
+            if let Some(admin_id) = turned_off {
+                let username: Option<String> =
+                    sqlx::query_scalar("SELECT username FROM admin_users WHERE id = ?")
+                        .bind(admin_id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
                 crate::security::record_security_event(
                     &state.db,
                     "push_subscription_gone",
-                    None,
+                    username.as_deref(),
                     None,
                     Some(crate::security::Detail::words(
                         "security.detail.push_gone",
@@ -943,6 +1232,27 @@ async fn send_one(
                     )),
                 )
                 .await;
+                // Never silent (2026-11-04): the row stays `gone` (Devices warns), and the inbox says so - pushed to
+                // the parents' devices that still get notifications. This pass sends it.
+                let name: String = sqlx::query_scalar(
+                    "SELECT COALESCE(display_name, username) FROM admin_users WHERE id = ?",
+                )
+                .bind(admin_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+                let event = crate::parent_events::push_off(
+                    admin_id,
+                    &name,
+                    std::slice::from_ref(&delivery.label),
+                    Forget::Gone,
+                    now,
+                );
+                if raise_on(&state.db, &event).await {
+                    state.push.wake();
+                }
             }
         }
         Outcome::BadSignature | Outcome::Failed => {

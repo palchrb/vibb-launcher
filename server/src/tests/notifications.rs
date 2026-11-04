@@ -910,10 +910,10 @@ async fn events_go_with_their_phone_and_after_90_days() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    // Subscriptions turned off 31 days ago (gone) and 29 (kept); on the kept one, deliveries 31
-    // days old (gone) and 29 (kept).
+    // Subscriptions a push service ended 181 days ago (gone) and 31 (kept: as long as the security log since
+    // 2026-11-04, `retention::PUSH_GONE_DAYS`); on the kept one, deliveries 31 days old (gone) and 29 (kept).
     let mut kept_sub = 0;
-    for (n, age) in [(1, "-31 days"), (2, "-29 days")] {
+    for (n, age) in [(1, "-181 days"), (2, "-31 days")] {
         kept_sub = sqlx::query_scalar(
             "INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state, gone_at) \
              VALUES (?, ?, x'00', x'00', 'https://pwa.example', 'Test', 'fp', 'gone', datetime('now', ?)) RETURNING id",
