@@ -131,12 +131,9 @@ pub async fn create_lift(
     let detail = match (target, rule_name.as_deref()) {
         ("rule", Some(rule)) => security::Detail::words(
             "security.detail.lift.rule",
-            &[
-                ("device", &device),
-                ("rule", rule),
-                ("minutes", &minutes.to_string()),
-            ],
-        ),
+            &[("device", &device), ("minutes", &minutes.to_string())],
+        )
+        .rule("rule", rule),
         ("rule", None) => security::Detail::words(
             "security.detail.lift.all_rules",
             &[("device", &device), ("minutes", &minutes.to_string())],
@@ -380,7 +377,10 @@ pub(crate) async fn today(
                     Some(rule) => t_params(
                         lang,
                         "device.summary.lift.rule",
-                        &[("rule", rule), ("duration", &length)],
+                        &[
+                            ("rule", &crate::time_rules::shown_name(lang, rule)),
+                            ("duration", &length),
+                        ],
                     ),
                     None => t_params(
                         lang,

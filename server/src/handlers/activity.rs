@@ -160,7 +160,10 @@ fn lift_row(
         ("rule", Some(rule)) => t_params(
             lang,
             "device.summary.lift.rule",
-            &[("rule", rule), ("duration", &length)],
+            &[
+                ("rule", &crate::time_rules::shown_name(lang, rule)),
+                ("duration", &length),
+            ],
         ),
         ("rule", None) => t_params(
             lang,

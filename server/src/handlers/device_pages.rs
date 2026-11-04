@@ -735,6 +735,18 @@ pub async fn view_about(
                 .unwrap_or_else(|| {
                     crate::time_state::TimeReport::from_lock_reason(&status.lock_reason)
                 });
+            // The active rule by its id, as the schedules page words it (design 70 §7).
+            let report = if report.locking() && report.active_rule_id.is_some() {
+                let rules = crate::time_rules::effective_rule_rows(&state.db, id)
+                    .await
+                    .unwrap_or_else(|err| {
+                        tracing::error!(device_id = id, %err, "can't read the phone's rules");
+                        Vec::new()
+                    });
+                report.named_by(&rules, lang)
+            } else {
+                report
+            };
             let value = if !report.locking() {
                 t(lang, "device.about.none").to_string()
             } else if let Some(name) = report.active_rule_name.clone() {
