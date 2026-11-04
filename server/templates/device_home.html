@@ -74,7 +74,7 @@
 
     <section id="quick-controls" aria-labelledby="quick-controls-title">
         <h2 class="group-header" id="quick-controls-title">{{ self.t("device.home.quick") }}</h2>
-        {#- One form for the five: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
+        {#- One form for the five and Bluetooth's any-device switch: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
         <form method="post" action="/devices/{{ device.id }}/policy#quick-controls" class="group">
             <input type="hidden" name="section" value="quick">
             <label class="row">
@@ -84,6 +84,11 @@
             <label class="row">
                 <span class="row-label">{{ self.t("device.home.bluetooth") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_bluetooth" value="on"{% if quick_bluetooth %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {#- Security review S-L5: off = the Bluetooth page pairs headphones and speakers only. -#}
+            <label class="row">
+                <span class="row-label">{{ self.t("device.home.bluetooth_any") }}<span class="row-sub">{{ self.t("device.home.bluetooth_any_sub") }}</span></span>
+                <input type="checkbox" role="switch" class="sw" name="bluetooth_any_device" value="on"{% if bluetooth_any_device %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
                 <span class="row-label">{{ self.t("device.home.brightness") }}</span>

@@ -58,6 +58,22 @@ fun btKind(uuids: Collection<String>): BtKind {
 fun hasLeAudio(uuids: Collection<String>): Boolean = uuids.any { it.equals(LE_AUDIO_ASCS_UUID, ignoreCase = true) }
 
 /**
+ * Security review S-L5: an audio device - headphones, a speaker, a car - by what it says of itself: an A2DP sink or LE
+ * Audio among its UUIDs ([kind]), or the audio/video major class ([majorDeviceClass], `BluetoothClass`; a device the
+ * scan found has its class long before its UUIDs). Never a service bit: phones set "audio" too.
+ */
+fun btAudioClass(majorDeviceClass: Int?, kind: BtKind): Boolean =
+    kind != BtKind.OTHER || majorDeviceClass == android.bluetooth.BluetoothClass.Device.Major.AUDIO_VIDEO
+
+/**
+ * Security review S-L5: Kid Settings' Bluetooth page offers pairing for an audio device ([btAudioClass]) only, unless
+ * the parent allows any device for this phone (the policy's `bluetooth_any_device`) or the parent's pause/override
+ * is on (the standing rule: the override lifts every restriction).
+ */
+fun btPairOffered(audioClass: Boolean, parentAllowsAny: Boolean, overrideActive: Boolean): Boolean =
+    audioClass || parentAllowsAny || overrideActive
+
+/**
  * A device's state. An A2DP device's comes from the A2DP proxy ([a2dpState] its
  * `getConnectionState`; null = no proxy, then the ACL link stands in); one that also speaks LE Audio
  * counts as connected on the ACL link too. Everything else is the ACL link ([aclConnected],

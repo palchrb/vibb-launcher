@@ -10,6 +10,7 @@ mod app_updates;
 mod attention;
 mod avatars;
 mod backup_secrets;
+mod bluetooth_pairing;
 mod caldav;
 mod calendar;
 mod calendar_feeds;

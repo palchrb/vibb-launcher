@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm
 
 import com.kidslauncher.mdm.server.Attempt
+import com.kidslauncher.mdm.server.BtKind
 import com.kidslauncher.mdm.server.Budget
 import com.kidslauncher.mdm.server.CallMarks
 import com.kidslauncher.mdm.server.DotLink
@@ -8,6 +9,8 @@ import com.kidslauncher.mdm.server.DotPool
 import com.kidslauncher.mdm.server.LEAVE_TAILNET_COMMAND
 import com.kidslauncher.mdm.server.OddKind
 import com.kidslauncher.mdm.server.TSNET_DEATH_WINDOW_MS
+import com.kidslauncher.mdm.server.btAudioClass
+import com.kidslauncher.mdm.server.btPairOffered
 import com.kidslauncher.mdm.server.cachedFixMaxAgeMs
 import com.kidslauncher.mdm.server.cachedFixReportable
 import com.kidslauncher.mdm.server.crashStreakAfter
@@ -36,6 +39,7 @@ import org.xbill.DNS.Name
 import org.xbill.DNS.Record
 import org.xbill.DNS.Type
 import android.app.ApplicationExitInfo
+import android.bluetooth.BluetoothClass
 import java.io.EOFException
 import java.io.File
 import java.io.IOException
@@ -228,5 +232,26 @@ class SecurityLowsBTest {
         val body = locate.substringAfter("suspend fun currentLocation(").substringBefore("fun clearCachedFix(")
         assertEquals(2, Regex("""loadCachedFix\(\)\?\.takeIf\((::)?reportable\)""").findAll(body).count())
         assertFalse(Regex("""loadCachedFix\(\)\s*(\n|$|\})""").containsMatchIn(body))
+    }
+
+    @Test
+    fun `S-L5 - pairing is offered for headphones and speakers only, unless the parent allows any or the override is on`() {
+        assertTrue("an A2DP sink", btAudioClass(null, BtKind.A2DP))
+        assertTrue("LE Audio", btAudioClass(BluetoothClass.Device.Major.UNCATEGORIZED, BtKind.LE_ONLY))
+        assertTrue("found by the scan, no UUIDs yet", btAudioClass(BluetoothClass.Device.Major.AUDIO_VIDEO, BtKind.OTHER))
+        for (major in listOf(BluetoothClass.Device.Major.PHONE, BluetoothClass.Device.Major.COMPUTER, BluetoothClass.Device.Major.WEARABLE)) {
+            assertFalse("$major", btAudioClass(major, BtKind.OTHER))
+        }
+        assertFalse(btAudioClass(null, BtKind.OTHER))
+        assertTrue(btPairOffered(audioClass = true, parentAllowsAny = false, overrideActive = false))
+        assertFalse("a friend's phone", btPairOffered(audioClass = false, parentAllowsAny = false, overrideActive = false))
+        assertTrue(btPairOffered(audioClass = false, parentAllowsAny = true, overrideActive = false))
+        assertTrue("the pause lifts it", btPairOffered(audioClass = false, parentAllowsAny = false, overrideActive = true))
+        // The page lists only what it may pair and checks again at the tap; a policy change drops the rest.
+        val page = src("java/com/kidslauncher/mdm/ui/quickcontrols/BluetoothDevicesActivity.kt").readText()
+        assertTrue(page.contains("if (!info.bonded && !pairOffered(info)) return@launch"))
+        val pair = page.substringAfter("private fun onPairTapped(").substringBefore("QuickControls.pairBluetoothDevice(")
+        assertTrue(pair.contains("if (!pairOffered(device)) {"))
+        assertTrue(page.contains("{ if (!finishIfNotAllowed()) dropUnoffered() }"))
     }
 }

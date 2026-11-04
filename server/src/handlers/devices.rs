@@ -2438,6 +2438,8 @@ pub async fn update_policy(
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
 
+    // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
+    let bluetooth_any_device = fields.contains_key("bluetooth_any_device");
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");
 
     // The parent PIN has its own card and save since design 24 (`handlers::parent_pin`): this
@@ -2445,11 +2447,13 @@ pub async fn update_policy(
     let result = sqlx::query(
         "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
          quick_controls_mask = COALESCE(?, quick_controls_mask), \
+         bluetooth_any_device = COALESCE(?, bluetooth_any_device), \
          vpn_filter_enabled = COALESCE(?, vpn_filter_enabled), updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
     .bind(quick.then_some(quick_controls_mask))
+    .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))
     .bind(id)
     .execute(&state.db)

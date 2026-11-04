@@ -57,6 +57,9 @@ data class PolicyResponse(
     val overridePinHash: String? = null,
     val overridePinSalt: String? = null,
     val quickControlsMask: Long = 0,
+    /** Security review S-L5: Kid Settings' Bluetooth page pairs any device (`true`), or only headphones and speakers
+     * (`false`, also from an older server) - [com.kidslauncher.mdm.server.btPairOffered]. */
+    val bluetoothAnyDevice: Boolean = false,
     val pendingCommand: PendingCommand? = null,
     val vpnFilterEnabled: Boolean = true,
     val dnsFilterVersion: String? = null,

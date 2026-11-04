@@ -574,10 +574,13 @@ object QuickControls {
         val bonded: Boolean,
         val audio: Boolean,
         val state: BtLink,
+        /** An audio device by its UUIDs or its class ([btAudioClass], S-L5): pairing offered without the parent's
+         * any-device switch. */
+        val audioClass: Boolean = audio,
     ) {
         val connected: Boolean get() = state == BtLink.CONNECTED
 
-        override fun toString() = "BluetoothDeviceInfo(bonded=$bonded, audio=$audio, state=$state)"
+        override fun toString() = "BluetoothDeviceInfo(bonded=$bonded, audio=$audio, audioClass=$audioClass, state=$state)"
     }
 
     /**
@@ -611,12 +614,18 @@ object QuickControls {
         val leAudio = hasLeAudio(uuidList)
         // The ACL link only where btLink reads it (not for a plain A2DP device the proxy answers for).
         val acl = (kind != BtKind.A2DP || a2dpState == null || leAudio) && isConnectedReflective()
+        val major = try {
+            bluetoothClass?.majorDeviceClass
+        } catch (e: Exception) {
+            null
+        }
         return BluetoothDeviceInfo(
             name = deviceName,
             address = address,
             bonded = bondState == BluetoothDevice.BOND_BONDED,
             audio = kind == BtKind.A2DP,
             state = btLink(kind, leAudio, a2dpState, acl),
+            audioClass = btAudioClass(major, kind),
         )
     }
 

@@ -1278,6 +1278,8 @@
   "device.home.quick": "Hurtigkontroller",
   "device.home.wifi": "Wi-Fi",
   "device.home.bluetooth": "Bluetooth",
+  "device.home.bluetooth_any": "Alle Bluetooth-enheter",
+  "device.home.bluetooth_any_sub": "Av: bare hodetelefoner og høyttalere kan pares",
   "device.home.brightness": "Skjermlysstyrke",
   "device.home.sound": "Lyd eller lydløs",
   "device.home.touch": "Berøringslyder og vibrering",

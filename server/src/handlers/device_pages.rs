@@ -1445,6 +1445,8 @@ struct HomeTemplate {
     quick_brightness: bool,
     quick_sound: bool,
     quick_touch: bool,
+    /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
+    bluetooth_any_device: bool,
 }
 crate::i18n::words!(HomeTemplate);
 
@@ -1491,6 +1493,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_brightness: mask & QUICK_CONTROL_BRIGHTNESS != 0,
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
+            bluetooth_any_device: policy.bluetooth_any_device,
             device,
         }
         .render()

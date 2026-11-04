@@ -1278,6 +1278,8 @@
   "device.home.quick": "Quick controls",
   "device.home.wifi": "Wi-Fi",
   "device.home.bluetooth": "Bluetooth",
+  "device.home.bluetooth_any": "Any Bluetooth Device",
+  "device.home.bluetooth_any_sub": "Off: only headphones and speakers can be paired",
   "device.home.brightness": "Screen brightness",
   "device.home.sound": "Sound or silent",
   "device.home.touch": "Touch sounds and vibration",

@@ -112,6 +112,10 @@ pub struct DevicePolicy {
     pub override_pin_hash: Option<String>,
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
+    /// Security review S-L5 (migration 0124): Kid Settings' Bluetooth page may pair any device, not only headphones
+    /// and speakers. Off by default.
+    #[sqlx(default)]
+    pub bluetooth_any_device: bool,
     pub vpn_filter_enabled: bool,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
@@ -1040,6 +1044,9 @@ pub struct PolicyResponse {
     pub override_pin_hash: Option<String>,
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
+    /// Security review S-L5: the Bluetooth page pairs any device (`true`) or only headphones and speakers (`false`,
+    /// the default). Always sent; the launcher's `PolicyResponse.bluetoothAnyDevice`.
+    pub bluetooth_any_device: bool,
     pub pending_command: Option<PendingCommand>,
     /// Per-device on/off for the on-device DNS filter's VPN piece
     /// (KidVpnService) - see `AppEnforcer.applyVpnRestrictions` on the

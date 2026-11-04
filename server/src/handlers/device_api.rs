@@ -479,6 +479,7 @@ pub(crate) async fn build_policy(
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
+        bluetooth_any_device: policy.bluetooth_any_device,
         pending_command,
         vpn_filter_enabled: policy.vpn_filter_enabled,
         dns_filter_version,

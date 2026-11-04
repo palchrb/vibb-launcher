@@ -108,3 +108,5 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `server/LocationPolicies.kt`): see `time-rules.md`, "Location policy". The server half of P-L3 needed no change:
   `zones::store_fix` already skips a fix with the same `captured_at` and coordinates (pinned by
   `zone_watch::here_now_counts_the_served_interval_and_a_still_re_send`'s "no new row").
+- **S-L5, audio devices only** (Bluetooth page, server switch `bluetooth_any_device`): see `kid-settings.md`,
+  "Bluetooth headphones in Kid Settings". L4 did the sharing restriction and the page's finish.

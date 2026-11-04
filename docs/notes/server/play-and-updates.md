@@ -85,6 +85,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   write Android's settings only with the "Modify system settings" app-op the clock format uses, so the parent turns
   it on after granting it (the group's ⓘ says so). Policy shape unchanged (one integer). Tests:
   `sound_mode::the_touch_bit_saves_reaches_the_phone_and_starts_off`, `device_pages::home_screen_holds_the_moved_forms`.
+- **Any Bluetooth Device** (security review S-L5, launcher round L4b, migration `0124_bluetooth_any_device.sql`):
+  `device_policy.bluetooth_any_device`, default 0, a switch right under Bluetooth in the same Quick controls form
+  (`bluetooth_any_device`, `section=quick` only - the filter's form keeps it -, unticked = off, back to
+  `#quick-controls`), sent as the policy's top-level `bluetooth_any_device` (always; `policy_json_keys_snapshot`,
+  the launcher's `PolicyResponseCompatTest`). Off: Kid Settings' Bluetooth page lists and pairs only headphones and
+  speakers. Test: `bluetooth_pairing`.
 - **Sound mode** (design 18, `src/sound_mode.rs`, migration `0047_sound_mode.sql`): `QUICK_CONTROL_SOUND` = 8, a switch in the
   Quick controls group of Home Screen (it only shows the kid's Sound / Silent (vibrate) row; the volume keys still work). Status
   `ringer_mode` / `interruption_filter` (`#[serde(default)] Option<String>`, only known values stored, else NULL) ->
