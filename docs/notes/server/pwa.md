@@ -1559,7 +1559,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   rule, bedtime and limit refusals take `lang` (`parse_rule_form`, `parse_exempt_apps_form`,
   `parse_budget_form`). The Web Filter's address refusals and backup reasons are keys the page words
   (`refusal_text`), its phone lines are in the `Zone`'s language, `FeedState::problem(lang)` also words Device ›
-  Web Filter's list rows; `config::check_server_url` answers a key (`Refused`) or the host (`PlainHttp`), worded by
+  Web Filter's list rows; `config::check_server_url` answers a key (`Refused`) or the host (`TailnetHttp`), worded by
   Phone Setup and the setup QR (`provisioning::plain_http_warning(lang, …)`). `backups::WEEKDAYS` holds keys.
   `static/notifications.js` (`?v=4`) reads This Device's state words from its form's `data-w-*`. Left for slice 4 (done, below):
   `backups::human_size` (the typed size of Format must match it), `photos::PhotoError::message` (an upload's

@@ -29,8 +29,9 @@ pub(crate) struct AdminExtras {
 
 /// The phones' server address for the setup QR: the one saved on Settings › Phone Setup, else
 /// `.env`'s `PHONE_SERVER_URL` (`ForkConfig::phone_server_url`); "" when neither is set. A saved
-/// one the rule refuses now (`config::check_server_url`: an http address to a public host, saved
-/// before 0.55.0) is never put in a QR (QA L-e): Phone Setup says why under the field.
+/// one the rule refuses now (`config::check_server_url`: plain http to anything but a Tailscale IP,
+/// saved before the launcher's S-M1 rule or 0.55.0) is never put in a QR (QA L-e): Phone Setup says
+/// why under the field.
 pub(crate) fn server_url<'a>(
     settings: &'a ProvisioningSettings,
     config: &'a ForkConfig,
@@ -51,10 +52,10 @@ pub(crate) fn saved_refused(saved: &str) -> bool {
     )
 }
 
-/// The plain-http warning for the QR's address in `lang`, if it has one (`config::ServerUrl::PlainHttp`).
+/// The plain-http warning for the QR's address in `lang`, if it has one (`config::ServerUrl::TailnetHttp`).
 pub(crate) fn plain_http_warning(lang: crate::i18n::Lang, url: &str) -> Option<String> {
     match crate::config::check_server_url(url) {
-        crate::config::ServerUrl::PlainHttp(host) => Some(crate::i18n::t_params(
+        crate::config::ServerUrl::TailnetHttp(host) => Some(crate::i18n::t_params(
             lang,
             "settings.provisioning.plain_http",
             &[("host", &host)],

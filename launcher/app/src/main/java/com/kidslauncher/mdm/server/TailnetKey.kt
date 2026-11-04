@@ -92,12 +92,7 @@ fun tailnetOnlyServer(serverUrl: String?): Boolean {
     } catch (e: Exception) {
         null
     } ?: return false
-    val bytes = ipLiteral(host)?.address ?: return false
-    return when (bytes.size) {
-        4 -> (bytes[0].toInt() and 0xFF) == 100 && (bytes[1].toInt() and 0xC0) == 0x40
-        16 -> listOf(0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0).withIndex().all { (i, b) -> (bytes[i].toInt() and 0xFF) == b }
-        else -> false
-    }
+    return isTailnetAddress(ipLiteral(host)?.address ?: return false)
 }
 
 /** The answer when the phone won't leave ([tailnetOnlyServer]). */

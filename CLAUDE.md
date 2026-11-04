@@ -181,6 +181,12 @@ posts `snapshot` against the stateful fake CalDAV (`tests::fake_dav`), checks ea
 compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.
 
+The phones' server address rule (launcher security review S-M1, 2026-11-04: `https://`, or `http://` to a Tailscale IP
+literal) is `server/testdata/server_url_vectors.json` (`{url, verdict}`: `https`, `tailnet_http`, `refused`),
+byte-identical in `launcher/app/src/test/resources/`: the server's `config::tests::the_server_url_vectors`
+(`config::check_server_url`, Phone Setup and `PHONE_SERVER_URL`) and the launcher's `ServerTransportTest`
+(`serverUrlVerdict`, the QR, the Settings edit and every server client) run every row and compare the copies.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -188,7 +194,7 @@ compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json` and `leave_tailnet.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json` and `server_url_vectors.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -197,7 +203,7 @@ compare the copies. The policy's `calendar.kid_caldav` is pinned by `policy_json
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json` and `leave_tailnet.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json` and `server_url_vectors.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

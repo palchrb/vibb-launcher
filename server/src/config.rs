@@ -68,7 +68,7 @@ pub struct ForkConfig {
     /// `PHONE_SERVER_URL`: the phones' server address in the setup QR when Settings › Phone Setup
     /// has none saved - the saved one always wins (`provisioning::server_url`). Checked as Phone
     /// Setup's field ([check_server_url]): a refused one is ignored (logged), a plain-http one to
-    /// a private address is taken with a warning in the log.
+    /// a Tailscale IP is taken with a warning in the log.
     pub phone_server_url: Option<String>,
     /// `SSE_KEEPALIVE_SECS` (5-240, default 240 since design 19, 120 before): how often the
     /// command stream sends a keepalive comment. Every phone holds the stream (no FCM); its read
@@ -156,14 +156,21 @@ impl ForkConfig {
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
             phone_server_url: read("PHONE_SERVER_URL", |url| match check_server_url(url) {
                 ServerUrl::Fine => true,
-                ServerUrl::PlainHttp(host) => {
+                ServerUrl::TailnetHttp(host) => {
                     tracing::warn!(
-                        "PHONE_SERVER_URL: the phones will use plain http to {host}. That is safe only if \
-                         the path is an encrypted tunnel (WireGuard, Tailscale). The server can't tell."
+                        "PHONE_SERVER_URL: the phones will use plain http to {host} over the tailnet. \
+                         Tailscale encrypts the way, but only https proves the server to the phone - \
+                         prefer an https:// name from tailscale serve."
                     );
                     true
                 }
-                ServerUrl::Refused(_) => false,
+                ServerUrl::Refused(_) => {
+                    tracing::warn!(
+                        "PHONE_SERVER_URL is not used: the phones take https:// only, or plain http:// \
+                         to a Tailscale IP address (100.64.0.0/10, fd7a:115c:a1e0::/48)."
+                    );
+                    false
+                }
             }),
             sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
                 .and_then(|v| v.parse().ok())
@@ -235,95 +242,195 @@ fn is_valid_url(value: &str) -> bool {
 /// What [check_server_url] says about a server address for the setup QR.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerUrl {
-    /// `https://`, or plain `http://` to a Tailscale address: the path is encrypted.
+    /// `https://` and a host.
     Fine,
-    /// Plain `http://` to another private address: taken, with a warning naming this host - safe only
-    /// through an encrypted tunnel, which the server can't see.
-    PlainHttp(String),
+    /// Plain `http://` to a Tailscale IP literal (this host, lower case, an IPv6 one without
+    /// brackets): taken, with a warning - the phone sends it only through its own tailnet
+    /// connection, but only https proves the server to it.
+    TailnetHttp(String),
     /// Not taken, and the key of why (`settings.provisioning.url_*`, worded by Phone Setup).
     Refused(&'static str),
 }
 
-/// The one rule for the phones' server address in the setup QR (security review L8; the user's
-/// rule of 2026-10-26), for `.env`'s `PHONE_SERVER_URL` and Phone Setup's field alike:
+/// The one rule for the phones' server address in the setup QR (launcher security review S-M1,
+/// the user's decision of 2026-11-04; before it, L8's four classes), for `.env`'s
+/// `PHONE_SERVER_URL` and Phone Setup's field alike, and the launcher's for the address it stores
+/// (`ServerUrlRule.kt`; both run `testdata/server_url_vectors.json`):
 /// - `https://` and a host: fine;
-/// - `http://` to a Tailscale address (100.64.0.0/10, `fd7a:115c:a1e0::/48`, a `*.ts.net` name):
-///   fine - the tailnet encrypts it;
-/// - `http://` to another private address (RFC 1918, loopback, link-local, `fc00::/7`, a `.local`,
-///   `.internal` or single-label name): taken with a warning - a WireGuard or Headscale path is
-///   encrypted too, and the server can't tell it from a cleartext LAN;
-/// - `http://` to a public address or name, anything else: refused.
+/// - `http://` to a Tailscale IP literal (100.64.0.0/10, `fd7a:115c:a1e0::/48`): taken with a
+///   warning (no name is looked up: a `*.ts.net` name must be https);
+/// - anything else: refused - a private address too (a LAN carries the token in clear).
+///
+/// The grammar is narrower than a URL, so no two parsers can see two hosts in it: after trimming
+/// ASCII whitespace, only `scheme://host[:port][/path]` with a path of `A-Z a-z 0-9 . _ ~ / -` -
+/// no userinfo, query, fragment, `%` or `\`; a host is a strict dotted quad, a bracketed IPv6
+/// literal of hex groups (no dotted tail, no zone), or a DNS name whose last label isn't a number.
 pub fn check_server_url(value: &str) -> ServerUrl {
-    let parsed = reqwest::Url::parse(value)
-        .ok()
-        .filter(|_| !value.chars().any(char::is_whitespace))
-        // The parser makes `https:///path` a host "path"; the text must name one.
-        .filter(|_| {
-            value
-                .split_once("://")
-                .is_some_and(|(_, rest)| !rest.starts_with('/'))
-        })
-        .filter(|url| url.host_str().is_some_and(|host| !host.is_empty()));
     const SHAPE: &str = "settings.provisioning.url_shape";
-    let Some(url) = parsed else {
+    let Some(parts) = parse_server_url(value) else {
         return ServerUrl::Refused(SHAPE);
     };
-    let host = url
-        .host_str()
-        .unwrap_or_default()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    match url.scheme() {
-        "https" => ServerUrl::Fine,
-        "http" => match host_kind(&host) {
-            HostKind::Tailscale => ServerUrl::Fine,
-            HostKind::Private => ServerUrl::PlainHttp(host),
-            HostKind::Public => ServerUrl::Refused("settings.provisioning.url_public_http"),
-        },
-        _ => ServerUrl::Refused(SHAPE),
+    if parts.https {
+        ServerUrl::Fine
+    } else if parts.ip.is_some_and(is_tailnet_ip) {
+        ServerUrl::TailnetHttp(parts.host)
+    } else {
+        ServerUrl::Refused("settings.provisioning.url_plain_http")
     }
 }
 
-enum HostKind {
-    Tailscale,
-    Private,
-    Public,
+/// An address [check_server_url]'s grammar takes.
+struct ServerUrlParts {
+    https: bool,
+    host: String,
+    ip: Option<std::net::IpAddr>,
 }
 
-/// Where a server address's host lives, by its address or name alone (nothing is looked up).
-fn host_kind(host: &str) -> HostKind {
-    use std::net::IpAddr;
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
+fn parse_server_url(value: &str) -> Option<ServerUrlParts> {
+    let text = value.trim_matches(|c: char| c.is_ascii_whitespace());
+    let (scheme, rest) = text.split_once("://")?;
+    if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let https = if scheme.eq_ignore_ascii_case("https") {
+        true
+    } else if scheme.eq_ignore_ascii_case("http") {
+        false
+    } else {
+        return None;
+    };
+    let (authority, path) = match rest.find('/') {
+        Some(i) => rest.split_at(i),
+        None => (rest, ""),
+    };
+    let path_char = |c: char| c.is_ascii_alphanumeric() || "._~/-".contains(c);
+    if !path.chars().all(path_char) {
+        return None;
+    }
+    let (host, ip, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let (raw, after) = bracketed.split_once(']')?;
+        let ip = ipv6_literal(raw)?;
+        let port = match after {
+            "" => None,
+            p => Some(p.strip_prefix(':')?),
+        };
+        (
+            raw.to_ascii_lowercase(),
+            Some(std::net::IpAddr::V6(ip)),
+            port,
+        )
+    } else {
+        let (raw, port) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        let ip = ipv4_literal(raw);
+        if ip.is_none() && !dns_name(raw) {
+            return None;
+        }
+        (raw.to_ascii_lowercase(), ip.map(std::net::IpAddr::V4), port)
+    };
+    if let Some(p) = port {
+        let digits = !p.is_empty() && p.len() <= 5 && p.chars().all(|c| c.is_ascii_digit());
+        if !digits || p.starts_with('0') || !(1..=65535).contains(&p.parse::<u32>().ok()?) {
+            return None;
+        }
+    }
+    Some(ServerUrlParts { https, host, ip })
+}
+
+/// 100.64.0.0/10 or `fd7a:115c:a1e0::/48` (an IPv4-mapped IPv6 address is neither).
+fn is_tailnet_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
             let [a, b, ..] = ip.octets();
-            if a == 100 && (64..=127).contains(&b) {
-                HostKind::Tailscale
-            } else if ip.is_private() || ip.is_loopback() || ip.is_link_local() {
-                HostKind::Private
-            } else {
-                HostKind::Public
-            }
+            a == 100 && (64..=127).contains(&b)
         }
-        Ok(IpAddr::V6(ip)) => {
+        std::net::IpAddr::V6(ip) => {
             let s = ip.segments();
-            if s[0] == 0xfd7a && s[1] == 0x115c && s[2] == 0xa1e0 {
-                HostKind::Tailscale
-            } else if ip.is_loopback() || (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 {
-                HostKind::Private
-            } else {
-                HostKind::Public
-            }
+            s[0] == 0xfd7a && s[1] == 0x115c && s[2] == 0xa1e0
         }
-        Err(_) if host.ends_with(".ts.net") => HostKind::Tailscale,
-        Err(_)
-            if !host.contains('.') || host.ends_with(".local") || host.ends_with(".internal") =>
-        {
-            HostKind::Private
-        }
-        Err(_) => HostKind::Public,
     }
+}
+
+/// Four decimal parts 0-255, no leading zero (`100.064.0.1` is octal to some parsers).
+fn ipv4_literal(text: &str) -> Option<std::net::Ipv4Addr> {
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut octets = [0u8; 4];
+    for (octet, part) in octets.iter_mut().zip(&parts) {
+        let digits =
+            !part.is_empty() && part.len() <= 3 && part.chars().all(|c| c.is_ascii_digit());
+        if !digits || (part.len() > 1 && part.starts_with('0')) {
+            return None;
+        }
+        *octet = part.parse().ok()?;
+    }
+    Some(std::net::Ipv4Addr::from(octets))
+}
+
+/// Hex groups and one `::` only (no dotted IPv4 tail, no zone).
+fn ipv6_literal(text: &str) -> Option<std::net::Ipv6Addr> {
+    if text.is_empty() || !text.chars().all(|c| c.is_ascii_hexdigit() || c == ':') {
+        return None;
+    }
+    let groups = |s: &str| -> Option<Vec<u16>> {
+        if s.is_empty() {
+            return Some(Vec::new());
+        }
+        s.split(':')
+            .map(|g| {
+                if (1..=4).contains(&g.len()) {
+                    u16::from_str_radix(g, 16).ok()
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    let halves: Vec<&str> = text.split("::").collect();
+    let all = match halves.as_slice() {
+        [whole] => groups(whole).filter(|g| g.len() == 8)?,
+        [head, tail] => {
+            let (head, tail) = (groups(head)?, groups(tail)?);
+            if head.len() + tail.len() > 7 {
+                return None;
+            }
+            let mut all = head;
+            all.resize(8 - tail.len(), 0);
+            all.extend(tail);
+            all
+        }
+        _ => return None,
+    };
+    let segments: [u16; 8] = all.try_into().ok()?;
+    Some(std::net::Ipv6Addr::from(segments))
+}
+
+/// A DNS name of ASCII labels (letters, digits, `-` inside), no empty label (so no trailing dot),
+/// at most 253 characters, whose last label isn't a number (decimal or `0x` hex): URL parsers read
+/// such a host as an IPv4 address (`1681915905` is 100.64.0.1).
+fn dns_name(text: &str) -> bool {
+    if text.is_empty() || text.len() > 253 {
+        return false;
+    }
+    let labels_ok = text.split('.').all(|l| {
+        (1..=63).contains(&l.len())
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    });
+    if !labels_ok {
+        return false;
+    }
+    let last = text.rsplit('.').next().unwrap_or_default();
+    let numeric = last.chars().all(|c| c.is_ascii_digit())
+        || (last.len() >= 2
+            && last[..2].eq_ignore_ascii_case("0x")
+            && last[2..].chars().all(|c| c.is_ascii_hexdigit()));
+    !numeric
 }
 
 /// 32 bytes as base64url without padding is exactly 43 characters.
@@ -383,59 +490,58 @@ mod tests {
             config.phone_server_url.as_deref(),
             Some("https://vibb.example.ts.net")
         );
-        // Plain http to a Tailscale address, or (with a warning) to another private one.
-        for taken in ["http://100.101.102.103:3100", "http://10.0.2.2:3100"] {
-            let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", taken)]));
-            assert_eq!(config.phone_server_url.as_deref(), Some(taken));
-        }
+        // Plain http to a Tailscale IP, with a warning in the log.
+        let taken = "http://100.101.102.103:3100";
+        let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", taken)]));
+        assert_eq!(config.phone_server_url.as_deref(), Some(taken));
     }
 
-    /// Security review L8, the user's rule: https fine; http to Tailscale fine; http to another
-    /// private address taken with a warning; http to a public address or name refused.
+    /// Launcher security review S-M1, the user's rule of 2026-11-04: every row of the vectors the
+    /// launcher runs too, and the copies identical.
     #[test]
-    fn a_server_address_is_judged_in_four_classes() {
-        for fine in [
-            "https://vibb.example.org",
-            "https://203.0.113.5:8443",
-            "http://100.101.102.103:3100",
-            "http://[fd7a:115c:a1e0::1]:3100",
-            "http://vibb.tail1234.ts.net",
-        ] {
-            assert_eq!(check_server_url(fine), ServerUrl::Fine, "{fine}");
+    fn the_server_url_vectors() {
+        const VECTORS: &str = include_str!("../testdata/server_url_vectors.json");
+        let rows: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
+        let rows = rows["vectors"].as_array().unwrap();
+        assert!(rows.len() >= 50);
+        for row in rows {
+            let url = row["url"].as_str().unwrap();
+            let got = match check_server_url(url) {
+                ServerUrl::Fine => "https",
+                ServerUrl::TailnetHttp(host) => {
+                    assert!(url.to_ascii_lowercase().contains(&host), "{url}: {host}");
+                    "tailnet_http"
+                }
+                ServerUrl::Refused(_) => "refused",
+            };
+            assert_eq!(got, row["verdict"].as_str().unwrap(), "{url:?}");
         }
-        for warned in [
-            "http://10.0.2.2:3100",
-            "http://192.168.1.5",
-            "http://172.20.0.1",
-            "http://127.0.0.1:3100",
-            "http://169.254.1.1",
-            "http://[fd00::5]",
-            "http://[fe80::1]",
-            "http://[::1]",
-            "http://nas.local",
-            "http://vibb.internal",
-            "http://vibb",
+        let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../launcher/app/src/test/resources/server_url_vectors.json");
+        let copy = std::fs::read_to_string(&launcher)
+            .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
+        assert_eq!(
+            copy, VECTORS,
+            "the launcher's server_url_vectors.json differs"
+        );
+    }
+
+    /// The refusal's reason: a bad shape, or plain http to anything but a tailnet IP.
+    #[test]
+    fn a_refused_address_says_why() {
+        for (url, why) in [
+            ("vibb.example.ts.net", "settings.provisioning.url_shape"),
+            (
+                "https://user@vibb.example.org",
+                "settings.provisioning.url_shape",
+            ),
+            ("http://192.168.1.5", "settings.provisioning.url_plain_http"),
+            (
+                "http://vibb.tail0000.ts.net",
+                "settings.provisioning.url_plain_http",
+            ),
         ] {
-            match check_server_url(warned) {
-                ServerUrl::PlainHttp(host) => assert!(
-                    !host.is_empty() && warned.contains(&host),
-                    "{warned}: {host}"
-                ),
-                other => panic!("{warned}: {other:?}"),
-            }
-        }
-        for refused in [
-            "http://203.0.113.5",
-            "http://vibb.example.org",
-            "http://100.128.0.1",
-            "http://[2001:db8::1]",
-            "ftp://vibb.example",
-            "vibb.example.ts.net",
-        ] {
-            assert!(
-                matches!(check_server_url(refused), ServerUrl::Refused(_)),
-                "{refused}"
-            );
+            assert_eq!(check_server_url(url), ServerUrl::Refused(why), "{url}");
         }
     }
 
@@ -454,6 +560,8 @@ mod tests {
             ("PHONE_SERVER_URL", "ftp://vibb.example"),
             ("PHONE_SERVER_URL", "http://vibb.example.org"),
             ("PHONE_SERVER_URL", "http://100.128.0.1"),
+            ("PHONE_SERVER_URL", "http://10.0.2.2:3100"),
+            ("PHONE_SERVER_URL", "http://vibb.tail1234.ts.net"),
             ("PWA_DEFAULT_LANG", "de"),
             ("LAUNCHER_SIGNATURE_CHECKSUM", "too-short"),
             // 44 characters: a padded base64 value, not the unpadded form Android expects.

@@ -199,7 +199,8 @@ Press Home, choose the launcher - or start it with `adb shell am start -a androi
 android.intent.category.HOME -p $P`. (Until 2026-10-24 Home had to start on screen once **before** the enrolment:
 a phone enrolled from Settings before that start lost its whole preferences file at the next process start, the
 token included - glance-topinset run, 2026-10-23. Since write-settings-row the first-launch reset skips an enrolled
-phone, `firstLaunchResetDue`, design 59d §8.17; the order no longer matters.) In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100`, enrollment code
+phone, `firstLaunchResetDue`, design 59d §8.17; the order no longer matters.) In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100` (plain http to `10.0.2.2` is taken by a debug build
+only - a release build takes `https://` or `http://` to a Tailscale IP, security review S-M1), enrollment code
 from step 2. Take a snapshot ("enrolled").
 
 **Nudging a sync** (E4/E5, 2026-10-27): the phone sends a status report with every sync, so a report "after the next

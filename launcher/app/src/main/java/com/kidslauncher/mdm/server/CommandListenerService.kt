@@ -89,16 +89,16 @@ class CommandListenerService : Service() {
     /** When the drop wake lock was last taken (elapsed realtime). */
     private var dropWakeLockAt: Long? = null
 
-    private fun buildClient(stamp: AtomicLong): OkHttpClient {
+    private fun buildClient(path: ServerPath, stamp: AtomicLong): OkHttpClient {
         val builder = OkHttpClient.Builder()
+            // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
+            // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
+            .toServer(path)
             // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (240 s by default,
             // never more); five minutes of silence means the stream is dead - reconnect.
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             // The keepalives never reach the listener: stamp every read here (design 19 hole 1).
             .addNetworkInterceptor(LastByteInterceptor { stamp.set(SystemClock.elapsedRealtime()) })
-        // Fresh per connect: the server is only reachable through the embedded tailnet's proxy,
-        // which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
-        TsnetClient.proxy()?.let { builder.proxy(it) }
         return builder.build()
     }
 
@@ -225,15 +225,21 @@ class CommandListenerService : Service() {
             return
         }
 
-        val base = if (serverUrl.endsWith("/")) serverUrl else "$serverUrl/"
+        // Security review S-M1: no stream to an address the rule refuses, nor to a tailnet one while tsnet is down -
+        // tried again like an unenrolled phone (the Settings edit or tsnet coming up opens it then).
+        val path = serverPathNow(serverUrl)
+        if (path is ServerPath.Closed) {
+            handler.postDelayed(connectRunnable, NOT_ENROLLED_RETRY_DELAY_MS)
+            return
+        }
         val request = Request.Builder()
-            .url("${base}api/devices/commands/stream")
+            .url("${path.baseUrl}api/devices/commands/stream")
             .header("Authorization", "Bearer $deviceToken")
             .build()
 
         val stamp = AtomicLong(SystemClock.elapsedRealtime())
         lastByte = stamp
-        eventSource = EventSources.createFactory(buildClient(stamp)).newEventSource(
+        eventSource = EventSources.createFactory(buildClient(path, stamp)).newEventSource(
             request,
             object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {

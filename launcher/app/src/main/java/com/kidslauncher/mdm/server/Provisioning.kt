@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import android.content.Context
 import android.util.Log
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 
@@ -17,14 +18,20 @@ private const val LOG_TAG = "Provisioning"
  * Must be called off the main thread - [TsnetClient.connectFromPreferences] blocks (up to 30s)
  * establishing the tailnet connection before the enroll call runs. This is deliberate, not just a
  * blocking-call accident: a `server_url` on the `*.ts.net` domain is only resolvable *through*
- * that connection - [createMdmApi] silently falls back to the device's normal (public) DNS/network
- * path if tsnet hasn't connected yet, which can never resolve a MagicDNS hostname and previously
+ * that connection - [createMdmApi] goes over the device's normal (public) DNS/network path for an https address
+ * if tsnet hasn't connected yet (never for http to a tailnet IP: [serverPath]), which can never resolve a MagicDNS hostname and previously
  * surfaced as a confusing "can't resolve host" failure on the very first scan, before tsnet had
  * any chance to come up at all.
  */
 suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras): Result<Unit> {
+    // Security review S-M1: a QR whose server address isn't https (or http to a tailnet IP) changes nothing - not the
+    // address, not the key, no enrolment. The server never puts one in a setup QR.
+    if (!serverUrlUsable(extras.serverUrl, com.kidslauncher.mdm.BuildConfig.DEBUG)) {
+        Log.w(LOG_TAG, "Setup QR refused: its server address isn't https")
+        return Result.failure(EnrollFailure(refused = true, context.getString(R.string.server_url_refused)))
+    }
     val mdm = LauncherPreferences.mdm()
-    mdm.serverUrl(extras.serverUrl)
+    mdm.serverUrl(extras.serverUrl.trim())
     if (extras.tailscaleAuthKey.isNotBlank()) {
         mdm.tailscaleAuthKey(extras.tailscaleAuthKey)
     }

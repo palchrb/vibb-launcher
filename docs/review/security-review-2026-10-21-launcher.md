@@ -32,7 +32,7 @@ Tailscale verdict: **keep it as it is.** With no auth key and no earlier join, n
 
 | ID | Severity | Finding |
 |---|---|---|
-| S-M1 | Medium | Cleartext allowed app-wide, no https check on the server URL, and a silent fallback past tsnet (review M11, still open) |
+| S-M1 | Medium | Cleartext allowed app-wide, no https check on the server URL, and a silent fallback past tsnet (review M11). **Fixed 2026-11-04** (branch `https-only`): https only, or http to a tailnet IP through tsnet alone |
 | S-M2 | Medium | The parent is never told when the content filter is down, and `dns_upstream` can show a dead tunnel as healthy |
 | S-M3 | Medium (decision) | One switch in an allowed browser ("Use secure DNS") bypasses the whole filter (accepted risk 2026-10-10, re-raised: cheap mitigations exist) |
 | S-M4 | Medium (decision) | A VoIP call from anyone opens the whole calling app, with the kiosk on also other allowed apps, over the PIN lock for whoever holds the phone (round 7 §1 accepted it for the kid, not for a finder) |
@@ -41,6 +41,16 @@ Tailscale verdict: **keep it as it is.** With no auth key and no earlier join, n
 ## Medium
 
 ### S-M1. Cleartext, no https check, silent fallback past tsnet (review M11, still open)
+
+- **Status 2026-11-04: fixed** (branch `https-only`; the user's decision: "kun godtar https flat out, med mindre det er
+  en tailnet IP direkte? Med advarsel?"). The phone and the server share one rule (`server/testdata/server_url_vectors.json`):
+  `https://`, or `http://` to a Tailscale IP literal - sent only through tsnet's SOCKS proxy, never over the phone's
+  own network; anything else, or a tailnet address while tsnet is down, makes no request (`server/ServerTransport.kt`).
+  Cleartext is off app-wide but for one `.invalid` name the tailnet path gives OkHttp. The QR and the Settings edit
+  refuse other addresses; Phone Setup warns on http to a tailnet IP and refuses any other http. See
+  `docs/notes/launcher/security.md`, "The server address: https only". Design 22's `EndpointPolicy`/legacy endpoints
+  were not built: a phone with a stored plain-http LAN address stops talking to the server until the parent types the
+  https address in its Settings.
 
 - **Evidence:**
   - `launcher/app/src/main/AndroidManifest.xml:112` has `android:usesCleartextTraffic="true"`, and there is no
@@ -306,7 +316,7 @@ Do S-L10's three items. Consider a `noTsnet` release flavor only if APK size or 
 | M8 (wipe) | Fixed (`wipeDevice(0)`); emulator check §6g still open |
 | M9 (override opens everything) | Fixed as decided (design 24b relock) |
 | M10 (catalog APKs) | Fixed, phone side checked (Info 5) |
-| M11 (cleartext, fallback) | **Open**: S-M1 |
+| M11 (cleartext, fallback) | Fixed 2026-11-04 with S-M1 |
 | M12 (Tailscale key) | Fixed on the phone (key deleted after joining); the console part is the user's |
 | L6 (PIN hashes) | Parent PIN fixed (vault); the kid PIN stays as decided, see P-L5 |
 | L7, L8, L12, L13, L9 (Gradle) | Fixed; L8's same-origin bearer and L13's release check verified |
