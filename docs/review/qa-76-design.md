@@ -316,3 +316,120 @@ M-1 and L-3 (and `StatusCapabilities.kt:18` is inside the list, which starts at 
 9. `isPinFailure` on the pinning prefix only, the anchor parse pinned by a test, subjects truncated (L-5). nb texts
    fixed (L-6). A QR scan test at 8 pins (L-7).
 10. Q2 answered "no". The tailnet recovery path named (I-5, I-6).
+
+## Re-review (63fbb9c7, 2026-11-04)
+
+Re-read the whole revised note (`git diff 0187490e..63fbb9c7`). The user answered: everything goes through Caddy; the
+no-QR recovery is by the tailnet; step 2 is deferred. I re-checked the new line references
+(`SettingsFragmentLauncher.kt:172-176` the Server URL row, `:700` `syncNowWithServer`; `MdmSyncWorker.kt:1196-1199`;
+`StatusCapabilities.kt:11`; `ServerTransport.kt:130,137,147`; `values-nb/strings.xml:202,208`). The policy is a plain
+`GET api/devices/policy` with no ETag/304 (`MdmApi.kt:45`), so every applied `server_tls` comes with its own handshake.
+
+**The pins are verified.**
+- Downloaded `letsencrypt.org/certs/gen-y/root-yr.pem`, `root-ye.pem`, `root-yr-by-x1.pem` and `root-ye-by-x2.pem`, and
+  recomputed them with D1's command:
+  - YR `fk6IOKit1ild5647BH06ujSIq5XbCgqlbYl6ANhhi88=`, certificate `e57b7e6f…`;
+  - YE `sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=`, certificate `e14ffcad…`.
+- Each cross-sign carries the same key (by X1 / by X2, valid 2026-05-13 to 2032-09-02). The self-signed roots are valid
+  2025-09-03 to 2045-09-02, and the subject is `C=US, O=ISRG, CN=Root YR|YE`.
+- The other six pins and certificate prefixes recompute identically from this VM's `/etc/ssl/certs`. All eight of
+  D1's rows are right.
+
+**Verdict: ready to build once R-1 and R-2 are written into the note** (both are a few lines in D2, §3 and §5, no new
+mechanism). The Lows can go in during the build.
+
+### The earlier findings
+
+| Finding | State |
+|---|---|
+| C-1 | **Resolved**: YR/YE in B (verified above), the publish-not-store rule, the per-release chore, the programmes' terms |
+| H-1 | **Resolved** by per-phone, server-switched enforcement with report-only built in. A server outside B never switches on. The gaps are R-1, R-2 and R-3 below |
+| H-2, L-3 | **Resolved**: the origin fence first in `Direct`, the pinner host from `HttpUrl.host`, the `findMatchingPins` test |
+| M-1 | **Resolved**: no cache migration; the flag is its own pref; `serverTls` is raw in the DTO |
+| M-2, M-5, L-1, L-2, L-7 | **Soundly deferred**: they belonged to E, the QR field and the self-check, none of which is built. The CDN rotation risk is in DEPLOY.md, and its recovery exists |
+| M-3 | **Resolved**: the outside ring, reported at the next contact, the alarm and the push. One hole: R-2 |
+| M-4 | **Moot** (no E). What remains: an attacker who passes B (a mis-issued LE certificate) can send `enforce: false`. It lasts only until the real server's next `true` over a passing connection (Info, already in §7's "Doesn't stop") |
+| L-4, L-5, L-6, I-3 | **Resolved** (the nb labels now match `values-nb`: "Serveradresse", "Skann oppsettskode", "adminsiden") |
+| I-5, I-6 | **Adopted**: no accept button; the tailnet address is the no-QR recovery |
+
+### Remaining findings
+
+**R-1 Medium - What the policy carries in `watching` is unspecified. The natural reading silently switches enforcing
+phones off.**
+- D2 says `on` carries `enforce: true` and `off` carries `enforce: false`. It says nothing about `watching`.
+- An implementation of `enforce: state == on` sends `false` in `watching`. By D2's table the phone then takes "off"
+  over any passing connection, which is every connection to the real server.
+- `watching` is reached without anyone deciding to turn phones off:
+  - "Turn it on again";
+  - a server database restored from a backup made before `on`;
+  - a re-created device row;
+  - the migration's default for every existing device.
+- Each of these would quietly unpin every enforcing phone it covers, for at least 72 hours, with nothing on the device
+  page but "watching".
+- Fix in the note and the contract (§5):
+  - `watching` sends `server_tls` with no `enforce` key, which the phone reads as keep. Only the parent's `off` ever
+    sends `false`.
+  - A report whose `enforcing` is true while the server is `watching` is shown as "on (the phone's)", not "watching".
+    Optionally the server adopts `on` from it, since the phone stored it only from a pinned policy.
+  - Add contract rows: `watching` gives absent, and a phone that is on stays on over a passing connection.
+
+**R-2 Medium - Before `on`, an attacker can erase their sightings and keep the phone unpinned with the stolen token,
+quietly.**
+- **Erasing.** The ring is "dropped after its 2xx" (D3). With the flag off, a MITM with any store-valid certificate
+  (emSign) receives the status report itself and answers 2xx, so the phone drops the evidence. §7's "an attempt is
+  reported" fails for exactly the attacker it describes.
+- **Keeping it off.** The same MITM now holds the bearer (as today before `on`). From anywhere, once every 71 hours,
+  it can post a status report with an `outside` row. Each one restarts the window (D2), and the phone is never
+  switched on.
+- **Quietly.** The only parent push is for a `refused` row (§4). An outside `seen` while watching is just a passive
+  device-page line.
+- Fix:
+  - (a) The phone drops ring rows only after a 2xx over a connection that passed B, or over the tailnet. A MITM can't
+    produce either, so the rows reach the real server at the first honest contact. That also covers a phone that is
+    switched on in between.
+  - (b) An outside sighting stops automatic switch-on instead of restarting the window. The phone stays `watching`
+    and the device page shows the sighting (name, network, time) with a one-shot "Turn the check on now" (parent
+    override, at once).
+  - (c) The first outside sighting of a phone that had in-set ones raises a parent event (push), at most one a day per
+    phone. It's either a split horizon or an attack, and the parent should hear of both.
+- With (b), forged rows can no longer hold a phone off without the parent seeing it, and the parent can override
+  them. Real split-horizon installs still never switch on by themselves.
+
+**R-3 Low - The 72-hour window can finish on one network only.**
+- A kid at home on Wi-Fi for three days switches on. The first day on mobile data then refuses a split-horizon
+  install's CDN chain (recovery: the tailnet or the QR).
+- The user's own setup (Caddy everywhere) is unaffected.
+- Fix: count the window in server receive time, never the phone's `at_ms`, and require in-set sightings on both
+  Wi-Fi and mobile when the phone has reported mobile at all, or at least three distinct days. Add a row in
+  `next_state`'s tests.
+
+**R-4 Low - Make the parent's "Turn off" loud.**
+- With a stolen parent session, turning the check off is the quiet first step of a later MITM. It's not an
+  escalation, since the session can already do everything, but it shouldn't pass silently.
+- As written, the settings-log middleware would log it as a generic `settings_saved` row (`settings_log.rs`).
+- Fix: its own security event (`server_tls_off` / `server_tls_on`, the parent's name). A parent event to every
+  parent's push subscription ("The certificate check for <phone> was turned off by <parent>"). The device page's "Off
+  since %s" names the parent too.
+- Also nudge the phone over the SSE so "at once" holds (parent-override rule). Today it takes effect at the next
+  sync.
+
+**R-5 Low - Pin down `nextFlag`'s inputs.**
+- `tailnet` must come from the request's `ServerPath.Tailnet`, never from `handshake() == null`, which a debug
+  `http://10.0.2.2` also gives. A debug http answer must stay "unchanged".
+- The flag must be computed only from a fresh policy response in the sync. The cached-policy re-apply paths
+  (`cachedPolicy()`, start-up, `currentPolicyDecision`) never call it. Say so in §3, and add a source-scan or unit
+  row.
+
+**R-6 Info - Things that hold.**
+- **Rollback.** Old launchers can't install over a new one (versionCode), and the flag survives everything but a
+  factory reset.
+- **Server rollback.** A server rolled back to a pre-76 version sends no `server_tls`, so the flag is kept.
+- **Stripping.** A MITM that strips `server_tls` or injects `enforce: true` changes nothing: `true` counts only over a
+  passing connection, and nothing it sends passes.
+- **The tailnet "off".** It needs the parent to have set the tailnet address (parent code) and a current WireGuard
+  peer at that IP. That's the right authority, and its trust in Tailscale's coordination server is already in §7.
+- **The QR clearing the flag before the enroll.** This is needed: the enroll itself may have to go unpinned. It's
+  behind the parent code or a factory reset.
+- **Enrolment.** It stays unpinned for the first 72 hours, as today. A future option, outside Q3's deferral: Phone
+  Setup's QR could carry `enforce` once the server has phones `on`, closing that window for new and re-enrolled
+  phones.
