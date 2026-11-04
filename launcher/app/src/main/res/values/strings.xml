@@ -583,7 +583,6 @@
     <string name="weather_updated">Updated %1$s</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
-    <string name="weather_foot">%1$s · %2$s</string>
     <!-- TalkBack (launcher QA M5): whole sentences joined with a space, never a sentence glued from parts. -->
     <string name="weather_spoken_now">Weather now: %1$s.</string>
     <string name="weather_spoken_now_plain">Weather now.</string>

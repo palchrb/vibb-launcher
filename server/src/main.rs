@@ -190,7 +190,7 @@ pub struct AppState {
     /// MET's requests (design 75 §3.3): their own `music_net::HttpSource` behind their own gate, never the music
     /// fetch's (a card's nowcast must not queue behind a 120 s feed); canned in the tests.
     pub weather_fetch: std::sync::Arc<dyn music_net::Source>,
-    /// The weather's caches in memory, its locks, Kartverket's client and the phones' ask limits
+    /// The weather's caches in memory, its locks and the phones' ask limits
     /// (`weather_cache::Weather`).
     pub weather: std::sync::Arc<weather_cache::Weather>,
 }
@@ -532,9 +532,7 @@ async fn main() {
             std::sync::Arc::new(music_net::HttpSource::new()),
             music_net::REQUEST_SPACING,
         )),
-        weather: std::sync::Arc::new(weather_cache::Weather::new(std::sync::Arc::new(
-            music_net::HttpSource::new(),
-        ))),
+        weather: Default::default(),
     };
     state
         .tokens

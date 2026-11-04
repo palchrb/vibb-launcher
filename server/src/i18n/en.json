@@ -1350,7 +1350,7 @@
   "device.weather.needs_position": "No fresh position and no zone - the lock shows no weather now.",
   "device.weather.needs_position_link": "Location Settings",
   "device.weather.needs_update": "This phone's Vibb One doesn't show weather yet - it comes with its next update.",
-  "device.weather.footer": "Forecast from MET Norway (CC BY 4.0), place names © Kartverket, symbols © Yr/NRK. The weather is for a square of about 2 km, never the exact position.",
+  "device.weather.footer": "Forecast from MET Norway (CC BY 4.0), symbols © Yr/NRK. The weather is for a square of about 2 km, never the exact position.",
   "device.lock.lock_screen_footer": "What the lock shows, anyone near the phone can see. A notification can be swiped away there, as on Android's own lock screen; nothing can be answered.",
   "device.lock.notifications": "Notifications on the lock screen",
   "device.lock.unreadable": "The apps couldn't be read. Check the server log.",

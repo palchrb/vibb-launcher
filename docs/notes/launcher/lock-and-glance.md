@@ -369,6 +369,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   had gone stale (L2). `LockClockFace` gained `dateRow` (placed and baselined as the date) and `shortDate(on)` (the
   no-profile date short while the switch is on, D14). `GlancePanel`: `placeList` counts the open card, `fitNext`
   measures without it. Capability `lock_weather_v1`. Licences: `legal_info_weather` + `assets/licenses/CC-BY-4.0.txt`.
+  No place name since 2026-11-04 (the user: "Vi dropper navnet"; design 75 §13): the card's foot is the low and high
+  alone ("8° / 13°", the dark text beside it as before), TalkBack names no place, the DTO has no `place` (an older
+  server's is an unknown key, ignored; `WeatherContractTest`), and E8's L3 re-pull of a place-less answer after 2 min
+  is gone.
   Not emulator-checked yet: `docs/testing/emulator.md` §6x.
 - **The calmer glance** (2026-11-04, branch `lock-glance-calm`, PLAN "A calmer lock glance and \"I morgen\"", the
   user's mockups boards A-D: fewer lines, closer to Android's own lock screen; the expanded weather pushes the lines

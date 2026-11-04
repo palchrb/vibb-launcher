@@ -1350,7 +1350,7 @@
   "device.weather.needs_position": "Ingen fersk posisjon og ingen sone - låseskjermen viser ikke vær nå.",
   "device.weather.needs_position_link": "Posisjonsinnstillinger",
   "device.weather.needs_update": "Vibb One på denne telefonen viser ikke vær ennå - det kommer med neste oppdatering.",
-  "device.weather.footer": "Værvarsel fra MET Norge (CC BY 4.0), stedsnavn © Kartverket, symboler © Yr/NRK. Været gjelder en rute på omtrent 2 km, aldri den nøyaktige posisjonen.",
+  "device.weather.footer": "Værvarsel fra MET Norge (CC BY 4.0), symboler © Yr/NRK. Været gjelder en rute på omtrent 2 km, aldri den nøyaktige posisjonen.",
   "device.lock.lock_screen_footer": "Det låsen viser, kan alle i nærheten av telefonen se. Et varsel kan sveipes bort der, som på Androids egen låseskjerm; ingenting kan besvares.",
   "device.lock.notifications": "Varsler på låseskjermen",
   "device.lock.unreadable": "Appene kunne ikke leses. Sjekk serverloggen.",

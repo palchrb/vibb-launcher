@@ -310,7 +310,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   writable by uid 65532".
 - **Updating**: the Updates page says when a version is out. Set `HANDY_VERSION=X.Y.Z` in `.env`, then
   `docker compose pull && docker compose up -d`. Before migrating the database, the new version copies it to
-  `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept).
+  `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
 - **Rolling back**: set the old `HANDY_VERSION`, put the pre-migration copy back, start:
 
   ```
@@ -758,10 +758,10 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
   tailnet the confirmation can't arrive and Notifications says it "may not be showing" after three unconfirmed
   pushes, or one a day old.
 
-## Weather on the lock screen (design 75, migration 0122)
+## Weather on the lock screen (design 75, migrations 0122 and 0126)
 
 Device › Weather turns it on per phone (off by default). The server then asks, only when a phone asks it and its
-cached answer is due (about once an hour per grid cell of about 2 x 2 km):
+cached answer is due (about once an hour per grid cell of about 2 x 2 km), one outside service:
 
 - **MET Norway** (`api.met.no`, HTTPS 443): Locationforecast 2.0 for the forecast, Nowcast 2.0 when the kid opens the
   card. MET's terms ask every client to identify itself with a way to contact its operator, and block clients that
@@ -769,12 +769,13 @@ cached answer is due (about once an hour per grid cell of about 2 x 2 km):
   your e-mail address or website (3-100 printable ASCII characters - no æ, ø, å - and no quotes) and it is added, so MET can reach you rather
   than block every install that shares the string (the log warns once while it is unset). With it, MET can tie the
   cells it is asked for - roughly where your family is, to about 2 km - to that address. MET's data is CC BY 4.0.
-- **Kartverket** (`api.kartverket.no`): the nearest settlement's name, once per cell, with the server's neutral
-  User-Agent. Place names © Kartverket, CC BY 4.0.
 
-The phones only ever ask this server. The cache (`weather_cells`, `weather_places`) has no phone in it: a cell nobody
-asked for in 48 hours goes, a place name with the longest location retention, and a phone's Location set to Off
-erases both at once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
+No place name is looked up: until 2026-11-04 the server also asked Kartverket (`api.kartverket.no`) for the nearest
+settlement's name once per cell; that lookup is gone, and migration 0126 drops its cache (`weather_places`).
+
+The phones only ever ask this server. The cache (`weather_cells`) has no phone in it: a cell nobody asked for in 48
+hours (or the longest location retention, when that is shorter) goes, and a phone's Location set to Off erases it at
+once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
 
 ## Useful commands on the Pi
 

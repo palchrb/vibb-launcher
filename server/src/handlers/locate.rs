@@ -2165,7 +2165,7 @@ pub async fn update_location_policy(
             if mode == "off" {
                 // A failing table is logged by the pass itself (security review L9).
                 crate::retention::prune(&state.db).await;
-                // Design 75 D13: the weather's cells and place names are a coarse trail of where the family has
+                // Design 75 D13: the weather's cells are a coarse trail of where the family has
                 // been - they go at the change to Off, whole (they carry no device id). Never in the prune.
                 if before.as_deref() != Some("off")
                     && let Err(err) = crate::weather_cache::erase(&state).await

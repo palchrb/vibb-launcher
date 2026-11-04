@@ -255,14 +255,14 @@ impl TestApp {
             )),
             kid_writes: Default::default(),
             server_release: Default::default(),
-            // MET through its own real gate, Kartverket ungated, both answered by the same canned fetch; a short wait
-            // so a slow fetch's test takes no 6 s.
+            // MET through its own real gate, answered by the canned fetch; a short wait so a slow fetch's test takes
+            // no 6 s.
             weather_fetch: std::sync::Arc::new(crate::music_net::Gated::new(
                 fetch.clone(),
                 std::time::Duration::ZERO,
             )),
             weather: {
-                let mut weather = crate::weather_cache::Weather::new(fetch.clone());
+                let mut weather = crate::weather_cache::Weather::default();
                 weather.forecast_wait = std::time::Duration::from_millis(500);
                 weather.nowcast_wait = std::time::Duration::from_millis(500);
                 std::sync::Arc::new(weather)

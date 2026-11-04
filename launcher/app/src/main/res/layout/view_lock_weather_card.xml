@@ -218,8 +218,7 @@
         android:importantForAccessibility="no"
         android:orientation="horizontal">
 
-        <!-- "Nydalen · 2° / 7°": only the place gives way (code QA L6, the panel cuts it to what the low and high
-             leave), never the low and high. -->
+        <!-- "2° / 7°": the low and high (no place name since 2026-11-04). -->
         <TextView
             android:id="@+id/weather_card_foot"
             android:layout_width="0dp"

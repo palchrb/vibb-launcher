@@ -31,7 +31,6 @@ class WeatherModelTest {
         v = 1,
         status = "ok",
         checkedAtMs = checkedAt,
-        place = "Bjølsen",
         hours = listOf(
             WeatherAnswerHour(h0, "partlycloudy_day", 7, words, card, 1),
             WeatherAnswerHour(h0 + hour, "rain", 6, WeatherAnswerWords("rain", "now"), card, 1),
@@ -196,7 +195,6 @@ class WeatherModelTest {
         assertFalse(card.tomorrow)
         assertEquals(listOf("morning", "afternoon", "evening"), card.columns.map { it.part })
         assertEquals(listOf(false, true, false), card.columns.map { it.current })
-        assertEquals("Bjølsen", card.place)
         assertEquals("at", card.dark!!.kind)
         // Tomorrow's card (from 18:00): "I morgen", no current column.
         val tomorrow = answer().let { a -> a.copy(days = a.days.map { it.copy(date = "2026-11-04") }) }

@@ -509,7 +509,6 @@
     <string name="weather_updated">Oppdatert kl. %1$s</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
-    <string name="weather_foot">%1$s · %2$s</string>
     <string name="weather_spoken_now">Været nå: %1$s.</string>
     <string name="weather_spoken_now_plain">Været nå.</string>
     <plurals name="weather_spoken_degrees">

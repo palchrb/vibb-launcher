@@ -1,5 +1,7 @@
 # 75 - Weather on the lock glance: yr's symbol and the degrees by the date, the day folded out
 
+
+**Superseded in part (2026-11-04):** the place name is gone - the server no longer asks Kartverket and the answer carries no `place` (the user: "Vi dropper navnet"). Read §13 first; wherever this note still describes a place (§0, §3, §5.2, the logs, TalkBack, the tests, the licence paragraph), it is history.
 Status: design note, 2026-11-03, on `main` at 6539d573; to be built on branch `lock-weather` (PLAN queue: "Weather on
 the lock glance - APPROVED 2026-11-03"). Both directories. Revised the same day after the two design QAs
 (`docs/review/qa-75-design-server.md`, `docs/review/qa-75-design-launcher.md`) and the user's answers (§11 lists what
@@ -26,7 +28,8 @@ server finds a position (the phone's fresh stored fix; else the zone the parent 
 a grid cell of about 2 x 2 km, and answers from a per-cell cache of MET Norway's Locationforecast 2.0 (`complete`),
 fetched only past MET's `Expires`, conditionally. The words, the periods, the darkness and the nowcast line are
 computed on the server, in the phone's own time zone; the phone renders keys, MET's symbol codes and numbers. The
-place name comes once per cell from Kartverket's place-name API.
+place name came once per cell from Kartverket's place-name API - dropped on 2026-11-04 (§13): the foot is "2° / 7° ·
+Mørkt kl. 17:02".
 
 **PWA.** A "Weather" group on Device › Lock Screen & PINs (`/devices/{id}/lock#weather`; §6, §12 - a page of its
 own for a day): "Vær på låseskjermen" / "Weather on the lock screen", off by default
@@ -168,7 +171,9 @@ lines of code.)
 local time, so 23- and 25-hour days need nothing special. *Why:* the kid's day is the phone's day; no external
 timezone service.
 
-**D13 - The place name and the caches' lifetime.** The place name comes from Kartverket once per cell, at the cell's
+**D13 - The place name and the caches' lifetime.** *Superseded for the place name on 2026-11-04 (the user, 2026-11-04: "Vi dropper navnet" (after "Det skjønte jeg ikke og det ønsker jeg ikke" - they hadn't understood that the server asks Kartverket once per cell);
+§13): no place name is looked up or sent, `weather_places` is dropped (migration 0126), and MET is the only outside
+service that sees a cell. The caches' lifetime below still holds for `weather_cells` and the nowcast map.* The place name comes from Kartverket once per cell, at the cell's
 centre, looked up **after** answering (`place` is `null` on a new cell's first answer; the next pull has it). It is
 kept per cell (`NULL` = looked up, no name) and, like a cell's forecast, dropped when no phone has asked for it within
 the location retention (§3.1). **A change of a phone's Location to Off erases the weather caches** (`weather_cells`,
@@ -236,6 +241,8 @@ not built. The source order is D5's: the fresh stored fix, the parent's chosen z
 - **Credit**: "Data: MET Norway" with the licence (§4.3).
 
 ### 2.2 Kartverket's place names
+
+*Superseded 2026-11-04 (the user, 2026-11-04: "Vi dropper navnet" (after "Det skjønte jeg ikke og det ønsker jeg ikke" - they hadn't understood that the server asks Kartverket once per cell); §13): the lookup is gone, nothing below is built any more.*
 
 - `GET https://api.kartverket.no/stedsnavn/v1/punkt?nord=59.94&ost=10.76&koordsys=4258&radius=2000&utkoordsys=4258
   &treffPerSide=500&side=1&filtrer=navn.stedsnavn.skrivemåte,navn.navneobjekttype,navn.meterFraPunkt,metadata.
@@ -940,3 +947,20 @@ None. The one open question (the phone's last-known position, D18) was answered 
   nudge waits for a pull that runs, `no_position` waits no hour (M2); an empty period unspoken (L1); "Etter­middag"
   hyphenated, the labels aligned (L2); a place-less first answer pulled again 2 min later (L3); the nb words' "kl." times
   24-hour on a 12-hour phone, no double full stop.
+
+## 13. The place name dropped (2026-11-04)
+
+The user, 2026-11-04: "Vi dropper navnet" (after "Det skjønte jeg ikke og det ønsker jeg ikke" - they hadn't understood that the server asks Kartverket once per cell). Built on branch `weather-no-place` (PLAN "The weather card without a place name; no Kartverket lookup"):
+
+- **Server**: `weather_cache::place`/`find_place`/`pick_place`/`clean_name`, `KARTVERKET_BASE`, Kartverket's client
+  (`Weather.place_fetch`), the in-flight set, the failed-lookup gate and the place writes' lock are gone, with
+  `testdata/weather/kartverket_*.json`. Migration `0126_weather_no_place.sql` drops `weather_places` (its rows were a
+  coarse trail of cells; the upgrade erases them). `retention::prune` and the Location Off erase keep only
+  `weather_cells` and the nowcast map. MET is the only outside service that receives a cell's centre.
+- **The contract**: `weather.json`'s `answer` and `answer_words` have no `place` (both copies, one commit). An older
+  launcher reads a missing `place` as `null` (its DTO default) and shows the card without a name; this launcher ignores
+  an older server's `place` (an unknown key; `WeatherContractTest`).
+- **Launcher**: the card's foot is the low and high alone ("8° / 13°"), the dark text as before ("Mørkt kl. 16:01");
+  TalkBack says no place; E8's L3 (a place-less answer pulled again 2 min later) is gone - it would never end now.
+  `weather_foot` left both catalogs; the legal page credits MET alone.
+- **PWA**: the Weather group's credit names MET and Yr/NRK only.

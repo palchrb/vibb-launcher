@@ -5,6 +5,8 @@ import com.kidslauncher.mdm.server.dto.WeatherAnswer
 import com.kidslauncher.mdm.server.dto.WeatherAnswerHour
 import com.kidslauncher.mdm.server.dto.WeatherNow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -41,7 +43,6 @@ class WeatherContractTest {
         val answer = answer()
         assertEquals(1, answer.v)
         assertEquals("ok", answer.status)
-        assertEquals("Bjølsen", answer.place)
         assertEquals(4, answer.hours.size)
         val now = parsed.getValue("answer_now_ms").jsonPrimitive.long
         val shown = answer.hours.single { it.atMs <= now && now < it.atMs + 3_600_000 }
@@ -52,9 +53,18 @@ class WeatherContractTest {
             assertEquals(listOf("morning", "afternoon", "evening"), day.periods.map { it.part })
             assertNotNull(day.dark)
         }
-        // Never the place, a temperature or a time in a log line.
-        assertFalse(answer.toString(), answer.toString().contains("Bjølsen"))
+        // Never a temperature or a time in a log line.
         assertFalse(answer.hours.first().toString().contains("temp"))
+    }
+
+    /** 2026-11-04 (the user: "Vi dropper navnet"): the answer carries no place. An older launcher's `place` defaults to
+     * null when it is missing; an older server's `place` is an unknown key this launcher ignores. */
+    @Test
+    fun `the answer has no place, and an older server's place is ignored`() {
+        val raw = parsed.getValue("answer").jsonObject
+        assertFalse(raw.keys.toString(), "place" in raw)
+        val older = JsonObject(raw + ("place" to JsonPrimitive("Bjølsen")))
+        assertEquals(answer(), ServerJson.decodeFromString(WeatherAnswer.serializer(), older.toString()))
     }
 
     @Test
@@ -73,7 +83,7 @@ class WeatherContractTest {
             ServerJson.decodeFromString(WeatherAnswer.serializer(), it.toString())
         }
         assertEquals(listOf("off", "no_position", "unavailable"), statuses.map { it.status })
-        assertTrue(statuses.all { it.hours.isEmpty() && it.days.isEmpty() && it.place == null })
+        assertTrue(statuses.all { it.hours.isEmpty() && it.days.isEmpty() })
     }
 
     @Test

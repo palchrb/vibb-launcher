@@ -1,5 +1,5 @@
 //! The weather's outside requests and caches (design 75 §3.3): MET's forecast per grid cell in `weather_cells`, its
-//! nowcast in memory, Kartverket's place name per cell in `weather_places`.
+//! nowcast in memory. MET is the only outside service that sees a cell (the place-name lookup went 2026-11-04).
 //!
 //! - **On demand, politely** (D7): a cell is fetched only when a phone asks and its `next_fetch_at` has passed -
 //!   `max(now + (Expires − Date), now + 30 min) + 0-120 s` (MET's clock never compared with ours), conditionally
@@ -11,19 +11,17 @@
 //! - **Location Off** erases every cache ([erase], `handlers::locate::update_location_policy`, D13): the cache has
 //!   no device id, so it goes whole. The age prune is `retention::prune`'s.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 
 use crate::AppState;
-use crate::music_net::{FetchError, Kind, PhoneAsks, Reach, Source, SourceRequest, SourceResponse};
+use crate::music_net::{FetchError, Kind, PhoneAsks, Reach, SourceRequest, SourceResponse};
 use crate::weather::{self, Cell, Hour, NowLine, Nowcast};
 
 pub const MET_BASE: &str = "https://api.met.no";
-pub const KARTVERKET_BASE: &str = "https://api.kartverket.no";
 /// How long a phone's forecast answer waits for a fetch (D7); the phone's own call times out at 15 s.
 pub const FORECAST_WAIT: StdDuration = StdDuration::from_secs(6);
 /// How long a card's nowcast answer waits for a fetch (D9).
@@ -41,13 +39,9 @@ const NOWCAST_FLOOR_MINUTES: i64 = 3;
 const NOWCAST_JITTER_SECONDS: u32 = 20;
 /// Nowcast steps from a fetch older than this are never used (radar data is stale after ~5 min).
 const NOWCAST_USE_MINUTES: i64 = 10;
-/// A failed place lookup isn't tried again for this long.
-const LOOKUP_RETRY_MINUTES: i64 = 60;
 
 /// The weather's state in memory (`AppState.weather`).
 pub struct Weather {
-    /// Kartverket's client: its own, ungated (one lookup per new cell), the neutral User-Agent.
-    pub place_fetch: Arc<dyn Source>,
     pub forecast_asks: PhoneAsks,
     pub nowcast_asks: PhoneAsks,
     pub forecast_wait: StdDuration,
@@ -55,15 +49,11 @@ pub struct Weather {
     forecast_lock: tokio::sync::Mutex<()>,
     nowcast_lock: tokio::sync::Mutex<()>,
     nowcasts: std::sync::Mutex<HashMap<Cell, NowEntry>>,
-    looking_up: std::sync::Mutex<HashSet<Cell>>,
-    lookup_failed: std::sync::Mutex<HashMap<Cell, DateTime<Utc>>>,
     deprecation_warned: std::sync::Mutex<Option<NaiveDate>>,
     contact_warned: AtomicBool,
-    /// Bumped by [erase] (Location Off, code QA L1): a place lookup or a nowcast fill that started before it never
-    /// writes back what it found.
+    /// Bumped by [erase] (Location Off, code QA L1): a nowcast fill that started before it never writes back what it
+    /// found.
     erased: AtomicU64,
-    /// Held by [erase] and by a place lookup's check-and-write, so neither lands between the other's halves.
-    place_writes: tokio::sync::Mutex<()>,
     /// The tests' clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
 }
@@ -78,11 +68,10 @@ struct NowEntry {
     outside_until: Option<DateTime<Utc>>,
 }
 
-impl Weather {
-    pub fn new(place_fetch: Arc<dyn Source>) -> Self {
+impl Default for Weather {
+    fn default() -> Self {
         let hour = StdDuration::from_secs(3600);
         Weather {
-            place_fetch,
             forecast_asks: PhoneAsks::new(FORECAST_ASKS_AN_HOUR, hour),
             nowcast_asks: PhoneAsks::new(NOWCAST_ASKS_AN_HOUR, hour),
             forecast_wait: FORECAST_WAIT,
@@ -90,16 +79,15 @@ impl Weather {
             forecast_lock: Default::default(),
             nowcast_lock: Default::default(),
             nowcasts: Default::default(),
-            looking_up: Default::default(),
-            lookup_failed: Default::default(),
             deprecation_warned: Default::default(),
             contact_warned: AtomicBool::new(false),
             erased: AtomicU64::new(0),
-            place_writes: Default::default(),
             clock: Default::default(),
         }
     }
+}
 
+impl Weather {
     pub fn now(&self) -> DateTime<Utc> {
         self.clock
             .lock()
@@ -548,218 +536,13 @@ async fn fill_nowcast(state: AppState, cell: Cell) {
     map.retain(|_, e| e.next_fetch_at > hour_ago || e.fetched_at.is_some_and(|at| at > hour_ago));
 }
 
-// ---- the place name -----------------------------------------------------------------------------
-
-/// Kartverket covers Norway: a cell outside this box is never asked.
-fn in_norway(cell: Cell) -> bool {
-    let (lat, lon) = cell.centre();
-    (57.5..=71.5).contains(&lat) && (4.0..=31.5).contains(&lon)
-}
-
-/// The cell's place name for an answer (D13): the stored one (`asked_at` moved), else none now and a lookup spawned
-/// (unless one is in flight for the cell or one failed in the last hour). `None` = no name (yet).
-pub async fn place(state: &AppState, cell: Cell) -> Result<Option<String>, sqlx::Error> {
-    let now = state.weather.now();
-    let stored: Option<Option<String>> =
-        sqlx::query_scalar("SELECT name FROM weather_places WHERE lat_i = ? AND lon_i = ?")
-            .bind(cell.lat_i)
-            .bind(cell.lon_i)
-            .fetch_optional(&state.db)
-            .await?;
-    if let Some(name) = stored {
-        sqlx::query("UPDATE weather_places SET asked_at = ? WHERE lat_i = ? AND lon_i = ?")
-            .bind(stamp(now))
-            .bind(cell.lat_i)
-            .bind(cell.lon_i)
-            .execute(&state.db)
-            .await?;
-        return Ok(name);
-    }
-    if !in_norway(cell) {
-        store_place(state, cell, None).await?;
-        return Ok(None);
-    }
-    {
-        let failed = state
-            .weather
-            .lookup_failed
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if failed
-            .get(&cell)
-            .is_some_and(|at| now - *at < Duration::minutes(LOOKUP_RETRY_MINUTES))
-        {
-            return Ok(None);
-        }
-        let mut looking = state
-            .weather
-            .looking_up
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if !looking.insert(cell) {
-            return Ok(None);
-        }
-    }
-    let generation = state.weather.erased.load(Ordering::SeqCst);
-    tokio::spawn(look_up(state.clone(), cell, generation));
-    Ok(None)
-}
-
-async fn store_place(state: &AppState, cell: Cell, name: Option<&str>) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO weather_places (lat_i, lon_i, name, asked_at) VALUES (?, ?, ?, ?) \
-         ON CONFLICT(lat_i, lon_i) DO UPDATE SET name = excluded.name, asked_at = excluded.asked_at",
-    )
-    .bind(cell.lat_i)
-    .bind(cell.lon_i)
-    .bind(name)
-    .bind(stamp(state.weather.now()))
-    .execute(&state.db)
-    .await
-    .map(|_| ())
-}
-
-/// One lookup, started at erase `generation`: an erase since then (Location Off) keeps its answer from being
-/// written (code QA L1).
-async fn look_up(state: AppState, cell: Cell, generation: u64) {
-    let found = find_place(state.weather.place_fetch.as_ref(), cell).await;
-    let weather = &state.weather;
-    {
-        let _writes = weather.place_writes.lock().await;
-        if weather.erased.load(Ordering::SeqCst) == generation {
-            match found {
-                Ok(name) => {
-                    if let Err(err) = store_place(&state, cell, name.as_deref()).await {
-                        tracing::error!(%err, "weather: couldn't store a place name");
-                    }
-                }
-                Err(code) => {
-                    tracing::warn!(code, "weather: Kartverket's place lookup failed");
-                    let now = weather.now();
-                    let mut failed = weather
-                        .lookup_failed
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    // Only the failures still in their retry gap are kept (code QA L2).
-                    failed.retain(|_, at| now - *at < Duration::minutes(LOOKUP_RETRY_MINUTES));
-                    failed.insert(cell, now);
-                }
-            }
-        }
-    }
-    state
-        .weather
-        .looking_up
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&cell);
-}
-
-/// Kartverket's place-name search around the cell's centre (§2.2): 2000 m (two pages at most), else 5000 m (two
-/// pages); the pick is [pick_place]'s. `Err` with a code when a request fails.
-pub async fn find_place(source: &dyn Source, cell: Cell) -> Result<Option<String>, &'static str> {
-    let (lat, lon) = cell.coordinates();
-    for radius in [2000, 5000] {
-        let mut names = Vec::new();
-        for page in 1..=2 {
-            let url = format!(
-                "{KARTVERKET_BASE}/stedsnavn/v1/punkt?nord={lat}&ost={lon}&koordsys=4258&radius={radius}\
-                 &utkoordsys=4258&treffPerSide=500&side={page}&filtrer=navn.stedsnavn.skrivem%C3%A5te,\
-                 navn.navneobjekttype,navn.meterFraPunkt,metadata.totaltAntallTreff"
-            );
-            let response = source
-                .get(SourceRequest::new(url, Kind::Weather, Reach::Public))
-                .await
-                .map_err(|err| match err {
-                    FetchError::Timeout => "timeout",
-                    _ => "network",
-                })?;
-            if response.status != 200 || response.truncated {
-                return Err("status");
-            }
-            let value: serde_json::Value =
-                serde_json::from_slice(&response.body).map_err(|_| "unreadable")?;
-            let hits = value["navn"].as_array().ok_or("unreadable")?;
-            names.extend(hits.iter().cloned());
-            let total = value["metadata"]["totaltAntallTreff"].as_u64().unwrap_or(0);
-            if total <= 500 * page {
-                break;
-            }
-        }
-        if let Some(name) = pick_place(&names) {
-            return Ok(Some(name));
-        }
-    }
-    Ok(None)
-}
-
-/// A district or settlement first, the nearest by `meterFraPunkt`; only when none, an estate, hamlet or rural
-/// community; its first spelling, cleaned ([clean_name]).
-pub fn pick_place(names: &[serde_json::Value]) -> Option<String> {
-    const FIRST: [&str; 5] = ["Bydel", "Tettsteddel", "Tettbebyggelse", "Tettsted", "By"];
-    const THEN: [&str; 3] = ["Boligfelt", "Grend", "Bygdelag (bygd)"];
-    let nearest = |types: &[&str]| {
-        names
-            .iter()
-            .filter(|n| {
-                n["navneobjekttype"]
-                    .as_str()
-                    .is_some_and(|t| types.contains(&t))
-            })
-            .filter_map(|n| {
-                let distance = n["meterFraPunkt"].as_f64()?;
-                let name = clean_name(n["stedsnavn"][0]["skrivemåte"].as_str()?)?;
-                Some((distance, name))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, name)| name)
-    };
-    nearest(&FIRST).or_else(|| nearest(&THEN))
-}
-
-/// Control and bidi characters out, whitespace collapsed, at most 40 characters cut at a word boundary.
-pub fn clean_name(raw: &str) -> Option<String> {
-    let bidi = |c: char| matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
-    let kept: String = raw
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .filter(|c| !c.is_control() && !bidi(*c))
-        .collect();
-    let words: Vec<&str> = kept.split_whitespace().collect();
-    let mut name = String::new();
-    for word in words {
-        let len = name.chars().count() + usize::from(!name.is_empty()) + word.chars().count();
-        if len > 40 {
-            if name.is_empty() {
-                name = word.chars().take(40).collect();
-            }
-            break;
-        }
-        if !name.is_empty() {
-            name.push(' ');
-        }
-        name.push_str(word);
-    }
-    (!name.is_empty()).then_some(name)
-}
-
 // ---- erase --------------------------------------------------------------------------------------
 
-/// A phone's Location turned Off (D13): every weather cache goes - the cells, the places, the nowcasts and the
-/// failed lookups' cells; a lookup or a nowcast fill in flight writes nothing back (code QA L1, L2).
+/// A phone's Location turned Off (D13): every weather cache goes - the cells and the nowcasts; a nowcast fill in
+/// flight writes nothing back (code QA L1).
 pub async fn erase(state: &AppState) -> Result<(), sqlx::Error> {
-    let _writes = state.weather.place_writes.lock().await;
     state.weather.erased.fetch_add(1, Ordering::SeqCst);
-    state
-        .weather
-        .lookup_failed
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
     sqlx::query("DELETE FROM weather_cells")
-        .execute(&state.db)
-        .await?;
-    sqlx::query("DELETE FROM weather_places")
         .execute(&state.db)
         .await?;
     state
@@ -776,10 +559,5 @@ impl Weather {
     /// The nowcast map's cells (the tests).
     pub fn nowcast_cells(&self) -> usize {
         self.nowcasts.lock().unwrap().len()
-    }
-
-    /// Place lookups running (the tests).
-    pub fn lookups_running(&self) -> usize {
-        self.looking_up.lock().unwrap().len()
     }
 }

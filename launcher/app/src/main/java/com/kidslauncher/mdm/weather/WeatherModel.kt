@@ -33,9 +33,6 @@ const val WEATHER_TRY_GAP_MS = 5 * 60_000L
  * this often, so a parent's change reaches the lock within a sync. */
 const val WEATHER_NUDGE_GAP_MS = 3 * 60_000L
 
-/** E8's L3: a new cell's place-less first answer is pulled once more this much later (Kartverket is asked after it). */
-const val WEATHER_PLACE_RETRY_MS = 2 * 60_000L
-
 /** The card's nowcast answer is reused this long (memory only). */
 const val WEATHER_NOW_REUSE_MS = 2 * 60_000L
 
@@ -201,12 +198,11 @@ fun weatherMm(mm: Double, locale: Locale): String? =
 /** One of the card's three columns: the part ("morning" ...), the symbol code (known, else null), degrees, mm. */
 data class WeatherCardColumn(val part: String, val symbol: String?, val temp: Int?, val mm: Double?, val current: Boolean)
 
-/** The card (§5.2): [tomorrow] when its day isn't the phone's today ("I morgen"), the columns, the foot (the place,
- * low, high, the dark), and the "Oppdatert kl." time when due. */
+/** The card (§5.2): [tomorrow] when its day isn't the phone's today ("I morgen"), the columns, the foot (the low,
+ * high, the dark), and the "Oppdatert kl." time when due. */
 data class WeatherCard(
     val tomorrow: Boolean,
     val columns: List<WeatherCardColumn>,
-    val place: String?,
     val low: Int?,
     val high: Int?,
     val dark: WeatherAnswerDark?,
@@ -237,7 +233,7 @@ fun weatherCard(
     }
     if (columns.isEmpty()) return null
     val dark = day.dark?.takeIf { it.kind in WEATHER_DARK_KINDS && (it.kind != "at" || it.atMs != null) }
-    return WeatherCard(tomorrow, columns, answer.place, day.low, day.high, dark, weatherUpdatedAt(answer, nowMs))
+    return WeatherCard(tomorrow, columns, day.low, day.high, dark, weatherUpdatedAt(answer, nowMs))
 }
 
 /** Where the mark sits (D15): beside the date or on its own line under it, with or without the words. */
