@@ -625,7 +625,11 @@ class LockMediaGuardTest {
             assertFalse("MusicLockPanel must not use $forbidden", code.contains(forbidden))
         }
         val calls = Regex("MusicSessions\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("addListener", "removeListener", "reading", "usable", "playPause", "next", "previous"), calls)
+        assertEquals(setOf("addListener", "removeListener", "reading", "lockUsable", "Live", "playPause", "next", "previous"), calls)
+        // 2026-11-04: any allowed app's session - the buttons act only on the picked one's controller.
+        for (button in listOf("playPause(activity, picked?.controller, session)", "previous(activity, picked?.controller)", "next(activity, picked?.controller)")) {
+            assertTrue(button, code.contains(button))
+        }
         // Design 28: the listening window only narrows what shows - its stamps are read, never written.
         val window = Regex("MusicListening\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
         assertEquals(setOf("addListener", "removeListener", "listening", "bootCount"), window)
@@ -638,7 +642,7 @@ class LockMediaGuardTest {
         for (forbidden in listOf("MusicNowPlaying", "snapshot", "Snapshot", "openPlayer", "EXTRA_RESUME", "musicCard")) {
             assertFalse("MusicLockPanel must not use $forbidden", code.contains(forbidden))
         }
-        assertTrue(code.contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
+        assertTrue(code.contains("lockTilePick(reading.access, candidates, MusicListening.listening(), now)"))
     }
 
     @Test

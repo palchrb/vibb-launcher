@@ -287,9 +287,11 @@ class MusicSuspensionGuardTest {
             assertFalse(source.contains("playbackInfo"))
             assertFalse(source.contains("PLAYBACK_TYPE"))
         }
-        assertTrue(sessions.contains("val music = controllers.firstOrNull { app != null && MusicTrust.trusted(app, it.packageName) }"))
-        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(newArt = true)"))
-        assertTrue(lock.contains("val art = MusicSessions.reading.art"))
+        // Home's pick is the first Vibb music session (by name and signer); the lock's art is its pick's (2026-11-04).
+        assertTrue(sessions.contains("Watched(c, app != null && MusicTrust.trusted(app, c.packageName))"))
+        assertTrue(sessions.contains("val music = watched.firstOrNull { it.vibb }"))
+        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(this@Watched, newArt = true)"))
+        assertTrue(lock.contains("val art = picked?.art"))
         assertTrue(lock.contains("val position = positionNow(s, SystemClock.elapsedRealtime())"))
         // a room's poll-anchored position: PLAYING from the poll's measuredAt, paused stands still
         val room = MusicSession("me.vibb.music", SessionPlay.PLAYING, "Abels tårn", "Episode 12", 120_000, 50_000, 1f, 1_800_000)
@@ -340,11 +342,12 @@ class MusicSuspensionGuardTest {
         for (call in listOf("MusicListening.addListener(changed)", "MusicListening.removeListener(changed)", "handler.removeCallbacks(expiry)")) {
             assertTrue(call, setActive.contains(call))
         }
-        // the lock: the pure lockTileSession (MusicWindowTest holds its rule), read once in shown() (step 3 code QA L1)
+        // the lock: the pure lockTilePick over lockTileSession (LockSessionPickTest, MusicWindowTest hold the rules), read once
+        // in shown() (step 3 code QA L1)
         val lock = file("music/MusicLockPanel.kt")
-        assertEquals(1, Regex("lockTileSession\\(").findAll(lock).count())
-        assertTrue(body(lock, "private fun shown(").contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
-        for (direct in listOf("windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
+        assertEquals(1, Regex("lockTilePick\\(").findAll(lock).count())
+        assertTrue(body(lock, "private fun shown(").contains("lockTilePick(reading.access, candidates, MusicListening.listening(), now)"))
+        for (direct in listOf("lockTileSession(", "windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
         val lookUp = body(lock, "fun lookUp(")
         assertTrue(lookUp.contains("val tileNow = shown(now)\n        session = tileNow.session"))
         assertTrue(body(lock, "private fun render(").contains("session = shown().session"))

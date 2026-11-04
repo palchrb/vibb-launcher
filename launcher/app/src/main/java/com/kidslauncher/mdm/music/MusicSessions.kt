@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.music
 
 import android.app.PendingIntent
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -19,38 +20,61 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.badges.BadgeListenerService
 import com.kidslauncher.mdm.lock.VisibleSender
+import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.currentPolicyDecision
+import com.kidslauncher.mdm.server.effectiveAllowlist
 
 private const val LOG_TAG = "MusicSessions"
 
 /**
- * The music app's live media session for Home's card and the PIN lock's media view (design 21
- * §3): `MediaSessionManager.getActiveSessions` through [BadgeListenerService] and its change
- * listener, filtered to [MUSIC_PACKAGES]. Without notification-listener access (granted with adb
- * at provisioning) there are no media surfaces. Watched only while Home or the lock shows one
- * ([addListener]); main thread, except [pauseBeforeSuspend].
+ * The live media sessions for Home's card and the PIN lock's media view (design 21 §3):
+ * `MediaSessionManager.getActiveSessions` through [BadgeListenerService] and its change listener. One
+ * watcher, two picks: Home's card reads Vibb music's session ([Reading.session], [Reading.controller],
+ * [Reading.art] - [MusicTrust], by name and signer); the lock reads every active session
+ * ([Reading.live]) and picks its own (`lockTilePick`, 2026-11-04: any app the parent allowed and
+ * that is usable now). Without notification-listener access (granted with adb at provisioning)
+ * there are no media surfaces. Watched only while Home or the lock shows one ([addListener]); main
+ * thread, except [pauseBeforeSuspend].
  */
 object MusicSessions {
-    /** What the surfaces may know now: [access] to the sessions at all, and the music app's
-     * session with its [controller] and cover [art] (null when none is active). */
-    class Reading(val access: Boolean, val session: MusicSession?, val controller: MediaController?, val art: Bitmap? = null)
+    /** One active session: [vibb] - Vibb music ([MusicTrust]); another app's [session] is already cut
+     * (`foreignSession`) and its [art] scaled down ([FOREIGN_ART_MAX_PX]). */
+    class Live(val session: MusicSession, val controller: MediaController, val art: Bitmap?, val vibb: Boolean)
+
+    /** What the surfaces may know now: [access] to the sessions at all, and Vibb music's session
+     * with its [controller] and cover [art] (null when none is active) - Home's card; [live]: every
+     * active session in the platform's order (Vibb music's among them) - the lock's pick. */
+    class Reading(
+        val access: Boolean,
+        val session: MusicSession?,
+        val controller: MediaController?,
+        val art: Bitmap? = null,
+        val live: List<Live> = emptyList(),
+    )
 
     private val main = Handler(Looper.getMainLooper())
     private val listeners = mutableListOf<() -> Unit>()
+    /** The listeners that hear every app's session (the lock); the rest hear only Vibb music's (Home). */
+    private val everyAppListeners = mutableSetOf<() -> Unit>()
     private var manager: MediaSessionManager? = null
-    private var watched: MediaController? = null
+    private var watched: List<Watched> = emptyList()
 
     var reading = Reading(access = false, session = null, controller = null)
         private set
 
     private fun component(context: Context) = ComponentName(context, BadgeListenerService::class.java)
 
-    fun addListener(context: Context, listener: () -> Unit) {
+    /** [everyApp]: told of any app's session change (the lock); else only of Vibb music's (Home's card). */
+    fun addListener(context: Context, listener: () -> Unit, everyApp: Boolean = false) {
         listeners += listener
+        if (everyApp) everyAppListeners += listener
         if (manager == null) watch(context.applicationContext)
     }
 
     fun removeListener(listener: () -> Unit) {
         listeners -= listener
+        everyAppListeners -= listener
         if (listeners.isEmpty()) unwatch()
     }
 
@@ -77,52 +101,85 @@ object MusicSessions {
     private fun unwatch() {
         manager?.let { runCatching { it.removeOnActiveSessionsChangedListener(sessionsChanged) } }
         manager = null
-        watched?.let { runCatching { it.unregisterCallback(callback) } }
-        watched = null
+        watched.forEach { it.unregister() }
+        watched = emptyList()
         reading = Reading(access = false, session = null, controller = null)
     }
 
     private val sessionsChanged = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
         pick(controllers.orEmpty())
-        changed()
+        changed(vibb = true)
     }
 
-    private val callback = object : MediaController.Callback() {
-        override fun onPlaybackStateChanged(state: PlaybackState?) = update(newArt = false)
-        override fun onMetadataChanged(metadata: MediaMetadata?) = update(newArt = true)
-        override fun onSessionDestroyed() {
-            watched?.let { runCatching { it.unregisterCallback(this) } }
-            watched = null
-            reading = Reading(access = true, session = null, controller = null)
-            changed()
+    /** One active session, watched with its own callback: its state and art read once per change
+     * here - the surfaces' ticks only read [reading]. */
+    private class Watched(val controller: MediaController, val vibb: Boolean) {
+        var session: MusicSession = sessionOf(controller, vibb)
+        var art: Bitmap? = art(controller.metadata, vibb)
+        val callback = object : MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: PlaybackState?) = update(this@Watched, newArt = false)
+            override fun onMetadataChanged(metadata: MediaMetadata?) = update(this@Watched, newArt = true)
+            override fun onSessionDestroyed() = destroyed(this@Watched)
         }
+
+        fun refresh(newArt: Boolean) {
+            session = sessionOf(controller, vibb)
+            if (newArt) art = art(controller.metadata, vibb)
+        }
+
+        fun register() = controller.registerCallback(callback, main)
+        fun unregister() = runCatching { controller.unregisterCallback(callback) }
     }
 
     private fun pick(controllers: List<MediaController>) {
         val app = appContext
-        val music = controllers.firstOrNull { app != null && MusicTrust.trusted(app, it.packageName) }
-        if (music?.sessionToken != watched?.sessionToken) {
-            watched?.let { runCatching { it.unregisterCallback(callback) } }
-            watched = music
-            music?.registerCallback(callback, main)
+        val kept = watched.associateBy { it.controller.sessionToken }
+        val next = controllers.map { c ->
+            kept[c.sessionToken]?.also { it.refresh(newArt = true) }
+                ?: Watched(c, app != null && MusicTrust.trusted(app, c.packageName)).also { it.register() }
         }
-        reading = Reading(access = true, session = music?.let(::sessionOf), controller = music, art = art(music?.metadata))
+        watched.filter { w -> next.none { it === w } }.forEach { it.unregister() }
+        watched = next
+        publish()
     }
 
-    /** The session changed: its state (and, with new metadata, its art) read once here - the
-     * surfaces' ticks only read [reading]. */
-    private fun update(newArt: Boolean) {
-        val c = watched ?: return
-        reading = Reading(access = true, session = sessionOf(c), controller = c, art = if (newArt) art(c.metadata) else reading.art)
-        changed()
+    /** Home's pick (the first Vibb music session, as before 2026-11-04) and the lock's list, from [watched]. */
+    private fun publish() {
+        val music = watched.firstOrNull { it.vibb }
+        reading = Reading(
+            access = true,
+            session = music?.session,
+            controller = music?.controller,
+            art = music?.art,
+            live = watched.map { Live(it.session, it.controller, it.art, it.vibb) },
+        )
     }
 
-    private fun changed() = listeners.toList().forEach { it() }
+    private fun isHomePick(w: Watched) = watched.firstOrNull { it.vibb } === w
 
-    private fun sessionOf(c: MediaController): MusicSession {
+    private fun update(w: Watched, newArt: Boolean) {
+        if (watched.none { it === w }) return
+        w.refresh(newArt)
+        publish()
+        changed(vibb = isHomePick(w))
+    }
+
+    private fun destroyed(w: Watched) {
+        if (watched.none { it === w }) return
+        val home = isHomePick(w)
+        w.unregister()
+        watched = watched.filter { it !== w }
+        publish()
+        changed(vibb = home)
+    }
+
+    /** [vibb]: Vibb music's session (Home's) changed - every listener; else only the lock's. */
+    private fun changed(vibb: Boolean) = listeners.toList().filter { vibb || it in everyAppListeners }.forEach { it() }
+
+    private fun sessionOf(c: MediaController, vibb: Boolean): MusicSession {
         val state = c.playbackState
         val meta = c.metadata
-        return MusicSession(
+        val session = MusicSession(
             packageName = c.packageName,
             play = sessionPlay(state?.state),
             entry = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: meta?.getString(MediaMetadata.METADATA_KEY_ARTIST),
@@ -132,18 +189,48 @@ object MusicSessions {
             speed = state?.playbackSpeed ?: 1f,
             durationMs = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.coerceAtLeast(0) ?: 0,
         )
+        // S-L8: another app's metadata is untrusted - its texts cut, its times bounded.
+        return if (vibb) session else foreignSession(session)
     }
 
-    /** The session's art (Media3 puts the cover's bitmap in the platform metadata), else null. */
-    private fun art(meta: MediaMetadata?): Bitmap? {
+    /** The session's art (Media3 puts the cover's bitmap in the platform metadata), else null;
+     * another app's scaled down to [FOREIGN_ART_MAX_PX] (an oversized bitmap must never reach the lock's draw). */
+    private fun art(meta: MediaMetadata?, vibb: Boolean): Bitmap? {
         meta ?: return null
-        return listOf(MediaMetadata.METADATA_KEY_ART, MediaMetadata.METADATA_KEY_ALBUM_ART, MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+        val art = listOf(MediaMetadata.METADATA_KEY_ART, MediaMetadata.METADATA_KEY_ALBUM_ART, MediaMetadata.METADATA_KEY_DISPLAY_ICON)
             .firstNotNullOfOrNull { runCatching { meta.getBitmap(it) }.getOrNull() }
+        if (vibb || art == null) return art
+        val long = maxOf(art.width, art.height)
+        if (long <= FOREIGN_ART_MAX_PX) return art
+        val scale = FOREIGN_ART_MAX_PX.toFloat() / long
+        return runCatching {
+            Bitmap.createScaledBitmap(art, (art.width * scale).toInt().coerceAtLeast(1), (art.height * scale).toInt().coerceAtLeast(1), true)
+        }.getOrNull()
+    }
+
+    /**
+     * The lock may show [live]'s session and act on it (`lockAppUsable`): not suspended; another app
+     * also not hidden by the device owner and on the allowlist when the phone has one (the last
+     * accepted policy's, less the relock's blocked apps). Looked up on changes only (the panel's
+     * `lookUp`), never at a tick; any failure is "no".
+     */
+    fun lockUsable(context: Context, live: Live): Boolean {
+        val pkg = live.session.packageName
+        if (!usable(context, pkg)) return false
+        if (live.vibb) return true
+        return try {
+            val dpm = context.getSystemService(DevicePolicyManager::class.java)
+            val hidden = dpm.isApplicationHidden(ComponentName(context, MdmDeviceAdminReceiver::class.java), pkg)
+            val allowlist = effectiveAllowlist(currentPolicyDecision().policy?.allowlist, WindowRelock.blockedPackages(context))
+            lockAppUsable(pkg, vibb = false, suspended = false, hidden = hidden, allowlist = allowlist, ownPackage = context.packageName)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**
      * Play or pause the live session (its transport controls - nothing is opened). A pause always
-     * goes; play, next and previous only while the music app can be used, looked up at the tap
+     * goes; play, next and previous only while the session's app can be used, looked up at the tap
      * (qa-21-step4-code M1: a time rule may have suspended it since the surface was drawn).
      */
     fun playPause(context: Context, controller: MediaController?, session: MusicSession?) {
@@ -169,10 +256,16 @@ object MusicSessions {
 
     /**
      * The launcher saw packages suspended or unsuspended (`LauncherApps.Callback`, main thread): a
-     * music app among them re-renders the shown surfaces, which look its state up again.
+     * music app among them re-renders the shown surfaces, another app with a live session the lock
+     * (both look its state up again).
      */
     fun packagesChanged(packages: List<String>?) {
-        if (packages.orEmpty().any { it in trustedMusicNames(com.kidslauncher.mdm.BuildConfig.DEBUG) } && listeners.isNotEmpty()) changed()
+        if (listeners.isEmpty()) return
+        val changedApps = packages.orEmpty()
+        when {
+            changedApps.any { it in trustedMusicNames(com.kidslauncher.mdm.BuildConfig.DEBUG) } -> changed(vibb = true)
+            changedApps.any { pkg -> reading.live.any { it.session.packageName == pkg } } -> changed(vibb = false)
+        }
     }
 
     /**
@@ -194,7 +287,7 @@ object MusicSessions {
         }
     }
 
-    /** The music app can be used now: installed, and not suspended (a time rule, the allowlist). */
+    /** The app can be used now: installed, and not suspended (a time rule, the budget, the allowlist). */
     fun usable(context: Context, pkg: String?): Boolean {
         pkg ?: return false
         return try {
