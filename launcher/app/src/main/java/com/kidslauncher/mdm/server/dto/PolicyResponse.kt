@@ -144,6 +144,12 @@ data class PolicyResponse(
      * (an older server, a `Fallback`) means "touch nothing". Not in `LastEnforcedPlan`: a denial lives in Android's
      * grant state. */
     val appPermissions: kotlinx.serialization.json.JsonElement? = null,
+    /** "Show as a media player on the lock screen" (the server's Device › Apps › Permissions, 2026-11-04): `[package]`,
+     * the apps the parent switched on on this phone - the lock's media tile counts them as media apps
+     * ([com.kidslauncher.mdm.music.lockMediaApp]). Raw JSON read by [com.kidslauncher.mdm.music.lockMediaAppsOf], so
+     * nothing in it can fail the policy; missing or not a list (an older server, a `Fallback`) = none. Not in
+     * `LastEnforcedPlan`. */
+    val lockMediaApps: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

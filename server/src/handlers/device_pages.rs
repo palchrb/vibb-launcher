@@ -1754,7 +1754,7 @@ pub struct AppView {
     /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
     /// Design 68: an allowed app's Permissions - the row's second sub-line and the `<details>` - when the phone's
-    /// report says something about it.
+    /// report says something about it, or it has the lock screen's media player switch (2026-11-04).
     pub perms: Option<crate::app_permissions::PermsView>,
 }
 
@@ -1996,6 +1996,11 @@ pub(crate) async fn render_apps(
         Ok(denied) => denied,
         Err(err) => return read_failed(lang, id, "the phone's app permissions", err),
     };
+    // 2026-11-04: the apps shown as media players on the lock screen (a failed read must not show them all off).
+    let lock_media = match crate::app_permissions::lock_media_apps(&state.db, id).await {
+        Ok(apps) => apps,
+        Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
+    };
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
     let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from, lang).await {
         Ok(nav) => nav,
@@ -2089,6 +2094,12 @@ pub(crate) async fn render_apps(
                     camera_off.contains(&package),
                     paused,
                     open_perms == Some(package.as_str()),
+                    crate::app_permissions::lock_media_offered(
+                        &package,
+                        row.is_launcher,
+                        row.third_party,
+                    )
+                    .then(|| lock_media.contains(&package)),
                 )
             })
             .flatten();

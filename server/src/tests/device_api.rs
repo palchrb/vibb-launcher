@@ -213,6 +213,23 @@ async fn db_error_is_500_not_default() {
     }
 }
 
+/// 2026-11-04: the lock-screen media apps only show a tile - a failed read sends the policy with none (logged), never
+/// a 500 for the phone's whole policy.
+#[tokio::test]
+async fn a_lost_lock_media_list_sends_none() {
+    let app = TestApp::new().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    sqlx::query("DROP TABLE device_lock_media_apps")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.json()["lock_media_apps"], serde_json::json!([]));
+}
+
 #[tokio::test]
 async fn failed_policy_does_not_consume_command() {
     let app = TestApp::new().await;
@@ -329,6 +346,7 @@ async fn policy_json_keys_snapshot() {
             "launcher_ui",
             "location_policy",
             "lock_glance",
+            "lock_media_apps",
             "lock_task_features",
             "music",
             "notification_auto_cancel",
@@ -363,6 +381,7 @@ async fn policy_json_keys_snapshot() {
         "launcher_ui",
         "location_policy",
         "lock_glance",
+        "lock_media_apps",
         "lock_task_features",
         "music",
         "notification_auto_cancel",
@@ -582,6 +601,10 @@ async fn policy_json_keys_snapshot() {
         denied["app_permissions"],
         serde_json::json!([{"package_name": "com.whatsapp", "camera": "deny"}])
     );
+
+    // 2026-11-04: always a list of package names (`[]` for a fresh phone), the launcher's `lockMediaAppsOf` shape.
+    assert_eq!(object["lock_media_apps"], serde_json::json!([]));
+    assert_eq!(denied["lock_media_apps"], serde_json::json!([]));
 }
 
 #[tokio::test]

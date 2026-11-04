@@ -1365,6 +1365,11 @@ pub fn build_admin_router(
             "/devices/{id}/apps/permissions",
             post(handlers::devices::save_app_permissions),
         )
+        // 2026-11-04: an app shown as a media player on the lock screen, or not (in its Permissions).
+        .route(
+            "/devices/{id}/apps/lock-media",
+            post(handlers::devices::save_lock_media),
+        )
         // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51)
         // - one three-way select per app since 2026-10-21.
         .route(
