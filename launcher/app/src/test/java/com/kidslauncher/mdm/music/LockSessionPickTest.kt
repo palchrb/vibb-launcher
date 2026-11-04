@@ -102,14 +102,15 @@ class LockSessionPickTest {
         assertTrue(sessions.contains("lockMediaApp(category, browser = pkg in browsers, chosen = pkg in chosen)"))
     }
 
-    /** E9b: another app's skip buttons show only when its session advertises that skip; Vibb music's always. */
+    /** E9b: another app's skip button hides only when its session's actions are known and lack that skip; no actions
+     * show both (the transport control's tap, QA L2); Vibb music's always show. */
     @Test
     fun `the tile's skips follow the session's advertised actions`() {
         val both = PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_PAUSE
         assertTrue(lockSkipShown(vibb = true, 0L, next = true) && lockSkipShown(vibb = true, 0L, next = false))
         assertTrue(lockSkipShown(vibb = false, both, next = true) && lockSkipShown(vibb = false, both, next = false))
         assertFalse("Fennec: play and pause only", lockSkipShown(vibb = false, PlaybackState.ACTION_PLAY_PAUSE, next = true))
-        assertFalse(lockSkipShown(vibb = false, 0L, next = false))
+        assertTrue("no actions known: both, the transport control's", lockSkipShown(vibb = false, 0L, next = false) && lockSkipShown(vibb = false, 0L, next = true))
         assertTrue(lockSkipShown(vibb = false, PlaybackState.ACTION_SKIP_TO_NEXT, next = true))
         assertFalse(lockSkipShown(vibb = false, PlaybackState.ACTION_SKIP_TO_NEXT, next = false))
     }

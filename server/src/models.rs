@@ -1184,7 +1184,8 @@ pub struct PolicyResponse {
     pub app_permissions: Vec<crate::app_permissions::AppPermission>,
     /// "Show as a media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
     /// parent switched on on this phone, which the lock's media tile then shows as it does a music, video or browser
-    /// app (`app_permissions::lock_media_apps`). A failing query is a 500. An older launcher ignores it.
+    /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
+    /// ignores it.
     pub lock_media_apps: Vec<String>,
 }
 

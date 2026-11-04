@@ -2054,10 +2054,8 @@ async fn apps_forms_return_to_their_rows() {
         app.assert_lands(&res, &cookie).await;
     }
     assert_eq!((toggles, names, updates), (4, 2, 1));
-    assert!(
-        lock_media > 0,
-        "the allowed third-party apps' lock media switches"
-    );
+    // No app here is allowed and installed third-party, so none has the lock media switch (its own test has one).
+    assert_eq!(lock_media, 0);
 
     // Each did what it says: the clock and Element X off, the game and Notes on; two names; the
     // Wi-Fi switch off. All on Anna.
@@ -2280,9 +2278,11 @@ async fn the_permissions_form_returns_to_its_open_details() {
     assert_eq!(rows, 0);
 }
 
-/// 2026-11-04: "Show as a media player on the lock screen" - a third-party allowed app's switch in its Permissions,
-/// back to the open details, sent as the policy's `lock_media_apps`; none for a preinstalled app; Vibb, Vibb music and
-/// Play's core refused at their row; the cap as the camera's.
+/// 2026-11-04: "Show as a media player on the lock screen" - an allowed, installed third-party app's switch in its
+/// Permissions, back to the open details, sent as the policy's `lock_media_apps`; none for a preinstalled app. The
+/// route keeps the page's rule for on (a preinstalled, an unknown, Vibb, Vibb music and Play's core refused at their
+/// row), takes off for any app, answers 400 for another value, prunes the rows of apps no longer offered when one is
+/// turned on, and caps the rest as the camera's.
 #[tokio::test]
 async fn the_lock_media_switch_returns_to_its_open_details() {
     let app = TestApp::new().await;
@@ -2300,7 +2300,9 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     )
     .await;
     sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
-        .bind(format!("[\"{pod}\", \"com.android.deskclock\"]"))
+        .bind(format!(
+            "[\"{pod}\", \"com.android.deskclock\", \"org.example.gone\"]"
+        ))
         .bind(id)
         .execute(&app.db)
         .await
@@ -2310,6 +2312,7 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     let anchor = format!("perms-{pod}");
     assert!(html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")));
     assert!(html.contains("Show as a media player on the lock screen"));
+    assert!(html.contains("title and picture show on the lock screen"));
     assert!(html.contains(&format!(
         "action=\"/devices/{id}/apps/lock-media#{anchor}\""
     )));
@@ -2319,15 +2322,38 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     );
 
     let target = format!("/devices/{id}/apps/lock-media");
+    let post = |package: &'static str, value: Option<&'static str>| {
+        let mut sent = vec![("package_name", package)];
+        if let Some(value) = value {
+            sent.push(("lock_media", value));
+        }
+        let (app, target, cookie) = (&app, &target, &cookie);
+        async move {
+            app.request_form(Method::POST, target, Some(cookie), &sent)
+                .await
+        }
+    };
+    let policy = || async {
+        app.request(Method::GET, "/api/devices/policy", Some(&token), None)
+            .await
+            .json()["lock_media_apps"]
+            .clone()
+    };
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_lock_media_apps")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+
+    // A stale row (an app gone since) is pruned by the next "on".
+    sqlx::query("INSERT INTO device_lock_media_apps (device_id, package_name) VALUES (?, 'org.example.gone')")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let mut nudges = app.state.command_notify.subscribe();
-    let res = app
-        .request_form(
-            Method::POST,
-            &target,
-            Some(&cookie),
-            &[("package_name", pod), ("lock_media", "on")],
-        )
-        .await;
+    let res = post(pod, Some("on")).await;
     let back = format!("{page}?perms={pod}");
     assert_redirect(&res, &back, Some(&anchor));
     assert_eq!(nudges.try_recv().ok(), Some(id));
@@ -2338,83 +2364,84 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
         "the details stay open"
     );
     assert!(html.contains("name=\"lock_media\" value=\"on\" checked"));
-    let policy = app
-        .request(Method::GET, "/api/devices/policy", Some(&token), None)
-        .await
-        .json();
-    assert_eq!(policy["lock_media_apps"], json!([pod]));
+    assert_eq!(policy().await, json!([pod]));
+    assert_eq!(rows().await, 1, "the stale row pruned");
 
-    // Off: the field missing (an auto-saving checkbox).
-    let res = app
-        .request_form(
-            Method::POST,
-            &target,
-            Some(&cookie),
-            &[("package_name", pod)],
-        )
-        .await;
+    // Off: the field missing (an auto-saving checkbox) - for any app, so a stale row can always be cleared.
+    let res = post(pod, None).await;
     assert_redirect(&res, &back, Some(&anchor));
-    let policy = app
-        .request(Method::GET, "/api/devices/policy", Some(&token), None)
-        .await
-        .json();
-    assert_eq!(policy["lock_media_apps"], json!([]));
+    assert_eq!(policy().await, json!([]));
+    let res = post("org.example.gone", None).await;
+    assert_redirect(
+        &res,
+        &format!("{page}?perms=org.example.gone"),
+        Some("perms-org.example.gone"),
+    );
+    assert_eq!(post(pod, Some("yes")).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        post("not a package", Some("on")).await.status,
+        StatusCode::BAD_REQUEST
+    );
 
+    // On only where the page offers it.
     for package in [
+        "com.android.deskclock",
+        "org.example.gone",
         "me.vibb.music",
         "me.vibb.launcher",
         "com.google.android.gms",
     ] {
-        let res = app
-            .request_form(
-                Method::POST,
-                &target,
-                Some(&cookie),
-                &[("package_name", package), ("lock_media", "on")],
-            )
-            .await;
+        let res = post(package, Some("on")).await;
         assert_redirect(
             &res,
             &format!("{page}?notice=perms&app=app-{package}"),
             Some(&format!("app-{package}")),
         );
     }
-    let res = app
-        .request_form(
-            Method::POST,
-            &target,
-            Some(&cookie),
-            &[("package_name", "not a package"), ("lock_media", "on")],
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(rows().await, 0);
 
-    for n in 0..crate::app_permissions::MAX_ROWS_PER_DEVICE {
+    // The cap: 200 offered apps on, the 201st refused.
+    let max = crate::app_permissions::MAX_ROWS_PER_DEVICE;
+    let many: Vec<String> = (0..=max).map(|n| format!("org.example.app{n}")).collect();
+    app.post_status(
+        &token,
+        json!({
+            "installed_apps": many
+                .iter()
+                .map(|p| json!({ "package_name": p, "label": p, "preinstalled": false }))
+                .collect::<Vec<_>>(),
+        }),
+    )
+    .await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(serde_json::to_string(&many).unwrap())
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for package in &many[..max as usize] {
         sqlx::query("INSERT INTO device_lock_media_apps (device_id, package_name) VALUES (?, ?)")
             .bind(id)
-            .bind(format!("org.example.app{n}"))
+            .bind(package)
             .execute(&app.db)
             .await
             .unwrap();
     }
+    let last = format!("org.example.app{max}");
     let res = app
         .request_form(
             Method::POST,
             &target,
             Some(&cookie),
-            &[("package_name", pod), ("lock_media", "on")],
+            &[("package_name", last.as_str()), ("lock_media", "on")],
         )
         .await;
     assert_redirect(
         &res,
-        &format!("{page}?notice=lock_media_full&app=app-{pod}"),
-        Some(&format!("app-{pod}")),
+        &format!("{page}?notice=lock_media_full&app=app-{last}"),
+        Some(&format!("app-{last}")),
     );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_lock_media_apps")
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(rows, crate::app_permissions::MAX_ROWS_PER_DEVICE);
+    assert_eq!(rows().await, max);
 }
 
 /// Design 68: at most `MAX_ROWS_PER_DEVICE` camera-off apps a phone - a new one past it is refused at its row and

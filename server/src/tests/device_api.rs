@@ -190,8 +190,6 @@ async fn db_error_is_500_not_default() {
         "device_pending_uninstalls",
         // Design 68: a lost list would hand the camera back.
         "device_app_permissions",
-        // 2026-11-04: the phone keeps its last list rather than an empty one.
-        "device_lock_media_apps",
         // Design 69: a lost hide rule would show what the parent hid.
         "device_calendar_rules",
         "device_calendars",
@@ -213,6 +211,23 @@ async fn db_error_is_500_not_default() {
             res.text()
         );
     }
+}
+
+/// 2026-11-04: the lock-screen media apps only show a tile - a failed read sends the policy with none (logged), never
+/// a 500 for the phone's whole policy.
+#[tokio::test]
+async fn a_lost_lock_media_list_sends_none() {
+    let app = TestApp::new().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    sqlx::query("DROP TABLE device_lock_media_apps")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.json()["lock_media_apps"], serde_json::json!([]));
 }
 
 #[tokio::test]

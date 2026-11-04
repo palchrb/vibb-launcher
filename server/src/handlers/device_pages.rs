@@ -2097,7 +2097,7 @@ pub(crate) async fn render_apps(
                     crate::app_permissions::lock_media_offered(
                         &package,
                         row.is_launcher,
-                        row.preinstalled,
+                        row.third_party,
                     )
                     .then(|| lock_media.contains(&package)),
                 )

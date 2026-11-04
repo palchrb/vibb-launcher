@@ -96,8 +96,7 @@ const ACCESS_STATES: [&str; 3] = ["granted", "denied", "unknown"];
 const CAMERA_STATES: [&str; 2] = ["requested", "admin_denied"];
 
 /// The policy's `lock_media_apps` for a phone (2026-11-04), sorted: the apps the parent switched on as media players on
-/// the lock screen - the phone's lock tile then shows their playback as it does a music, video or browser app's. A
-/// failing query is the caller's 500, as [policy_app_permissions]'s (the phone keeps its last policy).
+/// the lock screen - the phone's lock tile then shows their playback as it does a music, video or browser app's.
 pub async fn lock_media_apps(db: &SqlitePool, device_id: i64) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT package_name FROM device_lock_media_apps WHERE device_id = ? ORDER BY package_name",
@@ -107,14 +106,27 @@ pub async fn lock_media_apps(db: &SqlitePool, device_id: i64) -> Result<Vec<Stri
     .await
 }
 
-/// Switches one app's "Show as a media player on the lock screen" on (a row) or off (none). `Ok(false)`: the phone
-/// already has [MAX_ROWS_PER_DEVICE] rows (nothing written).
+/// Switches one app's "Show as a media player on the lock screen" on (a row) or off (none). Turning on first prunes
+/// the phone's rows outside [offered] (the apps the switch is offered for now: an app uninstalled or no longer
+/// allowed since keeps no row, so stale rows never fill the cap). `Ok(false)`: the phone still has
+/// [MAX_ROWS_PER_DEVICE] rows (nothing written). Off always deletes, whatever the app is now.
 pub async fn set_lock_media(
     db: &SqlitePool,
     device_id: i64,
     package: &str,
     on: bool,
+    offered: &[String],
 ) -> Result<bool, sqlx::Error> {
+    if on {
+        sqlx::query(
+            "DELETE FROM device_lock_media_apps WHERE device_id = ? \
+             AND package_name NOT IN (SELECT value FROM json_each(?))",
+        )
+        .bind(device_id)
+        .bind(serde_json::to_string(offered).unwrap_or_else(|_| "[]".to_string()))
+        .execute(db)
+        .await?;
+    }
     if !on {
         sqlx::query("DELETE FROM device_lock_media_apps WHERE device_id = ? AND package_name = ?")
             .bind(device_id)
@@ -144,11 +156,12 @@ pub async fn set_lock_media(
     Ok(true)
 }
 
-/// Whether an allowed app on Device › Apps gets the lock-screen media switch: a third-party app with a package (the
+/// Whether an allowed app on Device › Apps gets the lock-screen media switch, on the page and at the route alike: a
+/// third-party app the phone's last report has installed ([third_party]: reported and not preinstalled - the
 /// Permissions are a third-party app's), never Vibb, Vibb music (its player always shows) or Play's core.
-pub fn lock_media_offered(package: &str, is_launcher: bool, preinstalled: bool) -> bool {
+pub fn lock_media_offered(package: &str, is_launcher: bool, third_party: bool) -> bool {
     !is_launcher
-        && !preinstalled
+        && third_party
         && crate::app_display::valid_package_name(package)
         && !crate::play::is_play_core(package)
         && !crate::music::MUSIC_PACKAGES.contains(&package)
@@ -517,15 +530,15 @@ mod tests {
 
     #[test]
     fn the_lock_media_switch_is_a_third_party_apps() {
-        assert!(lock_media_offered("de.danoeh.antennapod", false, false));
+        assert!(lock_media_offered("de.danoeh.antennapod", false, true));
         assert!(
-            !lock_media_offered("de.danoeh.antennapod", false, true),
-            "preinstalled"
+            !lock_media_offered("de.danoeh.antennapod", false, false),
+            "preinstalled, or not installed"
         );
-        assert!(!lock_media_offered("me.vibb.launcher", true, false));
-        assert!(!lock_media_offered("me.vibb.launcher.debug", false, false));
-        assert!(!lock_media_offered("me.vibb.music", false, false));
-        assert!(!lock_media_offered("com.google.android.gms", false, false));
-        assert!(!lock_media_offered("", false, false));
+        assert!(!lock_media_offered("me.vibb.launcher", true, true));
+        assert!(!lock_media_offered("me.vibb.launcher.debug", false, true));
+        assert!(!lock_media_offered("me.vibb.music", false, true));
+        assert!(!lock_media_offered("com.google.android.gms", false, true));
+        assert!(!lock_media_offered("", false, true));
     }
 }

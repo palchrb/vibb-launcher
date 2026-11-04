@@ -129,12 +129,15 @@ fun lockMediaAppsOf(element: JsonElement?): Set<String> =
 
 /**
  * Whether the full tile shows its previous or next button ([next]) for the picked session: always for Vibb music (as
- * before); for another app only when its `PlaybackState` [advertised] that skip (`ACTION_SKIP_TO_PREVIOUS` /
- * `_NEXT`; E9b: Fennec's session, which can't skip, showed both and a tap did nothing). The hidden button keeps its
- * place, so play/pause stays in the middle.
+ * before); for another app hidden only when its `PlaybackState` [advertised] actions are known (non-zero) and lack that
+ * skip (`ACTION_SKIP_TO_PREVIOUS` / `_NEXT`; E9b: Fennec's session, which can't skip, showed both and a tap did
+ * nothing). No actions (0, or no state) shows both: the tap then goes as the transport control ([tileMediaKey]), which
+ * reaches a player's `onSkipToNext` whatever it lists (QA L2 of lock-media-switch). The hidden button keeps its place,
+ * so play/pause stays in the middle.
  */
 fun lockSkipShown(vibb: Boolean, advertised: Long, next: Boolean): Boolean =
-    vibb || advertised and (if (next) PlaybackState.ACTION_SKIP_TO_NEXT else PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
+    vibb || advertised == 0L ||
+        advertised and (if (next) PlaybackState.ACTION_SKIP_TO_NEXT else PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
 
 /**
  * The web browsers (QA M2 of lock-media-apps-2): the apps that open a plain https link no app claims ([https]) and

@@ -1407,8 +1407,8 @@
   "apps.perms.how": "På telefonen: Innstillinger (foreldrekode) › Sett alle begrensninger på pause › Tilgang for apper › {app}: {access}",
   "apps.perms.how_alarm": "På telefonen: Innstillinger (foreldrekode) › Sett alle begrensninger på pause › Tilgang for apper › {app}: {access}, og åpne så {app} én gang mens begrensningene er satt på pause",
   "apps.perms.lock_media": "Vis på låseskjermen som mediespiller",
-  "apps.perms.lock_media_help": "Musikk-, video- og nettleserapper vises alltid. Slå på for andre apper som spiller av lyd, som podkastapper.",
-  "apps.perms.lock_media_full": "Denne telefonen har allerede 200 apper som vises som mediespiller på låseskjermen - slå noen av først.",
+  "apps.perms.lock_media_help": "Mens appen spiller, vises tittel og bilde på låseskjermen - før koden er tastet. Musikk-, video- og nettleserapper gjør dette allerede; slå på for andre apper som spiller av lyd, som podkastapper.",
+  "apps.perms.lock_media_full": "Denne telefonen har allerede 200 apper som vises som mediespiller på låseskjermen - slå av noen først.",
 
   "devices.add.name_empty": "Gi telefonen et navn.",
   "devices.add.name_long": "Bruk høyst 40 tegn.",
@@ -1435,6 +1435,7 @@
   "error.make_code": "Kunne ikke lage en kode - ingenting ble endret. Sjekk serverloggen.",
   "error.not_an_app_name": "Ikke en app denne siden kan gi navn.",
   "error.not_camera": "Ikke en kamerainnstilling.",
+  "error.not_lock_media": "Ikke en innstilling for låseskjermen.",
   "error.not_an_app": "Ikke en app - ingenting ble endret.",
   "error.change_app": "Kunne ikke endre denne appen - sjekk serverloggen.",
   "error.launcher_always_on": "Vibb One er alltid på.",

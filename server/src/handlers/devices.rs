@@ -812,9 +812,9 @@ pub(crate) struct UnifiedAppRow {
     pub(crate) show_no_release_hint: bool,
     /// What the phone's report says about the app's camera and special accesses (design 68), for an installed app.
     pub(crate) access: Option<crate::app_permissions::AppAccess>,
-    /// The phone reports the app as preinstalled (a system app): no lock-screen media switch (2026-11-04) - the
-    /// Permissions are a third-party app's.
-    pub(crate) preinstalled: bool,
+    /// The phone's last report has the app installed and not preinstalled: the lock-screen media switch's apps
+    /// (2026-11-04, `app_permissions::lock_media_offered`) - the Permissions are a third-party app's.
+    pub(crate) third_party: bool,
 }
 
 /// The six parent-facing LockTask features, decoded from/encoded into the
@@ -1239,25 +1239,75 @@ pub async fn save_app_permissions(
 }
 
 /// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Show as a media player on the lock screen" - the
-/// auto-saving checkbox `lock_media=on`, its field missing = off - in its Permissions. Saved, refused and failed as
-/// [save_app_permissions] (`?notice=lock_media_full` past `app_permissions::MAX_ROWS_PER_DEVICE`); refused at the row
-/// for Vibb music too, whose player always shows.
+/// auto-saving checkbox `lock_media=on`, its field missing = off; another value is a 400 - in its Permissions. Saved,
+/// refused and failed as [save_app_permissions] (`?notice=lock_media_full` past `app_permissions::MAX_ROWS_PER_DEVICE`);
+/// refused at the row for Vibb music too, whose player always shows. On only for an app the page offers it for
+/// ([lock_media_offered_apps]; else refused as `perms`), pruning the phone's rows for apps no longer offered; off is
+/// always accepted, so any row can be cleared.
 pub async fn save_lock_media(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let on = form.get("lock_media").is_some_and(|v| v == "on");
+    let on = match form.get("lock_media").map(String::as_str) {
+        None => false,
+        Some("on") => true,
+        Some(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_lock_media");
+        }
+    };
     let target = match perms_target(&state, lang, id, &form, true).await {
         Ok(target) => target,
         Err(response) => return *response,
     };
-    match crate::app_permissions::set_lock_media(&state.db, id, &target.package, on).await {
+    let offered = if on {
+        match lock_media_offered_apps(&state, id).await {
+            Ok(offered) => offered,
+            Err(err) => return perms_save_failed(lang, id, err),
+        }
+    } else {
+        Vec::new()
+    };
+    if on && !offered.contains(&target.package) {
+        return target.refused("perms");
+    }
+    match crate::app_permissions::set_lock_media(&state.db, id, &target.package, on, &offered).await
+    {
         Ok(true) => target.saved(&state),
         Ok(false) => target.refused("lock_media_full"),
         Err(err) => perms_save_failed(lang, id, err),
     }
+}
+
+/// The apps the lock-screen media switch is offered for on this phone, as Device › Apps shows it: allowed (the stored
+/// allowlist; none when it is missing or unreadable) and installed and not preinstalled in the last report
+/// (`app_permissions::lock_media_offered`).
+async fn lock_media_offered_apps(state: &AppState, id: i64) -> Result<Vec<String>, sqlx::Error> {
+    let allowlist: Option<Option<String>> =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    let allowed: std::collections::HashSet<String> = allowlist
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    Ok(latest_installed(state, id)
+        .await?
+        .into_iter()
+        .filter(|a| {
+            allowed.contains(&a.package_name)
+                && crate::app_permissions::lock_media_offered(
+                    &a.package_name,
+                    false,
+                    !a.preinstalled,
+                )
+        })
+        .map(|a| a.package_name)
+        .collect())
 }
 
 /// The app a Permissions form saves for (design 68 §4.1), checked: its package in the grammar, a known phone, not
@@ -1589,7 +1639,7 @@ pub(crate) async fn app_rows(
             own_label,
             is_launcher: false,
             access: app.access.clone(),
-            preinstalled: app.preinstalled,
+            third_party: !app.preinstalled,
         });
         seen_packages.insert(app.package_name.clone());
     }
@@ -1650,7 +1700,7 @@ pub(crate) async fn app_rows(
             own_label,
             is_launcher: false,
             access: None,
-            preinstalled: false,
+            third_party: false,
         });
     }
 
@@ -1680,7 +1730,7 @@ pub(crate) async fn app_rows(
                 own_label: None,
                 is_launcher: true,
                 access: None,
-                preinstalled: false,
+                third_party: false,
             },
         );
     }
