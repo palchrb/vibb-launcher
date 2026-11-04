@@ -94,6 +94,8 @@
         <item quantity="other">%1$s, %2$d uleste</item>
     </plurals>
     <string name="kid_back_home">Tilbake til hjemskjermen</string>
+    <string name="kid_back_settings">Tilbake til Innstillinger</string>
+    <string name="kid_back">Tilbake</string>
     <string name="kid_close">Lukk</string>
     <string name="badges_listener_label">Varseltall på apper</string>
 

@@ -68,7 +68,7 @@ class KidSoundPickerActivity : UIObjectActivity() {
             lead = if (uri != null && title != null) PickerSound(uri, title) else null
         }
         KidInsets.apply(binding.root)
-        KidHeader.bind(this, binding.kidSoundHeader, titleFor(kind))
+        KidHeader.bind(this, binding.kidSoundHeader, titleFor(kind), back = R.string.kid_back_settings)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

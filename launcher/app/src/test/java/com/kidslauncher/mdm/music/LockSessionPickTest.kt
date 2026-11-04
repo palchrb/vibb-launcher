@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.music
 
 import android.content.pm.ApplicationInfo
+import android.view.KeyEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -114,5 +115,19 @@ class LockSessionPickTest {
         assertEquals(0L, bogus.durationMs)
         val stream = MusicSession("org.player", SessionPlay.PLAYING, null, "t", 0, 1, 4f, 0)
         assertEquals("a carried-forward stream stops at the bound (code QA L3)", FOREIGN_TIME_MAX_MS, lockPositionNow(stream, nowElapsedMs = 5 * 24 * 3_600_000L))
+    }
+
+    @Test
+    fun `another app's transport goes as its own media keys, Vibb music's by its controls, and only play or pause again`() {
+        TileAction.values().forEach { assertNull("Vibb music: transport controls ($it)", tileMediaKey(vibb = true, it)) }
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PLAY, tileMediaKey(vibb = false, TileAction.PLAY))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PAUSE, tileMediaKey(vibb = false, TileAction.PAUSE))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_NEXT, tileMediaKey(vibb = false, TileAction.NEXT))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PREVIOUS, tileMediaKey(vibb = false, TileAction.PREVIOUS))
+        assertTrue("a pause the app didn't follow", tileFallback(TileAction.PAUSE, playingNow = true))
+        assertFalse(tileFallback(TileAction.PAUSE, playingNow = false))
+        assertTrue("a play the app didn't follow", tileFallback(TileAction.PLAY, playingNow = false))
+        assertFalse(tileFallback(TileAction.PLAY, playingNow = true))
+        assertFalse("a skip is never sent twice", tileFallback(TileAction.NEXT, playingNow = true) || tileFallback(TileAction.PREVIOUS, playingNow = false))
     }
 }

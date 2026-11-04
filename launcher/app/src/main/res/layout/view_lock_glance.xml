@@ -554,7 +554,8 @@
     <!-- The bottom row (design 41 §1.3): "Nødsamtale" centred as before and the flashlight at the
          end, beside it without pushing it off centre. Nødsamtale keeps the 48 dp target of design 34
          P7 (qa-34-s8-code N5; the row's margin gave the 4 dp) and the room for a 48 dp button on each
-         side, so a long label at a large font wraps before it reaches the button; the button is no
+         side, so a long label at a large font wraps before it reaches the button (between words only: the panel's
+         fitEmergency shrinks the 15 sp until the longest word fits, E9 L3); the button is no
          taller than it. 8 dp under the scroller (design 59d §8.13: the hint line and before it "Lås opp" sat here), so
          the row with its margin is 56 dp; its 16 dp side margins are the side padding the root gave it before r11. The
          flashlight is gone without a flash unit or when the torch is refused while LOCKED (§1.5). -->

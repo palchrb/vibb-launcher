@@ -36,12 +36,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   row and the touch row, with the parent's **sound bit** (`QuickControlFeature.SOUND`, no new bit; also on a phone
   without a vibrator, where the sound row itself is hidden), each the phone's sound and a chevron. Pure
   `ui/kidsettings/SoundPicks.kt` (`SoundPicksTest`): `soundPicksState` (writable only with the "Modify system settings"
-  app-op, `Settings.System.canWrite` - without it both at 50 %, not clickable, with the touch row's "Kan ikke endres på
+  app-op, `Settings.System.canWrite` - without it both at 50 %, not clickable, without the chevron (E9 L7), with the touch row's "Kan ikke endres på
   denne telefonen ennå."), `soundValue` (MediaStore's title, else a canonical URI's `title`, "Ingen lyd" when none is
   set, "Annen lyd" when unreadable). The ringer mode is no input: Lydløs changes nothing here. Read off the main thread
   on every resume (`KidSettingsActivity.loadSoundValues`).
 - **Picker** `KidSoundPickerActivity` (not exported, our own page in the lock task; leaves when the sound bit or the
-  app-op goes, a lock comes first): the caption, RingtoneManager's cursor for `TYPE_RINGTONE` / `TYPE_NOTIFICATION`
+  app-op goes, a lock comes first; its back button says "Tilbake til Innstillinger", as Wi-Fi's and Bluetooth's - E9 L6,
+  `KidHeader.bind(back = ...)`): the caption, RingtoneManager's cursor for `TYPE_RINGTONE` / `TYPE_NOTIFICATION`
   filtered to the **built-in** sounds (`content://media/internal/…`; the cursor also lists shared-storage files - not
   offered) as one `RadioGroup` (`item_kid_sound`), the closing line. **No "Ingen" row** (the kid must not silence the
   parents' calls). A sound the parent set from a file leads the list while the picker is open (`leadSound`), so the

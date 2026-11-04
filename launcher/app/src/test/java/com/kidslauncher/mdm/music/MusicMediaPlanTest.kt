@@ -234,8 +234,10 @@ class MusicSuspensionGuardTest {
     fun `play, next and previous look the app up at the tap, a pause always goes`() {
         val sessions = file("music/MusicSessions.kt")
         val playPause = body(sessions, "fun playPause(")
-        assertTrue(playPause.contains("session?.playing == true -> controls.pause()"))
-        assertTrue(playPause.contains("usable(context, c.packageName) -> controls.play()"))
+        assertTrue(playPause.contains("session?.playing == true -> send(context, c, TileAction.PAUSE, vibb)"))
+        assertTrue(playPause.contains("usable(context, c.packageName) -> send(context, c, TileAction.PLAY, vibb)"))
+        // E9 M1: a play the media button didn't start goes again only while the app is still usable.
+        assertTrue(body(sessions, "private fun send(").contains("(action == TileAction.PAUSE || usable(app, c.packageName))"))
         for (name in listOf("next", "previous")) {
             assertTrue(name, body(sessions, "fun $name(").contains("if (usable(context, c.packageName))"))
         }

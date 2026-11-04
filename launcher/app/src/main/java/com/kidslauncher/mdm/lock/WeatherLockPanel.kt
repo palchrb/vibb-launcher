@@ -467,7 +467,7 @@ class WeatherLockPanel(
     private fun withNow(spoken: String): String {
         lastSpokenCard = spoken
         val now = card.weatherCardNow.takeIf { it.visibility == View.VISIBLE }?.text?.toString()
-        return listOfNotNull(now?.let(::sentence), spoken).joinToString(" ")
+        return WeatherWords.spoken(listOfNotNull(now?.let(::sentence), spoken).joinToString(" "))
     }
 
     private fun fold(event: WeatherEvent) {
@@ -545,7 +545,7 @@ class WeatherLockPanel(
         parts += if (name != null) activity.getString(R.string.weather_spoken_now, name) else activity.getString(R.string.weather_spoken_now_plain)
         model.temp?.let { parts += activity.resources.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
         words?.let { parts += sentence(it) }
-        return parts.joinToString(" ")
+        return WeatherWords.spoken(parts.joinToString(" "))
     }
 
     private fun spokenCard(model: WeatherCard, lowHigh: Boolean): String {
@@ -567,7 +567,7 @@ class WeatherLockPanel(
             model.high?.let { parts += res.getQuantityString(R.plurals.weather_spoken_high, abs(it), weatherNumber(it)) }
         }
         darkText(model)?.let { parts += sentence(it) }
-        return parts.joinToString(" ")
+        return WeatherWords.spoken(parts.joinToString(" "))
     }
 
     /** The mark is a button with expand/collapse actions and its state (launcher QA M5). */

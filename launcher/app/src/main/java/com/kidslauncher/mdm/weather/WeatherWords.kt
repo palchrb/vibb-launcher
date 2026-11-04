@@ -35,6 +35,10 @@ object WeatherWords {
         else -> null
     }
 
+    /** Text for TalkBack: without the soft hyphens a shown label keeps for its line break ("Etter\u00ADmiddag",
+     * E9 L4). */
+    fun spoken(text: String): String = text.replace("\u00AD", "")
+
     /** A card column's label. */
     fun partRes(part: String): Int? = when (part) {
         "morning" -> R.string.weather_part_morning

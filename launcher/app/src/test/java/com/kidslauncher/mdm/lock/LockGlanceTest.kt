@@ -604,7 +604,8 @@ class LockGlanceTest {
 
 /**
  * The glance page and the keypad's music row never weaken the PIN lock (design 21 step 4, design
- * 25): the music glue only plays, pauses and skips through the session's transport controls - no
+ * 25): the music glue only plays, pauses and skips through the session's transport controls (another
+ * app's as its media buttons, E9 M1) - no
  * app, session activity, setting, notification or intent of any kind; since design 28 only a live
  * session inside the listening window, never the snapshot.
  */
@@ -627,7 +628,7 @@ class LockMediaGuardTest {
         val calls = Regex("MusicSessions\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
         assertEquals(setOf("addListener", "removeListener", "reading", "lockUsableApps", "lockGeneration", "Live", "playPause", "next", "previous"), calls)
         // 2026-11-04: any allowed app's session - the buttons act only on the picked one's controller.
-        for (button in listOf("playPause(activity, p.controller, session)", "previous(activity, it.controller)", "next(activity, it.controller)")) {
+        for (button in listOf("playPause(activity, p.controller, session, p.vibb)", "previous(activity, it.controller, it.vibb)", "next(activity, it.controller, it.vibb)")) {
             assertTrue(button, code.contains(button))
         }
         // Design 28: the listening window only narrows what shows - its stamps are read, never written.
@@ -650,6 +651,10 @@ class LockMediaGuardTest {
         val sessions = file("java/com/kidslauncher/mdm/music/MusicSessions.kt").readText()
         val controls = Regex("(?:transportControls\\??|\\bcontrols)\\.(\\w+)\\(").findAll(sessions).map { it.groupValues[1] }.toSet()
         assertEquals(setOf("play", "pause", "skipToNext", "skipToPrevious"), controls)
+        // E9 M1: another app's taps go as media buttons - only these four keys, picked by the pure tileMediaKey.
+        assertFalse(sessions.contains("KEYCODE_"))
+        val keys = Regex("KeyEvent\\.(KEYCODE_\\w+)").findAll(file("java/com/kidslauncher/mdm/music/LockSessionPick.kt").readText()).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("KEYCODE_MEDIA_PLAY", "KEYCODE_MEDIA_PAUSE", "KEYCODE_MEDIA_NEXT", "KEYCODE_MEDIA_PREVIOUS"), keys)
     }
 
     @Test
@@ -1023,6 +1028,11 @@ class LockGlanceLayoutTest {
         // bottom block, 56 dp (the swipe hint + the row were 79.6, Lås opp + the row 116); the handle is in the inset.
         assertEquals(56f, withMargins("lock_glance_bottom"), 0.01f)
         assertEquals(8f, root.byId("lock_glance_bottom").dim("layout_marginTop"))
+        // E9 L3: the panel sizes the label from this sp, smaller only so its longest word fits beside the buttons.
+        assertEquals("${GLANCE_EMERGENCY_SP.toInt()}sp", link.getAttributeNS(ns, "textSize"))
+        assertEquals(1f, glanceEmergencyScale(longestWordPx = 140f, roomPx = 148f))
+        assertEquals(0.5f, glanceEmergencyScale(longestWordPx = 200f, roomPx = 100f))
+        assertEquals("no room known yet: as it is", 1f, glanceEmergencyScale(longestWordPx = 200f, roomPx = 0f))
     }
 
     @Test

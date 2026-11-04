@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.music
 
 import android.content.pm.ApplicationInfo
+import android.view.KeyEvent
 
 /*
  * The PIN lock's media tile for any allowed app (the user, 2026-11-04: "mediekontroller for andre apper, men kun for
@@ -37,6 +38,36 @@ fun lockTilePick(access: Boolean, candidates: List<LockCandidate>, listening: Li
         val window = if (c.vibb) listening else Listening(c.session.positionAtElapsedMs.takeIf { it > 0 }?.let { BootStamp(it, now.bootCount) }, headsetAt = null)
         lockTileSession(access, c.usable, c.session, window, now).takeIf { it.session != null }?.let { LockPick(index, it) }
     }.minWithOrNull(compareBy<LockPick>({ !candidates[it.index].session.playing }, { !candidates[it.index].vibb }, { it.index }))
+
+/** A tap on the lock tile's transport (or Home's card's play/pause). */
+enum class TileAction { PLAY, PAUSE, NEXT, PREVIOUS }
+
+/**
+ * How a tile tap reaches the session (E9 M1): Vibb music by its transport controls, as before (null); another app as a
+ * media button on its own session (`MediaController.dispatchMediaButtonEvent`, down and up) - the key code here. A
+ * Media3 player (Fossify Music Player 1.8.5 on the emulator) ignored the launcher's `TransportControls.pause()` and
+ * `skipToNext()` but obeys a media key at once: Media3 runs a media button as its own notification controller, and
+ * every player handles them for headsets. PLAY and PAUSE are their own keys, never PLAY_PAUSE (Media3 holds that one
+ * for a double tap, and a toggle could cross a state change the tile hasn't drawn yet).
+ */
+fun tileMediaKey(vibb: Boolean, action: TileAction): Int? = if (vibb) null else when (action) {
+    TileAction.PLAY -> KeyEvent.KEYCODE_MEDIA_PLAY
+    TileAction.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
+    TileAction.NEXT -> KeyEvent.KEYCODE_MEDIA_NEXT
+    TileAction.PREVIOUS -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+}
+
+/** After [TILE_FALLBACK_MS] the media button's play or pause is checked: still not where it was asked to go
+ * ([playingNow]), it goes again as the transport control (a session that handles no media button). A pause or a play
+ * twice is harmless; a skip is never repeated (it can't be told from the state, and twice skips two). */
+fun tileFallback(action: TileAction, playingNow: Boolean): Boolean = when (action) {
+    TileAction.PAUSE -> playingNow
+    TileAction.PLAY -> !playingNow
+    TileAction.NEXT, TileAction.PREVIOUS -> false
+}
+
+/** How long a media button's play or pause has before [tileFallback] looks. */
+const val TILE_FALLBACK_MS = 1_000L
 
 /**
  * Whether an app's session may show on the lock (and its controls act): never while [suspended] (a time rule, the used-up

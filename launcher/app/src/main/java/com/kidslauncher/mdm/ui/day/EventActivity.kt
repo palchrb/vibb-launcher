@@ -47,7 +47,7 @@ class EventActivity : UIObjectActivity() {
         end = intent.getLongExtra(EXTRA_END, 0L)
         val day = eventDay(begin, intent.getBooleanExtra(EXTRA_ALL_DAY, false), ZoneId.systemDefault())
         val (weekday, date) = DayActivity.dayTexts(this, day)
-        KidHeader.bind(this, binding.eventHeader, weekday, date, null, null)
+        KidHeader.bind(this, binding.eventHeader, weekday, date, action = null, back = R.string.kid_back, onAction = null)
     }
 
     override fun onResume() {
