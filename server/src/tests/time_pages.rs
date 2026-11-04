@@ -1925,7 +1925,7 @@ async fn the_silent_switch_saves_serves_and_shows() {
 
 /// Design 70 §7: a name the server made goes to the phone blank, so the phone reports it blank;
 /// the badge and Diagnostics name the rule by its id as the rules list does, in the parent's
-/// language, and a save of the shown name keeps the server's (no rename).
+/// language, and a save of the shown name - in either language - keeps the server's (no rename).
 #[tokio::test]
 async fn the_badge_names_a_blank_reported_rule_by_its_id() {
     let app = TestApp::new().await;
@@ -1966,10 +1966,18 @@ async fn the_badge_names_a_blank_reported_rule_by_its_id() {
         Some("Utenfor tillatte tider")
     );
 
+    // The form in nb keeps its `?lang=`; a save in another language (the account's en) of the
+    // name the form showed is still no rename (qa-s-i18n-5-code L1).
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(&format!("action=\"/schedules/rules/{rule}?lang=nb#rule\"")));
+    assert!(html.contains("value=\"Utenfor tillatte tider\""), "{html}");
     let res = app
         .request_form(
             Method::POST,
-            &format!("/schedules/rules/{rule}?lang=nb"),
+            &format!("/schedules/rules/{rule}"),
             Some(&cookie),
             &[
                 ("scope", ""),
@@ -1987,4 +1995,8 @@ async fn the_badge_names_a_blank_reported_rule_by_its_id() {
         .await
         .unwrap();
     assert_eq!(name, "Outside allowed hours");
+    // The log names the rule in the reader's language too.
+    let log = app.get_page("/security?lang=nb", &cookie).await.text();
+    assert!(log.contains("Utenfor tillatte tider"), "{log}");
+    assert!(!log.contains("Outside allowed hours"), "{log}");
 }

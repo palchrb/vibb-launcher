@@ -866,8 +866,20 @@ struct RuleTemplate {
     /// The kind select's options: value and label. Bedtime only on a day rule of that kind kept
     /// from before (design 66 §2), so a save keeps it.
     kinds: Vec<(&'static str, &'static str)>,
+    /// The page's own `?lang=`, kept on its form's action and the save's redirect (design 70 §3).
+    asked: Option<Lang>,
 }
 crate::i18n::words!(RuleTemplate);
+
+/// A request's own `?lang=` (this request only, design 70 §3), for the rule form to keep.
+fn asked_lang(params: &HashMap<String, String>) -> Option<Lang> {
+    params.get("lang").and_then(|code| Lang::from_code(code))
+}
+
+/// `&lang=nb` after a redirect's own query when the request asked for a language, else "".
+fn and_lang(asked: Option<Lang>) -> String {
+    asked.map_or(String::new(), |lang| format!("&lang={}", lang.code()))
+}
 
 fn render_rule(
     scope: &RuleScope,
@@ -876,6 +888,7 @@ fn render_rule(
     corrupt: Option<String>,
     status: StatusCode,
     lang: Lang,
+    asked: Option<Lang>,
 ) -> Response {
     let refusal = rule
         .name_error
@@ -931,6 +944,7 @@ fn render_rule(
                 ]
             },
             rule,
+            asked,
         },
         status,
     )
@@ -1068,7 +1082,15 @@ pub async fn show_rule(
         Some(_) => Some(t(lang, "common.saved")),
         None => None,
     };
-    render_rule(&scope, rule, saved, corrupt, StatusCode::OK, lang)
+    render_rule(
+        &scope,
+        rule,
+        saved,
+        corrupt,
+        StatusCode::OK,
+        lang,
+        asked_lang(&params),
+    )
 }
 
 /// GET `/schedules/rules/new` (`?device=X` for a phone's own rule): the editor, empty.
@@ -1103,7 +1125,15 @@ pub async fn new_rule(
         name_error: None,
         apps_error: None,
     };
-    render_rule(&scope, rule, None, None, StatusCode::OK, lang)
+    render_rule(
+        &scope,
+        rule,
+        None,
+        None,
+        StatusCode::OK,
+        lang,
+        asked_lang(&params),
+    )
 }
 
 /// A validated rule form.
@@ -1321,6 +1351,7 @@ async fn refuse_rule(
     fields: &[(String, String)],
     error: RuleError,
     lang: Lang,
+    asked: Option<Lang>,
 ) -> Response {
     let id = stored.map_or(0, |row| row.id);
     if error == RuleError::Kind {
@@ -1338,6 +1369,7 @@ async fn refuse_rule(
         stored.and_then(|row| unreadable_parts(lang, row)),
         StatusCode::BAD_REQUEST,
         lang,
+        asked,
     )
 }
 
@@ -1346,8 +1378,10 @@ pub async fn create_rule(
     State(state): State<AppState>,
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Query(params): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Response {
+    let asked = asked_lang(&params);
     let fields = form_pairs(&body);
     let scope = match parse_scope(&state, field(&fields, "scope"), lang).await {
         Ok(scope) => scope,
@@ -1355,7 +1389,9 @@ pub async fn create_rule(
     };
     let input = match parse_rule_form(lang, &fields) {
         Ok(input) => input,
-        Err(error) => return refuse_rule(&state, &scope, None, &fields, error, lang).await,
+        Err(error) => {
+            return refuse_rule(&state, &scope, None, &fields, error, lang, asked).await;
+        }
     };
     let device = scope.id();
     let result = sqlx::query_scalar::<_, i64>(
@@ -1381,7 +1417,11 @@ pub async fn create_rule(
     };
     log_change(&state, &admin, "time_rule_created", device, &input.name).await;
     nudge(&state, device).await;
-    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=added#rule")).into_response()
+    Redirect::to(&format!(
+        "/schedules/rules/{rule_id}?saved=added{}#rule",
+        and_lang(asked)
+    ))
+    .into_response()
 }
 
 /// The rule, if it still exists and belongs to `scope` (a device's own rule can't be edited
@@ -1425,8 +1465,10 @@ pub async fn update_rule(
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(rule_id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Response {
+    let asked = asked_lang(&params);
     let fields = form_pairs(&body);
     let scope = match parse_scope(&state, field(&fields, "scope"), lang).await {
         Ok(scope) => scope,
@@ -1440,12 +1482,16 @@ pub async fn update_rule(
     let mut input = match parse_rule_form(lang, &fields) {
         Ok(input) => input,
         Err(error) => {
-            return refuse_rule(&state, &scope, Some(&stored), &fields, error, lang).await;
+            return refuse_rule(&state, &scope, Some(&stored), &fields, error, lang, asked).await;
         }
     };
-    // The name the form showed (`shown_name`) is no rename: the server's own name stays, and the
-    // phone keeps naming the rule itself (design 70 §7).
-    if input.name == time_rules::shown_name(lang, &stored.name) {
+    // The name the form showed (`shown_name`, in any language: the form may have been worded in
+    // another than this POST's) is no rename: the server's own name stays, and the phone keeps
+    // naming the rule itself (design 70 §7).
+    if Lang::ALL
+        .iter()
+        .any(|l| input.name == time_rules::shown_name(*l, &stored.name))
+    {
         input.name = stored.name.clone();
     }
     let result = sqlx::query(
@@ -1475,7 +1521,11 @@ pub async fn update_rule(
     log_change(&state, &admin, "time_rule_updated", scope.id(), &input.name).await;
     nudge(&state, scope.id()).await;
     // Its form (§5.1.4): Save is at the top, and scroll-restore keeps the exact place.
-    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=1#rule")).into_response()
+    Redirect::to(&format!(
+        "/schedules/rules/{rule_id}?saved=1{}#rule",
+        and_lang(asked)
+    ))
+    .into_response()
 }
 
 /// POST `/schedules/rules/{id}/delete`: then the list it was in.
@@ -1732,8 +1782,9 @@ pub async fn switch_device_rule(
                         } else {
                             "security.detail.rule.off_for"
                         },
-                        &[("device", &id.to_string()), ("what", &rule.name)],
+                        &[("device", &id.to_string())],
                     )
+                    .rule("what", &rule.name)
                     .with_facts(format!("device {id}")),
                 ),
             )

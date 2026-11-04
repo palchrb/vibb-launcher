@@ -57,27 +57,34 @@ pub const SERVER_NAMES: [(&str, &str); 4] = [
     ),
 ];
 
-/// A rule's name as the phone gets it (design 70 §7): empty for a name in [SERVER_NAMES], else
-/// without a trailing " (morning)" / " (evening)", so both halves of a split rule show the
-/// parent's name (a typed suffix goes too).
+/// A rule's name as the phone gets it (design 70 §7): without a trailing " (morning)" /
+/// " (evening)", so both halves of a split rule show the parent's name (a typed suffix goes too),
+/// then empty when that is in [SERVER_NAMES] - "Bedtime (morning)", the morning half of an old
+/// split bedtime, too. The match is exact: a typed "Bedtime" is taken for the server's.
 pub fn phone_name(name: &str) -> String {
-    if SERVER_NAMES.iter().any(|(server, _)| *server == name) {
+    let base = name
+        .strip_suffix(MORNING_SUFFIX)
+        .or_else(|| name.strip_suffix(" (evening)"))
+        .unwrap_or(name);
+    if SERVER_NAMES.iter().any(|(server, _)| *server == base) {
         return String::new();
     }
-    name.strip_suffix(MORNING_SUFFIX)
-        .or_else(|| name.strip_suffix(" (evening)"))
-        .unwrap_or(name)
-        .to_string()
+    base.to_string()
 }
 
 /// A rule's name as the PWA shows it in `lang` (design 70 §7): a name in [SERVER_NAMES] in the
-/// parent's words, "<name> (morning)" with its suffix worded, anything else as the parent typed it.
+/// parent's words, "<name> (morning)" with its suffix worded (and its name, "Leggetid (morgen)"),
+/// anything else as the parent typed it.
 pub fn shown_name(lang: crate::i18n::Lang, name: &str) -> String {
     if let Some((_, key)) = SERVER_NAMES.iter().find(|(server, _)| *server == name) {
         return crate::i18n::t(lang, key).to_string();
     }
     match name.strip_suffix(MORNING_SUFFIX) {
-        Some(base) => crate::i18n::t_params(lang, "device.time.rule.morning", &[("name", base)]),
+        Some(base) => crate::i18n::t_params(
+            lang,
+            "device.time.rule.morning",
+            &[("name", &shown_name(lang, base))],
+        ),
         None => name.to_string(),
     }
 }
@@ -676,10 +683,13 @@ pub fn scoped_detail(device_id: Option<i64>, what: &str) -> crate::security::Det
     match device_id {
         Some(id) => crate::security::Detail::words(
             "security.detail.rule.device",
-            &[("device", &id.to_string()), ("what", what)],
+            &[("device", &id.to_string())],
         )
+        .rule("what", what)
         .with_facts(format!("device {id}")),
-        None => crate::security::Detail::words("security.detail.rule.everyone", &[("what", what)]),
+        None => {
+            crate::security::Detail::words("security.detail.rule.everyone", &[]).rule("what", what)
+        }
     }
 }
 
@@ -858,8 +868,9 @@ async fn convert_global_bedtime(
         "time_rule_to_bedtime",
         crate::security::Detail::words(
             "security.detail.rule.now_bedtime_of",
-            &[("what", &row.name), ("devices", &to.join(", "))],
-        ),
+            &[("devices", &to.join(", "))],
+        )
+        .rule("what", &row.name),
     )
     .await?;
     tx.commit().await
@@ -1272,6 +1283,11 @@ mod tests {
         assert_eq!(row(&morning_name("Natt")).to_policy().unwrap().name, "Natt");
         assert_eq!(row("Natt (evening)").to_policy().unwrap().name, "Natt");
         assert_eq!(row("Morning run").to_policy().unwrap().name, "Morning run");
+        // An old split bedtime's morning half (`migrate_crossing` before design 66).
+        assert_eq!(
+            row(&morning_name(BEDTIME_NAME)).to_policy().unwrap().name,
+            ""
+        );
         use crate::i18n::Lang;
         assert_eq!(shown_name(Lang::Nb, "Bedtime"), "Leggetid");
         assert_eq!(
@@ -1279,6 +1295,10 @@ mod tests {
             "Utenfor tillatte tider (kveld)"
         );
         assert_eq!(shown_name(Lang::Nb, "Natt (morning)"), "Natt (morgen)");
+        assert_eq!(
+            shown_name(Lang::Nb, "Bedtime (morning)"),
+            "Leggetid (morgen)"
+        );
         assert_eq!(shown_name(Lang::En, "Natt (morning)"), "Natt (morning)");
         assert_eq!(shown_name(Lang::Nb, "Morning run"), "Morning run");
     }

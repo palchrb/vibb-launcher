@@ -131,12 +131,9 @@ pub async fn create_lift(
     let detail = match (target, rule_name.as_deref()) {
         ("rule", Some(rule)) => security::Detail::words(
             "security.detail.lift.rule",
-            &[
-                ("device", &device),
-                ("rule", rule),
-                ("minutes", &minutes.to_string()),
-            ],
-        ),
+            &[("device", &device), ("minutes", &minutes.to_string())],
+        )
+        .rule("rule", rule),
         ("rule", None) => security::Detail::words(
             "security.detail.lift.all_rules",
             &[("device", &device), ("minutes", &minutes.to_string())],
