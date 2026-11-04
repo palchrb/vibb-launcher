@@ -12,6 +12,20 @@ switch (kid Settings, shown when the parent ticks "Touch sounds and vibration" o
 `HAPTIC_FEEDBACK_INTENSITY`, which no app may write. With Touch feedback turned off in Android's Settings, the kid's
 switch shows on while the phone stays without tap vibration - the switch can't bring it back.
 
+## Vibration for calls and messages stays on (2026-11-04)
+
+Android Settings -> Sound & vibration -> Vibration & haptics -> **Ring vibration: on** and **Notification vibration:
+on** (names vary by phone; on some it is "Vibrate for calls"). The user: "Jeg er fornøyd så lenge telefonen alltid
+vibrerer".
+
+Since Android 13 a call's vibration follows only the hidden `RING_VIBRATION_INTENSITY` (Telecom's
+`SystemSettingsUtil.isRingVibrationEnabled`; the public `VIBRATE_WHEN_RINGING` is no longer read) and a notification's
+the hidden `NOTIFICATION_VIBRATION_INTENSITY`. No app may write either, and a device owner has no API for them, so
+Vibb One's Kid Settings has no vibration rows (`kid-sounds`, 2026-11-04). Set both once; they stay. "Lydløs" on the
+kid's Sound row is Android's vibrate mode: it vibrates as long as these are on. An app's own notification channel can
+still turn its vibration off - check the messaging apps the kid uses (Android Settings -> Apps -> the app ->
+Notifications), also during a pause.
+
 ## "Modify system settings" for Vibb One
 
 The touch row's two switches and the PWA's clock format (design 34 P12) need the "Modify system settings" app-op; a
