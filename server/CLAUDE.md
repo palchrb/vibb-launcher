@@ -13,19 +13,17 @@ The client is the launcher in `../launcher/` of the same monorepo (`palchrb/vibb
 This is `server/` in the `palchrb/vibb-launcher` monorepo (was the `palchrb/kid-phone-server` fork). The repo publishes
 both components: the launcher from `launcher-vX.Y.Z` tags (stable ones are GitHub's "latest" release) and this server
 from `server-vX.Y.Z` tags (`.github/workflows/server-release.yml` at the root: tag must be on master/main and match
-`Cargo.toml`; published with makeLatest false). So the in-app update check (`handlers::system_update`) and
+`Cargo.toml`; published with makeLatest false). So the release check Software Updates shows (`handlers::system_update`) and
 `install.sh`/`update.sh` look up the newest stable `server-vX.Y.Z` in the releases *list*, never `releases/latest`,
 and the tracked-app sync skips `server-v*` releases. Everything that names a GitHub repo or a launcher build is configuration,
 not code: `src/config.rs` (`ForkConfig`, `AppState.config`) reads `SERVER_RELEASE_REPO`, `LAUNCHER_ADMIN_COMPONENT`,
 `LAUNCHER_APK_URL`, `LAUNCHER_SIGNATURE_CHECKSUM` and `PHONE_SERVER_URL` (0.54.0: the setup QR's server address
 while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) once at startup, with defaults pointing at the monorepo; the
 pre-monorepo defaults (`palchrb/kid-phone-server`, the `kids-launcher-mdm` APK URL) are read as today's, migration
-0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`, and `update.sh` maps the old `KPS_REPO`. Watcher
-schema 6: `actions.sh` fetches `server/deploy/update.sh`. The
+0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`, and `update.sh` maps the old `KPS_REPO`. The
 checksum has no default: without it the provisioning page shows a banner and no QR (never upstream's checksum). An
 invalid value is logged and treated as unset. The root-run deploy scripts never read `.env` (it's writable by the
-service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated), and `install.sh` substitutes it into
-`actions.sh` at install time. `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
+service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated). `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
 service, restarts it from an `ERR` trap if anything fails after the stop, copies the DB and the old binary to
 `/var/backups/kid-phone-server/` before every swap, and prunes old backups only once the new version is running
 (rollback steps in DEPLOY.md). Production launchers are the release build, package `me.vibb.launcher` (renamed from
@@ -130,7 +128,19 @@ No prior programming experience - build features directly rather than explaining
 
 ## Non-obvious gotchas hit so far
 
-- **`security::REQUIRED_WATCHER_SCHEMA` must be bumped in the exact same commit as any `deploy/install.sh` change to `WATCHER_SCHEMA_VERSION`, and it's easy to forget since they're two separate files with no compile-time link between them.** The DNS/Filters commit bumped `install.sh`'s `WATCHER_SCHEMA_VERSION` from `1` to `2` (adding the `dns_filter_enable`/`disable` root actions), but `REQUIRED_WATCHER_SCHEMA` was left at `1` - so `security::watcher_needs_update()` never actually flagged a Pi whose watcher predates that commit as needing a re-run of `install.sh`, even though its watcher script genuinely doesn't recognize `dns_filter_enable` as a valid action (falls through to `install.sh`'s "Unknown or empty update-request action" case, and the iptables redirect silently never gets applied - confirmed live: "Enable DNS filtering" showed 0 queries handled and ads still loaded on a device that otherwise had this Pi correctly configured as its Tailscale exit node). Fixed by bumping `REQUIRED_WATCHER_SCHEMA` to `2` to match (now `3`, bumped again in the same commit as the DNS-over-TLS iptables/cert-renewal actions, precisely to not repeat this; `5` in this fork, where `actions.sh` gets the release repo substituted in). If a future privileged root action is ever silently not taking effect, check this pairing first - specifically whether the Updates page's "watcher needs update" banner should have fired but didn't.
+- **The server never acts on its host** (the user, 2026-11-04: "PWA skal ikke ha rettigheter til å gjøre noenting som
+  helst på host", "jeg ønsker å gjøre ting på host selv"). No root helper, no request file, no update/restart/apt/
+  Tailscale/reboot/format button, no OS or app-update schedule, no read of the host's state (apt, `tailscale version`,
+  `/var/run/reboot-required`, `/sys/block`, mounts): Settings › Software Updates shows versions only and how the owner
+  updates (`handlers::updates`). Since server 0.67.0; through 0.66 a root watcher (`kid-phone-server-updater.path`, `actions.sh`,
+  `watcher.sh`), a root scheduler (`scheduler.sh` reading `data/schedule.conf`) and a root backup copy to a USB drive
+  (`backup_sync.sh`) did the PWA's bidding, paired by `security::REQUIRED_WATCHER_SCHEMA`; all of it is gone, and
+  `remove_host_helpers` (the same text in install.sh and update.sh, `tests::deploy_scripts`) removes them from an old
+  install - disables the path unit and the timers, never stops a running helper (an old server's "Update now" runs
+  update.sh inside the watcher's service), deletes the units, drop-ins and `/opt/kid-phone-server-updater/`, moves the
+  installed version to `/var/lib/kid-phone-server/installed_version`. The server deletes what the old requests left in
+  `data/` at every start (`startup::HOST_FILES`). Don't add a way back: a new thing the host should do is the owner's,
+  documented in DEPLOY.md.
 - **axum's built-in `Form` extractor cannot deserialize repeated same-named form fields** (e.g. multiple checked checkboxes named `allowed_packages`) into a `Vec<String>` - errors with `invalid type: string "...", expected a sequence`. Fixed in `handlers::devices::update_policy` by taking raw `axum::body::Bytes` and parsing manually with `form_urlencoded` instead of `Form<T>`. Reuse this pattern for any future repeated-checkbox-group field.
 - **Browsers cache `/static/*` assets aggressively with no revalidation** - editing `style.css` and reloading can silently keep serving the old cached copy even after a hard navigate. `partials/head.html` links it with a `?v=N` cache-busting query param (bump `N` when the stylesheet changes) - the same pattern `board-game-tracker` already uses. A lost `}` in `style.css` doesn't fail anything by itself - the browser nests everything after it and silently drops ~160 lines (the PWA browser pass of 2026-10-14, High 1) - so `tests::shell::style_css_has_the_shape_browsers_read` tokenizes the file (comments, strings, braces) and fails on a rule opened inside a declaration block, an unbalanced brace, or an unclosed comment or string.
 - **The dev server is a plain `cargo run`, not `cargo watch`** - it will not pick up template or static-file changes on its own. Kill the running `cargo`/`kid_phone_server` processes and restart after any such edit, or you'll be testing against stale HTML/CSS while genuinely-fresh files sit on disk (this has caused real confusion mid-session more than once).
@@ -150,46 +160,34 @@ No prior programming experience - build features directly rather than explaining
   minutes past the server's time is dropped too, and `retention::prune` deletes stored ones first (QA of the security
   wave, Low 3: it stayed "the newest fix" for good).
 - **Root takes only signed release files (security review M5).** `verify_signed FILE NAME TAG` (the same text in
-  install.sh, update.sh and both copies of actions.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig`
-  to verify with minisign and its trusted comment to be `NAME TAG`; `download_release` checks the tarball before
-  unpacking it, and `action_app_update` takes `update.sh` + `.minisig` from the release assets (never
-  raw.githubusercontent) and checks it before running it. `server-release.yml`'s `server-release-sign` job (the
-  `release` environment, before the image job) signs both tarballs and `update.sh` with that environment's `SERVER_MINISIGN_KEY` and checks
-  them against the key pinned in `deploy/update.sh` - no secret or no pinned key, nothing is pushed or published. `"not-set"` (the state until the owner pins a key) refuses everything. `tests::deploy_scripts`
-  keeps the six key lines and the four `verify_signed` equal, and install.sh's and update.sh's `case "$(uname -m)"`
-  (`aarch64`/`arm64`, `x86_64`/`amd64`, anything else refused) equal and matching the release's two tarballs
+  install.sh and update.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig` to verify with minisign and
+  its trusted comment to be `NAME TAG`; `download_release` checks the tarball before unpacking it.
+  `server-release.yml`'s `server-release-sign` job (the `release` environment, before the image job) signs both
+  tarballs and `update.sh` (an old install's watcher takes `update.sh` from the release assets and checks it - the way
+  in to the release that removes the watcher) with that environment's `SERVER_MINISIGN_KEY` and checks them against
+  the key pinned in `deploy/update.sh` - no secret or no pinned key, nothing is pushed or published. `"not-set"` (the
+  state until the owner pins a key) refuses everything. `tests::deploy_scripts` keeps the two key lines and the two
+  `verify_signed` equal, and install.sh's and update.sh's `case "$(uname -m)"` (`aarch64`/`arm64`,
+  `x86_64`/`amd64`, anything else refused) equal and matching the release's two tarballs
   (`the_scripts_pick_the_tarball_for_the_machine`).
-- **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user, so
-  `scheduler.sh` reads `schedule.conf` key by key with `grep` and checks each value against a pattern (a bad one
-  falls back to its default and is logged; a symlinked file is ignored), and every form that writes a schedule file
-  accepts only `HH:MM` times (`security::valid_clock_time`, 400 and nothing written otherwise). `update.sh` rewrites
-  every root script (`actions.sh`, `watcher.sh`, `scheduler.sh`, `backup_sync.sh`) on every update with install.sh's
-  text (`tests::deploy_scripts` keeps the heredocs equal and checks that no root heredoc sources anything but
-  `actions.sh`). The root restore (M4) reads only the zip's `kidphone.db` (`unzip -p`, at most 1 GiB, SQLite header
-  checked), keeps the replaced database in root-owned `/var/backups/kid-phone-server-prerestore/<time>/` (3 kept),
-  and puts the new file in place with `mktemp` + `mv -T` (a symlink at the target is replaced, never written
-  through); `watcher.sh` ignores a symlinked flag, and install.sh writes `data/watcher_*` by rename.
-  `backup_sync.sh` copies only regular files at the top of `data/backups/` and a regular `live_mirror.db`, with
-  `cp -a --remove-destination`, after deleting everything on the drive that isn't a regular file or a directory
-  (QA of the security wave, Medium 1: `cp -au` wrote through a link it had copied to the drive the run before).
-  It then prunes the drive's `snapshots/` to the server's counts (security review M2, `pwa-fixes-a`): the newest
-  `RETENTION_COUNT` (backup_schedule.conf, read by grep and checked; unset or invalid: `RETENTION_COUNT_DEFAULT` =
-  `backups::DEFAULT_RETENTION_COUNT`, logged; 0 keeps all - the server's `backups::retention_of` reads it the same
-  way) `backup-*.zip` and the newest `PRE_MIGRATE_KEEP` (`startup::PRE_MIGRATE_KEEP`) `pre-migrate-*.db`, also while
-  the copy is off, `find -xdev -maxdepth 1 -type f -name`, byte order, nothing else
-  (`tests::deploy_scripts::the_backup_sync_keeps_as_many_on_the_drive_as_the_server`, `..._counts_are_the_servers`,
-  `..._reads_backups_to_keep_as_the_server`).
-  `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
+- **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user. The only
+  root scripts left are install.sh and update.sh, run by the owner: they read nothing in `data/` (the installed
+  version is root's, `/var/lib/kid-phone-server/installed_version`; security QA L2), copy only plain database files out of it
+  (`update.sh`'s backup, `cp -P` past a symlink check), and `chmod` in it only as the service user (`runuser`). The
+  backup form still accepts only `HH:MM` times (`security::valid_clock_time`, 400 and nothing written otherwise).
+  A restore is the server's own (`startup::apply_restore_request` at the start, from `data/restore_request`: the
+  PWA's in the container, the owner's over SSH on a systemd install - DEPLOY.md, "Backups"): only the zip's
+  `kidphone.db`, at most 1 GiB, the replaced database kept in `data/backups/prerestore-<time>/` (3 kept), undone when
+  the restored one won't open.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
-  `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
-  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` and a blanked
+  `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, where only
+  finished copies are listed), `DELETE FROM tower_sessions` and a blanked
   `provisioning_settings.tailscale_auth_key` (`strip_secrets_in`) with `secure_delete` and the journal in memory,
-  then a rename - backup zips, the live mirror and `pre-migrate-*.db`. A restore forgets every session at the next
-  start (the container's `apply_restore_request`, or `data/restore_applied` that `actions.sh` leaves,
-  `startup::take_restore_applied`, logged `backup_restored`); migration 0061 bumped every `session_epoch` once, for the
+  then a rename - backup zips and `pre-migrate-*.db`. A restore forgets every session at the next
+  start (`apply_restore_request`, logged `backup_restored`); migration 0061 bumped every `session_epoch` once, for the
   ids in older backups. The process sets umask 077 first thing in `main` (rustix), the unit has `UMask=0077`
   (update.sh adds it as a drop-in), install.sh/update.sh `chmod` `data/` 700 and its files 600 as the service user
-  (`runuser`, so a symlink reaches nothing of root's), and `backup_sync.sh` keeps the drive's copies root-only. The
+  (`runuser`, so a symlink reaches nothing of root's). The
   2FA secret stays unsealed (design 22 §3.2.8). A new copy of the database anywhere goes through `snapshot`.
 
 ## Data model (SQLite, see `migrations/`)

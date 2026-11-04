@@ -7,7 +7,8 @@
 #
 # The host's network: the host's Tailscale and Caddy (Caddyfile.example) put HTTPS in front, and the server sees the
 # real client address, which its admin gate needs. It listens on 127.0.0.1 only (BIND_ADDR, DEVICE_BIND_ADDR).
-# Updating: set HANDY_VERSION in .env, then `docker compose pull && docker compose up -d`.
+# Updating: pull a new image - Watchtower does it by itself for a tag that moves (HANDY_VERSION=latest), or set
+# HANDY_VERSION in .env, then `docker compose pull && docker compose up -d`. The server never updates itself.
 services:
   handy:
     image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}

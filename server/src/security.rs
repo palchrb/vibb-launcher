@@ -94,8 +94,8 @@ pub fn bootstrap_username(configured: Option<&str>) -> Result<String, String> {
     }
 }
 
-/// A schedule time as the forms send it: exactly `HH:MM`, 00:00-23:59 (security review H1). The
-/// value goes into files a root-run script reads, so nothing else may ever reach them.
+/// A schedule time as the forms send it: exactly `HH:MM`, 00:00-23:59 (security review H1): nothing
+/// else ever reaches a schedule file.
 pub fn valid_clock_time(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() != 5 || bytes[2] != b':' {
@@ -734,61 +734,6 @@ pub fn generate_totp_secret_base32() -> String {
         Secret::Encoded(s) => s,
         Secret::Raw(_) => unreachable!("to_encoded() always returns the Encoded variant"),
     }
-}
-
-/// Plain read of whatever version install.sh last stamped into
-/// `data/watcher_version`, purely for display ("System helper scripts:
-/// vX.Y.Z"). Whether that's actually a *problem* is answered separately by
-/// `watcher_needs_update` below.
-pub async fn installed_watcher_version() -> Option<String> {
-    let installed = tokio::fs::read_to_string("data/watcher_version")
-        .await
-        .ok()?;
-    let installed = installed.trim();
-    if installed.is_empty() {
-        None
-    } else {
-        Some(installed.to_string())
-    }
-}
-
-/// The watcher "schema" version: a small counter, independent of the app's
-/// own release version, bumped only when install.sh's root-side scripts
-/// (actions.sh/watcher.sh/scheduler.sh/backup_sync.sh) actually gain or
-/// change a privileged action - see board-game-tracker's CLAUDE.md for why
-/// comparing raw version strings directly was the wrong check (it fired on
-/// every single app release regardless of whether the watcher itself had
-/// changed at all).
-/// 6: actions.sh fetches update.sh from the monorepo's server/deploy/.
-pub const REQUIRED_WATCHER_SCHEMA: u32 = 6;
-
-async fn installed_watcher_schema() -> Option<u32> {
-    let raw = tokio::fs::read_to_string("data/watcher_schema_version")
-        .await
-        .ok()?;
-    raw.trim().parse::<u32>().ok()
-}
-
-/// Whether the installed watcher is missing a privileged action the app
-/// might need to request. An unknown schema (no marker at all - a fresh
-/// install that hasn't run install.sh's watcher setup yet) is treated as
-/// needing an update too, since it can't be confirmed safe either way.
-pub async fn watcher_needs_update() -> bool {
-    installed_watcher_schema()
-        .await
-        .is_none_or(|schema| schema < REQUIRED_WATCHER_SCHEMA)
-}
-
-/// Re-run hint shown wherever the watcher version is displayed - the
-/// root-side watcher/scheduler scripts are only ever refreshed by re-running
-/// install.sh (the in-app "Update now" button only swaps the app binary). `repo` is
-/// `config::ForkConfig::server_release_repo`. The `KPS_REPO=` prefix keeps a re-run installing
-/// from the same repo even when it isn't install.sh's built-in default. Downloaded to a file and
-/// then run, never piped into a root shell (security review L10), from `main` - the only branch.
-pub fn reinstall_hint(repo: &str) -> String {
-    format!(
-        "curl -fsSLo kps-install.sh https://raw.githubusercontent.com/{repo}/main/server/deploy/install.sh && sudo KPS_REPO={repo} bash kps-install.sh"
-    )
 }
 
 /// Creates the first admin account if `admin_users` is empty - there's no self-registration, so

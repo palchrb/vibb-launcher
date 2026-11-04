@@ -25,8 +25,8 @@ pub const MERGE_MINUTES: i64 = 10;
 /// Past this a row takes no more routes; the next save starts a new one.
 const MAX_DETAIL: usize = 1000;
 /// POSTs that answer 303 but change no setting: commands and pauses (logged as their own events),
-/// checks, read marks, a test push, a backup made or restored and the root helper's actions
-/// (their own events too). `every_skipped_route_is_a_route` keeps the list to real routes.
+/// checks, read marks, a test push, a backup made or restored (its own event too).
+/// `every_skipped_route_is_a_route` keeps the list to real routes.
 const NOT_SAVES: &[&str] = &[
     "/devices/{id}/command/locate",
     "/devices/{id}/command/ring",
@@ -57,14 +57,6 @@ const NOT_SAVES: &[&str] = &[
     "/backups/create",
     "/backups/upload",
     "/backups/{filename}/restore",
-    // The Pi's root helper's actions (their own `*_triggered` events).
-    "/update/trigger",
-    "/update/restart",
-    "/system/os/check",
-    "/system/os/upgrade",
-    "/system/tailscale/update",
-    "/system/reboot",
-    "/backups/format-drive",
 ];
 
 /// One write at a time, so two saves at once can't both start a row or lose a count.

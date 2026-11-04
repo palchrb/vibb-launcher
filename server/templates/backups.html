@@ -12,8 +12,9 @@
     <h1 class="page-title">{{ self.t("settings.backups.title") }}</h1>
 
     {#- Every form renders its answer in the POST's response, posting to its group's fragment, so
-        the answer lands where the parent was (design 31 §5.1). Delete, Restore and Format are
-        <details> confirms; Restore and Format also need the file name or the drive's size typed. -#}
+        the answer lands where the parent was (design 31 §5.1). Delete and Restore are <details>
+        confirms; Restore also needs the file name typed. On a systemd install the server never
+        restarts itself (the user, 2026-11-04): Restore… shows the command to run over SSH. -#}
     <section id="backups" aria-label="{{ self.t("settings.backups.title") }}">
         <div class="group">
             <form method="post" action="/backups/create#backups" class="cell">
@@ -29,6 +30,7 @@
                 </summary>
                 <div class="edit-body">
                     <a href="/backups/{{ b.filename }}/download" class="button-small" download>{{ self.t("settings.backups.download") }}</a>
+                    {% if docker %}
                     <details class="confirm"{% if refused.is_some() %} open{% endif %}>
                         <summary class="row">{{ self.t("settings.backups.restore") }}…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/restore#backups" class="confirm-body">
@@ -40,6 +42,19 @@
                             {% include "partials/confirm_cancel.html" %}
                         </form>
                     </details>
+                    {% else %}
+                    <details class="info" data-restore="ssh">
+                        <summary class="row"><span class="row-label">{{ self.t("settings.backups.restore") }}…</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.backups.restore_how") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                        <div class="info-panel">
+                            <p>{{ self.t("settings.backups.restore_ssh") }} {{ self.t("backups.restore.accounts") }}</p>
+                            {% if let Some(command) = self.restore_command(b.filename) %}
+                            <pre><code>{{ command }}</code></pre>
+                            {% else %}
+                            <p data-restore="rename">{{ self.t("settings.backups.restore_rename") }}</p>
+                            {% endif %}
+                        </div>
+                    </details>
+                    {% endif %}
                     <details class="confirm">
                         <summary class="row">{{ self.t("settings.backups.delete") }}…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/delete#backups" class="confirm-body">
@@ -59,7 +74,7 @@
                 <summary aria-label="{{ self.t("settings.backups.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("settings.backups.info_holds") }}</p>
-                    <p>{{ self.t("settings.backups.info_keeps") }}{% if !docker %} {{ self.t("settings.backups.info_drive") }}{% endif %}</p>
+                    <p>{{ self.t("settings.backups.info_keeps") }}</p>
                 </div>
             </details>
         </div>
@@ -77,7 +92,7 @@
             </details>
             {% call group_flash::show(flash, "upload") %}{% endcall %}
         </div>
-        <p class="group-footer">{% if docker %}{{ self.t("settings.backups.upload_footer_docker") }}{% else %}{{ self.t("settings.backups.upload_footer") }}{% endif %}</p>
+        <p class="group-footer">{{ self.t("settings.backups.upload_footer") }}</p>
     </section>
 
     <section id="schedule" aria-labelledby="schedule-title">
@@ -113,16 +128,6 @@
                 <input type="number" id="retention_count" name="retention_count" min="0" max="3650" value="{{ schedule.retention_count }}">
                 <p class="field-hint">{{ self.t("settings.backups.keep_hint") }}</p>
             </div>
-            {% if !docker %}
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.backups.copy") }}<span class="row-sub">{{ self.t("settings.backups.copy_sub") }}</span></span>
-                <input type="checkbox" role="switch" class="sw" name="external_copy_enabled" value="1"{% if schedule.external_copy_enabled %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.backups.mirror") }}<span class="row-sub">{{ self.t("settings.backups.mirror_sub") }}</span></span>
-                <input type="checkbox" role="switch" class="sw" name="continuous_mirror_enabled" value="1"{% if schedule.continuous_mirror_enabled %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            {% endif %}
             <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
         {% if docker %}
@@ -131,40 +136,6 @@
         <p class="group-footer">{{ self.t("settings.backups.schedule_footer") }}</p>
         {% endif %}
     </section>
-
-    {% if !docker %}
-    <section id="drive" aria-labelledby="drive-title">
-        <h2 class="group-header" id="drive-title">{{ self.t("settings.backups.drive") }}</h2>
-        <div class="group">
-            <details class="info cell" data-row="drive">
-                <summary class="row">
-                    <span class="row-label">{{ self.t("settings.backups.backup_drive") }}</span>
-                    <span class="row-value">{% if external_drive_mounted %}{{ self.t("settings.backups.connected") }}{% else %}{{ self.t("settings.backups.not_connected") }}{% endif %}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.backups.drive_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                </summary>
-                <div class="info-panel"><p>{{ self.tp("settings.backups.drive_info", [("path", external_mount.as_str())]) }}</p></div>
-            </details>
-            {% for d in removable_drives %}
-            {% let refused = self.format_error(d.device) %}
-            <details class="confirm cell" data-drive="{{ d.device }}"{% if refused.is_some() %} open{% endif %}>
-                <summary class="row">{{ self.tp("settings.backups.format", [("device", d.device.as_str()), ("size", d.size_display.as_str())]) }}…</summary>
-                <form method="post" action="/backups/format-drive#drive" class="confirm-body">
-                    <input type="hidden" name="device" value="{{ d.device }}">
-                    <p>{{ self.t("settings.backups.format_confirm") }}</p>
-                    <label class="field-label" for="confirm_{{ d.device }}">{{ self.tp("settings.backups.type_size", [("size", d.size_display.as_str())]) }}</label>
-                    <input type="text" id="confirm_{{ d.device }}" name="confirm_size" autocomplete="off"{% if refused.is_some() %} aria-invalid="true" aria-describedby="format-error" autofocus{% endif %}>
-                    {% if let Some(why) = refused %}<p class="field-error" id="format-error">{{ self.t(why) }}</p>{% endif %}
-                    <button type="submit" class="button-destructive">{{ self.t("settings.backups.format_button") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% else %}
-            <p class="row row-note">{{ self.t("settings.backups.no_drive") }}</p>
-            {% endfor %}
-            {% call group_flash::show(flash, "drive") %}{% endcall %}
-        </div>
-    </section>
-    {% endif %}
 </main>
 </body>
 </html>

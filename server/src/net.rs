@@ -228,9 +228,9 @@ fn parse_forwarded_entry(entry: &str) -> Option<IpAddr> {
         .map(|ip| ip.to_canonical())
 }
 
-/// What `DEPLOY_KIND` says this install is (design 22 §6): the Pi's systemd unit with the
-/// root-side helper scripts, or the Docker image (no helper, no shell; updates by setting
-/// `HANDY_VERSION` and pulling the image).
+/// What `DEPLOY_KIND` says this install is (design 22 §6): install.sh's systemd unit (updated by
+/// the owner with update.sh; a restore over SSH), or the Docker image (no shell; updated by pulling
+/// the image; a restore restarts the container). The server acts on its host in neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeployKind {
     Systemd,

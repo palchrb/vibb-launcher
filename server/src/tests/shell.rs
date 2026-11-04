@@ -1749,7 +1749,7 @@ async fn every_confirm_has_a_cancel() {
             from = end;
         }
     }
-    assert!(confirms >= 33, "{confirms} confirms");
+    assert!(confirms >= 32, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
     assert!(head.contains("<script src=\"/static/confirm.js?v=1\" defer></script>"));
     let app = TestApp::new().await;

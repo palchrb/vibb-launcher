@@ -270,9 +270,9 @@ mod tests {
         assert_eq!(label_key(Lang::En, "unknown.music.title"), None);
     }
 
-    /// Literals near a security-event writer that are not event ids: form fields, notice codes,
-    /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 40] = [
+    /// Literals near a security-event writer that are not event ids: form fields, notice codes
+    /// and command names.
+    const NOT_EVENTS: [&str; 37] = [
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_no_pin",
         "pin_not_kept",
@@ -301,8 +301,6 @@ mod tests {
         "not_set_up",
         "not_a_domain_allow",
         "not_a_domain_block",
-        "os_check",
-        "os_upgrade",
         "override_is_kid_pin",
         "override_needed_by_lock",
         "parent_pin_cleared",
@@ -316,19 +314,18 @@ mod tests {
         "saved_safe_boot_not_kept",
         "show_text",
         "stop_ring",
-        "tailscale_update",
         "unknown_phone",
     ];
 
     /// Every event id the server writes has a label (qa-31-s14-code M2): the `snake_case` literals
     /// around each writer in `src/` (outside tests) - `record_security_event`, `log_event`,
-    /// `log_change`, the audit's `.record`, `request_action`, the raw `INSERT INTO
+    /// `log_change`, the audit's `.record`, the raw `INSERT INTO
     /// security_events`, and the `let (…event…)` tuples that pick one - are ids, unless listed in
     /// [NOT_EVENTS]. A new event without a label fails here.
     #[test]
     fn every_written_event_has_a_label() {
         let writer = regex::Regex::new(
-            r"record_security_event\(|record_phone_event(?:_logged)?\(|log_event\(|log_change\(|\.record\(|request_action\(|INSERT INTO security_events",
+            r"record_security_event\(|record_phone_event(?:_logged)?\(|log_event\(|log_change\(|\.record\(|INSERT INTO security_events",
         )
         .unwrap();
         let picker = regex::Regex::new(r"let \(?[a-z_, ]*event").unwrap();

@@ -84,7 +84,7 @@ async fn the_device_router_serves_nothing_but_the_device_api() {
         "/devices/1/command/wipe",
         "/settings",
         "/backups/x/download",
-        "/update/trigger",
+        "/updates",
         "/security",
         "/music",
         "/apps",

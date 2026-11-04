@@ -905,7 +905,6 @@ async fn every_route_is_locked_or_exempt() {
         "merge onboarding_routes",
         "merge lock_routes",
         "merge admin_routes",
-        "merge host_routes",
         "merge device_routes::device_routes",
         "nest_service \"/static\"",
     ]
