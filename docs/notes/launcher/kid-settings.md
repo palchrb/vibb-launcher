@@ -1,4 +1,4 @@
-# Launcher notes: kid Settings: sound, touch feedback, Bluetooth headphones
+# Launcher notes: kid Settings: sound, touch feedback, ringtone, Bluetooth headphones
 
 Moved from launcher/CLAUDE.md on 2026-11-01.
 
@@ -29,6 +29,41 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Residual**: Android 13+'s own Touch feedback toggle also writes the hidden `HAPTIC_FEEDBACK_INTENSITY`, which an app
   can't write - on a phone where it was turned off before enrolment ours shows on while haptics stay off (accepted;
   `docs/setup/android-settings.md`: leave it on). Not device-tested: the note's §5 check 4.
+
+## Ringtone and message sound in Kid Settings (PLAN, approved 2026-11-04, branch `kid-sounds`)
+
+- **Rows** (mockup https://claude.ai/artifact/51wRYDkVCPi2XRyLeLhtH9): "Ringetone" and "Meldingslyd" between the sound
+  row and the touch row, with the parent's **sound bit** (`QuickControlFeature.SOUND`, no new bit; also on a phone
+  without a vibrator, where the sound row itself is hidden), each the phone's sound and a chevron. Pure
+  `ui/kidsettings/SoundPicks.kt` (`SoundPicksTest`): `soundPicksState` (writable only with the "Modify system settings"
+  app-op, `Settings.System.canWrite` - without it both at 50 %, not clickable, with the touch row's "Kan ikke endres på
+  denne telefonen ennå."), `soundValue` (MediaStore's title, else a canonical URI's `title`, "Ingen lyd" when none is
+  set, "Annen lyd" when unreadable). The ringer mode is no input: Lydløs changes nothing here. Read off the main thread
+  on every resume (`KidSettingsActivity.loadSoundValues`).
+- **Picker** `KidSoundPickerActivity` (not exported, our own page in the lock task; leaves when the sound bit or the
+  app-op goes, a lock comes first): the caption, RingtoneManager's cursor for `TYPE_RINGTONE` / `TYPE_NOTIFICATION`
+  filtered to the **built-in** sounds (`content://media/internal/…`; the cursor also lists shared-storage files - not
+  offered) as one `RadioGroup` (`item_kid_sound`), the closing line. **No "Ingen" row** (the kid must not silence the
+  parents' calls). A sound the parent set from a file leads the list while the picker is open (`leadSound`), so the
+  kid can go back to it. A tap plays it (`KidSounds.Preview`: `MediaPlayer`, `USAGE_MEDIA`, a ducking transient focus
+  request - heard in Lydløs; silent at media volume 0) and, unless it is the phone's already (`pickerTapWrites`), writes
+  it; the checked row is then read back, so a refused write flips back. `onStop` stops the sound. Never the system
+  picker (`ACTION_RINGTONE_PICKER` is banned in `KidScreensEscapeTest`: its "add a sound" opens a file browser).
+- **Writes** only in `KidSounds.set` (`suspend`, `Dispatchers.IO`, one `Mutex`):
+  `RingtoneManager.setActualDefaultRingtoneUri` - the public `RINGTONE` / `NOTIFICATION_SOUND` keys plus Android's
+  ringtone cache (played before the first unlock); it silently skips a URI whose MIME type it can't read, so the result
+  is the read-back (`sameSound`, which ignores a canonical URI's query and a `0@` user id). Not a restriction: the
+  override and the pause change nothing, the bit going off leaves the sounds as they are.
+- **No vibration rows** (checked against AOSP 13/14, 2026-11-04): Telecom decides a call's vibration from the hidden
+  `RING_VIBRATION_INTENSITY` alone (`SystemSettingsUtil.isRingVibrationEnabled`: "VIBRATE_WHEN_RINGING setting was
+  deprecated"; `VibrationSettings` reads it too), so writing the still-public `VIBRATE_WHEN_RINGING` changes nothing on
+  minSdk 34. `RING_VIBRATION_INTENSITY` and `NOTIFICATION_VIBRATION_INTENSITY` are `@hide` and not in
+  `Settings.System.PUBLIC_SETTINGS`: SettingsProvider throws `IllegalArgumentException` at an unprivileged app with
+  target SDK > 22, app-op or not. No device-owner API either. A vibrate row would lie to the kid.
+- **Residual / device checks**: the message sound reaches only the apps whose channel uses the default sound
+  (`content://settings/system/notification_sound`); a channel created with its own sound keeps it (check Element X and
+  Google Messages on the Jelly Star). Not device-tested yet: the list on the Jelly Star, the preview while Lydløs, a
+  call and a message with the new sounds, and the read-back with the phone's canonical URIs.
 
 ## Bluetooth headphones in Kid Settings (design 52, `docs/design/52-bluetooth-headphones.md`, at the monorepo root)
 

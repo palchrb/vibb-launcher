@@ -74,7 +74,8 @@ import kotlinx.coroutines.withContext
  * The screen re-renders when a sync stores a new policy (the mask can change while it is open).
  * The sound row (design 18) re-reads the phone on every ringer-mode or Do Not Disturb change
  * while the screen is shown - the volume keys change it underneath. The touch row (design r9 §4) is
- * read again on every resume and after a tap's write. The kid's hidden apps (the user, 2026-11-03) are filtered again on
+ * read again on every resume and after a tap's write. The ringtone and message sound rows ([SoundPicks]) show the
+ * phone's sounds, read off the main thread on every resume (the picker is its own page). The kid's hidden apps (the user, 2026-11-03) are filtered again on
  * every resume, policy and change of the hidden set.
  */
 class KidSettingsActivity : UIObjectActivity() {
@@ -98,6 +99,11 @@ class KidSettingsActivity : UIObjectActivity() {
     private var hiddenApps: List<HiddenApp> = emptyList()
     private var hiddenOpen = false
     private var hiddenJob: Job? = null
+
+    /** The phone's ringtone and message sound as the rows show them ([KidSounds.currentValue]; main thread), the newest read wins. */
+    private var soundValues: Map<SoundKind, SoundValue> = emptyMap()
+    private var soundValuesJob: Job? = null
+    private var pickerOpening = false
 
     /** Volume keys, the volume panel or a DND schedule changed the ringer: show what is true now. */
     private val soundReceiver = object : BroadcastReceiver() {
@@ -170,6 +176,15 @@ class KidSettingsActivity : UIObjectActivity() {
                 section?.let { renderControls(it) }
             }
         }
+        for ((row, kind) in pickRows()) {
+            row.setOnClickListener {
+                // One picker per tap: a fast double tap would open two (cleared on the next resume).
+                if (it.isEnabled && !pickerOpening) {
+                    pickerOpening = true
+                    KidSoundPickerActivity.start(this, kind)
+                }
+            }
+        }
         binding.kidSettingsHiddenRow.setOnClickListener {
             hiddenOpen = !hiddenOpen
             renderHidden()
@@ -198,11 +213,13 @@ class KidSettingsActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
+        pickerOpening = false
         if (redirectIfLocked()) return
         // Also refreshes whether the system wallpaper is still ours (in the background).
         WallpaperStore.refreshAsync(this)
         render()
         loadHiddenApps()
+        loadSoundValues()
     }
 
     override fun onStop() {
@@ -312,10 +329,10 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         val rows = section as? ControlsSection.Rows
         val soundShown = renderSound(rows?.sound == true)
+        val picksShown = renderPicks(rows?.sound == true)
         val touchShown = renderTouch(rows?.touch == true)
-        // Mask 0 (or only the sound bit on a phone without a vibrator): no card and no heading -
-        // there is simply nothing to show.
-        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown || touchShown)
+        // Mask 0: no card and no heading - there is simply nothing to show.
+        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown || picksShown || touchShown)
         binding.kidSettingsControlsHeading.visibility =
             if (section == ControlsSection.NoneEnabled || (rows != null && !anyRow)) View.GONE else View.VISIBLE
         binding.kidSettingsControlsMessage.visibility = if (message != null) View.VISIBLE else View.GONE
@@ -410,6 +427,51 @@ class KidSettingsActivity : UIObjectActivity() {
         return true
     }
 
+    /**
+     * The ringtone and message sound rows ([soundPicksState]) with the parent's sound bit - also on a phone without a
+     * vibrator, where the sound row is hidden: each the phone's sound ([soundValue]) and a chevron; without the
+     * "Modify system settings" app-op both at 50 %, not clickable, with the touch row's line. Returns whether they show.
+     */
+    private fun renderPicks(wanted: Boolean): Boolean {
+        val state = soundPicksState(wanted, KidSounds.canWrite(this))
+        binding.kidSettingsPicksRow.visibility = if (state != null) View.VISIBLE else View.GONE
+        if (state == null) return false
+        for ((row, kind) in pickRows()) {
+            row.isEnabled = state.writable
+            row.alpha = if (state.writable) 1.0f else 0.5f
+            val value = when (val v = soundValues[kind]) {
+                is SoundValue.Named -> v.title
+                SoundValue.NoSound -> getString(R.string.kid_settings_sound_none)
+                SoundValue.Unnamed -> getString(R.string.kid_settings_sound_unnamed)
+                null -> ""
+            }
+            valueView(kind).text = value
+            row.contentDescription = listOf(getString(KidSoundPickerActivity.titleFor(kind)), value)
+                .filter { it.isNotEmpty() }.joinToString(", ")
+        }
+        binding.kidSettingsPicksReadOnly.visibility = if (state.writable) View.GONE else View.VISIBLE
+        return true
+    }
+
+    /** The phone's two sounds for the rows, off the main thread (a MediaStore read each); then the rows again. */
+    private fun loadSoundValues() {
+        soundValuesJob?.cancel()
+        soundValuesJob = lifecycleScope.launch {
+            soundValues = SoundKind.entries.associateWith { KidSounds.currentValue(this@KidSettingsActivity, it).second }
+            section?.let { renderControls(it) }
+        }
+    }
+
+    private fun pickRows(): List<Pair<View, SoundKind>> = listOf(
+        binding.kidSettingsRingtoneRow to SoundKind.RINGTONE,
+        binding.kidSettingsMessageSoundRow to SoundKind.MESSAGE,
+    )
+
+    private fun valueView(kind: SoundKind): TextView = when (kind) {
+        SoundKind.RINGTONE -> binding.kidSettingsRingtoneValue
+        SoundKind.MESSAGE -> binding.kidSettingsMessageSoundValue
+    }
+
     /** Showing the phone's state must not write it. */
     private fun showChecked(switch: CompoundButton, checked: Boolean, listener: CompoundButton.OnCheckedChangeListener) {
         switch.setOnCheckedChangeListener(null)
@@ -444,11 +506,16 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
             binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard, binding.kidSettingsLocationLine,
             binding.kidSettingsHiddenLabel,
+            binding.kidSettingsRingtoneLabel, binding.kidSettingsRingtoneValue, binding.kidSettingsMessageSoundLabel,
+            binding.kidSettingsMessageSoundValue, binding.kidSettingsPicksReadOnly,
             // The card's links in the ink too: peach on the card over a light or mid-tone ground
             // was ~2:1 (qa-34-s10-code M1). Bold, as before.
             binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,
         )) {
             KidInk.label(view, ink)
+        }
+        for (chevron in listOf(binding.kidSettingsRingtoneChevron, binding.kidSettingsMessageSoundChevron)) {
+            chevron.imageTintList = ColorStateList.valueOf(ink.ink)
         }
         if (ink != this.ink) {
             this.ink = ink

@@ -150,6 +150,14 @@
     <string name="kid_settings_touch_vibration">Vibrate on touch</string>
     <string name="kid_settings_touch_keyboard">The keyboard has its own sound and vibration in its settings.</string>
     <string name="kid_settings_touch_read_only">Can\'t be changed on this phone yet.</string>
+    <!-- The kid's ringtone and message sound (2026-11-04): the rows, their value when none is set or unnamed, the picker's lines. -->
+    <string name="kid_settings_ringtone">Ringtone</string>
+    <string name="kid_settings_message_sound">Message sound</string>
+    <string name="kid_settings_sound_none">No sound</string>
+    <string name="kid_settings_sound_unnamed">Other sound</string>
+    <string name="kid_sound_caption">Tap a sound to hear it. The last one you tap is chosen.</string>
+    <string name="kid_sound_footer">These are the phone\'s own sounds. The sound stops when you go back.</string>
+    <string name="kid_sound_empty">No sounds were found on this phone.</string>
     <!-- Design 64 step 2: Kid Settings' calm line while the phone shares where it is (sharesLocation). -->
     <string name="kid_settings_location_shared">This phone shares where it is with mum and dad.</string>
     <!-- The kid's hidden apps in Kid Settings (2026-11-03): the row, an app's word, its TalkBack label, the list open or closed. -->
