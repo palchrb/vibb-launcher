@@ -306,3 +306,127 @@ Tests of the fix round:
   passed again after it.
 - Launcher: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 2099 tests, 0 failures.
 - No emulator was started.
+
+## Verification (independent, 2026-11-04, f69ecce9)
+
+Security re-check of the fix round on `server-issuer-pin-2` by Opus, branch `verify-server-issuer-pin`. Read: the
+fix diff in full, `server_tls.rs` at f69ecce9, `config.rs`, `handlers::devices::server_tls`, the template, both i18n
+files, `ServerPins.kt`, `ServerPinStore.kt`, `ServerUrlRule.kt`, the sync's fresh-policy block, `Provisioning.kt`,
+the Settings dialogs, DEPLOY.md's new section, and the tests.
+
+**Verdict: every fix holds, and the new recovery-address surface is sound. There are no Critical, High or Medium
+findings.** Counts: **0 C, 0 H, 0 M, 3 L, 5 nits.**
+
+### The fixes
+
+- **H-1.** `PHONE_RECOVERY_URL` is taken only as `check_server_url`'s `TailnetHttp`
+  (`config::tests::the_recovery_url_is_a_tailnet_address_only`). `recovery_from` runs that same check on every source
+  (`the_recovery_address`). The page and the phone's two dialogs show the full address with its port.
+  DEPLOY.md's section covers the listener, Caddy, `tailscale serve`, the ACL and the check. Step 0 is still owed on
+  the user's server, as the design says.
+- **M-1.** The card follows `phone_enforcing` and the last `seen`. The alarm is not filtered by state. The flash no
+  longer says "hears it now". All of it is tested (`the_card_follows_the_phone`, `a_kept_row_is_open_...`).
+- **L-1.** The block ends at the last `"\n  Pinned certificates for "`, lines are strict, and a message of another
+  shape still refuses. Tested with three hostile CNs against OkHttp 4.12's real message.
+- **L-2.** Pushes need `in_set_seen` or `on`. **L-3:** see L-b below. **L-4:** tested. **L-5:** tested.
+- **Nits.** All four are fixed. The `/watch` refusal is tested. `enforce(null)` reading as on is a one-liner with no
+  test, which is fine.
+
+### The new surface
+
+- **`server_tls.recovery_url`, as stored on the phone.**
+  - `nextRecovery` stores the address only from the sync's fresh policy, and only over a `PASSED` or `TAILNET`
+    connection. It is judged on the policy response's own handshake. A source scan pins it to one caller in that
+    block.
+  - It stores only an address whose `serverUrlVerdict` is `TAILNET_HTTP`. The contract has 11 `recovery` rows,
+    covering failing, debug_http, absent, malformed, https and LAN.
+  - A MITM with a certificate outside the set gets `FAILED`, so it can neither plant the address nor clear it. Only an
+    in-set mis-issuance could plant one, and design §7 already puts that out of scope.
+  - The stored address is read in exactly one place, `serverCertRecovery`, which is dialog text.
+  - Nothing writes the Server URL from it, no token goes to it, and nothing follows it on its own. The branch adds no
+    `serverUrl(...)` writer.
+  - Even a planted address would be dialled only through tsnet to a current tailnet peer.
+- **`own_tailnet_ip`.**
+  - It only does `bind` and `connect` on a UDP socket. `connect(2)` on a datagram socket sends nothing, and nothing
+    on the host changes.
+  - It is `cfg!(test)` → `None`. Every server test is in-crate (there is no `server/tests/`), and the tests assert it
+    is `None`.
+  - Every error gives `None`.
+  - It accepts only `is_tailnet_ip`: `a == 100 && b in 64..=127`, or `fd7a:115c:a1e0::/48`.
+  - `recovery_url` never fails the policy.
+- **Migration 0129.**
+  - It was first added in 821587c5 (branch `server-issuer-pin`), then in ae3006fa.
+  - `git tag --contains` is empty for every commit that touches it, and origin/main ends at 0128. The latest tag is
+    `server-v0.68.0`.
+  - sqlx's `migrate!` checks checksums, so a database that ran an earlier 0129 would refuse to start. No released build
+    has one, and no local database here has one (`~/e*-data-pre-start`: 121 at most). Only a dev or emulator database
+    that ran these branch commits would need its 0129 row and table dropped by hand.
+- **Contract.** The fix commit changes `server_tls_report.json` in both directories, and `cmp` finds the two copies
+  identical. `policy_json_keys_snapshot` stays `{}` (no address in the tests), and the launcher reads `server_tls` raw.
+- **Lockout.** No new path touches lock, calls or 112. The fail-closed `enforce(null)` has no reachable null caller
+  (`Application.instance` is set before any client, and the boot cover has none). The PowerEvents rebuild only follows
+  the flag.
+- **Standing rules.**
+  - There are no fallbacks, no adb step and no host actions.
+  - There is no private key on the branch: the 10 PEMs are certificates only, and the only `tskey-` strings are the
+    old fake test keys.
+  - All 45 `server_tls` keys are in both `en.json` and `nb.json`, with no key missing from either.
+  - Every form and redirect lands on `#server-tls`.
+
+### Findings
+
+**L-a - The refusal alarm can be drained by phone-sent rows.** `server_tls.rs:308-310` drains the kept rows oldest
+first, whatever their kind, and `card` (`:796`) shows only the newest `refused` row.
+- Forged reports: one report from a token holder with 8 distinct `seen` rows removes the stored `refused` row, and the
+  alarm is gone from the page at once. If the day's push has already gone out, no new push follows. The real
+  refusal's push stays in the inbox, but not on the page. A newer forged `refused` row also replaces the issuer the
+  alarm names.
+- Without forgery: a phone whose parent turned the check off on a server outside the set never drops its ring
+  (`FAILED`). It adds a `seen` row at each Wi-Fi/mobile switch, so the refusal leaves the page in about two days, not
+  the week M-1 promises.
+- Fix: drain `seen` rows before `refused` rows, and keep the newest `refused` row through the cap while it is `open`
+  or within `ALARM_KEPT`. Add a test with 8 new rows.
+
+**L-b - L-3 is closed only for a stopped phone.** Adoption from `watching` without a stop (`:319-325`) still leaves no
+security line, only a `tracing::info`.
+- The `seen.in_set: true` that the fix now requires is as easy for the token holder L-3 is about to forge as
+  `enforcing: true`.
+- So on a split-horizon install whose phone has not reported mobile data yet, one forged report still switches the
+  phone `on` silently. It is not a brick: Wi-Fi keeps working, and the refusals on mobile reach the server over Wi-Fi
+  as an alarm.
+- Fix (the review's second option): write `server_tls_on`, with the phone's report as actor, on every adoption.
+
+**L-c - DEPLOY.md's firewall advice cuts off the user's own proxy.** `DEPLOY.md:249` says to firewall 3101 to the
+tailnet and "deny it elsewhere", or to bind the tailnet IP.
+- In the setup design step 0 names (the server on `0.0.0.0:3101`, Caddy on 10.73.10.81 proxying over the LAN), either
+  step blocks Caddy.
+- Every phone then loses the server until the host's firewall is fixed. This is not a phone brick, and the tailnet
+  path still works.
+- Fix: "and from your reverse proxy (`ufw allow from 10.73.10.81 to any port 3101`)". Also say that binding the tailnet
+  IP fits only when the proxy reaches the server over the tailnet.
+
+Nits:
+- **n1 - The recovery address outlives the server it belongs to.** A setup QR clears the flag
+  (`Provisioning.kt:37`) but not `server_pin_recovery`. After re-provisioning to another server, Settings keeps
+  showing the old server's address as "This server's tailnet address". That lasts until a passing policy with
+  `server_tls` arrives, and it never happens on a server without `server_pin_v1`. Clear the address with the flag.
+- **n2 - A CGNAT host can show a false address.** `own_tailnet_ip` (`:463`) takes any 100.64/10 source address. A host
+  that is not on Tailscale but has a CGNAT address on its uplink would show that address as the recovery address.
+  Nothing leaks, since the phone dials it only through tsnet, but the page shows a false address. Name
+  `PHONE_RECOVERY_URL` as the override in DEPLOY.md.
+- **n3 - `[::]` does not always answer IPv4.** `listener_port` (`:485`) counts `[::]` as answering an IPv4 address,
+  which is false with `net.ipv6.bindv6only=1`.
+- **n4 - Two line-breaking characters pass the filter.** `hidden_char` (`:158`) misses U+2028 and U+2029. They are
+  not `is_control`, and some notification renderers break lines on them.
+- **n5 - Two card lines don't say what the phone reports.** A phone that enforces over the tailnet (no `seen`) while
+  the server is `watching` without a stop is not adopted, which is correct. But the card shows only "watching - on
+  from …", because `phone_says_on` (`:866`) requires a stop. In the same way, "on - the phone takes it at its next
+  sync" never comes true for a phone that only uses the tailnet.
+
+### Tests run
+
+- Server (`CARGO_TARGET_DIR=~/cargo-targets/verify-pin`, `line-tables-only`): `cargo test` 1749 passed, 0 failed;
+  `cargo fmt --check` clean.
+- Launcher (`--no-daemon --max-workers=2`): `ServerPinsTest` 13, `ServerPinTransportTest` 7, `ServerTransportTest` 10,
+  `PolicyResponseCompatTest` 49 - 0 failures.
+- No emulator was started.
