@@ -320,7 +320,7 @@ pub fn load_key(file: &std::path::Path) -> Result<VapidKey, String> {
 /// parent removes it.
 pub async fn forget_other_keys(db: &sqlx::SqlitePool, key: &VapidKey) {
     let done: Result<Vec<(i64, String)>, sqlx::Error> = sqlx::query_as(
-        "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now') \
+        "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now'), p256dh = X'', auth = X'' \
          WHERE state = 'active' AND vapid_fp != ? RETURNING admin_id, label",
     )
     .bind(&key.fingerprint)
@@ -467,34 +467,47 @@ pub async fn this_browser(session: &tower_sessions::Session) -> Option<String> {
 }
 
 /// Deletes an admin's subscriptions (§7, security review M1 - a lost device stops getting titles): Sign Out
-/// Everywhere, a new password, "Reset two-factor login", a removed passkey and "Kun passkey" on Account, the
-/// re-auth sign-out after three wrong tries (`admin_auth::record_reauth`) and the CLI's `reset-2fa`. `keep` is
-/// this session's own browser ([this_browser], the server's own record - never a value the request names): the
-/// device that made the change keeps its notifications, made current in the account's new epoch (Push never lost
-/// silently, 2026-11-04); only a change this session survives passes it. Every other row goes, and a deletion is
-/// never silent: [trace_forgotten] writes `push_subscriptions_cleared` and raises `push_off` (then the sender is
-/// woken). A parent's Reset and Remove delete them in their own transaction (`parents.rs`) and trace the same way.
-/// Each subscription also keeps the epoch of the session that made it, for [forget_stale] and [CURRENT_EPOCH].
+/// Everywhere, a new password, "Reset two-factor login", a removed passkey and "Kun passkey" on Account, and the
+/// re-auth sign-out after three wrong tries (`admin_auth::record_reauth`). `kept` is this session's own browser's
+/// row ([kept_row], read before the change; [keep_row] moved it to the new epoch in the change's own transaction):
+/// the device that made the change keeps its notifications (Push never lost silently, 2026-11-04); only a change
+/// this session survives passes it. Every other row goes, and a deletion is never silent: [trace_forgotten] writes
+/// `push_subscriptions_cleared` and raises `push_off` (then the sender is woken). The CLI's `reset-2fa` and a
+/// parent's Reset and Remove delete them in their own statements and trace the same way. Each subscription also keeps
+/// the epoch of the session that made it, for [forget_stale] and [CURRENT_EPOCH]. Whether a row was kept.
 pub async fn forget_subscriptions(
     state: &AppState,
     admin: &crate::models::AdminUser,
     why: Forget,
-    keep: Option<&str>,
-) {
-    if forget_in(&state.db, admin.id, why, keep).await {
+    kept: Option<i64>,
+) -> bool {
+    let (raised, kept) = forget_in(&state.db, admin.id, why, kept).await;
+    if raised {
         state.push.wake();
     }
+    kept
 }
 
-/// [forget_subscriptions] on a pool alone (the CLI): whether an inbox event was raised.
-pub async fn forget_in(
+/// [forget_subscriptions]' work on the pool: `(an inbox event was raised, a row was kept)`. The kept row counts only
+/// while it is this admin's, active and of the account's epoch now (its [keep_row] took).
+async fn forget_in(
     db: &sqlx::SqlitePool,
     admin_id: i64,
     why: Forget,
-    keep: Option<&str>,
-) -> bool {
-    let kept = match keep {
-        Some(hash) => keep_this_browser(db, admin_id, hash).await,
+    kept: Option<i64>,
+) -> (bool, bool) {
+    let kept: Option<(i64, String)> = match kept {
+        Some(id) => sqlx::query_as(&format!(
+            "SELECT s.id, s.label FROM push_subscriptions s \
+             WHERE s.id = ? AND s.admin_id = ? AND s.state = 'active' AND {CURRENT_EPOCH}"
+        ))
+        .bind(id)
+        .bind(admin_id)
+        .fetch_optional(db)
+        .await
+        .inspect_err(|err| tracing::error!(%err, "can't read this browser's subscription"))
+        .ok()
+        .flatten(),
         None => None,
     };
     let deleted: Result<Vec<(String, String)>, sqlx::Error> = sqlx::query_as(
@@ -504,6 +517,7 @@ pub async fn forget_in(
     .bind(kept.as_ref().map(|(id, _)| *id))
     .fetch_all(db)
     .await;
+    let was_kept = kept.is_some();
     match deleted {
         Ok(rows) => {
             // A row already gone was told when it went.
@@ -512,43 +526,61 @@ pub async fn forget_in(
                 .filter(|(_, state)| state == "active")
                 .map(|(label, _)| label)
                 .collect();
-            trace_forgotten(db, admin_id, why, &labels, kept.map(|(_, label)| label)).await
+            let raised =
+                trace_forgotten(db, admin_id, why, &labels, kept.map(|(_, label)| label)).await;
+            (raised, was_kept)
         }
         Err(err) => {
             tracing::error!(%err, "can't delete the notification subscriptions");
-            false
+            (false, was_kept)
         }
     }
 }
 
-/// The active subscription of `admin_id` whose [endpoint_hash] is `hash`, moved to the account's epoch now (the
-/// change moved it first): `(id, label)`.
-async fn keep_this_browser(
+/// This session's browser's subscription, read before an account change ([forget_subscriptions]' `kept`): the
+/// admin's active row of the session's own epoch (security review of 2026-11-04, L-3: never an older row) whose
+/// [endpoint_hash] is the one the server noted in this session ([this_browser]). Its id.
+pub async fn kept_row(
     db: &sqlx::SqlitePool,
-    admin_id: i64,
-    hash: &str,
-) -> Option<(i64, String)> {
-    let rows: Vec<(i64, String, String)> = sqlx::query_as(
-        "SELECT id, endpoint, label FROM push_subscriptions WHERE admin_id = ? AND state = 'active'",
+    admin: &crate::models::AdminUser,
+    session: &tower_sessions::Session,
+) -> Option<i64> {
+    let hash = this_browser(session).await?;
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, endpoint FROM push_subscriptions \
+         WHERE admin_id = ? AND state = 'active' AND session_epoch = ?",
     )
-    .bind(admin_id)
+    .bind(admin.id)
+    .bind(admin.session_epoch)
     .fetch_all(db)
     .await
     .inspect_err(|err| tracing::error!(%err, "can't read this browser's subscription"))
     .ok()?;
-    let (id, _, label) = rows
-        .into_iter()
-        .find(|(_, endpoint, _)| endpoint_hash(endpoint) == hash)?;
+    rows.into_iter()
+        .find(|(_, endpoint)| endpoint_hash(endpoint) == hash)
+        .map(|(id, _)| id)
+}
+
+/// Moves the [kept_row] to the account's epoch, on the change's own connection right after its epoch `UPDATE`, so no
+/// send pass in between ([forget_stale]) can take it for a signed-out session's.
+pub async fn keep_row(
+    conn: &mut sqlx::SqliteConnection,
+    admin_id: i64,
+    kept: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    let Some(id) = kept else {
+        return Ok(());
+    };
     sqlx::query(
         "UPDATE push_subscriptions SET session_epoch = \
-         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id) WHERE id = ?",
+         (SELECT a.session_epoch FROM admin_users a WHERE a.id = ?1) \
+         WHERE id = ?2 AND admin_id = ?1 AND state = 'active'",
     )
+    .bind(admin_id)
     .bind(id)
-    .execute(db)
-    .await
-    .inspect_err(|err| tracing::error!(%err, "can't keep this browser's subscription"))
-    .ok()?;
-    Some((id, label))
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// The trace of subscriptions the server ended (Push never lost silently, 2026-11-04): with any `labels` (the
@@ -1204,8 +1236,8 @@ async fn send_one(
         Outcome::Gone => {
             finish(state, delivery.id, "dropped", status, reason.as_deref()).await?;
             let turned_off: Option<i64> = sqlx::query_scalar(
-                "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now') \
-                 WHERE id = ? AND state = 'active' RETURNING admin_id",
+                "UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now'), \
+                 p256dh = X'', auth = X'' WHERE id = ? AND state = 'active' RETURNING admin_id",
             )
             .bind(delivery.subscription_id)
             .fetch_optional(&state.db)

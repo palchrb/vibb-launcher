@@ -44,9 +44,9 @@ pub const INSTALL_PROGRESS_MINUTES: i64 = 10;
 /// Web Push deliveries (design 35 §2.4).
 pub const PUSH_DAYS: i64 = 30;
 /// A subscription a push service ended (`gone`, 404/410 or another server key) stays this long - shown on Devices
-/// and Getting Notifications until its device sends a new one or the parent removes it - and so does a parent's
-/// Remove/Turn Off note (`push_removed`): as long as the security log keeps the `push_subscription_gone` line about
-/// it (Push never lost silently, 2026-11-04; 30 days before).
+/// and Getting Notifications until its device sends a new one or the parent removes it -: as long as the security log
+/// keeps the `push_subscription_gone` line about it (Push never lost silently, 2026-11-04; 30 days before). A
+/// parent's Remove/Turn Off note (`push_removed`) is kept for good.
 pub const PUSH_GONE_DAYS: i64 = SECURITY_EVENT_DAYS;
 /// The phones' commands (`device_commands`, design 48 §1.6), by when they were asked - except one
 /// that may still reach its phone.
@@ -212,7 +212,7 @@ fn rows(
 /// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
 ///   by when they were stored; design 64 decision 6);
 /// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries after [PUSH_DAYS] (design 35 §2.4),
-///   subscriptions a push service ended and a parent's Remove notes after [PUSH_GONE_DAYS];
+///   subscriptions a push service ended after [PUSH_GONE_DAYS] (a parent's Remove notes stay);
 /// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
 ///   delivered nor cancelled, and not an expiring kind (`models::EXPIRING_COMMANDS` - those are
 ///   past their hour) - a lost phone that comes back weeks later must still be wiped or locked
@@ -433,12 +433,9 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
     )
     .bind(PUSH_GONE_DAYS)
     .execute(db)
-    .await) + rows(failed, "push_removed", sqlx::query(
-        "DELETE FROM push_removed WHERE removed_at < datetime('now', '-' || ? || ' days')",
-    )
-    .bind(PUSH_GONE_DAYS)
-    .execute(db)
     .await);
+    // `push_removed` is never pruned (review M-1): a parent's Remove or Turn Off holds until a tap turns that
+    // browser on again - an expiry would bring it back silently. Its rows come only from those taps.
     let expiring = crate::models::EXPIRING_COMMANDS;
     let sql = format!(
         "DELETE FROM device_commands WHERE requested_at < datetime('now', '-' || ? || ' days') \

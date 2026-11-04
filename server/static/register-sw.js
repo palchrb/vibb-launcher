@@ -94,7 +94,8 @@
     // - none, or one the push service ended or made for another server key: a new one is made with the server's key
     //   and sent (with `replaces`, the dead one); a subscribe the browser refuses without a tap (iOS) shows the
     //   app-wide quiet banner "Notifications are off on this phone" with Turn On (subscribe first in the tap) and Hide;
-    // - known, stored, removed by a parent (Remove/Turn Off), refused, or any failure: nothing more.
+    // - removed by a parent (Remove, Turn Off or Hide - the server's mark, review M-1): Turn Off in this browser too;
+    // - known, stored, refused, or any failure: nothing more.
     var SYNC_KEY = "vibb.push-sync";
     var SYNC_SPACING = 10 * 60 * 1000;
     var OFF_KEY = "vibb.push-off";
@@ -287,6 +288,9 @@
         hide.addEventListener("click", function () {
             markOff(win);
             gone();
+            // The server marks this browser turned off too (a cookie), so a cleared localStorage or a new sign-in
+            // doesn't bring the banner or a silent subscribe back (review M-1).
+            post(win, { off: "1" }).catch(function () {});
         });
         return row;
     }
@@ -305,6 +309,8 @@
             if (!reg || !reg.pushManager) return null;
             return check(win, reg).then(function (answer) {
                 if (answer && answer.state === "needs_tap") banner(win, reg, answer);
+                // A parent turned this browser off (here or under Getting Notifications): this browser stops asking.
+                if (answer && answer.state === "removed") markOff(win);
                 return answer;
             });
         }).catch(function () {

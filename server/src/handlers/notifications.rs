@@ -1062,9 +1062,59 @@ async fn note_removed(db: &sqlx::SqlitePool, admin_id: i64, endpoint: &str) {
     }
 }
 
+/// The cookie that says a parent turned notifications off in this browser (Push never lost silently, review M-1):
+/// `__Host-handy-push-off` (`handy-push-off` with `INSECURE_COOKIES`; Secure, HttpOnly, Strict, 400 days, renewed by
+/// every [sync] that answers `removed`). Set by This Device's Turn Off, the banner's Hide and a `removed` answer;
+/// deleted by a tap on Turn On. It outlives an endpoint the browser rotates, a cleared localStorage, a new sign-in and
+/// [REMOVED]'s rows: the app's own re-send never turns this browser on again while it is set.
+pub fn off_cookie_name(insecure: bool) -> &'static str {
+    if insecure {
+        "handy-push-off"
+    } else {
+        "__Host-handy-push-off"
+    }
+}
+
+/// The `Set-Cookie` that marks this browser turned off (`on`), or deletes the mark.
+fn off_cookie(insecure: bool, on: bool) -> axum::http::HeaderValue {
+    let secure = if insecure { "" } else { "; Secure" };
+    let (value, age) = if on {
+        ("1", crate::lock::COOKIE_SECS)
+    } else {
+        ("", 0)
+    };
+    axum::http::HeaderValue::from_str(&format!(
+        "{}={value}; Path=/; Max-Age={age}; HttpOnly; SameSite=Strict{secure}",
+        off_cookie_name(insecure)
+    ))
+    .expect("a cookie of ASCII")
+}
+
+/// Whether the request carries this browser's turned-off mark ([off_cookie_name]).
+fn marked_off(headers: &HeaderMap, insecure: bool) -> bool {
+    let name = off_cookie_name(insecure);
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .any(|pair| {
+            pair.trim()
+                .split_once('=')
+                .is_some_and(|(cookie, value)| cookie == name && value.trim() == "1")
+        })
+}
+
+fn with_off_cookie(mut response: Response, insecure: bool, on: bool) -> Response {
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, off_cookie(insecure, on));
+    response
+}
+
 /// This Device's Turn On (§5.2): the browser's subscription (`endpoint`, `p256dh`, `auth`) from
 /// `notifications.js`, checked and stored by [store_subscription]; refused with a flash in `#this-device`. The session
-/// notes it as its browser's ([push::remember_this_browser]).
+/// notes it as its browser's ([push::remember_this_browser]). A tap: it lifts this browser's turned-off mark.
 pub async fn subscribe(
     State(state): State<AppState>,
     lang: Lang,
@@ -1077,11 +1127,12 @@ pub async fn subscribe(
         Ok(Ok(label)) => {
             subscribed(&state, &session, &admin, &form, &label, false).await;
             // The first opening's card on Devices (2026-11-01) comes back there; This Device to its group.
-            if form.get("offer").map(String::as_str) == Some("devices") {
+            let back = if form.get("offer").map(String::as_str) == Some("devices") {
                 Redirect::to("/devices?notice=push_on#push-offer-done").into_response()
             } else {
                 back_to(&form, "push_on", "this-device")
-            }
+            };
+            with_off_cookie(back, crate::lock::insecure(&state), false)
         }
         Ok(Err(notice)) => crate::settings_log::refused(back_to(&form, notice, "this-device")),
         Err(err) => db_error(lang, err),
@@ -1089,7 +1140,8 @@ pub async fn subscribe(
 }
 
 /// After a stored subscription: `push_subscribed` (the label; re-sent by the app itself, or replacing a dead one,
-/// says so) and the session's note of its browser.
+/// says so) and the session's note of its browser. A tap (not `by_the_app`) also deletes the Remove note of the
+/// browser this session had before ([REMOVED]): the parent turned it on here again.
 async fn subscribed(
     state: &AppState,
     session: &tower_sessions::Session,
@@ -1113,6 +1165,14 @@ async fn subscribed(
         Some(detail),
     )
     .await;
+    if !by_the_app && let Some(before) = push::this_browser(session).await {
+        sqlx::query("DELETE FROM push_removed WHERE endpoint_hash = ?")
+            .bind(before)
+            .execute(&state.db)
+            .await
+            .inspect_err(|err| tracing::error!(%err, "couldn't lift a Remove note"))
+            .ok();
+    }
     if let Some(endpoint) = form.get("endpoint") {
         push::remember_this_browser(session, endpoint.trim()).await;
     }
@@ -1132,17 +1192,19 @@ fn sync_answer(body: serde_json::Value) -> Response {
 /// browser's subscription, from `static/register-sw.js` on a signed-in page (and This Device's, `notifications.js`).
 /// Never a way past a session: it sits behind `require_full_auth` and the app lock like every page, and a signed-out
 /// or locked browser gets no answer to act on. Not a use of the app (`lock::PUSH_SYNC_ROUTE`): it runs at a page's
-/// load. The
-/// form is the browser's subscription (`endpoint`, `p256dh`, `auth`, `key` = its `applicationServerKey`, base64url,
-/// when the browser tells it) or nothing; `asked` = the parent tapped "Turn On" in the app's banner; `replaces` = a
-/// dead subscription the browser just replaced. The answer's `state`:
+/// load. The form is the browser's subscription (`endpoint`, `p256dh`, `auth`, `key` = its `applicationServerKey`,
+/// base64url, when the browser tells it) or nothing; `asked` = the parent tapped "Turn On" in the app's banner;
+/// `off` = the banner's Hide; `replaces` = a dead subscription the browser just replaced. The answer's `state`:
 /// - `no_key`: push is off on this server;
-/// - `none` (no subscription sent), `other_key` (made for another server key), `gone` (its push service ended it):
-///   with `key` (the server's) and `words` (the banner's) - the browser makes a new one;
 /// - `known`: an active row of this session's epoch has it (this parent's - noted as this session's browser - or
 ///   another parent's on a shared device);
-/// - `removed`: a parent removed or turned off this one ([REMOVED]); it comes back only with a tap;
-/// - `stored`: stored again ([store_subscription]), logged `push_subscribed` "sent again by the app";
+/// - `removed`: a parent turned this browser off - its mark ([off_cookie_name]), the browser this session noted, or
+///   the posted endpoint in [REMOVED] (review M-1: a new endpoint, a cleared localStorage or a new sign-in never
+///   undo a Remove or a Turn Off) - and this is no tap; the mark is set (renewed) with it;
+/// - `none` (no subscription sent), `other_key` (made for another server key), `gone` (its push service ended it):
+///   with `key` (the server's) and `words` (the banner's) - the browser makes a new one;
+/// - `stored`: stored again ([store_subscription]), logged `push_subscribed` "sent again by the app" (a tap:
+///   the mark deleted);
 /// - `refused` with `notice` (This Device's words for it).
 pub async fn sync(
     State(state): State<AppState>,
@@ -1155,6 +1217,18 @@ pub async fn sync(
     let Some(key) = &state.push.key else {
         return sync_answer(serde_json::json!({ "state": "no_key" }));
     };
+    let insecure = crate::lock::insecure(&state);
+    let removed = || {
+        with_off_cookie(
+            sync_answer(serde_json::json!({ "state": "removed" })),
+            insecure,
+            true,
+        )
+    };
+    // The banner's Hide: this browser turned off, by the parent.
+    if form.get("off").is_some_and(|v| v == "1") {
+        return removed();
+    }
     let to_make = |state: &str| {
         sync_answer(serde_json::json!({
             "state": state,
@@ -1168,6 +1242,51 @@ pub async fn sync(
         }))
     };
     let endpoint = form.get("endpoint").map(|e| e.trim()).unwrap_or("");
+    let asked = form.get("asked").is_some_and(|v| v == "1");
+    let noted = push::this_browser(&session).await;
+    let read = async {
+        let row: Option<(i64, String, bool)> = if endpoint.is_empty() {
+            None
+        } else {
+            sqlx::query_as(&format!(
+                "SELECT s.admin_id, s.state, {} FROM push_subscriptions s WHERE s.endpoint = ?",
+                push::CURRENT_EPOCH
+            ))
+            .bind(endpoint)
+            .fetch_optional(&state.db)
+            .await?
+        };
+        let hashes: Vec<String> = [
+            (!endpoint.is_empty()).then(|| push::endpoint_hash(endpoint)),
+            noted.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let removed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM push_removed \
+             WHERE endpoint_hash IN (SELECT value FROM json_each(?)))",
+        )
+        .bind(serde_json::to_string(&hashes).unwrap_or_default())
+        .fetch_one(&state.db)
+        .await?;
+        Ok::<_, sqlx::Error>((row, removed))
+    };
+    let (row, noted_removed) = match read.await {
+        Ok(read) => read,
+        Err(err) => return db_error(lang, err),
+    };
+    if let Some((owner, state_now, true)) = &row
+        && state_now == "active"
+    {
+        if *owner == admin.id && noted.as_deref() != Some(push::endpoint_hash(endpoint).as_str()) {
+            push::remember_this_browser(&session, endpoint).await;
+        }
+        return sync_answer(serde_json::json!({ "state": "known" }));
+    }
+    if !asked && (noted_removed || marked_off(&headers, insecure)) {
+        return removed();
+    }
     if endpoint.is_empty() {
         return to_make("none");
     }
@@ -1178,47 +1297,18 @@ pub async fn sync(
     if !browser_key.is_empty() && browser_key != key.public.trim_end_matches('=') {
         return to_make("other_key");
     }
-    let asked = form.get("asked").is_some_and(|v| v == "1");
-    let row = async {
-        let row: Option<(i64, String, bool)> = sqlx::query_as(&format!(
-            "SELECT s.admin_id, s.state, {} FROM push_subscriptions s WHERE s.endpoint = ?",
-            push::CURRENT_EPOCH
-        ))
-        .bind(endpoint)
-        .fetch_optional(&state.db)
-        .await?;
-        let removed: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM push_removed WHERE endpoint_hash = ?)",
-        )
-        .bind(push::endpoint_hash(endpoint))
-        .fetch_one(&state.db)
-        .await?;
-        Ok::<_, sqlx::Error>((row, removed))
-    };
-    let (row, removed) = match row.await {
-        Ok(read) => read,
-        Err(err) => return db_error(lang, err),
-    };
-    match row {
-        Some((_, state, _)) if state == "gone" => return to_make("gone"),
-        Some((owner, _, true)) => {
-            if owner == admin.id
-                && push::this_browser(&session).await.as_deref()
-                    != Some(push::endpoint_hash(endpoint).as_str())
-            {
-                push::remember_this_browser(&session, endpoint).await;
-            }
-            return sync_answer(serde_json::json!({ "state": "known" }));
-        }
-        _ => {}
-    }
-    if removed && !asked {
-        return sync_answer(serde_json::json!({ "state": "removed" }));
+    if row.is_some_and(|(_, state_now, _)| state_now == "gone") {
+        return to_make("gone");
     }
     match store_subscription(&state, &admin, &headers, &form).await {
         Ok(Ok(label)) => {
             subscribed(&state, &session, &admin, &form, &label, !asked).await;
-            sync_answer(serde_json::json!({ "state": "stored" }))
+            let stored = sync_answer(serde_json::json!({ "state": "stored" }));
+            if asked {
+                with_off_cookie(stored, insecure, false)
+            } else {
+                stored
+            }
         }
         Ok(Err(notice)) => sync_answer(serde_json::json!({
             "state": "refused",
@@ -1229,14 +1319,10 @@ pub async fn sync(
     }
 }
 
-/// A parent turned a subscription off: `push_unsubscribed` with the device's label and how (`security.detail.*`).
-pub async fn log_turned_off(
-    db: &sqlx::SqlitePool,
-    username: &str,
-    labels: &[String],
-    how: &'static str,
-) {
-    for label in labels {
+/// A parent turned subscriptions off: `push_unsubscribed` for each `(owner's username, label)`, and how
+/// (`security.detail.*`).
+pub async fn log_turned_off(db: &sqlx::SqlitePool, rows: &[(String, String)], how: &'static str) {
+    for (username, label) in rows {
         crate::security::record_security_event(
             db,
             "push_unsubscribed",
@@ -1249,33 +1335,37 @@ pub async fn log_turned_off(
 }
 
 /// This Device's Turn Off (§5.2): the browser unsubscribed; its row goes, whichever account
-/// made it (This Device shows On for any account's subscription of this browser, L1). Logged, and noted as turned off
-/// ([REMOVED]) so the app never sends it again by itself.
+/// made it (This Device shows On for any account's subscription of this browser, L1). Logged under the row's own
+/// parent and noted as turned off ([REMOVED]) only for a row that went (review L-6), and this browser is marked
+/// turned off ([off_cookie_name]) so the app never sends it again by itself.
 pub async fn unsubscribe(
     State(state): State<AppState>,
     lang: Lang,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let endpoint = form.get("endpoint").map(|e| e.trim()).unwrap_or("");
-    let done: Result<Vec<String>, sqlx::Error> =
-        sqlx::query_scalar("DELETE FROM push_subscriptions WHERE endpoint = ? RETURNING label")
-            .bind(endpoint)
-            .fetch_all(&state.db)
-            .await;
+    let done: Result<Vec<(i64, String, String)>, sqlx::Error> = sqlx::query_as(
+        "DELETE FROM push_subscriptions WHERE endpoint = ? RETURNING admin_id, label, \
+         (SELECT a.username FROM admin_users a WHERE a.id = push_subscriptions.admin_id)",
+    )
+    .bind(endpoint)
+    .fetch_all(&state.db)
+    .await;
     match done {
-        Ok(labels) => {
-            if !endpoint.is_empty() {
-                note_removed(&state.db, admin.id, endpoint).await;
+        Ok(rows) => {
+            if let Some((owner, _, _)) = rows.first() {
+                note_removed(&state.db, *owner, endpoint).await;
             }
-            log_turned_off(
-                &state.db,
-                &admin.username,
-                &labels,
-                "security.detail.push_turned_off",
+            let logged: Vec<(String, String)> = rows
+                .into_iter()
+                .map(|(_, label, username)| (username, label))
+                .collect();
+            log_turned_off(&state.db, &logged, "security.detail.push_turned_off").await;
+            with_off_cookie(
+                back_to(&form, "push_off", "this-device"),
+                crate::lock::insecure(&state),
+                true,
             )
-            .await;
-            back_to(&form, "push_off", "this-device")
         }
         Err(err) => db_error(lang, err),
     }
@@ -1303,8 +1393,7 @@ pub async fn remove(
                 note_removed(&state.db, admin.id, &endpoint).await;
                 log_turned_off(
                     &state.db,
-                    &admin.username,
-                    &[label],
+                    &[(admin.username.clone(), label)],
                     "security.detail.push_removed",
                 )
                 .await;

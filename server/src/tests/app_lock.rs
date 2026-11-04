@@ -1230,16 +1230,14 @@ async fn a_stale_challenge_is_no_wrong_try() {
         .await,
         0
     );
-    assert_eq!(
-        scalar(
-            &app,
-            "SELECT COUNT(*) FROM security_events WHERE event_type = 'app_unlock_failed' \
-             AND detail = 'challenge'"
-        )
-        .await,
-        4,
-        "each one logged"
-    );
+    // Logged, one line for the window (review I-3: a held locked cookie can't fill the log).
+    let lines: Vec<String> = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'app_unlock_failed'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(lines, ["challenge ×4"]);
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
         1,

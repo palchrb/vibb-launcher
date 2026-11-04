@@ -222,7 +222,9 @@ async fn the_switch_counts_its_passkey_in_the_statement() {
         .await
         .unwrap();
     assert_eq!(
-        crate::passkeys::switch_on(&app.db, &read).await.unwrap(),
+        crate::passkeys::switch_on(&app.db, &read, None)
+            .await
+            .unwrap(),
         crate::passkeys::SwitchedOn::NoPasskey
     );
     assert!(!flag(&app, "parent").await);
@@ -511,7 +513,7 @@ async fn the_last_passkey_stays_while_on() {
     // The statement itself refuses, whatever the handler read.
     let account = admin(&app, "parent").await;
     assert_eq!(
-        crate::passkeys::remove(&app.db, &account, first)
+        crate::passkeys::remove(&app.db, &account, first, None)
             .await
             .unwrap(),
         crate::passkeys::Removed::Last

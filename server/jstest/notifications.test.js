@@ -231,7 +231,22 @@ test("a subscription the server knows is On, and Turn Off ends it there too and 
     assert.strictEqual(page.offForm.elements.endpoint.value, ENDPOINT);
     // The app never turns it on again by itself (register-sw.js reads it); Turn On forgets it.
     assert.strictEqual(page.storage["vibb.push-off"], "1");
-    assert.deepStrictEqual(page.posted, [], "a known one is never sent");
+});
+
+test("a known subscription is noted as this session's browser; a failed Turn Off forgets the Off", async () => {
+    const subscription = browserSubscription();
+    subscription.unsubscribe = () => Promise.reject(new Error("failed"));
+    const page = fakePage({ subscription, known: [hashOf(ENDPOINT)], sync: [{ state: "known" }] });
+    install(page.win);
+    await settle();
+    assert.strictEqual(page.nodes["push-state"].textContent, "På");
+    assert.strictEqual(page.posted.length, 1, "the server notes it (review L-4)");
+    assert.strictEqual(page.posted[0][3].get("endpoint"), ENDPOINT);
+    page.nodes["push-off"].click();
+    await settle();
+    assert.strictEqual(page.nodes["push-state"].textContent, "Fikk ikke slått av - prøv igjen");
+    assert.strictEqual(page.storage["vibb.push-off"], null, "still on: the app keeps it on (review L-1)");
+    assert.deepStrictEqual(page.submitted, []);
 });
 
 // Push never lost silently (2026-11-04): an unknown subscription made for the server's key is the server's loss,

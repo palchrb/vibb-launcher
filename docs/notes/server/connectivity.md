@@ -450,7 +450,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   read. The server's own refusals (`webauthn::Refused::servers_own`) don't count: `challenge` - expired, dropped from
   the session's 8 newest, already used, or bound to another session or epoch - and `database` (a read or store error,
   its own code since then; it was `unknown_credential` before). They answer 400 with the same words and are logged
-  `app_unlock_failed` with their code, nothing else. A wrong try still counts 1 of 3 in a row, reset by any right
+  `app_unlock_failed` with their code, nothing else - one line per parent, client and code each 10 minutes, "challenge
+  ×N" past the first (`handlers::lock::log_servers_own`; review I-3: they aren't bounded by the third wrong try, so a
+  held locked cookie could otherwise fill the log). A wrong try still counts 1 of 3 in a row, reset by any right
   re-auth; the re-auth forms (password or passkey) are unchanged. The red line
   shows after a tap's failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`, behind an in-page confirm since 2026-11-04 ("Logge ut? Varsler på denne
   telefonen slås også av."): `/logout` then answers

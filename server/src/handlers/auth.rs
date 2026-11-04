@@ -535,7 +535,8 @@ pub async fn verify_2fa(
 /// Settings' Sign Out. The form may carry this browser's push subscription (`endpoint`, filled by
 /// `static/register-sw.js`, which also unsubscribes the browser): that one row goes too, only when
 /// it is the signed-in parent's (the user, 2026-10-25). Without it - no JS, no subscription, an
-/// empty or missing field - the session ends as before and every subscription stays.
+/// empty or missing field - the row the session noted as its browser's goes (`push::this_browser`, review L-2);
+/// with neither, every subscription stays.
 pub async fn logout(
     State(state): State<AppState>,
     session: Session,
@@ -546,7 +547,26 @@ pub async fn logout(
         .find(|(name, _)| name == "endpoint")
         .map(|(_, value)| value.trim().to_string())
         .filter(|e| !e.is_empty() && e.len() <= 1024);
-    if let Some(endpoint) = endpoint {
+    // Without the endpoint (no JS, the wait ran out, a slow lookup) the session's own note of its browser names
+    // the row (review L-2): a signed-out browser gets no titles either way.
+    let row = match endpoint {
+        Some(endpoint) => Some(endpoint),
+        None => match crate::push::this_browser(&session).await {
+            Some(hash) => {
+                let rows: Vec<String> = sqlx::query_scalar(
+                    "SELECT endpoint FROM push_subscriptions WHERE admin_id = ? AND state = 'active'",
+                )
+                .bind(admin.id)
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+                rows.into_iter()
+                    .find(|e| crate::push::endpoint_hash(e) == hash)
+            }
+            None => None,
+        },
+    };
+    if let Some(endpoint) = row {
         let gone: Result<Vec<String>, sqlx::Error> = sqlx::query_scalar(
             "DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ? RETURNING label",
         )
@@ -557,10 +577,13 @@ pub async fn logout(
         match gone {
             // Never silent (2026-11-04): the security log says which device's notifications went.
             Ok(labels) => {
+                let rows: Vec<(String, String)> = labels
+                    .into_iter()
+                    .map(|label| (admin.username.clone(), label))
+                    .collect();
                 crate::handlers::notifications::log_turned_off(
                     &state.db,
-                    &admin.username,
-                    &labels,
+                    &rows,
                     "security.detail.push_signed_out",
                 )
                 .await
@@ -1176,6 +1199,20 @@ pub async fn login_warning_of(session: &Session) -> Option<admin_auth::LoginWarn
     }
 }
 
+/// An account change's words (Push never lost silently, review L-4): `kept=1` - this browser kept its
+/// notifications - says "every other device", else `key` says "every device".
+fn kept_words(
+    query: &std::collections::HashMap<String, String>,
+    key: &'static str,
+) -> &'static str {
+    // Not `push`: that is a tapped notification's marker (`notifications::push_marker` takes it off).
+    match (query.get("kept").map(String::as_str), key) {
+        (Some("1"), "account.password.changed") => "account.password.changed_kept",
+        (Some("1"), "passkeys.only.on") => "passkeys.only.on_kept",
+        _ => key,
+    }
+}
+
 /// The page; `?changed=password` (after a change, post/redirect/get - qa-31-s14-code M1) shows
 /// the result in the Password group, `?changed=name` in Name, `?parents=removed|gone` in Parents.
 /// Also `GET /account/parents` and `/account/parents/{id}/reset`, where a reload of their POST's
@@ -1194,9 +1231,10 @@ pub async fn account_page(
         query.get("parents").map(String::as_str),
         query.get("done").map(String::as_str),
     ) {
-        (Some("password"), _, _) => {
-            Some(Flash::done("password", t(lang, "account.password.changed")))
-        }
+        (Some("password"), _, _) => Some(Flash::done(
+            "password",
+            t(lang, kept_words(&query, "account.password.changed")),
+        )),
         (Some("name"), _, _) => Some(Flash::done("name", t(lang, "account.name.saved"))),
         (_, Some("removed"), _) => Some(Flash::done("parents", t(lang, "account.parents.removed"))),
         (_, Some("gone"), _) => Some(Flash::done("parents", t(lang, "account.parents.gone"))),
@@ -1207,9 +1245,10 @@ pub async fn account_page(
         }
         (_, _, Some("passkey_gone")) => Some(Flash::done("passkeys", t(lang, "passkeys.gone"))),
         // Design 74 step 2: "Kun passkey" on lands in Passkeys, switched off in Password.
-        (_, _, Some("passkey_only_on")) => {
-            Some(Flash::done("passkeys", t(lang, "passkeys.only.on")))
-        }
+        (_, _, Some("passkey_only_on")) => Some(Flash::done(
+            "passkeys",
+            t(lang, kept_words(&query, "passkeys.only.on")),
+        )),
         (_, _, Some("password_on")) => Some(Flash::done(
             "password",
             t(lang, "account.password.on_again"),
@@ -1337,17 +1376,28 @@ pub async fn update_account_password(
     };
 
     // A new password makes the old one's wrong codes moot: the counter and the lock go too, so
-    // the parent can sign in elsewhere again.
-    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
-        "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
-         locked_until = NULL, session_epoch = session_epoch + 1 \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
-         RETURNING session_epoch",
-    )
-    .bind(&new_hash)
-    .bind(admin.id)
-    .bind(admin.session_epoch)
-    .fetch_optional(&state.db)
+    // the parent can sign in elsewhere again. This browser's subscription moves to the new epoch in the same
+    // transaction (Push never lost silently: the session that made the change is the parent's, and it goes on).
+    let kept = crate::push::kept_row(&state.db, &admin, &session).await;
+    let epoch: Result<Option<i64>, sqlx::Error> = async {
+        let mut tx = state.db.begin().await?;
+        let epoch: Option<i64> = sqlx::query_scalar(
+            "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
+             locked_until = NULL, session_epoch = session_epoch + 1 \
+             WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
+             RETURNING session_epoch",
+        )
+        .bind(&new_hash)
+        .bind(admin.id)
+        .bind(admin.session_epoch)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if epoch.is_some() {
+            crate::push::keep_row(&mut tx, admin.id, kept).await?;
+        }
+        tx.commit().await?;
+        Ok(epoch)
+    }
     .await;
     // No row: a Reset, a removal or another session's change came first (design 62 §2) - this
     // request can't undo it.
@@ -1365,16 +1415,10 @@ pub async fn update_account_password(
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // A browser a stolen session turned notifications on in stops getting them too (security
-    // review M1); this browser keeps its own (Push never lost silently, 2026-11-04: the session that made the
-    // change is the parent's, and it goes on).
-    let this_browser = crate::push::this_browser(&session).await;
-    crate::push::forget_subscriptions(
-        &state,
-        &admin,
-        crate::push::Forget::Password,
-        this_browser.as_deref(),
-    )
-    .await;
+    // review M1); this browser keeps its own (Push never lost silently, 2026-11-04).
+    let kept =
+        crate::push::forget_subscriptions(&state, &admin, crate::push::Forget::Password, kept)
+            .await;
     // The warning said to change the password: done.
     session
         .remove_value(admin_auth::LOGIN_WARNING_KEY)
@@ -1393,8 +1437,14 @@ pub async fn update_account_password(
     )
     .await;
 
-    // Post/redirect/get: the password stays in this POST's body, and a reload asks nothing again.
-    Redirect::to("/account?changed=password#password").into_response()
+    // Post/redirect/get: the password stays in this POST's body, and a reload asks nothing again. The words say
+    // whether this browser kept its notifications (`kept=1`: "every other device", else "every device").
+    Redirect::to(if kept {
+        "/account?changed=password&kept=1#password"
+    } else {
+        "/account?changed=password#password"
+    })
+    .into_response()
 }
 
 /// The "Reset two-factor login" form: the current password.
@@ -1467,15 +1517,26 @@ pub async fn reset_totp(
         )
         .await;
     }
-    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
-        "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
-         session_epoch = session_epoch + 1 \
-         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
-         RETURNING session_epoch",
-    )
-    .bind(admin.id)
-    .bind(admin.session_epoch)
-    .fetch_optional(&state.db)
+    // This browser's subscription moves to the new epoch in the same transaction (Push never lost silently).
+    let kept = crate::push::kept_row(&state.db, &admin, &session).await;
+    let epoch: Result<Option<i64>, sqlx::Error> = async {
+        let mut tx = state.db.begin().await?;
+        let epoch: Option<i64> = sqlx::query_scalar(
+            "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
+             session_epoch = session_epoch + 1 \
+             WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND passkey_only = 0 \
+             RETURNING session_epoch",
+        )
+        .bind(admin.id)
+        .bind(admin.session_epoch)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if epoch.is_some() {
+            crate::push::keep_row(&mut tx, admin.id, kept).await?;
+        }
+        tx.commit().await?;
+        Ok(epoch)
+    }
     .await;
     if let Ok(None) = epoch {
         session.flush().await.ok();
@@ -1492,14 +1553,7 @@ pub async fn reset_totp(
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // Every other device's notifications end with the other sessions (security review M1); this one, which goes
     // on, keeps its own (2026-11-04).
-    let this_browser = crate::push::this_browser(&session).await;
-    crate::push::forget_subscriptions(
-        &state,
-        &admin,
-        crate::push::Forget::TotpReset,
-        this_browser.as_deref(),
-    )
-    .await;
+    crate::push::forget_subscriptions(&state, &admin, crate::push::Forget::TotpReset, kept).await;
 
     security::record_security_event(
         &state.db,

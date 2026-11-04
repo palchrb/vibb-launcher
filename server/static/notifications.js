@@ -84,6 +84,13 @@
 
     // POST /notifications/subscriptions/sync with this browser's subscription; resolves with the answer.
     function syncPost(win, subscription, own) {
+        // A subscription that can't be read rejects, never throws into the caller.
+        return Promise.resolve().then(function () {
+            return syncSend(win, subscription, own);
+        });
+    }
+
+    function syncSend(win, subscription, own) {
         var json = subscription.toJSON();
         var fields = {
             endpoint: json.endpoint,
@@ -373,6 +380,9 @@
                 var known = (form.getAttribute("data-subscribed") || "").split(",");
                 if (known.indexOf(hash) >= 0) {
                     current = subscription;
+                    // The server notes it as this session's browser (review L-4: an account change made here then
+                    // keeps it); the answer changes nothing on the page.
+                    if (win.fetch) syncPost(win, subscription, keyOf(subscription, win)).catch(function () {});
                     return true;
                 }
                 // One the server doesn't know: sent again when it is for the server's key, dropped when it was made
@@ -429,6 +439,8 @@
                 offForm.elements.endpoint.value = endpoint;
                 offForm.submit();
             }, function () {
+                // Still on (review L-1): the app must keep sending it again if the server loses it.
+                markOff(win, false);
                 show("off-failed");
             });
         });

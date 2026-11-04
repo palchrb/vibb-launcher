@@ -1456,7 +1456,7 @@ async fn a_new_password_and_a_2fa_reset_keep_only_this_browser() {
             ],
         )
         .await;
-    super::assert_redirect(&res, "/account?changed=password", Some("password"));
+    super::assert_redirect(&res, "/account?changed=password&kept=1", Some("password"));
     let left: Vec<(String, bool)> = sqlx::query_as(
         "SELECT s.endpoint, s.session_epoch = a.session_epoch FROM push_subscriptions s \
          JOIN admin_users a ON a.id = s.admin_id",
@@ -1465,7 +1465,10 @@ async fn a_new_password_and_a_2fa_reset_keep_only_this_browser() {
     .await
     .unwrap();
     assert_eq!(left, [(ENDPOINT.to_string(), true)]);
-    let page = app.get_page("/account?changed=password", &cookie).await;
+    let page = app
+        .get_page("/account?changed=password&kept=1", &cookie)
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{:?}", page.location());
     assert!(
         page.text()
             .contains("notifications are off on every other device"),
@@ -1542,17 +1545,28 @@ async fn a_change_from_a_session_without_its_browser_keeps_nothing() {
     let cookie = app.admin_cookie().await;
     let other = app.admin_cookie().await;
     subscribe(&app, &other, ENDPOINT).await;
-    app.request_form(
-        Method::POST,
-        "/account/password",
-        Some(&cookie),
-        &[
-            ("current_password", PASSWORD),
-            ("new_password", NEW_PASSWORD),
-            ("confirm_password", NEW_PASSWORD),
-        ],
-    )
-    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/password",
+            Some(&cookie),
+            &[
+                ("current_password", PASSWORD),
+                ("new_password", NEW_PASSWORD),
+                ("confirm_password", NEW_PASSWORD),
+            ],
+        )
+        .await;
+    // Nothing kept: the words say every device (review L-4).
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
+    let page = app
+        .get_page("/account?changed=password", &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("notifications are off on every device"),
+        "{page}"
+    );
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
         0
@@ -2494,14 +2508,14 @@ async fn the_sync_answers_and_stores_again() {
     assert_eq!(answer["state"], "refused");
     assert_eq!(answer["notice"], "push_service");
     assert!(answer["words"].is_string());
-    // Signed out: no answer to act on, nothing stored.
+    // Signed out (the sign-out took this session's browser's row, review L-2): no answer to act on, nothing stored.
     app.request_form(Method::POST, "/logout", Some(&cookie), &[])
         .await;
     let res = sync(&app, &cookie, &mine).await;
     assert_eq!(res.location(), Some("/login"));
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
-        1
+        0
     );
 }
 
@@ -2665,7 +2679,8 @@ async fn a_gone_subscription_warns_and_is_told() {
     assert!(!devices.contains("id=\"push-warning\""), "{devices}");
 }
 
-/// A gone row and a Remove note stay as long as the security log keeps the line about them (180 days, 30 before).
+/// A gone row stays as long as the security log keeps the line about it (180 days, 30 before); a Remove note for
+/// good.
 #[tokio::test]
 async fn gone_rows_stay_as_long_as_the_security_log() {
     let app = TestApp::new().await;
@@ -2698,9 +2713,266 @@ async fn gone_rows_stay_as_long_as_the_security_log() {
         .await
         .unwrap();
     assert_eq!(left, [ENDPOINT]);
-    let notes: Vec<String> = sqlx::query_scalar("SELECT endpoint_hash FROM push_removed")
+    let notes: Vec<String> =
+        sqlx::query_scalar("SELECT endpoint_hash FROM push_removed ORDER BY endpoint_hash")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    // A parent's Remove never expires (review M-1): only a tap turns that browser on again.
+    assert_eq!(notes, ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]);
+}
+
+/// Review L-3: only this session's browser's row of the session's own epoch is kept - an older row with the same
+/// endpoint (a sign-out whose delete failed) goes with the others.
+#[tokio::test]
+async fn only_a_row_of_this_sessions_epoch_is_kept() {
+    const PASSWORD: &str = "correct horse battery staple";
+    const NEW_PASSWORD: &str = "a brand new long password";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    sqlx::query("UPDATE push_subscriptions SET session_epoch = session_epoch - 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/password",
+            Some(&cookie),
+            &[
+                ("current_password", PASSWORD),
+                ("new_password", NEW_PASSWORD),
+                ("confirm_password", NEW_PASSWORD),
+            ],
+        )
+        .await;
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+}
+
+/// The `Set-Cookie` of this browser's turned-off mark in `res`: `Some(true)` set, `Some(false)` deleted.
+fn off_mark(res: &TestResponse) -> Option<bool> {
+    res.headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("handy-push-off="))
+        .map(|v| v.starts_with("handy-push-off=1;"))
+}
+
+/// Review M-1: a parent's Remove (from another device) binds to the removed session's browser, not to one endpoint:
+/// its sync with no subscription or a new endpoint answers `removed` - no silent subscribe, no banner - and marks the
+/// browser (a cookie), so a new sign-in there with a new endpoint stays off too; a tap (`asked`) is the way back.
+#[tokio::test]
+async fn a_remove_holds_past_a_new_endpoint_and_a_new_sign_in() {
+    const NEW: &str = "https://web.push.apple.com/QK1-fake-new";
+    const NEWER: &str = "https://web.push.apple.com/QK1-fake-newer";
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let ipad = app.admin_cookie().await;
+    subscribe(&app, &ipad, ENDPOINT).await;
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{id}/delete"),
+        Some(&mamma),
+        &[("from", "devices")],
+    )
+    .await;
+    for fields in [vec![], with_keys(NEW, &[])] {
+        let res = sync(&app, &ipad, &fields).await;
+        assert_eq!(res.json()["state"], "removed", "{fields:?}");
+        assert_eq!(off_mark(&res), Some(true));
+    }
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+    // A new sign-in on that browser (no note in its session) with yet another endpoint: the mark holds.
+    let again = app.admin_cookie().await;
+    let marked = format!("{again}; handy-push-off=1");
+    let res = sync(&app, &marked, &with_keys(NEWER, &[])).await;
+    assert_eq!(res.json()["state"], "removed");
+    // A tap turns it on again and lifts the mark.
+    let res = sync(&app, &marked, &with_keys(NEWER, &[("asked", "1")])).await;
+    assert_eq!(res.json()["state"], "stored");
+    assert_eq!(off_mark(&res), Some(false));
+    // Without the mark and the note, a new session's new endpoint is the parent's own new browser: stored.
+    let fresh = app.admin_cookie().await;
+    assert_eq!(
+        sync(&app, &fresh, &with_keys(NEW, &[])).await.json()["state"],
+        "stored"
+    );
+}
+
+/// Review M-1: This Device's Turn Off and the banner's Hide mark the browser; Turn On (the form) lifts it. Review L-6:
+/// Turn Off notes and logs only a row that went, under its own parent.
+#[tokio::test]
+async fn turn_off_and_hide_mark_the_browser() {
+    const PAPPA: &str = "https://web.push.apple.com/QK1-fake-pappa";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &pappa, PAPPA).await;
+    // Turn Off of an endpoint no row has: marked, nothing noted, nothing logged.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions/unsubscribe",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[("endpoint", "https://web.push.apple.com/QK1-fake-random")],
+    )
+    .await;
+    assert_eq!(off_mark(&res), Some(true));
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM push_removed").await, 0);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_unsubscribed'"
+        )
+        .await,
+        0
+    );
+    // Turn Off on a shared device of Pappa's row, by this parent: noted and logged under Pappa.
+    post_as_browser(
+        &app,
+        "/notifications/subscriptions/unsubscribe",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[("endpoint", PAPPA)],
+    )
+    .await;
+    let noted: String = sqlx::query_scalar(
+        "SELECT a.username FROM push_removed r JOIN admin_users a ON a.id = r.admin_id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(noted, "pappa");
+    let logged: Option<String> = sqlx::query_scalar(
+        "SELECT username FROM security_events WHERE event_type = 'push_unsubscribed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(logged.as_deref(), Some("pappa"));
+    // The banner's Hide: marked.
+    let res = sync(&app, &cookie, &[("off", "1")]).await;
+    assert_eq!(res.json()["state"], "removed");
+    assert_eq!(off_mark(&res), Some(true));
+    let marked = format!("{cookie}; handy-push-off=1");
+    assert_eq!(sync(&app, &marked, &[]).await.json()["state"], "removed");
+    // This Device's Turn On is a tap: stored, the mark deleted.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions",
+        Some(&marked),
+        Some(ORIGIN),
+        &with_keys(ENDPOINT, &[("from", "devices")]),
+    )
+    .await;
+    assert!(res.location().unwrap().contains("notice=push_on"));
+    assert_eq!(off_mark(&res), Some(false));
+}
+
+/// Review L-2: a Sign Out without the endpoint (no JS, the wait ran out) still takes the row the session noted as
+/// its browser's.
+#[tokio::test]
+async fn sign_out_without_the_endpoint_takes_this_sessions_browser() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let other = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    subscribe(&app, &other, "https://web.push.apple.com/QK1-fake-other").await;
+    app.request_form(Method::POST, "/logout", Some(&cookie), &[])
+        .await;
+    let left: Vec<String> = sqlx::query_scalar("SELECT endpoint FROM push_subscriptions")
         .fetch_all(&app.db)
         .await
         .unwrap();
-    assert_eq!(notes, ["bbbbbbbbbbbbbbbb"]);
+    assert_eq!(left, ["https://web.push.apple.com/QK1-fake-other"]);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_unsubscribed' \
+             AND params LIKE '%push_signed_out%'"
+        )
+        .await,
+        1
+    );
+}
+
+/// Review I-2: the sync stores nothing for a half-signed-in session (a password without its code), a session of an
+/// older epoch, or a cross-site request.
+#[tokio::test]
+async fn the_sync_needs_a_whole_current_session() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    // Password only: the second step is still owed.
+    let login = app
+        .request_form(
+            Method::POST,
+            "/login",
+            None,
+            &[
+                ("username", "parent"),
+                ("password", "correct horse battery staple"),
+            ],
+        )
+        .await;
+    assert_eq!(login.location(), Some("/auth/verify-2fa"));
+    let half = super::session_cookie(&login).unwrap();
+    let res = sync(&app, &half, &with_keys(ENDPOINT, &[])).await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    // An older epoch.
+    let admin = app.an_admin().await;
+    crate::admin_auth::bump_epoch(&app.db, admin.id)
+        .await
+        .unwrap();
+    let res = sync(&app, &cookie, &with_keys(ENDPOINT, &[])).await;
+    assert_eq!(res.location(), Some("/login"));
+    // Cross-site, with a current session.
+    let cookie = app.admin_cookie().await;
+    let body = form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(with_keys(ENDPOINT, &[]))
+        .finish();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(crate::lock::PUSH_SYNC_ROUTE)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("sec-fetch-site", "cross-site")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(body))
+        .unwrap();
+    let res = app
+        .send_via(&app.router, super::LOOPBACK_PEER, request)
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+}
+
+/// Review I-7: a row a push service ended keeps no browser keys.
+#[tokio::test]
+async fn a_gone_row_keeps_no_keys() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    app.pushes.answer(410, None, None);
+    send(&app).await;
+    let keys: (String, i64, i64) =
+        sqlx::query_as("SELECT state, length(p256dh), length(auth) FROM push_subscriptions")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(keys, ("gone".to_string(), 0, 0));
 }

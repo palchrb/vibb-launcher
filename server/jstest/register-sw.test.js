@@ -346,6 +346,8 @@ test("the banner's Hide is a Turn Off in this browser; a failed Turn On says so"
     w.banner().children[2].click();
     assert.strictEqual(w.banner(), null);
     assert.strictEqual(w.local["vibb.push-off"], "1");
+    // The server marks this browser off too (review M-1).
+    assert.deepStrictEqual(w.log[w.log.length - 1], ["post", "/notifications/subscriptions/sync", "manual", { off: "1" }]);
     w = syncWindow({
         subscribe: () => Promise.reject(new Error("NotAllowedError")),
         answers: [{ state: "none", key: SERVER_KEY, words: BANNER_WORDS }],
@@ -389,6 +391,14 @@ test("nothing is sent without the permission, after Turn Off here, with unreadab
     w = syncWindow({ subscription: held(), answers: [{ state: "known" }], session });
     await pushSync(w.win);
     assert.strictEqual(w.log.length, 1);
+});
+
+test("a parent's Remove or Turn Off answered: this browser stops asking", async () => {
+    const w = syncWindow({ answers: [{ state: "removed" }] });
+    await pushSync(w.win);
+    assert.strictEqual(w.log.length, 1);
+    assert.strictEqual(w.local["vibb.push-off"], "1");
+    assert.strictEqual(w.banner(), null);
 });
 
 test("removed, refused, known or a failed answer: nothing more", async () => {
