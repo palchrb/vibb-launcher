@@ -46,12 +46,8 @@ pub struct UnseenBoots {
 
 impl UnseenBoots {
     /// The row's value: "1 time", "3 times".
-    pub fn value(&self) -> String {
-        if self.count == 1 {
-            "1 time".to_string()
-        } else {
-            format!("{} times", self.count)
-        }
+    pub fn value(&self, lang: crate::i18n::Lang) -> String {
+        crate::i18n::t_count(lang, "device.about.starts_count", self.count, &[])
     }
 
     /// The ⓘ under the row: when, what it means and what to do.
@@ -63,19 +59,19 @@ impl UnseenBoots {
         let when = chrono::DateTime::from_timestamp_millis(self.last_at_ms)
             .map(|t| zone.when(t, now))
             .unwrap_or_default();
-        let advice = match self.advice {
-            BootAdvice::CutShort => {
-                "Safe mode is blocked, so it was probably a start cut short. Ask your child if it \
-                 repeats."
-            }
-            BootAdvice::Either => {
-                "Safe mode is blocked now, but maybe not yet at that start. Ask your child."
-            }
-            BootAdvice::BlockSafeMode => "Turn on Block safe mode in Advanced.",
-        };
-        format!(
-            "Last noticed {when}. In safe mode the phone skips every app, call and time rule; a \
-             start can also be cut short (battery, a system update rolling back). {advice}"
+        let lang = zone.lang();
+        let advice = crate::i18n::t(
+            lang,
+            match self.advice {
+                BootAdvice::CutShort => "device.about.starts.cut_short",
+                BootAdvice::Either => "device.about.starts.either",
+                BootAdvice::BlockSafeMode => "device.about.starts.block_safe_mode",
+            },
+        );
+        crate::i18n::t_params(
+            lang,
+            "device.about.starts.detail",
+            &[("when", &when), ("advice", advice)],
         )
     }
 }
@@ -156,7 +152,7 @@ mod tests {
                 advice: BootAdvice::BlockSafeMode
             }
         );
-        assert_eq!(one.value(), "1 time");
+        assert_eq!(one.value(crate::i18n::Lang::En), "1 time");
         let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
         let now = chrono::DateTime::from_timestamp_millis(NOW).unwrap();
         assert_eq!(
@@ -166,7 +162,7 @@ mod tests {
              safe mode in Advanced."
         );
         let three = unseen(Some(3), Some(at), NOW, true, Some(at - 1)).unwrap();
-        assert_eq!(three.value(), "3 times");
+        assert_eq!(three.value(crate::i18n::Lang::En), "3 times");
         assert!(
             three
                 .detail(&zone, now)

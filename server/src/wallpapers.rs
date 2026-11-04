@@ -54,6 +54,22 @@ impl WallpaperRow {
         })
     }
 
+    /// The name a parent's page shows in `lang`: a built-in's in the catalog (`settings.wallpapers.builtin.*`; a
+    /// built-in can't be renamed, and the phone names it by its key), an upload's as the parent typed it.
+    pub fn shown_label(&self, lang: crate::i18n::Lang) -> String {
+        let key = match self.builtin_key.as_deref() {
+            Some("navy") => "settings.wallpapers.builtin.navy",
+            Some("forest") => "settings.wallpapers.builtin.forest",
+            Some("plum") => "settings.wallpapers.builtin.plum",
+            Some("green") => "settings.wallpapers.builtin.green",
+            Some("sky") => "settings.wallpapers.builtin.sky",
+            Some("sunset") => "settings.wallpapers.builtin.sunset",
+            Some("vibb_night") => "settings.wallpapers.builtin.vibb_night",
+            _ => return self.label.clone(),
+        };
+        crate::i18n::t(lang, key).to_string()
+    }
+
     /// CSS `background` for the admin pages' swatches (colours are checked hex, so safe).
     pub fn css_background(&self) -> String {
         match (self.kind.as_str(), self.checked_colours()) {

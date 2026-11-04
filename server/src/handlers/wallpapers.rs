@@ -60,7 +60,7 @@ async fn page(state: &AppState, status: StatusCode, error: Option<String>, lang:
         .iter()
         .map(|row| WallpaperView {
             id: row.id,
-            label: row.label.clone(),
+            label: row.shown_label(lang),
             background: row.css_background(),
             image: row.image_hash.clone(),
             builtin: row.builtin_key.is_some(),
@@ -309,6 +309,7 @@ pub struct DeviceWallpaperChoice {
 /// Every wallpaper, ticked when this phone may use it (Home Screen, Lock Screen & PINs).
 pub async fn device_choices(
     state: &AppState,
+    lang: Lang,
     device_id: i64,
 ) -> Result<Vec<DeviceWallpaperChoice>, sqlx::Error> {
     let allowed: HashSet<i64> = store::for_device(&state.db, device_id)
@@ -325,7 +326,7 @@ pub async fn device_choices(
             background: w.css_background(),
             checked: allowed.contains(&w.id),
             lock: lock == Some(w.id),
-            label: w.label,
+            label: w.shown_label(lang),
             image: w.image_hash,
         })
         .collect())

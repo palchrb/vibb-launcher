@@ -341,8 +341,7 @@ impl Zone {
 }
 
 /// A length of time in minutes as a value: "45 min", "2 h", "1 h 30 min" (nb "1 t 30 min") -
-/// design 70 §6's `duration`, here since slice 2 for the events' words (`lifts::minutes_text`'s
-/// callers move onto it in slice 4).
+/// design 70 §6's `duration`, the one for every page (the lifts, Device › Time, the events).
 pub fn duration(lang: Lang, minutes: i64) -> String {
     let (h, m) = (minutes / 60, minutes % 60);
     let (h, m) = (h.to_string(), m.to_string());

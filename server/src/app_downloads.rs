@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::display_time::Zone;
+use crate::i18n::{Lang, t, t_params};
 
 /// At most this many downloads are stored.
 pub const MAX_ENTRIES: usize = 20;
@@ -95,13 +96,19 @@ fn time(ms: i64) -> Option<DateTime<Utc>> {
 }
 
 /// "120 of 326 MB", "120 MB so far", or nothing before the first byte.
-pub(crate) fn progress(entry: &AppDownloadEntry) -> Option<String> {
-    let mb = |b: i64| (b + 500_000) / 1_000_000;
+pub(crate) fn progress(lang: Lang, entry: &AppDownloadEntry) -> Option<String> {
+    let mb = |b: i64| ((b + 500_000) / 1_000_000).to_string();
     match entry.total.filter(|t| *t > 0) {
-        Some(total) if entry.bytes > 0 || entry.state == "downloading" => {
-            Some(format!("{} of {} MB", mb(entry.bytes), mb(total)))
-        }
-        None if entry.bytes > 0 => Some(format!("{} MB so far", mb(entry.bytes))),
+        Some(total) if entry.bytes > 0 || entry.state == "downloading" => Some(t_params(
+            lang,
+            "device.apps.download.of",
+            &[("done", &mb(entry.bytes)), ("total", &mb(total))],
+        )),
+        None if entry.bytes > 0 => Some(t_params(
+            lang,
+            "device.apps.download.so_far",
+            &[("done", &mb(entry.bytes))],
+        )),
         _ => None,
     }
 }
@@ -115,25 +122,26 @@ pub fn refused(entry: &AppDownloadEntry) -> bool {
     entry.state.starts_with("refused")
 }
 
-/// What the download does, lower case, so it reads after "update": "waiting for Wi-Fi",
-/// "refused: signed with another key". Never a raw code (design 31 §4.2).
-fn state_text(state: &str) -> &'static str {
+/// What the download does, its key: lower case, so it reads after "update" ("waiting for Wi-Fi",
+/// "refused: signed with another key"); alone on a row it is [capitalized]. Never a raw code (design 31 §4.2).
+fn state_key(state: &str) -> &'static str {
     match state {
-        "waiting_wifi" => "waiting for Wi-Fi",
-        "waiting_network" => "waiting for a network",
-        "waiting_roaming" => "paused while roaming",
-        "waiting_space" => "waiting for storage space",
-        "downloading" => "downloading",
-        "installing" => "installing",
-        "refused_package" => "refused: it is another app",
-        "refused_signer" => "refused: signed with another key",
-        "refused_unreadable" => "refused: the file is unreadable",
-        "refused_unpinned" => "refused: its key isn't known yet",
-        other if other.starts_with("refused") => "refused by the phone",
-        _ => "waiting",
+        "waiting_wifi" => "device.apps.download.waiting_wifi",
+        "waiting_network" => "device.apps.download.waiting_network",
+        "waiting_roaming" => "device.apps.download.waiting_roaming",
+        "waiting_space" => "device.apps.download.waiting_space",
+        "downloading" => "device.apps.download.downloading",
+        "installing" => "device.apps.download.installing",
+        "refused_package" => "device.apps.download.refused_package",
+        "refused_signer" => "device.apps.download.refused_signer",
+        "refused_unreadable" => "device.apps.download.refused_unreadable",
+        "refused_unpinned" => "device.apps.download.refused_unpinned",
+        other if other.starts_with("refused") => "device.apps.download.refused",
+        _ => "device.apps.download.waiting",
     }
 }
 
+/// [state_key]'s words alone on a row, capitalised ("Waiting for Wi-Fi").
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
@@ -146,31 +154,49 @@ fn capitalized(text: &str) -> String {
 /// waits for Wi-Fi with a grace, and " · 120 of 326 MB". Times in Phone Setup's zone (design 31
 /// M4).
 fn line(head: String, entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
+    let lang = zone.lang();
     let mut parts = vec![head];
     if waiting(&entry.state)
         && let Some(since) = entry.since_ms.and_then(time)
     {
-        parts.push(format!("since {}", zone.when(since, now)));
+        parts.push(t_params(
+            lang,
+            "device.apps.download.since",
+            &[("at", &zone.when(since, now))],
+        ));
     }
     if entry.state == "waiting_wifi"
         && let Some(any) = entry.any_network_at_ms.and_then(time)
     {
-        parts.push(format!("any network from {}", zone.until(any, now)));
+        parts.push(t_params(
+            lang,
+            "device.apps.download.any_network",
+            &[("at", &zone.until(any, now))],
+        ));
     }
-    parts.extend(progress(entry));
+    parts.extend(progress(lang, entry));
     parts.join(" · ")
 }
 
 /// A catalog app that isn't on the phone yet: "Waiting for Wi-Fi · since 10:58 · 120 of 326 MB".
 pub fn new_app_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
-    line(capitalized(state_text(&entry.state)), entry, zone, now)
+    line(
+        capitalized(t(zone.lang(), state_key(&entry.state))),
+        entry,
+        zone,
+        now,
+    )
 }
 
 /// An installed catalog app with a newer release: "Installed · update waiting for Wi-Fi · since
 /// 10:58".
 pub fn update_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
     line(
-        format!("Installed · update {}", state_text(&entry.state)),
+        t_params(
+            zone.lang(),
+            "device.apps.download.update",
+            &[("state", t(zone.lang(), state_key(&entry.state)))],
+        ),
         entry,
         zone,
         now,
@@ -189,13 +215,17 @@ pub fn release_name(tag: &str) -> &str {
 /// 14:30". Downloaded, it waits for the night window ("downloaded").
 pub fn launcher_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
     let state = match entry.state.as_str() {
-        "installing" => "downloaded",
-        other => state_text(other),
+        "installing" => "device.apps.download.downloaded",
+        other => state_key(other),
     };
     line(
-        format!(
-            "Installed · update {} {state}",
-            release_name(&entry.release_tag)
+        t_params(
+            zone.lang(),
+            "device.apps.download.update_named",
+            &[
+                ("release", release_name(&entry.release_tag)),
+                ("state", t(zone.lang(), state)),
+            ],
         ),
         entry,
         zone,
@@ -205,14 +235,17 @@ pub fn launcher_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>)
 
 /// The phone's network at its last report, as a row value: "Wi-Fi", "Mobile data", "Roaming",
 /// "No network"; `None` for a value this server doesn't know.
-pub fn network(downloads: &AppDownloads) -> Option<&'static str> {
-    Some(match downloads.network.as_str() {
-        "unmetered" => "Wi-Fi",
-        "metered" => "Mobile data",
-        "roaming" => "Roaming",
-        "none" => "No network",
-        _ => return None,
-    })
+pub fn network(lang: Lang, downloads: &AppDownloads) -> Option<&'static str> {
+    Some(t(
+        lang,
+        match downloads.network.as_str() {
+            "unmetered" => "device.apps.network.wifi",
+            "metered" => "device.music.mobile_data",
+            "roaming" => "device.apps.network.roaming",
+            "none" => "device.apps.network.none",
+            _ => return None,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -355,7 +388,7 @@ mod tests {
         assert_eq!(parsed.entries[0].total, Some(MAX_BYTES));
         assert_eq!(parsed.entries[0].since_ms, Some(0));
         assert!(parsed.wifi_only);
-        assert_eq!(network(&parsed), Some("Mobile data"));
+        assert_eq!(network(Lang::En, &parsed), Some("Mobile data"));
         assert_eq!(sanitize(&serde_json::json!([1, 2])), None);
     }
 }

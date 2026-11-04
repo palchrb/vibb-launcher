@@ -195,7 +195,7 @@ async fn preview_card(
                         }
                         Err(skip) => {
                             skipped += 1;
-                            (String::new(), Some(skip.reason()))
+                            (String::new(), Some(skip.reason(lang)))
                         }
                     };
                     PreviewRow {
@@ -652,7 +652,7 @@ fn skipped_rows(
             lines.push(format!(
                 "{} / {name}: {}",
                 section_label(lang, section),
-                skip.reason()
+                skip.reason(lang)
             ));
         }
     }

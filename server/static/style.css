@@ -2167,12 +2167,16 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 .fix-age { display: block; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
 /* Ring, Stop Ringing, Lock: three tiles, as the mockup draws them. */
 .act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
-.act-grid form { margin: 0; }
+.act-grid form { display: flex; flex-direction: column; margin: 0; }
+/* A tile in a form or a sheet fills its grid cell, so a row of tiles keeps one height when a label wraps. */
+.act-grid form > .act, .act-sheet > summary.act { flex: 1 1 auto; }
 /* One plain line over the quick actions: how a pause of the restrictions ends (its alarm is the Attention row). */
 .quick-note { margin: 0 16px 10px; font-size: 0.8125rem; line-height: 1.38; color: var(--label-2); }
-.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* One line per tile (white-space above), so every tile is its 68px and every row the same (the user, 2026-10-20:
-   "Hurtigknappene ... burde vel være samme dimensjon?"); a label longer than the tile ends in "…". */
+.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; overflow: hidden; }
+/* A label wraps to at most two lines and then ends in "…" (the user, 2026-11-04, nb on an iPhone: "Sett en regel på
+   pause…" ran out of its tile); the tiles of a row stay one height (the grid stretches them), at least 68px (the
+   user, 2026-10-20: "Hurtigknappene ... burde vel være samme dimensjon?"). */
+.act-label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: break-word; }
 .act:hover { background: var(--row-active); color: var(--tint); }
 .act svg { width: 24px; height: 24px; margin-bottom: 5px; }
 .tone-green { color: var(--green); font-weight: 600; }
@@ -2586,7 +2590,7 @@ a.act, a.act:hover { text-decoration: none; }
 .act-strong { background: var(--tint-fill); color: var(--on-tint-fill); }
 .act-strong:hover { background: var(--tint-fill-hover); color: var(--on-tint-fill); }
 /* Pause a rule… and Unlock for 2 h…: a tile that opens its sheet under it, across the grid. */
-.act-sheet { margin: 0; }
+.act-sheet { display: flex; flex-direction: column; margin: 0; }
 .act-sheet[open] { grid-column: 1 / -1; }
 .act-sheet > summary.act { list-style: none; }
 .act-sheet > summary.act::-webkit-details-marker { display: none; }

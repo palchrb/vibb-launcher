@@ -27,6 +27,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::i18n::{Lang, t, t_params};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
@@ -102,11 +104,6 @@ pub fn storage_limit(stored: Option<i64>) -> Option<i64> {
     }
 }
 
-/// "2 GB" or "no limit".
-pub fn storage_limit_label(limit_gb: Option<i64>) -> String {
-    limit_gb.map_or("no limit".to_string(), |gb| format!("{gb} GB"))
-}
-
 /// The two switches on the wire (design 30 §1.3): `(mobile_data, stream_mobile_data,
 /// download_mobile_data)`. `mobile_data` is what an older launcher and music app read, one switch
 /// for both, so it is on only when both are: it never spends data the parent turned off.
@@ -144,12 +141,7 @@ impl OlderApps {
         }
     }
 
-    /// The Attention row (English until the summary's words move, design 70 §6).
-    pub fn title(self) -> &'static str {
-        crate::i18n::t(crate::i18n::Lang::En, self.title_key())
-    }
-
-    /// Device › Music's warning: the key of its title.
+    /// Device › Music's warning and the summary's Attention row: the key of its title.
     pub fn title_key(self) -> &'static str {
         match self {
             OlderApps::VibbOne => "device.music.update_vibb_one",
@@ -193,11 +185,13 @@ pub struct Storage {
 }
 
 pub fn storage(
+    lang: Lang,
     cache_bytes: i64,
     audio_bytes: Option<i64>,
     extra_bytes: Option<i64>,
     limit_gb: Option<i64>,
 ) -> Storage {
+    let megabytes = |bytes| megabytes(lang, bytes);
     let stored = megabytes(cache_bytes);
     let Some(audio) = audio_bytes else {
         return Storage {
@@ -212,21 +206,30 @@ pub fn storage(
     Storage {
         stored,
         downloads: Some(match limit_gb {
-            Some(gb) => format!("{} of {gb} GB", megabytes(audio)),
-            None => format!("{} (no limit)", megabytes(audio)),
+            Some(gb) => t_params(
+                lang,
+                "music.size.of_limit",
+                &[("size", &megabytes(audio)), ("limit", &gb.to_string())],
+            ),
+            None => t_params(
+                lang,
+                "music.size.no_limit_of",
+                &[("size", &megabytes(audio))],
+            ),
         }),
         extras: (extra > 0).then(|| megabytes(extra)),
         over_limit: limit_gb
             .filter(|gb| kept > gb.saturating_mul(1_000_000_000))
-            .map(|gb| (gigabytes_up(kept), gb)),
+            .map(|gb| (gigabytes_up(lang, kept), gb)),
     }
 }
 
 /// Bytes as "2.1 GB", rounded **up** to the tenth (qa-30-s1-code L1): a figure over the limit never
 /// reads as the limit itself ("2.0 GB of the 2 GB limit"). Negative bytes read as 0.
-pub fn gigabytes_up(bytes: i64) -> String {
+pub fn gigabytes_up(lang: Lang, bytes: i64) -> String {
     let tenths = bytes.max(0).saturating_add(99_999_999) / 100_000_000;
-    format!("{}.{} GB", tenths / 10, tenths % 10)
+    let mark = if lang == Lang::Nb { ',' } else { '.' };
+    format!("{}{mark}{} GB", tenths / 10, tenths % 10)
 }
 
 pub fn icon_known(key: &str) -> bool {
@@ -589,30 +592,27 @@ pub enum CheckError {
 }
 
 impl CheckError {
-    pub fn message(&self) -> String {
+    /// The add form's and the card's sentence, in `lang`.
+    pub fn message(&self, lang: Lang) -> String {
         match self {
-            CheckError::Storytel(code) => storytel_check_message(code),
-            CheckError::Spotify(code) => spotify_check_message(code),
-            CheckError::NotFound => {
-                "NRK doesn't know that podcast or series - check the link.".to_string()
-            }
-            CheckError::NotFeed => {
-                "That link isn't a podcast feed (RSS). Paste the feed's address \
-                                    (it often ends in .rss or .xml), or an NRK radio link."
-                    .to_string()
-            }
-            CheckError::NoItems => "That feed has no episodes with audio.".to_string(),
+            CheckError::Storytel(code) => storytel_check_message(lang, code),
+            CheckError::Spotify(code) => spotify_check_message(lang, code),
+            CheckError::NotFound => t(lang, "music.check.not_found").to_string(),
+            CheckError::NotFeed => t(lang, "music.check.not_feed").to_string(),
+            CheckError::NoItems => t(lang, "music.check.no_items").to_string(),
             CheckError::Status(code) => {
-                format!("The site answered {code} - check the link, or try again later.")
+                t_params(lang, "music.check.status", &[("status", &code.to_string())])
             }
-            CheckError::TooBig => format!(
-                "That feed's first {} MB hold no episode with audio.",
-                crate::music_net::MAX_FEED_BYTES / 1_000_000
+            CheckError::TooBig => t_params(
+                lang,
+                "music.check.too_big",
+                &[(
+                    "mb",
+                    &(crate::music_net::MAX_FEED_BYTES / 1_000_000).to_string(),
+                )],
             ),
-            CheckError::Network(err) => {
-                format!("Couldn't reach the site ({err}) - try again later.")
-            }
-            CheckError::Timeout => "The site didn't answer in time - try again later.".to_string(),
+            CheckError::Network(err) => t_params(lang, "music.check.network", &[("error", err)]),
+            CheckError::Timeout => t(lang, "music.check.timeout").to_string(),
         }
     }
 
@@ -649,52 +649,44 @@ impl CheckError {
     }
 }
 
-/// The card's sentence for a Storytel entry never listed ("Couldn't list it: ...").
-pub fn storytel_check_message(code: &str) -> String {
-    match code {
-        "not_on_shelf" => {
-            "The series or book isn't on the Storytel shelf - pick it again from the \
-                           shelf."
-                .to_string()
-        }
-        "storytel_off" => "No Storytel login is saved on this server.".to_string(),
-        "storytel_key" => {
-            "The saved Storytel login was locked with another key - enter it again.".to_string()
-        }
-        "login_refused" => {
-            "Storytel refused the saved login - save the password again.".to_string()
-        }
-        "no_jwt" => "Storytel took the login but sent no session.".to_string(),
+/// The card's sentence for a Storytel entry never listed ("Couldn't list it: ..."), in `lang`.
+pub fn storytel_check_message(lang: Lang, code: &str) -> String {
+    let key = match code {
+        "not_on_shelf" => "music.check.storytel.not_on_shelf",
+        "storytel_off" => "music.check.storytel.off",
+        "storytel_key" => "music.check.storytel.key",
+        "login_refused" => "music.check.storytel.login_refused",
+        "no_jwt" => "music.check.storytel.no_jwt",
         // Design 58 §2.3: a failed login backs off (1 minute doubling to 30) instead of a refusal.
-        "login_backoff" => {
-            "Storytel couldn't be reached - the server tries again within 30 minutes.".to_string()
+        "login_backoff" => "music.check.storytel.login_backoff",
+        "short_life" => "music.check.storytel.short_life",
+        "bad_shelf" => "music.check.storytel.bad_shelf",
+        "too_big" => "music.check.storytel.too_big",
+        "timeout" => "music.check.storytel.timeout",
+        "network" => "music.check.storytel.network",
+        other => {
+            return match other.strip_prefix("http_") {
+                Some(status) => {
+                    t_params(lang, "music.check.storytel.status", &[("status", status)])
+                }
+                None => format!("{}.", other.replace('_', " ")),
+            };
         }
-        "short_life" => "Storytel sent a session that ends at once.".to_string(),
-        "bad_shelf" => "Storytel sent a shelf this server can't read.".to_string(),
-        "too_big" => "The Storytel shelf is too big to read.".to_string(),
-        "timeout" => "Storytel didn't answer in time.".to_string(),
-        "network" => "Storytel couldn't be reached.".to_string(),
-        other => match other.strip_prefix("http_") {
-            Some(status) => format!("Storytel answered {status}."),
-            None => format!("{}.", other.replace('_', " ")),
-        },
-    }
+    };
+    t(lang, key).to_string()
 }
 
 /// The card's sentence for a Spotify entry never listed ("Couldn't list it: ...", design 26c
-/// §3.4).
-pub fn spotify_check_message(code: &str) -> String {
+/// §3.4), in `lang`.
+pub fn spotify_check_message(lang: Lang, code: &str) -> String {
     match code {
-        "no_items" => "Nothing in it can be played here.".to_string(),
-        // 2026-11-01: from the catalog, in English as the rest of the Music pages until they move (round S-i18n);
-        // `nb.json` has its words ready.
-        crate::spotify::AUDIOBOOK_CODE => {
-            crate::i18n::t(crate::i18n::Lang::En, "music.spotify.audiobook").to_string()
-        }
-        "network" => "Spotify couldn't be reached.".to_string(),
-        "timeout" => "Spotify didn't answer in time.".to_string(),
+        "no_items" => t(lang, "music.check.spotify.no_items").to_string(),
+        crate::spotify::AUDIOBOOK_CODE => t(lang, "music.spotify.audiobook").to_string(),
+        "network" => t(lang, "music.check.spotify.network").to_string(),
+        "timeout" => t(lang, "music.check.spotify.timeout").to_string(),
         other => {
-            let text = sweep_error_text("spotify", other);
+            let source = "spotify";
+            let text = sweep_error_text(lang, source, other);
             let mut chars = text.chars();
             match chars.next() {
                 Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
@@ -721,6 +713,7 @@ impl From<crate::music_net::FetchError> for CheckError {
 pub async fn check_link(
     source: &dyn crate::music_net::Source,
     link: &Link,
+    lang: Lang,
 ) -> Result<String, CheckError> {
     use crate::music_net::{Kind, Reach, SourceRequest};
     let (url, slug) = match link {
@@ -745,7 +738,7 @@ pub async fn check_link(
             if fetched.status != 200 {
                 return Err(CheckError::Status(fetched.status));
             }
-            return feed_title(&fetched.body, fetched.truncated);
+            return feed_title(lang, &fetched.body, fetched.truncated);
         }
     };
     let fetched = source
@@ -762,13 +755,14 @@ pub async fn check_link(
 }
 
 /// An RSS feed's channel title, if the body is a feed with at least one item that has an enclosure
-/// (vibb plays only those); `truncated` = the body is the cap's worth of a longer feed.
-pub fn feed_title(body: &[u8], truncated: bool) -> Result<String, CheckError> {
+/// (vibb plays only those); `truncated` = the body is the cap's worth of a longer feed. A feed without a title is
+/// named in `lang`, the adding parent's (the name is stored).
+pub fn feed_title(lang: Lang, body: &[u8], truncated: bool) -> Result<String, CheckError> {
     match crate::music_sources::parse_feed(body, false, 1) {
         Ok(feed) => Ok(feed
             .title
             .and_then(|t| cut_title(&t, MAX_NAME_CHARS))
-            .unwrap_or_else(|| "Podcast".to_string())),
+            .unwrap_or_else(|| t(lang, "music.default_name.podcast").to_string())),
         Err(_) if truncated => Err(CheckError::TooBig),
         Err(crate::music_sources::FeedError::NotFeed) => Err(CheckError::NotFeed),
         Err(crate::music_sources::FeedError::NoItems) => Err(CheckError::NoItems),
@@ -1954,88 +1948,87 @@ pub fn parse_music_state(json: Option<&str>) -> Option<MusicState> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// "not found at the source" for an entry error code (the phone's, and the sweep's, 21b §2.4).
-pub fn entry_error_text(code: &str) -> String {
-    match code {
-        "not_found" => "not found at the source".to_string(),
-        "not_feed" => "the link isn't a feed any more".to_string(),
-        "no_items" => "no episodes".to_string(),
-        "network" => "the site couldn't be reached".to_string(),
-        "timeout" => "the site didn't answer in time".to_string(),
-        "too_big" => "the feed is too big".to_string(),
-        "bad_media" => "what came back isn't audio".to_string(),
+/// "not found at the source" for an entry error code (the phone's, and the sweep's, 21b §2.4), in
+/// `lang`. A code this server doesn't know reads as its words.
+pub fn entry_error_text(lang: Lang, code: &str) -> String {
+    let key = match code {
+        "not_found" => "music.entry_error.not_found",
+        "not_feed" => "music.entry_error.not_feed",
+        "no_items" => "music.entry_error.no_items",
+        "network" => "music.entry_error.network",
+        "timeout" => "music.entry_error.timeout",
+        "too_big" => "music.entry_error.too_big",
+        "bad_media" => "music.entry_error.bad_media",
         // Storytel (design 26b §2.4, §2.5).
-        "no_audio" => "Storytel gave no audio for this book".to_string(),
+        "no_audio" => "music.entry_error.no_audio",
         // Spotify (design 26c §3.6, §5.8).
-        "unplayable" => "Spotify couldn't play this track on the phone".to_string(),
-        "not_on_shelf" => "no longer on the Storytel shelf".to_string(),
-        "login_refused" => "Storytel refused the login".to_string(),
-        "storytel_off" => "no Storytel login on this server".to_string(),
-        "storytel_key" => "the Storytel login must be entered again".to_string(),
-        "no_jwt" => "Storytel took the login but sent no session".to_string(),
-        "bad_shelf" => "Storytel sent a shelf this server can't read".to_string(),
-        other => match other.strip_prefix("http_") {
-            Some(status) => format!("the source answered {status}"),
-            None => other.replace('_', " "),
-        },
-    }
+        "unplayable" => "music.entry_error.unplayable",
+        "not_on_shelf" => "music.entry_error.not_on_shelf",
+        "login_refused" => "music.entry_error.login_refused",
+        "storytel_off" => "music.entry_error.storytel_off",
+        "storytel_key" => "music.entry_error.storytel_key",
+        "no_jwt" => "music.entry_error.no_jwt",
+        "bad_shelf" => "music.entry_error.bad_shelf",
+        other => {
+            return match other.strip_prefix("http_") {
+                Some(status) => t_params(lang, "music.entry_error.status", &[("status", status)]),
+                None => other.replace('_', " "),
+            };
+        }
+    };
+    t(lang, key).to_string()
 }
 
 /// [entry_error_text] for the sweep's error on an entry of `source`: a Storytel entry's `too_big`
 /// is the shelf, not a feed.
-pub fn sweep_error_text(source: &str, code: &str) -> String {
-    match (source, code) {
-        ("storytel", "too_big") => "the Storytel shelf is too big".to_string(),
-        ("storytel", "network") => "Storytel couldn't be reached".to_string(),
-        ("storytel", "timeout") => "Storytel didn't answer in time".to_string(),
+pub fn sweep_error_text(lang: Lang, source: &str, code: &str) -> String {
+    let key = match (source, code) {
+        ("storytel", "too_big") => "music.sweep_error.storytel.too_big",
+        ("storytel", "network") => "music.sweep_error.storytel.network",
+        ("storytel", "timeout") => "music.sweep_error.storytel.timeout",
         ("storytel", other) if other.starts_with("http_") => {
-            format!("Storytel answered {}", &other[5..])
+            return t_params(
+                lang,
+                "music.sweep_error.storytel.status",
+                &[("status", &other[5..])],
+            );
         }
         // Spotify (design 26c §3.4).
-        ("spotify", "spotify_off") => "no Spotify app is set up on this server".to_string(),
-        ("spotify", "no_account") => "no Spotify account is logged in".to_string(),
-        ("spotify", "reauthorize") => "the Spotify logins need renewing".to_string(),
-        ("spotify", "app_refused") => {
-            "Spotify doesn't accept this server's client ID any more".to_string()
-        }
-        ("spotify", "not_found") => {
-            "Spotify doesn't let this app open it (or it was deleted)".to_string()
-        }
-        ("spotify", "rate_limited") => {
-            "Spotify asked this server to slow down - it tries again later".to_string()
-        }
-        ("spotify", "quota") => {
-            "Spotify's limit for this app was reached - it tries again later".to_string()
-        }
-        ("spotify", "network") => "Spotify couldn't be reached".to_string(),
-        ("spotify", "timeout") => "Spotify didn't answer in time".to_string(),
-        ("spotify", "too_big") => "Spotify's answer was too big to read".to_string(),
-        ("spotify", "bad_answer") => "Spotify sent an answer this server can't read".to_string(),
-        ("spotify", "key") => {
-            "a saved Spotify login was locked with another key - log in again".to_string()
-        }
-        ("spotify", "no_items") => "nothing in it can be played here".to_string(),
-        ("spotify", crate::spotify::AUDIOBOOK_CODE) => {
-            crate::i18n::t(crate::i18n::Lang::En, "music.spotify.audiobook_short").to_string()
-        }
+        ("spotify", "spotify_off") => "music.sweep_error.spotify.off",
+        ("spotify", "no_account") => "music.sweep_error.spotify.no_account",
+        ("spotify", "reauthorize") => "music.sweep_error.spotify.reauthorize",
+        ("spotify", "app_refused") => "music.sweep_error.spotify.app_refused",
+        ("spotify", "not_found") => "music.sweep_error.spotify.not_found",
+        ("spotify", "rate_limited") => "music.sweep_error.spotify.rate_limited",
+        ("spotify", "quota") => "music.sweep_error.spotify.quota",
+        ("spotify", "network") => "music.sweep_error.spotify.network",
+        ("spotify", "timeout") => "music.sweep_error.spotify.timeout",
+        ("spotify", "too_big") => "music.sweep_error.spotify.too_big",
+        ("spotify", "bad_answer") => "music.sweep_error.spotify.bad_answer",
+        ("spotify", "key") => "music.sweep_error.spotify.key",
+        ("spotify", "no_items") => "music.sweep_error.spotify.no_items",
+        ("spotify", crate::spotify::AUDIOBOOK_CODE) => "music.spotify.audiobook_short",
         // qa-26c-step2a-code L3: a token mint that couldn't read its account row, and a refused
         // address (`FetchError::Refused`, coded `network` today - mapped should it get its own).
-        ("spotify", "database") => {
-            "this server couldn't read its Spotify login - it tries again later".to_string()
-        }
-        ("spotify", "refused") => {
-            "Spotify's address pointed somewhere this server won't go".to_string()
-        }
+        ("spotify", "database") => "music.sweep_error.spotify.database",
+        ("spotify", "refused") => "music.sweep_error.spotify.refused",
         ("spotify", other) if other.starts_with("http_") => {
-            format!("Spotify answered {}", &other[5..])
+            return t_params(
+                lang,
+                "music.sweep_error.spotify.status",
+                &[("status", &other[5..])],
+            );
         }
-        _ => entry_error_text(code),
-    }
+        _ => return entry_error_text(lang, code),
+    };
+    t(lang, key).to_string()
 }
 
-/// Bytes as "12.3 MB".
-pub fn megabytes(bytes: i64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+pub fn megabytes(lang: Lang, bytes: i64) -> String {
+    format!(
+        "{} MB",
+        crate::i18n::number(lang, bytes as f64 / 1_000_000.0, 1)
+    )
 }
 
 #[cfg(test)]
@@ -2056,11 +2049,9 @@ mod tests {
             );
         }
         assert_eq!(DEFAULT_STORAGE_LIMIT_GB, 2);
-        assert_eq!(storage_limit_label(Some(2)), "2 GB");
-        assert_eq!(storage_limit_label(None), "no limit");
-        assert_eq!(gigabytes_up(3_200_000_000), "3.2 GB");
-        assert_eq!(gigabytes_up(3_200_000_001), "3.3 GB");
-        assert_eq!(gigabytes_up(-5), "0.0 GB");
+        assert_eq!(gigabytes_up(Lang::En, 3_200_000_000), "3.2 GB");
+        assert_eq!(gigabytes_up(Lang::En, 3_200_000_001), "3.3 GB");
+        assert_eq!(gigabytes_up(Lang::En, -5), "0.0 GB");
     }
 
     #[test]
@@ -2086,7 +2077,8 @@ mod tests {
     #[test]
     fn an_older_phone_names_the_app_to_update() {
         let names = |vibb_one, music_app| {
-            older_phone(true, false, Some(1), None, vibb_one, music_app).map(OlderApps::title)
+            older_phone(true, false, Some(1), None, vibb_one, music_app)
+                .map(|apps| crate::i18n::t(crate::i18n::Lang::En, apps.title_key()))
         };
         // launcher-v0.26.0-rc.N and music-v0.4.0-rc.N are the first that pass it on.
         assert_eq!(names(Some(25_999), Some(2)), Some("Update the music app"));
@@ -2209,16 +2201,23 @@ mod tests {
   <item><title>Uten lyd</title></item>
   <item><title>Episode 1</title><enclosure url="https://example.org/1.mp3" type="audio/mpeg" length="1"/></item>
 </channel></rss>"#;
-        assert_eq!(feed_title(feed, false).unwrap(), "Godnatt &amp; eventyr");
+        assert_eq!(
+            feed_title(Lang::En, feed, false).unwrap(),
+            "Godnatt &amp; eventyr"
+        );
         let entities = b"<rss><channel><title>Bl&#229; &amp; gr&#xF8;nn</title>\
             <item><enclosure url='x.mp3'/></item></channel></rss>";
-        assert_eq!(feed_title(entities, false).unwrap(), "Blå & grønn");
+        assert_eq!(
+            feed_title(Lang::En, entities, false).unwrap(),
+            "Blå & grønn"
+        );
         // An item's title isn't the channel's.
         let no_title =
             b"<rss><channel><item><title>Ep</title><enclosure url=\"a\"/></item></channel></rss>";
-        assert_eq!(feed_title(no_title, false).unwrap(), "Podcast");
+        assert_eq!(feed_title(Lang::En, no_title, false).unwrap(), "Podcast");
         assert_eq!(
             feed_title(
+                Lang::En,
                 b"<rss><channel><title>T</title><item><title>x</title></item></channel></rss>",
                 false
             ),
@@ -2226,6 +2225,7 @@ mod tests {
         );
         assert_eq!(
             feed_title(
+                Lang::En,
                 b"<!doctype html><html><head><title>Hi</title></head></html>",
                 false
             ),
@@ -2233,6 +2233,7 @@ mod tests {
         );
         assert_eq!(
             feed_title(
+                Lang::En,
                 b"<rss><channelx><item><enclosure url='a'/></item></channelx></rss>",
                 false
             ),
@@ -2472,7 +2473,7 @@ mod tests {
         assert_eq!(state.item_errors.len(), 1);
         assert_eq!(state.item_errors[0].error, "unplayable");
         assert_eq!(
-            sweep_error_text("spotify", "unplayable"),
+            sweep_error_text(Lang::En, "spotify", "unplayable"),
             "Spotify couldn't play this track on the phone"
         );
         let id = "0FakePlaylistKveld0001";
@@ -2574,7 +2575,10 @@ mod tests {
             sanitize_music_state(&serde_json::json!({"bridge": 5})),
             None
         );
-        assert_eq!(entry_error_text("http_503"), "the source answered 503");
+        assert_eq!(
+            entry_error_text(Lang::En, "http_503"),
+            "the source answered 503"
+        );
     }
 
     /// Design 21b §4.3: item errors and download rows, known fields only, checked and capped.
@@ -2736,28 +2740,28 @@ mod tests {
         assert_eq!(default_category(&categories, "rss").map(|c| c.id), Some(4));
         assert!(
             CheckError::Spotify("not_found".to_string())
-                .message()
+                .message(Lang::En)
                 .starts_with("Spotify doesn't let this app open it")
         );
         assert_eq!(
-            CheckError::Spotify("http_502".to_string()).message(),
+            CheckError::Spotify("http_502".to_string()).message(Lang::En),
             "Spotify answered 502."
         );
         assert_eq!(
-            sweep_error_text("spotify", "reauthorize"),
+            sweep_error_text(Lang::En, "spotify", "reauthorize"),
             "the Spotify logins need renewing"
         );
         assert_eq!(
-            sweep_error_text("nrk", "not_found"),
+            sweep_error_text(Lang::En, "nrk", "not_found"),
             "not found at the source"
         );
         // qa-26c-step2a-code L3: no raw word on the card.
         assert_eq!(
-            sweep_error_text("spotify", "database"),
+            sweep_error_text(Lang::En, "spotify", "database"),
             "this server couldn't read its Spotify login - it tries again later"
         );
         assert_eq!(
-            CheckError::Spotify("refused".to_string()).message(),
+            CheckError::Spotify("refused".to_string()).message(Lang::En),
             "Spotify's address pointed somewhere this server won't go."
         );
     }
@@ -2796,36 +2800,39 @@ mod tests {
             "Storytel book"
         );
         assert_eq!(
-            entry_error_text("no_audio"),
+            entry_error_text(Lang::En, "no_audio"),
             "Storytel gave no audio for this book"
         );
         assert_eq!(
-            entry_error_text("not_on_shelf"),
+            entry_error_text(Lang::En, "not_on_shelf"),
             "no longer on the Storytel shelf"
         );
-        assert_eq!(sweep_error_text("rss", "too_big"), "the feed is too big");
         assert_eq!(
-            sweep_error_text("storytel", "too_big"),
+            sweep_error_text(Lang::En, "rss", "too_big"),
+            "the feed is too big"
+        );
+        assert_eq!(
+            sweep_error_text(Lang::En, "storytel", "too_big"),
             "the Storytel shelf is too big"
         );
         assert_eq!(
-            sweep_error_text("storytel", "network"),
+            sweep_error_text(Lang::En, "storytel", "network"),
             "Storytel couldn't be reached"
         );
         assert_eq!(
-            sweep_error_text("storytel", "timeout"),
+            sweep_error_text(Lang::En, "storytel", "timeout"),
             "Storytel didn't answer in time"
         );
         assert_eq!(
-            sweep_error_text("storytel", "http_503"),
+            sweep_error_text(Lang::En, "storytel", "http_503"),
             "Storytel answered 503"
         );
         assert_eq!(
-            sweep_error_text("rss", "http_503"),
+            sweep_error_text(Lang::En, "rss", "http_503"),
             "the source answered 503"
         );
         assert_eq!(
-            sweep_error_text("storytel", "no_audio"),
+            sweep_error_text(Lang::En, "storytel", "no_audio"),
             "Storytel gave no audio for this book"
         );
         assert_eq!(

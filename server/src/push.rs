@@ -1170,20 +1170,30 @@ pub struct Subscription {
 /// Why a push failed, in words: the push service out of reach (a network error, 429, 5xx - also
 /// once retries ran past the TTL), its refusal of the server's signature, another refusal, or
 /// the server's own problem.
-pub fn failure_text(http_status: Option<i64>, reason: Option<&str>) -> String {
+pub fn failure_text(
+    lang: crate::i18n::Lang,
+    http_status: Option<i64>,
+    reason: Option<&str>,
+) -> String {
+    use crate::i18n::{t, t_params};
     match (http_status, reason) {
         (_, Some("too_large" | "bad_key" | "endpoint_not_allowed")) => {
-            "The server couldn't send it".to_string()
+            t(lang, "push.failure.server").to_string()
         }
-        (None | Some(429) | Some(500..), _) => "The push service couldn't be reached".to_string(),
-        (Some(401 | 403), _) => "The push service refused the server's signature".to_string(),
-        (Some(status), _) => format!("The push service refused it ({status})"),
+        (None | Some(429) | Some(500..), _) => t(lang, "push.failure.unreachable").to_string(),
+        (Some(401 | 403), _) => t(lang, "push.failure.signature").to_string(),
+        (Some(status), _) => t_params(
+            lang,
+            "push.failure.refused",
+            &[("status", &status.to_string())],
+        ),
     }
 }
 
-/// The admin's subscriptions, oldest first, with their health.
+/// The admin's subscriptions, oldest first, with their health (a failure worded in `lang`).
 pub async fn subscriptions(
     db: &sqlx::SqlitePool,
+    lang: crate::i18n::Lang,
     admin_id: i64,
     now: DateTime<Utc>,
 ) -> Result<Vec<Subscription>, sqlx::Error> {
@@ -1267,7 +1277,8 @@ pub async fn subscriptions(
                         parse(oldest),
                         now,
                     ),
-                    failure: failed.then(|| failure_text(latest_status, latest_reason.as_deref())),
+                    failure: failed
+                        .then(|| failure_text(lang, latest_status, latest_reason.as_deref())),
                     sending,
                     since_opened,
                     ever_opened,
@@ -1514,23 +1525,23 @@ mod tests {
             Health::NotGettingThrough
         );
         assert_eq!(
-            failure_text(None, Some("network")),
+            failure_text(crate::i18n::Lang::En, None, Some("network")),
             "The push service couldn't be reached"
         );
         assert_eq!(
-            failure_text(Some(503), Some("expired")),
+            failure_text(crate::i18n::Lang::En, Some(503), Some("expired")),
             "The push service couldn't be reached"
         );
         assert_eq!(
-            failure_text(Some(400), Some("BadDeviceToken")),
+            failure_text(crate::i18n::Lang::En, Some(400), Some("BadDeviceToken")),
             "The push service refused it (400)"
         );
         assert_eq!(
-            failure_text(Some(403), None),
+            failure_text(crate::i18n::Lang::En, Some(403), None),
             "The push service refused the server's signature"
         );
         assert_eq!(
-            failure_text(None, Some("too_large")),
+            failure_text(crate::i18n::Lang::En, None, Some("too_large")),
             "The server couldn't send it"
         );
     }

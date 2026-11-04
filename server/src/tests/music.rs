@@ -1721,7 +1721,13 @@ async fn the_storage_rows_show_the_limit_and_the_extras() {
     // The pure rows' variants:
     use crate::music::{Storage, storage};
     assert_eq!(
-        storage(1_234_500_000, Some(980_000_000), Some(210_000_000), Some(2)),
+        storage(
+            crate::i18n::Lang::En,
+            1_234_500_000,
+            Some(980_000_000),
+            Some(210_000_000),
+            Some(2)
+        ),
         Storage {
             stored: "1234.5 MB".to_string(),
             downloads: Some("980.0 MB of 2 GB".to_string()),
@@ -1729,14 +1735,27 @@ async fn the_storage_rows_show_the_limit_and_the_extras() {
             over_limit: None,
         }
     );
-    let rows = storage(1_234_500_000, Some(980_000_000), Some(0), Some(2));
+    let rows = storage(
+        crate::i18n::Lang::En,
+        1_234_500_000,
+        Some(980_000_000),
+        Some(0),
+        Some(2),
+    );
     assert_eq!(rows.extras, None, "no extras, no row");
     assert_eq!(
-        storage(1_234_500_000, Some(980_000_000), None, None).downloads,
+        storage(
+            crate::i18n::Lang::En,
+            1_234_500_000,
+            Some(980_000_000),
+            None,
+            None
+        )
+        .downloads,
         Some("980.0 MB (no limit)".to_string())
     );
     assert_eq!(
-        storage(1_234_500_000, None, None, Some(2)),
+        storage(crate::i18n::Lang::En, 1_234_500_000, None, None, Some(2)),
         Storage {
             stored: "1234.5 MB".to_string(),
             downloads: None,
@@ -1750,7 +1769,9 @@ async fn the_storage_rows_show_the_limit_and_the_extras() {
 #[test]
 fn the_page_warns_when_kept_items_alone_pass_the_limit() {
     use crate::music::storage;
-    let over = |cache, audio, extra, limit| storage(cache, audio, extra, limit).over_limit;
+    let over = |cache, audio, extra, limit| {
+        storage(crate::i18n::Lang::En, cache, audio, extra, limit).over_limit
+    };
     // 3.4 GB of audio, 0.2 GB of it extras: 3.2 GB kept against 2 GB.
     assert_eq!(
         over(

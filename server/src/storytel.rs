@@ -781,53 +781,39 @@ impl StorytelError {
         )
     }
 
-    /// The picker's text, times in `zone` (design 31 M4) and relative to `now`.
+    /// The picker's text in the `zone`'s language, times in `zone` (design 31 M4) and relative to `now`.
     pub fn message(&self, zone: &crate::display_time::Zone, now: DateTime<Utc>) -> String {
-        match self {
-            StorytelError::NotConfigured => {
-                "No Storytel login is saved on this server.".to_string()
+        let lang = zone.lang();
+        let until = |key: &str, at: &DateTime<Utc>| {
+            crate::i18n::t_params(lang, key, &[("at", &zone.until(*at, now))])
+        };
+        let key = match self {
+            StorytelError::NotConfigured => "music.storytel.error.not_configured",
+            StorytelError::KeyUnusable => "music.storytel.error.key",
+            StorytelError::Refused(_) => "music.storytel.error.refused",
+            StorytelError::Cooldown { until: at } => {
+                return until("music.storytel.error.cooldown", at);
             }
-            StorytelError::KeyUnusable => {
-                "The saved Storytel login was locked with another key (a restored backup or a new \
-                 key file) - enter it again."
-                    .to_string()
+            StorytelError::NoJwt => "music.storytel.error.no_jwt",
+            StorytelError::ShortLife => "music.storytel.error.short_life",
+            StorytelError::Backoff { until: at } => {
+                return until("music.storytel.error.backoff", at);
             }
-            StorytelError::Refused(_) => {
-                "Storytel refused the saved login. Nothing is tried again for an hour - save the \
-                 password again to try now."
-                    .to_string()
-            }
-            StorytelError::Cooldown { until } => format!(
-                "Storytel refused the saved login. Nothing is tried again before {} - save the \
-                 password again to try now.",
-                zone.until(*until, now)
-            ),
-            StorytelError::NoJwt => {
-                "Storytel took the login but sent no session - try again later.".to_string()
-            }
-            StorytelError::ShortLife => {
-                "Storytel sent a session that ends at once - try again later.".to_string()
-            }
-            StorytelError::Backoff { until } => format!(
-                "Storytel couldn't be reached - trying again at {}.",
-                zone.until(*until, now)
-            ),
-            StorytelError::Busy { .. } => "Storytel is busy - try again later.".to_string(),
-            StorytelError::Fetch(FetchError::Timeout) => {
-                "Storytel didn't answer in time - try again later.".to_string()
-            }
-            StorytelError::Fetch(_) => {
-                "Storytel couldn't be reached - try again later.".to_string()
-            }
+            StorytelError::Busy { .. } => "music.storytel.error.busy",
+            StorytelError::Fetch(FetchError::Timeout) => "music.storytel.error.timeout",
+            StorytelError::Fetch(_) => "music.storytel.error.network",
             StorytelError::LoginStatus(code) | StorytelError::Status(code) => {
-                format!("Storytel answered {code} - try again later.")
+                return crate::i18n::t_params(
+                    lang,
+                    "music.storytel.error.status",
+                    &[("status", &code.to_string())],
+                );
             }
-            StorytelError::TooBig => "The Storytel shelf is too big to read.".to_string(),
-            StorytelError::BadShelf => "Storytel sent a shelf this server can't read.".to_string(),
-            StorytelError::Database(_) => {
-                "Couldn't read the Storytel login - check the server log.".to_string()
-            }
-        }
+            StorytelError::TooBig => "music.storytel.error.too_big",
+            StorytelError::BadShelf => "music.storytel.error.bad_shelf",
+            StorytelError::Database(_) => "music.storytel.error.database",
+        };
+        crate::i18n::t(lang, key).to_string()
     }
 }
 

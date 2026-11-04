@@ -17,6 +17,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::lock_glance;
 use crate::security::{self, CurrentAdmin};
 
@@ -26,12 +27,12 @@ fn saved(state: &AppState, id: i64, form: &str) -> Response {
     Redirect::to(&format!("/devices/{id}/lock#{form}")).into_response()
 }
 
-fn failed() -> Response {
-    (
+fn failed(lang: Lang) -> Response {
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
+        "error.save_failed_log",
     )
-        .into_response()
 }
 
 /// What the lock shows of one app (the page's select): `off`, `name` or `text`.
@@ -74,6 +75,7 @@ impl Show {
 /// with nothing written.
 pub async fn save_app(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -84,21 +86,17 @@ pub async fn save_app(
         .unwrap_or_default()
         .to_string();
     if !lock_glance::valid_package(&package) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Not an app that can show on the lock screen.",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_lock_screen_app");
     }
     let Some(value) = form.get("show") else {
         // A page from before the select (it posts `on`): nothing written, and what to do.
-        return stale_page().await;
+        return stale_page(lang).await;
     };
     let Some(show) = Show::parse(value) else {
-        return (StatusCode::BAD_REQUEST, "Pick Off, Name only or Full text.").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.pick_lock_screen_show");
     };
     match write_show(&state, id, &package, show).await {
-        Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(None) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Ok(Some(before)) => {
             let after = show.stored();
             if before.is_some() != after.is_some() {
@@ -133,7 +131,7 @@ pub async fn save_app(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the lock screen's app");
-            failed()
+            failed(lang)
         }
     }
 }
@@ -141,12 +139,8 @@ pub async fn save_app(
 /// A Lock page loaded before 2026-10-21's select posts the old fields (`on`) or to the removed
 /// `/lock-screen/apps/text`: a 400 that says to reload, nothing written (qa-srv-sweep-resume-code
 /// L6b). The route can go a release after.
-pub async fn stale_page() -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        "This page is out of date - reload it.",
-    )
-        .into_response()
+pub async fn stale_page(lang: Lang) -> Response {
+    crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date")
 }
 
 /// [save_app]'s write in one transaction: `Ok(None)` = no such device (nothing written), else the
@@ -217,6 +211,7 @@ async fn write_show(
 /// written.
 pub async fn save_wake(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
@@ -233,11 +228,11 @@ pub async fn save_wake(
         Ok(before) => before,
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't read the lock screen's wake switch");
-            return failed();
+            return failed(lang);
         }
     };
     let Some(before) = before else {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
     };
     let result =
         sqlx::query("UPDATE device_policy SET lock_wake_on_notification = ? WHERE device_id = ?")
@@ -261,7 +256,7 @@ pub async fn save_wake(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the lock screen's wake switch");
-            failed()
+            failed(lang)
         }
     }
 }

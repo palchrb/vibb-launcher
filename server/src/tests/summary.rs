@@ -208,7 +208,9 @@ async fn the_quick_actions_follow_the_phone() {
     let quick = group(&html, "quick");
     for label in ["+15 min", "+30 min", "+1 h"] {
         assert!(
-            quick.contains(&format!("</svg>{label}</button>")),
+            quick.contains(&format!(
+                "</svg><span class=\"act-label\">{label}</span></button>"
+            )),
             "{label}: {quick}"
         );
     }

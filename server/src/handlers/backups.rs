@@ -150,7 +150,7 @@ async fn external_drive_mounted() -> bool {
         .unwrap_or(false)
 }
 
-fn human_size(bytes: u64) -> String {
+fn human_size(lang: Lang, bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut size = bytes as f64;
     let mut unit = 0;
@@ -161,7 +161,7 @@ fn human_size(bytes: u64) -> String {
     if unit == 0 {
         format!("{bytes} {}", UNITS[unit])
     } else {
-        format!("{size:.1} {}", UNITS[unit])
+        format!("{} {}", crate::i18n::number(lang, size, 1), UNITS[unit])
     }
 }
 
@@ -526,7 +526,7 @@ async fn render_backups(
                 .map(chrono::DateTime::<chrono::Utc>::from);
             backups.push(BackupRow {
                 filename,
-                size_display: human_size(meta.len()),
+                size_display: human_size(lang, meta.len()),
                 when: made.map_or_else(
                     || t(lang, "settings.backups.time_unknown").to_string(),
                     |made| zone.when(made, now),
@@ -552,7 +552,7 @@ async fn render_backups(
         removable_drives: if docker {
             Vec::new()
         } else {
-            list_removable_drives().await
+            list_removable_drives(lang).await
         },
         docker,
     };
@@ -864,7 +864,7 @@ async fn base_device_of(mount_point: &str) -> Option<String> {
 /// classification, which some SD card controllers also report as true) -
 /// this list is what both the UI and the format-drive confirmation step
 /// treat as safe-to-format candidates.
-async fn list_removable_drives() -> Vec<RemovableDrive> {
+async fn list_removable_drives(lang: Lang) -> Vec<RemovableDrive> {
     let mut drives = Vec::new();
     let Ok(mut entries) = tokio::fs::read_dir("/sys/block").await else {
         return drives;
@@ -898,7 +898,7 @@ async fn list_removable_drives() -> Vec<RemovableDrive> {
 
         drives.push(RemovableDrive {
             device,
-            size_display: human_size(size_sectors * 512),
+            size_display: human_size(lang, size_sectors * 512),
         });
     }
     drives
@@ -927,7 +927,7 @@ impl FormatRefusal {
 }
 
 /// The drive a Format request names, only if it is in the freshly listed `drives` and the typed
-/// size is its size exactly.
+/// size is its size exactly (either decimal mark: "29,8 GB" in Norwegian is "29.8 GB").
 fn format_target<'a>(
     drives: &'a [RemovableDrive],
     device: &str,
@@ -937,7 +937,7 @@ fn format_target<'a>(
         .iter()
         .find(|d| d.device == device)
         .ok_or(FormatRefusal::Gone)?;
-    if confirm.trim() != drive.size_display {
+    if confirm.trim().replace(',', ".") != drive.size_display.replace(',', ".") {
         return Err(FormatRefusal::WrongSize);
     }
     Ok(drive)
@@ -967,7 +967,7 @@ pub async fn format_drive(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<FormatDriveForm>,
 ) -> Response {
-    let drives = list_removable_drives().await;
+    let drives = list_removable_drives(lang).await;
     let drive = match format_target(&drives, &form.device, &form.confirm_size) {
         Ok(drive) => drive,
         Err(refusal) => {
@@ -1209,6 +1209,9 @@ mod tests {
     fn format_needs_a_listed_drive_and_its_size() {
         let drives = [drive()];
         assert!(format_target(&drives, "/dev/sda", " 29.8 GB ").is_ok());
+        assert!(format_target(&drives, "/dev/sda", "29,8 GB").is_ok());
+        assert_eq!(human_size(Lang::Nb, 1_258_291), "1,2 MB");
+        assert_eq!(human_size(Lang::En, 1_258_291), "1.2 MB");
         assert_eq!(
             format_target(&drives, "/dev/sda", "29.8").err(),
             Some(FormatRefusal::WrongSize)

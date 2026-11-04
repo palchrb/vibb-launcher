@@ -4,6 +4,8 @@
 //! interruption filter (DND), so About This Phone can say why a call wasn't heard (design 31:
 //! typed values, [state]; Do Not Disturb is also an Attention row).
 
+use crate::i18n::{Lang, t};
+
 /// The latest report's `ringer_mode`, kept only if it is one the launcher sends; anything else
 /// (or a missing field from an older launcher) is stored as NULL.
 pub fn sanitize_ringer_mode(value: Option<&str>) -> Option<&'static str> {
@@ -36,24 +38,24 @@ pub enum Ringer {
 }
 
 impl Ringer {
-    /// The row's value on About This Phone.
-    pub fn label(self) -> &'static str {
-        match self {
-            Ringer::Normal => "On",
-            Ringer::Vibrate => "Vibrate",
-            Ringer::Silent => "Silent",
-        }
+    /// The row's value on About This Phone, in `lang`.
+    pub fn label(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                Ringer::Normal => "common.on",
+                Ringer::Vibrate => "device.about.ringer.vibrate",
+                Ringer::Silent => "device.about.ringer.silent",
+            },
+        )
     }
 
     /// The ⓘ under the row, for a ringer that isn't on.
-    pub fn detail(self) -> Option<&'static str> {
+    pub fn detail(self, lang: Lang) -> Option<&'static str> {
         match self {
             Ringer::Normal => None,
-            Ringer::Vibrate => Some("Calls and notifications only vibrate."),
-            Ringer::Silent => Some(
-                "Calls and notifications neither ring nor vibrate. It is set with the phone's \
-                 volume buttons: your child's sound row offers only sound and vibrate.",
-            ),
+            Ringer::Vibrate => Some(t(lang, "device.about.ringer.vibrate_sub")),
+            Ringer::Silent => Some(t(lang, "device.about.ringer.silent_sub")),
         }
     }
 }
@@ -72,31 +74,29 @@ impl Dnd {
         self != Dnd::Off
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Dnd::Off => "Off",
-            Dnd::PriorityOnly => "Priority only",
-            Dnd::AlarmsOnly => "Alarms only",
-            Dnd::TotalSilence => "Total silence",
-        }
+    pub fn label(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                Dnd::Off => "common.off",
+                Dnd::PriorityOnly => "device.about.dnd.priority",
+                Dnd::AlarmsOnly => "device.about.dnd.alarms",
+                Dnd::TotalSilence => "device.about.dnd.none",
+            },
+        )
     }
 
     /// The ⓘ under the row while it is on.
-    pub fn detail(self) -> Option<&'static str> {
-        Some(match self {
-            Dnd::Off => return None,
-            Dnd::PriorityOnly => {
-                "Only the calls it lets through ring. Your child can't change the sound from Vibb One \
-                 while it is on."
-            }
-            Dnd::AlarmsOnly => {
-                "Calls don't ring. Your child can't change the sound from Vibb One while it is on."
-            }
-            Dnd::TotalSilence => {
-                "Calls and alarms don't ring. Your child can't change the sound from Vibb One while it \
-                 is on."
-            }
-        })
+    pub fn detail(self, lang: Lang) -> Option<&'static str> {
+        Some(t(
+            lang,
+            match self {
+                Dnd::Off => return None,
+                Dnd::PriorityOnly => "device.about.dnd.priority_sub",
+                Dnd::AlarmsOnly => "device.about.dnd.alarms_sub",
+                Dnd::TotalSilence => "device.about.dnd.none_sub",
+            },
+        ))
     }
 }
 
@@ -155,10 +155,10 @@ mod tests {
         assert_eq!(on.ringer, Some(Ringer::Normal));
         assert_eq!(on.dnd, Some(Dnd::Off));
         assert!(!Dnd::Off.is_on());
-        assert_eq!(Ringer::Normal.label(), "On");
-        assert_eq!(Ringer::Normal.detail(), None);
-        assert_eq!(Dnd::Off.label(), "Off");
-        assert_eq!(Dnd::Off.detail(), None);
+        assert_eq!(Ringer::Normal.label(Lang::En), "On");
+        assert_eq!(Ringer::Normal.detail(Lang::En), None);
+        assert_eq!(Dnd::Off.label(Lang::En), "Off");
+        assert_eq!(Dnd::Off.detail(Lang::En), None);
         let quiet = state(Some("vibrate"), Some("priority"));
         assert_eq!(quiet.ringer, Some(Ringer::Vibrate));
         assert_eq!(quiet.dnd, Some(Dnd::PriorityOnly));
@@ -171,14 +171,18 @@ mod tests {
             (Dnd::TotalSilence, "Total silence"),
         ] {
             assert!(dnd.is_on());
-            assert_eq!(dnd.label(), label);
-            assert!(dnd.detail().unwrap().contains("can't change the sound"));
+            assert_eq!(dnd.label(Lang::En), label);
+            assert!(
+                dnd.detail(Lang::En)
+                    .unwrap()
+                    .contains("can't change the sound")
+            );
         }
-        assert_eq!(Ringer::Vibrate.label(), "Vibrate");
-        assert_eq!(Ringer::Silent.label(), "Silent");
+        assert_eq!(Ringer::Vibrate.label(Lang::En), "Vibrate");
+        assert_eq!(Ringer::Silent.label(Lang::En), "Silent");
         assert!(
             Ringer::Silent
-                .detail()
+                .detail(Lang::En)
                 .unwrap()
                 .contains("neither ring nor vibrate")
         );

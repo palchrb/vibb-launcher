@@ -225,7 +225,7 @@ async fn show_child_pin_needs_the_password() {
     assert!(!get.text().contains("4826"));
     assert_eq!(
         events(&app, "kid_pin_shown").await,
-        [Some(format!("device {id}"))]
+        [Some(format!("phone {id}"))]
     );
     assert_eq!(events(&app, "kid_pin_reveal_refused").await.len(), 1);
     let logged: Vec<String> = sqlx::query_scalar(

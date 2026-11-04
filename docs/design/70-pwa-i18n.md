@@ -206,6 +206,11 @@ is a **time rule's `name` the server made itself** (`legacy_to_rules`: "Bedtime"
   `device.time.rule.morning` ("{name} (morning)" / "{name} (morgen)") until the parent renames it.
 - Tests: `time_rules::tests::server_names_go_to_the_phone_blank` (the four names, "Natt (morning)" → "Natt", "Morning
   run" untouched); `tests::time_pages::the_badge_names_a_blank_reported_rule_by_its_id`.
+- **A fallback name the server stores** (slice 4, 2026-11-04, qa-s-i18n-4-code L1): an entry added without a name of its
+  own - a Spotify item without one (`spotify::LinkKind::plain_name`), a feed without a title (`music::feed_title`), a
+  Storytel series or book without one (`handlers::music`) - is named in the language of the parent who adds it
+  (`music.default_name.*`) and stored so: the kid's tile, notification and lock screen show it, as any name the
+  parent typed. It is the parent's data from then on (D5); existing entries keep their English names.
 - Seeded "Musikk" (Home tile, music categories, 0049) is the parent's data (D5). A later field change follows the API
   rule: one commit, `server/testdata/*.json` byte-identical in `launcher/app/src/test/resources/`.
 

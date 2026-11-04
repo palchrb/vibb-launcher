@@ -164,7 +164,8 @@ async fn list_row(
 ) -> DeviceListRow {
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts(state, &device, connection).await;
-    let attention = crate::attention::items(device.id, &facts).len();
+    // Only counted: no words needed.
+    let attention = crate::attention::items(Lang::En, device.id, &facts).len();
     let (lock, screen_time, battery) = if device.enrolled_at.is_some() {
         time_glance(
             state,
@@ -920,16 +921,17 @@ struct DeviceDetailTemplate {
 crate::i18n::words!(DeviceDetailTemplate);
 
 impl DeviceDetailTemplate {
-    /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), and
+    /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), worded, and
     /// whether it is a refusal.
     fn flash(&self, group: &str) -> Option<(&'static str, bool)> {
         self.relock
             .flash_in(group)
-            .map(|text| (text, false))
+            .map(|key| (key, false))
             .or(self
                 .done
                 .filter(|(g, _, _)| *g == group)
-                .map(|(_, text, refused)| (text, refused)))
+                .map(|(_, key, refused)| (key, refused)))
+            .map(|(key, refused)| (t(self.lang, key), refused))
     }
 
     /// Access removed: the header says so and links to Advanced › Connection (L2).
@@ -1698,17 +1700,20 @@ async fn render_device(
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's apps"))
         .ok();
+    let unreadable = || t(lang, "device.summary.value.unreadable").to_string();
     let apps_value = match &rows {
-        Some(rows) if !rows.allowlist_corrupt => format!(
-            "{} allowed",
+        Some(rows) if !rows.allowlist_corrupt => t_count(
+            lang,
+            "device.summary.value.apps",
             rows.apps
                 .iter()
                 .filter(|a| a.checked && !a.is_launcher)
-                .count()
+                .count() as i64,
+            &[],
         ),
         // The stored list is corrupt; a failed read says so (qa-31-s6-code N2).
-        Some(_) => "List unreadable".to_string(),
-        None => "Couldn't read".to_string(),
+        Some(_) => t(lang, "device.summary.value.list_unreadable").to_string(),
+        None => unreadable(),
     };
 
     // The Calls & Contacts row: "8 contacts" while calls are managed; a failed read says so,
@@ -1730,11 +1735,10 @@ async fn render_device(
         .map_err(|err| tracing::error!(device_id = id, %err, "failed to read the call report"))
         .ok();
     let calls_value = match (policy.calls_managed, contact_count) {
-        _ if call_problems.is_none() => "Couldn't read".to_string(),
-        (false, _) => "Not managed".to_string(),
-        (true, None) => "Couldn't read".to_string(),
-        (true, Some(1)) => "1 contact".to_string(),
-        (true, Some(n)) => format!("{n} contacts"),
+        _ if call_problems.is_none() => unreadable(),
+        (false, _) => t(lang, "device.summary.value.not_managed").to_string(),
+        (true, None) => unreadable(),
+        (true, Some(n)) => t_count(lang, "device.summary.value.contacts", n, &[]),
     };
     let call_problems = call_problems.unwrap_or_default();
 
@@ -1801,19 +1805,23 @@ async fn render_device(
         },
         now.timestamp_millis(),
     );
-    let attention = crate::attention::items(id, &facts);
+    let attention = crate::attention::items(lang, id, &facts);
     // "Needs attention" while Device › Music shows a warning (qa-31-s7-code M1).
+    let needs_attention = || t(lang, "device.summary.value.needs_attention").to_string();
     let (music_value, music_attention) = match &music_ticked {
-        Err(_) => ("Couldn't read".to_string(), false),
-        Ok(_) if facts.music.any() => ("Needs attention".to_string(), true),
-        Ok(ticked) if ticked.is_empty() => ("None".to_string(), false),
-        Ok(ticked) => (format!("{} in library", ticked.len()), false),
+        Err(_) => (unreadable(), false),
+        Ok(_) if facts.music.any() => (needs_attention(), true),
+        Ok(ticked) if ticked.is_empty() => (t(lang, "device.about.none").to_string(), false),
+        Ok(ticked) => (
+            t_count(lang, "device.summary.value.music", ticked.len() as i64, &[]),
+            false,
+        ),
     };
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
-        Err(_) => ("Couldn't read".to_string(), false),
+        Err(_) => (unreadable(), false),
         Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
-            ("Needs attention".to_string(), true)
+            (needs_attention(), true)
         }
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
@@ -1822,7 +1830,7 @@ async fn render_device(
                 || (policy.custom_schedule_enabled
                     && crate::time_rules::parse_budget(&policy.daily_budget_json).is_err()) =>
         {
-            ("Needs attention".to_string(), true)
+            (needs_attention(), true)
         }
         // The rules in force, its bedtime too (each rule has its own switch since 0115).
         Ok(rules) if rules.is_empty() => (t(lang, "device.about.none").to_string(), false),
@@ -1902,9 +1910,7 @@ async fn render_device(
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
-        .map(|(group, text, refused)| {
-            (crate::handlers::lifts::summary_group(group), text, refused)
-        });
+        .map(|(group, key, refused)| (crate::handlers::lifts::summary_group(group), key, refused));
     Html(
         DeviceDetailTemplate {
             lang,
@@ -1946,9 +1952,10 @@ async fn render_device(
                 .and_then(|s| s.app_version.as_deref())
                 .filter(|v| !v.is_empty())
                 .map(|v| {
-                    format!(
-                        "Vibb One {}",
-                        crate::handlers::device_pages::short_version(v)
+                    t_params(
+                        lang,
+                        "device.summary.value.about",
+                        &[("version", crate::handlers::device_pages::short_version(v))],
                     )
                 }),
             calls_value,
@@ -1959,20 +1966,26 @@ async fn render_device(
             time_attention,
             calendar_label: crate::i18n::t(lang, "calendar.summary.label"),
             calendar_value: crate::handlers::calendar::summary_value(state, lang, id).await,
-            lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_none() {
-                "PIN off"
-            } else if crate::kid_lock::android_requested(&policy) {
-                // Design 59 §2.3: the parent's choice of lock.
-                "PIN on · Android's lock"
-            } else {
-                "PIN on"
-            },
-            home_value: format!("{} per row", policy.home_columns),
-            filter_value: if policy.vpn_filter_enabled {
-                "On"
-            } else {
-                "Off"
-            },
+            lock_value: t(
+                lang,
+                if crate::kid_lock::policy_kid_lock(&policy).is_none() {
+                    "device.summary.value.pin_off"
+                } else if crate::kid_lock::android_requested(&policy) {
+                    // Design 59 §2.3: the parent's choice of lock.
+                    "device.summary.value.pin_android"
+                } else {
+                    "device.summary.value.pin_on"
+                },
+            ),
+            home_value: t_count(lang, "device.summary.value.home", policy.home_columns, &[]),
+            filter_value: t(
+                lang,
+                if policy.vpn_filter_enabled {
+                    "common.on"
+                } else {
+                    "common.off"
+                },
+            ),
             device,
         }
         .render()
@@ -2052,12 +2065,7 @@ pub async fn toggle_app(
     // Play Store/services/GSF are never the parent's to allow or remove (handy step 7): the
     // launcher keeps them installed, unhidden and out of the kiosk whatever the allowlist says.
     if crate::play::is_play_core(&package_name) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "The Play Store, Play services and Google Services Framework are managed by Vibb One \
-             itself and can't be allowed or removed here.",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.play_core");
     }
     if package_name.is_empty() && tracked_app_id.is_none() {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
@@ -2200,7 +2208,7 @@ pub async fn toggle_app(
         if !package_name.is_empty()
             && let Err(err) = add_to_allowlist(&state, id, &package_name).await
         {
-            return allowlist_error_response(id, &package_name, err);
+            return allowlist_error_response(lang, id, &package_name, err);
         }
     } else {
         if let Some(tid) = tracked_app_id
@@ -2216,7 +2224,7 @@ pub async fn toggle_app(
         }
         if !package_name.is_empty() {
             if let Err(err) = remove_from_allowlist(&state, id, &package_name).await {
-                return allowlist_error_response(id, &package_name, err);
+                return allowlist_error_response(lang, id, &package_name, err);
             }
             let removable = installed
                 .iter()
@@ -2244,19 +2252,18 @@ pub async fn toggle_app(
 }
 
 fn allowlist_error_response(
+    lang: Lang,
     device_id: i64,
     package_name: &str,
     err: AllowlistError,
 ) -> axum::response::Response {
+    // What went wrong is the log's (`err`); the page says what it means.
     tracing::error!(device_id, package_name, %err, "failed to change allowlist");
-    (
+    crate::i18n::error(
+        lang,
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        format!(
-            "Couldn't change the allowed apps for this device ({err}). Nothing was changed - \
-             check the server log."
-        ),
+        "error.change_allowed_apps",
     )
-        .into_response()
 }
 
 /// The apps the phone's last report lists installed (none before its first report): where each

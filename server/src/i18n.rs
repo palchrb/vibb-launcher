@@ -173,6 +173,55 @@ pub fn has(lang: Lang, key: &str) -> bool {
     lang.catalog().contains_key(key)
 }
 
+/// The English catalog's keys that start with `prefix`, sorted (the tests' closed sets and seeded rows).
+#[cfg(test)]
+pub fn keys_in(prefix: &str) -> Vec<String> {
+    let mut keys: Vec<String> = EN
+        .keys()
+        .filter(|key| key.starts_with(prefix))
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// Every word a reader reads as language in the catalog's values in `lang` ([language_words]), `{params}` left
+/// out: `tests::i18n_pages` looks for English on a Norwegian page by them.
+#[cfg(test)]
+pub fn catalog_words(lang: Lang) -> std::collections::HashSet<String> {
+    static PARAM: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\{[a-z_]+\}").unwrap());
+    lang.catalog()
+        .values()
+        .flat_map(|text| language_words(&PARAM.replace_all(text, " ")))
+        .collect()
+}
+
+/// The whole words of `text` that are language, lower case: not the facts - a token with `/`, `_`, `=`, `@`, a dot
+/// between letters or a letter beside a digit (addresses, paths, packages, codes, env vars, a key's groups) -,
+/// not a «quote» (another program's words), not the names Vibb Phone, Vibb One and Vibb Music, not an `adb …`
+/// command to the end of its sentence.
+#[cfg(test)]
+pub fn language_words(text: &str) -> Vec<String> {
+    static NOT_LANGUAGE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"«[^»]*»|\badb (?:[^.;()]|\.\S)*|\bVibb (?:Phone|One|Music)\b|\S*(?:[/_=@]|\p{L}\.\p{L}|\p{L}\p{N}|\p{N}\p{L})\S*",
+        )
+        .unwrap()
+    });
+    words_of_text(&NOT_LANGUAGE.replace_all(text, " "))
+}
+
+/// The whole words of `text`, lower case (see [language_words]).
+#[cfg(test)]
+pub fn words_of_text(text: &str) -> Vec<String> {
+    static WORD: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\p{L}+(?:['’]\p{L}+)*").unwrap());
+    WORD.find_iter(text)
+        .map(|m| m.as_str().to_lowercase().replace('’', "'"))
+        .collect()
+}
+
 /// [t] with each `{name}` replaced by its value: one pass over the text, so a value is never scanned again (a name
 /// with a `{…}` in it stays as typed).
 pub fn t_params(lang: Lang, key: &str, params: &[(&str, &str)]) -> String {
@@ -212,6 +261,16 @@ pub fn t_count(lang: Lang, key: &str, n: i64, params: &[(&str, &str)]) -> String
     all.push(("count", count.as_str()));
     all.extend_from_slice(params);
     t_params(lang, &format!("{key}.{}", lang.plural_form(n)), &all)
+}
+
+/// A number with `decimals` places in `lang`'s way: "1.5" in English, "1,5" in Norwegian (design 70 §6, the PWA's
+/// few decimals: sizes).
+pub fn number(lang: Lang, value: f64, decimals: usize) -> String {
+    let text = format!("{value:.decimals$}");
+    match lang {
+        Lang::En => text,
+        Lang::Nb => text.replace('.', ","),
+    }
 }
 
 /// A plain-text answer worded in `lang` (`text/plain`), for the refusals and failures a page never renders.
@@ -818,6 +877,66 @@ mod tests {
             })
             .collect();
         assert!(unused.is_empty(), "keys no code uses: {unused:?}");
+    }
+
+    /// No answer a parent's browser gets is an English literal (design 70 §2, slice 4): a `StatusCode::X, "…"` pair whose
+    /// text reads as words fails, outside tests; [error] words it. The phone's API answers codes, never words to a
+    /// parent, and `security.rs` pairs a status with its log reason.
+    #[test]
+    fn no_status_answers_with_literal_words() {
+        const NOT_A_PARENTS: &[&str] = &["src/handlers/device_api.rs", "src/security.rs"];
+        let pair =
+            regex::Regex::new(r#"StatusCode::[A-Z_]+\s*,\s*(?:format!\(\s*)?"((?:[^"\\]|\\.)*)""#)
+                .unwrap();
+        let words = regex::Regex::new(r"^[A-Z][a-z]|\p{L} \p{L}").unwrap();
+        let tests =
+            regex::Regex::new(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))? )?mod tests\b").unwrap();
+        let mut files = Vec::new();
+        let mut dirs = vec![std::path::PathBuf::from("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if !path.ends_with("tests") {
+                        dirs.push(path);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") && !path.ends_with("tests.rs")
+                {
+                    // A module's `tests.rs` is its tests.
+                    files.push(path);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for path in &files {
+            let shown = path.display().to_string();
+            if NOT_A_PARENTS.contains(&shown.as_str()) {
+                continue;
+            }
+            let text = std::fs::read_to_string(path).unwrap();
+            // A module's tests, however declared, are cut (qa-s-i18n-4-code L10).
+            let text = tests
+                .find(&text)
+                .map_or(text.as_str(), |cut| &text[..cut.start()]);
+            for caps in pair.captures_iter(text) {
+                if words.is_match(&caps[1]) {
+                    found.push(format!("{shown}: {}", &caps[1]));
+                }
+            }
+        }
+        assert!(files.len() > 50, "{} files", files.len());
+        assert!(found.is_empty(), "English answers:\n{}", found.join("\n"));
+        // The scan sees a literal answer, also a line down.
+        let sample = "(StatusCode::NOT_FOUND,\n    \"Device not found\")";
+        assert!(words.is_match(&pair.captures(sample).unwrap()[1]));
+    }
+
+    #[test]
+    fn numbers_take_the_languages_decimal_mark() {
+        assert_eq!(number(Lang::En, 1.24, 1), "1.2");
+        assert_eq!(number(Lang::Nb, 1.5, 1), "1,5");
+        assert_eq!(number(Lang::Nb, 1234.0, 0), "1234");
+        assert_eq!(number(Lang::En, 980.04, 1), "980.0");
     }
 
     #[test]

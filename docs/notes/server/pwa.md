@@ -1503,7 +1503,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   key) and `app_permissions::words`. `i18n::tests::moved_templates_have_no_literal_words` scans the moved templates
   (`MOVED`); the every-page scripts read `partials/js_words.html` (`#js-words`, `data-w-*`: `reconnect.js`'s chip,
   `nav-timing.js`'s On/Off), `reveal.js` its button's own `data-w-copied`/`-select`, and `jstest/words.test.js` keeps
-  the moved scripts free of words. Left for slice 4: the summary rows and Attention, the badge and screen-time words,
+  the moved scripts free of words. Left for slice 4 (done, below): the summary rows and Attention, the badge and screen-time words,
   the helper modules' words (`kid_lock`, `kiosk_escapes`, `window_relock`, `lifts`, `activity`, `app_downloads`,
   `sound_mode`, `boot_witness`, `models`, `streams`, `config`, `photos`, `phone`); for 3c Locate's command rows
   (`locate::CommandRow`), for 3e Time Rules' day and limit words (`schedules`) shared with Device › Time.
@@ -1515,7 +1515,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (`DisplayValues::describe(lang)`), the icons' names (`apps.display.icon.<key>`, `every_icon_is_worded`: a new icon
   needs its key) and the colours (`color_label` gives a key), and a refusal (`FieldError.key`); `preview_text` is a key the template words. Install Now's rows, flashes and `install-now.json`'s sub-lines come
   from `install_now` in the reader's language (`Offer::sub(lang)`, `value(lang)`, `flash(lang, word)`, the working
-  words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4:
+  words in the `Zone`'s); `app-display.js` reads the preview tile's own `data-w-own`/`data-w-vibb`. Left for slice 4 (done, below):
   a sync's or upload's raw detail behind ⓘ (`Failure::detail`), `app_downloads::progress`
   (`fdroid::normalize_repo`/`parse_package` take `lang` since the merge with round S4); for 3c Install Now's answer row (`locate::CommandRow`).
 - **Slice 3c (Locate)**: the Locate tab, a phone's Locations page and a zone's page are worded (`locate.*`), with
@@ -1529,7 +1529,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   words from the page: the Locations count's `data-w-none`/`-kept`/`-in-12`/`-in-24`/`-in-168`/`-newest`, the map
   box's `data-w-newest` (the marker's popup for a newer fix) and the wait line's `data-w-answered`/`-no-answer`.
   The span pick's words are `locate.span.<hours>` (`locate::SPANS` holds the keys). Zone events and their pushes were
-  keys already (design 64, slice 2). Left for slice 4: `kid_lock::PinAnswer::words` (a `set_kid_pin` answer in
+  keys already (design 64, slice 2). Left for slice 4 (done, below): `kid_lock::PinAnswer::words` (a `set_kid_pin` answer in
   Activity stays English with `kid_lock`'s other words).
 - **Slice 3d (Music)**: the Music tab, an entry's page, Settings (with `partials/spotify_setup.html`), Categories,
   Import from Vibb, the Storytel shelf, Add from Spotify, the Spotify login's step back and Device › Music are
@@ -1541,8 +1541,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice and
   `OlderApps::title_key` Device › Music's update warning. `music::parse_link` (the Add-link form) and
   `music_import::parse` (the Import form) refuse with a key (`music.link.*`, `music.import.not_json`/`no_sections`)
-  the handler words; the import's skip reasons word `parse_link`'s keys in English until slice 4.
-  `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4:
+  the handler words; the import's skip reasons word `parse_link`'s keys since slice 4.
+  `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4 (done, below):
   the helpers' sentences inside those lines - `music::sweep_error_text`, `CheckError::message`, `entry_error_text`,
   `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
   `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
@@ -1561,7 +1561,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (`refusal_text`), its phone lines are in the `Zone`'s language, `FeedState::problem(lang)` also words Device ›
   Web Filter's list rows; `config::check_server_url` answers a key (`Refused`) or the host (`PlainHttp`), worded by
   Phone Setup and the setup QR (`provisioning::plain_http_warning(lang, …)`). `backups::WEEKDAYS` holds keys.
-  `static/notifications.js` (`?v=4`) reads This Device's state words from its form's `data-w-*`. Left for slice 4:
+  `static/notifications.js` (`?v=4`) reads This Device's state words from its form's `data-w-*`. Left for slice 4 (done, below):
   `backups::human_size` (the typed size of Format must match it), `photos::PhotoError::message` (an upload's
   refusal), a push failure's text (`push::Subscription::failure`) and the built-in wallpapers' and seeded lists'
   names (data).
@@ -1578,7 +1578,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   end can't be read says "For a while" (`security_log.banned.a_while`). A field's error-or-hint is two `{% if %}`s
   (one inside the `<input>` for `aria-describedby`, one after it), so the scan sees whole tags. `app-lock.js` and
   `calendar-preview.js` join `words.test.js` (no words: the locked tab's title is the name). Since 3e `MOVED` is
-  every template. Left for slice 4: the words Rust builds in the helper modules (design 70 §6), the security log's
+  every template. Left for slice 4 (done, below): the words Rust builds in the helper modules (design 70 §6), the security log's
   row for an id no catalog names (`admin::words_of`, the id as words), and the `SignInWhy` reasons (log only).
 - **Events, the security log and the times (design 70 §4, slice 2)**: `display_time::Zone` carries the reader's
   `Lang` (`Zone::load(db, lang)`, `in_lang`), and every time word comes from `time.*` - "nå nettopp", "for 3 min
@@ -1597,5 +1597,40 @@ man er inne på en device". Branch `pwa-fixes-b`.
   and its facts (`Detail::shown`): the words say "phone 3" in the reader's language, the facts and the greps say
   `device 3`. A `security.detail.*` key is frozen once a release wrote it - old rows name it for 180 days and a key
   the catalog lost reads as itself - so a rename keeps the old key (or maps it when reading) until the rows are gone.
+- **The words Rust builds (design 70 §6, slice 4)**: what the slice-3 PRs left in the helper modules is worded in the
+  reader's language too. A helper takes `lang` (or reads it from the `Zone` it already gets) and either words
+  its text (`t`, `t_params`, `t_count`) or returns a key the template words (`{{ self.t(key) }}`): the summary's
+  rows and values (`device.summary.value.*`), Attention (`attention::items(lang, …)`, `device.attention.*`, counted
+  rows by `t_count`), the lifts and their flashes (`device.summary.flash.*`, `lift_state.*`;
+  `lifts::minutes_text` went: `display_time::duration` is the one length of time), Locked Again and the blocked apps
+  (`window_relock`: `BlockWhy::key`, `findings` in the `Zone`'s language, the flashes as keys), About This Phone's
+  network, sound and starts rows (`limits::Via::label(lang)`, `sound_mode`, `boot_witness`), Advanced's update fence,
+  filter and boot cover notes (`kiosk_escapes::EscapeNote::note`, `device.advanced.escape.*`) and the restart
+  effects (`models::admin_policy_effects` gives keys), Lock Screen & PINs (`kid_lock::LockNote::note(lang, …)`,
+  `PinAnswer::words` a key, both PINs' flashes `flash_text(lang, …)`, the screen timeouts `SCREEN_TIMEOUTS` as keys,
+  the lock-screen notifications' notes `lock_glance`), Device › Apps' downloads (`app_downloads`), Device › Time's
+  screen time (`ScreenTime::text(lang)`; the badge's English `text`/`text_beside` went for `LockBadge::words`), the
+  music errors and sizes (`CheckError::message(lang)`, `entry_error_text`/`sweep_error_text(lang, …)`,
+  `StorytelError::message`, `SpotifyError::message(lang)`, `spotify::add_refusal(lang, …)`, `LinkError::key`,
+  `music_import::Skip::reason(lang)`, `music::storage(lang, …)`), a push failure (`push::failure_text(lang, …)`),
+  a phone number's refusal (`PhoneError::key`), the built-in wallpapers' and seeded blocklists' names
+  (`WallpaperRow::shown_label`, `models::blocklist_name`: a built-in can't be renamed, so its name is ours; lists
+  sorted by the shown name), the fallback name an entry is stored with when its source gives none (Spotify, a feed,
+  Storytel: `music.default_name.*`, in the adding parent's language - the kid sees it; design 70 §7), a bare id
+  fact alone in the security log ("phone 3" / "telefon 3") and the error bodies (`i18n::error`). Sizes and other decimals: `i18n::number(lang, value, decimals)` ("1.5" / "1,5";
+  Format's typed size is accepted with either mark). Two scans keep it so: `i18n::tests::no_status_answers_with_literal_words`
+  refuses a `StatusCode::X, "words"` pair outside tests (the phone's API in `device_api.rs` and `security.rs`'s log
+  reasons are no parent's), and `tests::i18n_pages::nb_pages_have_no_english` signs a parent in on Norwegian over a
+  seeded family (`tests::seeded_family`: three phones - a rich report, the other problems, one not set up - one
+  event of each kind, a security line of each label, a tracked app, a music entry, a zone, a rule), GETs every page
+  and the JSON routes and fails on a whole word that is in some English value and in no Norwegian one, or on a `{param}` left
+  unfilled. Both sides read only language (`i18n::language_words`): addresses, paths, packages, codes, env vars, a
+  «quote», the names Vibb Phone/One/Music and an `adb …` command are left out, so "phone", "settings", "add" and
+  "password" are words it sees. Since the fix round it also follows redirects, reads every one-shot flash
+  (`?done=`, `?notice=`) on its page, a refused form, `/login` and the onboarding steps (`/auth/change-password`,
+  `setup-2fa`, `verify-2fa`). Still English by design: the raw technical details behind an ⓘ (a sync's or
+  upload's `Failure::detail`, a feed's or a list's download error, `music_net::FetchError`'s reqwest text), an id no
+  catalog names (`admin::words_of`, the id as words), a subscription's stored label fallback ("Device · Browser"),
+  the logs, and the names the phone sends (slice 5).
   **No new
   user-facing word is hardcoded** (the user, 2026-10-26).

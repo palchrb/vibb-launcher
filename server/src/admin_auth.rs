@@ -135,12 +135,12 @@ impl PasswordGate {
     }
 }
 
-/// 429 for [Busy].
-pub fn busy_response() -> Response {
+/// 429 for [Busy], in `lang`.
+pub fn busy_response(lang: crate::i18n::Lang) -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(header::RETRY_AFTER, "5")],
-        "Too many sign-ins at once - try again in a few seconds.",
+        crate::i18n::t(lang, "error.busy").to_string(),
     )
         .into_response()
 }

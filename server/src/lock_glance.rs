@@ -84,27 +84,27 @@ pub enum Note {
 }
 
 impl Note {
-    pub fn note(self) -> crate::handlers::device_pages::Note {
+    /// Its words in `lang`.
+    pub fn note(self, lang: crate::i18n::Lang) -> crate::handlers::device_pages::Note {
         let (title, detail) = match self {
             Note::NoChildPin => (
-                "No lock without a Child PIN",
-                "The phone opens straight to its home screen and shows none of this.",
+                "device.lock.glance.no_child_pin",
+                "device.lock.glance.no_child_pin_sub",
             ),
             Note::NeedsUpdate => (
-                "Vibb One can't show these yet",
-                "Update Vibb One on the phone to show notifications on its lock screen.",
+                "device.lock.glance.needs_update",
+                "device.lock.glance.needs_update_sub",
             ),
             Note::NoNotificationAccess => (
-                "Missed calls only",
-                "Vibb One has no notification access, so messages don't show. The fix is under \
-                 Launcher on the phone's page.",
+                "device.lock.glance.no_access",
+                "device.lock.glance.no_access_sub",
             ),
         };
         crate::handlers::device_pages::Note {
             warning: true,
-            title: title.to_string(),
+            title: crate::i18n::t(lang, title).to_string(),
             value: None,
-            detail: Some(detail.to_string()),
+            detail: Some(crate::i18n::t(lang, detail).to_string()),
             fix: None,
         }
     }
@@ -251,16 +251,17 @@ pub fn unlisted_note(allowlist: Option<&BTreeSet<String>>, package: &str) -> &'s
     }
 }
 
-pub const NOT_ALLOWED_TICKED: &str = "Not allowed";
-pub const NOT_ON_PHONE_TICKED: &str = "Not on the phone";
+/// The notes' keys (the page words them).
+pub const NOT_ALLOWED_TICKED: &str = "device.lock.glance.not_allowed";
+pub const NOT_ON_PHONE_TICKED: &str = "device.lock.glance.not_on_phone";
 
 /// The group's text when it has no app to list (code QA Low 6): the phone hasn't reported its
-/// apps yet, or it has but none is allowed (an allowlist) or listed.
+/// apps yet, or it has but none is allowed (an allowlist) or listed - its key.
 pub fn empty_text(reported: bool, has_allowlist: bool) -> &'static str {
     match (reported, has_allowlist) {
-        (false, _) => "No apps yet: the phone hasn't reported its apps.",
-        (true, true) => "No allowed apps to choose from. Allow one under Apps first.",
-        (true, false) => "No apps to choose from: the phone reported none.",
+        (false, _) => "device.lock.glance.empty_unreported",
+        (true, true) => "device.lock.glance.empty_none_allowed",
+        (true, false) => "device.lock.glance.empty_none",
     }
 }
 
@@ -341,7 +342,7 @@ mod tests {
             [Note::NoNotificationAccess]
         );
         for note in all {
-            let words = note.note();
+            let words = note.note(crate::i18n::Lang::En);
             assert!(words.warning);
             // §4.2: a title of up to 6 words and one sentence.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
@@ -449,9 +450,11 @@ mod tests {
 
     #[test]
     fn the_empty_subsection_says_why() {
-        assert!(empty_text(false, true).contains("hasn't reported its apps"));
-        assert!(empty_text(false, false).contains("hasn't reported its apps"));
-        assert!(empty_text(true, true).contains("No allowed apps"));
-        assert!(!empty_text(true, false).contains("hasn't reported"));
+        let en =
+            |reported, listed| crate::i18n::t(crate::i18n::Lang::En, empty_text(reported, listed));
+        assert!(en(false, true).contains("hasn't reported its apps"));
+        assert!(en(false, false).contains("hasn't reported its apps"));
+        assert!(en(true, true).contains("No allowed apps"));
+        assert!(!en(true, false).contains("hasn't reported"));
     }
 }

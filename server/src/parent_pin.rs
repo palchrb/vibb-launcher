@@ -168,32 +168,18 @@ pub async fn run_easy_sweep(db: SqlitePool, candidates: Vec<String>) {
 }
 
 /// The flash after a Parent PIN save (`?notice=`), inside the Parent PIN group on Lock Screen &
-/// PINs (design 31 §3.0); `true` = a warning or refusal.
-pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
-    Some(match code {
-        "parent_pin_saved" => (
-            "Parent PIN saved. The phone uses it as soon as it checks in, and a lockout running \
-             there ends then.",
-            false,
-        ),
-        "parent_pin_saved_easy" => (
-            "Parent PIN saved, but it is easy to guess. The phone uses it as soon as it checks \
-             in.",
-            true,
-        ),
-        "parent_pin_cleared" => ("Parent PIN removed.", false),
-        "parent_pin_invalid" => ("Parent PIN not changed: it must be 6 to 10 digits.", true),
-        "override_is_kid_pin" => (
-            "Parent PIN not changed: it must differ from the Child PIN.",
-            true,
-        ),
-        "override_needed_by_lock" => (
-            "Parent PIN not removed: the Child PIN needs it to open the lock. Remove the Child \
-             PIN first.",
-            true,
-        ),
+/// PINs (design 31 §3.0), in `lang`; `true` = a warning or refusal.
+pub fn flash_text(lang: crate::i18n::Lang, code: &str) -> Option<(&'static str, bool)> {
+    let (key, warning) = match code {
+        "parent_pin_saved" => ("device.lock.flash.parent_saved", false),
+        "parent_pin_saved_easy" => ("device.lock.flash.parent_saved_easy", true),
+        "parent_pin_cleared" => ("device.lock.flash.parent_cleared", false),
+        "parent_pin_invalid" => ("device.lock.flash.parent_invalid", true),
+        "override_is_kid_pin" => ("device.lock.flash.parent_is_kid_pin", true),
+        "override_needed_by_lock" => ("device.lock.flash.parent_needed_by_lock", true),
         _ => return None,
-    })
+    };
+    Some((crate::i18n::t(lang, key), warning))
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -490,13 +476,21 @@ mod tests {
             "override_is_kid_pin",
             "override_needed_by_lock",
         ] {
-            let (text, _) = flash_text(code).unwrap();
+            let (text, _) = flash_text(crate::i18n::Lang::En, code).unwrap();
             assert!(text.contains("Parent PIN"), "{code}: {text}");
         }
-        assert!(!flash_text("parent_pin_saved").unwrap().1);
-        assert!(flash_text("parent_pin_saved_easy").unwrap().1);
+        assert!(
+            !flash_text(crate::i18n::Lang::En, "parent_pin_saved")
+                .unwrap()
+                .1
+        );
+        assert!(
+            flash_text(crate::i18n::Lang::En, "parent_pin_saved_easy")
+                .unwrap()
+                .1
+        );
         // The kid lock's codes are not this card's.
-        assert_eq!(flash_text("saved"), None);
+        assert_eq!(flash_text(crate::i18n::Lang::En, "saved"), None);
     }
 
     // --------------------------------------------------------------------------------------------

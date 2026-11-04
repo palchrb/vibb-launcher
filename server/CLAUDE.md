@@ -59,7 +59,9 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
   (`events.<kind>.*`, worded when read; pushes in the subscriber's language) and the security log (`security.event.<id>`
   labels, `security::Detail` words in `security_events.params`, 0107) are in the reader's language too. **No new
   user-facing word is hardcoded** (the user, 2026-10-26): new pages go through it (since slice 3e of round S-i18n,
-  design 70, every template is worded and scanned, `MOVED`; slice 4 takes the words Rust builds in the helper modules;
+  design 70, every template is worded and scanned, `MOVED`; since slice 4 the words Rust builds too - helpers take
+  `lang` or return keys, `i18n::number` for decimals, `i18n::error` for every answer (`no_status_answers_with_literal_words`),
+  and `tests::i18n_pages::nb_pages_have_no_english` reads every page of a seeded family in Norwegian;
   `docs/notes/server/pwa.md`, "Words").
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), or any x86_64 Linux box: every `server-v*` tag builds the static `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` binaries, each natively on a runner of its own architecture (root `.github/workflows/server-release.yml`, plain `cargo build --target`, `musl-tools`; no `cross` since 2026-10-25), and publishes a tarball for each - `deploy/install.sh` downloads the newest `server-v*` release's tarball for `uname -m` and sets up a systemd service
 

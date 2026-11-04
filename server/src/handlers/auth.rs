@@ -233,7 +233,7 @@ pub async fn login(
         Ok(valid) => valid,
         Err(admin_auth::Busy) => {
             take_back().await;
-            return admin_auth::busy_response();
+            return admin_auth::busy_response(lang);
         }
     };
 
@@ -661,7 +661,7 @@ pub async fn change_password(
         .await
     {
         Ok(changed) => changed,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        Err(admin_auth::Busy) => return admin_auth::busy_response(lang),
     };
     // Three wrong in a row end the session (design 59 §2.2's one re-auth rule); each wrong one is
     // in the security log (security review L7).
@@ -1284,7 +1284,7 @@ pub async fn update_account_password(
     .await
     {
         Ok(answer) => answer,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        Err(admin_auth::Busy) => return admin_auth::busy_response(lang),
     };
     // Three wrong in a row end the session (design 59 §2.2's one re-auth rule); each wrong one is
     // in the security log (security review L7).
@@ -1412,7 +1412,7 @@ pub async fn reset_totp(
     let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
     let reauth = admin_auth::reauth(&state, &session, &admin, proof).await;
     if reauth == admin_auth::Reauth::Busy {
-        return admin_auth::busy_response();
+        return admin_auth::busy_response(lang);
     }
     if reauth != admin_auth::Reauth::Right {
         security::record_security_event(

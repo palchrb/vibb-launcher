@@ -514,6 +514,7 @@ async fn every_call_warning_is_typed() {
     // calls page words the same findings).
     assert!(report.findings.len() >= 9, "{:?}", report.findings);
     let rows = crate::attention::items(
+        crate::i18n::Lang::En,
         id,
         &crate::attention::Facts {
             calls: report.problems(),

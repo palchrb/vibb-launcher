@@ -136,13 +136,13 @@
     <section id="actions" aria-label="{{ self.t("locate.actions_aria") }}">
         <div class="act-grid">
             <form method="post" action="/devices/{{ view.device.id }}/command/ring#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("locate.command.ring") }}</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("locate.command.ring") }}</span></button>
             </form>
             <form method="post" action="/devices/{{ view.device.id }}/command/stop-ring#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("locate.command.stop_ring") }}</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("locate.command.stop_ring") }}</span></button>
             </form>
             <form method="post" action="/devices/{{ view.device.id }}/command/lock#actions">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>{{ self.t("locate.command.lock") }}</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("locate.command.lock") }}</span></button>
             </form>
         </div>
         <div class="group">
