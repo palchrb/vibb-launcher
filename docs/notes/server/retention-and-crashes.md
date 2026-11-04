@@ -79,6 +79,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   parent-PIN events a day the new ones aren't stored (logged); at most 50 crash hashes per phone, the oldest reported
   going first. A count that can't be read is logged and drops nothing. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
 - Tests: `src/tests/cleanup.rs`.
+- **Backups** keep everything past these windows until the backup itself goes ("Backups to keep", default 14;
+  DEPLOY.md, "Backups"). They stay in `data/backups/`: since 2026-11-04 the server never acts on its host, so nothing
+  copies them off the machine (the root copy to a USB drive, `backup_sync.sh`, which pruned the drive to the same
+  count, is gone) - a copy the owner keeps elsewhere is theirs to prune. The live mirror (`data/live_mirror.db`, a
+  whole database refreshed every 90 s for that drive) is gone too, and deleted at the next start
+  (`startup::HOST_FILES`).
 
 ## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)
 

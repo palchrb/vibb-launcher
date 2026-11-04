@@ -24,6 +24,12 @@ installs nothing**: releases before it aren't signed, and it never installs an u
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
 [`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo), sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
 
+**The server never acts on its host.** It runs as an unprivileged user and asks nothing of root: there is no update
+button, no restart, no system or Tailscale updates, no reboot, no drive formatting and no schedule for any of it
+(removed 2026-11-04, the user: "jeg ønsker å gjøre ting på host selv"). You update the server (below, "Updating"),
+and keep the system and Tailscale updated yourself (`apt upgrade`, `tailscale update`, or unattended-upgrades). The
+server makes its backups itself, in its own `data/backups/` ("Backups").
+
 The app only listens on the Pi itself (`127.0.0.1:3100`) by default — that's intentional for security.
 
 ## 2. Choose how it's reachable (server >= 0.23.0)
@@ -308,9 +314,11 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
-- **Updating**: the Updates page says when a version is out. Set `HANDY_VERSION=X.Y.Z` in `.env`, then
-  `docker compose pull && docker compose up -d`. Before migrating the database, the new version copies it to
-  `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept).
+- **Updating**: by pulling a new image - [Watchtower](https://containrrr.dev/watchtower/) does it by itself for an
+  image tag that moves (`HANDY_VERSION=latest`), or by hand: `docker compose pull && docker compose up -d` (with
+  `HANDY_VERSION` pinned, set it to the new `X.Y.Z` first). Settings › Software Updates shows this server's version
+  and the newest release, and says how; it never updates anything itself. Before migrating the database, the new
+  version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept).
 - **Rolling back**: set the old `HANDY_VERSION`, put the pre-migration copy back, start:
 
   ```
@@ -324,8 +332,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
   back. A backup whose database is over 1 GiB is refused.
-- Settings › Software Updates has no OS, Tailscale or restart controls in the container, and Backups no external drive:
-  copy `data/backups` off the host yourself.
+- Copy `data/backups` off the host yourself: the server never copies anything out of its volume.
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
   and turns Passkey Only off; see "Signing in and recovery").
 
@@ -354,9 +361,10 @@ curl -fsSLo update.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/ma
 sudo bash update.sh
 ```
 
-Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks its signature
-("Release signing" below) and the release's published `.sha256`, and swaps the binary in place. The in-app "Update
-now" runs the `update.sh` that release carries, signed (not a branch's copy), from a file, never piped. Doesn't touch your `.env`. The download is unpacked and
+Run it over SSH, by hand: the server never updates itself (Settings › Software Updates shows this server's version,
+the newest release and this command, nothing more). Downloads the newest stable `server-vX.Y.Z` release (prereleases
+and drafts are skipped), checks its signature ("Release signing" below) and the release's published `.sha256`, and
+swaps the binary in place. Doesn't touch your `.env`. The download is unpacked and
 checked before the service is stopped, so a failed download leaves the old version running; if anything fails after the
 stop, the service is started again. Before the swap it copies the database and the old binary to
 `/var/backups/kid-phone-server/<timestamp>/`, because the new version may migrate the database on its first start. Old
@@ -366,26 +374,39 @@ pre-update copy.
 To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for both `install.sh` and `update.sh`):
 `sudo KPS_REPO=someone/vibb-launcher bash install.sh`, with the fork's own script. The fork must keep this repo's layout
 (`server/deploy/`), publish server releases as `server-vX.Y.Z`, and sign them with its own key, pinned in its scripts
-("Release signing"). The root-side updater remembers the repo it was installed from.
+("Release signing").
+
+**Installs from before the root helpers were removed (server 0.66 and older)** had a root-owned watcher
+(`kid-phone-server-updater.path`/`.service`, `/opt/kid-phone-server-updater/actions.sh` and `watcher.sh`) that did what
+the PWA asked - the update, restart, apt check and upgrade, Tailscale update, reboot, formatting a drive, a restore -,
+a root timer for the OS/Tailscale schedule (`kid-phone-server-scheduler.timer`, `scheduler.sh` reading
+`data/schedule.conf`) and one copying the backups to a USB drive (`kid-phone-server-backup-sync.timer`,
+`backup_sync.sh`). The first `update.sh` (or `install.sh`) of 0.67.0 or later removes them, the last time root
+touches them: it disables the path unit and both timers, deletes their units, drop-ins and
+`/opt/kid-phone-server-updater/`, and keeps the installed version (for the downgrade check) in
+`/var/lib/kid-phone-server/installed_version`. A helper that is running right now is left to finish (the old server's
+"Update now" runs `update.sh` inside the watcher's own service, so that update works one last time and removes it). The
+new server deletes what the old requests left in `data/` at its first start (`update_requested`, `schedule.conf`,
+`app_update_schedule.conf`, `watcher_version`, `live_mirror.db`, ...). A backup drive at `/mnt/kid-phone-server-backup`
+and its `/etc/fstab` line stay as they are (its copies are no longer refreshed): copy backups there yourself, or
+`sudo umount /mnt/kid-phone-server-backup` and delete the line.
 
 **Installs from before the monorepo** (installed from `palchrb/kid-phone-server`): the server itself follows the move
 (`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
-and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration), but the
-root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above; it keeps
-`.env` and the database. Until then the server refuses "Update Now…" and scheduled auto-updates and shows the command (Settings › Software
-Updates, "Run the installer again").
+and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration). Run
+`update.sh` from the URL above (or re-run the installer from it); both keep `.env` and the database.
 (The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
 
-Updates only ever go forward: the Updates page, the scheduler and `update.sh` refuse a release that isn't newer than the
-installed one. To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
+Updates only ever go forward: `update.sh` refuses a release that isn't newer than the installed one (and Software
+Updates calls an older release "Up to date"). To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
 `KPS_ALLOW_DOWNGRADE=1` - it then installs the newest release even if older.
 
 ### Release signing (server >= 0.24.0)
 
 Root on the Pi installs and runs only release files signed with the project's [minisign](https://jedisct1.github.io/minisign/)
 key (security review M5): `install.sh` and `update.sh` check the tarball for their machine (each of the two has its
-own `.minisig`), and the root-side updater checks `update.sh`
-before it runs it. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
+own `.minisig`). `update.sh` itself is signed too: an older install's root-side updater checked it before it ran it,
+and that is how such an install reaches the release that removes the updater. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
 another release. `server-release.yml` signs both tarballs and `update.sh` in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
 secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it
@@ -403,8 +424,7 @@ doesn't match the pinned key, the run stops there and nothing is pushed or publi
      branch can't.
    - **Deployment branches and tags**: add a tag rule `server-v*` next to `launcher-v*` and `music-v*`, or the release
      job can't enter the environment.
-3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts (six places,
-   actions.sh's copies included):
+3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts:
    `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh`,
    then `cargo test deploy_scripts` (from `server/`) and commit.
 4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases). The `release`
@@ -414,12 +434,9 @@ Until the key is pinned, the scripts refuse every release ("No release signing k
 pushed before steps 2-3 stops at the signing job, with nothing pushed or published: delete the tag, finish the setup,
 and tag again.
 
-- **The way in**: a Pi on 0.23 or older updates to 0.24.0 the old way (its `actions.sh` takes `update.sh` from the
-  tag), but 0.24.0's `update.sh` already checks the tarball's signature, installs `minisign`, and rewrites
-  `actions.sh` to check every later `update.sh`. A fresh install from `main` refuses releases older than 0.24.0 (they
-  aren't signed).
-- **A new key** (lost or leaked): make a new pair, replace the secret and the pinned key, release, and re-run
-  `install.sh` on every Pi - an installed `actions.sh` refuses anything the old key didn't sign, by design.
+- A fresh install from `main` refuses releases older than 0.24.0 (they aren't signed).
+- **A new key** (lost or leaked): make a new pair, replace the secret and the pinned key, release, and run the new
+  `update.sh` from `main` on every server - the scripts refuse anything the old key didn't sign, by design.
 
 ### Rolling back the server
 
@@ -436,8 +453,8 @@ sudo chown kidphone:kidphone /opt/kid-phone-server/kid_phone_server /opt/kid-pho
 sudo systemctl start kid-phone-server
 ```
 
-Anything the devices reported after that backup (status, locations) is lost. Turn off scheduled automatic
-updates on the Updates page first, or the next scheduled check installs the bad version again.
+Anything the devices reported after that backup (status, locations) is lost. The server never updates itself, so
+nothing installs the bad version again until you run `update.sh`.
 
 ## Launcher provisioning settings
 
@@ -554,8 +571,8 @@ Music row on its page).
   or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
   0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
   `MUSIC_SECRET_KEY_FILE` points elsewhere, but only somewhere the service can write. No backup holds the key: the
-  backup zip has the database and the image stores, the live mirror and the external drive copy the database and
-  `data/backups/`, `update.sh` the database files - don't copy `data/keys/` anywhere yourself. A database restored
+  backup zip has the database and the image stores, `update.sh` copies the database files - don't copy `data/keys/`
+  anywhere yourself. A database restored
   on another box, or a lost key file, means entering the login again in Music › Settings. Without a usable key the
   Storytel form is off and the phones get 503.
 - **Smoke check after the update**: `journalctl -u kid-phone-server -b | grep -i storytel` shows "Storytel logins are
@@ -784,26 +801,37 @@ erases both at once. **Backups** (and the pre-migration and pre-restore copies) 
 
 ## Backups
 
-Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one on demand, the Schedule group sets automatic ones, and on the Pi they can be copied (and the database mirrored live) to an external drive plugged into it. Each backup in the list has Download, Restore… (type its file name) and Delete…; Upload a Backup… adds one from elsewhere. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
+Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one on demand, the Schedule group sets automatic ones; they stay in `data/backups/` on the server - the server never copies anything off the machine, so download one every so often (or copy `/opt/kid-phone-server/data/backups/` elsewhere yourself). Each backup in the list has Download, Restore… and Delete…; Upload a Backup… adds one from elsewhere. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
 
-- **Keep backups as safe as the admin password.** A backup (and a copy of the data volume or the live mirror) holds
+**Restoring a backup** on a systemd install is done over SSH (the server never restarts itself): its Restore… in the
+list shows the command for that file, the same as
+
+```
+echo backup-20261104-020000.zip | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request
+sudo systemctl restart kid-phone-server.service
+```
+
+The server takes the marker at its next start (the same restore as the container's): the backup's `kidphone.db` must
+be an SQLite database of at most 1 GiB, the database it replaces is kept in `data/backups/prerestore-<time>/` (the
+newest 3), a backup that won't open is undone, and everyone signs in again. A backup that isn't in
+`data/backups/` yet goes there first (Upload a Backup…, or copy it in as the `kidphone` user). In Docker Restore…
+asks for the file name and restarts the container itself ("Docker" above).
+
+- **Keep backups as safe as the admin password.** A backup (and a copy of the data volume) holds
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on
   purpose: sealing it would tie every sign-in to the key file in `data/keys/`, and losing that file would lock you out
   of the admin (design 22).
-- Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions** and **no
+- Since 0.24.0 a backup (and the pre-migration copy) holds **no admin sessions** and **no
   Tailscale key for the phones**, so a stolen copy signs no one in and joins nothing to the tailnet; a restore signs
-  everyone out, and the next phone's setup needs a new key in Settings > Phone Setup (it is one-time anyway). Everything in `data/` is readable by the service user only, and the
-  copies on the external drive by root only. The drive itself isn't encrypted: keep it at home, or use an encrypted
-  one.
+  everyone out, and the next phone's setup needs a new key in Settings > Phone Setup (it is one-time anyway). Everything in `data/` is readable by the service user only. A copy you keep
+  elsewhere is as private as the place you keep it: an encrypted disk, or at home.
 - **A backup keeps data past the retention windows.** It holds every location, DNS log and event as they were when it
   was made, until the backup itself is deleted - so with 14 daily backups kept, data lives about 14 days past its
-  window. The external drive keeps as many as the server: `backup_sync.sh` deletes all but the newest
-  "Backups to keep" `backup-*.zip` and the newest 3 `pre-migrate-*.db` in its `snapshots/` (0 keeps them all; nothing
-  else on the drive is touched) - also while the copy to the drive is off, as long as the drive is mounted. A
-  "Backups to keep" that isn't a number (only a hand-edited `data/backup_schedule.conf` has one) keeps 14, on the
-  server and on the drive alike, and is logged.
-- Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`
-  (root-only, the newest 3).
+  window - and a copy you made elsewhere, until you delete it. A "Backups to keep" that isn't a number (only a
+  hand-edited `data/backup_schedule.conf` has one) keeps 14, and is logged.
+- Restoring a backup keeps the database it replaces in `data/backups/prerestore-<time>/` (the newest 3). Restores
+  done by the old root helper (server 0.66 and older) kept theirs in `/var/backups/kid-phone-server-prerestore/`,
+  which stays until you delete it.
 - Since 0.23.0 the server also copies the database to `data/backups/pre-migrate-<from>-<to>.db` before an update
   changes it (the newest 3 are kept). Rolling back a Pi still uses the `update.sh` copy ("Rolling back the server");
   the pre-migration copy is a second one.
@@ -812,8 +840,7 @@ Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one
 - Since migration 0123 a backup also holds each contact photo's **kept original** (`contact_photo_originals/<hash>.jpg`:
   the photo as uploaded, at most about 3 MP, without location or camera data, for "Adjust crop"), stored in the zip as
   it is - a JPEG doesn't compress further. That is about 0.5-1.5 MB per contact with a photo against 30-60 KB for its
-  square: 30 photos make each zip about 30 MB, so 14 kept backups need a few hundred MB in `data/backups/` and on the
-  external drive. Removing a photo removes its original at once; the backups keep it until they are deleted.
+  square: 30 photos make each zip about 30 MB, so 14 kept backups need a few hundred MB in `data/backups/`. Removing a photo removes its original at once; the backups keep it until they are deleted.
 
 ## Removed: MollySocket and the launcher's UnifiedPush distributor
 

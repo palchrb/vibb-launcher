@@ -110,9 +110,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
-  uid N", exit 1); `apply_restore_request` (the container's restore: `data/restore_request` written by
-  `backups::restore_in_container`, which exits 3 a second later for the restart policy; startup deletes the marker
-  first, checks the name/zip/`kidphone.db` like `actions.sh` (at most `RESTORE_MAX_BYTES`, 1 GiB), copies the DB +
+  uid N", exit 1); `remove_host_files` (since the server stopped acting on its host, 2026-11-04: what the old root
+  helper's requests left in `data/`, `startup::HOST_FILES`); `apply_restore_request` (every restore: `data/restore_request`
+  written by `backups::restore_in_container`, which exits 3 a second later for the restart policy, or on a systemd
+  install by the owner over SSH before `systemctl restart` - DEPLOY.md, "Backups"; startup deletes the marker
+  first, checks the name/zip/`kidphone.db` (at most `RESTORE_MAX_BYTES`, 1 GiB), copies the DB +
   wal/shm to `backups/prerestore-<ts>/` (`PRERESTORE_KEEP` = 3, the new one always kept), swaps, and `undo_restore` puts it back if `try_connect_db` fails;
   `backup_restored` event); `try_connect_db` = `connect_db` without the panic, taking
   `<db dir>/backups/pre-migrate-<from>-<to>.db` (`VACUUM INTO`, 3 kept, a failure stops the start) when migrations
@@ -122,11 +124,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   be `security::valid_username`, else the start stops with the reason (design 62 §2). Logging defaults to `info` without `RUST_LOG` (tracing-subscriber's own default was
   errors only, so the startup lines never reached the journal). Subcommands (`main::run_command`): `healthcheck`
   (`/healthz` on `BIND_ADDR`, 0.0.0.0 -> 127.0.0.1, :: -> ::1, 3 s), `selftest-tls` (api.github.com through
-  reqwest/rustls, any status passes), `reset-2fa <user>`. In docker: the root-helper routes (`/update/*`,
-  `/system/*`, `/backups/format-drive`) aren't registered, the live mirror and app-update scheduler aren't
-  spawned, Software Updates (`updates::page`, pure) says "Version X is out" with "Set `HANDY_VERSION=X` in `.env`, then
-  `docker compose pull && docker compose up -d`" behind its ⓘ, no OS/Tailscale/installer groups, and Backups has no
-  external drive or mirror.
+  reqwest/rustls, any status passes), `reset-2fa <user>`. **The server never acts on its host**, in Docker or on a
+  systemd install (the user, 2026-11-04): the root-helper routes (`/update/*`, `/system/*`, `/backups/format-drive`),
+  the live mirror, the app-update scheduler and the external drive are gone, and Software Updates (`updates::page`,
+  pure) shows versions only - in docker "Version X is out" with the image pull (Watchtower, or `docker compose pull &&
+  docker compose up -d`, and `HANDY_VERSION=X` when pinned) behind its ⓘ, on a systemd install the `update.sh`
+  command. Backups' Restore… restarts the container in docker and shows the SSH command on a systemd install.
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
   Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
@@ -136,7 +139,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `RELEASE` needs a push event) run `deploy/image-smoke.sh`.
 - Tests: `src/tests/docker.rs` (the pre-migration backup once and 3 kept, from a real older DB; the restore marker
   with a good zip, bad names, a zip without a DB, and a DB that won't open put back; the healthcheck; the Docker
-  Updates page; the host routes 404 and the drive features hidden in docker), `startup::tests`.
+  Updates page on both kinds; no route asks the host for anything and the old host files go at the start), `startup::tests`.
 - Tests: `src/tests/admin_auth.rs` (the lock and its doubling, the banner, no password lock, a code works once,
   pending expiry, the epoch on password change/2FA reset/sign out everywhere, `reset-2fa`, 20 parallel logins while
   an SSE keepalive keeps its 1 s beat, CSRF, headers and cache rules, the cookie, the write-only key, pruning, IPv6

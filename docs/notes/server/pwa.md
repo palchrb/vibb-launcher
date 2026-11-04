@@ -728,14 +728,24 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
   Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
   Parents (`/account`; design 62 added its Name and Parents groups - `connectivity.md`, "Parent accounts"), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+- **Software Updates shows versions only** (the user, 2026-11-04: the server never acts on its host): this server's
+  version (with "(Docker image)" in the container), the newest stable `server-v*` release from the in-memory cache
+  (`system_update::ServerRelease`, read at start and in the background when an hour old - "Checking…", "Couldn't
+  check", "Version X is out" or "Up to date"), and How to Update behind its ⓘ: in Docker the image pull (Watchtower by
+  itself, or `docker compose pull && docker compose up -d`, and the version for a pinned `HANDY_VERSION`), on a systemd
+  install the `update.sh` command for `SERVER_RELEASE_REPO` (`updates::update_command`, the catalog's
+  `settings.updates.update_command`). Its footer says the server never changes anything on its machine. No form, no
+  host state read (no apt, `tailscale version` or reboot flag), no flash; an old `?done=` is ignored. Diagnostics ›
+  Page timing stays. The update/restart/OS/Tailscale/reboot buttons, both schedules, the busy banner and "Run the
+  installer again" (`security::REQUIRED_WATCHER_SCHEMA`) are gone, with their routes.
 - **Settings saves in the Security Log (Q29, 0.54.0, `src/settings_log.rs`)**: `settings_log::log_saves`, inside
-  `require_full_auth` on the admin and host routes, writes `settings_saved` ("Settings saved") for a POST answered
+  `require_full_auth` on the admin routes, writes `settings_saved` ("Settings saved") for a POST answered
   303 to a page of this app (decision 10: the success path; a 4xx, a re-rendered form, a redirect to `/login` or off
   the app are not saves; `/music` is). Detail: `<page> · <route> (<param> <value>, ...); <route> ... ×N` - the
   Location's path, the matched route and its path ids (cleaned to `[A-Za-z0-9/._-]`), never form values; one row per
   parent and page from its first save for `MERGE_MINUTES` (10), up to 1000 characters. `NOT_SAVES`: commands,
   pauses and lifts, checks, read marks and the dismissed sign-in warning, the test push, backup create, upload and
-  restore, the root helper's actions (their own events). Two 303s are no save (code QA M1, L2): **a refusal back to
+  restore. Two 303s are no save (code QA M1, L2): **a refusal back to
   its page** (`?notice=parent_pin_invalid`, the Child PIN's, `revoke_unconfirmed`, `toggle_app`'s, the DNS
   `bad_list`/`not_a_domain_*`, `music_notice=`, a gone contact, rule or parent, the push refusals, a refused avatar)
   carries `settings_log::Refused` in its extensions (`settings_log::refused(...)`) - **a new refusal by redirect must
@@ -755,20 +765,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   key - and the reason under the field, a pasted key not kept and said so, the remove tick kept); Unban →
   `/security?unbanned=<address>#banned` (the line only for an address no longer blocked). **Every success redirects**
   (post/redirect/get, qa-31-s14-code M1: a reload never restores, updates, restarts or backs up again):
-  `/account?changed=password#password`, `/backups?done=backup|deleted|gone|schedule|upload|restore|format#<group>`
-  (`backups::Done`), `/updates?done=update|restart|os_check|os_upgrade|tailscale|reboot|app_schedule|os_schedule#<group>`
-  (`updates::Done`, `updates::request_action` writes the root helper's request file); the GET shows the line in that
+  `/account?changed=password#password`, `/backups?done=backup|deleted|gone|schedule|upload|restore#<group>`
+  (`backups::Done`; `restore` only in the container); the GET shows the line in that
   group (`settings::Flash` + `partials/group_flash.html`). Only refusals render in the POST's answer, posting to their
-  group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`, `#drive`, `#app`, `#os`, `#tailscale`,
-  `#app-schedule`, `#os-schedule`): a password or typed confirm never goes into a URL; a refused Restore… or Format
-  renders with that confirm open and the reason under the typed field. `check_forms` asserts each fragment is the
+  group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`): a password or typed confirm never goes into
+  a URL; a refused Restore… renders with that confirm open and the reason under the typed field. On a systemd install
+  a backup's Restore… is an ⓘ with the SSH command for that file (`settings.backups.restore_command`; the server
+  never restarts itself), and a POST to restore answers 400 "restores over SSH". `check_forms` asserts each fragment is the
   form's own group. A refused Web Filter add keeps what was typed (`&typed=`, `&name=`, `&url=`).
 - **Testable without the working directory or the network**: `AppState::data_dir` (`data/`, a temp dir in tests)
-  holds the backups, the schedules and the root helper's request file; `ForkConfig::github_api` is a closed local port
+  holds the backups, their schedule and a restore's marker; `ForkConfig::github_api` is a closed local port
   in tests, so Software Updates renders at once.
 - **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a waiting parent's Withdraw…, a photo's Delete Photo…, a backup's Restore… and
-  Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
-  Updates and Update Tailscale stay one tap.
+  Delete… (a backup's Restore… only in the container). Unban and a domain's Remove stay one tap.
 - **Robust**: every page read is a 500 on a DB error, never an empty page (Web Filter, Blocked Activity, Phone Setup,
   Security Log); every Web Filter write too (it used to redirect as if saved); a password change and a 2FA reset move
   the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
@@ -799,13 +808,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   label there; an unknown id reads as its words), the row
   says who and from where, the time local (`Zone::when`, the exact one in `title`), the stored detail and the id behind
   the row's ⓘ; a ban's end with `Zone::until`; the live sign-in warning's lock end local (`auth::live_warning(admin,
-  zone, now)`); a backup's time local. The schedule summaries are gone (the forms show the values); the update, backup
-  and restore results are short `Flash`es; the installer command and the Docker commands sit behind ⓘ.
+  zone, now)`); a backup's time local. The schedule summaries are gone (the forms show the values); the backup
+  and restore results are short `Flash`es; the update commands and the systemd restore command sit behind ⓘ.
 - Tests: `src/tests/settings_pages.rs` (the redirect table for Web Filter, Wallpapers, Phone Setup and the Security
   Log; Web Filter's refusals, rows and unreadable page; Blocked Activity's values; Wallpapers' confirm and refused
   upload; Phone Setup's refusal and flash; Account's field errors, confirms and local lock time; the Security Log's
-  labels, escaping and local times; Backups' refusals in their groups), `tests::docker` (Software Updates on both
-  kinds, its confirms and where each result shows), `admin::tests`, repointed `admin_auth.rs`, `intake_limits.rs`,
+  labels, escaping and local times; Backups' refusals in their groups and both kinds' Restore…), `tests::docker`
+  (Software Updates on both kinds; no route asks the host for anything; the old host files go at the start), `admin::tests`, repointed `admin_auth.rs`, `intake_limits.rs`,
   `provisioning.rs`, `wallpapers.rs`, `dns_blocklist.rs`, `deploy_scripts.rs`.
 
 ## Add Phone, sign-in, the tab pages (design 31 step 15, `docs/design/31-pwa-redesign.md` §3.7)
@@ -1562,7 +1571,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   Web Filter's list rows; `config::check_server_url` answers a key (`Refused`) or the host (`PlainHttp`), worded by
   Phone Setup and the setup QR (`provisioning::plain_http_warning(lang, …)`). `backups::WEEKDAYS` holds keys.
   `static/notifications.js` (`?v=4`) reads This Device's state words from its form's `data-w-*`. Left for slice 4 (done, below):
-  `backups::human_size` (the typed size of Format must match it), `photos::PhotoError::message` (an upload's
+  `backups::human_size`, `photos::PhotoError::message` (an upload's
   refusal), a push failure's text (`push::Subscription::failure`) and the built-in wallpapers' and seeded lists'
   names (data).
 - **Slice 3e, part B (accounts and sign-in; the last templates)**: the sign-in pages (`login`,
@@ -1618,7 +1627,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   sorted by the shown name), the fallback name an entry is stored with when its source gives none (Spotify, a feed,
   Storytel: `music.default_name.*`, in the adding parent's language - the kid sees it; design 70 §7), a bare id
   fact alone in the security log ("phone 3" / "telefon 3") and the error bodies (`i18n::error`). Sizes and other decimals: `i18n::number(lang, value, decimals)` ("1.5" / "1,5";
-  Format's typed size is accepted with either mark). Two scans keep it so: `i18n::tests::no_status_answers_with_literal_words`
+  a backup's size). Two scans keep it so: `i18n::tests::no_status_answers_with_literal_words`
   refuses a `StatusCode::X, "words"` pair outside tests (the phone's API in `device_api.rs` and `security.rs`'s log
   reasons are no parent's), and `tests::i18n_pages::nb_pages_have_no_english` signs a parent in on Norwegian over a
   seeded family (`tests::seeded_family`: three phones - a rich report, the other problems, one not set up - one
