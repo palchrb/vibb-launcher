@@ -50,6 +50,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 75: the lock glance shows the weather (`launcher_ui.lock_weather`, `GET /api/devices/weather`); the
     // server's Device › Weather says so until a phone reports it.
     com.kidslauncher.mdm.weather.LOCK_WEATHER_CAPABILITY,
+    // Design 76: the policy's `server_tls` (the certificate check the server switches on) and `server_tls` in every
+    // report.
+    SERVER_PIN_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

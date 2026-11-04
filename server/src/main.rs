@@ -53,6 +53,7 @@ mod play;
 mod push;
 mod retention;
 mod security;
+mod server_tls;
 mod settings_log;
 mod sound_mode;
 mod spotify;
@@ -1146,6 +1147,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/leave-tailnet",
             post(handlers::devices::leave_tailnet),
+        )
+        .route(
+            "/devices/{id}/server-tls/{action}",
+            post(handlers::devices::server_tls),
         )
         .route(
             "/devices/{id}/delete",

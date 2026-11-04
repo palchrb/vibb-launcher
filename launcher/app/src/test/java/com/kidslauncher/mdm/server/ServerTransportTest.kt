@@ -167,7 +167,7 @@ class ServerTransportTest {
         val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File(path))
         val base = doc.getElementsByTagName("base-config").item(0) as Element
         assertEquals(path, "false", base.getAttribute("cleartextTrafficPermitted"))
-        val certificates = doc.getElementsByTagName("certificates")
+        val certificates = base.getElementsByTagName("certificates")
         assertEquals(path, 1, certificates.length)
         assertEquals(path, "system", (certificates.item(0) as Element).getAttribute("src"))
         val configs = doc.getElementsByTagName("domain-config")
@@ -187,6 +187,16 @@ class ServerTransportTest {
         assertEquals(listOf(TAILNET_SERVER_HOST), cleartextDomains("src/main/res/xml/network_security_config.xml"))
         assertEquals(listOf(TAILNET_SERVER_HOST, EMULATOR_HOST), cleartextDomains("src/debug/res/xml/network_security_config.xml"))
         assertTrue(TAILNET_SERVER_HOST.endsWith(".invalid"))
+        // Design 76 (qa I-3): the release config never trusts a user CA; the debug one does, under debug-overrides
+        // only (mitmproxy on the emulator), so the certificate check is what refuses there.
+        val release = File("src/main/res/xml/network_security_config.xml").readText()
+        assertFalse(release.contains("debug-overrides"))
+        assertFalse(release.contains("src=\"user\""))
+        val debug = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/debug/res/xml/network_security_config.xml"))
+        val overrides = debug.getElementsByTagName("debug-overrides")
+        assertEquals(1, overrides.length)
+        val trusted = (overrides.item(0) as Element).getElementsByTagName("certificates")
+        assertEquals(listOf("system", "user"), (0 until trusted.length).map { (trusted.item(it) as Element).getAttribute("src") })
         val manifest = File("src/main/AndroidManifest.xml").readText()
         assertTrue(manifest.contains("android:networkSecurityConfig=\"@xml/network_security_config\""))
         assertFalse(manifest.contains("usesCleartextTraffic"))

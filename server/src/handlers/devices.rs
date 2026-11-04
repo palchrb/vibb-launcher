@@ -695,6 +695,71 @@ pub async fn leave_tailnet(
     }
 }
 
+/// POST `/devices/{id}/server-tls/{action}` (design 76 R-4): the parent's one-shot on the certificate check - `off`
+/// ("Turn off the certificate check", behind its confirm), `watch` ("Turn it on again") or `on` ("Turn the check on
+/// now"). At once: stored, its own security event with the parent's name (`server_tls_off` / `server_tls_on`, never
+/// the settings log's generic save), for `off` a push to every parent, and an SSE nudge so the phone syncs now.
+pub async fn server_tls(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, action)): Path<(i64, String)>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<RevokeForm>,
+) -> Response {
+    use crate::server_tls::Action;
+    let Some(action) = Action::of(&action) else {
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+    };
+    if action == Action::Off && form.confirm != "yes" {
+        return crate::settings_log::refused(Redirect::to(&format!(
+            "/devices/{id}/advanced?notice=server_tls_unconfirmed#server-tls"
+        )));
+    }
+    let Some(phone) = crate::parent_events::Phone::load(&state.db, id).await else {
+        return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+    };
+    let now = chrono::Utc::now();
+    let stored = async {
+        let mut tx = state.db.begin().await?;
+        let row = crate::server_tls::load(&mut *tx, id).await?;
+        crate::server_tls::store(
+            &mut *tx,
+            id,
+            &crate::server_tls::by_parent(&row, action, admin.name(), now),
+        )
+        .await?;
+        tx.commit().await
+    };
+    if let Err(err) = stored.await {
+        tracing::error!(device_id = id, %err, "can't store the certificate check");
+        return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed");
+    }
+    security::record_security_event(
+        &state.db,
+        action.event(),
+        Some(&admin.username),
+        None,
+        Some(
+            security::Detail::words(action.sentence(), &[("phone", phone.name.as_str())])
+                .with_facts(format!("device {id}")),
+        ),
+    )
+    .await;
+    if action == Action::Off {
+        crate::parent_events::raise_logged(
+            &state,
+            &crate::parent_events::server_tls_off(&phone, admin.name(), now),
+        )
+        .await;
+    }
+    let _ = state.command_notify.send(id);
+    Redirect::to(&format!(
+        "/devices/{id}/advanced?notice={}#server-tls",
+        action.notice()
+    ))
+    .into_response()
+}
+
 /// A phone's connection to this server, for Advanced › Connection and the not-enrolled card
 /// (design 22 §3.1, design 31 §3.2): times in the Phone Setup zone.
 pub struct AccessCard {

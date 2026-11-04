@@ -143,11 +143,17 @@ interface MdmApi {
  * subsequent authenticated call. The way to the server is [serverPathNow]'s (security review S-M1): https direct or
  * through [TsnetClient]'s embedded-tailnet SOCKS5 proxy while it runs; http to a tailnet IP only through that proxy;
  * any other address, or a tailnet one while tsnet is down, gives a client whose every call throws [ServerPathClosed]
- * before anything is sent. */
-fun createMdmApi(baseUrl: String, token: String? = null, callTimeoutMs: Long? = null): MdmApi {
-    val path = serverPathNow(baseUrl)
+ * before anything is sent. [path] is passed by the sync, which judges its answers by it (design 76: `tailnet` is
+ * `path is ServerPath.Tailnet`, R-5). */
+fun createMdmApi(
+    baseUrl: String,
+    token: String? = null,
+    callTimeoutMs: Long? = null,
+    path: ServerPath = serverPathNow(baseUrl),
+): MdmApi {
     val clientBuilder = OkHttpClient.Builder()
-        // First: a closed path refuses before any other interceptor sees the request.
+        // First: a closed path refuses before any other interceptor sees the request; on the direct path the origin
+        // fence and the certificate check come first (design 76).
         .toServer(path)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)

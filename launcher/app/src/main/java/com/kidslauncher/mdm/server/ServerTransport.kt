@@ -7,7 +7,12 @@ import java.net.Proxy
 import java.net.Socket
 import java.net.UnknownHostException
 import javax.net.SocketFactory
+import java.util.Collections
+import java.util.WeakHashMap
+import okhttp3.CertificatePinner
+import okhttp3.Connection
 import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 
@@ -31,6 +36,13 @@ import okhttp3.OkHttpClient
  *
  * The proxy itself (`mobile/tsembed`, dial.go) dials a Tailscale address only through netstack and only while it is a
  * current peer - never on the phone's own network (the security QA of S-M1, H1).
+ *
+ * Design 76 narrows https's trust on the [ServerPath.Direct] path ([ServerPinning], [ServerPins.kt]): a request to
+ * any other origin is refused before a socket and no redirect is followed; once the server has switched the check on,
+ * OkHttp's pinner wants a key of the built-in set in the chain Android validated (after Android's validation, never
+ * instead of it); either way every new connection's chain is looked at and a chain outside the set is kept as a
+ * sighting for the server. The tailnet path is never pinned (WireGuard authenticates the peer), nor a debug build's
+ * plain http to the emulator's host (no TLS).
  */
 
 /** The name OkHttp sees for a server at a tailnet IP; see the file's comment. */
@@ -73,6 +85,30 @@ class ServerPathClosed(val why: ClosedWhy) : IOException(
         ClosedWhy.TAILNET_DOWN -> "the server is at a tailnet address and the tailnet isn't connected"
     },
 )
+
+/** Thrown by a [ServerPath.Direct] client for a request to another origin than the server's (design 76, qa H-2):
+ * before a socket, so an `@Url` the server named can't reach another host unpinned. */
+class ServerOriginRefused(host: String) : IOException("not the server's origin: $host")
+
+/**
+ * What a [ServerPath.Direct] client pins (design 76 §3): [enforce] is the stored flag ([ServerPinStore]), [pins] the
+ * built-in set's keys (a test's own set in `ServerTransportTest`), [onOutside] where a sighting outside them goes -
+ * `refused` (the pinner refused it) or `seen` (the flag off) with the request's host and the chain's anchor.
+ */
+class ServerPinning(
+    val enforce: Boolean,
+    val pins: List<String> = BUILTIN_PINS.map { it.pin },
+    val onOutside: (kind: String, host: String, anchor: Anchor) -> Unit = { _, _, _ -> },
+)
+
+/** The pinner for [host] (exactly `HttpUrl.host`, the string OkHttp compares - qa I-1) and [pins]; `null` when it
+ * can't be built or pins nothing for [host] - the caller then fails closed (qa L-4). */
+fun serverPinner(host: String, pins: List<String>): CertificatePinner? = try {
+    CertificatePinner.Builder().add(host, *pins.map { "sha256/$it" }.toTypedArray()).build()
+        .takeIf { it.findMatchingPins(host).isNotEmpty() }
+} catch (e: IllegalArgumentException) {
+    null
+}
 
 /** Whether [url] may be stored as the server address: the rule ([serverUrlVerdict]), or in a [debug] build the
  * emulator's host over http. */
@@ -122,12 +158,17 @@ fun serverPathNow(serverUrl: String): ServerPath {
 
 /**
  * Sets this builder up for [path] - call it before adding any other interceptor, so a closed path's refusal runs
- * first and nothing else (the bearer included) sees the request. [currentProxy] is tsnet's proxy at connect time: a
+ * first and nothing else (the bearer included) sees the request. [pinning] is the certificate check's now (design 76:
+ * the flag is read where the path is read). [currentProxy] is tsnet's proxy at connect time: a
  * tailnet socket refuses when it is no longer the one the path was made with (a client kept across a tsnet restart,
  * whose old loopback port any app could bind - the security QA of S-M1, L1).
  */
-fun OkHttpClient.Builder.toServer(path: ServerPath, currentProxy: () -> Proxy? = { TsnetClient.proxy() }): OkHttpClient.Builder = when (path) {
-    is ServerPath.Direct -> apply { path.proxy?.let { proxy(it) } }
+fun OkHttpClient.Builder.toServer(
+    path: ServerPath,
+    pinning: ServerPinning = ServerPinStore.pinningNow(),
+    currentProxy: () -> Proxy? = { TsnetClient.proxy() },
+): OkHttpClient.Builder = when (path) {
+    is ServerPath.Direct -> direct(path, pinning)
     is ServerPath.Tailnet -> proxy(Proxy.NO_PROXY)
         .dns(TailnetServerDns(path.address))
         .socketFactory(SocksSocketFactory(path.proxy, currentProxy))
@@ -145,6 +186,57 @@ fun OkHttpClient.Builder.toServer(path: ServerPath, currentProxy: () -> Proxy? =
     is ServerPath.Closed -> proxy(Proxy.NO_PROXY)
         .dns(NoDns)
         .addInterceptor(Interceptor { throw ServerPathClosed(path.why) })
+}
+
+/** The [ServerPath.Direct] client (design 76 §3), in this order: the origin fence, the refusal catch, the pinner once
+ * the flag is on, the chain observer. */
+private fun OkHttpClient.Builder.direct(path: ServerPath.Direct, pinning: ServerPinning): OkHttpClient.Builder {
+    val origin = path.baseUrl.toHttpUrlOrNull()
+    path.proxy?.let { proxy(it) }
+    // No device route redirects (qa I-2); a redirect would leave the fence's check of the first hop.
+    followRedirects(false)
+    followSslRedirects(false)
+    // 1. The origin fence: the server's scheme, host and port only (a base that doesn't parse: nothing).
+    addInterceptor(Interceptor { chain ->
+        val url = chain.request().url
+        if (origin == null || !sameOrigin(origin, url)) throw ServerOriginRefused(url.host)
+        chain.proceed(chain.request())
+    })
+    // 2. The refusal catch: OkHttp's pin failure (that prefix only, qa L-5) is kept as `refused` and told as ours.
+    addInterceptor(Interceptor { chain ->
+        try {
+            chain.proceed(chain.request())
+        } catch (e: javax.net.ssl.SSLPeerUnverifiedException) {
+            val anchor = pinFailureAnchor(e) ?: throw e
+            pinning.onOutside(OutsideRow.REFUSED, chain.request().url.host, anchor)
+            throw ServerPinRefused(anchor, e)
+        }
+    })
+    // 3. The pinner, with the flag on: it runs in connectTls after Android's validation, before the connection is
+    // pooled or a request byte is written. One that can't be built fails closed, never open.
+    if (pinning.enforce && origin != null) {
+        val pinner = serverPinner(origin.host, pinning.pins)
+        if (pinner != null) certificatePinner(pinner) else addInterceptor(Interceptor { throw ServerPinRefused(null) })
+    }
+    // 4. The observer, always: each new connection's validated chain once; one outside the set is kept as `seen`
+    // (with the flag on no such connection gets this far).
+    val observed: MutableMap<Connection, Boolean> = Collections.synchronizedMap(WeakHashMap())
+    addNetworkInterceptor(Interceptor { chain ->
+        val connection = chain.connection()
+        val handshake = connection?.handshake()
+        if (connection != null && handshake != null && observed.put(connection, true) == null) {
+            try {
+                val certificates = handshake.peerCertificates
+                if (!inSet(certificates.map(::spkiPin), pinning.pins)) {
+                    chainAnchor(certificates)?.let { pinning.onOutside(OutsideRow.SEEN, chain.request().url.host, it) }
+                }
+            } catch (e: Exception) {
+                Log.w("ServerTransport", "Couldn't read the server's chain: ${e.javaClass.simpleName}")
+            }
+        }
+        chain.proceed(chain.request())
+    })
+    return this
 }
 
 /** Answers nothing (a closed path's client, which never gets this far). */

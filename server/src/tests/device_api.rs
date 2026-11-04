@@ -605,6 +605,24 @@ async fn policy_json_keys_snapshot() {
     // 2026-11-04: always a list of package names (`[]` for a fresh phone), the launcher's `lockMediaAppsOf` shape.
     assert_eq!(object["lock_media_apps"], serde_json::json!([]));
     assert_eq!(denied["lock_media_apps"], serde_json::json!([]));
+
+    // Design 76: `server_tls` only for a launcher with `server_pin_v1` - `{}` while watching (no `enforce`, R-1), the
+    // launcher's raw `serverTls` (PolicyResponseCompatTest, ServerPinsTest).
+    app.post_status(
+        &token,
+        serde_json::json!({"capabilities": [crate::server_tls::CAPABILITY]}),
+    )
+    .await;
+    let capable = app.policy(&token).await;
+    let mut capable_keys: Vec<&str> = capable
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    capable_keys.retain(|k| !keys.contains(k));
+    assert_eq!(capable_keys, ["server_tls"]);
+    assert_eq!(capable["server_tls"], serde_json::json!({}));
 }
 
 #[tokio::test]

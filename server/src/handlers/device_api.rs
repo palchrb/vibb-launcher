@@ -410,6 +410,8 @@ pub(crate) async fn build_policy(
             crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now())
                 .await?;
     }
+    // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
+    let server_tls = crate::server_tls::policy(&state.db, device_id, &capabilities).await?;
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
@@ -544,6 +546,7 @@ pub(crate) async fn build_policy(
         calendar,
         app_permissions,
         lock_media_apps,
+        server_tls,
     })
 }
 
@@ -1406,6 +1409,8 @@ pub async fn status(
     .ok();
     // Design 69 §4.2: which calendars the phone has (its own sanitizer), never an event.
     crate::calendar::store_report(&state.db, device.id, report.calendar.as_ref()).await;
+    // Design 76: the certificate check's sightings move this phone's state (receive time); an outside one is pushed.
+    crate::server_tls::intake(&state, device.id, report.server_tls.as_ref()).await;
     // The phone's storage budget (security review L4): past it, this report replaces the last.
     if let Some(previous) = &previous {
         crate::retention::replace_over_budget(&state.db, device.id, previous.id).await;

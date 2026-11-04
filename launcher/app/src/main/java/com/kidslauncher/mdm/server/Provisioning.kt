@@ -32,6 +32,9 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
     }
     val mdm = LauncherPreferences.mdm()
     mdm.serverUrl(extras.serverUrl.trim())
+    // Design 76 D2: a setup QR is a fresh setup - the certificate check is off until the server's `on` reaches the
+    // phone over a connection that passes it (the enrolment itself may have to go unpinned, R-6).
+    ServerPinStore.setEnforce(context, false)
     if (extras.tailscaleAuthKey.isNotBlank()) {
         mdm.tailscaleAuthKey(extras.tailscaleAuthKey)
     }

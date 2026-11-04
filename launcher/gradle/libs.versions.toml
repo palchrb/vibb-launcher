@@ -47,6 +47,7 @@ squareup-retrofit = { group = "com.squareup.retrofit2", name = "retrofit", versi
 jakewharton-retrofit2-kotlinx-serialization-converter = { group = "com.jakewharton.retrofit", name = "retrofit2-kotlinx-serialization-converter", version.ref = "retrofit-kotlinx-serialization-converter" }
 squareup-okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 squareup-okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
+squareup-okhttp-tls = { group = "com.squareup.okhttp3", name = "okhttp-tls", version.ref = "okhttp" }
 
 # Annotation Processors
 jonahbauer-android-preference-annotations = { group = "eu.jonahbauer", name = "android-preference-annotations", version.ref = "android-preference-annotations" }

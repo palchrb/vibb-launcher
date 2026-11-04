@@ -219,6 +219,22 @@ nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` 
 buffering and no compression on it** - for nginx `proxy_buffering off; proxy_read_timeout 330s; proxy_http_version
 1.1;`. Cloudflare's proxy cuts connections idle for 100 s: use DNS-only there, or `SSE_KEEPALIVE_SECS=90`.
 
+### The phones' certificate check (design 76)
+
+Vibb One (with `server_pin_v1`) talks to this server over https only through a certificate chain from **Let's Encrypt
+or ZeroSSL** (Sectigo) once the check is on for that phone. The server switches it on by itself after the phone has
+shown only such certificates for three days (on Wi-Fi and mobile data); Device › Advanced › Certificate check shows
+where each phone is, and a certificate from another issuer - an attack, or a proxy with its own CA - is told there and
+pushed. Caddy's Let's Encrypt, its ZeroSSL fallback and `tailscale cert` are all in the set. **Behind a CDN that picks
+its own CA** (Cloudflare's Universal SSL rotates Let's Encrypt, Google Trust Services and SSL.com) the check may switch
+on during a Let's Encrypt period and a later rotation then cuts the phones off: turn such phones' check off on that
+page, or give the CDN a fixed CA (Cloudflare: an Advanced certificate with Let's Encrypt) - or keep the phones on
+DNS-only as above. A CAA record naming the CA, ideally with `accounturi` (`0 issue "letsencrypt.org;
+accounturi=..."`), narrows who can issue for the name. **Recovery** for a phone that refuses the server's
+certificate: on the phone, Settings (parent code) › Server URL › `http://<this server's Tailscale IP>[:port]` - the
+tailnet path is never pinned - then fix the certificate (switch the address back to https) or turn the phone's check
+off on its Advanced page. Re-scanning the setup QR also clears the check on the phone.
+
 ### Changing how it's exposed
 
 To stop the public phone URL: point the phones back at the tailnet URL first, then remove the Caddy site (or the

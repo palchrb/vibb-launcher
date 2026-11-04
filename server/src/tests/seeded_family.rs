@@ -332,6 +332,21 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             crate::push::Forget::Password,
             ago(110),
         ),
+        // Design 76: the certificate check turned off, a certificate from outside the set.
+        parent_events::server_tls_off(&phone, "Mamma", ago(115)),
+        parent_events::server_tls_seen(
+            &phone,
+            &crate::server_tls::Outside {
+                kind: "refused".to_string(),
+                host: "vibb.example.org".to_string(),
+                name: "emSign Root CA - G1".to_string(),
+                pin: "N2oacIKlk9zMINVh0Rnpq40w8RzDIdCjf6QfDfKE4Bw=".to_string(),
+                network: "mobile".to_string(),
+                at_ms: ago(118).timestamp_millis(),
+                received_at: String::new(),
+            },
+            ago(118),
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

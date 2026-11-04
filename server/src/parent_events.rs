@@ -66,10 +66,17 @@ pub enum Kind {
     /// wrong tries, a Reset) or a push service answered that one is gone (404/410). No phone; pushed to every parent's
     /// remaining devices - no switch - and in each inbox. Told from its parameters ([PushOffParams]).
     PushOff,
+    /// Design 76 R-4: a parent turned a phone's certificate check off - pushed to every parent at once (no switch)
+    /// and in each inbox, so an off a held session made is seen. Told from its parameters ([ServerTlsParams]).
+    ServerTlsOff,
+    /// Design 76 R-2: a phone saw (or refused) a certificate for this server from outside its built-in set - a split
+    /// horizon or an attack; at most one a day per phone (`server_tls::next_state`), no switch. Told from its
+    /// parameters ([ServerTlsParams]).
+    ServerTlsSeen,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 15] = [
+    pub const ALL: [Kind; 17] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -85,6 +92,8 @@ impl Kind {
         Kind::AppUpdated,
         Kind::PasskeyAdded,
         Kind::PushOff,
+        Kind::ServerTlsOff,
+        Kind::ServerTlsSeen,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -104,6 +113,8 @@ impl Kind {
             Kind::AppUpdated => "app_updated",
             Kind::PasskeyAdded => "passkey_added",
             Kind::PushOff => "push_off",
+            Kind::ServerTlsOff => "server_tls_off",
+            Kind::ServerTlsSeen => "server_tls_seen",
         }
     }
 
@@ -143,7 +154,12 @@ impl Kind {
         match self {
             // A new way into the account is always told (design 74 D1.2), and a device that stopped getting
             // notifications (2026-11-04: "å miste push sub er kritisk").
-            Kind::EmergencyCall | Kind::PasskeyAdded | Kind::PushOff => None,
+            // Design 76: the certificate check turned off, or a certificate from outside the set (R-2, R-4).
+            Kind::EmergencyCall
+            | Kind::PasskeyAdded
+            | Kind::PushOff
+            | Kind::ServerTlsOff
+            | Kind::ServerTlsSeen => None,
             Kind::PinUsed => Some(("push_pin_used", "Parent PIN used")),
             Kind::PinLockout => Some(("push_pin_lockout", "Parent PIN locked")),
             Kind::ForeignAccess => Some(("push_foreign_access", "An app may read the PIN")),
@@ -1666,6 +1682,114 @@ pub fn push_off(
     }
 }
 
+/// Design 76: a phone's certificate check - turned off by `parent`, or a certificate from `issuer` seen on `network`
+/// (`wifi`, `mobile`, `other`; `refused` when the phone's check refused it).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ServerTlsParams {
+    pub phone: String,
+    #[serde(default)]
+    pub parent: String,
+    #[serde(default)]
+    pub issuer: String,
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub refused: bool,
+    pub at: String,
+}
+
+/// A parent turned `phone`'s certificate check off at `at` (R-4): key = the instant, target the check's group.
+pub fn server_tls_off(phone: &Phone, parent: &str, at: DateTime<Utc>) -> NewEvent {
+    let params = ServerTlsParams {
+        phone: phone.name.clone(),
+        parent: parent.to_string(),
+        issuer: String::new(),
+        network: String::new(),
+        refused: false,
+        at: instant(at),
+    };
+    NewEvent {
+        target: format!("/devices/{}/advanced#server-tls", phone.id),
+        ..phone.with_params(
+            Kind::ServerTlsOff,
+            at.timestamp_millis().to_string(),
+            at,
+            &params,
+        )
+    }
+}
+
+/// `phone` reported a certificate for this server from outside its set (`outside`, received at `at`): key = the
+/// row's kind and the phone's instant.
+pub fn server_tls_seen(
+    phone: &Phone,
+    outside: &crate::server_tls::Outside,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = ServerTlsParams {
+        phone: phone.name.clone(),
+        parent: String::new(),
+        issuer: outside.name.clone(),
+        network: outside.network.clone(),
+        refused: outside.kind == "refused",
+        at: instant(at),
+    };
+    NewEvent {
+        target: format!("/devices/{}/advanced#server-tls", phone.id),
+        ..phone.with_params(
+            Kind::ServerTlsSeen,
+            format!("{}:{}", outside.kind, outside.at_ms),
+            at,
+            &params,
+        )
+    }
+}
+
+/// "The certificate check for Anna was turned off by Mamma" / "14:02"; "Anna saw a certificate for your server from
+/// emSign Root CA - G1" / "14:02 · Wi-Fi" - the same words pushed.
+fn server_tls_told(
+    form: Form,
+    kind: Kind,
+    p: &ServerTlsParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let (title, body) = if kind == Kind::ServerTlsOff {
+        let key = format!("events.server_tls_off.{}.title", form.key());
+        let title = fit_name(&p.phone, TITLE_MAX, |phone| {
+            t_params(lang, &key, &[("phone", phone), ("name", &p.parent)])
+        });
+        (title, at)
+    } else {
+        let key = format!(
+            "events.server_tls_seen.{}.{}",
+            form.key(),
+            if p.refused { "refused" } else { "title" }
+        );
+        // The issuer is cut to fit (up to 64 characters from the phone), never the phone's name.
+        let title = fit_name(&p.issuer, TITLE_MAX, |issuer| {
+            t_params(lang, &key, &[("phone", &p.phone), ("issuer", issuer)])
+        });
+        let network = t(
+            lang,
+            match p.network.as_str() {
+                "wifi" => "server_tls.network.wifi",
+                "mobile" => "server_tls.network.mobile",
+                _ => "server_tls.network.elsewhere",
+            },
+        );
+        (title, push_body(&at, Some(network.to_string())))
+    };
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&body, SUMMARY_MAX).to_string(),
+    )
+}
+
 /// "Notifications stopped on iPhone · Safari (Mamma)" / "14:02 · Password changed"; pushed "Mamma: notifications
 /// off on iPhone · Safari"; with more devices their count instead of the label.
 fn push_off_told(
@@ -1793,6 +1917,9 @@ pub fn told_as(
         Kind::PushOff => params
             .and_then(|p| serde_json::from_str::<PushOffParams>(p).ok())
             .map(|p| push_off_told(form, &p, zone, now)),
+        Kind::ServerTlsOff | Kind::ServerTlsSeen => params
+            .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
+            .map(|p| server_tls_told(form, kind, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -2152,6 +2279,19 @@ mod tests {
 
     fn utc(s: &str) -> DateTime<Utc> {
         crate::display_time::parse_db_utc(s).unwrap()
+    }
+
+    /// Design 76: an outside row as a phone reports it.
+    fn tls_outside(kind: &str) -> crate::server_tls::Outside {
+        crate::server_tls::Outside {
+            kind: kind.to_string(),
+            host: "vibb.example.org".to_string(),
+            name: "emSign Root CA - G1".to_string(),
+            pin: "N2oacIKlk9zMINVh0Rnpq40w8RzDIdCjf6QfDfKE4Bw=".to_string(),
+            network: "wifi".to_string(),
+            at_ms: 1_793_795_000_000,
+            received_at: String::new(),
+        }
     }
 
     fn anna() -> Phone {
@@ -2809,6 +2949,19 @@ mod tests {
                 "Notifications stopped on iPhone · Safari (Mamma)",
                 "14:02 · Passkey Only turned on",
                 "/notifications/settings#devices",
+            ),
+            // Design 76: the certificate check, told from its parameters.
+            (
+                server_tls_off(&phone, "Mamma", two),
+                "The certificate check for Anna was turned off by Mamma",
+                "14:02",
+                "/devices/3/advanced#server-tls",
+            ),
+            (
+                server_tls_seen(&phone, &tls_outside("seen"), two),
+                "Anna saw a certificate for your server from emSign Root CA…",
+                "14:02 · Wi-Fi",
+                "/devices/3/advanced#server-tls",
             ),
         ];
         for (event, title, summary, target) in &rows {
@@ -3582,6 +3735,9 @@ mod tests {
                 crate::push::Forget::ReauthLockout,
                 two,
             ),
+            server_tls_off(&phone, "Mamma", two),
+            server_tls_seen(&phone, &tls_outside("seen"), two),
+            server_tls_seen(&phone, &tls_outside("refused"), two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

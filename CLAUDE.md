@@ -192,6 +192,17 @@ The longest "pause all restrictions" (2026-11-04, QA of pause-end-report M1) is 
 than it is over) and the launcher's `RestrictionsPauseTest` (`RESTRICTIONS_PAUSE_DURATION_MS`) check their constant against
 it and compare the copies.
 
+The launcher's certificate check (design 76: the server's issuer pinned once the server switches it on) is
+`server/testdata/server_tls_report.json`, byte-identical in `launcher/app/src/test/resources/`: `report` (the status
+body's `server_tls`: `enforcing`, `seen`, `outside` rows of both kinds), `policy` (the policy's `server_tls` per server
+state: `{}` watching, `{"enforce": true}` on, `{"enforce": false}` off), `flags` (the phone's stored flag from each
+policy value - absent and malformed included - start state and connection: `passing`, `failing`, `tailnet`,
+`debug_http`) and `drops` (the outside rows leave only after a 2xx over a passing or a tailnet connection). The
+launcher's `ServerPinsTest` encodes `report` exactly and runs every `flags` and `drops` row; the server's
+`tests::server_tls::a_launcher_report_moves_the_state` posts `report` (its instants moved to the last hour) and produces
+every `policy` row; both compare the copies. The built-in set itself stays the launcher's (`ServerPins.kt`): the server
+never judges a chain. The policy's `server_tls` is pinned by `policy_json_keys_snapshot` and `ServerPinsTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -199,7 +210,7 @@ it and compare the copies.
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json` and `restrictions_pause.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json` and `server_tls_report.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -208,7 +219,7 @@ it and compare the copies.
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json` and `restrictions_pause.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json` and `server_tls_report.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

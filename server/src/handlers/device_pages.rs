@@ -835,6 +835,8 @@ struct AdvancedTemplate {
     access: crate::handlers::devices::AccessCard,
     /// The Spotify diagnostic log ([SpotifyDiagCard]); `None` on a phone that doesn't play Spotify.
     spotify_diag: Option<SpotifyDiagCard>,
+    /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
+    server_tls: Option<crate::server_tls::Card>,
 }
 crate::i18n::words!(AdvancedTemplate);
 
@@ -886,6 +888,25 @@ pub async fn view_advanced(
         .iter()
         .map(|n| n.note(&zone, now))
         .partition(|n| n.warning);
+    // Design 76: a read error hides the group (logged) - it never costs the page.
+    let server_tls =
+        if crate::server_tls::capable(latest.as_ref().and_then(|s| s.capabilities_json.as_deref()))
+        {
+            match crate::server_tls::load(&state.db, id).await {
+                Ok(row) => Some(crate::server_tls::card(
+                    &row,
+                    &zone,
+                    now,
+                    query.get("notice").map(String::as_str),
+                )),
+                Err(err) => {
+                    tracing::error!(device_id = id, %err, "can't read the certificate check");
+                    None
+                }
+            }
+        } else {
+            None
+        };
     let escapes = escapes_card(&policy, latest.as_ref(), now_ms);
     let (escape_warnings, escape_rows): (Vec<Note>, Vec<Note>) = escapes
         .notes
@@ -917,6 +938,7 @@ pub async fn view_advanced(
                 )
             },
             spotify_diag: spotify_diag_card(&policy, &zone, now),
+            server_tls,
             device,
         }
         .render()

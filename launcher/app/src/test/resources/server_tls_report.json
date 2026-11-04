@@ -1,0 +1,109 @@
+{
+  "report": {
+    "server_tls": {
+      "enforcing": false,
+      "seen": {
+        "in_set": true,
+        "name": "ISRG Root X1",
+        "pin": "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=",
+        "network": "wifi",
+        "at_ms": 1793800000000
+      },
+      "outside": [
+        {
+          "kind": "seen",
+          "host": "vibb.example.org",
+          "name": "emSign Root CA - G1",
+          "pin": "N2oacIKlk9zMINVh0Rnpq40w8RzDIdCjf6QfDfKE4Bw=",
+          "network": "mobile",
+          "at_ms": 1793790000000
+        },
+        {
+          "kind": "refused",
+          "host": "vibb.example.org",
+          "name": "emSign Root CA - G1",
+          "pin": "N2oacIKlk9zMINVh0Rnpq40w8RzDIdCjf6QfDfKE4Bw=",
+          "network": "wifi",
+          "at_ms": 1793795000000
+        }
+      ]
+    }
+  },
+  "policy": [
+    {"state": "watching", "server_tls": {}},
+    {"state": "on", "server_tls": {"enforce": true}},
+    {"state": "off", "server_tls": {"enforce": false}}
+  ],
+  "flags": [
+    {"server_tls": {"enforce": true}, "connection": "passing", "from": false, "flag": true},
+    {"server_tls": {"enforce": true}, "connection": "passing", "from": true, "flag": true},
+    {"server_tls": {"enforce": true}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {"enforce": true}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {"enforce": true}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {"enforce": true}, "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": {"enforce": true}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {"enforce": true}, "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": {"enforce": false}, "connection": "passing", "from": false, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "passing", "from": true, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {"enforce": false}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "tailnet", "from": true, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {"enforce": false}, "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": {}, "connection": "passing", "from": false, "flag": false},
+    {"server_tls": {}, "connection": "passing", "from": true, "flag": true},
+    {"server_tls": {}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {}, "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": {}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {}, "connection": "debug_http", "from": true, "flag": true},
+    {"connection": "passing", "from": false, "flag": false},
+    {"connection": "passing", "from": true, "flag": true},
+    {"connection": "failing", "from": false, "flag": false},
+    {"connection": "failing", "from": true, "flag": true},
+    {"connection": "tailnet", "from": false, "flag": false},
+    {"connection": "tailnet", "from": true, "flag": true},
+    {"connection": "debug_http", "from": false, "flag": false},
+    {"connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": "on", "connection": "passing", "from": false, "flag": false},
+    {"server_tls": "on", "connection": "passing", "from": true, "flag": true},
+    {"server_tls": "on", "connection": "failing", "from": false, "flag": false},
+    {"server_tls": "on", "connection": "failing", "from": true, "flag": true},
+    {"server_tls": "on", "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": "on", "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": "on", "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": "on", "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": {"enforce": "true"}, "connection": "passing", "from": false, "flag": false},
+    {"server_tls": {"enforce": "true"}, "connection": "passing", "from": true, "flag": true},
+    {"server_tls": {"enforce": "true"}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {"enforce": "true"}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {"enforce": "true"}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {"enforce": "true"}, "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": {"enforce": "true"}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {"enforce": "true"}, "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": {"enforce": null}, "connection": "passing", "from": false, "flag": false},
+    {"server_tls": {"enforce": null}, "connection": "passing", "from": true, "flag": true},
+    {"server_tls": {"enforce": null}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {"enforce": null}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {"enforce": null}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {"enforce": null}, "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": {"enforce": null}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {"enforce": null}, "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": [true], "connection": "passing", "from": false, "flag": false},
+    {"server_tls": [true], "connection": "passing", "from": true, "flag": true},
+    {"server_tls": [true], "connection": "failing", "from": false, "flag": false},
+    {"server_tls": [true], "connection": "failing", "from": true, "flag": true},
+    {"server_tls": [true], "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": [true], "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": [true], "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": [true], "connection": "debug_http", "from": true, "flag": true}
+  ],
+  "drops": [
+    {"connection": "passing", "dropped": true},
+    {"connection": "failing", "dropped": false},
+    {"connection": "tailnet", "dropped": true},
+    {"connection": "debug_http", "dropped": false}
+  ]
+}

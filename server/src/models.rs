@@ -1243,6 +1243,11 @@ pub struct PolicyResponse {
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
     pub lock_media_apps: Vec<String>,
+    /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
+    /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
+    /// off. Left out for an older launcher.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls: Option<serde_json::Value>,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -1457,6 +1462,10 @@ pub struct StatusReportRequest {
     /// `report`). Absent from older launchers.
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
+    /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
+    /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
+    #[serde(default)]
+    pub server_tls: Option<serde_json::Value>,
     /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Absent from
     /// older launchers; anything that isn't one with a level in 0..=100 is dropped, never the
     /// report ([lenient_battery]).

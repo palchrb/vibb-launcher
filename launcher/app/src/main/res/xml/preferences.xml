@@ -23,6 +23,11 @@
         android:key="@string/settings_mdm_server_url_key"
         android:title="@string/settings_mdm_server_url" />
 
+    <!-- Design 76: the certificate check's state; tapping it explains and names the recovery. -->
+    <Preference
+        android:key="settings_mdm_server_cert"
+        android:title="@string/settings_mdm_server_cert" />
+
     <Preference
         android:key="@string/settings_mdm_tailscale_auth_key_key"
         android:title="@string/settings_mdm_tailscale_auth_key" />
