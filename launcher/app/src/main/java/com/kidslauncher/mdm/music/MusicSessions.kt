@@ -353,14 +353,20 @@ object MusicSessions {
         if (usable(context, c.packageName)) send(context, c, TileAction.PREVIOUS, vibb)
     }
 
+    /** Every tile tap's number ([send], main thread): a fallback check acts only for the newest (QA M1). */
+    private var tileTap = 0
+
     /**
      * [action] on [c]: its transport control for Vibb music; for another app the media button
-     * ([tileMediaKey]), the transport control instead when the session takes no button, and a play or
-     * pause the session hasn't followed after [TILE_FALLBACK_MS] again as the transport control
-     * ([tileFallback]; a play only while the app is still usable). Main thread.
+     * ([tileMediaKey]; a skip the session doesn't advertise as the transport control), the transport
+     * control instead when the session takes no button, and a play or pause the session hasn't followed
+     * after [TILE_FALLBACK_MS] again as the transport control ([tileFallback]; only while no newer tap
+     * came, a play only while the app is still usable). Main thread.
      */
     private fun send(context: Context, c: MediaController, action: TileAction, vibb: Boolean) {
-        val key = tileMediaKey(vibb, action)
+        val tap = ++tileTap
+        val advertised = runCatching { c.playbackState?.actions ?: 0L }.getOrDefault(0L)
+        val key = tileMediaKey(vibb, action, advertised)
         if (key == null || !runCatching { mediaButton(c, key) }.getOrDefault(false)) {
             runCatching { control(c, action) }
             return
@@ -370,7 +376,7 @@ object MusicSessions {
         main.postDelayed({
             runCatching {
                 val playing = sessionPlay(c.playbackState?.state) == SessionPlay.PLAYING
-                if (tileFallback(action, playing) && (action == TileAction.PAUSE || usable(app, c.packageName))) control(c, action)
+                if (tileFallback(action, playing, newest = tap == tileTap) && (action == TileAction.PAUSE || usable(app, c.packageName))) control(c, action)
             }
         }, TILE_FALLBACK_MS)
     }
@@ -385,11 +391,14 @@ object MusicSessions {
         }
     }
 
-    /** A media button's press and release on [c]'s own session (never the system's media-button route). */
+    /** A media button's press and release on [c]'s own session (never the system's media-button route): sent once the
+     * press was taken - the action runs on it, so a release that fails never makes a skip go twice (QA L-a). */
     private fun mediaButton(c: MediaController, key: Int): Boolean {
         val at = SystemClock.uptimeMillis()
         val down = KeyEvent(at, at, KeyEvent.ACTION_DOWN, key, 0)
-        return c.dispatchMediaButtonEvent(down) && c.dispatchMediaButtonEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP))
+        if (!c.dispatchMediaButtonEvent(down)) return false
+        runCatching { c.dispatchMediaButtonEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP)) }
+        return true
     }
 
     /**

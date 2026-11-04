@@ -64,7 +64,7 @@ class PhoneBookActivity : UIObjectActivity() {
         binding.phoneBookGrid.layoutManager = GridLayoutManager(this, 3)
         binding.phoneBookGrid.adapter = adapter
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
-        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.phoneBookHeader, R.string.calls_phone_book)
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.phoneBookHeader, R.string.calls_phone_book, back = R.string.kid_back)
         // Once: not again after a recreation.
         if (savedInstanceState == null) takeMissedContact(intent)
         handleNumber(intent)

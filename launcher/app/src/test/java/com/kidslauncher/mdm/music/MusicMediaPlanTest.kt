@@ -237,7 +237,15 @@ class MusicSuspensionGuardTest {
         assertTrue(playPause.contains("session?.playing == true -> send(context, c, TileAction.PAUSE, vibb)"))
         assertTrue(playPause.contains("usable(context, c.packageName) -> send(context, c, TileAction.PLAY, vibb)"))
         // E9 M1: a play the media button didn't start goes again only while the app is still usable.
-        assertTrue(body(sessions, "private fun send(").contains("(action == TileAction.PAUSE || usable(app, c.packageName))"))
+        val send = body(sessions, "private fun send(")
+        assertTrue(send.contains("(action == TileAction.PAUSE || usable(app, c.packageName))"))
+        // QA M1: every tap numbered first; a check acts only for the newest.
+        assertTrue(send.substringAfter("{").trimStart().startsWith("val tap = ++tileTap"))
+        assertTrue(send.contains("tileFallback(action, playing, newest = tap == tileTap)"))
+        // QA L-a: a press taken is sent - the release's result never makes the action go again as the control.
+        val button = body(sessions, "private fun mediaButton(")
+        assertTrue(button.contains("if (!c.dispatchMediaButtonEvent(down)) return false"))
+        assertTrue(button.contains("runCatching { c.dispatchMediaButtonEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP)) }"))
         for (name in listOf("next", "previous")) {
             assertTrue(name, body(sessions, "fun $name(").contains("if (usable(context, c.packageName))"))
         }

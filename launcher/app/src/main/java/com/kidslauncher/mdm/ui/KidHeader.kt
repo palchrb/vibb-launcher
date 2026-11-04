@@ -57,8 +57,9 @@ object KidHeader {
         }
     }
 
-    /** The back button, which says where it goes ([back], E9 L6): Home's pages [R.string.kid_back_home], kid Settings'
-     * own pages [R.string.kid_back_settings], the rest [R.string.kid_back]. */
+    /** The back button, which says where it goes ([back], E9 L6): kid Settings (only ever opened from Home)
+     * [R.string.kid_back_home], its own pages [R.string.kid_back_settings], the rest [R.string.kid_back] - Dagen and the
+     * phone book open from the lock and a notification too (QA L-b), and Back then goes there. */
     private fun backButton(activity: ComponentActivity, header: IncludeKidHeaderBinding, back: Int) {
         header.kidHeaderBack.contentDescription = activity.getString(back)
         header.kidHeaderBack.setOnClickListener { activity.onBackPressedDispatcher.onBackPressed() }
