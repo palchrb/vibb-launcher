@@ -211,24 +211,29 @@ class WeatherModelTest {
         assertNull(weatherCard(odd, l, h0, oslo, known)!!.dark)
     }
 
-    /** §5.3's budget table, exactly as the design writes it. */
+    /** §5.3's budgets under the calmer glance's rule (2026-11-04, boards A and B): words take their own line, no words
+     * sit beside the date after the " · " (12 dp), and nothing is cut. */
     @Test
-    fun `the mark's place at the design's budgets`() {
-        // 360 dp, no profile (328 dp of line): date 92, core 70, words 125.
-        assertEquals(WeatherPlace.BESIDE_WORDS, weatherPlace(328f, 92f, 8f, 70f, 125f))
-        assertEquals(WeatherPlace.LINE_WORDS, weatherPlace(328f, 92f * 1.3f, 8f, 75f, 163f))
-        assertEquals(WeatherPlace.BESIDE, weatherPlace(328f, 184f, 8f, 100f, 250f))
-        // The Jelly Star with its profile (≈269 dp): the reference alone keeps it on its own line every day.
-        assertEquals(WeatherPlace.LINE_WORDS, weatherPlace(269f, 105f, 8f, 74f, 125f))
-        assertEquals(WeatherPlace.LINE_WORDS, weatherPlace(269f, 105f * 1.3f, 8f, 96f, 163f))
-        assertEquals(WeatherPlace.LINE, weatherPlace(269f, 210f, 8f, 148f, 250f))
-        assertEquals(WeatherPlace.BESIDE, weatherPlace(328f, 92f, 8f, 70f, null))
-        // Between lock-ups the place holds; words that no longer fit are dropped, never cut or moved.
-        assertTrue(weatherWordsFit(WeatherPlace.BESIDE_WORDS, 328f, 92f, 8f, 70f, 150f))
-        assertFalse(weatherWordsFit(WeatherPlace.BESIDE_WORDS, 328f, 92f, 8f, 70f, 160f))
-        assertTrue(weatherWordsFit(WeatherPlace.LINE_WORDS, 269f, 105f, 8f, 74f, 190f))
-        assertFalse(weatherWordsFit(WeatherPlace.BESIDE, 328f, 92f, 8f, 70f, 10f))
-        assertFalse(weatherWordsFit(WeatherPlace.LINE, 328f, 92f, 8f, 70f, 10f))
+    fun `the mark's place - its own line only with words, else beside the date when it fits`() {
+        // 360 dp, no profile (328 dp of line): date 92, core 70, words 125 - the words go to their own line.
+        assertEquals(WeatherPlace.LINE_WORDS, weatherPlace(328f, 92f, 12f, 70f, 125f))
+        assertEquals(WeatherPlace.LINE_WORDS, weatherPlace(328f, 92f * 1.3f, 12f, 75f, 163f))
+        // No words: beside the date - at 360 dp and on the Jelly Star with its profile (≈269 dp of line).
+        assertEquals(WeatherPlace.BESIDE, weatherPlace(328f, 92f, 12f, 70f, null))
+        assertEquals(WeatherPlace.BESIDE, weatherPlace(269f, 105f, 12f, 74f, null))
+        assertEquals(WeatherPlace.BESIDE, weatherPlace(269f, 183f, 12f, 74f, null))
+        // The date's line can't hold it (a narrow phone, a large font): its own line, never a cut date.
+        assertEquals(WeatherPlace.LINE, weatherPlace(269f, 184f, 12f, 74f, null))
+        assertEquals(WeatherPlace.LINE, weatherPlace(269f, 210f, 12f, 148f, null))
+        // Words that don't fit even their own line: the mark without them, beside the date when it fits.
+        assertEquals(WeatherPlace.BESIDE, weatherPlace(328f, 184f, 12f, 100f, 250f))
+        assertEquals(WeatherPlace.LINE, weatherPlace(269f, 210f, 12f, 148f, 250f))
+        // Between lock-ups the place holds; words that no longer fit are dropped, never cut or moved - and words that
+        // come while the mark is beside the date wait for the next lock-up.
+        assertTrue(weatherWordsFit(WeatherPlace.LINE_WORDS, 269f, 74f, 190f))
+        assertFalse(weatherWordsFit(WeatherPlace.LINE_WORDS, 269f, 74f, 200f))
+        assertFalse(weatherWordsFit(WeatherPlace.BESIDE, 328f, 70f, 10f))
+        assertFalse(weatherWordsFit(WeatherPlace.LINE, 328f, 70f, 10f))
     }
 
     /** Launcher QA H1 and the design review's L1: 48 dp tall, 8 dp wider each side; the top capped at the clock's

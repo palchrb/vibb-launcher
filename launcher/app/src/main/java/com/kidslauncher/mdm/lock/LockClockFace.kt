@@ -3,7 +3,12 @@ package com.kidslauncher.mdm.lock
 import android.app.AlarmManager
 import android.content.Context
 import android.os.Build
+import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.format.DateFormat
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.text.method.TransformationMethod
 import android.util.Log
 import android.util.TypedValue
@@ -17,6 +22,7 @@ import android.widget.TextView
 import androidx.core.content.res.ResourcesCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.ClockFormat
+import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -32,6 +38,8 @@ import kotlin.math.roundToInt
  * child); [extra] are lines under the date that follow it to the start (the glance's "Neste" line and the weather's own
  * line, design 75). [dateRow] (the glance's, design 75 §5.5): the row holding the date and the weather mark - placed,
  * measured and baselined instead of the date (the row's baseline is the date's); the time-rule screen passes none.
+ * [dateAlarm] (the glance's, the calmer glance 2026-11-04): the alarm's place on the date line, in that row - the
+ * [alarm] line then shows only when the date's line can't hold it ([placeAlarm]).
  */
 class LockClockFace(
     private val context: Context,
@@ -43,6 +51,7 @@ class LockClockFace(
     private val extra: List<View> = emptyList(),
     private val logTag: String,
     private val dateRow: View? = null,
+    private val dateAlarm: TextView? = null,
 ) {
     /** What the face places where the date was: the glance's date row, else the date. */
     private val dateBox: View get() = dateRow ?: date
@@ -63,6 +72,19 @@ class LockClockFace(
     init {
         datePattern(short = profile != null)
         profile?.let { profileLook(it, locale) }
+        // The calmer glance: the wake-up alarm comes at the evening's start and goes at noon - checked at each minute
+        // of the clock (once bound), not only at a render.
+        clock.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                try {
+                    if (alarmBound) bindAlarm()
+                } catch (e: Throwable) {
+                    Log.w(logTag, "Clock face alarm failed: ${e.javaClass.simpleName}")
+                }
+            }
+        })
     }
 
     private fun datePattern(short: Boolean) {
@@ -127,18 +149,107 @@ class LockClockFace(
         }
     }
 
-    /** The next alarm under the date (design 42 §1.3): the system clock app's or the pinned clock
-     * app's only ([PinLockRuntime.clockPackages]), "Alarm 07:00" - with the weekday more than 24 h
-     * away; always shown while there is one (r11 §1.2: nothing drops it). */
+    /** [bindAlarm] ran once: the minute's re-check may run. */
+    private var alarmBound = false
+
+    /** The alarm's time as shown ("07:00"), `null` = none shown. */
+    private var alarmTime: String? = null
+
+    /**
+     * The next alarm (design 42 §1.3): the system clock app's or the pinned clock app's only
+     * ([PinLockRuntime.clockPackages]), and since the calmer glance (2026-11-04) only the evening's wake-up alarm
+     * ([glanceWakeAlarm]: from 18:00, ringing before noon the next day) - the alarm glyph and "07:00", TalkBack
+     * "Vekkerklokke 07:00". On the date line when it holds it ([placeAlarm]), else on the line under the date.
+     */
     fun bindAlarm() {
+        alarmBound = true
         val next = try {
             context.getSystemService(AlarmManager::class.java)?.nextAlarmClock
         } catch (e: Exception) {
             null
         }
-        val shown = glanceAlarm(next?.triggerTime, next?.showIntent?.creatorPackage, PinLockRuntime.clockPackages(), System.currentTimeMillis())
-        alarm.text = shown?.let { context.getString(R.string.lock_alarm, alarmText(it)) }
-        alarm.visibility = if (shown != null) View.VISIBLE else View.GONE
+        val now = System.currentTimeMillis()
+        val shown = glanceWakeAlarm(glanceAlarm(next?.triggerTime, next?.showIntent?.creatorPackage, PinLockRuntime.clockPackages(), now), now, ZoneId.systemDefault())
+        alarmTime = shown?.let { alarmText(it) }
+        placeAlarm()
+    }
+
+    /**
+     * The alarm's line (the calmer glance): beside the date - after the weather mark when it is there - when the date's
+     * line holds it ([glanceAlarmBeside]: the row's other parts as they are now, measured unbounded, and the alarm's
+     * text, against the line's room), else the line under the date; nothing is cut. Run at every bind, a layout of the
+     * page and a change of the weather's place. Returns whether a view's visibility changed (the caller skips that
+     * frame).
+     */
+    fun placeAlarm(): Boolean {
+        val time = alarmTime
+        val row = dateAlarm
+        val spoken = time?.let { context.getString(R.string.lock_alarm, it) }
+        var beside = false
+        if (time != null && row != null) {
+            row.setTextSize(TypedValue.COMPLEX_UNIT_PX, date.textSize)
+            val text = alarmLine(context.getString(R.string.glance_separator), time, row)
+            if (row.text?.toString() != text.toString() || row.textSize != lastAlarmPx) {
+                row.text = text
+                lastAlarmPx = row.textSize
+            }
+            beside = besideFits(row)
+        }
+        if (time != null && !beside) {
+            val line = alarmLine("", time, alarm)
+            if (alarm.text?.toString() != line.toString()) alarm.text = line
+        }
+        alarm.contentDescription = spoken
+        row?.contentDescription = spoken
+        var changed = show(alarm, time != null && !beside)
+        if (row != null) changed = show(row, beside) || changed
+        return changed
+    }
+
+    /** The date-line alarm's text size its text was last built at (the glyph follows the size). */
+    private var lastAlarmPx = 0f
+
+    private fun show(view: View, on: Boolean): Boolean {
+        val wanted = if (on) View.VISIBLE else View.GONE
+        if (view.visibility == wanted) return false
+        view.visibility = wanted
+        return true
+    }
+
+    /** Whether [view]'s text fits after the date row's other shown parts on the line (unknown width: yes, placed again
+     * at the first layout). */
+    private fun besideFits(view: TextView): Boolean {
+        val row = dateRow as? ViewGroup ?: return false
+        val start = (row.layoutParams as? ViewGroup.MarginLayoutParams)?.marginStart ?: 0
+        val width = top.width - top.paddingStart - top.paddingEnd - (if (profile != null) start else 0)
+        if (width <= 0) return true
+        var used = 0
+        for (i in 0 until row.childCount) {
+            val child = row.getChildAt(i)
+            if (child === view || child.visibility == View.GONE) continue
+            child.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            val margins = child.layoutParams as? ViewGroup.MarginLayoutParams
+            used += child.measuredWidth + (margins?.marginStart ?: 0) + (margins?.marginEnd ?: 0)
+        }
+        val density = context.resources.displayMetrics.density
+        val alarmDp = Layout.getDesiredWidth(view.text, view.paint) / density + ALARM_SLACK_DP
+        return glanceAlarmBeside(width / density, used / density, alarmDp)
+    }
+
+    /** [prefix], the alarm glyph at the text's size in the text's colour, a space and [time]. */
+    private fun alarmLine(prefix: String, time: String, view: TextView): CharSequence {
+        val built = SpannableStringBuilder(prefix)
+        val glyph = context.getDrawable(R.drawable.app_glyph_alarm)?.mutate()
+        if (glyph != null) {
+            val size = (view.textSize * ALARM_GLYPH_SCALE).roundToInt()
+            glyph.setBounds(0, 0, size, size)
+            glyph.setTint(view.currentTextColor)
+            val at = built.length
+            built.append(GLYPH_CHAR)
+            built.setSpan(ImageSpan(glyph, DynamicDrawableSpan.ALIGN_CENTER), at, at + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            built.append(' ')
+        }
+        return built.append(time)
     }
 
     private fun alarmText(alarm: GlanceAlarm): String {
@@ -270,6 +381,15 @@ class LockClockFace(
 
     private companion object {
         const val CLOCK_BIG_SP = 56f
+
+        /** The alarm glyph's size against the text's (the calmer glance). */
+        const val ALARM_GLYPH_SCALE = 1.1f
+
+        /** What the measured alarm text may be off by. */
+        const val ALARM_SLACK_DP = 2f
+
+        /** The character the alarm glyph's span stands on. */
+        const val GLYPH_CHAR = '\uFFFC'
 
         /** Design 59d step L: the digits whose ink the profile's clock keeps inside the page. */
         const val CLOCK_DIGITS = "0123456789"

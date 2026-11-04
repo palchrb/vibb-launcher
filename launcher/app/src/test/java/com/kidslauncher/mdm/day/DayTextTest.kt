@@ -46,7 +46,9 @@ class DayTextTest {
             assertTrue(name, text.contains("ClockFormat.formatClock("))
         }
         val glance = File(src, "lock/GlancePanel.kt").readText()
-        assertTrue(glance.contains("R.string.glance_next, title, ClockFormat.formatClock(activity, begin)"))
+        // The "Neste" line and the evening's "I morgen" line (the calmer glance) take the same time.
+        assertTrue(glance.contains("val time = ClockFormat.formatClock(activity, line.row.begin)"))
+        assertTrue(glance.contains("if (line.tomorrow) R.string.glance_tomorrow else R.string.glance_next, line.row.title, time)"))
         assertTrue(glance.contains("val time = ClockFormat.formatClock(activity, row.beginMs)"))
         // The form's day is the one-line day, not weekday + date glued with a space.
         val form = File(src, "ui/day/EventEditActivity.kt").readText()

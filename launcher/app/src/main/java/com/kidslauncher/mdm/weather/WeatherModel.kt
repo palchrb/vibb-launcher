@@ -241,16 +241,16 @@ fun weatherCard(
 }
 
 /** Where the mark sits (D15): beside the date or on its own line under it, with or without the words. */
-enum class WeatherPlace { BESIDE_WORDS, LINE_WORDS, BESIDE, LINE }
+enum class WeatherPlace { LINE_WORDS, BESIDE, LINE }
 
 /**
- * The mark's place (§5.3), the first that fits [lineDp] (the date's line's room): beside the date with the words, on
- * its own line with the words, beside without, its own line without. [dateDp] the date's drawn width, [gapDp] the gap
- * between them, [coreDp] symbol, degrees and chevron with their gaps, [wordsDp] the dot and the widest words planned
- * for (null = none).
+ * The mark's place (§5.3; the calmer glance, 2026-11-04, mockup boards A and B), the first that fits [lineDp] (the
+ * date's line's room): with words to say ([wordsDp], the dot and the words now; null = none) its own line with them;
+ * else beside the date after the " · " ([gapDp]) when [dateDp] (the date's drawn width) and [coreDp] (symbol,
+ * degrees and chevron with their gaps) fit; else its own line without words. Words never sit beside the date, and the
+ * date's line is never cut.
  */
 fun weatherPlace(lineDp: Float, dateDp: Float, gapDp: Float, coreDp: Float, wordsDp: Float?): WeatherPlace = when {
-    wordsDp != null && dateDp + gapDp + coreDp + wordsDp <= lineDp -> WeatherPlace.BESIDE_WORDS
     wordsDp != null && coreDp + wordsDp <= lineDp -> WeatherPlace.LINE_WORDS
     dateDp + gapDp + coreDp <= lineDp -> WeatherPlace.BESIDE
     else -> WeatherPlace.LINE
@@ -258,11 +258,10 @@ fun weatherPlace(lineDp: Float, dateDp: Float, gapDp: Float, coreDp: Float, word
 
 /** Whether [wordsDp] still fits the kept [place] (between lock-ups the mark never moves; words that don't fit are
  * left out). A place without words shows none. */
-fun weatherWordsFit(place: WeatherPlace, lineDp: Float, dateDp: Float, gapDp: Float, coreDp: Float, wordsDp: Float): Boolean = when (place) {
-    WeatherPlace.BESIDE_WORDS -> dateDp + gapDp + coreDp + wordsDp <= lineDp
+fun weatherWordsFit(place: WeatherPlace, lineDp: Float, coreDp: Float, wordsDp: Float): Boolean = when (place) {
     WeatherPlace.LINE_WORDS -> coreDp + wordsDp <= lineDp
     WeatherPlace.BESIDE, WeatherPlace.LINE -> false
 }
 
 /** Whether the place is beside the date (the row's mark) or on its own line (the slot's). */
-fun WeatherPlace.beside(): Boolean = this == WeatherPlace.BESIDE_WORDS || this == WeatherPlace.BESIDE
+fun WeatherPlace.beside(): Boolean = this == WeatherPlace.BESIDE

@@ -1,7 +1,10 @@
 package com.kidslauncher.mdm.lock
 
 import com.kidslauncher.mdm.badges.cleanGlanceText
+import com.kidslauncher.mdm.day.GLANCE_EVENING_HOUR
 import com.kidslauncher.mdm.music.clockText
+import java.time.Instant
+import java.time.ZoneId
 
 /*
  * The clock on the lock (design 42, docs/design/42-lock-clock.md at the monorepo root): pure,
@@ -152,6 +155,28 @@ fun glanceAlarm(triggerMs: Long?, creator: String?, clockPackages: Set<String>, 
     if (triggerMs == null || creator == null || creator !in clockPackages || triggerMs <= nowMs) return null
     return GlanceAlarm(triggerMs, triggerMs - nowMs > ALARM_WEEKDAY_AFTER_MS)
 }
+
+/** A wake-up alarm rings before this local hour (the calmer glance, 2026-11-04: never a midday alarm). */
+const val WAKE_ALARM_BEFORE_HOUR = 12
+
+/**
+ * The lock's alarm (the calmer glance, 2026-11-04 - the user: "Alarm 13:35" all day took room): only a wake-up alarm,
+ * and only the evening and the night before it. From [GLANCE_EVENING_HOUR]:00 local time in
+ * [zone], an [alarm] that rings before [WAKE_ALARM_BEFORE_HOUR]:00 the next day shows, until it rings (past midnight
+ * too); between [WAKE_ALARM_BEFORE_HOUR]:00 and the evening nothing, and an alarm at noon or later never. Formally: the
+ * alarm rings before noon of the day after the latest evening start at or before [nowMs].
+ */
+fun glanceWakeAlarm(alarm: GlanceAlarm?, nowMs: Long, zone: ZoneId): GlanceAlarm? {
+    if (alarm == null) return null
+    val now = Instant.ofEpochMilli(nowMs).atZone(zone)
+    val evening = if (now.hour >= GLANCE_EVENING_HOUR) now.toLocalDate() else now.toLocalDate().minusDays(1)
+    val noon = evening.plusDays(1).atTime(WAKE_ALARM_BEFORE_HOUR, 0).atZone(zone).toInstant().toEpochMilli()
+    return alarm.takeIf { it.atMs < noon }
+}
+
+/** Whether the alarm fits on the date's line (the calmer glance): the row's other parts [rowDp] and the alarm's
+ * " · [glyph] 07:00" [alarmDp] within the line's room [lineDp]; else it takes the line under the date. */
+fun glanceAlarmBeside(lineDp: Float, rowDp: Float, alarmDp: Float): Boolean = rowDp + alarmDp <= lineDp
 
 /**
  * The clock apps whose alarms show over the lock and under the date (§1.2): the system clock app

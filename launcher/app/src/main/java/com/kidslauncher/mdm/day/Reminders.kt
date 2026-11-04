@@ -1,9 +1,13 @@
 package com.kidslauncher.mdm.day
 
+import java.time.Instant
+import java.time.ZoneId
+
 /*
  * Dagen on the lock's glance (design 69 §5): the "Neste" line (A) and the calm reminder row (C) - pure; RemindersTest.
- * Both are today's timed events only, with the rules applied (a hidden event, a calendar switched off, a cancelled or
- * declined one gives nothing - the day model has dropped them already), and both need Dagen on Home.
+ * Both are timed events only, with the rules applied (a hidden event, a calendar switched off, a cancelled or
+ * declined one gives nothing - the day model has dropped them already), and both need Dagen on Home. The row is
+ * today's alone; the line turns to tomorrow's first event in the evening (the calmer glance, 2026-11-04).
  */
 
 /** `CalendarContract.Reminders.MINUTES_DEFAULT`: no minutes of its own - counts as no reminder. */
@@ -13,9 +17,22 @@ const val REMINDER_MINUTES_DEFAULT = -1
  * all day; Dagen shows the day). */
 const val OWN_REMINDER_MAX_MINUTES = 120
 
-/** Today and what the glance needs of it: the day as the kid sees it, and the events' own reminder minutes. */
-data class TodayCalendar(val view: DayView, val ownMinutes: Map<Long, List<Int>>) {
-    override fun toString() = "TodayCalendar(${view.timed.size})"
+/** Today and what the glance needs of it: the day as the kid sees it, the events' own reminder minutes, and - for the
+ * "I morgen" line, read only while the parent's `glance_next` is on - tomorrow as the kid sees it (`null` = not read). */
+data class TodayCalendar(val view: DayView, val ownMinutes: Map<Long, List<Int>>, val tomorrow: DayView? = null) {
+    override fun toString() = "TodayCalendar(${view.timed.size}, ${tomorrow?.timed?.size})"
+}
+
+/** The evening starts at this local hour (the calmer glance, 2026-11-04): the "Neste" line may turn to tomorrow, and
+ * the lock shows the wake-up alarm (`lock/ClockTile.kt`'s `glanceWakeAlarm`). */
+const val GLANCE_EVENING_HOUR = 18
+
+/** Whether [now] is in the evening in [zone]: from [GLANCE_EVENING_HOUR]:00 to midnight. */
+fun glanceEvening(now: Long, zone: ZoneId): Boolean = Instant.ofEpochMilli(now).atZone(zone).hour >= GLANCE_EVENING_HOUR
+
+/** The line's event: today's next ("Neste: …") or, in the evening, tomorrow's first ("I morgen: …"). */
+data class GlanceNext(val row: DayRow, val tomorrow: Boolean) {
+    override fun toString() = "GlanceNext(${row.eventId}, $tomorrow)"
 }
 
 /** A reminder that is up: the event's shown title and its start; [minutesLeft] counts down, 1 = "nå"; [color] the
@@ -56,19 +73,32 @@ fun reminderNow(today: TodayCalendar, policy: CalendarPolicy, now: Long): Glance
     return GlanceReminder(row.eventId, row.title, row.begin, minutesLeft(row.begin, now), row.color)
 }
 
-/** The "Neste" line now (A): the switch on and Dagen on Home, the first timed event today that starts after [now];
- * ongoing and all-day events never. */
-fun glanceNext(today: TodayCalendar, policy: CalendarPolicy, now: Long): DayRow? {
+/**
+ * The "Neste" line now (A): the switch on and Dagen on Home, the first timed event today that starts after [now];
+ * ongoing and all-day events never. Once today's last timed event has started and it is evening in [zone]
+ * ([glanceEvening]), tomorrow's first timed event instead ("I morgen", the calmer glance, 2026-11-04) - the same rules,
+ * nothing when tomorrow has none. After midnight tomorrow is today: the line is "Neste" again.
+ */
+fun glanceNext(today: TodayCalendar, policy: CalendarPolicy, now: Long, zone: ZoneId): GlanceNext? {
     if (!policy.usable || !policy.onHome || !policy.glanceNext) return null
-    return today.view.timed.firstOrNull { startsToday(it) && it.begin > now }
+    today.view.timed.firstOrNull { startsToday(it) && it.begin > now }?.let { return GlanceNext(it, tomorrow = false) }
+    if (!glanceEvening(now, zone)) return null
+    return today.tomorrow?.timed?.firstOrNull { startsToday(it) }?.let { GlanceNext(it, tomorrow = true) }
 }
 
 /**
  * When what the glance shows of the calendar next changes after [now]: a reminder's start, an event's start (the
- * reminder goes, the line moves on), and while a reminder is up its next minute; `null` = nothing today.
+ * reminder goes, the line moves on), and while a reminder is up its next minute; with the "Neste" line on also the
+ * evening's start (the line may turn to tomorrow) and the next midnight in [zone] (the day is read again); `null` =
+ * nothing.
  */
-fun nextReminderBoundary(today: TodayCalendar, policy: CalendarPolicy, now: Long): Long? {
+fun nextReminderBoundary(today: TodayCalendar, policy: CalendarPolicy, now: Long, zone: ZoneId): Long? {
     val times = ArrayList<Long>()
+    if (policy.usable && policy.onHome && policy.glanceNext) {
+        val local = Instant.ofEpochMilli(now).atZone(zone)
+        times += local.toLocalDate().atTime(GLANCE_EVENING_HOUR, 0).atZone(zone).toInstant().toEpochMilli()
+        times += local.toLocalDate().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
     for (row in today.view.timed) {
         if (!startsToday(row) || row.begin <= now) continue
         times += row.begin

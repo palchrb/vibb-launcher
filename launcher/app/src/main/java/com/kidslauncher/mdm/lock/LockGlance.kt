@@ -566,8 +566,10 @@ fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean, rule: Boolean = f
 fun glanceNextFits(scrollerDp: Float, thirdRowTopDp: Float?, lineDp: Float): Boolean =
     thirdRowTopDp == null || scrollerDp - (thirdRowTopDp + lineDp) >= GLANCE_ROW_MIN_IN_SIGHT_DP
 
-/** A row "in sight" for [glanceNextFits]: today's worst case (the profile clock, the alarm line, music + 3 rows, 3-button
- * navigation) shows 22.4 dp of row 3; the line would leave 2.2. */
+/** A row "in sight" for [glanceNextFits]: the worst case with the alarm on a line of its own (the profile clock, the
+ * alarm line, music + 3 rows, 3-button navigation) shows 22.4 dp of row 3 and the line would leave 2.2; since the
+ * calmer glance (2026-11-04) the alarm and the weather sit on the date line wherever it holds them, and the line shows
+ * there too (22.4 dp left). */
 const val GLANCE_ROW_MIN_IN_SIGHT_DP = 16f
 
 // ---- the keypad's prompt -------------------------------------------------------------------------
