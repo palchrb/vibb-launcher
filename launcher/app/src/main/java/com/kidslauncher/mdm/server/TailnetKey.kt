@@ -32,3 +32,51 @@ fun tailnetConnect(storedKey: String?, joined: Boolean, connected: Boolean): Tai
 
 /** Whether the stored key goes now: the node is on the tailnet (tsnet won't read it again). */
 fun forgetTailnetKey(storedKey: String?, connected: Boolean): Boolean = connected && !storedKey.isNullOrBlank()
+
+/*
+ * Security review S-L10 (round L4b): a Go panic or abort after `connect` returned kills the process outside any
+ * try - the crash guard's pending flag is cleared by then. So the time a connect returned is kept, and the next
+ * process counts the death that followed as a crash when Android's own record of it ([android.app.ApplicationExitInfo])
+ * says the process ended itself or by a signal within [TSNET_DEATH_WINDOW_MS]: a Go `exit(2)` or abort, or a native
+ * crash. Android's kills (low memory, an update, a force stop, a reboot) never count.
+ */
+
+/** A death this soon after a connect returned counts toward the crash guard. */
+const val TSNET_DEATH_WINDOW_MS = 10 * 60 * 1000L
+
+/** The exit reasons a tsnet crash leaves: Go's own exit, a signal (SIGABRT), a native crash. */
+val TSNET_CRASH_EXITS = setOf(
+    android.app.ApplicationExitInfo.REASON_EXIT_SELF,
+    android.app.ApplicationExitInfo.REASON_SIGNALED,
+    android.app.ApplicationExitInfo.REASON_CRASH_NATIVE,
+)
+
+/** The last process's death ([exitAtMs], [reason]; null = none recorded) after a connect returned at [returnedAtMs]
+ * counts as a tsnet crash. */
+fun deathAfterConnectIsCrash(returnedAtMs: Long, exitAtMs: Long?, reason: Int?): Boolean =
+    returnedAtMs > 0 && exitAtMs != null && reason in TSNET_CRASH_EXITS &&
+        exitAtMs >= returnedAtMs && exitAtMs - returnedAtMs <= TSNET_DEATH_WINDOW_MS
+
+/**
+ * The crash guard's streak after this process's first look at the last one ([wasLeftPending]: a connect never
+ * returned; [lastConnect]: the last connect returned and the process lived on (false) or died soon after (true), null
+ * when no connect returned since the last look). A connect that returned and lived past the window ends the streak.
+ */
+fun crashStreakAfter(count: Int, wasLeftPending: Boolean, lastConnect: Boolean?): Int = when {
+    wasLeftPending || lastConnect == true -> count + 1
+    lastConnect == false -> 0
+    else -> count
+}
+
+/** The `leave_tailnet` command (S-L10): its name and answers - the server words them (`locate::reword`). */
+const val LEAVE_TAILNET_COMMAND = "leave_tailnet"
+const val LEFT_TAILNET = "left the tailnet"
+const val NOT_ON_TAILNET = "not on the tailnet"
+const val LEAVE_TAILNET_FAILED = "failed to leave the tailnet"
+
+/** The answer: [wasOn] the phone had a key, the joined mark, node state or a running client; [cleared] all of it went. */
+fun leaveTailnetAnswer(wasOn: Boolean, cleared: Boolean): Pair<Boolean, String> = when {
+    !cleared -> false to LEAVE_TAILNET_FAILED
+    wasOn -> true to LEFT_TAILNET
+    else -> true to NOT_ON_TAILNET
+}

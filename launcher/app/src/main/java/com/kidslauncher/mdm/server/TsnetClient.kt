@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.util.Log
@@ -25,6 +26,10 @@ private const val LAST_CRASH_AT_KEY = "tsnet_connect_last_crash_at"
 /** Set (with the auth key's deletion, one commit) once this phone's node has been on the tailnet:
  * later starts come up from tsnet's stored node state without a key (security review M12). */
 private const val TAILNET_JOINED_KEY = "tsnet_node_joined"
+
+/** When the last connect returned (wall clock): the next process judges the death that followed (S-L10,
+ * [deathAfterConnectIsCrash]). */
+private const val CONNECT_RETURNED_AT_KEY = "tsnet_connect_returned_at"
 
 /** After this many consecutive crashes-during-connect, skip the next attempt entirely rather than
  * retry into the same crash - see [TsnetClient.connectFromPreferences]'s own doc comment. */
@@ -77,6 +82,9 @@ object TsnetClient {
 
     val connected: Boolean
         get() = proxyAddress != null
+
+    /** The last process's death has been judged in this one (S-L10): only the first call of a process looks. */
+    private var lastDeathJudged = false
 
     /**
      * Connects to the tailnet and starts the local SOCKS5 proxy - safe to
@@ -183,23 +191,31 @@ object TsnetClient {
         val wasLeftPending = prefs.getBoolean(CRASH_GUARD_PENDING_KEY, false)
         if (wasLeftPending) prefs.edit().putBoolean(CRASH_GUARD_PENDING_KEY, false).commit()
 
+        // Security review S-L10: the last process's connect returned - did the process die soon after (a Go panic or
+        // abort outside any try)? Judged once per process, before this one connects.
+        val lastConnect = if (lastDeathJudged) null else lastConnectDied(context, prefs)
+        lastDeathJudged = true
+
         var crashCount = prefs.getInt(CRASH_COUNT_KEY, 0)
         val lastCrashAt = prefs.getLong(LAST_CRASH_AT_KEY, 0)
         if (crashCount > 0 && now - lastCrashAt > CRASH_STREAK_COOLDOWN_MS) {
             crashCount = 0
         }
-        if (wasLeftPending) {
-            crashCount += 1
+        val streak = crashStreakAfter(crashCount, wasLeftPending, lastConnect)
+        if (streak > crashCount) {
             Log.w(
                 LOG_TAG,
-                "Previous tsnet connect attempt never completed (process likely crashed) - " +
-                    "consecutive count now $crashCount",
+                (if (wasLeftPending) "Previous tsnet connect attempt never completed" else "The process died soon after a tsnet connect") +
+                    " (process likely crashed) - consecutive count now $streak",
             )
             prefs.edit()
-                .putInt(CRASH_COUNT_KEY, crashCount)
+                .putInt(CRASH_COUNT_KEY, streak)
                 .putLong(LAST_CRASH_AT_KEY, now)
                 .commit()
+        } else if (streak < crashCount) {
+            prefs.edit().putInt(CRASH_COUNT_KEY, streak).commit()
         }
+        crashCount = streak
 
         if (crashCount >= MAX_CONSECUTIVE_CRASHES) {
             Log.w(
@@ -228,15 +244,65 @@ object TsnetClient {
             connect(hostname, authKey, stateDir)
         } finally {
             // Reached by any path that returns normally (success or a caught/logged failure
-            // inside connect() itself, which already has its own try/catch) - proves the process
-            // survived the attempt, so clear the guard and reset the streak.
+            // inside connect() itself, which already has its own try/catch) - the attempt itself
+            // didn't crash. The streak ends only once the process outlives the window after it
+            // (S-L10: a Go panic can follow a connect that returned) - judged by the next process.
             prefs.edit()
                 .putBoolean(CRASH_GUARD_PENDING_KEY, false)
-                .putInt(CRASH_COUNT_KEY, 0)
+                .putLong(CONNECT_RETURNED_AT_KEY, System.currentTimeMillis())
                 .commit()
         }
         if (ip != null) forgetKeyOnceJoined(context, storedKey)
         return ip
+    }
+
+    /**
+     * The last process's connect ([CONNECT_RETURNED_AT_KEY]) and Android's record of how that process ended: true
+     * when it died as a crash within the window ([deathAfterConnectIsCrash]), false when it lived on, null when no
+     * connect returned since the last look. The mark is consumed.
+     */
+    private fun lastConnectDied(context: Context, prefs: android.content.SharedPreferences): Boolean? {
+        val returnedAt = prefs.getLong(CONNECT_RETURNED_AT_KEY, 0L)
+        if (returnedAt <= 0L) return null
+        prefs.edit().remove(CONNECT_RETURNED_AT_KEY).commit()
+        val exit = try {
+            context.getSystemService(ActivityManager::class.java)
+                ?.getHistoricalProcessExitReasons(context.packageName, 0, 8)
+                ?.firstOrNull { it.processName == context.packageName }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read the last exit: ${e.javaClass.simpleName}")
+            null
+        }
+        return deathAfterConnectIsCrash(returnedAt, exit?.timestamp, exit?.reason)
+    }
+
+    /**
+     * The parent's "Leave tailnet" (the `leave_tailnet` command, security review S-L10): tsnet stops, and the joined
+     * mark, any stored auth key, the crash guard's marks and the node state (`files/tailscale`) go, so the phone no
+     * longer starts tsnet on every Home resume and sync. It reaches the server on its direct address from then on;
+     * joining again takes a new key. Returns the command's answer ([leaveTailnetAnswer]).
+     */
+    @Synchronized
+    fun leave(context: Context): Pair<Boolean, String> {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val keyName = LauncherPreferences.mdm().keys().tailscaleAuthKey()
+        val stateDir = context.filesDir.resolve("tailscale")
+        val wasOn = client != null || prefs.getBoolean(TAILNET_JOINED_KEY, false) ||
+            !prefs.getString(keyName, null).isNullOrBlank() || stateDir.exists()
+        close()
+        // The marks first: a death mid-way leaves a phone that doesn't start tsnet, never one that rejoins.
+        val saved = prefs.edit()
+            .remove(TAILNET_JOINED_KEY)
+            .remove(keyName)
+            .remove(CRASH_GUARD_PENDING_KEY)
+            .remove(CRASH_COUNT_KEY)
+            .remove(LAST_CRASH_AT_KEY)
+            .remove(CONNECT_RETURNED_AT_KEY)
+            .commit()
+        val deleted = !stateDir.exists() || stateDir.deleteRecursively()
+        val answer = leaveTailnetAnswer(wasOn, saved && deleted)
+        Log.i(LOG_TAG, "Leave tailnet: ${answer.second}")
+        return answer
     }
 
     /** Whether this phone's node has been on the tailnet (Settings shows it once the key is gone). */

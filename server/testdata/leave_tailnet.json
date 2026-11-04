@@ -1,0 +1,8 @@
+{
+  "command": "leave_tailnet",
+  "answers": [
+    {"success": true, "message": "left the tailnet"},
+    {"success": true, "message": "not on the tailnet"},
+    {"success": false, "message": "failed to leave the tailnet"}
+  ]
+}

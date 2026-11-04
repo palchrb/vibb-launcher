@@ -956,6 +956,8 @@ pub fn command_label(command: &str) -> &'static str {
         "install_update" => "locate.command.install_update",
         // Design 59: the Child PIN for Android's lock (its answers: `kid_lock::PinAnswer`).
         "set_kid_pin" => "locate.command.set_kid_pin",
+        // Security review S-L10: Advanced › Connection's "Leave Tailnet" (`testdata/leave_tailnet.json`).
+        "leave_tailnet" => "locate.command.leave_tailnet",
         _ => "locate.command.unknown",
     }
 }

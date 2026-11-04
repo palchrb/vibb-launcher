@@ -452,3 +452,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `jstest/{reconnect,auto-reload,install-now,pull-refresh,passkey}.test.js`. Owed by hand: the iPhone PWA (the app
   switcher's picture under the veil, the back-forward cache, the standalone WebAuthn prompt on its own at each showing and from the tap), Android
   Chrome's WebAPK, Mac Safari.
+
+## Leave Tailnet (security review S-L10, launcher round L4b)
+
+Advanced › Connection has "Leave Tailnet…" (a `details.confirm` with a required box, like Disconnect Phone; while the
+phone has a token): `POST /devices/{id}/leave-tailnet` (`handlers::devices::leave_tailnet`) queues `leave_tailnet`
+through `locate::queue_command` (logged `device_command_queued`) and returns to `#connection` with
+`?notice=tailnet_leave_queued`; without the box `?notice=tailnet_unconfirmed` and nothing is queued. The server can't
+see whether a phone is on the tailnet, so the row is always there; the confirm says the phone then reaches the server
+only at its direct address. It never expires (like a lock). The launcher's answers are the shared contract
+`testdata/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
+`not_on_tailnet`, `leave_tailnet_failed`); an older launcher answers "too old".

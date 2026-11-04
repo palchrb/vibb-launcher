@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 /** The oldest undelivered remote command for this device, if any - see
  * [PolicyResponse.pendingCommand]. [command] is one of "ring" | "stop_ring" | "lock" | "wipe" |
  * "locate" | "end_windows" | "allow_blocked" | "start_pause" (design 24b) | "install_update" (design 37) |
- * "set_kid_pin" (design 59). [toString] never shows [pin]; the cached policy never holds it
+ * "set_kid_pin" (design 59) | "leave_tailnet" (security review S-L10). [toString] never shows [pin]; the cached policy never holds it
  * ([com.kidslauncher.mdm.server.cacheablePolicy]). */
 @Serializable
 data class PendingCommand(

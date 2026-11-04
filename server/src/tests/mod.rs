@@ -35,6 +35,7 @@ mod install_now;
 mod intake_limits;
 mod kid_keyguard;
 mod launcher_ui;
+mod leave_tailnet;
 mod listeners;
 mod locate_page;
 mod locations;

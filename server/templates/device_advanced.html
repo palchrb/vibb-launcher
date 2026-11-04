@@ -257,6 +257,19 @@
                     {% include "partials/confirm_cancel.html" %}
                 </form>
             </details>
+            {#- Security review S-L10: the phone forgets its tailnet node (the server can't see whether it has one). -#}
+            <details class="confirm cell">
+                <summary class="row">{{ self.t("device.advanced.leave_tailnet") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/leave-tailnet#connection" class="confirm-body">
+                    <p>{{ self.tp("device.advanced.leave_tailnet_confirm", [("name", device.name.as_str())]) }}</p>
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="confirm" value="yes" required>
+                        <span>{{ self.t("device.advanced.leave_tailnet_yes") }}</span>
+                    </label>
+                    <button type="submit" class="button-destructive">{{ self.t("device.advanced.leave_tailnet") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
             {% endif %}
             {% if let Some((text, error)) = access.notice %}
             <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>

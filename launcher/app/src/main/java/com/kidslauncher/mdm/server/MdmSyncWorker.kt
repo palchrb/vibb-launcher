@@ -512,6 +512,15 @@ private suspend fun dispatchPendingCommand(
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
+        // Security review S-L10: the parent's "Leave tailnet" - tsnet stops and its node state goes. This sync's API
+        // client still points at the closed proxy, so the answer may wait in the outbox for the follow-up sync, which
+        // takes the direct path.
+        LEAVE_TAILNET_COMMAND -> {
+            val (ok, message) = TsnetClient.leave(context)
+            reportCommandResult(context, api, pending, success = ok, message = message)
+            requestFollowUpSync(context)
+        }
+
         // Design 37: the parent's Install Now - this sync goes on to the list (download, settle)
         // and, last, the commit; the answer comes from the settle or a failure.
         INSTALL_NOW_COMMAND -> {

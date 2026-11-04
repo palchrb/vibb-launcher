@@ -1167,6 +1167,10 @@ pub fn build_admin_router(
             post(handlers::devices::revoke_access),
         )
         .route(
+            "/devices/{id}/leave-tailnet",
+            post(handlers::devices::leave_tailnet),
+        )
+        .route(
             "/devices/{id}/delete",
             post(handlers::devices::delete_device),
         )

@@ -256,7 +256,7 @@ async fn advanced_forms_return_to_their_groups() {
         &'a [(&'a str, &'a str)],
         Option<(String, Option<&'a str>)>,
     );
-    let table: [Row; 6] = [
+    let table: [Row; 7] = [
         (
             "hardening#restrictions",
             &[("disallow_factory_reset", "on")],
@@ -278,6 +278,14 @@ async fn advanced_forms_return_to_their_groups() {
             &[("confirm", "yes")],
             Some((
                 format!("{advanced}?notice=access_revoked"),
+                Some("connection"),
+            )),
+        ),
+        (
+            "leave-tailnet#connection",
+            &[("confirm", "yes")],
+            Some((
+                format!("{advanced}?notice=tailnet_leave_queued"),
                 Some("connection"),
             )),
         ),
