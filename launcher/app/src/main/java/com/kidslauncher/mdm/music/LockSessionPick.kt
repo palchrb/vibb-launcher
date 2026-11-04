@@ -21,15 +21,18 @@ data class LockPick(val index: Int, val tile: WindowedSession)
  * The session the lock's tile shows, or null. Each candidate goes through [lockTileSession] (listener [access], usable,
  * live, inside the listening window): Vibb music with the window's stamps as they are ([listening]: the bridge's end of
  * play, a fresh headset); another app with its session's own last state change as the end of play
- * (`PlaybackState.getLastPositionUpdateTime`, the pause moment - the bridge stamps only Vibb music) and the same headset
- * stamp - so a pause tapped on the lock keeps the tile for the window, as Vibb music's does.
+ * (`PlaybackState.getLastPositionUpdateTime`, the pause moment - the bridge stamps only Vibb music) and **no** headset
+ * window (code QA L5: earbuds plugged in by a finder must not bring an old paused session of any app back on the lock) -
+ * so a pause tapped on the lock keeps the tile for the window, as Vibb music's does. The app sets that stamp itself
+ * (code QA L4): one that keeps re-stamping a paused state, or claims to play, keeps its tile - with only its own
+ * transport controls.
  *
  * Of the ones left: a playing one before a paused one; among equals Vibb music first; then the platform's order of the
  * active sessions (most recently active first) - so two playing apps or two paused ones always give the same pick.
  */
 fun lockTilePick(access: Boolean, candidates: List<LockCandidate>, listening: Listening, now: BootStamp): LockPick? =
     candidates.mapIndexedNotNull { index, c ->
-        val window = if (c.vibb) listening else Listening(c.session.positionAtElapsedMs.takeIf { it > 0 }?.let { BootStamp(it, now.bootCount) }, listening.headsetAt)
+        val window = if (c.vibb) listening else Listening(c.session.positionAtElapsedMs.takeIf { it > 0 }?.let { BootStamp(it, now.bootCount) }, headsetAt = null)
         lockTileSession(access, c.usable, c.session, window, now).takeIf { it.session != null }?.let { LockPick(index, it) }
     }.minWithOrNull(compareBy<LockPick>({ !candidates[it.index].session.playing }, { !candidates[it.index].vibb }, { it.index }))
 
@@ -49,19 +52,48 @@ fun lockAppUsable(pkg: String, vibb: Boolean, suspended: Boolean, hidden: Boolea
 /** At most this many characters of another app's title or album on the lock (S-L8: its metadata is untrusted text). */
 const val FOREIGN_TEXT_MAX = 120
 
-/** Another app's times are kept within 0..this (100 hours), so a bogus position or duration can't widen the tile's times. */
+/** Another app's times are kept within 0..this (100 hours) - its position and duration ([foreignSession]) and the
+ * position carried forward while it plays ([lockPositionNow]) -, so bogus times can't widen the tile's times. */
 const val FOREIGN_TIME_MAX_MS = 100 * 3_600_000L
 
 /** Another app's art is scaled down to at most this many pixels on its long side before the lock draws it. */
 const val FOREIGN_ART_MAX_PX = 512
 
+/** At most this many combining marks in a row are kept on another app's text (code QA L2: a pile of them draws over the
+ * lines above and below). */
+const val FOREIGN_MARKS_MAX = 3
+
+private fun isMark(codePoint: Int) = Character.getType(codePoint).let {
+    it == Character.NON_SPACING_MARK.toInt() || it == Character.ENCLOSING_MARK.toInt() || it == Character.COMBINING_SPACING_MARK.toInt()
+}
+
+/** Line breaks, tabs, NUL; the bidi embeddings, overrides and isolates (U+202A-202E, U+2066-2069), zero-width and the
+ * other format characters; U+2028/2029. */
+private fun isBlanked(codePoint: Int) = Character.getType(codePoint).let {
+    it == Character.CONTROL.toInt() || it == Character.FORMAT.toInt() ||
+        it == Character.LINE_SEPARATOR.toInt() || it == Character.PARAGRAPH_SEPARATOR.toInt()
+}
+
 /**
- * Another app's title or album as the lock shows it: ISO control characters (line breaks, tabs, NUL) as spaces, trimmed,
- * cut to [FOREIGN_TEXT_MAX] without splitting a surrogate pair; blank is null. The tile's lines are one line each,
+ * Another app's title or album as the lock shows it: control, format (bidi controls among them) and line/paragraph
+ * separator characters as spaces, at most [FOREIGN_MARKS_MAX] combining marks in a row, trimmed, cut to
+ * [FOREIGN_TEXT_MAX] characters without splitting a surrogate pair; blank is null. The tile's lines are one line each,
  * ellipsized, as for Vibb music.
  */
 fun foreignText(text: String?): String? {
-    val clean = text?.map { if (it.isISOControl()) ' ' else it }?.joinToString("")?.trim() ?: return null
+    text ?: return null
+    val out = StringBuilder()
+    var marks = 0
+    var i = 0
+    // Read a little past the cut only (the trim may drop leading spaces).
+    while (i < text.length && out.length < FOREIGN_TEXT_MAX * 4) {
+        val cp = text.codePointAt(i)
+        i += Character.charCount(cp)
+        marks = if (isMark(cp)) marks + 1 else 0
+        if (marks > FOREIGN_MARKS_MAX) continue
+        if (isBlanked(cp)) out.append(' ') else out.appendCodePoint(cp)
+    }
+    val clean = out.toString().trim()
     if (clean.isEmpty()) return null
     if (clean.length <= FOREIGN_TEXT_MAX) return clean
     val end = if (clean[FOREIGN_TEXT_MAX - 1].isHighSurrogate()) FOREIGN_TEXT_MAX - 1 else FOREIGN_TEXT_MAX
@@ -75,3 +107,7 @@ fun foreignSession(session: MusicSession): MusicSession = session.copy(
     positionMs = session.positionMs.coerceIn(0, FOREIGN_TIME_MAX_MS),
     durationMs = session.durationMs.coerceIn(0, FOREIGN_TIME_MAX_MS),
 )
+
+/** The lock's position now ([positionNow]) within [FOREIGN_TIME_MAX_MS] (code QA L3: a playing session without a
+ * duration is carried forward without an end; Vibb music never gets near 100 hours). Home's card uses [positionNow]. */
+fun lockPositionNow(session: MusicSession, nowElapsedMs: Long): Long = positionNow(session, nowElapsedMs).coerceAtMost(FOREIGN_TIME_MAX_MS)

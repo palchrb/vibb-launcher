@@ -625,9 +625,9 @@ class LockMediaGuardTest {
             assertFalse("MusicLockPanel must not use $forbidden", code.contains(forbidden))
         }
         val calls = Regex("MusicSessions\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("addListener", "removeListener", "reading", "lockUsable", "Live", "playPause", "next", "previous"), calls)
+        assertEquals(setOf("addListener", "removeListener", "reading", "lockUsableApps", "lockGeneration", "Live", "playPause", "next", "previous"), calls)
         // 2026-11-04: any allowed app's session - the buttons act only on the picked one's controller.
-        for (button in listOf("playPause(activity, picked?.controller, session)", "previous(activity, picked?.controller)", "next(activity, picked?.controller)")) {
+        for (button in listOf("playPause(activity, p.controller, session)", "previous(activity, it.controller)", "next(activity, it.controller)")) {
             assertTrue(button, code.contains(button))
         }
         // Design 28: the listening window only narrows what shows - its stamps are read, never written.

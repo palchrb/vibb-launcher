@@ -48,8 +48,10 @@ class LockSessionPickTest {
         val vibbPlayedLately = Listening(BootStamp(now.elapsedMs - 1, boot), null)
         assertNull("Vibb music's end of play keeps no other app",
             picked(listOf(other("org.player", SessionPlay.PAUSED, changedAt = now.elapsedMs - MUSIC_LINGER_MS)), vibbPlayedLately))
-        assertEquals("a fresh headset counts for every app", "org.player",
-            picked(listOf(other("org.player", SessionPlay.PAUSED, changedAt = 0)), Listening(null, BootStamp(now.elapsedMs - 1, boot))))
+        val headset = Listening(null, BootStamp(now.elapsedMs - 1, boot))
+        assertNull("a fresh headset brings no old paused session of another app back (code QA L5)",
+            picked(listOf(other("org.player", SessionPlay.PAUSED, changedAt = now.elapsedMs - MUSIC_LINGER_MS)), headset))
+        assertEquals("Vibb music keeps the headset window", "me.vibb.music", picked(listOf(vibb(SessionPlay.PAUSED)), headset))
         assertEquals("a paused app inside its window beats Vibb music paused outside its own", "org.player",
             picked(listOf(vibb(SessionPlay.PAUSED), other("org.player", SessionPlay.PAUSED))))
     }
@@ -70,6 +72,10 @@ class LockSessionPickTest {
     @Test
     fun `another app's text is one cut line and its times are bounded`() {
         assertEquals("Line one line two", foreignText("  Line one\nline\ttwo\u0000"))
+        assertEquals("bidi controls, separators and format characters are spaces (code QA L2)", "a b c d e f",
+            foreignText("a\u202Eb\u2066c\u2028d\u200Be\u2029f"))
+        assertEquals("a pile of combining marks is cut to three", "e\u0301\u0301\u0301x", foreignText("e" + "\u0301".repeat(100) + "x"))
+        assertEquals("ordinary marks stay", "Tiếng Việt", foreignText("Tiếng Việt"))
         assertNull(foreignText(" \n "))
         assertEquals(FOREIGN_TEXT_MAX, foreignText("x".repeat(10_000))!!.length)
         val emoji = "a".repeat(FOREIGN_TEXT_MAX - 1) + "🎵"
@@ -77,5 +83,7 @@ class LockSessionPickTest {
         val bogus = foreignSession(MusicSession("org.player", SessionPlay.PLAYING, null, "t", Long.MAX_VALUE, 0, 1f, -5))
         assertEquals(FOREIGN_TIME_MAX_MS, bogus.positionMs)
         assertEquals(0L, bogus.durationMs)
+        val stream = MusicSession("org.player", SessionPlay.PLAYING, null, "t", 0, 1, 4f, 0)
+        assertEquals("a carried-forward stream stops at the bound (code QA L3)", FOREIGN_TIME_MAX_MS, lockPositionNow(stream, nowElapsedMs = 5 * 24 * 3_600_000L))
     }
 }

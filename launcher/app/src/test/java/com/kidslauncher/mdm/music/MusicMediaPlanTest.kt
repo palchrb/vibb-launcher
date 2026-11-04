@@ -288,11 +288,11 @@ class MusicSuspensionGuardTest {
             assertFalse(source.contains("PLAYBACK_TYPE"))
         }
         // Home's pick is the first Vibb music session (by name and signer); the lock's art is its pick's (2026-11-04).
-        assertTrue(sessions.contains("Watched(c, app != null && MusicTrust.trusted(app, c.packageName))"))
+        assertTrue(sessions.contains("(app != null && MusicTrust.trusted(app, c.packageName)).let { vibb ->"))
         assertTrue(sessions.contains("val music = watched.firstOrNull { it.vibb }"))
-        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(this@Watched, newArt = true)"))
+        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) {\n                newMetadata(metadata)"))
         assertTrue(lock.contains("val art = picked?.art"))
-        assertTrue(lock.contains("val position = positionNow(s, SystemClock.elapsedRealtime())"))
+        assertTrue(lock.contains("val position = lockPositionNow(s, SystemClock.elapsedRealtime())"))
         // a room's poll-anchored position: PLAYING from the poll's measuredAt, paused stands still
         val room = MusicSession("me.vibb.music", SessionPlay.PLAYING, "Abels tårn", "Episode 12", 120_000, 50_000, 1f, 1_800_000)
         assertEquals(125_000, positionNow(room, nowElapsedMs = 55_000))
