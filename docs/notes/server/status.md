@@ -1,5 +1,7 @@
 # Server notes: status
 
+> **Gone since server 0.67.0:** the root watcher (`kid-phone-server-updater`, `actions.sh`, `watcher.sh`), its schema check and every root action described below - the server never acts on its host (`server/CLAUDE.md`, "The server never acts on its host"; DEPLOY.md, "Updating"). What follows is history.
+
 Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the rest is' lists every note.
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet

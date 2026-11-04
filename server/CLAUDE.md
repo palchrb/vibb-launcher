@@ -132,7 +132,7 @@ No prior programming experience - build features directly rather than explaining
   helst på host", "jeg ønsker å gjøre ting på host selv"). No root helper, no request file, no update/restart/apt/
   Tailscale/reboot/format button, no OS or app-update schedule, no read of the host's state (apt, `tailscale version`,
   `/var/run/reboot-required`, `/sys/block`, mounts): Settings › Software Updates shows versions only and how the owner
-  updates (`handlers::updates`). Until server 0.66 a root watcher (`kid-phone-server-updater.path`, `actions.sh`,
+  updates (`handlers::updates`). Since server 0.67.0; through 0.66 a root watcher (`kid-phone-server-updater.path`, `actions.sh`,
   `watcher.sh`), a root scheduler (`scheduler.sh` reading `data/schedule.conf`) and a root backup copy to a USB drive
   (`backup_sync.sh`) did the PWA's bidding, paired by `security::REQUIRED_WATCHER_SCHEMA`; all of it is gone, and
   `remove_host_helpers` (the same text in install.sh and update.sh, `tests::deploy_scripts`) removes them from an old
@@ -171,8 +171,8 @@ No prior programming experience - build features directly rather than explaining
   `x86_64`/`amd64`, anything else refused) equal and matching the release's two tarballs
   (`the_scripts_pick_the_tarball_for_the_machine`).
 - **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user. The only
-  root scripts left are install.sh and update.sh, run by the owner: they read nothing in `data/` but a version string
-  (`installed_version`, pattern-checked, for the oldest installs), copy only plain database files out of it
+  root scripts left are install.sh and update.sh, run by the owner: they read nothing in `data/` (the installed
+  version is root's, `/var/lib/kid-phone-server/installed_version`; security QA L2), copy only plain database files out of it
   (`update.sh`'s backup, `cp -P` past a symlink check), and `chmod` in it only as the service user (`runuser`). The
   backup form still accepts only `HH:MM` times (`security::valid_clock_time`, 400 and nothing written otherwise).
   A restore is the server's own (`startup::apply_restore_request` at the start, from `data/restore_request`: the

@@ -42,7 +42,8 @@
                     <p>{{ self.t("settings.updates.docker_backup") }}</p>
                     {% else %}
                     <p>{{ self.t("settings.updates.over_ssh") }}</p>
-                    <pre><code>{{ update_command }}</code></pre>
+                    <pre><code>{{ self.t("settings.updates.update_command") }}</code></pre>
+                    {% if let Some(repo) = other_repo %}<p data-repo="other">{{ self.tp("settings.updates.other_repo", [("repo", repo.as_str())]) }}</p>{% endif %}
                     {% endif %}
                 </div>
             </details>

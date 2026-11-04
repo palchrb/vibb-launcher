@@ -374,14 +374,40 @@ impl BackupsTemplate {
     }
 
     /// On a systemd install: the command that restores `file` (the same restore as the
-    /// container's, `startup::apply_restore_request`, at the service's next start; DEPLOY.md).
-    fn restore_command(&self, file: &str) -> String {
-        crate::i18n::t_params(
-            self.lang,
-            "settings.backups.restore_command",
-            &[("file", file)],
-        )
+    /// container's, `startup::apply_restore_request`, at the service's next start; DEPLOY.md), or
+    /// `None` for a name a shell would read - the owner pastes it into a root-capable shell
+    /// (security QA M1): the page then says to rename the file.
+    fn restore_command(&self, file: &str) -> Option<String> {
+        restore_command(self.lang, file)
     }
+}
+
+/// [BackupsTemplate::restore_command]: only for a [shell_plain_backup_name], and quoted anyway.
+pub(crate) fn restore_command(lang: Lang, file: &str) -> Option<String> {
+    shell_plain_backup_name(file).then(|| {
+        crate::i18n::t_params(
+            lang,
+            "settings.backups.restore_command",
+            &[("file", &shell_quote(file))],
+        )
+    })
+}
+
+/// `^backup-[0-9A-Za-z._-]+\.zip$`: nothing a shell expands, splits or substitutes.
+pub(crate) fn shell_plain_backup_name(name: &str) -> bool {
+    name.strip_prefix("backup-")
+        .and_then(|rest| rest.strip_suffix(".zip"))
+        .is_some_and(|middle| {
+            !middle.is_empty()
+                && middle
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        })
+}
+
+/// `value` in single quotes, each `'` in it as `'\''`: one word to a POSIX shell, never expanded.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// What a form on Backups sent back, besides the page.
@@ -955,7 +981,7 @@ mod tests {
                 assert!(!html.to_lowercase().contains(gone), "{gone}: {html}");
             }
             let restore = "action=\"/backups/backup-20261013-030000.zip/restore#backups\"";
-            let command = "echo backup-20261013-030000.zip | sudo -u kidphone tee \
+            let command = "echo &#39;backup-20261013-030000.zip&#39; | sudo -u kidphone tee \
                            /opt/kid-phone-server/data/restore_request";
             assert_eq!(html.contains(restore), docker, "docker: {docker}");
             assert_eq!(html.contains(command), !docker, "docker: {docker}");
@@ -975,5 +1001,76 @@ mod tests {
         }
         assert_eq!(Done::parse("nonsense"), None);
         assert_eq!(Done::parse("format"), None, "an old bookmark shows nothing");
+    }
+
+    /// Security QA M1: the systemd restore command is pasted into a root-capable shell, so it is
+    /// shown only for a plain `backup-*.zip` name, and the name is single-quoted anyway; any other
+    /// name (a browser's "(1)", a space, `$(...)`, a backtick, a glob, a quote) shows the rename note.
+    #[test]
+    fn a_restore_command_never_hands_a_shell_a_hostile_name() {
+        let plain = [
+            "backup-20261104-020000.zip",
+            "backup-20261104-020000-uploaded-12.zip",
+            "backup-a_b.c.zip",
+        ];
+        let hostile = [
+            "backup-20261104-020000 (1).zip",
+            "backup-two words.zip",
+            "backup-$(touch pwned).zip",
+            "backup-`touch pwned`.zip",
+            "backup-*.zip",
+            "backup-it's.zip",
+            "backup-x;touch pwned.zip",
+            "backup-.zip",
+            "backup-x.zip.txt",
+        ];
+        for name in plain {
+            assert!(shell_plain_backup_name(name), "{name}");
+            let command = restore_command(Lang::En, name).unwrap();
+            assert!(
+                command.starts_with(&format!("echo '{name}' | sudo -u kidphone tee ")),
+                "{command}"
+            );
+        }
+        for name in hostile {
+            assert!(!shell_plain_backup_name(name), "{name}");
+            assert_eq!(restore_command(Lang::En, name), None, "{name}");
+        }
+        // The quoting alone already makes each one a single word that bash prints back unchanged.
+        let sandbox = tempfile::tempdir().unwrap();
+        for name in plain.iter().chain(&hostile) {
+            let output = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(format!("printf %s {}", shell_quote(name)))
+                .current_dir(sandbox.path())
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), *name);
+        }
+        assert!(!sandbox.path().join("pwned").exists());
+        // The page: the command for a plain name, the rename note for the others.
+        let html = BackupsTemplate {
+            lang: Lang::En,
+            title: "Backups".to_string(),
+            backups: [plain[0], hostile[0], hostile[2]]
+                .iter()
+                .map(|name| BackupRow {
+                    filename: name.to_string(),
+                    size_display: "1 KB".to_string(),
+                    when: "now".to_string(),
+                    exact: String::new(),
+                })
+                .collect(),
+            flash: None,
+            restore_refused: None,
+            schedule: BackupScheduleConfig::defaults(),
+            weekdays: &WEEKDAYS,
+            docker: false,
+        }
+        .render()
+        .unwrap();
+        assert_eq!(html.matches("<pre><code>echo ").count(), 1, "{html}");
+        assert_eq!(html.matches("data-restore=\"rename\"").count(), 2, "{html}");
+        assert!(!html.contains("touch pwned).zip | sudo"));
     }
 }

@@ -26,7 +26,7 @@ This downloads the newest server release (the newest `server-vX.Y.Z` release of 
 
 **The server never acts on its host.** It runs as an unprivileged user and asks nothing of root: there is no update
 button, no restart, no system or Tailscale updates, no reboot, no drive formatting and no schedule for any of it
-(removed 2026-11-04, the user: "jeg ønsker å gjøre ting på host selv"). You update the server (below, "Updating"),
+(removed in server 0.67.0, 2026-11-04, the user: "jeg ønsker å gjøre ting på host selv"). You update the server (below, "Updating"),
 and keep the system and Tailscale updated yourself (`apt upgrade`, `tailscale update`, or unattended-upgrades). The
 server makes its backups itself, in its own `data/backups/` ("Backups").
 
@@ -456,6 +456,11 @@ sudo systemctl start kid-phone-server
 Anything the devices reported after that backup (status, locations) is lost. The server never updates itself, so
 nothing installs the bad version again until you run `update.sh`.
 
+Rolling back below 0.67.0 brings back a server whose Software Updates and Backups buttons (Update, Restart, Reboot,
+Format, Restore) only write `data/update_requested`, which nothing reads any more: they do nothing, so update and
+restore by hand as above. `/var/lib/kid-phone-server/installed_version` still names 0.67.0 or later, so a later
+`update.sh` to a 0.66.x release needs `KPS_ALLOW_DOWNGRADE=1`.
+
 ## Launcher provisioning settings
 
 The server needs to know which launcher build to provision. These live in `/opt/kid-phone-server/.env` (restart the
@@ -804,10 +809,11 @@ erases both at once. **Backups** (and the pre-migration and pre-restore copies) 
 Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one on demand, the Schedule group sets automatic ones; they stay in `data/backups/` on the server - the server never copies anything off the machine, so download one every so often (or copy `/opt/kid-phone-server/data/backups/` elsewhere yourself). Each backup in the list has Download, Restore… and Delete…; Upload a Backup… adds one from elsewhere. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
 
 **Restoring a backup** on a systemd install is done over SSH (the server never restarts itself): its Restore… in the
-list shows the command for that file, the same as
+list shows the command for that file - only for a plain name (`backup-` and letters, digits, `.`, `_`, `-`, then
+`.zip`; rename a file like `backup-... (1).zip` first), and quoted - the same as
 
 ```
-echo backup-20261104-020000.zip | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request
+echo 'backup-20261104-020000.zip' | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request
 sudo systemctl restart kid-phone-server.service
 ```
 

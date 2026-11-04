@@ -483,13 +483,25 @@ fn the_updates_page_says_how_to_update() {
     assert!(pi.contains("Version 0.24.0 is out"));
     let (summary, panel) = how(&pi);
     assert!(!summary.contains("sudo"), "{summary}");
+    // Security QA L1: always the project's command; another SERVER_RELEASE_REPO is named, never used.
+    let project = "raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh \
+                   &#38;&#38; sudo bash update.sh";
+    assert!(panel.contains(project), "{panel}");
+    assert!(!panel.contains("KPS_REPO"), "{panel}");
     assert!(
-        panel.contains(
-            "raw.githubusercontent.com/someone/vibb-launcher/main/server/deploy/update.sh \
-         &#38;&#38; sudo KPS_REPO=someone/vibb-launcher bash update.sh"
-        ),
+        panel.contains("looks for releases in someone/vibb-launcher (SERVER_RELEASE_REPO in .env)"),
         "{panel}"
     );
+    let own = updates::page(
+        false,
+        app_data(Some("v0.24.0"), true),
+        crate::config::DEFAULT_SERVER_RELEASE_REPO,
+        crate::i18n::Lang::En,
+    )
+    .0;
+    let (_, own_panel) = how(&own);
+    assert!(own_panel.contains(project));
+    assert!(!own.contains("data-repo=\"other\""));
     // Security review L10: downloaded to a file, never piped into a root shell.
     assert!(!panel.contains("| sudo"));
     assert!(!pi.contains("HANDY_VERSION"));

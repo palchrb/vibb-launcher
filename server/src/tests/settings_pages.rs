@@ -1401,7 +1401,7 @@ async fn backups_answer_in_their_groups() {
     );
     assert!(
         item.contains(&format!(
-            "echo {file} | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request"
+            "echo &#39;{file}&#39; | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request"
         )),
         "{item}"
     );

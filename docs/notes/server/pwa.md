@@ -733,8 +733,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`system_update::ServerRelease`, read at start and in the background when an hour old - "Checking…", "Couldn't
   check", "Version X is out" or "Up to date"), and How to Update behind its ⓘ: in Docker the image pull (Watchtower by
   itself, or `docker compose pull && docker compose up -d`, and the version for a pinned `HANDY_VERSION`), on a systemd
-  install the `update.sh` command for `SERVER_RELEASE_REPO` (`updates::update_command`, the catalog's
-  `settings.updates.update_command`). Its footer says the server never changes anything on its machine. No form, no
+  install the project's `update.sh` command (`settings.updates.update_command`, always `palchrb/vibb-launcher`; a
+  `SERVER_RELEASE_REPO` that differs is named in a line under it, never put in the command - `.env` is the service
+  user's, security QA L1). A backup's systemd restore command is shown only for a plain
+  `backup-[0-9A-Za-z._-]+.zip` name, single-quoted (`backups::shell_plain_backup_name`, `shell_quote`; any other name
+  says to rename the file first, security QA M1). Its footer says the server never changes anything on its machine. No form, no
   host state read (no apt, `tailscale version` or reboot flag), no flash; an old `?done=` is ignored. Diagnostics ›
   Page timing stays. The update/restart/OS/Tailscale/reboot buttons, both schedules, the busy banner and "Run the
   installer again" (`security::REQUIRED_WATCHER_SCHEMA`) are gone, with their routes.

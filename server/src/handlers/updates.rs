@@ -9,7 +9,7 @@ use axum::response::{Html, IntoResponse};
 
 use crate::AppState;
 use crate::handlers::system_update;
-use crate::i18n::{Lang, Words, t, t_params};
+use crate::i18n::{Lang, Words, t};
 
 #[derive(Template)]
 #[template(path = "updates.html")]
@@ -21,8 +21,10 @@ struct UpdatesTemplate {
     docker: bool,
     /// The newer release's version ("0.67.0"), when one is out: a pinned `HANDY_VERSION` is set to it.
     newer_version: Option<String>,
-    /// The command that updates a systemd install (`update.sh`, from the configured repo).
-    update_command: String,
+    /// `SERVER_RELEASE_REPO` when it isn't the project's (security QA L1): the command shown stays the
+    /// project's, and a line names the other repo - `.env` is the service user's, so the page never
+    /// quietly points the owner's root shell at it.
+    other_repo: Option<String>,
 }
 crate::i18n::words!(UpdatesTemplate);
 
@@ -45,18 +47,12 @@ pub(crate) fn page(
             app,
             docker,
             newer_version,
-            update_command: update_command(lang, repo),
+            other_repo: (repo != crate::config::DEFAULT_SERVER_RELEASE_REPO)
+                .then(|| repo.to_string()),
         }
         .render()
         .unwrap(),
     )
-}
-
-/// The `update.sh` command for `repo` (`config::ForkConfig::server_release_repo`, `owner/repo`):
-/// downloaded to a file and then run, never piped into a root shell (security review L10), from
-/// `main`; the `KPS_REPO=` prefix keeps it on the same repo when that isn't the script's default.
-pub(crate) fn update_command(lang: Lang, repo: &str) -> String {
-    t_params(lang, "settings.updates.update_command", &[("repo", repo)])
 }
 
 /// The page. An old bookmark's `?done=` (from when the page had buttons) is ignored.

@@ -112,11 +112,12 @@ version_gt() {
 }
 
 # The installed server version (vX.Y.Z), or nothing if unknown: install.sh/update.sh record it in
-# VERSION_FILE; older installs have it in OLD_UPDATER_DIR, the oldest only in data/watcher_version
-# (written by install.sh at install time; read as a version string, never run).
+# VERSION_FILE, older installs in OLD_UPDATER_DIR - both root's. Nothing in data/ is read (security
+# QA L2: the service user's file could hang root or block every later update); an install with
+# neither file skips the downgrade check.
 installed_version() {
     local f v
-    for f in "$VERSION_FILE" "$OLD_UPDATER_DIR/installed_version" "$INSTALL_DIR/data/watcher_version"; do
+    for f in "$VERSION_FILE" "$OLD_UPDATER_DIR/installed_version"; do
         [ -f "$f" ] || continue
         v="$(head -c 32 "$f" | tr -d '\n')"
         if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
