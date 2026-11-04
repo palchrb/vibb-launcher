@@ -316,17 +316,12 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
-<<<<<<< HEAD
-- **Updating**: the Updates page says when a version is out. Set `HANDY_VERSION=X.Y.Z` in `.env`, then
-  `docker compose pull && docker compose up -d`. Before migrating the database, the new version copies it to
-  `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
-=======
 - **Updating**: by pulling a new image - [Watchtower](https://containrrr.dev/watchtower/) does it by itself for an
   image tag that moves (`HANDY_VERSION=latest`), or by hand: `docker compose pull && docker compose up -d` (with
   `HANDY_VERSION` pinned, set it to the new `X.Y.Z` first). Settings › Software Updates shows this server's version
   and the newest release, and says how; it never updates anything itself. Before migrating the database, the new
-  version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept).
->>>>>>> origin/no-host-actions
+  version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps
+  what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
 - **Rolling back**: set the old `HANDY_VERSION`, put the pre-migration copy back, start:
 
   ```
