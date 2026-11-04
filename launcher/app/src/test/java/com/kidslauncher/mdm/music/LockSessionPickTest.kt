@@ -75,15 +75,43 @@ class LockSessionPickTest {
 
     @Test
     fun `only music, video and browsers are media apps for the lock - the user, 2026-11-04`() {
-        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_AUDIO, browser = false))
-        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_VIDEO, browser = false))
-        assertTrue("a browser, whatever it declares", lockMediaApp(ApplicationInfo.CATEGORY_UNDEFINED, browser = true))
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_AUDIO, browser = false, chosen = false))
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_VIDEO, browser = false, chosen = false))
+        assertTrue("a browser, whatever it declares", lockMediaApp(ApplicationInfo.CATEGORY_UNDEFINED, browser = true, chosen = false))
         for (category in listOf(
             ApplicationInfo.CATEGORY_SOCIAL, ApplicationInfo.CATEGORY_GAME, ApplicationInfo.CATEGORY_UNDEFINED, ApplicationInfo.CATEGORY_PRODUCTIVITY,
             ApplicationInfo.CATEGORY_NEWS, ApplicationInfo.CATEGORY_MAPS, ApplicationInfo.CATEGORY_IMAGE, ApplicationInfo.CATEGORY_ACCESSIBILITY,
         )) {
-            assertFalse("category $category", lockMediaApp(category, browser = false))
+            assertFalse("category $category", lockMediaApp(category, browser = false, chosen = false))
         }
+    }
+
+    /** 2026-11-04: the parent's "Show as a media player on the lock screen" (the policy's `lock_media_apps`) counts an
+     * app with any category - AntennaPod declares none (E9's M2) - read from the last accepted policy at each look-up. */
+    @Test
+    fun `an app the parent switched on is a media app for the lock`() {
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_UNDEFINED, browser = false, chosen = true))
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_SOCIAL, browser = false, chosen = true))
+        fun of(json: String) = lockMediaAppsOf(kotlinx.serialization.json.Json.parseToJsonElement(json))
+        assertEquals(setOf("de.danoeh.antennapod"), of("""["de.danoeh.antennapod", "not a package", 7, null, {"package": "x.y"}]"""))
+        assertEquals(emptySet<String>(), of("[]"))
+        assertEquals(emptySet<String>(), of("""{"apps": ["de.danoeh.antennapod"]}"""))
+        assertEquals(emptySet<String>(), lockMediaAppsOf(null))
+        val sessions = java.io.File("src/main/java/com/kidslauncher/mdm/music/MusicSessions.kt").readText()
+        assertTrue(sessions.contains("lockMediaAppsOf(currentPolicyDecision().policy?.lockMediaApps)"))
+        assertTrue(sessions.contains("lockMediaApp(category, browser = pkg in browsers, chosen = pkg in chosen)"))
+    }
+
+    /** E9b: another app's skip buttons show only when its session advertises that skip; Vibb music's always. */
+    @Test
+    fun `the tile's skips follow the session's advertised actions`() {
+        val both = PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_PAUSE
+        assertTrue(lockSkipShown(vibb = true, 0L, next = true) && lockSkipShown(vibb = true, 0L, next = false))
+        assertTrue(lockSkipShown(vibb = false, both, next = true) && lockSkipShown(vibb = false, both, next = false))
+        assertFalse("Fennec: play and pause only", lockSkipShown(vibb = false, PlaybackState.ACTION_PLAY_PAUSE, next = true))
+        assertFalse(lockSkipShown(vibb = false, 0L, next = false))
+        assertTrue(lockSkipShown(vibb = false, PlaybackState.ACTION_SKIP_TO_NEXT, next = true))
+        assertFalse(lockSkipShown(vibb = false, PlaybackState.ACTION_SKIP_TO_NEXT, next = false))
     }
 
     /** QA M2 of lock-media-apps-2: a browser opens both a plain https and a plain http link; an app with only a host-less

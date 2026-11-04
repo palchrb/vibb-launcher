@@ -91,6 +91,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `CAMERA` (`setPermissionGrantState` DENIED, never GRANTED) outside the pause and the override, waits for a call's
   end when the app holds the camera, and works out the special accesses each app wants from its own manifest - the
   server sends none of them.
+- **The policy's `lock_media_apps`** (2026-11-04, `app_permissions::lock_media_apps`, from `device_lock_media_apps`,
+  migration 0127): the package names the parent switched on as media players on the lock screen on this phone (Device ›
+  Apps › Permissions), sorted, always a list, a failing read a 500. The launcher counts them as lock media apps beside
+  its own rule (category audio or video, or a browser): their playback shows on the lock's tile, as those apps' does.
 - **The report's `installed_apps[].access`** (`app_permissions::AppAccess`): `camera` (`requested` | `admin_denied`,
   only for third-party apps that ask for it) and `manage_media`, `exact_alarm`, `write_settings`, `usage_access`,
   `full_screen` (`granted` | `denied` | `unknown`), only the keys the app declares; anything else is dropped at the

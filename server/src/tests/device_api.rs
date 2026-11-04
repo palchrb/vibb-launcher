@@ -190,6 +190,8 @@ async fn db_error_is_500_not_default() {
         "device_pending_uninstalls",
         // Design 68: a lost list would hand the camera back.
         "device_app_permissions",
+        // 2026-11-04: the phone keeps its last list rather than an empty one.
+        "device_lock_media_apps",
         // Design 69: a lost hide rule would show what the parent hid.
         "device_calendar_rules",
         "device_calendars",
@@ -329,6 +331,7 @@ async fn policy_json_keys_snapshot() {
             "launcher_ui",
             "location_policy",
             "lock_glance",
+            "lock_media_apps",
             "lock_task_features",
             "music",
             "notification_auto_cancel",
@@ -363,6 +366,7 @@ async fn policy_json_keys_snapshot() {
         "launcher_ui",
         "location_policy",
         "lock_glance",
+        "lock_media_apps",
         "lock_task_features",
         "music",
         "notification_auto_cancel",
@@ -582,6 +586,10 @@ async fn policy_json_keys_snapshot() {
         denied["app_permissions"],
         serde_json::json!([{"package_name": "com.whatsapp", "camera": "deny"}])
     );
+
+    // 2026-11-04: always a list of package names (`[]` for a fresh phone), the launcher's `lockMediaAppsOf` shape.
+    assert_eq!(object["lock_media_apps"], serde_json::json!([]));
+    assert_eq!(denied["lock_media_apps"], serde_json::json!([]));
 }
 
 #[tokio::test]

@@ -1406,6 +1406,9 @@
   "apps.perms.camera_help": "Off: {app} can't use the camera - a video call or a QR scan stops working. Turning it off closes {app} if it was allowed the camera.",
   "apps.perms.how": "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}",
   "apps.perms.how_alarm": "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}, then open {app} once while restrictions are paused",
+  "apps.perms.lock_media": "Show as a media player on the lock screen",
+  "apps.perms.lock_media_help": "Music, video and browser apps always show. Turn on for other apps that play audio, such as podcast apps.",
+  "apps.perms.lock_media_full": "This phone already has 200 apps shown as media players on the lock screen - turn some off first.",
 
   "devices.add.name_empty": "Give the phone a name.",
   "devices.add.name_long": "Use at most 40 characters.",

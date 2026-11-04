@@ -260,6 +260,7 @@ object MusicSessions {
             positionAtElapsedMs = state?.lastPositionUpdateTime ?: 0,
             speed = state?.playbackSpeed ?: 1f,
             durationMs = meta.durationMs,
+            actions = state?.actions ?: 0L,
         )
         // S-L8: another app's metadata is untrusted - its texts cut, its times bounded.
         return if (vibb) session else foreignSession(session)
@@ -283,7 +284,8 @@ object MusicSessions {
     /**
      * The apps of [live] whose session the lock may show and act on (`lockAppUsable`): not suspended;
      * another app also not hidden by the device owner and on the allowlist when the phone has one (the
-     * last accepted policy's, less the relock's blocked apps - read once per call). Looked up at the
+     * last accepted policy's, less the relock's blocked apps - read once per call), and a media app
+     * (`lockMediaApp`: its category, a browser, or the same policy's `lock_media_apps`). Looked up at the
      * lock's start, at a change of the sessions list or a suspension ([lockGeneration]) and at a tap -
      * never at a playback update or a tick; any failure is "no".
      */
@@ -292,13 +294,14 @@ object MusicSessions {
         val allowlist by lazy { effectiveAllowlist(currentPolicyDecision().policy?.allowlist, WindowRelock.blockedPackages(context)) }
         val dpm by lazy { context.getSystemService(DevicePolicyManager::class.java) }
         val browsers by lazy { browserPackages(context) }
+        val chosen by lazy { lockMediaAppsOf(currentPolicyDecision().policy?.lockMediaApps) }
         return live.filter { l ->
             val pkg = l.session.packageName
             usable(context, pkg) && (
                 l.vibb || try {
                     val hidden = dpm.isApplicationHidden(ComponentName(context, MdmDeviceAdminReceiver::class.java), pkg)
                     val category = context.packageManager.getApplicationInfo(pkg, 0).category
-                    val media = lockMediaApp(category, browser = pkg in browsers)
+                    val media = lockMediaApp(category, browser = pkg in browsers, chosen = pkg in chosen)
                     lockAppUsable(pkg, vibb = false, suspended = false, hidden = hidden, allowlist = allowlist, ownPackage = context.packageName, mediaApp = media)
                 } catch (e: Exception) {
                     false

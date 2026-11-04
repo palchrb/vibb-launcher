@@ -1979,8 +1979,11 @@ async fn apps_forms_return_to_their_rows() {
     let (emil, _) = app.enrolled_device("Emil").await;
     let page = device_page(id, Section::Apps);
     let html = app.get_page(&page, &cookie).await.text();
-    let (mut toggles, mut names, mut updates) = (0, 0, 0);
-    for (action, hidden) in forms(&html) {
+    let (mut toggles, mut names, mut updates, mut lock_media) = (0, 0, 0, 0);
+    // The lock media switches first: a switch below turns its app off, and the Permissions with it.
+    let mut all = forms(&html);
+    all.sort_by_key(|(action, _)| !action.contains("/apps/lock-media"));
+    for (action, hidden) in all {
         let field = |name: &str| {
             hidden
                 .iter()
@@ -2020,6 +2023,19 @@ async fn apps_forms_return_to_their_rows() {
             let row = format!("app-{}", field("package_name").unwrap());
             assert_eq!(action_fragment.as_deref(), Some(row.as_str()));
             row
+        } else if target == format!("/devices/{id}/apps/lock-media") {
+            // 2026-11-04: the lock screen's media switch, back to its open Permissions.
+            lock_media += 1;
+            let package = field("package_name").unwrap();
+            let anchor = format!("perms-{package}");
+            assert_eq!(action_fragment.as_deref(), Some(anchor.as_str()));
+            assert!(html.contains(&format!("id=\"{anchor}\"")));
+            let res = app
+                .request_form(Method::POST, &target, Some(&cookie), &sent)
+                .await;
+            assert_redirect(&res, &format!("{page}?perms={package}"), Some(&anchor));
+            app.assert_lands(&res, &cookie).await;
+            continue;
         } else if target == format!("/devices/{id}/app-updates") {
             updates += 1;
             assert_eq!(action_fragment.as_deref(), Some("downloads"));
@@ -2038,6 +2054,10 @@ async fn apps_forms_return_to_their_rows() {
         app.assert_lands(&res, &cookie).await;
     }
     assert_eq!((toggles, names, updates), (4, 2, 1));
+    assert!(
+        lock_media > 0,
+        "the allowed third-party apps' lock media switches"
+    );
 
     // Each did what it says: the clock and Element X off, the game and Notes on; two names; the
     // Wi-Fi switch off. All on Anna.
@@ -2145,10 +2165,13 @@ async fn the_permissions_form_returns_to_its_open_details() {
         html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")),
         "closed at first"
     );
-    assert!(
-        !html.contains("id=\"perms-org.example.plain\""),
-        "nothing to say: no details"
-    );
+    // Nothing reported: only the lock screen's media switch (2026-11-04), no camera.
+    let plain = html
+        .split("id=\"perms-org.example.plain\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</details>").next())
+        .expect("the plain app's details");
+    assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"camera\""));
     assert!(html.contains("Media management: not approved"));
     assert!(html.contains("App access › Element X: Media management"));
     let action = format!("/devices/{id}/apps/permissions#{anchor}");
@@ -2255,6 +2278,143 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .await
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+/// 2026-11-04: "Show as a media player on the lock screen" - a third-party allowed app's switch in its Permissions,
+/// back to the open details, sent as the policy's `lock_media_apps`; none for a preinstalled app; Vibb, Vibb music and
+/// Play's core refused at their row; the cap as the camera's.
+#[tokio::test]
+async fn the_lock_media_switch_returns_to_its_open_details() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let pod = "de.danoeh.antennapod";
+    app.post_status(
+        &token,
+        json!({
+            "installed_apps": [
+                { "package_name": pod, "label": "AntennaPod", "preinstalled": false },
+                { "package_name": "com.android.deskclock", "label": "Clock", "preinstalled": true },
+            ],
+        }),
+    )
+    .await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(format!("[\"{pod}\", \"com.android.deskclock\"]"))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = device_page(id, Section::Apps);
+    let html = app.get_page(&page, &cookie).await.text();
+    let anchor = format!("perms-{pod}");
+    assert!(html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")));
+    assert!(html.contains("Show as a media player on the lock screen"));
+    assert!(html.contains(&format!(
+        "action=\"/devices/{id}/apps/lock-media#{anchor}\""
+    )));
+    assert!(
+        !html.contains("id=\"perms-com.android.deskclock\""),
+        "preinstalled: no switch"
+    );
+
+    let target = format!("/devices/{id}/apps/lock-media");
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", pod), ("lock_media", "on")],
+        )
+        .await;
+    let back = format!("{page}?perms={pod}");
+    assert_redirect(&res, &back, Some(&anchor));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    app.assert_lands(&res, &cookie).await;
+    let html = app.get_page(&back, &cookie).await.text();
+    assert!(
+        html.contains(&format!("id=\"{anchor}\" open")),
+        "the details stay open"
+    );
+    assert!(html.contains("name=\"lock_media\" value=\"on\" checked"));
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(policy["lock_media_apps"], json!([pod]));
+
+    // Off: the field missing (an auto-saving checkbox).
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", pod)],
+        )
+        .await;
+    assert_redirect(&res, &back, Some(&anchor));
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(policy["lock_media_apps"], json!([]));
+
+    for package in [
+        "me.vibb.music",
+        "me.vibb.launcher",
+        "com.google.android.gms",
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &target,
+                Some(&cookie),
+                &[("package_name", package), ("lock_media", "on")],
+            )
+            .await;
+        assert_redirect(
+            &res,
+            &format!("{page}?notice=perms&app=app-{package}"),
+            Some(&format!("app-{package}")),
+        );
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", "not a package"), ("lock_media", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
+    for n in 0..crate::app_permissions::MAX_ROWS_PER_DEVICE {
+        sqlx::query("INSERT INTO device_lock_media_apps (device_id, package_name) VALUES (?, ?)")
+            .bind(id)
+            .bind(format!("org.example.app{n}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", pod), ("lock_media", "on")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("{page}?notice=lock_media_full&app=app-{pod}"),
+        Some(&format!("app-{pod}")),
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_lock_media_apps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, crate::app_permissions::MAX_ROWS_PER_DEVICE);
 }
 
 /// Design 68: at most `MAX_ROWS_PER_DEVICE` camera-off apps a phone - a new one past it is refused at its row and
@@ -3168,7 +3328,10 @@ async fn apps_from_the_apps_tab_go_back_there() {
     let from = format!("app:{element}");
     let html = get(format!("?from={from}")).await;
     let mut posted = 0;
-    for (action, hidden) in forms(&html) {
+    // The lock media switches first: a switch below turns its app off, and the Permissions with it.
+    let mut all = forms(&html);
+    all.sort_by_key(|(action, _)| !action.contains("/apps/lock-media"));
+    for (action, hidden) in all {
         let (target, fragment) = action.split_once('#').unwrap();
         let mut sent: Vec<(&str, &str)> = hidden
             .iter()
@@ -3177,10 +3340,17 @@ async fn apps_from_the_apps_tab_go_back_there() {
         if target.ends_with("/apps/display") {
             sent.extend([("label", "Mine"), ("icon", "chat"), ("color", "auto")]);
         }
+        // The lock screen's media switch returns to its Permissions, open (2026-11-04).
+        let params = match hidden.iter().find(|(k, _)| k == "package_name") {
+            Some((_, package)) if target.ends_with("/apps/lock-media") => {
+                format!("perms={package}&")
+            }
+            _ => String::new(),
+        };
         let res = app
             .request_form(Method::POST, target, Some(&cookie), &sent)
             .await;
-        assert_redirect(&res, &format!("{page}?from={from}"), Some(fragment));
+        assert_redirect(&res, &format!("{page}?{params}from={from}"), Some(fragment));
         app.assert_lands(&res, &cookie).await;
         let landed = app
             .get_page(res.location().unwrap().split('#').next().unwrap(), &cookie)

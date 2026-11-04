@@ -38,7 +38,8 @@ fun sessionPlay(state: Int?): SessionPlay = when (state) {
  * The music app's live session as the launcher reads it (`MediaSessionManager.getActiveSessions`
  * through the badge listener): [entry] is the library entry (the session's album), [item] the
  * episode, chapter or track (its title). [positionMs] was the position at elapsed realtime
- * [positionAtElapsedMs], moving at [speed] while playing.
+ * [positionAtElapsedMs], moving at [speed] while playing. [actions]: the `PlaybackState`'s advertised actions (0 for
+ * none or no state) - the lock tile's skip buttons for another app ([lockSkipShown]).
  */
 data class MusicSession(
     val packageName: String,
@@ -49,6 +50,7 @@ data class MusicSession(
     val positionAtElapsedMs: Long,
     val speed: Float,
     val durationMs: Long,
+    val actions: Long = 0L,
 ) {
     /** Playing or paused: there is something to show and control. */
     val live: Boolean get() = play != SessionPlay.STOPPED

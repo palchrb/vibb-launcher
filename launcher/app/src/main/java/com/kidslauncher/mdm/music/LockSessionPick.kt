@@ -3,6 +3,10 @@ package com.kidslauncher.mdm.music
 import android.content.pm.ApplicationInfo
 import android.media.session.PlaybackState
 import android.view.KeyEvent
+import com.kidslauncher.mdm.appdisplay.isValidPackageName
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 /*
  * The PIN lock's media tile for any allowed app (the user, 2026-11-04: "mediekontroller for andre apper, men kun for
@@ -86,7 +90,7 @@ const val TILE_FALLBACK_MS = 1_000L
  * device owner, and must be on the [allowlist] when the phone has one (null: no allowlist - an unmanaged phone; the
  * pause and the offline override lift the hiding, not this), and must be a [mediaApp] ([lockMediaApp]: the user,
  * 2026-11-04 - "bare for musikk apper og evt videoer og musikk som spilles av i browser"; a messenger's voice message
- * never shows on the lock).
+ * never shows on the lock; or one the parent switched on, 2026-11-04).
  */
 fun lockAppUsable(
     pkg: String,
@@ -105,11 +109,32 @@ fun lockAppUsable(
 /**
  * Another app is a media app for the lock: its manifest declares `android:appCategory` audio or video
  * (`ApplicationInfo.category`), or it is a web browser ([browser]: it opens a plain https link no app claims - music or
- * a video playing in the browser). Every other category - social (messengers), games, productivity, maps, news, image,
- * accessibility - and an undefined one never shows.
+ * a video playing in the browser), or the parent switched it on ([chosen]: the policy's `lock_media_apps`,
+ * [lockMediaAppsOf] - "Show as a media player on the lock screen", 2026-11-04, for a podcast app that declares no
+ * category, AntennaPod in E9's M2). Every other category - social (messengers), games, productivity, maps, news, image,
+ * accessibility - and an undefined one never shows unless chosen.
  */
-fun lockMediaApp(category: Int, browser: Boolean): Boolean =
-    browser || category == ApplicationInfo.CATEGORY_AUDIO || category == ApplicationInfo.CATEGORY_VIDEO
+fun lockMediaApp(category: Int, browser: Boolean, chosen: Boolean): Boolean =
+    chosen || browser || category == ApplicationInfo.CATEGORY_AUDIO || category == ApplicationInfo.CATEGORY_VIDEO
+
+/**
+ * The policy's `lock_media_apps` (2026-11-04): the packages the parent switched on as media players on the lock. Only
+ * valid package names; anything else - not a list, a wrong type, null - is none (a parent's "on" can't widen anything
+ * but the tile).
+ */
+fun lockMediaAppsOf(element: JsonElement?): Set<String> =
+    (element as? JsonArray).orEmpty().mapNotNull { item ->
+        (item as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { isValidPackageName(it) }
+    }.toSet()
+
+/**
+ * Whether the full tile shows its previous or next button ([next]) for the picked session: always for Vibb music (as
+ * before); for another app only when its `PlaybackState` [advertised] that skip (`ACTION_SKIP_TO_PREVIOUS` /
+ * `_NEXT`; E9b: Fennec's session, which can't skip, showed both and a tap did nothing). The hidden button keeps its
+ * place, so play/pause stays in the middle.
+ */
+fun lockSkipShown(vibb: Boolean, advertised: Long, next: Boolean): Boolean =
+    vibb || advertised and (if (next) PlaybackState.ACTION_SKIP_TO_NEXT else PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0L
 
 /**
  * The web browsers (QA M2 of lock-media-apps-2): the apps that open a plain https link no app claims ([https]) and
