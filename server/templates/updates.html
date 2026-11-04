@@ -6,249 +6,49 @@
 <body>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
-{% import "partials/group_flash.html" as group_flash %}
 <main class="container">
     <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
     <h1 class="page-title">{{ self.t("settings.updates.title") }}</h1>
 
-    {#- Every form renders this page in its answer with the result in its own group, and posts to
-        that group's fragment, so the answer lands where the parent was (design 31 §5.1). Update,
-        Restart, Install and Restart Pi are <details> confirms. -#}
-    {% if !docker && app.watcher_needs_update %}
-    <div class="attention attention-action" data-warning="installer">
-        <div class="attention-text">{{ self.t("settings.updates.reinstall") }}<div class="attention-sub">{% if app.watcher_version.is_some() %}{{ self.t("settings.updates.scripts_old") }}{% else %}{{ self.t("settings.updates.scripts_unknown") }}{% endif %}
-            <details class="info">
-                <summary aria-label="{{ self.t("settings.updates.reinstall_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("settings.updates.over_ssh") }}</p><pre><code>{{ app.reinstall_hint }}</code></pre></div>
-            </details></div></div>
-    </div>
-    {% endif %}
-
+    {#- Versions only (the user, 2026-11-04): the server never acts on its host, so the page has no
+        buttons - it says what is installed, what is out, and how the owner updates it. The
+        commands are behind the row's ⓘ, never in its visible text (design 31 §4.2). -#}
     <section id="app" aria-labelledby="app-title">
         <h2 class="group-header" id="app-title">{{ self.t("settings.updates.app") }}</h2>
         <div class="group">
-            {% if let Some(scripts) = app.watcher_version %}
-            <details class="info cell" data-row="version">
-                <summary class="row">
-                    <span class="row-label">{{ self.t("settings.updates.version") }}</span>
-                    <span class="row-value">{{ app.current_version.trim_start_matches('v') }}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.updates.version_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                </summary>
-                <div class="info-panel"><p>{{ self.tp("settings.updates.scripts_version", [("version", scripts.as_str())]) }}</p></div>
-            </details>
-            {% else %}
             <div class="row" data-row="version">
                 <span class="row-label">{{ self.t("settings.updates.version") }}</span>
                 <span class="row-value">{{ app.current_version.trim_start_matches('v') }}{% if docker %} {{ self.t("settings.updates.docker_image") }}{% endif %}</span>
             </div>
-            {% endif %}
             {% if app.checking %}
             <p class="row row-note" data-row="latest">{{ self.t("settings.updates.checking") }}</p>
             {% else if app.check_failed %}
             <p class="row row-note" data-row="latest">{{ self.t("settings.updates.check_failed") }}</p>
-            {% else if docker %}
-            {% if let Some(version) = docker_version %}
-            <details class="info cell" data-row="latest">
+            {% else if let Some(version) = newer_version %}
+            <div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span></div>
+            {% else %}
+            <div class="row" data-row="latest"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
+            {% endif %}
+            <details class="info cell" data-row="how">
                 <summary class="row">
-                    <span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.updates.image_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                    <span class="row-label">{{ self.t("settings.updates.how") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("settings.updates.how_label") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                 </summary>
                 <div class="info-panel">
-                    <p>{{ self.tp("settings.updates.docker_set", [("version", version.as_str())]) }}</p>
+                    {% if docker %}
+                    <p>{{ self.t("settings.updates.docker_how") }}</p>
                     <pre><code>{{ self.t("settings.updates.docker_command") }}</code></pre>
+                    {% if let Some(version) = newer_version %}<p>{{ self.tp("settings.updates.docker_set", [("version", version.as_str())]) }}</p>{% endif %}
                     <p>{{ self.t("settings.updates.docker_backup") }}</p>
+                    {% else %}
+                    <p>{{ self.t("settings.updates.over_ssh") }}</p>
+                    <pre><code>{{ update_command }}</code></pre>
+                    {% endif %}
                 </div>
             </details>
-            {% else %}
-            <div class="row" data-row="latest"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
-            {% endif %}
-            {% else if app.update_available %}
-            {% if let Some(latest) = app.latest_version %}<div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", latest.trim_start_matches('v'))]) }}</span></div>{% endif %}
-            {% else %}
-            <div class="row" data-row="latest"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
-            {% endif %}
-            {% if !docker %}
-            {% if app.update_available || app.check_failed || app.checking %}
-            <details class="confirm cell" id="update-now">
-                <summary class="row">{{ self.t("settings.updates.update_now") }}…</summary>
-                <form method="post" action="/update/trigger#app" class="confirm-body">
-                    <p>{{ self.t("settings.updates.update_confirm") }}</p>
-                    <button type="submit" class="button-destructive">{{ self.t("settings.updates.update_now") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% endif %}
-            <details class="confirm cell" id="restart">
-                <summary class="row">{{ self.t("settings.updates.restart") }}…</summary>
-                <form method="post" action="/update/restart#app" class="confirm-body">
-                    <p>{{ self.t("settings.updates.restart_confirm") }}</p>
-                    <button type="submit" class="button-destructive">{{ self.t("settings.updates.restart") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% endif %}
-            {% call group_flash::show(flash, "app") %}{% endcall %}
         </div>
-        {% if docker %}
-        <p class="group-footer">{{ self.t("settings.updates.docker_footer") }}</p>
-        {% endif %}
+        <p class="group-footer">{{ self.t("settings.updates.footer") }}</p>
     </section>
-
-    {% if !docker %}
-    {% if os.watcher_busy %}
-    <div class="attention attention-action" data-warning="busy">
-        <div class="attention-text">{{ self.t("settings.updates.busy") }}<div class="attention-sub">{{ self.t("settings.updates.busy_sub") }}</div></div>
-    </div>
-    {% endif %}
-
-    <section id="os" aria-labelledby="os-title">
-        <h2 class="group-header" id="os-title">{{ self.t("settings.updates.os") }}</h2>
-        <div class="group">
-            {% if os.watcher_busy %}
-            <p class="row row-note" data-row="os-status">{{ self.t("settings.updates.shown_again") }}</p>
-            {% else if let Some(count) = os.os_update_count %}
-            <div class="row" data-row="os-status"><span class="row-label">{% if *count == 0 %}{{ self.t("settings.updates.up_to_date") }}{% else %}{{ self.tc("settings.updates.os_waiting", count, []) }}{% endif %}</span></div>
-            {% else %}
-            <details class="info cell" data-row="os-status">
-                <summary class="row"><span class="row-label row-label-quiet">{{ self.t("settings.updates.os_check_failed") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.why") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("settings.updates.not_a_pi") }}</p></div>
-            </details>
-            {% endif %}
-            {% if os.reboot_required %}
-            <p class="row text-alarm" data-row="reboot">{{ self.t("settings.updates.reboot_needed") }}</p>
-            {% endif %}
-            <form method="post" action="/system/os/check#os" class="cell">
-                <button type="submit" class="row row-button"{% if os.watcher_busy %} disabled{% endif %}>{{ self.t("settings.updates.check") }}</button>
-            </form>
-            <details class="confirm cell" id="install-os">
-                <summary class="row">{{ self.t("settings.updates.install") }}…</summary>
-                <form method="post" action="/system/os/upgrade#os" class="confirm-body">
-                    <p>{{ self.t("settings.updates.install_confirm") }}</p>
-                    <button type="submit" class="button-destructive"{% if os.watcher_busy %} disabled{% endif %}>{{ self.t("settings.updates.install") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% if os.reboot_required %}
-            <details class="confirm cell" id="reboot">
-                <summary class="row">{{ self.t("settings.updates.reboot") }}…</summary>
-                <form method="post" action="/system/reboot#os" class="confirm-body">
-                    <p>{{ self.t("settings.updates.reboot_confirm") }}</p>
-                    <button type="submit" class="button-destructive"{% if os.watcher_busy %} disabled{% endif %}>{{ self.t("settings.updates.reboot") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% endif %}
-            {% call group_flash::show(flash, "os") %}{% endcall %}
-        </div>
-    </section>
-
-    <section id="tailscale" aria-labelledby="tailscale-title">
-        <h2 class="group-header" id="tailscale-title">{{ self.t("settings.updates.tailscale") }}</h2>
-        <div class="group">
-            {% if os.watcher_busy %}
-            <p class="row row-note" data-row="tailscale-status">{{ self.t("settings.updates.shown_again") }}</p>
-            {% else if let Some(current) = os.tailscale_current %}
-            <div class="row" data-row="tailscale-version">
-                <span class="row-label">{{ self.t("settings.updates.version") }}</span>
-                <span class="row-value">{{ current }}</span>
-            </div>
-            {% if os.tailscale_update_available %}
-            <div class="row" data-row="tailscale-status"><span class="row-label tone-green">{% if let Some(upstream) = os.tailscale_upstream %}{{ self.tp("settings.updates.version_out", [("version", upstream.as_str())]) }}{% else %}{{ self.t("settings.updates.update_out") }}{% endif %}</span></div>
-            <form method="post" action="/system/tailscale/update#tailscale" class="cell">
-                <button type="submit" class="row row-button">{{ self.t("settings.updates.update_tailscale") }}</button>
-            </form>
-            {% else %}
-            <div class="row" data-row="tailscale-status"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
-            {% endif %}
-            {% else %}
-            <p class="row row-note" data-row="tailscale-status">{{ self.t("settings.updates.tailscale_unknown") }}</p>
-            {% endif %}
-            {% call group_flash::show(flash, "tailscale") %}{% endcall %}
-        </div>
-    </section>
-
-    <section id="app-schedule" aria-labelledby="app-schedule-title">
-        <h2 class="group-header" id="app-schedule-title">{{ self.t("settings.updates.app_schedule") }}</h2>
-        <form method="post" action="/update/schedule#app-schedule" class="group form-group">
-            {% call group_flash::show(flash, "app-schedule") %}{% endcall %}
-            <div class="field">
-                <label class="field-label" for="app_frequency">{{ self.t("settings.updates.app_frequency") }}</label>
-                <select id="app_frequency" name="frequency">
-                    <option value="daily"{% if app.schedule.frequency == "daily" %} selected{% endif %}>{{ self.t("settings.schedule.daily") }}</option>
-                    <option value="weekly"{% if app.schedule.frequency == "weekly" %} selected{% endif %}>{{ self.t("settings.schedule.weekly") }}</option>
-                    <option value="monthly"{% if app.schedule.frequency == "monthly" %} selected{% endif %}>{{ self.t("settings.schedule.monthly") }}</option>
-                </select>
-            </div>
-            <div class="field">
-                <label class="field-label" for="app_day_of_week">{{ self.t("settings.schedule.day_of_week") }}</label>
-                <select id="app_day_of_week" name="day_of_week">
-                    {% for (value, name) in weekdays %}
-                    <option value="{{ value }}"{% if app.schedule.day_of_week == **value %} selected{% endif %}>{{ self.t(name) }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <label class="field-label" for="app_day_of_month">{{ self.t("settings.schedule.day_of_month") }}</label>
-                <input type="number" id="app_day_of_month" name="day_of_month" min="1" max="28" value="{{ app.schedule.day_of_month }}">
-            </div>
-            <div class="field">
-                <label class="field-label" for="app_check_time">{{ self.t("settings.schedule.time") }}</label>
-                <input type="time" id="app_check_time" name="check_time" value="{{ app.schedule.check_time }}">
-            </div>
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.updates.auto_install") }}<span class="row-sub">{{ self.t("settings.updates.auto_install_sub") }}</span></span>
-                <input type="checkbox" role="switch" class="sw" name="auto_install_enabled" value="1"{% if app.schedule.auto_install_enabled %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
-        </form>
-        <p class="group-footer">{{ self.t("settings.updates.app_schedule_footer") }}</p>
-    </section>
-
-    <section id="os-schedule" aria-labelledby="os-schedule-title">
-        <h2 class="group-header" id="os-schedule-title">{{ self.t("settings.updates.os_schedule") }}</h2>
-        <form method="post" action="/system/schedule#os-schedule" class="group form-group">
-            {% call group_flash::show(flash, "os-schedule") %}{% endcall %}
-            <div class="field">
-                <label class="field-label" for="os_frequency">{{ self.t("settings.updates.os_frequency") }}</label>
-                <select id="os_frequency" name="frequency">
-                    <option value="daily"{% if os.schedule.frequency == "daily" %} selected{% endif %}>{{ self.t("settings.schedule.daily") }}</option>
-                    <option value="weekly"{% if os.schedule.frequency == "weekly" %} selected{% endif %}>{{ self.t("settings.schedule.weekly") }}</option>
-                    <option value="monthly"{% if os.schedule.frequency == "monthly" %} selected{% endif %}>{{ self.t("settings.schedule.monthly") }}</option>
-                </select>
-            </div>
-            <div class="field">
-                <label class="field-label" for="os_day_of_week">{{ self.t("settings.schedule.day_of_week") }}</label>
-                <select id="os_day_of_week" name="day_of_week">
-                    {% for (value, name) in weekdays %}
-                    <option value="{{ value }}"{% if os.schedule.day_of_week == **value %} selected{% endif %}>{{ self.t(name) }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <label class="field-label" for="os_day_of_month">{{ self.t("settings.schedule.day_of_month") }}</label>
-                <input type="number" id="os_day_of_month" name="day_of_month" min="1" max="28" value="{{ os.schedule.day_of_month }}">
-            </div>
-            <div class="field">
-                <label class="field-label" for="os_check_time">{{ self.t("settings.schedule.time") }}</label>
-                <input type="time" id="os_check_time" name="check_time" value="{{ os.schedule.check_time }}">
-            </div>
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.updates.auto_os") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="auto_apply_os" value="1"{% if os.schedule.auto_apply_os %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.updates.update_tailscale") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="auto_apply_tailscale" value="1"{% if os.schedule.auto_apply_tailscale %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            <label class="row field-switch">
-                <span class="row-label">{{ self.t("settings.updates.auto_reboot") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="auto_reboot" value="1"{% if os.schedule.auto_reboot %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-            </label>
-            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
-        </form>
-        <p class="group-footer">{{ self.t("settings.updates.os_schedule_footer") }}</p>
-    </section>
-    {% endif %}
 
     {#- The tab-switch timing's switch for this browser (Q28; code QA M2: the installed iPhone app has
         no address bar and its own storage). A plain link back to this group; static/nav-timing.js

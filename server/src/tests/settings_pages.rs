@@ -1349,8 +1349,9 @@ async fn the_security_log_reads_as_labelled_rows() {
 }
 
 /// Backups, in the test's own data dir (`AppState::data_dir`, qa-31-s14-code L1): Back Up Now, the
-/// restore's typed name (wrong: 400, its confirm open, nothing asked; right: the request file), the
-/// schedule (a refusal in its group, a save), Delete twice - every success a redirect to its group.
+/// restore (a systemd install's command; the container's typed name - wrong: 400, its confirm open,
+/// nothing asked; right: the restore marker), the schedule (a refusal in its group, a save), Delete
+/// twice - every success a redirect to its group.
 #[tokio::test]
 async fn backups_answer_in_their_groups() {
     let app = TestApp::new().await;
@@ -1381,19 +1382,66 @@ async fn backups_answer_in_their_groups() {
     check_forms("/backups", &page);
     let group = part(&page, "<section id=\"backups\"", "</section>");
     assert!(group.contains("data-flash=\"backups\"") && group.contains("Backup made."));
-    behind_a_confirm(&page, &format!("/backups/{file}/restore#backups"));
     behind_a_confirm(&page, &format!("/backups/{file}/delete#backups"));
     let page = app.get_page("/backups?done=nonsense", &cookie).await.text();
     assert!(!page.contains("data-flash"));
 
-    // Restore: the typed name must be the file's; a wrong one asks nothing of the helper.
-    let flag = data.join("update_requested");
+    // On a systemd install the server never restarts itself (the user, 2026-11-04): Restore…
+    // shows the command for this file, and a POST restores nothing.
     let restore = format!("/backups/{file}/restore");
+    let marker = data.join(crate::startup::RESTORE_REQUEST);
+    let item = part(
+        &page,
+        &format!("data-backup=\"{file}\""),
+        "</details>\n            </details>",
+    );
+    assert!(
+        !item.contains(&format!("action=\"{restore}#backups\"")),
+        "{item}"
+    );
+    assert!(
+        item.contains(&format!(
+            "echo {file} | sudo -u kidphone tee /opt/kid-phone-server/data/restore_request"
+        )),
+        "{item}"
+    );
     let res = app
         .request_form(
             Method::POST,
             &restore,
             Some(&cookie),
+            &[("confirm_filename", file.as_str())],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    let group = part(&html, "<section id=\"backups\"", "</section>");
+    assert!(group.contains("nothing was restored"), "{group}");
+    assert!(!marker.exists());
+
+    // In the container the typed name must be the file's; a wrong one asks nothing, the right
+    // one leaves the marker the next start applies.
+    let docker = TestApp::with_env(&[("DEPLOY_KIND", "docker")]).await;
+    let docker_cookie = docker.admin_cookie().await;
+    let res = docker
+        .request_form(Method::POST, "/backups/create", Some(&docker_cookie), &[])
+        .await;
+    assert_redirect(&res, "/backups?done=backup", Some("backups"));
+    let docker_backups = docker.state.data_dir.join("backups");
+    let docker_file = std::fs::read_dir(&docker_backups)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .find(|name| name.starts_with("backup-"))
+        .unwrap();
+    let restore = format!("/backups/{docker_file}/restore");
+    let marker = docker.state.data_dir.join(crate::startup::RESTORE_REQUEST);
+    let page = docker.get_page("/backups", &docker_cookie).await.text();
+    behind_a_confirm(&page, &format!("{restore}#backups"));
+    let res = docker
+        .request_form(
+            Method::POST,
+            &restore,
+            Some(&docker_cookie),
             &[("confirm_filename", "backup-x.zip")],
         )
         .await;
@@ -1401,7 +1449,7 @@ async fn backups_answer_in_their_groups() {
     let html = res.text();
     let item = part(
         &html,
-        &format!("data-backup=\"{file}\""),
+        &format!("data-backup=\"{docker_file}\""),
         "</details>\n            </details>",
     );
     assert!(
@@ -1414,26 +1462,13 @@ async fn backups_answer_in_their_groups() {
         ),
         "{item}"
     );
-    assert!(!flag.exists(), "nothing asked of the root helper");
-    let res = app
-        .request_form(
-            Method::POST,
-            &restore,
-            Some(&cookie),
-            &[("confirm_filename", file.as_str())],
-        )
-        .await;
-    assert_redirect(&res, "/backups?done=restore", Some("backups"));
-    assert_eq!(
-        std::fs::read_to_string(&flag).unwrap(),
-        format!("restore_backup {file}")
-    );
+    assert!(!marker.exists(), "nothing asked");
     // A backup that isn't there (any more): nothing restored, said in the group.
-    let res = app
+    let res = docker
         .request_form(
             Method::POST,
             "/backups/backup-19700101-000000.zip/restore",
-            Some(&cookie),
+            Some(&docker_cookie),
             &[("confirm_filename", "backup-19700101-000000.zip")],
         )
         .await;
@@ -1444,6 +1479,19 @@ async fn backups_answer_in_their_groups() {
         group.contains("data-flash=\"backups\"") && group.contains("nothing was restored"),
         "{group}"
     );
+
+    let res = docker
+        .request_form(
+            Method::POST,
+            &restore,
+            Some(&docker_cookie),
+            &[("confirm_filename", docker_file.as_str())],
+        )
+        .await;
+    assert_redirect(&res, "/backups?done=restore", Some("backups"));
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), docker_file);
+    // (The container then exits for its restart - not in tests - with its database closed.)
+    drop(docker);
 
     // The schedule: a refusal in its group (400, nothing written), a save redirects.
     let schedule = data.join("backup_schedule.conf");
@@ -1501,72 +1549,4 @@ async fn backups_answer_in_their_groups() {
         .request_form(Method::POST, &delete, Some(&cookie), &[])
         .await;
     assert_redirect(&res, "/backups?done=gone", Some("backups"));
-}
-
-/// Software Updates: every request that worked redirects to its group with its line (a reload asks
-/// the helper nothing again, qa-31-s14-code M1), the request file says what was asked, and the
-/// page renders without the network (the GitHub check fails at once in tests).
-#[tokio::test]
-async fn updates_redirect_after_each_request() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let flag = app.state.data_dir.join("update_requested");
-    std::fs::create_dir_all(app.state.data_dir.as_path()).unwrap();
-    for (route, action, done, group) in [
-        ("/update/restart", "restart", "restart", "app"),
-        ("/system/os/check", "os_check", "os_check", "os"),
-        ("/system/os/upgrade", "os_upgrade", "os_upgrade", "os"),
-        (
-            "/system/tailscale/update",
-            "tailscale_update",
-            "tailscale",
-            "tailscale",
-        ),
-        ("/system/reboot", "reboot", "reboot", "os"),
-    ] {
-        let res = app
-            .request_form(Method::POST, route, Some(&cookie), &[])
-            .await;
-        assert_redirect(&res, &format!("/updates?done={done}"), Some(group));
-        assert_eq!(std::fs::read_to_string(&flag).unwrap(), action, "{route}");
-    }
-    for (route, file, done, group) in [
-        (
-            "/update/schedule",
-            "app_update_schedule.conf",
-            "app_schedule",
-            "app-schedule",
-        ),
-        (
-            "/system/schedule",
-            "schedule.conf",
-            "os_schedule",
-            "os-schedule",
-        ),
-    ] {
-        let res = app
-            .request_form(
-                Method::POST,
-                route,
-                Some(&cookie),
-                &[
-                    ("frequency", "daily"),
-                    ("day_of_week", "0"),
-                    ("day_of_month", "1"),
-                    ("check_time", "04:15"),
-                ],
-            )
-            .await;
-        assert_redirect(&res, &format!("/updates?done={done}"), Some(group));
-        let saved = std::fs::read_to_string(app.state.data_dir.join(file)).unwrap();
-        assert!(saved.contains("CHECK_TIME=04:15"), "{saved}");
-    }
-    let page = app.get_page("/updates?done=reboot", &cookie).await.text();
-    check_forms("/updates", &page);
-    let group = part(&page, "<section id=\"os\"", "</section>");
-    assert!(
-        group.contains("data-flash=\"os\"") && group.contains("The Pi is restarting."),
-        "{group}"
-    );
-    assert!(!page.contains("open this page again"));
 }

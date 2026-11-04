@@ -55,7 +55,7 @@ fn migrate_legacy(key: &str, value: String, legacy: &str, current: &str) -> Stri
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkConfig {
     /// `owner/repo` this server checks for its own new releases (`handlers::system_update`) and
-    /// names in the "re-run the installer" hint (`security::reinstall_hint`).
+    /// names in Software Updates' `update.sh` command (`handlers::updates::update_command`).
     pub server_release_repo: String,
     /// `PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME` in the provisioning QR.
     pub launcher_admin_component: String,

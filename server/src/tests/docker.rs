@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use axum::http::{Method, StatusCode};
 
 use super::TestApp;
-use crate::handlers::{system_maintenance, system_update, updates};
+use crate::handlers::{system_update, updates};
 use crate::startup;
 
 /// A database in `dir/data/kidphone.db` migrated only up to `version`, as an older server left
@@ -443,156 +443,128 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
         update_available,
         check_failed: latest.is_none(),
         checking: false,
-        watcher_version: None,
-        watcher_needs_update: true,
-        reinstall_hint: "curl ... | sudo bash".to_string(),
-        schedule: system_update::AppUpdateScheduleConfig::defaults(),
     }
 }
 
+/// Software Updates shows versions only (the user, 2026-11-04): no form, no host state; how to
+/// update is behind the row's ⓘ, never in its visible text (design 31 §4.2) - in Docker the image
+/// pull (Watchtower, or by hand, with the version for a pinned HANDY_VERSION), on a systemd
+/// install the update.sh command for the configured repo.
 #[test]
-fn the_updates_page_says_how_to_update_the_image() {
-    let page = updates::page(
-        true,
-        app_data(Some("v0.24.0"), true),
-        system_maintenance::not_managed(),
-        None,
-        crate::i18n::Lang::En,
-    )
-    .0;
-    assert!(page.contains("Version 0.24.0 is out"), "{page}");
-    // The commands are behind the row's ⓘ, never in its visible text (design 31 §4.2).
-    let row = &page[page.find("data-row=\"latest\"").unwrap()..];
-    let row = &row[..row.find("</details>").unwrap()];
-    let (summary, panel) = row.split_once("</summary>").unwrap();
-    assert!(!summary.contains("HANDY_VERSION"), "{summary}");
-    assert!(panel.contains("HANDY_VERSION=0.24.0"));
+fn the_updates_page_says_how_to_update() {
+    let page = |docker: bool, latest: &str, newer: bool| {
+        updates::page(
+            docker,
+            app_data(Some(latest), newer),
+            "someone/vibb-launcher",
+            crate::i18n::Lang::En,
+        )
+        .0
+    };
+    let how = |page: &str| {
+        let row = &page[page.find("data-row=\"how\"").unwrap()..];
+        let row = &row[..row.find("</details>").unwrap()];
+        let (summary, panel) = row.split_once("</summary>").unwrap();
+        (summary.to_string(), panel.to_string())
+    };
+    let docker = page(true, "v0.24.0", true);
+    assert!(docker.contains("Version 0.24.0 is out"), "{docker}");
+    let (summary, panel) = how(&docker);
+    assert!(!summary.contains("docker compose"), "{summary}");
+    assert!(panel.contains("Watchtower"));
     assert!(panel.contains("docker compose pull &#38;&#38; docker compose up -d"));
-    for gone in [
-        "/update/trigger",
-        "/update/restart",
-        "/update/schedule",
-        "/system/",
-        "Raspberry Pi OS",
-        "Tailscale</h2>",
-        "installer",
-        "Restart Server",
-    ] {
-        assert!(!page.contains(gone), "{gone} on the Docker page");
-    }
-    let current = updates::page(
-        true,
-        app_data(Some("v0.23.0"), false),
-        system_maintenance::not_managed(),
-        None,
-        crate::i18n::Lang::En,
-    )
-    .0;
+    assert!(panel.contains("HANDY_VERSION pinned in .env, set it to 0.24.0"));
+    assert!(!panel.contains("update.sh"));
+    let current = page(true, "v0.23.0", false);
     assert!(current.contains("Up to date"));
     assert!(!current.contains("HANDY_VERSION"));
 
-    // systemd keeps its page: the confirms, the installer warning with its command behind ⓘ.
-    let pi = updates::page(
-        false,
-        app_data(Some("v0.24.0"), true),
-        system_maintenance::not_managed(),
-        None,
-        crate::i18n::Lang::En,
-    )
-    .0;
+    let pi = page(false, "v0.24.0", true);
+    assert!(pi.contains("Version 0.24.0 is out"));
+    let (summary, panel) = how(&pi);
+    assert!(!summary.contains("sudo"), "{summary}");
+    assert!(
+        panel.contains(
+            "raw.githubusercontent.com/someone/vibb-launcher/main/server/deploy/update.sh \
+         &#38;&#38; sudo KPS_REPO=someone/vibb-launcher bash update.sh"
+        ),
+        "{panel}"
+    );
+    // Security review L10: downloaded to a file, never piped into a root shell.
+    assert!(!panel.contains("| sudo"));
     assert!(!pi.contains("HANDY_VERSION"));
-    for confirm in [
-        "/update/trigger#app",
-        "/update/restart#app",
-        "/system/os/upgrade#os",
-    ] {
-        let at = pi.find(&format!("action=\"{confirm}\"")).expect(confirm);
-        let before = &pi[..at];
-        assert!(
-            before.rfind("<details class=\"confirm").unwrap() > before.rfind("</details>").unwrap(),
-            "{confirm} is behind a <details> confirm"
-        );
+    for page in [&docker, &current, &pi] {
+        assert!(!page.contains("<form"), "{page}");
+        assert!(page.contains("never changes anything on the machine it runs on"));
+        for gone in [
+            "/update/",
+            "/system/",
+            "Raspberry Pi OS",
+            "Tailscale</h2>",
+            "installer",
+            "Restart",
+            "data-warning",
+            "Automatic",
+        ] {
+            assert!(!page.contains(gone), "{gone}: {page}");
+        }
     }
-    let warning = &pi[pi.find("data-warning=\"installer\"").unwrap()..];
-    let warning = &warning[..warning.find("</details>").unwrap()];
-    let (visible, panel) = warning.split_once("</summary>").unwrap();
-    assert!(!visible.contains("sudo bash"), "{visible}");
-    assert!(panel.contains("curl ... | sudo bash"));
     super::settings_pages::check_forms("/updates", &pi);
 }
 
-/// A result shows in the group whose form posted it, never at the page's top (design 31 §3.0).
-#[test]
-fn an_updates_result_shows_in_its_own_group() {
-    use crate::handlers::settings::Flash;
-    for (at, before, after) in [
-        ("app", "id=\"app\"", "id=\"os\""),
-        ("os", "id=\"os\"", "id=\"tailscale\""),
-        ("tailscale", "id=\"tailscale\"", "id=\"app-schedule\""),
-        ("app-schedule", "id=\"app-schedule\"", "id=\"os-schedule\""),
-        ("os-schedule", "id=\"os-schedule\"", "</main>"),
-    ] {
-        let page = updates::page(
-            false,
-            app_data(Some("v0.23.0"), false),
-            system_maintenance::not_managed(),
-            Some(Flash::done(at, "Probe result.")),
-            crate::i18n::Lang::En,
-        )
-        .0;
-        let flash = page.find("Probe result.").expect(at);
-        assert!(page.find(before).unwrap() < flash, "{at}");
-        assert!(flash < page.find(after).unwrap(), "{at}");
-        assert_eq!(page.matches("Probe result.").count(), 1, "{at}");
-    }
-    // A refusal with a reason: the title visible, the reason behind ⓘ.
-    let page = updates::page(
-        false,
-        app_data(Some("v0.23.0"), false),
-        system_maintenance::not_managed(),
-        Some(Flash::refused("app", "Nothing was started").because("Probe reason.")),
-        crate::i18n::Lang::En,
-    )
-    .0;
-    let flash = &page[page.find("data-flash=\"app\"").unwrap()..];
-    let (title, panel) = flash.split_once("</summary>").unwrap();
-    assert!(title.contains("Nothing was started"));
-    assert!(!title.contains("Probe reason."));
-    assert!(panel[..panel.find("</details>").unwrap()].contains("Probe reason."));
-}
-
+/// Nothing the server could ask of its host is left (the user, 2026-11-04): the old routes are
+/// gone in Docker and on a systemd install alike, and Backups has no external drive anywhere.
 #[tokio::test]
-
-async fn in_docker_the_host_helper_routes_and_drive_features_are_gone() {
+async fn no_route_asks_the_host_for_anything() {
+    for env in [&[("DEPLOY_KIND", "docker")][..], &[][..]] {
+        let app = TestApp::with_env(env).await;
+        let cookie = app.admin_cookie().await;
+        for path in [
+            "/update/trigger",
+            "/update/restart",
+            "/update/schedule",
+            "/system/os/check",
+            "/system/os/upgrade",
+            "/system/tailscale/update",
+            "/system/reboot",
+            "/system/schedule",
+            "/backups/format-drive",
+        ] {
+            let res = app
+                .request_form(Method::POST, path, Some(&cookie), &[])
+                .await;
+            assert_eq!(res.status, StatusCode::NOT_FOUND, "{path} {env:?}");
+        }
+        assert!(!app.state.data_dir.join("update_requested").exists());
+        let page = app.get_page("/backups", &cookie).await.text();
+        assert!(!page.contains("id=\"drive\""), "{page}");
+        assert!(!page.contains("external drive"), "{page}");
+        assert!(!page.contains("continuous_mirror_enabled"));
+        assert!(!page.contains("external_copy_enabled"));
+    }
     let app = TestApp::with_env(&[("DEPLOY_KIND", "docker")]).await;
     let cookie = app.admin_cookie().await;
-    for path in [
-        "/update/trigger",
-        "/update/restart",
-        "/update/schedule",
-        "/system/os/check",
-        "/system/os/upgrade",
-        "/system/tailscale/update",
-        "/system/reboot",
-        "/system/schedule",
-        "/backups/format-drive",
-    ] {
-        let res = app
-            .request_form(Method::POST, path, Some(&cookie), &[])
-            .await;
-        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
-    }
     let page = app.get_page("/backups", &cookie).await.text();
-    assert!(!page.contains("id=\"drive\""), "{page}");
-    assert!(!page.contains("external drive"), "{page}");
-    assert!(!page.contains("continuous_mirror_enabled"));
     assert!(page.contains("copy them off the host"));
-    // On the Pi they are there.
-    let pi = TestApp::new().await;
-    let cookie = pi.admin_cookie().await;
-    let page = pi.get_page("/backups", &cookie).await.text();
-    assert!(page.contains("id=\"drive\""));
-    assert!(page.contains("continuous_mirror_enabled"));
+}
+
+/// The files the old host requests left in data/ go at the next start; nothing else does.
+#[test]
+fn the_old_host_files_are_removed_at_start() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in startup::HOST_FILES {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    std::fs::write(dir.path().join("backup_schedule.conf"), "FREQUENCY=daily\n").unwrap();
+    std::fs::write(dir.path().join(startup::RESTORE_REQUEST), "backup-x.zip").unwrap();
+    startup::remove_host_files(dir.path());
+    for name in startup::HOST_FILES {
+        assert!(!dir.path().join(name).exists(), "{name}");
+    }
+    assert!(dir.path().join("backup_schedule.conf").exists());
+    assert!(dir.path().join(startup::RESTORE_REQUEST).exists());
+    // Again, with none there: nothing to do.
+    startup::remove_host_files(dir.path());
 }
 
 /// A fake GitHub release list: `tag` (`None`: a 500), and how many reads it answered.

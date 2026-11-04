@@ -7,8 +7,8 @@
 //! `data/keys/music-secret.key`, created 0600 in a 0700 directory with a random key the first time
 //! the server starts without one - old `.env`s never get the variable). `data/` is the only place
 //! the systemd unit lets the server write (`ProtectSystem=strict`, qa-21-step1-code #1), and no
-//! backup copies `data/keys/`: the zip holds the database and the image stores, the live mirror and
-//! the external drive copy the database and `data/backups/`, `update.sh` the database files. A
+//! backup copies `data/keys/`: the zip holds the database and the image stores, `update.sh` copies
+//! the database files. A
 //! lost key means re-entering the login; nothing else depends on it.
 //!
 //! Since design 26c the same key seals each Spotify account's refresh token

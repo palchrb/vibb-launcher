@@ -3,9 +3,10 @@
 //!
 //! - [check_data_writable]: a clear error when `data/` isn't writable by this process (a Docker
 //!   bind mount isn't seeded from the image; only a named volume is).
-//! - [apply_restore_request]: a restore the PWA asked for in the container (`data/restore_request`,
-//!   no root helper there) - the marker is consumed first, the same checks as `actions.sh`, a
-//!   prerestore copy, and [undo_restore] when the restored database won't open.
+//! - [apply_restore_request]: a restore asked for in `data/restore_request` (the PWA's in the
+//!   container, the owner's over SSH on a systemd install, DEPLOY.md) - the marker is consumed
+//!   first, a prerestore copy, and [undo_restore] when the restored database won't open.
+//! - [remove_host_files]: the files the server's old requests to its host left in `data/`.
 //! - [pre_migration_backup]: `VACUUM INTO data/backups/pre-migrate-<from>-<to>.db` before pending
 //!   migrations run (3 kept) - the backup a rollback needs.
 //! - [initial_admin_password]: no admin and no password configured - one is generated into
@@ -63,8 +64,7 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Applies `data_dir/restore_request` if it is there (the same checks as `actions.sh`'s
-/// `action_restore_backup`): the marker is deleted first, so a restore that fails can't loop; the
+/// Applies `data_dir/restore_request` if it is there: the marker is deleted first, so a restore that fails can't loop; the
 /// name must be `backup-*.zip` without `/` or `..`, the file must be in `backups/` and hold
 /// `kidphone.db`; the live database (with its `-wal`/`-shm`) is copied to
 /// `backups/prerestore-<timestamp>/` first, then replaced, and its `-wal`/`-shm` removed.
@@ -73,18 +73,32 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
     apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
 }
 
-/// Written by the Pi's `actions.sh` after it swapped in a backup (the container's restore is
-/// [apply_restore_request]): the next start forgets every session (security review M2), holding
-/// the backup's name.
-pub const RESTORE_APPLIED: &str = "restore_applied";
+/// What the server's requests to its host left in `data/` before it stopped making any (the
+/// user, 2026-11-04): the root watcher's request file and the version stamps install.sh wrote for
+/// it, the OS/Tailscale and app-update schedules and the last check, the live copy of the database
+/// the drive copy read (a whole database - gone, not kept) and the root restore's marker. Deleted
+/// at every start; a missing one is fine. `update.sh` removes the root helpers themselves.
+pub const HOST_FILES: [&str; 9] = [
+    "update_requested",
+    "watcher_version",
+    "watcher_schema_version",
+    "schedule.conf",
+    "app_update_schedule.conf",
+    "app_update_last_check",
+    "live_mirror.db",
+    "live_mirror.db.tmp",
+    "restore_applied",
+];
 
-/// Takes `data_dir/restore_applied` if it is there: the backup's name (clipped), or `None`.
-pub fn take_restore_applied(data_dir: &Path) -> Option<String> {
-    let marker = data_dir.join(RESTORE_APPLIED);
-    let text = std::fs::read(&marker).ok()?;
-    let _ = std::fs::remove_file(&marker);
-    let text = String::from_utf8_lossy(&text);
-    Some(crate::audit::clip(text.trim(), 100).to_string())
+/// Deletes [HOST_FILES] in `data_dir` (a symlink is removed, never followed).
+pub fn remove_host_files(data_dir: &Path) {
+    for name in HOST_FILES {
+        match std::fs::remove_file(data_dir.join(name)) {
+            Ok(()) => tracing::info!("removed data/{name}: the server no longer acts on its host"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => tracing::warn!("couldn't remove data/{name}: {err}"),
+        }
+    }
 }
 
 /// After a restore: a backup made before 0.24.0 holds the sessions of its time, and none of them
@@ -95,8 +109,7 @@ pub async fn forget_sessions(db: &sqlx::SqlitePool) {
     }
 }
 
-/// The largest `kidphone.db` a restore takes out of a zip (QA 22 Low 7; `actions.sh` has the same
-/// cap).
+/// The largest `kidphone.db` a restore takes out of a zip (QA 22 Low 7).
 pub const RESTORE_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 /// `prerestore-*` copies kept in `backups/`.
 pub const PRERESTORE_KEEP: usize = 3;
@@ -277,8 +290,8 @@ pub async fn pre_migration_backup(
         .map_err(|err| format!("couldn't make {}: {err}", dir.display()))?;
     let target = dir.join(format!("pre-migrate-{from:04}-{latest:04}.db"));
     // The same name means the same upgrade again (after a rollback), and the newest state is the
-    // one to keep. Made beside the database, not in backups/ (which `backup_sync.sh` copies),
-    // with no sessions in it (security review M2).
+    // one to keep. Made beside the database, not in backups/ (where only finished copies are
+    // listed), with no sessions in it (security review M2).
     let scratch = with_suffix(db_path, ".pre-migrate-tmp");
     crate::handlers::backups::snapshot(db, &scratch, &target)
         .await

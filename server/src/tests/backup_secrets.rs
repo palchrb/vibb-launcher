@@ -1,5 +1,5 @@
-//! Security review M2: no admin session leaves the live database - not in a backup's snapshot, the
-//! live mirror or a pre-migration copy (`tests/docker.rs`) - and a restore brings none back.
+//! Security review M2: no admin session leaves the live database - not in a backup's snapshot or a
+//! pre-migration copy (`tests/docker.rs`) - and a restore brings none back.
 
 use axum::http::StatusCode;
 
@@ -73,25 +73,12 @@ async fn a_snapshot_holds_no_session_and_still_the_rest() {
     assert_eq!(page.status, StatusCode::OK);
 }
 
-/// The Pi's `actions.sh` leaves `data/restore_applied` (the backup's name); the next start takes
-/// it and every session goes - a backup from before 0.24.0 still holds the sessions of its time.
+/// After a restore (`startup::apply_restore_request`, at the start) every session goes - a backup
+/// from before 0.24.0 still holds the sessions of its time.
 #[tokio::test]
 async fn a_restore_signs_everyone_out() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let dir = tempfile::tempdir().unwrap();
-    assert_eq!(startup::take_restore_applied(dir.path()), None);
-
-    std::fs::write(
-        dir.path().join(startup::RESTORE_APPLIED),
-        format!("backup-20261011-020000.zip\n{}", "x".repeat(500)),
-    )
-    .unwrap();
-    let name = startup::take_restore_applied(dir.path()).unwrap();
-    assert!(name.starts_with("backup-20261011-020000.zip"), "{name}");
-    assert!(name.len() <= 100, "clipped: {}", name.len());
-    assert!(!dir.path().join(startup::RESTORE_APPLIED).exists());
-
     startup::forget_sessions(&app.db).await;
     let page = app.get_page("/devices", &cookie).await;
     assert_eq!(page.status, StatusCode::SEE_OTHER);

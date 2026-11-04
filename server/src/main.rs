@@ -107,9 +107,8 @@ pub struct AppState {
     /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
     /// `config::ForkConfig`.
     pub config: std::sync::Arc<config::ForkConfig>,
-    /// `data/` (a temp dir in tests): the backups and their schedule, the update and system
-    /// schedules and the root helper's request file (`handlers::backups`, `system_update`,
-    /// `system_maintenance`), so a test can drive them without touching the working directory.
+    /// `data/` (a temp dir in tests): the backups, their schedule and a restore's marker
+    /// (`handlers::backups`), so a test can drive them without touching the working directory.
     pub data_dir: std::sync::Arc<std::path::PathBuf>,
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
@@ -227,7 +226,7 @@ pub fn log_filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
 
 #[tokio::main]
 async fn main() {
-    // Everything this process writes (the database, backups, the live mirror, keys) is for the
+    // Everything this process writes (the database, backups, keys) is for the
     // service user alone (security review M2): the systemd unit says so too, the container can't.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
     dotenvy::dotenv().ok();
@@ -289,8 +288,10 @@ async fn main() {
         std::process::exit(1);
     }
 
-    // A restore the PWA asked for in the container (no root helper there): applied before the
-    // database is opened, and undone if the restored one won't open.
+    // A restore asked for in data/restore_request (the PWA's in the container, the owner's over
+    // SSH on a systemd install): applied before the database is opened, and undone if the
+    // restored one won't open. The old host requests' files go first.
+    startup::remove_host_files(std::path::Path::new("data"));
     let db_path = startup::sqlite_path(&database_url);
     let restored = match &db_path {
         Some(path) => match startup::apply_restore_request(std::path::Path::new("data"), path) {
@@ -341,20 +342,6 @@ async fn main() {
         .await;
     }
 
-    // The Pi's root helper swapped in a backup while the server was stopped.
-    let restored_on_host = startup::take_restore_applied(std::path::Path::new("data"));
-    if let Some(filename) = &restored_on_host {
-        tracing::info!("restored the backup {filename}");
-        security::record_security_event(
-            &db,
-            "backup_restored",
-            None,
-            None,
-            Some(security::Detail::facts(filename)),
-        )
-        .await;
-    }
-
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
 
     let session_store = SqliteStore::new(db.clone());
@@ -362,7 +349,7 @@ async fn main() {
         .migrate()
         .await
         .expect("failed to run session store migrations");
-    if restored.is_some() || restored_on_host.is_some() {
+    if restored.is_some() {
         startup::forget_sessions(&db).await;
     }
 
@@ -557,14 +544,6 @@ async fn main() {
     tokio::task::spawn(async move {
         handlers::system_update::refresh_release(&release_state).await;
     });
-    // The live mirror feeds an external drive and the app-update schedule a root helper - neither
-    // exists in the container (design 22 §6: nothing writes update_requested there).
-    if state.net.deploy_kind == net::DeployKind::Systemd {
-        tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
-        tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
-            state.clone(),
-        ));
-    }
     // The launcher's catalog row, so its self-updates need nothing added under Apps - before
     // the scheduled sync's first pass.
     handlers::tracked_apps::ensure_launcher_row(&state).await;
@@ -1741,60 +1720,11 @@ pub fn build_admin_router(
             security::require_full_auth,
         ));
 
-    // Requests for the Pi's root helper (design 22 §6): the app update, restart and their
-    // schedule, OS and Tailscale updates, reboot, formatting a drive. The container has no helper
-    // and writes none of these files, so there the routes don't exist.
-    let host_routes = Router::new()
-        .route(
-            "/update/trigger",
-            post(handlers::system_update::trigger_update),
-        )
-        .route(
-            "/update/restart",
-            post(handlers::system_update::trigger_restart),
-        )
-        .route(
-            "/update/schedule",
-            post(handlers::system_update::save_app_update_schedule),
-        )
-        .route(
-            "/system/os/check",
-            post(handlers::system_maintenance::trigger_os_check),
-        )
-        .route(
-            "/system/os/upgrade",
-            post(handlers::system_maintenance::trigger_os_upgrade),
-        )
-        .route(
-            "/system/tailscale/update",
-            post(handlers::system_maintenance::trigger_tailscale_update),
-        )
-        .route(
-            "/system/reboot",
-            post(handlers::system_maintenance::trigger_reboot),
-        )
-        .route(
-            "/system/schedule",
-            post(handlers::system_maintenance::save_schedule),
-        )
-        .route(
-            "/backups/format-drive",
-            post(handlers::backups::format_drive),
-        )
-        .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
-        .layer(from_fn_with_state(
-            state.clone(),
-            security::require_full_auth,
-        ));
-
     let mut app = Router::new()
         .merge(public_routes)
         .merge(onboarding_routes)
         .merge(lock_routes)
         .merge(admin_routes);
-    if state.net.deploy_kind == net::DeployKind::Systemd {
-        app = app.merge(host_routes);
-    }
     if state.net.admin_device_api {
         app = app.merge(device_routes::device_routes(state.clone()));
     }

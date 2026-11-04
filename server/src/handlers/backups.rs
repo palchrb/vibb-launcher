@@ -1,12 +1,12 @@
 //! Admin-triggered and scheduled backups: a consistent snapshot of the
 //! SQLite database, zipped up and stored under `data/backups/`.
 //!
-//! Backup creation itself never needs root - it only touches `data/`, which
-//! this process can already write to - so scheduling lives entirely in this
-//! process as a background task (see `run_scheduled_backups` in main.rs),
-//! unlike the OS/Tailscale scheduler which needs a separate root component.
-//! The one piece that *does* need root is copying backups to an external
-//! drive (outside `data/`), which the root scheduler in install.sh handles.
+//! Everything here stays in `data/`, which this process owns: the schedule is a
+//! background task in this process (`run_scheduled_backups`), and nothing is
+//! copied off the machine - the server never acts on its host (the user,
+//! 2026-11-04; the root copy to a USB drive and its formatting are gone). A
+//! restore is the container's restart (`restore_in_container`); on a systemd
+//! install the owner runs it over SSH, and the page shows the command.
 
 use askama::Template;
 use axum::Extension;
@@ -25,14 +25,8 @@ use crate::security::{self, CurrentAdmin};
 pub(crate) const BACKUP_DIR: &str = "backups";
 const SCHEDULE_FILE: &str = "backup_schedule.conf";
 const LAST_RUN_FILE: &str = "backup_schedule_last_run";
-/// "Backups to keep" when the schedule file doesn't say; `backup_sync.sh`'s
-/// `RETENTION_COUNT_DEFAULT` for the drive's copies is the same (`tests::deploy_scripts`).
+/// "Backups to keep" when the schedule file doesn't say.
 pub(crate) const DEFAULT_RETENTION_COUNT: usize = 14;
-const EXTERNAL_MOUNT: &str = "/mnt/kid-phone-server-backup";
-const LIVE_MIRROR_DB: &str = "live_mirror.db";
-/// The root helper's request file in `data_dir` (`system_update` and `system_maintenance` write
-/// the same one).
-pub(crate) const FLAG_FILE: &str = "update_requested";
 
 /// A backup in the list: when it was made (local, the exact time in `title`) and its size; the
 /// file name only inside its Restore… confirm, where it is typed.
@@ -50,8 +44,6 @@ pub struct BackupScheduleConfig {
     day_of_month: String,
     backup_time: String,
     retention_count: String,
-    external_copy_enabled: bool,
-    continuous_mirror_enabled: bool,
 }
 
 impl BackupScheduleConfig {
@@ -62,8 +54,6 @@ impl BackupScheduleConfig {
             day_of_month: "1".to_string(),
             backup_time: "02:00".to_string(),
             retention_count: DEFAULT_RETENTION_COUNT.to_string(),
-            external_copy_enabled: false,
-            continuous_mirror_enabled: false,
         }
     }
 
@@ -83,8 +73,6 @@ impl BackupScheduleConfig {
                 "DAY_OF_MONTH" => config.day_of_month = value,
                 "BACKUP_TIME" => config.backup_time = value,
                 "RETENTION_COUNT" => config.retention_count = value,
-                "EXTERNAL_COPY_ENABLED" => config.external_copy_enabled = value == "true",
-                "CONTINUOUS_MIRROR_ENABLED" => config.continuous_mirror_enabled = value == "true",
                 _ => {}
             }
         }
@@ -93,20 +81,18 @@ impl BackupScheduleConfig {
 
     fn to_file_contents(&self) -> String {
         format!(
-            "FREQUENCY={}\nDAY_OF_WEEK={}\nDAY_OF_MONTH={}\nBACKUP_TIME={}\nRETENTION_COUNT={}\nEXTERNAL_COPY_ENABLED={}\nCONTINUOUS_MIRROR_ENABLED={}\n",
+            "FREQUENCY={}\nDAY_OF_WEEK={}\nDAY_OF_MONTH={}\nBACKUP_TIME={}\nRETENTION_COUNT={}\n",
             self.frequency,
             self.day_of_week,
             self.day_of_month,
             self.backup_time,
             self.retention_count,
-            self.external_copy_enabled,
-            self.continuous_mirror_enabled,
         )
     }
 
     /// How many backups to keep; `None` keeps them all ("0"). A value that isn't 1-4 digits (only
-    /// a hand-edited file has one) keeps [DEFAULT_RETENTION_COUNT] and is logged - the same rule
-    /// as `backup_sync.sh` for the drive's copies (qa-pwa-fixes-a-code Q-6).
+    /// a hand-edited file has one) keeps [DEFAULT_RETENTION_COUNT] and is logged
+    /// (qa-pwa-fixes-a-code Q-6).
     fn retention_count(&self) -> Option<usize> {
         retention_of(&self.retention_count)
     }
@@ -128,8 +114,7 @@ pub(crate) fn retention_of(value: &str) -> Option<usize> {
     (count > 0).then_some(count)
 }
 
-/// The schedule forms' day choices (Sunday = 0, as the schedule files and the root scheduler
-/// read them).
+/// The schedule form's day choices (Sunday = 0, as the schedule file has them).
 /// Each: the value and the key of the day's name.
 pub(crate) const WEEKDAYS: [(&str, &str); 7] = [
     ("1", "settings.time_rules.weekday.1"),
@@ -140,15 +125,6 @@ pub(crate) const WEEKDAYS: [(&str, &str); 7] = [
     ("6", "settings.time_rules.weekday.6"),
     ("0", "settings.time_rules.weekday.7"),
 ];
-
-async fn external_drive_mounted() -> bool {
-    tokio::process::Command::new("mountpoint")
-        .args(["-q", EXTERNAL_MOUNT])
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
 
 fn human_size(lang: Lang, bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
@@ -234,9 +210,9 @@ pub(crate) fn build_backup_zip(
 }
 
 /// A consistent copy of the live database (`VACUUM INTO`) at `target`, with no admin sessions in
-/// it (security review M2): a backup zip, the live mirror and a pre-migration copy must never sign
-/// anyone in - nor carry the phones' Tailscale key ([strip_secrets_in]). The copy is made at `scratch` (in `data/`, which `backup_sync.sh` never copies off the
-/// box), the sessions are deleted with `secure_delete` (their bytes zeroed, not left in free pages),
+/// it (security review M2): a backup zip and a pre-migration copy must never sign
+/// anyone in - nor carry the phones' Tailscale key ([strip_secrets_in]). The copy is made at `scratch` (in `data/`, never
+/// in `data/backups/`, where a parent downloads from), the sessions are deleted with `secure_delete` (their bytes zeroed, not left in free pages),
 /// and only then is it renamed to `target`. The file is 0600 by the process umask (`main`).
 pub(crate) async fn snapshot(
     db: &sqlx::SqlitePool,
@@ -314,7 +290,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
         .map_err(|_| "Couldn't create the backups folder.".to_string())?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
-    // In data/, not data/backups/: backup_sync.sh copies everything in backups/ to the drive.
+    // In data/, not data/backups/: only finished backups are ever listed there.
     let snapshot_path = state
         .data_dir
         .join(format!("backup-snapshot-{timestamp}.db"))
@@ -376,18 +352,14 @@ struct BackupsTemplate {
     lang: Lang,
     title: String,
     backups: Vec<BackupRow>,
-    /// The last form's result, in its group ("backups", "upload", "schedule", "drive").
+    /// The last form's result, in its group ("backups", "upload", "schedule").
     flash: Option<Flash>,
     /// A refused restore: the file whose confirm renders open, and the key of why.
     restore_refused: Option<(String, &'static str)>,
-    /// A refused format: the drive whose confirm renders open, and the key of why.
-    format_refused: Option<(String, &'static str)>,
     schedule: BackupScheduleConfig,
     weekdays: &'static [(&'static str, &'static str)],
-    external_mount: String,
-    external_drive_mounted: bool,
-    removable_drives: Vec<RemovableDrive>,
-    /// `DEPLOY_KIND=docker` (design 22 §6): no external drive, live mirror or formatting.
+    /// `DEPLOY_KIND=docker` (design 22 §6): Restore… restarts the container. On a systemd install
+    /// it shows the command the owner runs over SSH ([BackupsTemplate::restore_command]).
     docker: bool,
 }
 crate::i18n::words!(BackupsTemplate);
@@ -401,12 +373,14 @@ impl BackupsTemplate {
             .map(|(_, why)| *why)
     }
 
-    /// Why formatting `device` was refused, if it was.
-    fn format_error(&self, device: &str) -> Option<&'static str> {
-        self.format_refused
-            .as_ref()
-            .filter(|(refused, _)| refused == device)
-            .map(|(_, why)| *why)
+    /// On a systemd install: the command that restores `file` (the same restore as the
+    /// container's, `startup::apply_restore_request`, at the service's next start; DEPLOY.md).
+    fn restore_command(&self, file: &str) -> String {
+        crate::i18n::t_params(
+            self.lang,
+            "settings.backups.restore_command",
+            &[("file", file)],
+        )
     }
 }
 
@@ -415,12 +389,11 @@ impl BackupsTemplate {
 struct Answer {
     flash: Option<Flash>,
     restore_refused: Option<(String, &'static str)>,
-    format_refused: Option<(String, &'static str)>,
 }
 
 /// What a form that worked did (qa-31-s14-code M1): the POST redirects to
 /// `/backups?done=<code>#<group>` and the GET shows its line in that group, so a reload repeats
-/// nothing (no second restore, backup or format). Refusals still render in the POST's answer: they
+/// nothing (no second restore or backup). Refusals still render in the POST's answer: they
 /// changed nothing, and a typed confirm never goes into a URL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Done {
@@ -430,18 +403,16 @@ enum Done {
     Schedule,
     Upload,
     Restore,
-    Format,
 }
 
 impl Done {
-    const ALL: [Done; 7] = [
+    const ALL: [Done; 6] = [
         Done::Backup,
         Done::Deleted,
         Done::Gone,
         Done::Schedule,
         Done::Upload,
         Done::Restore,
-        Done::Format,
     ];
 
     fn code(self) -> &'static str {
@@ -452,7 +423,6 @@ impl Done {
             Done::Schedule => "schedule",
             Done::Upload => "upload",
             Done::Restore => "restore",
-            Done::Format => "format",
         }
     }
 
@@ -460,7 +430,6 @@ impl Done {
         match self {
             Done::Schedule => "schedule",
             Done::Upload => "upload",
-            Done::Format => "drive",
             _ => "backups",
         }
     }
@@ -470,17 +439,15 @@ impl Done {
     }
 
     /// The line in its group. A restore's result is shown on the page the server answers after
-    /// it is back, so it says what happened.
-    fn flash(self, lang: Lang, docker: bool) -> Flash {
+    /// it is back, so it says what happened (only the container restores from the page).
+    fn flash(self, lang: Lang) -> Flash {
         let key = match self {
             Done::Backup => "settings.backups.done.backup",
             Done::Deleted => "settings.backups.done.deleted",
             Done::Gone => "settings.backups.done.gone",
             Done::Schedule => "settings.schedule.saved",
             Done::Upload => "settings.backups.done.upload",
-            Done::Restore if docker => "settings.backups.done.restore_docker",
             Done::Restore => "settings.backups.done.restore",
-            Done::Format => "settings.backups.done.format",
         };
         Flash::done(self.group(), t(lang, key))
     }
@@ -544,16 +511,8 @@ async fn render_backups(
         backups,
         flash: answer.flash,
         restore_refused: answer.restore_refused,
-        format_refused: answer.format_refused,
         schedule: BackupScheduleConfig::load(&state.data_dir).await,
         weekdays: &WEEKDAYS,
-        external_mount: EXTERNAL_MOUNT.to_string(),
-        external_drive_mounted: !docker && external_drive_mounted().await,
-        removable_drives: if docker {
-            Vec::new()
-        } else {
-            list_removable_drives(lang).await
-        },
         docker,
     };
     (status, Html(page.render().unwrap())).into_response()
@@ -565,12 +524,11 @@ pub async fn list_backups(
     lang: Lang,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
     let answer = Answer {
         flash: query
             .get("done")
             .and_then(|code| Done::parse(code))
-            .map(|done| done.flash(lang, docker)),
+            .map(|done| done.flash(lang)),
         ..Answer::default()
     };
     render_backups(&state, StatusCode::OK, answer, lang).await
@@ -649,8 +607,6 @@ pub struct BackupScheduleForm {
     day_of_month: String,
     backup_time: String,
     retention_count: String,
-    external_copy_enabled: Option<String>,
-    continuous_mirror_enabled: Option<String>,
 }
 
 const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
@@ -669,7 +625,7 @@ pub async fn save_backup_schedule(
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
-    // Also read by a root script (backup_sync.sh): exactly HH:MM or nothing is written (review H1).
+    // Exactly HH:MM or nothing is written (review H1).
     let backup_time = if form.backup_time.trim().is_empty() {
         "02:00".to_string()
     } else if security::valid_clock_time(form.backup_time.trim()) {
@@ -677,7 +633,7 @@ pub async fn save_backup_schedule(
     } else {
         let answer = Answer::refused(
             "schedule",
-            crate::handlers::updates::bad_time(lang, "02:00"),
+            crate::i18n::t_params(lang, "settings.schedule.bad_time", &[("example", "02:00")]),
         );
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
@@ -694,11 +650,6 @@ pub async fn save_backup_schedule(
         day_of_month: day_of_month.to_string(),
         backup_time,
         retention_count: retention_count.to_string(),
-        // No external drive in the container (design 22 §6).
-        external_copy_enabled: form.external_copy_enabled.is_some()
-            && state.net.deploy_kind == crate::net::DeployKind::Systemd,
-        continuous_mirror_enabled: form.continuous_mirror_enabled.is_some()
-            && state.net.deploy_kind == crate::net::DeployKind::Systemd,
     };
 
     let answer = if tokio::fs::write(
@@ -725,9 +676,8 @@ pub async fn save_backup_schedule(
 
 /// Background task (spawned once at startup, see main.rs) that creates a
 /// backup when the configured schedule says it's due, and prunes old
-/// backups per the retention setting. Entirely in-process since backup
-/// creation only touches data/, which this process already owns - no root
-/// component needed, unlike the OS/Tailscale scheduler.
+/// backups per the retention setting. Entirely in-process: backup creation
+/// only touches data/, which this process already owns.
 pub async fn run_scheduled_backups(state: AppState) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
     loop {
@@ -803,225 +753,18 @@ async fn is_due(data: &std::path::Path, schedule: &BackupScheduleConfig) -> bool
     (0..5).contains(&diff)
 }
 
-/// Background task: keeps `data/live_mirror.db` refreshed as a consistent,
-/// up-to-date snapshot of the live database, every couple of minutes - a
-/// much tighter recovery point than the named point-in-time backups above.
-/// Only does anything if continuous mirroring is actually enabled, since
-/// otherwise this would just burn CPU/IO on a Pi for no benefit (a snapshot
-/// refreshed on the same SD card the original lives on protects against
-/// nothing on its own - the value is entirely in the root scheduler mirroring
-/// this file out to external media, see deploy/install.sh's backup_sync.sh).
-///
-/// Written to a temp path and renamed into place atomically, so the external
-/// copy step (a separate process) can never read a half-written file.
-pub async fn run_live_mirror(state: AppState) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(90));
-    loop {
-        interval.tick().await;
-
-        let schedule = BackupScheduleConfig::load(&state.data_dir).await;
-        if !schedule.continuous_mirror_enabled {
-            continue;
-        }
-
-        let mirror = state.data_dir.join(LIVE_MIRROR_DB);
-        if let Err(e) = snapshot(&state.db, &mirror.with_extension("db.tmp"), &mirror).await {
-            tracing::warn!("live mirror snapshot failed: {e}");
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct RemovableDrive {
-    device: String,
-    size_display: String,
-}
-
-/// The block device backing a mount point, with any trailing partition
-/// number stripped (e.g. `/dev/mmcblk0p2` -> `/dev/mmcblk0`, `/dev/sda1` ->
-/// `/dev/sda`) - used to make sure the format-drive feature can never even
-/// list the Pi's own boot/root device as a candidate.
-async fn base_device_of(mount_point: &str) -> Option<String> {
-    let output = tokio::process::Command::new("findmnt")
-        .args(["-no", "SOURCE", mount_point])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if source.is_empty() {
-        return None;
-    }
-    let base = source.trim_end_matches(|c: char| c.is_ascii_digit());
-    let base = base.strip_suffix('p').unwrap_or(base);
-    Some(base.to_string())
-}
-
-/// Lists devices the kernel reports as removable, excluding whatever backs
-/// the root and boot filesystems by identity (not just by "removable"
-/// classification, which some SD card controllers also report as true) -
-/// this list is what both the UI and the format-drive confirmation step
-/// treat as safe-to-format candidates.
-async fn list_removable_drives(lang: Lang) -> Vec<RemovableDrive> {
-    let mut drives = Vec::new();
-    let Ok(mut entries) = tokio::fs::read_dir("/sys/block").await else {
-        return drives;
-    };
-
-    let root_device = base_device_of("/").await;
-    let boot_device = base_device_of("/boot").await;
-
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let removable = tokio::fs::read_to_string(format!("/sys/block/{name}/removable"))
-            .await
-            .unwrap_or_default();
-        if removable.trim() != "1" {
-            continue;
-        }
-
-        let device = format!("/dev/{name}");
-        if Some(&device) == root_device.as_ref() || Some(&device) == boot_device.as_ref() {
-            continue;
-        }
-
-        let size_sectors: u64 = tokio::fs::read_to_string(format!("/sys/block/{name}/size"))
-            .await
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
-        if size_sectors == 0 {
-            continue;
-        }
-
-        drives.push(RemovableDrive {
-            device,
-            size_display: human_size(lang, size_sectors * 512),
-        });
-    }
-    drives
-}
-
-/// Why a Format request is refused.
-#[derive(Debug, PartialEq, Eq)]
-enum FormatRefusal {
-    /// The drive isn't in the fresh list.
-    Gone,
-    /// The typed size isn't the drive's.
-    WrongSize,
-}
-
-impl FormatRefusal {
-    /// The page's answer: a wrong size under that drive's open confirm, a gone drive in the group.
-    fn answer(self, lang: Lang, device: &str) -> Answer {
-        match self {
-            FormatRefusal::Gone => Answer::refused("drive", t(lang, "settings.backups.drive_gone")),
-            FormatRefusal::WrongSize => Answer {
-                format_refused: Some((device.to_string(), "settings.backups.wrong_size")),
-                ..Answer::default()
-            },
-        }
-    }
-}
-
-/// The drive a Format request names, only if it is in the freshly listed `drives` and the typed
-/// size is its size exactly (either decimal mark: "29,8 GB" in Norwegian is "29.8 GB").
-fn format_target<'a>(
-    drives: &'a [RemovableDrive],
-    device: &str,
-    confirm: &str,
-) -> Result<&'a RemovableDrive, FormatRefusal> {
-    let drive = drives
-        .iter()
-        .find(|d| d.device == device)
-        .ok_or(FormatRefusal::Gone)?;
-    if confirm.trim().replace(',', ".") != drive.size_display.replace(',', ".") {
-        return Err(FormatRefusal::WrongSize);
-    }
-    Ok(drive)
-}
-
-#[derive(Deserialize)]
-pub struct FormatDriveForm {
-    device: String,
-    confirm_size: String,
-}
-
-/// Formats a removable drive as ext4 and mounts it at the external backup
-/// path. The actual mkfs/mount work happens root-side (see
-/// action_format_drive in deploy/install.sh's actions.sh) - this handler's
-/// job is just the two checks that make the request safe to forward: the
-/// device must be in the *freshly re-fetched* list of detected removable
-/// drives (never trust a stale value from an old page load), and the admin
-/// must type the drive's exact displayed size, not just click a button -
-/// a plain confirm() dialog is bypassable by anyone who can hit this route
-/// directly, and formatting is the one action here with no undo.
-/// The root side independently re-validates the device again from scratch
-/// regardless of what this handler already checked. A wrong size renders the
-/// page with that drive's confirm open and the reason under the field.
-pub async fn format_drive(
-    State(state): State<AppState>,
-    lang: Lang,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-    axum::Form(form): axum::Form<FormatDriveForm>,
-) -> Response {
-    let drives = list_removable_drives(lang).await;
-    let drive = match format_target(&drives, &form.device, &form.confirm_size) {
-        Ok(drive) => drive,
-        Err(refusal) => {
-            let answer = refusal.answer(lang, &form.device);
-            return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
-        }
-    };
-
-    let flag_content = format!("format_drive {}", drive.device);
-    let answer = if tokio::fs::write(state.data_dir.join(FLAG_FILE), &flag_content)
-        .await
-        .is_ok()
-    {
-        security::record_security_event(
-            &state.db,
-            "drive_format_triggered",
-            Some(&admin.username),
-            None,
-            Some(security::Detail::facts(&drive.device)),
-        )
-        .await;
-        return Done::Format.redirect();
-    } else {
-        not_requested(lang, "drive")
-    };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
-}
-
-/// The root helper's request file couldn't be written: nothing happens, and why is behind ⓘ.
-fn not_requested(lang: Lang, at: &'static str) -> Answer {
-    Answer {
-        flash: Some(crate::handlers::updates::not_requested(lang, at)),
-        ..Answer::default()
-    }
-}
-
 #[derive(Deserialize)]
 pub struct RestoreBackupForm {
     confirm_filename: String,
 }
 
-/// Restores a named backup: stops the app, swaps the live database for the
-/// backup's contents, and restarts - all root-side (see
-/// action_restore_backup in deploy/install.sh's actions.sh), since this
-/// process can't safely replace the very database file it has open under
-/// its own running SQLite connection. This handler's job is just the two
-/// checks that make the request safe to forward: the backup must still be
-/// in the *freshly re-listed* set of files on disk (never trust a stale
-/// page load), and the admin must type the exact filename to confirm - this
-/// discards whatever's in the live database right now, so a plain confirm()
-/// dialog (bypassable via a direct POST) isn't enough. The root side takes
-/// its own safety copy of the current data before overwriting anything, in
-/// case the wrong backup gets picked. A wrong name renders the page with that
-/// backup's confirm open and the reason under the field.
+/// Restores a named backup in the container: the backup must still be in the *freshly
+/// re-listed* set of files on disk (never trust a stale page load), and the admin must type the
+/// exact filename to confirm - this discards whatever's in the live database right now, so a
+/// plain confirm() dialog (bypassable via a direct POST) isn't enough. A wrong name renders the
+/// page with that backup's confirm open and the reason under the field. On a systemd install the
+/// server has no way to restart itself and asks nothing of its host (the user, 2026-11-04): the
+/// page shows the command, and a POST here restores nothing.
 pub async fn restore_backup(
     State(state): State<AppState>,
     lang: Lang,
@@ -1031,6 +774,10 @@ pub async fn restore_backup(
 ) -> Response {
     if !is_safe_backup_filename(&filename) {
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.backup_not_found");
+    }
+    if state.net.deploy_kind != crate::net::DeployKind::Docker {
+        let answer = Answer::refused("backups", t(lang, "settings.backups.restore_over_ssh"));
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
     let names = list_backup_filenames(&state.data_dir.join(BACKUP_DIR)).await;
     if !names.contains(&filename) {
@@ -1044,33 +791,11 @@ pub async fn restore_backup(
         };
         return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
-
-    if state.net.deploy_kind == crate::net::DeployKind::Docker {
-        return restore_in_container(&state, &admin, &filename, lang).await;
-    }
-
-    let flag_content = format!("restore_backup {filename}");
-    let answer = if tokio::fs::write(state.data_dir.join(FLAG_FILE), &flag_content)
-        .await
-        .is_ok()
-    {
-        security::record_security_event(
-            &state.db,
-            "backup_restore_triggered",
-            Some(&admin.username),
-            None,
-            Some(security::Detail::facts(&filename)),
-        )
-        .await;
-        return Done::Restore.redirect();
-    } else {
-        not_requested(lang, "backups")
-    };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
+    restore_in_container(&state, &admin, &filename, lang).await
 }
 
-/// The restore in the container (design 22 §6): no root helper, so the marker
-/// `data/restore_request` names the backup and the process exits non-zero; the restart policy
+/// The restore in the container (design 22 §6): the marker `data/restore_request` names the
+/// backup and the process exits non-zero; the restart policy
 /// brings it back, and startup applies the restore before opening the database
 /// (`startup::apply_restore_request`, which also puts the old database back if the restored one
 /// won't open).
@@ -1113,8 +838,7 @@ fn restart_soon(state: AppState) {
 }
 
 /// Accepts an uploaded backup zip - e.g. one downloaded earlier and saved
-/// elsewhere, or recovered from the external drive after this Pi's own copy
-/// was lost - and adds it to the list above so it can be restored like any
+/// elsewhere after this server's own copy was lost - and adds it to the list above so it can be restored like any
 /// other backup. Never trusts the browser-supplied filename or the .zip
 /// extension alone: the archive is actually opened and checked for a
 /// `kidphone.db` entry before being accepted. A refusal says why in the
@@ -1197,51 +921,13 @@ pub async fn upload_backup(
 mod tests {
     use super::*;
 
-    fn drive() -> RemovableDrive {
-        RemovableDrive {
-            device: "/dev/sda".to_string(),
-            size_display: "29.8 GB".to_string(),
-        }
-    }
-
-    /// Format needs the drive in the fresh list and its size typed exactly (qa-31-s14-code L1).
+    /// The page with a backup (which a test machine has none of): every form lands on its own
+    /// group, the delete is a confirm; in the container the restore is a typed confirm, on a
+    /// systemd install its command for that file; every [Done] code reads back to itself and shows
+    /// in a group the page has.
     #[test]
-    fn format_needs_a_listed_drive_and_its_size() {
-        let drives = [drive()];
-        assert!(format_target(&drives, "/dev/sda", " 29.8 GB ").is_ok());
-        assert!(format_target(&drives, "/dev/sda", "29,8 GB").is_ok());
-        assert_eq!(human_size(Lang::Nb, 1_258_291), "1,2 MB");
-        assert_eq!(human_size(Lang::En, 1_258_291), "1.2 MB");
-        assert_eq!(
-            format_target(&drives, "/dev/sda", "29.8").err(),
-            Some(FormatRefusal::WrongSize)
-        );
-        assert_eq!(
-            format_target(&drives, "/dev/sdb", "29.8 GB").err(),
-            Some(FormatRefusal::Gone)
-        );
-        assert_eq!(
-            format_target(&[], "/dev/sda", "29.8 GB").err(),
-            Some(FormatRefusal::Gone)
-        );
-        let wrong = FormatRefusal::WrongSize.answer(Lang::En, "/dev/sda");
-        assert_eq!(wrong.format_refused.unwrap().0, "/dev/sda");
-        assert_eq!(
-            FormatRefusal::Gone
-                .answer(Lang::En, "/dev/sda")
-                .flash
-                .unwrap()
-                .at,
-            "drive"
-        );
-    }
-
-    /// The page with a backup and a USB drive (which a test machine has neither of): every form
-    /// lands on its own group, the deletes and the format are confirms, a refused format opens its
-    /// confirm; every [Done] code reads back to itself and shows in a group the page has.
-    #[test]
-    fn the_page_with_a_backup_and_a_drive() {
-        let page = |format_refused: Option<(String, &'static str)>, flash: Option<Flash>| {
+    fn the_page_with_a_backup() {
+        let page = |docker: bool, flash: Option<Flash>| {
             BackupsTemplate {
                 lang: Lang::En,
                 title: "Backups".to_string(),
@@ -1253,30 +939,30 @@ mod tests {
                 }],
                 flash,
                 restore_refused: None,
-                format_refused,
                 schedule: BackupScheduleConfig::defaults(),
                 weekdays: &WEEKDAYS,
-                external_mount: EXTERNAL_MOUNT.to_string(),
-                external_drive_mounted: false,
-                removable_drives: vec![drive()],
-                docker: false,
+                docker,
             }
             .render()
             .unwrap()
         };
-        let html = page(None, None);
-        crate::tests::settings_pages::check_forms("/backups", &html);
-        assert!(html.contains("<summary class=\"row\">Format /dev/sda (29.8 GB)…</summary>"));
-        assert!(!html.contains("data-drive=\"/dev/sda\" open"));
-        let refused = page(
-            Some(("/dev/sda".to_string(), "settings.backups.wrong_size")),
-            None,
-        );
-        assert!(refused.contains("data-drive=\"/dev/sda\" open"));
-        assert!(refused.contains("id=\"format-error\""));
+        assert_eq!(human_size(Lang::Nb, 1_258_291), "1,2 MB");
+        assert_eq!(human_size(Lang::En, 1_258_291), "1.2 MB");
+        for docker in [false, true] {
+            let html = page(docker, None);
+            crate::tests::settings_pages::check_forms("/backups", &html);
+            for gone in ["drive", "format", "mirror", "external"] {
+                assert!(!html.to_lowercase().contains(gone), "{gone}: {html}");
+            }
+            let restore = "action=\"/backups/backup-20261013-030000.zip/restore#backups\"";
+            let command = "echo backup-20261013-030000.zip | sudo -u kidphone tee \
+                           /opt/kid-phone-server/data/restore_request";
+            assert_eq!(html.contains(restore), docker, "docker: {docker}");
+            assert_eq!(html.contains(command), !docker, "docker: {docker}");
+        }
         for done in Done::ALL {
             assert_eq!(Done::parse(done.code()), Some(done));
-            let html = page(None, Some(done.flash(Lang::En, false)));
+            let html = page(true, Some(done.flash(Lang::En)));
             assert!(
                 html.contains(&format!("id=\"{}\"", done.group())),
                 "{done:?}"
@@ -1285,13 +971,9 @@ mod tests {
                 html.contains(&format!("data-flash=\"{}\"", done.group())),
                 "{done:?}"
             );
-            assert!(
-                !done
-                    .flash(Lang::En, true)
-                    .title
-                    .contains("open this page again")
-            );
+            assert!(!done.flash(Lang::En).title.contains("open this page again"));
         }
         assert_eq!(Done::parse("nonsense"), None);
+        assert_eq!(Done::parse("format"), None, "an old bookmark shows nothing");
     }
 }
