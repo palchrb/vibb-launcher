@@ -215,8 +215,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Root on every Pi installs and runs only what this key signed (install.sh, update.sh and
-  # actions.sh check it). Nothing from the checkout is executed here; only this job sees the key.
+  # Root on every server installs only what this key signed (install.sh and update.sh check it;
+  # an older install's actions.sh checks update.sh before it runs it). Nothing from the checkout is
+  # executed here; only this job sees the key.
   server-release-sign:
     needs: [ server-release-test, server-release-build ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}

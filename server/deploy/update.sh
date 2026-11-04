@@ -11,16 +11,20 @@
 #   curl -fsSLo update.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh
 #   sudo bash update.sh
 #
-# KPS_REPO=owner/repo picks a different fork (same as install.sh). The
-# root-side updater passes the repo it was installed from, and KPS_TAG=server-vX.Y.Z
-# (the release this script was fetched from). KPS_ALLOW_DOWNGRADE=1 allows
-# installing a release older than the installed one.
+# KPS_REPO=owner/repo picks a different fork (same as install.sh), KPS_TAG=server-vX.Y.Z a
+# release (an older install's root-side updater passes both: the repo it was installed from and
+# the release this script was fetched from). KPS_ALLOW_DOWNGRADE=1 allows installing a release
+# older than the installed one.
+#
+# The server never makes this machine do anything (the user, 2026-11-04). An install from before
+# 0.67.0 has root helpers that did - a watcher for the server's requests, a scheduler, a backup
+# copy to a drive: this removes them (remove_host_helpers).
 
 set -euo pipefail
 
 REPO="${KPS_REPO:-palchrb/vibb-launcher}"
-# The pre-monorepo server repo: its installs pass it in (the root-side updater remembers the
-# repo it was installed from). Its releases now live in the monorepo.
+# The pre-monorepo server repo: its installs pass it in (an older install's root-side updater
+# remembered the repo it was installed from). Its releases now live in the monorepo.
 if [ "$REPO" = "palchrb/kid-phone-server" ]; then
     REPO="palchrb/vibb-launcher"
 fi
@@ -30,10 +34,15 @@ if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 fi
 INSTALL_DIR="/opt/kid-phone-server"
 SERVICE_USER="kidphone"
+# The installed server version, for the downgrade check: root's, outside data/. Installs from
+# before 0.67.0 kept it in OLD_UPDATER_DIR, the root helpers' directory (remove_host_helpers). The
+# same lines in install.sh and update.sh.
+VERSION_FILE="/var/lib/kid-phone-server/installed_version"
+OLD_UPDATER_DIR="/opt/kid-phone-server-updater"
 
 # Security review M5: every release file root installs or runs is signed with the project's
-# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
-# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
+# minisign key, pinned here (the same line in install.sh and update.sh - a server test keeps them
+# equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
 # the tag, so a signed file can't be passed off under another name or as another release.
 SERVER_SIGNING_PUBKEY="RWQp6olF7G4WFeRgDWSWwq2/qOkClyqqXEzDBrPPf2EUrdZlAUQATU5g"
 
@@ -74,7 +83,7 @@ esac
 # "latest" - so the server's release is looked up in the releases list (newest first): the first
 # server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
 # the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
-# none of these keys). Same text in install.sh, update.sh and install.sh's actions.sh.
+# none of these keys). Same text in install.sh and update.sh.
 resolve_server_tag() {
     curl -fsSL -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/$REPO/releases?per_page=100" \
@@ -103,11 +112,11 @@ version_gt() {
 }
 
 # The installed server version (vX.Y.Z), or nothing if unknown: install.sh/update.sh record it in
-# the root-owned updater directory; installs from before that only have data/watcher_version
-# (written by install.sh, at install time).
+# VERSION_FILE; older installs have it in OLD_UPDATER_DIR, the oldest only in data/watcher_version
+# (written by install.sh at install time; read as a version string, never run).
 installed_version() {
     local f v
-    for f in /opt/kid-phone-server-updater/installed_version "$INSTALL_DIR/data/watcher_version"; do
+    for f in "$VERSION_FILE" "$OLD_UPDATER_DIR/installed_version" "$INSTALL_DIR/data/watcher_version"; do
         [ -f "$f" ] || continue
         v="$(head -c 32 "$f" | tr -d '\n')"
         if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -133,8 +142,8 @@ refuse_downgrade() {
     fi
 }
 
-# KPS_TAG (set by the root-side updater, which fetched this script at that tag) or the newest
-# stable server release.
+# KPS_TAG (a release picked by hand; an older install's root-side updater sets it to the tag it
+# fetched update.sh from) or the newest stable server release.
 pick_tag() {
     if [ -n "${KPS_TAG:-}" ]; then
         if ! [[ "$KPS_TAG" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -198,476 +207,42 @@ download_release() {
     fi
 }
 
-UPDATER_DIR="/opt/kid-phone-server-updater"
+# The host helpers' removal. Since 0.67.0 the server never makes its host do anything (the user,
+# 2026-11-04): no root watcher for its requests (update, restart, apt, Tailscale, reboot, format a
+# drive, restore), no root scheduler for the system's updates, no root copy of the backups to a
+# drive. An install from before has them; this removes them, the last time root touches them. A
+# helper that is running right now is never stopped (an older server's "Update now" runs update.sh
+# inside the watcher's own service): with its unit gone it ends by itself. A backup drive mounted
+# at /mnt/kid-phone-server-backup and its /etc/fstab line are the owner's and stay. The same text
+# in install.sh and update.sh.
 
-# Writes stdin to $UPDATER_DIR/$1 (root, 0700) through a temp file and a rename, so a script
-# running right now keeps its old copy.
-install_root_script() {
-    local tmp
-    tmp="$(mktemp "$UPDATER_DIR/.$1.XXXXXX")"
-    cat >"$tmp"
-    chown root:root "$tmp"
-    chmod 700 "$tmp"
-    mv -f "$tmp" "$UPDATER_DIR/$1"
+# record_version vX.Y.Z: the installed server version, into VERSION_FILE (root's).
+record_version() {
+    install -d -m 755 "${VERSION_FILE%/*}"
+    printf '%s' "$1" >"$VERSION_FILE.new"
+    mv -f "$VERSION_FILE.new" "$VERSION_FILE"
 }
 
-# Rewrites the root-side helper scripts on every update, so an existing Pi gets their fixes
-# without re-running install.sh (security review H1: scheduler.sh no longer sources data/; M4: the
-# restore never writes through data/). The texts are install.sh's (a server test keeps them
-# equal); no privileged action is added, so the watcher schema stays.
-refresh_root_scripts() {
-    [ -d "$UPDATER_DIR" ] && [ ! -L "$UPDATER_DIR" ] || return 0
-    sed "s|@REPO@|$REPO|" <<'ACTIONS_EOF' | install_root_script actions.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Filled in by install.sh (sed below) with the repo it was installed from.
-REPO="@REPO@"
-DATA_DIR="/opt/kid-phone-server/data"
-BACKUP_DIR="$DATA_DIR/backups"
-
-# The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
-# "latest" - so the server's release is looked up in the releases list (newest first): the first
-# server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
-# the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
-# none of these keys). Same text in install.sh and update.sh.
-resolve_server_tag() {
-    curl -fsSL -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/$REPO/releases?per_page=100" \
-        | grep -oE '"(tag_name|draft|prerelease)": *("[^"]*"|true|false)' \
-        | awk -F': *' '
-            /"tag_name"/ { tag = $2; gsub(/"/, "", tag); draft = ""; next }
-            /"draft"/ { draft = $2; next }
-            /"prerelease"/ {
-                if (draft == "false" && $2 == "false" && tag ~ /^server-v[0-9]+\.[0-9]+\.[0-9]+$/) { print tag; exit }
-            }' || true
-}
-
-# Security review M5: every release file root installs or runs is signed with the project's
-# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
-# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
-# the tag, so a signed file can't be passed off under another name or as another release.
-SERVER_SIGNING_PUBKEY="RWQp6olF7G4WFeRgDWSWwq2/qOkClyqqXEzDBrPPf2EUrdZlAUQATU5g"
-
-# verify_signed FILE NAME TAG: FILE.minisig must be a good signature of FILE by the pinned key,
-# with the trusted comment "NAME TAG". Anything else - no key pinned, no minisign, no or a bad
-# signature, another comment - refuses.
-verify_signed() {
-    local file="$1" name="$2" tag="$3" comment
-    if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
-        echo "No release signing key is pinned in this script - refusing $name (server/DEPLOY.md, \"Release signing\")." >&2
-        return 1
-    fi
-    if ! command -v minisign >/dev/null 2>&1; then
-        { apt-get update -qq && apt-get install -y -qq minisign; } >/dev/null 2>&1 || true
-    fi
-    if ! command -v minisign >/dev/null 2>&1; then
-        echo "minisign is missing and couldn't be installed - refusing $name unchecked." >&2
-        return 1
-    fi
-    if ! comment="$(minisign -V -Q -P "$SERVER_SIGNING_PUBKEY" -m "$file" -x "$file.minisig" 2>/dev/null)" ||
-        [ "$comment" != "$name $tag" ]; then
-        echo "$name has no valid signature for $tag - not using it." >&2
-        return 1
-    fi
-}
-
-# Runs update.sh as the release it installs carries it (a release asset, signed - never a branch's
-# copy), from a file: a failed, truncated or unsigned download is never executed.
-action_app_update() {
-    local tag dir rc=0
-    tag="$(resolve_server_tag)"
-    if [ -z "$tag" ]; then
-        echo "app_update: no server-vX.Y.Z release found in $REPO" >&2
-        return 1
-    fi
-    dir="$(mktemp -d)"
-    if ! curl -fsSL "https://github.com/$REPO/releases/download/$tag/update.sh" -o "$dir/update.sh" ||
-        ! curl -fsSL "https://github.com/$REPO/releases/download/$tag/update.sh.minisig" -o "$dir/update.sh.minisig"; then
-        rm -rf "$dir"
-        echo "app_update: couldn't download update.sh for $tag" >&2
-        return 1
-    fi
-    if ! verify_signed "$dir/update.sh" update.sh "$tag"; then
-        rm -rf "$dir"
-        return 1
-    fi
-    KPS_REPO="$REPO" KPS_TAG="$tag" bash "$dir/update.sh" || rc=$?
-    rm -rf "$dir"
-    return "$rc"
-}
-
-action_app_restart() {
-    systemctl restart kid-phone-server
-}
-
-action_os_check() {
-    apt-get update -qq
-}
-
-action_os_upgrade() {
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
-}
-
-action_tailscale_update() {
-    tailscale update --yes
-}
-
-action_reboot() {
-    systemctl reboot
-}
-
-# Formats a removable drive as ext4 and mounts it at the external backup
-# path. Defense in depth: independently re-validates the device from
-# scratch - matches the expected /dev/sd[a-z] pattern, is actually marked
-# removable by the kernel, and is definitely not whatever backs / or /boot
-# - regardless of what the (unprivileged, internet-facing) app already
-# checked before requesting this, since that process is exactly the one
-# component that must never be trusted to have gotten this right on its own.
-action_format_drive() {
-    local device="$1"
-
-    if [ -z "$device" ]; then
-        echo "format_drive: no device specified" >&2
-        return 1
-    fi
-    if ! echo "$device" | grep -qE '^/dev/sd[a-z]$'; then
-        echo "format_drive: refusing to format '$device' — doesn't match the expected /dev/sd[a-z] pattern" >&2
-        return 1
-    fi
-
-    local devname
-    devname="$(basename "$device")"
-    if [ ! -f "/sys/block/$devname/removable" ] || [ "$(cat "/sys/block/$devname/removable")" != "1" ]; then
-        echo "format_drive: refusing to format '$device' — not marked removable by the kernel" >&2
-        return 1
-    fi
-
-    local root_device boot_device
-    root_device="$(findmnt -no SOURCE / | sed -E 's/p?[0-9]+$//')"
-    if [ "$device" = "$root_device" ]; then
-        echo "format_drive: refusing to format '$device' — this is the root filesystem's device" >&2
-        return 1
-    fi
-    boot_device="$(findmnt -no SOURCE /boot 2>/dev/null | sed -E 's/p?[0-9]+$//' || true)"
-    if [ -n "$boot_device" ] && [ "$device" = "$boot_device" ]; then
-        echo "format_drive: refusing to format '$device' — this is the boot device" >&2
-        return 1
-    fi
-
-    echo "Formatting $device as ext4..."
-    umount "${device}"* 2>/dev/null || true
-    mkfs.ext4 -F -q "$device"
-
-    mkdir -p /mnt/kid-phone-server-backup
-    local uuid
-    uuid="$(blkid -s UUID -o value "$device")"
-
-    # Replace any existing fstab entry for this mount point first, so
-    # re-formatting a previously-configured drive doesn't leave stale
-    # duplicate entries behind.
-    sed -i '\#/mnt/kid-phone-server-backup#d' /etc/fstab
-    echo "UUID=$uuid /mnt/kid-phone-server-backup ext4 defaults,nofail 0 2" >>/etc/fstab
-
-    mount /mnt/kid-phone-server-backup
-    echo "Drive formatted and mounted at /mnt/kid-phone-server-backup."
-}
-
-# Restores a named backup zip: stops the app, swaps in the backup's database, and restarts.
-# data/ belongs to the unprivileged service user, so this root code never follows or writes
-# through anything it finds there (security review M4): only the zip's kidphone.db is read, as a
-# stream into a root-only temp directory, at most RESTORE_MAX_BYTES and only if it is an SQLite
-# file; the live database is copied aside into a root-owned directory; and the restored file goes
-# into place by rename, which replaces a symlink at the target instead of writing through it.
-# Everything that can be checked happens *before* the app is stopped, so a bad request never takes
-# the app down for nothing. Once stopped, an EXIT trap restarts it however this ends.
-RESTORE_MAX_BYTES=$((1024 * 1024 * 1024))
-PRERESTORE_ROOT="/var/backups/kid-phone-server-prerestore"
-
-action_restore_backup() {
-    local filename="$1"
-
-    if [ -z "$filename" ]; then
-        echo "restore_backup: no filename specified" >&2
-        return 1
-    fi
-    case "$filename" in
-        backup-*.zip) ;;
-        *)
-            echo "restore_backup: refusing to restore '$filename' — doesn't match the expected backup-*.zip pattern" >&2
-            return 1
-            ;;
-    esac
-    if echo "$filename" | grep -qE '/|\.\.'; then
-        echo "restore_backup: refusing to restore '$filename' — invalid characters" >&2
-        return 1
-    fi
-    if [ -L "$DATA_DIR" ] || [ -L "$BACKUP_DIR" ]; then
-        echo "restore_backup: $DATA_DIR or $BACKUP_DIR is a symlink - refusing" >&2
-        return 1
-    fi
-
-    local backup_path="$BACKUP_DIR/$filename"
-    if [ -L "$backup_path" ] || [ ! -f "$backup_path" ]; then
-        echo "restore_backup: '$backup_path' not found (or not a plain file)" >&2
-        return 1
-    fi
-
-    local restore_tmp staged size magic
-    restore_tmp="$(mktemp -d)"
-    staged="$restore_tmp/kidphone.db"
-    # Only kidphone.db, streamed: no other entry (a symlink, a path) is ever written anywhere, and
-    # head stops a zip bomb at the limit (unzip then fails on the closed pipe).
-    if ! timeout 900 unzip -p "$backup_path" kidphone.db 2>/dev/null | head -c "$((RESTORE_MAX_BYTES + 1))" >"$staged"; then
-        echo "restore_backup: couldn't read kidphone.db from '$backup_path' (missing, damaged or larger than $RESTORE_MAX_BYTES bytes)" >&2
-        rm -rf "$restore_tmp"
-        return 1
-    fi
-    size="$(stat -c %s "$staged")"
-    magic="$(head -c 16 "$staged" | od -An -tx1 | tr -d ' \n')"
-    if [ "$size" -eq 0 ] || [ "$size" -gt "$RESTORE_MAX_BYTES" ] || [ "$magic" != "53514c69746520666f726d6174203300" ]; then
-        echo "restore_backup: the kidphone.db in '$backup_path' is not an SQLite database (or too large) - aborting" >&2
-        rm -rf "$restore_tmp"
-        return 1
-    fi
-
-    echo "Stopping the app for restore..."
-    systemctl stop kid-phone-server
-    trap 'systemctl start kid-phone-server' EXIT
-
-    # Safety copy of whatever's live right now, in a root-owned directory (never inside data/): the
-    # newest 3 are kept. Only plain files are copied; a symlink in data/ is never followed.
-    local prerestore_dir f incoming
-    install -d -m 700 "$PRERESTORE_ROOT"
-    prerestore_dir="$PRERESTORE_ROOT/$(date +%Y%m%d-%H%M%S)"
-    mkdir -m 700 "$prerestore_dir"
-    for f in kidphone.db kidphone.db-wal kidphone.db-shm; do
-        if [ -f "$DATA_DIR/$f" ] && [ ! -L "$DATA_DIR/$f" ]; then
-            cp -p "$DATA_DIR/$f" "$prerestore_dir/$f"
-        fi
+remove_host_helpers() {
+    local unit current
+    for unit in kid-phone-server-updater.path kid-phone-server-scheduler.timer kid-phone-server-backup-sync.timer; do
+        systemctl disable --now "$unit" >/dev/null 2>&1 || true
     done
-    find "$PRERESTORE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -n -3 \
-        | while read -r old; do rm -rf "${PRERESTORE_ROOT:?}/$old"; done
-
-    # Into place by rename: mktemp creates a new file (never an existing one), and mv -T replaces
-    # whatever sits at the target - a symlink included - instead of writing through it.
-    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
-    cat "$staged" >"$incoming"
-    chown kidphone:kidphone "$incoming"
-    chmod 600 "$incoming"
-    rm -f "$DATA_DIR/kidphone.db-wal" "$DATA_DIR/kidphone.db-shm"
-    mv -fT "$incoming" "$DATA_DIR/kidphone.db"
-    rm -rf "$restore_tmp"
-    # The next start forgets every admin session the backup holds (security review M2), and logs
-    # the restore. The same new-file-and-rename as above.
-    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
-    printf '%s' "$filename" >"$incoming"
-    chown kidphone:kidphone "$incoming"
-    mv -fT "$incoming" "$DATA_DIR/restore_applied"
-
-    echo "Restore complete (the previous database is in $prerestore_dir)."
-}
-ACTIONS_EOF
-    install_root_script watcher.sh <<'WATCHER_EOF'
-#!/usr/bin/env bash
-# Runs as root, triggered only when kid-phone-server (unprivileged) drops
-# a flag file asking for one of a fixed set of actions.
-set -euo pipefail
-source /opt/kid-phone-server-updater/actions.sh
-
-FLAG_FILE="/opt/kid-phone-server/data/update_requested"
-# data/ belongs to the service user: only a regular file is read (security review M4; a FIFO
-# would block the read, and with it every later request - QA of the security wave, Low 1), at most
-# one short line of it, and the read is bounded in time for a file swapped after the check.
-[ -e "$FLAG_FILE" ] || [ -L "$FLAG_FILE" ] || exit 0
-if [ -L "$FLAG_FILE" ] || [ ! -f "$FLAG_FILE" ]; then
-    rm -f "$FLAG_FILE"
-    echo "The update request is not a regular file - ignored" >&2
-    exit 1
-fi
-FLAG_CONTENT="$(timeout 5 head -c 256 -- "$FLAG_FILE" 2>/dev/null | head -n 1 || true)"
-rm -f "$FLAG_FILE"
-
-# Most actions are a single word; format_drive/restore_backup additionally
-# carry a second, space-separated argument.
-ACTION="${FLAG_CONTENT%% *}"
-if [ "$ACTION" != "$FLAG_CONTENT" ]; then
-    ARG="${FLAG_CONTENT#* }"
-else
-    ARG=""
-fi
-
-case "$ACTION" in
-    update) action_app_update ;;
-    restart) action_app_restart ;;
-    os_check) action_os_check ;;
-    os_upgrade) action_os_upgrade ;;
-    tailscale_update) action_tailscale_update ;;
-    reboot) action_reboot ;;
-    format_drive) action_format_drive "$ARG" ;;
-    restore_backup) action_restore_backup "$ARG" ;;
-    *)
-        echo "Unknown or empty update-request action: '$ACTION'" >&2
-        exit 1
-        ;;
-esac
-WATCHER_EOF
-    install_root_script scheduler.sh <<'SCHEDULER_EOF'
-#!/usr/bin/env bash
-# Root-run, every 10 minutes: the OS/Tailscale schedule from the Software updates page.
-# schedule.conf lives in data/, which the unprivileged service writes, so it is never sourced or
-# executed (security review H1): each key is read with grep and must match its pattern, else its
-# default is used and the problem logged. A symlinked file is ignored. update.sh rewrites this
-# script on every update (the same text is in install.sh and update.sh; a server test keeps them
-# equal).
-set -euo pipefail
-# shellcheck source=/dev/null
-source /opt/kid-phone-server-updater/actions.sh
-
-CONFIG_FILE="/opt/kid-phone-server/data/schedule.conf"
-LAST_RUN_FILE="/opt/kid-phone-server-updater/last_run_date"
-
-[ -f "$CONFIG_FILE" ] || exit 0
-if [ -L "$CONFIG_FILE" ]; then
-    echo "scheduler: $CONFIG_FILE is a symlink - ignored" >&2
-    exit 0
-fi
-
-# setting KEY DEFAULT PATTERN: the key's value if it matches PATTERN (an anchored regex), else
-# DEFAULT.
-setting() {
-    local value
-    value="$(timeout 5 grep -m1 "^$1=" -- "$CONFIG_FILE" | cut -d= -f2- || true)"
-    if [[ "$value" =~ $3 ]]; then
-        printf '%s\n' "$value"
-    else
-        if [ -n "$value" ]; then
-            echo "scheduler: ignoring an invalid $1 in $CONFIG_FILE" >&2
-        fi
-        printf '%s\n' "$2"
+    for unit in kid-phone-server-updater kid-phone-server-scheduler kid-phone-server-backup-sync; do
+        rm -f "/etc/systemd/system/$unit.service"
+        rm -rf "/etc/systemd/system/$unit.service.d"
+    done
+    rm -f /etc/systemd/system/kid-phone-server-updater.path \
+        /etc/systemd/system/kid-phone-server-scheduler.timer \
+        /etc/systemd/system/kid-phone-server-backup-sync.timer
+    # The version the downgrade check reads moves out of the directory that goes.
+    current="$(installed_version)"
+    if [ -n "$current" ] && [ ! -f "$VERSION_FILE" ]; then
+        record_version "$current"
     fi
-}
-
-FREQUENCY="$(setting FREQUENCY daily '^(daily|weekly|monthly)$')"
-DAY_OF_WEEK="$(setting DAY_OF_WEEK 0 '^[0-6]$')"
-DAY_OF_MONTH="$(setting DAY_OF_MONTH 1 '^([1-9]|1[0-9]|2[0-8])$')"
-CHECK_TIME="$(setting CHECK_TIME 03:00 '^([01][0-9]|2[0-3]):[0-5][0-9]$')"
-AUTO_APPLY_OS="$(setting AUTO_APPLY_OS false '^(true|false)$')"
-AUTO_APPLY_TAILSCALE="$(setting AUTO_APPLY_TAILSCALE false '^(true|false)$')"
-AUTO_REBOOT="$(setting AUTO_REBOOT false '^(true|false)$')"
-
-TODAY="$(date +%F)"
-LAST_RUN="$(cat "$LAST_RUN_FILE" 2>/dev/null || true)"
-[ "$LAST_RUN" != "$TODAY" ] || exit 0
-
-case "$FREQUENCY" in
-    weekly)
-        [ "$(date +%w)" = "$DAY_OF_WEEK" ] || exit 0
-        ;;
-    monthly)
-        [ "$(date +%-d)" = "$DAY_OF_MONTH" ] || exit 0
-        ;;
-esac
-
-NOW_MINUTES=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
-TARGET_MINUTES=$(( 10#${CHECK_TIME%%:*} * 60 + 10#${CHECK_TIME##*:} ))
-DIFF=$(( NOW_MINUTES - TARGET_MINUTES ))
-# Only fire in the 10-minute window right after the scheduled time (this
-# runs on a 10-minute timer, so this is the precision that's actually
-# achievable - good enough for background maintenance).
-[ "$DIFF" -ge 0 ] && [ "$DIFF" -lt 10 ] || exit 0
-
-echo "$TODAY" >"$LAST_RUN_FILE"
-
-action_os_check
-if [ "$AUTO_APPLY_OS" = "true" ]; then
-    action_os_upgrade
-fi
-if [ "$AUTO_APPLY_TAILSCALE" = "true" ]; then
-    action_tailscale_update
-fi
-if [ "$AUTO_REBOOT" = "true" ] && [ -f /var/run/reboot-required ]; then
-    action_reboot
-fi
-SCHEDULER_EOF
-    install_root_script backup_sync.sh <<'BACKUP_SYNC_EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-BACKUP_CONFIG_FILE="/opt/kid-phone-server/data/backup_schedule.conf"
-EXTERNAL_MOUNT="/mnt/kid-phone-server-backup"
-DATA_DIR="/opt/kid-phone-server/data"
-
-[ -f "$BACKUP_CONFIG_FILE" ] || exit 0
-mountpoint -q "$EXTERNAL_MOUNT" || exit 0
-# data/ belongs to the service user: never follow a symlink it put there (security review M4).
-if [ -L "$DATA_DIR" ] || [ -L "$DATA_DIR/backups" ] || [ -L "$BACKUP_CONFIG_FILE" ]; then
-    echo "backup_sync: a symlink in $DATA_DIR - not copying" >&2
-    exit 0
-fi
-
-EXTERNAL_COPY_ENABLED="$(timeout 5 grep -m1 '^EXTERNAL_COPY_ENABLED=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
-CONTINUOUS_MIRROR_ENABLED="$(timeout 5 grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
-
-# The copies hold the whole database: root's alone on the Pi (security review M2).
-chmod 700 "$EXTERNAL_MOUNT"
-# Root never follows, reads or writes through anything else the service user put in data/ (QA of
-# the security wave, Medium 1): only regular files at the top of data/backups/ and a regular
-# live_mirror.db are copied - never a symlink, a FIFO, a device or a directory. Each copy lands by
-# --remove-destination, so whatever sits at the destination is replaced, never written through;
-# -a never dereferences, so a file swapped for a link in between arrives as a link, and anything
-# on the drive that isn't a regular file or a directory is deleted first, every run.
-find "$EXTERNAL_MOUNT" -xdev -mindepth 1 ! -type f ! -type d -delete 2>/dev/null || true
-
-if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
-    install -d -m 700 "$EXTERNAL_MOUNT/snapshots"
-    find "$DATA_DIR/backups" -mindepth 1 -maxdepth 1 -type f -print0 |
-        while IFS= read -r -d '' file; do
-            cp -au --remove-destination -- "$file" "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
-        done
-fi
-
-# The drive keeps as many as data/backups/ (security review M2), so the data retention windows
-# hold there too - also while the copy to the drive is off, as long as the drive is mounted: the
-# newest RETENTION_COUNT backup-*.zip (the Backups page's "Backups to keep", 0 keeps them all) and
-# the newest PRE_MIGRATE_KEEP pre-migrate-*.db (startup::PRE_MIGRATE_KEEP). RETENTION_COUNT is 1-4
-# digits, spaces around them allowed; unset or anything else keeps RETENTION_COUNT_DEFAULT
-# (handlers::backups::DEFAULT_RETENTION_COUNT), logged when set - the server's own rule
-# (backups::retention_of; server tests keep the numbers and the rule equal). Only regular files at
-# the top of snapshots/ with those two names are ever deleted; the names sort by time (byte order,
-# as the server sorts them).
-RETENTION_COUNT_DEFAULT=14
-PRE_MIGRATE_KEEP=3
-RETENTION_SETTING="$(timeout 5 grep -m1 '^RETENTION_COUNT=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2- || true)"
-if [[ "$RETENTION_SETTING" =~ ^[[:space:]]*([0-9]{1,4})[[:space:]]*$ ]]; then
-    RETENTION_COUNT="${BASH_REMATCH[1]}"
-else
-    if [ -n "$RETENTION_SETTING" ]; then
-        echo "backup_sync: ignoring an invalid RETENTION_COUNT in $BACKUP_CONFIG_FILE - keeping $RETENTION_COUNT_DEFAULT" >&2
-    fi
-    RETENTION_COUNT="$RETENTION_COUNT_DEFAULT"
-fi
-# prune_snapshots PATTERN KEEP: deletes all but the newest KEEP files named PATTERN (KEEP 0: none).
-prune_snapshots() {
-    [ "$2" -gt 0 ] || return 0
-    find "$EXTERNAL_MOUNT/snapshots" -xdev -mindepth 1 -maxdepth 1 -type f -name "$1" -printf '%f\0' |
-        LC_ALL=C sort -z -r | tail -z -n +"$(( $2 + 1 ))" |
-        while IFS= read -r -d '' name; do
-            rm -f -- "$EXTERNAL_MOUNT/snapshots/$name"
-        done
-}
-if [ -d "$EXTERNAL_MOUNT/snapshots" ] && [ ! -L "$EXTERNAL_MOUNT/snapshots" ]; then
-    prune_snapshots 'backup-*.zip' "$((10#$RETENTION_COUNT))" || true
-    prune_snapshots 'pre-migrate-*.db' "$PRE_MIGRATE_KEEP" || true
-fi
-
-if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ] &&
-    [ ! -L "$DATA_DIR/live_mirror.db" ]; then
-    install -d -m 700 "$EXTERNAL_MOUNT/live"
-    cp -au --remove-destination -- "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
-fi
-BACKUP_SYNC_EOF
+    # Root's alone (0700): actions.sh, watcher.sh, scheduler.sh, backup_sync.sh, their run dates.
+    rm -rf "$OLD_UPDATER_DIR"
+    systemctl daemon-reload
 }
 
 TAG="$(pick_tag)"
@@ -683,7 +258,7 @@ trap 'rm -rf "$TMP_EXTRACT"' EXIT
 # Download, verify and unpack everything *before* stopping the service: a 404, a GitHub error
 # page, a truncated or altered download must fail here, with the old version still running.
 download_release "$TMP_EXTRACT"
-refresh_root_scripts
+remove_host_helpers
 
 echo "Stopping service..."
 systemctl stop kid-phone-server
@@ -731,14 +306,6 @@ if [ -d "$INSTALL_DIR/data" ] && [ ! -L "$INSTALL_DIR/data" ]; then
 fi
 mkdir -p /etc/systemd/system/kid-phone-server.service.d
 printf '[Service]\nUMask=0077\n' >/etc/systemd/system/kid-phone-server.service.d/umask.conf
-# The root helpers are oneshots, which have no start timeout by default: one hung on something in
-# data/ would block every later request (QA of the security wave, Low 1). install.sh has the same
-# values in the units.
-for helper in updater:2h scheduler:2h backup-sync:1h; do
-    mkdir -p "/etc/systemd/system/kid-phone-server-${helper%%:*}.service.d"
-    printf '[Service]\nTimeoutStartSec=%s\n' "${helper##*:}" \
-        >"/etc/systemd/system/kid-phone-server-${helper%%:*}.service.d/timeout.conf"
-done
 systemctl daemon-reload
 
 echo "Starting service..."
@@ -751,8 +318,7 @@ if systemctl is-active --quiet kid-phone-server; then
     # each back up the already-migrated DB and push out the pre-migration copy that a rollback
     # needs. Keep the newest 3 (directory names sort by time).
     ls -1d "$BACKUP_ROOT"/*/ 2>/dev/null | sort | head -n -3 | xargs -r rm -rf
-    mkdir -p /opt/kid-phone-server-updater
-    echo -n "$NEW_VERSION" >/opt/kid-phone-server-updater/installed_version
+    record_version "$NEW_VERSION"
     echo ""
     echo "Update complete and running."
 else
