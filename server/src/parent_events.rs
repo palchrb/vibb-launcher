@@ -2291,6 +2291,7 @@ mod tests {
             network: "wifi".to_string(),
             at_ms: 1_793_795_000_000,
             received_at: String::new(),
+            open: false,
         }
     }
 

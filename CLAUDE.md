@@ -197,8 +197,10 @@ The launcher's certificate check (design 76: the server's issuer pinned once the
 body's `server_tls`: `enforcing`, `seen`, `outside` rows of both kinds), `policy` (the policy's `server_tls` per server
 state: `{}` watching, `{"enforce": true}` on, `{"enforce": false}` off), `flags` (the phone's stored flag from each
 policy value - absent and malformed included - start state and connection: `passing`, `failing`, `tailnet`,
-`debug_http`) and `drops` (the outside rows leave only after a 2xx over a passing or a tailnet connection). The
-launcher's `ServerPinsTest` encodes `report` exactly and runs every `flags` and `drops` row; the server's
+`debug_http`), `drops` (the outside rows leave only after a 2xx over a passing or a tailnet connection) and
+`recovery` (the stored tailnet recovery address from a policy's `server_tls.recovery_url`: taken only over a passing or
+tailnet connection, only as tailnet http). The launcher's `ServerPinsTest` encodes `report` exactly and runs every
+`flags`, `drops` and `recovery` row; the server's
 `tests::server_tls::a_launcher_report_moves_the_state` posts `report` (its instants moved to the last hour) and produces
 every `policy` row; both compare the copies. The built-in set itself stays the launcher's (`ServerPins.kt`): the server
 never judges a chain. The policy's `server_tls` is pinned by `policy_json_keys_snapshot` and `ServerPinsTest`.

@@ -496,27 +496,41 @@ enforces it only once this server says so. `src/server_tls.rs` (migration `0129_
 one row per phone, no row = `watching`):
 - **Intake** (`server_tls::intake`, from `device_api::status`): the report's raw `server_tls` through `sanitize` (at
   most 8 `outside` rows, names 64 characters, pins 44 characters of base64, networks `wifi`/`mobile`/`other`; junk
-  drops a row, never the report), then `next_state` at the **receive time**. `watching` -> `on` when in-set `seen`
+  drops a row, never the report; control and bidi characters are dropped from names and hosts, code QA L-4), then
+  `next_state` at the **receive time**. `watching` -> `on` when in-set `seen`
   sightings span 72 hours, on 3 distinct (UTC) days, on Wi-Fi and mobile data when the phone has reported mobile at
-  all (R-3); a phone reporting `enforcing: true` is adopted as `on` (it stored that only from a pinned `true`). An
-  outside sighting (a new `outside` row, or `seen.in_set: false`) sets `stopped_at`: never switched on by itself, the
-  window isn't restarted (R-2). `on` is sticky against outside rows. A new outside row raises `server_tls_seen`
-  (`parent_events`, no switch, "Anna saw a certificate for your server from …"), at most one a day per phone, never
-  while `off`.
+  all (R-3); a phone reporting `enforcing: true` with an in-set `seen` is adopted as `on` (it stored that only from a
+  pinned `true`) - never while `stopped_at` is set: then the security line `server_tls_phone_on` (once per change,
+  code QA L-3) and the page says so. An outside sighting (a new `outside` row, or `seen.in_set: false`) sets
+  `stopped_at`: never switched on by itself, the window isn't restarted (R-2). `on` is sticky against outside rows. A
+  new outside row of a phone that has shown an in-set chain at all (`in_set_seen`, R-2(c), code QA L-2) raises
+  `server_tls_seen` (`parent_events`, no switch, "Anna saw a certificate for your server from …"), at most one a day
+  per phone, never while `off`. Each kept row is `open` while the phone's last report still carries it (it drops a
+  row only after a 2xx over a working connection); the last report's `seen` is kept (`seen_in_set`, `seen_name`).
 - **Policy** (`server_tls::policy`, in `build_policy`): only for a phone whose last report has `server_pin_v1` -
-  `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; a
-  read error fails the policy. Pinned by `policy_json_keys_snapshot`.
+  `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
+  with `recovery_url` when the server knows its tailnet recovery address (`server_tls::recovery_url`: `PHONE_RECOVERY_URL`,
+  else the setup QR's address when it is tailnet http, else this box's tailnet address - the source picked toward
+  100.100.100.100 / `fd7a:115c:a1e0::53` on a connected UDP socket, nothing sent, never in the tests - on a listener
+  bound to it or to `0.0.0.0`/`[::]`; code QA H-1); a read error fails the policy. Pinned by
+  `policy_json_keys_snapshot`.
 - **Device › Advanced › Certificate check** (`#server-tls`, after Connection, only with the capability): the state as
-  one row ("on - only Let's Encrypt or ZeroSSL", "watching - on from …", "not on - this phone saw a certificate from …
-  - not switched on by itself", "Off since …, by …"), the last `refused` row as an alarm, and the parent's one-shots
+  one row, from the server's state and what the phone reports (code QA M-1: "on - only Let's Encrypt or ZeroSSL" only
+  while the phone says it enforces, "on - the phone takes it at its next sync", "on here, but this phone can't take
+  it - … comes from X"; "watching - on from …"; "not on - this phone saw a certificate from … - not switched on by
+  itself"; "Off since …, by …" and, while the phone still enforces, how to reach it), the recovery address or where
+  to find it, the last `refused` row as an alarm while the phone still sends it and a week after (`off` included;
+  the phone's own time when it is plausible, else "reported at", L-5), and the parent's one-shots
   `POST /devices/{id}/server-tls/{off|watch|on}` (`handlers::devices::server_tls`): "Turn off the certificate check"
-  (behind a ticked box) while watching or on, "Turn it on again" (back to `watching`, a new window) while off, "Turn
+  (behind a ticked box) while watching or on, "Turn it on again" (back to `watching`, a new window) only while off (the
+  route refuses it otherwise, `?notice=server_tls_unchanged`), "Turn
   the check on now" while off or stopped. Each at once: stored, its own security event (`server_tls_off` /
   `server_tls_on`, the parent's username, `security.detail.server_tls.*` naming the phone - never the settings log's
   `settings_saved`), for off the `server_tls_off` event pushed to every parent ("The certificate check for Anna was
   turned off by Mamma"), and an SSE nudge (R-4). Each returns to `#server-tls` with `?notice=`.
 - **Contract**: `testdata/server_tls_report.json` (root `CLAUDE.md`); `tests::server_tls` posts its `report` and
   produces its `policy` rows.
-- Recovery for a phone that refuses this server's certificate: its Server URL set to `http://<this server's Tailscale
-  IP>` on the phone (the tailnet path is never pinned), then "Turn off the certificate check" here if the server stays
-  outside the set (DEPLOY.md, "The phones' certificate check").
+- Recovery for a phone that refuses this server's certificate: its Server URL set to the tailnet recovery address on
+  the phone (the tailnet path is never pinned), then "Turn off the certificate check" here if the server stays outside
+  the set (DEPLOY.md, "Tailnet recovery address": something must answer the phones' API on plain http at the box's
+  tailnet IP - nothing does in the loopback setups by default).

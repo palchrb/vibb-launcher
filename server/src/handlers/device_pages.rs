@@ -898,6 +898,7 @@ pub async fn view_advanced(
                     &zone,
                     now,
                     query.get("notice").map(String::as_str),
+                    crate::server_tls::recovery_url(&state).await.as_deref(),
                 )),
                 Err(err) => {
                     tracing::error!(device_id = id, %err, "can't read the certificate check");

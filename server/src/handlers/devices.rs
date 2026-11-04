@@ -722,17 +722,35 @@ pub async fn server_tls(
     let stored = async {
         let mut tx = state.db.begin().await?;
         let row = crate::server_tls::load(&mut *tx, id).await?;
+        // "Turn it on again" is the way back from `off` only (code QA nit): from `watching` or `on` it would restart
+        // the window or leave `on` without anyone deciding to.
+        if action == Action::Watch && row.state != crate::server_tls::State::Off {
+            return Ok(false);
+        }
         crate::server_tls::store(
             &mut *tx,
             id,
             &crate::server_tls::by_parent(&row, action, admin.name(), now),
         )
         .await?;
-        tx.commit().await
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(true)
     };
-    if let Err(err) = stored.await {
-        tracing::error!(device_id = id, %err, "can't store the certificate check");
-        return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed");
+    match stored.await {
+        Ok(true) => {}
+        Ok(false) => {
+            return crate::settings_log::refused(Redirect::to(&format!(
+                "/devices/{id}/advanced?notice=server_tls_unchanged#server-tls"
+            )));
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't store the certificate check");
+            return crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed",
+            );
+        }
     }
     security::record_security_event(
         &state.db,

@@ -260,6 +260,8 @@
     <string name="settings_mdm_server_cert_off">Not checked - the server turns the check on</string>
     <string name="settings_mdm_server_cert_refused">Refused a certificate from %1$s at %2$s</string>
     <string name="server_cert_explain">Vibb One talks to your server over https only when its certificate comes from Let\'s Encrypt or ZeroSSL. If it now comes from another issuer: put the server back on one of those, or set Server URL to http:// and the server\'s Tailscale IP - the tailnet connection works at once - and turn the check off on the phone\'s page on the admin site if the server stays with the new issuer. Or scan the phone\'s setup code on the admin site again (Scan setup QR).</string>
+    <string name="server_cert_recovery">This server\'s tailnet address: %1$s - set it as Server URL if the phone refuses the server\'s certificate.</string>
+    <string name="server_cert_recovery_unknown">The phone\'s Advanced page on the admin site shows the server\'s tailnet address (Certificate check).</string>
     <string name="server_cert_refused_sync">The server\'s certificate is from %1$s, which this phone doesn\'t accept. Nothing was sent.</string>
     <string name="server_url_refused">The phone only uses a server address that starts with https:// (plain http only to a Tailscale IP like http://100.\u2060101.\u2060102.\u2060103). Use the server\'s https address.</string>
     <string name="settings_mdm_tailscale_auth_key">Tailscale auth key</string>

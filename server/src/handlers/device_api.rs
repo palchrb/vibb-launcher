@@ -411,7 +411,7 @@ pub(crate) async fn build_policy(
                 .await?;
     }
     // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
-    let server_tls = crate::server_tls::policy(&state.db, device_id, &capabilities).await?;
+    let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);

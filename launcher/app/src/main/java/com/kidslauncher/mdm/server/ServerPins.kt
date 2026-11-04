@@ -119,18 +119,28 @@ fun chainAnchor(chain: List<Certificate>): Anchor? {
 /** OkHttp's pin failure starts with this (only this: a hostname failure is not a pin failure, qa L-5). */
 const val PIN_FAILURE_PREFIX = "Certificate pinning failure!"
 
+/** Whether [e] is OkHttp's pin failure (only that: a hostname failure is not one, qa L-5). */
+fun isPinFailure(e: Throwable): Boolean =
+    (e as? javax.net.ssl.SSLPeerUnverifiedException)?.message?.startsWith(PIN_FAILURE_PREFIX) == true
+
+/** One certificate of OkHttp's "Peer certificate chain": four spaces, `sha256/` and a 32-byte pin, its subject. */
+private val CHAIN_LINE = Regex("^ {4}sha256/([A-Za-z0-9+/]{43}=): (.*)$")
+
 /**
- * The anchor of OkHttp's pin failure: the last `sha256/<pin>: <subject>` line of its "Peer certificate chain" (the
- * chain Android validated, anchor last). `null` for any other failure. Pinned against OkHttp 4.12's message by
- * `ServerPinsTest`.
+ * The anchor of OkHttp's pin failure: the last `    sha256/<pin>: <subject>` line of its "Peer certificate chain"
+ * (the chain Android validated, anchor last), up to the **last** "Pinned certificates for" - the hostname and the
+ * pins after it are ours, while a leaf's subject is whoever got it issued and may carry either phrase or a newline
+ * (code QA L-1: a leaf can't name the anchor). `null` for any other failure or a message of another shape. Pinned
+ * against OkHttp 4.12's message by `ServerPinsTest`.
  */
 fun pinFailureAnchor(e: Throwable): Anchor? {
-    val message = (e as? javax.net.ssl.SSLPeerUnverifiedException)?.message ?: return null
-    if (!message.startsWith(PIN_FAILURE_PREFIX)) return null
-    val chain = message.substringAfter("Peer certificate chain:", "").substringBefore("Pinned certificates for")
-    val last = chain.lines().map { it.trim() }.lastOrNull { it.startsWith("sha256/") && it.contains(": ") } ?: return null
-    val pin = last.removePrefix("sha256/").substringBefore(": ")
-    return Anchor(anchorName(last.substringAfter(": ")), pin)
+    if (!isPinFailure(e)) return null
+    val message = e.message!!
+    val start = message.indexOf("\n  Peer certificate chain:")
+    val end = message.lastIndexOf("\n  Pinned certificates for ")
+    if (start < 0 || end <= start) return null
+    val last = message.substring(start, end).lines().mapNotNull { CHAIN_LINE.matchEntire(it) }.lastOrNull() ?: return null
+    return Anchor(anchorName(last.groupValues[2]), last.groupValues[1])
 }
 
 /** Thrown by a server client when the server's chain failed the pins (the flag on): nothing was sent. */
@@ -159,6 +169,24 @@ data class OutsideRow(
         const val REFUSED = "refused"
     }
 }
+
+/** The policy's `server_tls.recovery_url` (code QA H-1): the plain-http tailnet address of this server, shown in
+ * Settings for a phone that refuses its certificate - only an address the phone itself takes as tailnet http
+ * ([serverUrlVerdict]), anything else is none. */
+fun recoveryOf(serverTls: JsonElement?): String? {
+    val url = (serverTls as? JsonObject)?.get("recovery_url") as? JsonPrimitive ?: return null
+    return url.content.takeIf { url.isString && serverUrlVerdict(it) == ServerUrlVerdict.TAILNET_HTTP }
+}
+
+/** The stored recovery address after a fresh policy: the server's (or none) when the policy came over a connection
+ * that passed the built-in set or over the tailnet and carries `server_tls`; otherwise the stored one, so a MITM
+ * can't name an address (the contract's `recovery` rows). */
+fun nextRecovery(stored: String?, serverTls: JsonElement?, connection: PinConnection): String? =
+    if ((connection == PinConnection.PASSED || connection == PinConnection.TAILNET) && serverTls is JsonObject) {
+        recoveryOf(serverTls)
+    } else {
+        stored
+    }
 
 /** The ring with [row] added: only when it differs from the last ([OutsideRow.sameAs]), the oldest dropped past
  * [OUTSIDE_MAX]. */

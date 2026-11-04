@@ -13,7 +13,9 @@
 -- the last 8 outside rows the phone sent (`{kind, host, name, pin, network, at_ms, received_at}`), for the device
 -- page. `outside_pushed_on`: the UTC date of the last outside push (one a day per phone). `phone_enforcing`: the
 -- last report's `enforcing`. `changed_at`/`changed_by`: the last switch, by a parent's name (NULL = the server or
--- the phone).
+-- the phone). `in_set_seen`: the phone has shown an in-set chain at all (only then is an outside sighting pushed,
+-- R-2(c)); `seen_in_set`/`seen_name`: the last report's `seen` (the device page says when an `on` phone can't pin).
+-- An `outside_json` row's `open`: the phone's last report still carried it.
 CREATE TABLE device_server_tls (
     device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
     state TEXT NOT NULL DEFAULT 'watching' CHECK (state IN ('watching', 'on', 'off')),
@@ -26,5 +28,8 @@ CREATE TABLE device_server_tls (
     outside_pushed_on TEXT,
     phone_enforcing INTEGER,
     changed_at TEXT,
-    changed_by TEXT
+    changed_by TEXT,
+    in_set_seen INTEGER NOT NULL DEFAULT 0,
+    seen_in_set INTEGER,
+    seen_name TEXT NOT NULL DEFAULT ''
 );

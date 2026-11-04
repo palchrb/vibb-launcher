@@ -16,6 +16,7 @@ object ServerPinStore {
     private const val LOG_TAG = "ServerPins"
     const val ENFORCE_KEY = "server_pin_enforce"
     const val OUTSIDE_KEY = "server_pins_outside"
+    const val RECOVERY_KEY = "server_pin_recovery"
 
     /** The last refusal in this process and when (elapsed-free wall time), for "Sync now"'s dialog. */
     @Volatile
@@ -26,8 +27,9 @@ object ServerPinStore {
 
     private fun app(): Context? = com.kidslauncher.mdm.Application.instance
 
-    /** The stored flag; off without a context (never before `Application.onCreate`). */
-    fun enforce(context: Context? = app()): Boolean = context?.let { prefs(it).getBoolean(ENFORCE_KEY, false) } ?: false
+    /** The stored flag. Without a context (never in practice: `Application.instance` is set before any server client,
+     * and the boot cover's process has none) it reads as on - closed, never open (code QA nit). */
+    fun enforce(context: Context? = app()): Boolean = context?.let { prefs(it).getBoolean(ENFORCE_KEY, false) } ?: true
 
     /** Sets the flag (the sync's [nextFlag], or a setup QR's clear); true when stored. */
     fun setEnforce(context: Context, on: Boolean): Boolean {
@@ -35,6 +37,17 @@ object ServerPinStore {
         val ok = prefs(context).edit().putBoolean(ENFORCE_KEY, on).commit()
         Log.i(LOG_TAG, if (on) "The certificate check is on" else "The certificate check is off")
         return ok
+    }
+
+    /** The server's plain-http tailnet address ([nextRecovery]), shown in Settings for a refused server; `null`
+     * when the server didn't name one. */
+    fun recovery(context: Context): String? = prefs(context).getString(RECOVERY_KEY, null)
+
+    fun setRecovery(context: Context, url: String?) {
+        if (recovery(context) == url) return
+        val edit = prefs(context).edit()
+        if (url == null) edit.remove(RECOVERY_KEY) else edit.putString(RECOVERY_KEY, url)
+        edit.commit()
     }
 
     fun ring(context: Context? = app()): List<OutsideRow> = context?.let { decodeRing(prefs(it).getString(OUTSIDE_KEY, null)) } ?: emptyList()

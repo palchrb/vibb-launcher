@@ -138,10 +138,18 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // Design 76 D2: the certificate check's flag - from this fresh policy over its own connection only, never from
         // the cache (R-5): on only through the built-in set, off only through it or the tailnet.
+        val pinnedBefore = ServerPinStore.enforce(context)
         ServerPinStore.setEnforce(
             context,
             nextFlag(ServerPinStore.enforce(context), enforceOf(freshPolicy.serverTls), pinConnection(apiPath, policyHandshake)),
         )
+        // Code QA H-1: the server's tailnet recovery address, by the same connection rule.
+        ServerPinStore.setRecovery(
+            context,
+            nextRecovery(ServerPinStore.recovery(context), freshPolicy.serverTls, pinConnection(apiPath, policyHandshake)),
+        )
+        // The shutdown's prepared client follows the flag at once, not at the next sync (code QA nit).
+        if (ServerPinStore.enforce(context) != pinnedBefore) PowerEvents.prepare(context)
         // The call services read the rules from memory, never per call.
         CallPolicyStore.refresh(context)
         // The parent's language choice, switched when Home is next in front (LauncherLocales).

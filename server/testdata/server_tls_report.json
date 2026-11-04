@@ -32,7 +32,8 @@
   "policy": [
     {"state": "watching", "server_tls": {}},
     {"state": "on", "server_tls": {"enforce": true}},
-    {"state": "off", "server_tls": {"enforce": false}}
+    {"state": "off", "server_tls": {"enforce": false}},
+    {"state": "on", "recovery_url": "http://100.101.102.103:3101", "server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}}
   ],
   "flags": [
     {"server_tls": {"enforce": true}, "connection": "passing", "from": false, "flag": true},
@@ -98,12 +99,33 @@
     {"server_tls": [true], "connection": "tailnet", "from": false, "flag": false},
     {"server_tls": [true], "connection": "tailnet", "from": true, "flag": true},
     {"server_tls": [true], "connection": "debug_http", "from": false, "flag": false},
-    {"server_tls": [true], "connection": "debug_http", "from": true, "flag": true}
+    {"server_tls": [true], "connection": "debug_http", "from": true, "flag": true},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "passing", "from": false, "flag": true},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "passing", "from": true, "flag": true},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "failing", "from": false, "flag": false},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "failing", "from": true, "flag": true},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "tailnet", "from": false, "flag": false},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "tailnet", "from": true, "flag": true},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "debug_http", "from": false, "flag": false},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "debug_http", "from": true, "flag": true}
   ],
   "drops": [
     {"connection": "passing", "dropped": true},
     {"connection": "failing", "dropped": false},
     {"connection": "tailnet", "dropped": true},
     {"connection": "debug_http", "dropped": false}
+  ],
+  "recovery": [
+    {"server_tls": {"recovery_url": "http://100.101.102.103:3101"}, "connection": "passing", "from": null, "stored": "http://100.101.102.103:3101"},
+    {"server_tls": {"enforce": true, "recovery_url": "http://100.101.102.103:3101"}, "connection": "tailnet", "from": "http://100.64.0.9:3101", "stored": "http://100.101.102.103:3101"},
+    {"server_tls": {"recovery_url": "http://[fd7a:115c:a1e0::1]:3101"}, "connection": "passing", "from": null, "stored": "http://[fd7a:115c:a1e0::1]:3101"},
+    {"server_tls": {"recovery_url": "http://100.101.102.103:3101"}, "connection": "failing", "from": null, "stored": null},
+    {"server_tls": {"recovery_url": "http://100.101.102.103:3101"}, "connection": "debug_http", "from": "http://100.64.0.9:3101", "stored": "http://100.64.0.9:3101"},
+    {"server_tls": {}, "connection": "passing", "from": "http://100.64.0.9:3101", "stored": null},
+    {"connection": "passing", "from": "http://100.64.0.9:3101", "stored": "http://100.64.0.9:3101"},
+    {"server_tls": "on", "connection": "passing", "from": "http://100.64.0.9:3101", "stored": "http://100.64.0.9:3101"},
+    {"server_tls": {"recovery_url": "https://vibb.example.org"}, "connection": "passing", "from": "http://100.64.0.9:3101", "stored": null},
+    {"server_tls": {"recovery_url": "http://192.168.1.10:3101"}, "connection": "passing", "from": null, "stored": null},
+    {"server_tls": {"recovery_url": 7}, "connection": "tailnet", "from": null, "stored": null}
   ]
 }

@@ -18,7 +18,7 @@ from `server-vX.Y.Z` tags (`.github/workflows/server-release.yml` at the root: t
 and the tracked-app sync skips `server-v*` releases. Everything that names a GitHub repo or a launcher build is configuration,
 not code: `src/config.rs` (`ForkConfig`, `AppState.config`) reads `SERVER_RELEASE_REPO`, `LAUNCHER_ADMIN_COMPONENT`,
 `LAUNCHER_APK_URL`, `LAUNCHER_SIGNATURE_CHECKSUM` and `PHONE_SERVER_URL` (0.54.0: the setup QR's server address
-while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) once at startup, with defaults pointing at the monorepo; the
+while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) and `PHONE_RECOVERY_URL` (design 76's fix round: the tailnet recovery address, plain http to a Tailscale IP only, `server_tls::recovery_url`) once at startup, with defaults pointing at the monorepo; the
 pre-monorepo defaults (`palchrb/kid-phone-server`, the `kids-launcher-mdm` APK URL) are read as today's, migration
 0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`, and `update.sh` maps the old `KPS_REPO`. The
 checksum has no default: without it the provisioning page shows a banner and no QR (never upstream's checksum). An

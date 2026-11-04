@@ -233,3 +233,76 @@ case.**
 - Launcher (`--no-daemon --max-workers=2`, debug with the tsnet stub): `ServerPinsTest`, `ServerPinTransportTest`,
   `ServerTransportTest`, `PolicyResponseCompatTest`, `PowerEventsTest`, `SecurityLowsBTest` - BUILD SUCCESSFUL.
 - No emulator was started. Design step 0 and section 6's emulator rows are still open (H-1 depends on step 0).
+
+## Fix round (on `server-issuer-pin-2`, 2026-11-04)
+
+Every finding is fixed. The setup-dependent part of H-1 is still owed: step 0 on the user's server.
+
+- **H-1, the tailnet recovery address.**
+  - DEPLOY.md has a new "Tailnet recovery address" section. It covers:
+    - a server listening beyond loopback (`DEVICE_BIND_ADDR=0.0.0.0:3101` or the tailnet IP, the firewall line,
+      Docker with `network_mode: host`);
+    - a Caddy `http://<tailnet IP>:3102` site bound to the tailnet IP, on the same box or on another host;
+    - `tailscale serve --http`;
+    - the ACL line;
+    - the `curl …/healthz` check from another tailnet device, then a phone's "Sync now".
+  - `PHONE_RECOVERY_URL` is new (`config.rs`, `.env.example`, the env table). It takes plain http to a Tailscale IP
+    only; anything else is logged and ignored.
+  - `server_tls::recovery_url` picks the address in this order:
+    - `PHONE_RECOVERY_URL`;
+    - the setup QR's own address, when it is tailnet http;
+    - this box's tailnet address on a listener bound to it or to `0.0.0.0`/`[::]`. The device listener comes first;
+      the admin listener counts only while `ADMIN_DEVICE_API` is on.
+  - The box's tailnet address is the source the kernel picks on a UDP socket connected toward 100.100.100.100 /
+    `fd7a:115c:a1e0::53`. Nothing is sent and nothing on the host changes. It is accepted only inside 100.64.0.0/10 or
+    `fd7a:115c:a1e0::/48`, and never read in the tests.
+  - The device page shows the address. When the server can't tell, the page says what the address looks like and
+    points to DEPLOY.md.
+  - The policy's `server_tls` carries the address as `recovery_url` in every state; `watching` still sends no
+    `enforce`.
+  - The phone stores it (`server_pin_recovery`) only from a fresh policy over a passing or tailnet connection, and
+    only as tailnet http (`nextRecovery`, the contract's new `recovery` rows). It shows it in the Server certificate
+    dialog and in "Sync now"'s refusal dialog.
+  - Nothing else is accepted: `server_url_vectors.json` and both address rules are untouched.
+  - Design 76 step 0 is now marked owed before the release, with the user's setup spelled out (the Docker VM's
+    `0.0.0.0:3101`, `network_mode: host`, Caddy on 10.73.10.81).
+- **M-1, the card.**
+  - The card uses `phone_enforcing` and the last report's `seen` (new columns `seen_in_set` and `seen_name`).
+  - **On**: "only Let's Encrypt or ZeroSSL" shows only while the phone says it enforces. Otherwise it reads "the
+    phone takes it at its next sync", or, when the phone's own chain is outside the set, "on here, but this phone
+    can't take it - … comes from X".
+  - **Off** while the phone still enforces: a second sentence says how to reach it.
+  - **The flash**: "hears it now" is gone. It now says "takes it at its next sync". After "Turn off" on a refusing
+    phone it says the phone can't hear it and names the recovery address.
+  - **The refusal alarm** shows in every state, `off` included:
+    - while the phone still sends the row. A row is `open` per report; the phone drops a row only after a 2xx over a
+      working connection.
+    - and for a week after the row arrived, then marked "the phone has reached this server through a working
+      connection since".
+- **L-1.** The anchor is now read as the last strict `    sha256/<43>=: ` line before the *last* "Pinned certificates
+  for". A message of another shape still refuses, with no anchor and no sighting. New test rows cover leaf subjects
+  carrying OkHttp's phrases, a newline, and a pinned root's line.
+- **L-2.** A sighting is pushed only for a phone that has shown an in-set chain at all (`in_set_seen`, sticky), or one
+  that is `on` (R-2(c)).
+- **L-3.** `enforcing: true` is adopted only with an in-set `seen` in the same report, and never while `stopped_at` is
+  set. In that case the server writes the security event `server_tls_phone_on` once per change, and the page says "The
+  phone says its check is on" with "Turn the check on now".
+- **L-4.** `sanitize` drops control characters and bidi or invisible format characters (U+061C, U+200B-F, U+202A-E,
+  U+2060-9, U+FEFF) from names and hosts.
+- **L-5.** A row's time is the phone's own when it lies within a week before its receive time (or 5 minutes after).
+  Otherwise the row is worded "reported at" with the receive time.
+- **Nits.**
+  - PowerEvents' shutdown client is rebuilt in the sync when the flag moved.
+  - `ServerPinStore.enforce(null)` now reads as on.
+  - `/server-tls/watch` is refused outside `off` (`?notice=server_tls_unchanged`).
+  - A stopped phone without its own row reads "not on - this phone saw a certificate from outside Let's Encrypt and
+    ZeroSSL".
+- **Migration 0129** gains `in_set_seen`, `seen_in_set` and `seen_name`. It isn't released yet, so it is edited in
+  place.
+
+Tests of the fix round:
+- Server: `cargo fmt --check` clean, `cargo clippy --all-targets` no warnings, `cargo test` 1749 passed. That run
+  came before a one-line refinement of the card's "can't pin" judgement; `cargo test server_tls`, fmt and clippy
+  passed again after it.
+- Launcher: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 2099 tests, 0 failures.
+- No emulator was started.

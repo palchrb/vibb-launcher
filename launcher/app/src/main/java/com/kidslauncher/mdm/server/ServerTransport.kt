@@ -207,8 +207,10 @@ private fun OkHttpClient.Builder.direct(path: ServerPath.Direct, pinning: Server
         try {
             chain.proceed(chain.request())
         } catch (e: javax.net.ssl.SSLPeerUnverifiedException) {
-            val anchor = pinFailureAnchor(e) ?: throw e
-            pinning.onOutside(OutsideRow.REFUSED, chain.request().url.host, anchor)
+            if (!isPinFailure(e)) throw e
+            // A message of another shape still refuses; only a readable anchor is kept as a sighting.
+            val anchor = pinFailureAnchor(e)
+            anchor?.let { pinning.onOutside(OutsideRow.REFUSED, chain.request().url.host, it) }
             throw ServerPinRefused(anchor, e)
         }
     })

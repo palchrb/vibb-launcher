@@ -344,6 +344,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
                 network: "mobile".to_string(),
                 at_ms: ago(118).timestamp_millis(),
                 received_at: String::new(),
+                open: false,
             },
             ago(118),
         ),

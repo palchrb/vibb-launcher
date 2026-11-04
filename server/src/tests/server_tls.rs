@@ -107,9 +107,36 @@ async fn a_launcher_report_moves_the_state() {
         "action=\"/devices/{id}/server-tls/off#server-tls\""
     )));
 
-    // The policy's rows: each state's `server_tls`, `watching` without `enforce` (R-1).
+    // The phone says its check is on while the switch-on is stopped (code QA L-3): not adopted, a security line.
+    let mut says_on = report_now();
+    says_on["server_tls"]["enforcing"] = json!(true);
+    app.post_status(&token, says_on.clone()).await;
+    app.post_status(&token, says_on).await;
+    assert_eq!(
+        crate::server_tls::load(&app.db, id).await.unwrap().state,
+        crate::server_tls::State::Watching
+    );
+    let phone_on: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'server_tls_phone_on'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(phone_on, 1, "told once");
+    let group = advanced(&app, id, &cookie, "").await.unwrap();
+    assert!(group.contains("The phone says its check is on."), "{group}");
+    // No recovery address known: the page says how to find it (code QA H-1).
+    assert!(group.contains("Tailnet recovery address"), "{group}");
+
+    // The policy's rows: each state's `server_tls`, `watching` without `enforce` (R-1), with the recovery address
+    // when this server knows it (here: the setup QR's own tailnet address).
     let contract: Value = serde_json::from_str(CONTRACT).unwrap();
     for row in contract["policy"].as_array().unwrap() {
+        sqlx::query("UPDATE provisioning_settings SET server_url = ?")
+            .bind(row["recovery_url"].as_str().unwrap_or(""))
+            .execute(&app.db)
+            .await
+            .unwrap();
         sqlx::query("UPDATE device_server_tls SET state = ? WHERE device_id = ?")
             .bind(row["state"].as_str().unwrap())
             .bind(id)
@@ -122,6 +149,15 @@ async fn a_launcher_report_moves_the_state() {
             "{row}"
         );
     }
+    let group = advanced(&app, id, &cookie, "").await.unwrap();
+    assert!(
+        group.contains("Recovery address: http://100.101.102.103:3101"),
+        "{group}"
+    );
+    sqlx::query("UPDATE provisioning_settings SET server_url = ''")
+        .execute(&app.db)
+        .await
+        .unwrap();
 
     // A phone that reports `enforcing: true` while watched stored it from a pinned `true`: adopted as on.
     let (other, other_token) = app.enrolled_device("Ola").await;
@@ -265,6 +301,24 @@ async fn the_parents_one_shots_are_loud_and_at_once() {
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{action}");
         assert_eq!(app.policy(&token).await["server_tls"], policy, "{action}");
     }
+    // "Turn it on again" only from off: from on it changes nothing (code QA nit).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/server-tls/watch"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/advanced?notice=server_tls_unchanged"),
+        Some("server-tls"),
+    );
+    assert_eq!(
+        app.policy(&token).await["server_tls"],
+        json!({"enforce": true})
+    );
     let on_lines: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'server_tls_on'",
     )

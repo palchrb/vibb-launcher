@@ -292,7 +292,10 @@
         {% endif %}
         <div class="group">
             <div class="row" data-row="server-tls">
-                <span class="row-label">{{ tls.line }}</span>
+                <span class="row-label">{{ tls.line }}{% if let Some(detail) = tls.detail %} {{ detail }}{% endif %}</span>
+            </div>
+            <div class="row" data-row="server-tls-recovery">
+                <span class="row-label">{{ tls.recovery }}</span>
             </div>
             {% if tls.can_turn_on %}
             <form method="post" action="/devices/{{ device.id }}/server-tls/on#server-tls" class="cell">

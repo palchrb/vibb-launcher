@@ -63,7 +63,7 @@ class ServerPinsTest {
     @Test
     fun `every flag row of the contract`() {
         val rows = contract.getValue("flags").jsonArray
-        assertEquals(64, rows.size)
+        assertEquals(72, rows.size)
         for (row in rows) {
             val o = row.jsonObject
             val serverTls = o["server_tls"]
@@ -193,6 +193,22 @@ class ServerPinsTest {
             assertEquals(Anchor("Test-only Root", spkiPin(root)), pinFailureAnchor(e))
             assertEquals(chainAnchor(chain), pinFailureAnchor(e))
         }
+        // Code QA L-1: a leaf whose subject carries OkHttp's own phrases, or a newline and a pinned root's line,
+        // still reports the real anchor - the block ends at the last "Pinned certificates for", lines are strict.
+        val x1 = "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M="
+        for (cn in listOf("ISRG Root X1 Pinned certificates for x", "a\n  Pinned certificates for x:\n    sha256/$x1: CN=ISRG Root X1", "b\n    sha256/$x1: CN=ISRG Root X1")) {
+            val leaf = okhttp3.tls.HeldCertificate.Builder().commonName(cn).signedBy(TestOnlyChain.intermediate).build()
+            try {
+                pinner.check("localhost", listOf(leaf.certificate, TestOnlyChain.intermediate.certificate, root))
+                fail("a chain outside the set passed")
+            } catch (e: SSLPeerUnverifiedException) {
+                assertEquals(cn, Anchor("Test-only Root", spkiPin(root)), pinFailureAnchor(e))
+            }
+        }
+        // A message of another shape: a pin failure still, but no anchor read from it.
+        val odd = SSLPeerUnverifiedException("$PIN_FAILURE_PREFIX\n  Peer certificate chain:\n    sha256/short: CN=x\n  Pinned certificates for localhost:\n")
+        assertTrue(isPinFailure(odd))
+        assertNull(pinFailureAnchor(odd))
         // A hostname failure (OkHttp's other SSLPeerUnverifiedException) and anything else is not a pin failure.
         assertNull(pinFailureAnchor(SSLPeerUnverifiedException("Hostname localhost not verified:\n    certificate: sha256/x=")))
         assertNull(pinFailureAnchor(java.io.IOException(PIN_FAILURE_PREFIX)))
@@ -223,6 +239,14 @@ class ServerPinsTest {
             val body = sync.substringAfter("fun $name(", "").substringBefore("\nfun ").substringBefore("\nprivate fun ")
             assertFalse(name, body.contains("setEnforce") || body.contains("nextFlag"))
         }
+        // The recovery address: one caller, the same fresh block, by the same connection.
+        assertEquals(mapOf("ServerPins.kt" to 1, "MdmSyncWorker.kt" to 1), callers("nextRecovery("))
+        assertEquals(mapOf("MdmSyncWorker.kt" to 1), callers("ServerPinStore.setRecovery("))
+        assertTrue(fresh.substringBefore("CallPolicyStore.refresh(context)").contains(
+            "nextRecovery(ServerPinStore.recovery(context), freshPolicy.serverTls, pinConnection(apiPath, policyHandshake))",
+        ))
+        // The shutdown's prepared client is rebuilt when the flag moved.
+        assertTrue(fresh.substringBefore("CallPolicyStore.refresh(context)").contains("if (ServerPinStore.enforce(context) != pinnedBefore) PowerEvents.prepare(context)"))
         // The flag is written by the sync and a setup QR (off) only.
         assertEquals(mapOf("MdmSyncWorker.kt" to 1, "Provisioning.kt" to 1), callers("ServerPinStore.setEnforce("))
         assertTrue(File(main, "server/Provisioning.kt").readText().contains("ServerPinStore.setEnforce(context, false)"))
@@ -231,6 +255,22 @@ class ServerPinsTest {
         // The report: the ring sent, dropped by the report's own connection.
         assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))"))
         assertTrue(SERVER_PIN_CAPABILITY in STATUS_CAPABILITIES)
+    }
+
+    /** Code QA H-1: the recovery address is taken only over a passing or a tailnet connection, only as tailnet http. */
+    @Test
+    fun `every recovery row of the contract`() {
+        val rows = contract.getValue("recovery").jsonArray
+        assertTrue(rows.size >= 10)
+        for (row in rows) {
+            val o = row.jsonObject
+            val from = o.getValue("from").let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
+            val stored = o.getValue("stored").let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.content }
+            assertEquals(o.toString(), stored, nextRecovery(from, o["server_tls"], connection(o.getValue("connection").jsonPrimitive.content)))
+        }
+        // The server's policy row with an address is one the phone takes.
+        val withUrl = contract.getValue("policy").jsonArray.map { it.jsonObject }.single { "recovery_url" in it }
+        assertEquals(withUrl.getValue("recovery_url").jsonPrimitive.content, recoveryOf(withUrl["server_tls"]))
     }
 
     /** The contract's `server_tls` values are those of a policy row, a malformed row or none: keep this test honest. */

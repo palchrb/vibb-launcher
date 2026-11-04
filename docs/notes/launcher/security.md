@@ -195,7 +195,9 @@ waits for a device capture of the Play Protect / account-security channel ids.
   address edit doesn't.
 - **`toServer`'s direct path** (`ServerTransport.kt`), in this order: the origin fence (a request to another scheme,
   host or port throws `ServerOriginRefused` before a socket; redirects are never followed), the refusal catch
-  (OkHttp's `Certificate pinning failure!` only -> a `refused` sighting and `ServerPinRefused`), the pinner with the
+  (OkHttp's `Certificate pinning failure!` only -> `ServerPinRefused`, and a `refused` sighting when the anchor reads:
+  the last strict `    sha256/<44>: ` line before the **last** "Pinned certificates for", so a leaf's subject can't
+  name the anchor, code QA L-1), the pinner with the
   flag on (`CertificatePinner` for exactly `HttpUrl.host`, after Android's validation; one that can't be built fails
   closed), and always the observer (each new connection's chain once; one outside B is kept as `seen`). The flag is
   read where the path is read (each `createMdmApi`, SSE connect, `createMusicServer`). The tailnet path and a debug
@@ -205,7 +207,9 @@ waits for a device capture of the Play Protect / account-security channel ids.
   differs from the last). The ring's sent rows leave only after a 2xx over a connection that passed B or over the
   tailnet (R-2: a MITM answering 2xx can't erase them). Contract: `server_tls_report.json` (root `CLAUDE.md`).
 - **On the phone**: Settings › "Server certificate" under Server URL (on / not on yet / the last refusal), its dialog
-  names the recovery; "Sync now" says why in a dialog after a refusal. The kid sees nothing. Offline the phone keeps
+  names the recovery and the server's tailnet address when the server sent one (`server_tls.recovery_url`,
+  `server_pin_recovery`, stored by `nextRecovery` only from a fresh policy over a passing or tailnet connection, only
+  as tailnet http - code QA H-1); "Sync now" says why in a dialog after a refusal, with the same address. The kid sees nothing. Offline the phone keeps
   enforcing its cached policy, calls and 112 included.
 - **Recovery without adb or the QR**: Settings (parent code) › Server URL › `http://<the server's Tailscale IP>` -
   WireGuard-authenticated, never pinned; the phone syncs, sends its refusals and takes the server's `enforce`. Or
@@ -218,5 +222,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
   report-only, an IP literal, the origin fence and no redirect, a broken pinner, through a SOCKS5 relay). okhttp-tls
   4.12.0 is a test dependency only, its checksums in `gradle/verification-metadata.xml` (checked against Maven
   Central's `.sha256` and `.sha1`).
+- The flag reads as on without a context (fail closed in form; never in practice), and PowerEvents' prepared shutdown
+  client is rebuilt in the sync when the flag moved (code QA nits).
 - **Not device-tested yet** (design 76 step 0 and §6's emulator rows): the anchor Android validates for the user's
   host and for a ZeroSSL host, mitmproxy with the check off and on, the tailnet recovery end to end, a QR re-scan.

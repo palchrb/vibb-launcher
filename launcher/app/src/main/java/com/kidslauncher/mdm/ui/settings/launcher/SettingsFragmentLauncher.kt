@@ -186,7 +186,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         serverCert?.setOnPreferenceClickListener {
             AlertDialog.Builder(requireContext(), R.style.AlertDialogCustom)
                 .setTitle(R.string.settings_mdm_server_cert)
-                .setMessage(R.string.server_cert_explain)
+                .setMessage(getString(R.string.server_cert_explain) + "\n\n" + serverCertRecovery(requireContext()))
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
             true
@@ -383,6 +383,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             }
         }
     }
+
+    /** Where to point a phone that refuses its server (code QA H-1): the server's tailnet address when it named one. */
+    private fun serverCertRecovery(context: Context): String =
+        ServerPinStore.recovery(context)?.let { context.getString(R.string.server_cert_recovery, it) }
+            ?: context.getString(R.string.server_cert_recovery_unknown)
 
     /** The certificate check's row (design 76 D3): the last refusal not yet told to the server, else on or off. */
     private fun serverCertSummary(context: Context): String {
@@ -757,7 +762,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 if (refused != null) {
                     AlertDialog.Builder(context, R.style.AlertDialogCustom)
                         .setTitle(R.string.settings_mdm_server_cert)
-                        .setMessage(context.getString(R.string.server_cert_refused_sync, refused.name))
+                        .setMessage(context.getString(R.string.server_cert_refused_sync, refused.name) + "\n\n" + serverCertRecovery(context))
                         .setPositiveButton(android.R.string.ok, null)
                         .show()
                     if (isAdded) findPreference<Preference>(SERVER_CERT_ROW)?.summary = serverCertSummary(context)
