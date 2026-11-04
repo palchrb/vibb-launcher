@@ -435,6 +435,9 @@ object AppEnforcer {
         applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist, requested)
 
         lastPlanSuspend = plan.suspend
+        // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
+        // (2026-11-04: each is paused before its suspension; without listener access none).
+        val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
 
@@ -467,10 +470,11 @@ object AppEnforcer {
                 // partition system app that stayed reachable despite being correctly excluded
                 // from the allowlist, with nothing in logs to explain why.
                 if (shouldBeSuspended != currentlySuspended) {
-                    // Vibb music: a playing session is paused first (design 21 §3).
-                    if (com.kidslauncher.mdm.music.pauseBeforeSuspend(packageName, shouldBeSuspended, currentlySuspended)) {
-                        com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(context, packageName)
-                    }
+                    // A playing session is paused first (design 21 §3; every app's since 2026-11-04).
+                    val toPause = if (shouldBeSuspended && !currentlySuspended) playingSessions else emptyMap()
+                    com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(
+                        com.kidslauncher.mdm.music.sessionsToPause(packageName, shouldBeSuspended, currentlySuspended, toPause),
+                    )
                     val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)
                     if (!notSuspended.isNullOrEmpty()) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")

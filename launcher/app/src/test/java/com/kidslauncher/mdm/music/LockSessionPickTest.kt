@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.music
 
+import android.content.pm.ApplicationInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -59,14 +60,28 @@ class LockSessionPickTest {
     @Test
     fun `who may show on the lock - suspended never, another app only allowed, visible and not ours`() {
         val list = listOf("org.player")
-        assertTrue(lockAppUsable("org.player", vibb = false, suspended = false, hidden = false, allowlist = list, ownPackage = "me.vibb.launcher"))
-        assertFalse("suspended (a rule, the budget)", lockAppUsable("org.player", false, suspended = true, hidden = false, allowlist = list, ownPackage = "me.vibb.launcher"))
-        assertFalse("not on the allowlist", lockAppUsable("org.other", false, false, false, list, "me.vibb.launcher"))
-        assertFalse("hidden by the device owner", lockAppUsable("org.player", false, false, hidden = true, allowlist = list, ownPackage = "me.vibb.launcher"))
-        assertTrue("no allowlist: an unmanaged phone", lockAppUsable("org.other", false, false, false, null, "me.vibb.launcher"))
-        assertFalse("never our own", lockAppUsable("me.vibb.launcher", false, false, false, null, "me.vibb.launcher"))
-        assertTrue("Vibb music: only suspension counts", lockAppUsable("me.vibb.music", vibb = true, suspended = false, hidden = false, allowlist = emptyList(), ownPackage = "me.vibb.launcher"))
-        assertFalse(lockAppUsable("me.vibb.music", vibb = true, suspended = true, hidden = false, allowlist = null, ownPackage = "me.vibb.launcher"))
+        assertTrue(lockAppUsable("org.player", vibb = false, suspended = false, hidden = false, allowlist = list, ownPackage = "me.vibb.launcher", mediaApp = true))
+        assertFalse("suspended (a rule, the budget)", lockAppUsable("org.player", false, suspended = true, hidden = false, allowlist = list, ownPackage = "me.vibb.launcher", mediaApp = true))
+        assertFalse("not on the allowlist", lockAppUsable("org.other", false, false, false, list, "me.vibb.launcher", mediaApp = true))
+        assertFalse("hidden by the device owner", lockAppUsable("org.player", false, false, hidden = true, allowlist = list, ownPackage = "me.vibb.launcher", mediaApp = true))
+        assertTrue("no allowlist: an unmanaged phone", lockAppUsable("org.other", false, false, false, null, "me.vibb.launcher", mediaApp = true))
+        assertFalse("never our own", lockAppUsable("me.vibb.launcher", false, false, false, null, "me.vibb.launcher", mediaApp = true))
+        assertFalse("not a media app (a messenger's voice message)", lockAppUsable("org.player", false, false, false, list, "me.vibb.launcher", mediaApp = false))
+        assertTrue("Vibb music: only suspension counts", lockAppUsable("me.vibb.music", vibb = true, suspended = false, hidden = false, allowlist = emptyList(), ownPackage = "me.vibb.launcher", mediaApp = false))
+        assertFalse(lockAppUsable("me.vibb.music", vibb = true, suspended = true, hidden = false, allowlist = null, ownPackage = "me.vibb.launcher", mediaApp = true))
+    }
+
+    @Test
+    fun `only music, video and browsers are media apps for the lock - the user, 2026-11-04`() {
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_AUDIO, browser = false))
+        assertTrue(lockMediaApp(ApplicationInfo.CATEGORY_VIDEO, browser = false))
+        assertTrue("a browser, whatever it declares", lockMediaApp(ApplicationInfo.CATEGORY_UNDEFINED, browser = true))
+        for (category in listOf(
+            ApplicationInfo.CATEGORY_SOCIAL, ApplicationInfo.CATEGORY_GAME, ApplicationInfo.CATEGORY_UNDEFINED, ApplicationInfo.CATEGORY_PRODUCTIVITY,
+            ApplicationInfo.CATEGORY_NEWS, ApplicationInfo.CATEGORY_MAPS, ApplicationInfo.CATEGORY_IMAGE, ApplicationInfo.CATEGORY_ACCESSIBILITY,
+        )) {
+            assertFalse("category $category", lockMediaApp(category, browser = false))
+        }
     }
 
     @Test
