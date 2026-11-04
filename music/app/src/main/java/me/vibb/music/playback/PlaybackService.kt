@@ -348,7 +348,8 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, KidPlayer(renderer.player)).setCallback(callback).setSessionActivity(open).build()
-        setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(R.drawable.music_glyph_music_note) })
+        // 2026-11-04: off a secure lock screen (VISIBILITY_SECRET) - the launcher's lock tile reads the session.
+        setMediaNotificationProvider(SecretMediaNotification(DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(R.drawable.music_glyph_music_note) }))
         audio.registerAudioDeviceCallback(deviceCallback, handler)
         PlayerHub.position = { renderer.positionMs() }
         LiveBridge.acquire(this)
