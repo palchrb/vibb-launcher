@@ -433,6 +433,59 @@ fn the_recorded_forecast_reads() {
     assert_eq!(odd[0].sym, None);
 }
 
+/// The emulator's cell (Mountain View, 37.42/-122.08), recorded 2026-11-04 (`testdata/weather/README.md`): outside
+/// MEPS, so ECMWF's shape - no gust, no chance of rain, the last five hourly entries without `next_6_hours`, then the
+/// 6-hourly tail. It reads whole.
+#[test]
+fn the_mountain_view_forecast_reads() {
+    let hours =
+        parse_forecast(&std::fs::read("testdata/weather/met_complete_mountain_view.json").unwrap())
+            .unwrap();
+    assert_eq!(hours.len(), 63);
+    assert_eq!(hours[0].t, utc("2026-11-04T21:00:00Z").timestamp());
+    assert_eq!(hours[0].sym.as_deref(), Some("clearsky_day"));
+    assert_eq!(hours[0].temp, Some(18.3));
+    assert_eq!(hours[62].t, utc("2026-11-07T11:00:00Z").timestamp());
+    assert!(hours.iter().all(|h| h.gust.is_none() && h.pop.is_none()));
+    assert!(hours.iter().all(|h| h.temp.is_some() && h.sym.is_some()));
+    assert_eq!(hours.iter().filter(|h| h.sym6.is_some()).count(), 58);
+}
+
+/// E9 (2026-11-04): MET served a `complete` cut short. Every cut keeps exactly the whole hourly entries before it -
+/// the first hours as the whole body reads them - and anything but a cut stays unreadable.
+#[test]
+fn a_cut_body_keeps_its_whole_hours() {
+    let body = std::fs::read("testdata/weather/met_complete.json").unwrap();
+    let whole = recorded_hours();
+    assert_eq!(parse_cut_forecast(&body), Err(Unreadable), "a whole body");
+    let mut kept = 0;
+    for cut in (0..body.len()).step_by(997) {
+        match parse_cut_forecast(&body[..cut]) {
+            Ok(hours) => {
+                assert!(hours.len() >= kept && hours.len() < whole.len(), "at {cut}");
+                assert_eq!(hours[..], whole[..hours.len()], "at {cut}");
+                kept = hours.len();
+            }
+            Err(Unreadable) => assert_eq!(kept, 0, "at {cut}: unreadable after a readable cut"),
+        }
+    }
+    assert!(kept > 30, "{kept}");
+    // E9's own cut: 38 038 of ~65 000 bytes, here the same share.
+    let e9 = parse_cut_forecast(&body[..body.len() * 38 / 65]).unwrap();
+    assert!((15..30).contains(&e9.len()), "{}", e9.len());
+    // Wrong before its end, or not MET's head.
+    let mut wrong = body[..body.len() / 2].to_vec();
+    let at = wrong.windows(7).rposition(|w| w == b"\"data\":").unwrap() + 6;
+    wrong[at] = b';';
+    assert_eq!(parse_cut_forecast(&wrong), Err(Unreadable));
+    assert_eq!(parse_cut_forecast(b"<html><body>503"), Err(Unreadable));
+    assert_eq!(
+        parse_cut_forecast(br#"{"type":"Feature","timeseries":[{"time":"2026-11-03T13:00:00Z""#),
+        Err(Unreadable),
+        "no properties"
+    );
+}
+
 #[test]
 fn merge_keeps_a_day_back() {
     let hour = |h: i64, temp: f32| Hour {
@@ -462,6 +515,12 @@ fn merge_keeps_a_day_back() {
             .all(|h| h.temp == Some(2.0)),
         "the new hours win"
     );
+    // After a cut body the old hours past the new series' last stay too.
+    let cut: Vec<Hour> = (26..28).map(|h| hour(h, 2.0)).collect();
+    let merged = merge_cut(&old, &cut, utc("2026-11-04T03:00:00Z"));
+    assert_eq!(merged.len(), 27);
+    assert_eq!(merged.last().unwrap().temp, Some(1.0));
+    assert_eq!(merge(&old, &cut, utc("2026-11-04T03:00:00Z")).len(), 25);
 }
 
 #[test]

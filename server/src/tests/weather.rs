@@ -385,18 +385,21 @@ async fn failures_back_off_and_keep_the_old_hours() {
     outside(&app);
     let (id, token) = phone(&app, "f", true, "interval").await;
     fix(&app, id, 59.9412, 10.7598, Duration::minutes(5), None).await;
-    // No hours yet and MET failing.
-    app.fetch.canned_once(
-        MET,
-        Canned {
-            status: 503,
-            ..Default::default()
-        },
-    );
+    // No hours yet and MET failing: three quick tries (a 503, a 502, a 503), then the old backoff.
+    for status in [503, 502, 503] {
+        app.fetch.canned_once(
+            MET,
+            Canned {
+                status,
+                ..Default::default()
+            },
+        );
+    }
     assert_eq!(weather(&app, &token).await["status"], "unavailable");
     let (_, next, failures, error) = cell_row(&app).await;
     assert_eq!((failures, error.as_deref()), (1, Some("status_5xx")));
     assert_eq!(at(&next), now() + Duration::minutes(5));
+    assert_eq!(met_asks(&app), 3);
     // The next try fills it.
     let mut t = now() + Duration::minutes(6);
     app.state.weather.set_now(t);
@@ -459,6 +462,75 @@ async fn failures_back_off_and_keep_the_old_hours() {
     let (_, next, _, error) = cell_row(&app).await;
     assert_eq!(error.as_deref(), Some("unreadable"));
     assert!(at(&next) >= t + Duration::minutes(45), "{next:?}");
+}
+
+/// 2026-11-04: MET's edge answers a cold point 503 (`Retry-After: 5`), then serves it. The fetch tries again within
+/// seconds and stores the forecast as any 200 - no failure, no error code, the next fetch by MET's `Expires`. A
+/// `Retry-After` past a minute is never asked before: no quick try, the old backoff or longer.
+#[tokio::test]
+async fn a_503_is_tried_again_within_seconds() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    outside(&app);
+    let (id, token) = phone(&app, "q", true, "interval").await;
+    fix(&app, id, 59.9412, 10.7598, Duration::minutes(5), None).await;
+    for retry_after in [Some("5"), None] {
+        app.fetch.canned_once(
+            MET,
+            Canned {
+                status: 503,
+                retry_after: retry_after.map(str::to_string),
+                body: b"<html>503 Backend fetch failed</html>".to_vec(),
+                ..Default::default()
+            },
+        );
+    }
+    // "5 s" and "5 s" are 5 ms each here, inside the phone's wait.
+    assert_eq!(weather(&app, &token).await["status"], "ok");
+    assert_eq!(met_asks(&app), 3);
+    let (checked, next, failures, error) = cell_row(&app).await;
+    assert_eq!((failures, error), (0, None));
+    assert_eq!(at(&checked), now());
+    assert!(at(&next) >= now() + Duration::minutes(30), "{next:?}");
+
+    // Due again: MET asks for ten minutes - one request, then at least that long.
+    let t = at(&next);
+    app.state.weather.set_now(t);
+    app.fetch.canned_once(
+        MET,
+        Canned {
+            status: 503,
+            retry_after: Some("600".to_string()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(weather(&app, &token).await["status"], "ok", "the old hours");
+    assert_eq!(met_asks(&app), 4);
+    let (_, next, failures, error) = cell_row(&app).await;
+    assert_eq!((failures, error.as_deref()), (1, Some("status_5xx")));
+    assert_eq!(at(&next), t + Duration::minutes(10));
+}
+
+/// E9 (2026-11-04): MET served a 200 cut short, from its cache until its `Expires`. Its whole hours are stored
+/// (`cut`) and the cell is asked again only after that `Expires` - never a quick retry.
+#[tokio::test]
+async fn a_cut_body_keeps_its_whole_hours_until_expires() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    let (id, token) = phone(&app, "c", true, "interval").await;
+    fix(&app, id, 59.9412, 10.7598, Duration::minutes(5), None).await;
+    let mut cut = met_ok(
+        "Tue, 03 Nov 2026 14:00:22 GMT",
+        "Tue, 03 Nov 2026 14:59:22 GMT",
+    );
+    cut.body.truncate(cut.body.len() * 38 / 65);
+    app.fetch.canned(MET, cut);
+    assert_eq!(weather(&app, &token).await["status"], "ok");
+    assert_eq!(met_asks(&app), 1);
+    let (checked, next, failures, error) = cell_row(&app).await;
+    assert_eq!((failures, error.as_deref()), (0, Some("cut")));
+    assert_eq!(at(&checked), now());
+    assert!(at(&next) >= now() + Duration::minutes(59), "{next:?}");
 }
 
 /// D7: a phone waits at most the fetch's budget (6 s in the server, 500 ms here); the fetch carries on and fills the

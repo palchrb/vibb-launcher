@@ -265,6 +265,8 @@ impl TestApp {
                 let mut weather = crate::weather_cache::Weather::default();
                 weather.forecast_wait = std::time::Duration::from_millis(500);
                 weather.nowcast_wait = std::time::Duration::from_millis(500);
+                // A quick retry's "5 s" is 5 ms here.
+                weather.quick_second = std::time::Duration::from_millis(1);
                 std::sync::Arc::new(weather)
             },
         };

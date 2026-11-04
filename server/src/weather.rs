@@ -121,6 +121,11 @@ fn read_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
     let series = value["properties"]["timeseries"]
         .as_array()
         .ok_or(Unreadable)?;
+    hours_of(series)
+}
+
+/// The hourly entries of `series` as [Hour]s, sorted, one per hour; none is [Unreadable].
+fn hours_of(series: &[serde_json::Value]) -> Result<Vec<Hour>, Unreadable> {
     let mut hours: Vec<Hour> = series
         .iter()
         .filter(|entry| entry["data"]["next_1_hours"].is_object())
@@ -151,14 +156,77 @@ fn read_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
     Ok(hours)
 }
 
+/// A `complete` body MET cut short (emulator session E9, 2026-11-04: a 200 of 38 038 of ~65 000 bytes, served so from
+/// MET's cache until its `Expires`): the hourly entries that arrived whole, read as [parse_forecast] reads them. Only
+/// JSON that is right as far as it goes and ends early, with `properties.timeseries` before the cut and at least one
+/// whole hourly entry; a whole body, any other fault or nothing hourly is [Unreadable]. A panic inside is caught.
+pub fn parse_cut_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
+    std::panic::catch_unwind(|| read_cut_forecast(body)).unwrap_or_else(|_| {
+        tracing::error!("a cut forecast body made the reader panic");
+        Err(Unreadable)
+    })
+}
+
+fn read_cut_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
+    match serde_json::from_slice::<serde::de::IgnoredAny>(body) {
+        Err(err) if err.is_eof() => {}
+        // Whole (parse_forecast's verdict stands), or wrong before its end.
+        _ => return Err(Unreadable),
+    }
+    let ws = |bytes: &[u8]| -> usize {
+        bytes
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+            .count()
+    };
+    // The head as MET writes it: `{"type":"Feature","geometry":{...},"properties":{"meta":{...},"timeseries":[`.
+    const PROPERTIES: &[u8] = b"\"properties\"";
+    const SERIES: &[u8] = b"\"timeseries\"";
+    let find = |bytes: &[u8], what: &[u8]| bytes.windows(what.len()).position(|w| w == what);
+    let props = find(body, PROPERTIES).ok_or(Unreadable)?;
+    let start = props + find(&body[props..], SERIES).ok_or(Unreadable)? + SERIES.len();
+    let mut rest = &body[start..];
+    rest = &rest[ws(rest)..];
+    rest = rest.strip_prefix(b":").ok_or(Unreadable)?;
+    rest = &rest[ws(rest)..];
+    rest = rest.strip_prefix(b"[").ok_or(Unreadable)?;
+    let mut series = Vec::new();
+    loop {
+        rest = &rest[ws(rest)..];
+        let mut one = serde_json::Deserializer::from_slice(rest).into_iter::<serde_json::Value>();
+        match one.next() {
+            Some(Ok(entry)) if entry.is_object() => series.push(entry),
+            // The entry the cut went through, or not an entry.
+            _ => break,
+        }
+        rest = &rest[one.byte_offset()..];
+        rest = &rest[ws(rest)..];
+        match rest.first() {
+            Some(b',') => rest = &rest[1..],
+            _ => break,
+        }
+    }
+    hours_of(&series)
+}
+
 /// The stored hours after a new fetch: the new ones win; the old ones before the new series' first hour are kept
 /// back to 24 h before `now` (this morning's period still has its hours at 15:00).
 pub fn merge(old: &[Hour], new: &[Hour], now: DateTime<Utc>) -> Vec<Hour> {
+    merge_kept(old, new, now, false)
+}
+
+/// [merge] after a cut body ([parse_cut_forecast]): the old hours past the new series' last are kept too.
+pub fn merge_cut(old: &[Hour], new: &[Hour], now: DateTime<Utc>) -> Vec<Hour> {
+    merge_kept(old, new, now, true)
+}
+
+fn merge_kept(old: &[Hour], new: &[Hour], now: DateTime<Utc>, after_last: bool) -> Vec<Hour> {
     let first = new.first().map_or(i64::MAX, |h| h.t);
+    let last = new.last().map_or(i64::MAX, |h| h.t);
     let floor = (now - Duration::hours(24)).timestamp();
     let mut merged: Vec<Hour> = old
         .iter()
-        .filter(|h| h.t < first && h.t >= floor)
+        .filter(|h| (h.t < first || (after_last && h.t > last)) && h.t >= floor)
         .cloned()
         .chain(new.iter().cloned())
         .collect();
