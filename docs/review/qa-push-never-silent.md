@@ -183,3 +183,75 @@ returned, with their owner's `admin_id` (`RETURNING admin_id, label`).
   each write a line. Gone rows are filtered out of the labels, so nothing is told twice.
 - **Migration 0128.** `endpoint_hash` is the primary key, `admin_id` cascades, and only the hash is stored, never the
   endpoint. It runs after main's 0127. See L-5 for the test list.
+
+## Fix round verified (0835133f, after the main merge b0a2cfe2)
+
+Read `git diff 7e27749c..0835133f`. In the merge, only the migration list (`(127, "lock media apps")`,
+`(128, "push removed")`) and server/CLAUDE.md touch this branch. cargo and node were not run.
+
+**Every finding is fixed.**
+- **M-1 fixed.**
+  - `sync` now answers `removed` (unless `asked=1`) when the posted endpoint *or the session's noted browser* is in
+    `push_removed`, or when the browser carries `__Host-handy-push-off`. That cookie is HttpOnly, SameSite=Strict,
+    Secure, `Path=/`, 400 days (`lock::COOKIE_SECS`), and renewed by each `removed` answer.
+  - It is set by Turn Off, by the banner's Hide (`off=1`) and by any `removed` answer. It is deleted by This Device's
+    Turn On form and by a stored `asked=1`.
+  - `push_removed` is no longer pruned. A tap's `subscribed()` also lifts the note of the session's previous browser.
+  - `register-sw.js` turns `removed` into a local Off (no banner).
+  - Tests: `a_remove_holds_past_a_new_endpoint_and_a_new_sign_in` and `turn_off_and_hide_mark_the_browser`.
+- **L-1 fixed:** the failure branch clears the flag (jstest).
+- **L-2 fixed:** `/logout` falls back to the session's noted row, still `admin_id`-bound, and doesn't mark it
+  removed, so it comes back at the next sign-in as designed. Test:
+  `sign_out_without_the_endpoint_takes_this_sessions_browser`.
+- **L-3 fixed:**
+  - `kept_row` takes only a row of the session's own epoch.
+  - `keep_row` runs in the change's own transaction, right after the epoch `UPDATE`, for all four changes:
+    password, 2FA reset, passkey remove under `BEGIN IMMEDIATE`, and `switch_on`.
+  - `keep_row` re-checks `admin_id`/`active`, and `forget_in` re-checks `CURRENT_EPOCH`.
+  - Test: `only_a_row_of_this_sessions_epoch_is_kept`.
+- **L-4 fixed:**
+  - Notification Settings posts a `known` sync for a subscription it already knows, so the hash is noted.
+  - The flashes are worded from what was actually kept (`kept=1` -> `*_kept`), for the new password and for
+    "Kun passkey". A crafted `kept=1` only changes the flash's words.
+- **L-5 fixed:** the merge resolved the list. server/CLAUDE.md was updated in the merge.
+- **L-6 fixed:** Turn Off notes and logs only the rows the `DELETE` returned, under their own owner.
+- **I-2:** `the_sync_needs_a_whole_current_session` now covers the half-signed-in, older-epoch and cross-site cases.
+- **I-3:** the server's own unlock refusals are coalesced: one `app_unlock_failed` line per parent, client and code
+  every 10 minutes, "challenge ×N". I checked the SQL's character arithmetic: `length(code)+3` skips " ×", and the
+  first merge reads "" as 1, giving ×2. The test expects `["challenge ×4"]`.
+- **I-7:** gone rows are now written with `p256dh`/`auth` = `X''` (`NOT NULL` holds). A gone row is never encrypted
+  to: `send_due` drops its queued deliveries before sending, and a re-activation upserts fresh keys. Test:
+  `a_gone_row_keeps_no_keys`.
+- **I-8:** the nb wording and both stale docs are fixed.
+
+**The cookie can't be abused:**
+- **CSRF:** it is set only by same-origin, CSRF-guarded, full-auth, unlocked POSTs (`sync`, `unsubscribe`). The
+  `__Host-` prefix stops a sibling host from planting it.
+- **Its only effect is to block the app's own re-send.** Deleting or forging it can't turn anything on: any store
+  still needs the session, and `push_removed` still answers for the endpoint and the noted browser.
+- **Cross-parent:** it is per browser, not per parent. On a shared browser, one parent's Off also stops the other
+  parent's silent re-send. That is acceptable: their Turn On tap lifts it.
+- **A way back always exists:** Notification Settings shows Off with Turn On whenever the answer is `removed`, and
+  that form clears the cookie and both notes.
+
+**M1 is not weakened:** nothing new re-enables a subscription, and the logout fallback closes the M1 gap left by a
+sign-out without the endpoint.
+
+**Remaining (Low, one):**
+- **R-1 Removing a *gone* row now turns that device off for good.** `handlers/notifications.rs:1383-1395` notes
+  `push_removed` for any removed row, `gone` included. The branch's own Devices warning invites this: "Notifications
+  stopped on iPhone · Safari - turn them on again on that device, or remove it under Notifications".
+  - Scenario: the iPhone's subscription 410s (the original iOS loss). The parent taps Remove on the laptop to clear
+    the warning. At the iPhone's next opening, its noted hash is in `push_removed`, so the answer is `removed` and the
+    cookie is set: no re-subscribe and no banner, until someone opens Notification Settings there and taps Turn On.
+    Before the Remove, the same sync would have answered `gone` and re-subscribed on its own.
+  - A gone row's endpoint is dead, so there is nothing to keep off. Removing it is cleanup, not an Off.
+  - **Fix:** note only when the deleted row was `active`; add `state` to the `RETURNING`.
+
+**Info:**
+- An account change's own epoch commit can still race a send pass's `forget_stale` before `forget_subscriptions`
+  runs. The other rows would then be deleted as `Stale`, logged but not told in the inbox. The window is milliseconds
+  and unchanged from before the branch.
+- `reset_totp` still leads straight to 2FA setup without kept-aware words. Harmless.
+
+**Verdict:** with R-1 fixed (a one-line condition), the branch is ready to merge from a security standpoint.
