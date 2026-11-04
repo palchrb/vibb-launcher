@@ -379,6 +379,9 @@ object TsnetClient {
             clientParams = null
             proxyAddress = null
             proxyCredential = null
+            // The security QA of S-M1, L1: nothing answers for the closed proxy's port any more - an app that binds
+            // it gets no credential (and ServerTransport's sockets refuse a proxy that isn't the current one).
+            Authenticator.setDefault(null)
         }
         proxyChanged(before)
     }

@@ -138,21 +138,37 @@ waits for a device capture of the Play Protect / account-security channel ids.
   (`TAILNET_SERVER_HOST`). A network security config names hosts, never ranges, and OkHttp checks cleartext against the
   URL's host, so the tailnet path's base URL names that host: its `Dns` answers it with the tailnet address and refuses
   every other name, its `SocketFactory` makes SOCKS sockets to tsnet's proxy on loopback (a plain socket, not an HTTP
-  request: no loopback exception), `NO_PROXY`, no redirects, and an interceptor sends the real `Host`. `.invalid` never
-  resolves (RFC 6761), so no other client can use the exception. The SOCKS request carries the IP, never a name
+  request: no loopback exception), `NO_PROXY`, no redirects, and an interceptor sends the real `Host`. The name is under
+  `.invalid` (RFC 6761) and no client but the tailnet one asks for it (another would ask the network's DNS, which a
+  hostile resolver could answer - nothing of ours does). A tailnet socket refuses when tsnet's proxy is no longer the
+  one its client was made with, and `TsnetClient.close()` drops the process `Authenticator` (QA L1: an app that binds
+  the freed loopback port gets neither the credential nor the request). The SOCKS request carries the IP, never a name
   (`ServerTransportTest` runs it against a fake SOCKS5 proxy). `src/debug/res/xml/` adds `10.0.2.2`, and a debug build
   alone takes `http://10.0.2.2[:port]` as the address (`EMULATOR_HOST`, the emulator loop).
+- **The proxy is ours** (`launcher/mobile/tsembed/dial.go`, the security QA of S-M1, H1): tsnet's `Loopback()` SOCKS
+  server dials with tsdial's `UserDial`, which takes netstack only for a current peer and dials any other address - a
+  Tailscale one included - on an OS socket (tailscale.com v1.104.0 `net/tsdial/tsdial.go` `dialOneUser`; `Server.Dial`
+  is the same). So `StartProxy` runs its own `socks5.Server` (user `tsnet`, a random password, 127.0.0.1:0) whose
+  dialer resolves once (`UserDialPlan`) and then: an address in 100.64.0.0/10 or `fd7a:115c:a1e0::/48` goes through
+  `NetstackDialTCP` (never the OS network) and only while it is a peer (`UseNetstackForIP`), else it is refused;
+  any other address goes through `UserDial` as before - only https goes there, and TLS with the system CAs covers it;
+  TCP only. `go test ./tsembed/` (`TestRouteFor`) runs in the build-tsnet action.
 - **Where it is refused**: the setup QR (`applyProvisioningExtras`, Android's provisioning and the in-app scanner) saves
   nothing and enrolls nothing; Settings' Server URL edit doesn't save it (toast `server_url_refused`); "Sync now" says
   why instead of "couldn't reach". The Server URL row's summary says "Not used: ..." under a refused stored address and
   "Plain http, only through the tailnet" under a tailnet one.
-- **A phone set up earlier with a plain-http LAN address** (the server took one with a warning from 0.55.0 until this
-  rule): it stops talking to the server at this update - no fallback, since a last report over it would carry the token
+- **A phone set up earlier with a plain-http address other than a tailnet IP** - a LAN address (the server took one
+  with a warning from 0.55.0 until this rule) or `http://<name>.ts.net` (the old rule took it silently as Tailscale): it stops talking to the server at this update - no fallback, since a last report over it would carry the token
   in clear. It keeps enforcing its cached policy. The parent fixes it on the phone without adb: Settings (the parent
   code, checked offline against the vault) › Server URL › the https address; the next sync and stream use it at once.
   The PWA can't hear from such a phone (it shows as not seen since); Phone Setup says under a saved refused address that
   phones set up with it stop reaching the server and how to fix it.
-  A phone with no parent code on it yet has its Settings locked (`settings_gate_no_pin`): it needs a new setup (reset,
-  setup QR).
-- **Not device-tested**: the tailnet path on a phone (tsnet's SOCKS with an IPv4/IPv6 destination instead of a name, the
-  NSC exception for the `.invalid` name), the refused-address summary and toast, a QR with an http LAN address.
+  A phone with no parent code on it yet has its Settings locked (`settings_gate_no_pin`): it needs a factory reset and
+  a new setup QR.
+- **Release order**: the server first, then the launcher. Android's QR provisioning installs `releases/latest`, so an
+  older server could still print a QR with a plain-http address that the new launcher refuses (the phone ends up
+  Device Owner but not enrolled; fixable in its Settings, open until the first policy). Before the launcher ships,
+  check which address the phones store (Settings › Server URL).
+- **Not device-tested**: the tailnet path on a phone (our SOCKS proxy with an IPv4/IPv6 destination instead of a name,
+  the NSC exception for the `.invalid` name), the proxy refusing a tailnet IP that isn't a peer (no packet on Wi-Fi or
+  mobile), a MagicDNS https name through it, the refused-address summary and toast, a QR with an http LAN address.

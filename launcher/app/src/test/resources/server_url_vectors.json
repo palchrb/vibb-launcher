@@ -1,5 +1,5 @@
 {
-  "about": "The phones' server address rule (launcher security review S-M1, the user's decision of 2026-11-04): https:// to any host, or http:// to a Tailscale IP literal (100.64.0.0/10, fd7a:115c:a1e0::/48) - nothing else. Byte-identical in launcher/app/src/test/resources/; the server's config::tests::the_server_url_vectors and the launcher's ServerUrlRuleTest run every row. verdict: https | tailnet_http | refused. The text is trimmed of ASCII whitespace at both ends; then only scheme://host[:port][/path] with a path of A-Z a-z 0-9 . _ ~ / - passes: no userinfo, query, fragment, percent sign or backslash.",
+  "about": "The phones' server address rule (launcher security review S-M1, the user's decision of 2026-11-04): https:// to any host, or http:// to a Tailscale IP literal (100.64.0.0/10, fd7a:115c:a1e0::/48) - nothing else. Byte-identical in launcher/app/src/test/resources/; the server's config::tests::the_server_url_vectors and the launcher's ServerTransportTest run every row. verdict: https | tailnet_http | refused. The text is trimmed of ASCII whitespace at both ends; then only scheme://host[:port][/path] with a path of A-Z a-z 0-9 . _ ~ / - passes: no userinfo, query, fragment, percent sign or backslash.",
   "vectors": [
     {"url": "https://vibb.example.org", "verdict": "https"},
     {"url": "https://vibb.tail0000.ts.net", "verdict": "https"},

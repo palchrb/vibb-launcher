@@ -5,9 +5,9 @@
   - The one exception is the name tailnet-server.vibb.invalid (server/ServerTransport.kt, TAILNET_SERVER_HOST): a
     config names hosts, never address ranges, so a server at http://<tailnet IP> is given to OkHttp under that name.
     Only that client resolves it - to the tailnet address, with sockets through tsnet's SOCKS proxy on loopback (the
-    proxy hop is a plain socket, not an HTTP request: no loopback exception is needed). `.invalid` never resolves
-    anywhere else (RFC 6761), so no other request can use the exception.
-  The debug build's copy (src/debug/res/xml/) also allows the emulator's host, 10.0.2.2. NetworkSecurityConfigTest
+    proxy hop is a plain socket, not an HTTP request: no loopback exception is needed). The name is under `.invalid`
+    (RFC 6761) and no client but the tailnet one asks for it.
+  The debug build's copy (src/debug/res/xml/) also allows the emulator's host, 10.0.2.2. ServerTransportTest
   pins both and the manifest's reference.
 -->
 <network-security-config>

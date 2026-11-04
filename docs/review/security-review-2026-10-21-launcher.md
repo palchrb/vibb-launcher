@@ -48,9 +48,11 @@ Tailscale verdict: **keep it as it is.** With no auth key and no earlier join, n
   own network; anything else, or a tailnet address while tsnet is down, makes no request (`server/ServerTransport.kt`).
   Cleartext is off app-wide but for one `.invalid` name the tailnet path gives OkHttp. The QR and the Settings edit
   refuse other addresses; Phone Setup warns on http to a tailnet IP and refuses any other http. See
-  `docs/notes/launcher/security.md`, "The server address: https only". Design 22's `EndpointPolicy`/legacy endpoints
-  were not built: a phone with a stored plain-http LAN address stops talking to the server until the parent types the
-  https address in its Settings.
+  `docs/notes/launcher/security.md`, "The server address: https only". The SOCKS proxy is our own (`mobile/tsembed`):
+  a Tailscale address is dialed only through netstack and only while it is a peer (QA `qa-https-only.md` H1). Design
+  22's `EndpointPolicy`/legacy endpoints were not built: a phone with a stored plain-http address that isn't a tailnet
+  IP - a LAN address or `http://<name>.ts.net` - stops talking to the server until the parent types the https address
+  in its Settings (a phone with no parent code: factory reset and a new QR). Release the server before the launcher.
 
 - **Evidence:**
   - `launcher/app/src/main/AndroidManifest.xml:112` has `android:usesCleartextTraffic="true"`, and there is no

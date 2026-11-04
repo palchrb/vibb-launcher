@@ -173,24 +173,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         val serverUrl = findPreference<Preference>(mdm.keys().serverUrl())
         serverUrl?.summary = serverUrlSummary(mdm.serverUrl())
         serverUrl?.setOnPreferenceClickListener {
-            showEditTextDialog(
-                requireContext(),
-                getString(R.string.settings_mdm_server_url),
-                mdm.serverUrl()
-            ) { typed ->
-                // Security review S-M1: https, or http to a tailnet IP; anything else isn't saved.
-                val value = typed.trim()
-                if (value.isNotEmpty() && !com.kidslauncher.mdm.server.serverUrlUsable(value, BuildConfig.DEBUG)) {
-                    Toast.makeText(requireContext(), R.string.server_url_refused, Toast.LENGTH_LONG).show()
-                    return@showEditTextDialog
-                }
-                mdm.serverUrl(value)
-                serverUrl.summary = serverUrlSummary(value)
-                // The stream retries a closed path every 30 s; a sync now uses the new address at once.
-                if (value.isNotEmpty() && com.kidslauncher.mdm.server.DeviceToken.present()) {
-                    com.kidslauncher.mdm.push.SyncRunner.request(requireContext().applicationContext, "server_url")
-                }
-            }
+            editServerUrl(serverUrl, mdm.serverUrl())
             true
         }
 
@@ -362,6 +345,26 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             !key.isNullOrBlank() -> maskedSecretSummary(key, getString(R.string.settings_mdm_not_set))
             com.kidslauncher.mdm.server.TsnetClient.joined(requireContext()) -> getString(R.string.settings_mdm_tailscale_joined)
             else -> getString(R.string.settings_mdm_not_set)
+        }
+    }
+
+    /** The Server URL edit (security review S-M1): https, or http to a tailnet IP; anything else isn't saved, and the
+     * dialog opens again with what was typed. */
+    private fun editServerUrl(row: Preference, current: String?) {
+        val mdm = LauncherPreferences.mdm()
+        showEditTextDialog(requireContext(), getString(R.string.settings_mdm_server_url), current) { typed ->
+            val value = typed.trim()
+            if (value.isNotEmpty() && !com.kidslauncher.mdm.server.serverUrlUsable(value, BuildConfig.DEBUG)) {
+                Toast.makeText(requireContext(), R.string.server_url_refused, Toast.LENGTH_LONG).show()
+                editServerUrl(row, typed)
+                return@showEditTextDialog
+            }
+            mdm.serverUrl(value)
+            row.summary = serverUrlSummary(value)
+            // The stream retries a closed path every 30 s; a sync now uses the new address at once.
+            if (value.isNotEmpty() && com.kidslauncher.mdm.server.DeviceToken.present()) {
+                com.kidslauncher.mdm.push.SyncRunner.request(requireContext().applicationContext, "server_url")
+            }
         }
     }
 

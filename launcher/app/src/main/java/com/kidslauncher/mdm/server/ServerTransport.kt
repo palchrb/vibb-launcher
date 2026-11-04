@@ -26,7 +26,11 @@ import okhttp3.OkHttpClient
  * that name instead of the IP: OkHttp checks cleartext against the URL's host, and its [Dns] for this client alone
  * answers the name with the tailnet address, and its sockets are SOCKS sockets to tsnet's proxy on loopback (the
  * proxy hop is a plain socket, never an HTTP request, so no loopback exception is needed). The name is under
- * `.invalid` (RFC 6761), which no resolver answers, so no other client can reach anything through the exception.
+ * `.invalid` (RFC 6761) and no client but the tailnet one asks for it (the others use the system resolver, which
+ * would forward the query to the network's DNS - a hostile resolver could answer it, but nothing of ours asks).
+ *
+ * The proxy itself (`mobile/tsembed`, dial.go) dials a Tailscale address only through netstack and only while it is a
+ * current peer - never on the phone's own network (the security QA of S-M1, H1).
  */
 
 /** The name OkHttp sees for a server at a tailnet IP; see the file's comment. */
@@ -118,13 +122,15 @@ fun serverPathNow(serverUrl: String): ServerPath {
 
 /**
  * Sets this builder up for [path] - call it before adding any other interceptor, so a closed path's refusal runs
- * first and nothing else (the bearer included) sees the request.
+ * first and nothing else (the bearer included) sees the request. [currentProxy] is tsnet's proxy at connect time: a
+ * tailnet socket refuses when it is no longer the one the path was made with (a client kept across a tsnet restart,
+ * whose old loopback port any app could bind - the security QA of S-M1, L1).
  */
-fun OkHttpClient.Builder.toServer(path: ServerPath): OkHttpClient.Builder = when (path) {
+fun OkHttpClient.Builder.toServer(path: ServerPath, currentProxy: () -> Proxy? = { TsnetClient.proxy() }): OkHttpClient.Builder = when (path) {
     is ServerPath.Direct -> apply { path.proxy?.let { proxy(it) } }
     is ServerPath.Tailnet -> proxy(Proxy.NO_PROXY)
         .dns(TailnetServerDns(path.address))
-        .socketFactory(SocksSocketFactory(path.proxy))
+        .socketFactory(SocksSocketFactory(path.proxy, currentProxy))
         // The API never redirects; a redirect off the tailnet name has nowhere to go anyway.
         .followRedirects(false)
         .followSslRedirects(false)
@@ -152,9 +158,13 @@ private class TailnetServerDns(private val address: InetAddress) : Dns {
         if (hostname == TAILNET_SERVER_HOST) listOf(address) else throw UnknownHostException("not the tailnet server")
 }
 
-/** Sockets through tsnet's SOCKS5 proxy (its credential comes from the process's Authenticator, [TsnetClient]). */
-private class SocksSocketFactory(private val proxy: Proxy) : SocketFactory() {
-    override fun createSocket(): Socket = Socket(proxy)
+/** Sockets through tsnet's SOCKS5 proxy (its credential comes from the process's Authenticator, [TsnetClient]), only
+ * while [proxy] is still [currentProxy]. */
+private class SocksSocketFactory(private val proxy: Proxy, private val currentProxy: () -> Proxy?) : SocketFactory() {
+    override fun createSocket(): Socket {
+        if (currentProxy() != proxy) throw IOException("tsnet's proxy changed since this client was made")
+        return Socket(proxy)
+    }
     override fun createSocket(host: String, port: Int): Socket = unsupported()
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = unsupported()
     override fun createSocket(host: InetAddress, port: Int): Socket = unsupported()

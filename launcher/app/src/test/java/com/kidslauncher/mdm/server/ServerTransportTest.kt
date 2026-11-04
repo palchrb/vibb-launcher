@@ -128,7 +128,7 @@ class ServerTransportTest {
             }
             val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", listener.localPort))
             val path = serverPath("http://100.101.102.103:3100", proxy, debug = false)
-            val client = OkHttpClient.Builder().toServer(path).build()
+            val client = OkHttpClient.Builder().toServer(path) { proxy }.build()
             val body = client.newCall(Request.Builder().url("${path.baseUrl}api/devices/policy").build()).execute().use { it.body!!.string() }
             assertEquals("ok", body)
             val (atyp, target, request) = seen.get(5, TimeUnit.SECONDS)
@@ -136,6 +136,28 @@ class ServerTransportTest {
             assertEquals("100.101.102.103:3100", target)
             assertTrue(request, request.startsWith("GET /api/devices/policy HTTP/1.1\r\n"))
             assertTrue(request, request.contains("\r\nHost: 100.101.102.103:3100\r\n"))
+        }
+    }
+
+    @Test
+    fun `a tailnet client refuses once tsnet's proxy changed`() {
+        ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { listener ->
+            listener.soTimeout = 300
+            val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", listener.localPort))
+            val path = serverPath("http://100.101.102.103:3100", proxy, debug = false)
+            for (now in listOf(null, socks)) {
+                val client = OkHttpClient.Builder().toServer(path) { now }.retryOnConnectionFailure(false).build()
+                try {
+                    client.newCall(Request.Builder().url("${path.baseUrl}api/devices/policy").build()).execute()
+                    fail("a stale proxy was used ($now)")
+                } catch (expected: java.io.IOException) {
+                }
+            }
+            try {
+                listener.accept().close()
+                fail("the old proxy port got a connection")
+            } catch (expected: SocketTimeoutException) {
+            }
         }
     }
 

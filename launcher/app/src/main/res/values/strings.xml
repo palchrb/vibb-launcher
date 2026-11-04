@@ -242,7 +242,7 @@
 
     <string name="settings_mdm_server_url">Server URL</string>
     <!-- Security review S-M1: the phone uses only https, or plain http to a Tailscale IP (only through the tailnet). -->
-    <string name="settings_mdm_server_url_not_used">Not used: this address isn\'t encrypted, so the phone doesn\'t contact the server. Type the server\'s https:// address.</string>
+    <string name="settings_mdm_server_url_not_used">Not used: this isn\'t an address the phone takes, so it doesn\'t contact the server. Type the server\'s https:// address.</string>
     <string name="settings_mdm_server_url_tailnet_http">Plain http, only through the tailnet. https://&lt;name&gt;.ts.net is better.</string>
     <string name="server_url_refused">The phone only uses a server address that starts with https:// (plain http only to a Tailscale IP like http://100.101.102.103). Use the server\'s https address.</string>
     <string name="settings_mdm_tailscale_auth_key">Tailscale auth key</string>

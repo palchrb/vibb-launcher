@@ -5,7 +5,7 @@ package com.kidslauncher.mdm.server
  * or `http://` to a Tailscale IP literal (100.64.0.0/10, fd7a:115c:a1e0::/48) - and that only through this phone's
  * own tailnet connection ([serverPath]). Nothing is looked up: a `*.ts.net` name must be https. Pure, and the
  * server judges the same rows the same way (`config::check_server_url`): `testdata/server_url_vectors.json`,
- * byte-identical in both, run by ServerUrlRuleTest and `config::tests::the_server_url_vectors`.
+ * byte-identical in both, run by ServerTransportTest and `config::tests::the_server_url_vectors`.
  *
  * The grammar is deliberately narrower than a URL: after trimming ASCII whitespace at both ends only
  * `scheme://host[:port][/path]` passes, with a path of `A-Z a-z 0-9 . _ ~ / -`. No userinfo, query, fragment, percent

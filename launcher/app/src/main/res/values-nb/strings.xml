@@ -190,7 +190,7 @@
     <string name="settings_apps_hidden">Skjulte apper</string>
     <string name="settings_meta_version">Versjon</string>
     <string name="settings_mdm_server_url">Serveradresse</string>
-    <string name="settings_mdm_server_url_not_used">Brukes ikke: adressen er ikke kryptert, så telefonen kontakter ikke serveren. Skriv inn serverens https://-adresse.</string>
+    <string name="settings_mdm_server_url_not_used">Brukes ikke: adressen er ikke tillatt, så telefonen kontakter ikke serveren. Skriv inn serverens https://-adresse.</string>
     <string name="settings_mdm_server_url_tailnet_http">Vanlig http, bare gjennom tailnettet. https://&lt;navn&gt;.ts.net er bedre.</string>
     <string name="server_url_refused">Telefonen bruker bare en serveradresse som begynner med https:// (vanlig http bare til en Tailscale-IP som http://100.101.102.103). Bruk serverens https-adresse.</string>
     <string name="settings_mdm_tailscale_auth_key">Tailscale-nøkkel</string>
