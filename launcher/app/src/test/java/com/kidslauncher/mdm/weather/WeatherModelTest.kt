@@ -196,7 +196,7 @@ class WeatherModelTest {
         assertEquals(listOf("morning", "afternoon", "evening"), card.columns.map { it.part })
         assertEquals(listOf(false, true, false), card.columns.map { it.current })
         assertEquals("at", card.dark!!.kind)
-        // Tomorrow's card (from 18:00): "I morgen", no current column.
+        // Tomorrow's card without the evening (an older server): "I morgen", no current column.
         val tomorrow = answer().let { a -> a.copy(days = a.days.map { it.copy(date = "2026-11-04") }) }
         val t = weatherCard(tomorrow, l.copy(card = "2026-11-04"), h0, oslo, known)!!
         assertTrue(t.tomorrow)
@@ -207,6 +207,39 @@ class WeatherModelTest {
         assertEquals("all_day", weatherCard(polar, l, h0, oslo, known)!!.dark!!.kind)
         val odd = answer().let { a -> a.copy(days = a.days.map { it.copy(dark = WeatherAnswerDark("eclipse")) }) }
         assertNull(weatherCard(odd, l, h0, oslo, known)!!.dark)
+    }
+
+    /** The evening card (2026-11-04, mockup v2): from 18:00 the server sends the rest of this evening with tomorrow's
+     * card; the card then is "I kveld" (current) beside tomorrow's morning and afternoon, the foot tomorrow's. */
+    @Test
+    fun `the evening card - tonight beside tomorrow's morning and afternoon`() {
+        val evening = hour * 4 // 19:00 in Oslo
+        val tonight = WeatherAnswerPeriod("evening", "partlycloudy_night", 2, 0.0)
+        val tomorrow = answer(checkedAt = h0 + evening - 10 * 60_000L).let { a ->
+            a.copy(
+                hours = listOf(WeatherAnswerHour(h0 + evening, "partlycloudy_night", 1, null, "2026-11-04", null, tonight)),
+                days = a.days.map { it.copy(date = "2026-11-04") },
+            )
+        }
+        // 19:04: the line carries the evening; the card is the evening card.
+        val l = line(tomorrow, h0 + evening + 4 * 60_000L)!!
+        assertEquals(WeatherTonight("partlycloudy_night", 2, 0.0), l.tonight)
+        val card = weatherCard(tomorrow, l, h0 + evening + 4 * 60_000L, oslo, known)!!
+        assertTrue(card.tomorrow)
+        assertEquals(WeatherCardColumn("evening", "partlycloudy_night", 2, 0.0, current = true), card.tonight)
+        assertEquals(listOf("morning", "afternoon"), card.columns.map { it.part })
+        assertTrue(card.columns.none { it.current })
+        assertEquals(2 to 7, card.low to card.high)
+        // An unknown symbol keeps the degrees; neither symbol nor degrees: the plain tomorrow card.
+        val odd = tomorrow.copy(hours = tomorrow.hours.map { it.copy(tonight = tonight.copy(symbol = "aurora")) })
+        assertEquals(WeatherTonight(null, 2, 0.0), line(odd, h0 + evening)!!.tonight)
+        val empty = tomorrow.copy(hours = tomorrow.hours.map { it.copy(tonight = WeatherAnswerPeriod("evening")) })
+        val plain = weatherCard(empty, line(empty, h0 + evening)!!, h0 + evening, oslo, known)!!
+        assertNull(plain.tonight)
+        assertEquals(listOf("morning", "afternoon", "evening"), plain.columns.map { it.part })
+        // An older server (no tonight) or a card that is today's after all (a zone change): the plain card.
+        assertNull(weatherCard(answer(), l.copy(card = "2026-11-03"), h0, oslo, known)!!.tonight)
+        assertNull(line(answer(), h0)!!.tonight)
     }
 
     /** §5.3's budgets under the calmer glance's rule (2026-11-04, boards A and B): words take their own line, no words
@@ -250,6 +283,9 @@ class WeatherModelTest {
     fun `the spoken text has no soft hyphen (E9 L4)`() {
         assertEquals("Ettermiddag: Klarvær.", WeatherWords.spoken("Etter\u00ADmiddag: Klarvær."))
         val panel = java.io.File("src/main/java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
-        assertEquals("the mark, the card and the card with its nowcast line", 3, Regex("return WeatherWords\\.spoken\\(").findAll(panel).count())
+        val spoken = java.io.File("src/main/java/com/kidslauncher/mdm/weather/WeatherSpoken.kt").readText()
+        val call = Regex("return WeatherWords\\.spoken\\(")
+        assertEquals("the mark and the card with its nowcast line", 2, call.findAll(panel).count())
+        assertEquals("the card (WeatherSpoken.kt)", 1, call.findAll(spoken).count())
     }
 }

@@ -47,6 +47,9 @@ class WeatherContractTest {
         val now = parsed.getValue("answer_now_ms").jsonPrimitive.long
         val shown = answer.hours.single { it.atMs <= now && now < it.atMs + 3_600_000 }
         assertEquals(ServerJson.decodeFromString(WeatherAnswerHour.serializer(), parsed.getValue("answer_line").toString()), shown)
+        // The evening card: the 18:00 entry (tomorrow's card) carries the rest of this evening, the afternoon's don't.
+        assertEquals(listOf(false, false, false, true), answer.hours.map { it.tonight != null })
+        assertEquals("evening", answer.hours.last().tonight!!.part)
         // Every card date an hour names is one of the days.
         assertTrue(answer.hours.all { hour -> answer.days.any { it.date == hour.card } })
         for (day in answer.days) {
@@ -160,7 +163,8 @@ class WeatherContractTest {
     @Test
     fun `every symbol has its drawable and its name in both languages`() {
         val answer = answer()
-        val codes = answer.hours.mapNotNull { it.symbol } + answer.days.flatMap { day -> day.periods.mapNotNull { it.symbol } }
+        val codes = answer.hours.mapNotNull { it.symbol } + answer.hours.mapNotNull { it.tonight?.symbol } +
+            answer.days.flatMap { day -> day.periods.mapNotNull { it.symbol } }
         assertTrue(codes.isNotEmpty())
         for (code in codes) {
             assertNotNull("the answer's $code", WeatherSymbols.drawable(code))

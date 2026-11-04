@@ -51,8 +51,18 @@ data class WeatherWordsKey(val key: String, val form: String, val atMs: Long?)
 
 /** What the date's line shows at this moment: MET's symbol code (known to the phone, else null), the degrees, the
  * words (a pair the phone has words for, else null), the card's date (one of the answer's days, else null - no card,
- * no chevron) and the current period on today's card. */
-data class WeatherLine(val symbol: String?, val temp: Int?, val words: WeatherWordsKey?, val card: String?, val current: Int?)
+ * no chevron), the current period on today's card and, from 18:00 to midnight, the rest of this evening. */
+data class WeatherLine(
+    val symbol: String?,
+    val temp: Int?,
+    val words: WeatherWordsKey?,
+    val card: String?,
+    val current: Int?,
+    val tonight: WeatherTonight? = null,
+)
+
+/** The rest of this evening (the evening card's "I kveld", 2026-11-04): the symbol (known, else null), degrees, mm. */
+data class WeatherTonight(val symbol: String?, val temp: Int?, val mm: Double?)
 
 /**
  * The line now (§5.2): null when the switch is off, the answer isn't `ok`, MET last answered more than 3 h ago, or no
@@ -77,7 +87,9 @@ fun weatherLine(
         WeatherWordsKey(w.key, w.form, w.atMs).takeIf { wordsKnown(w.key, w.form) && (w.form != "from" || w.atMs != null) }
     }
     val card = hour.card?.takeIf { date -> answer.days.any { it.date == date } }
-    return WeatherLine(symbol, hour.temp, words, card, hour.current?.takeIf { it in 0..2 })
+    val tonight = hour.tonight?.let { WeatherTonight(it.symbol?.takeIf(symbolKnown), it.temp, it.precipMm) }
+        ?.takeIf { it.symbol != null || it.temp != null }
+    return WeatherLine(symbol, hour.temp, words, card, hour.current?.takeIf { it in 0..2 }, tonight)
 }
 
 /**
@@ -199,7 +211,9 @@ fun weatherMm(mm: Double, locale: Locale): String? =
 data class WeatherCardColumn(val part: String, val symbol: String?, val temp: Int?, val mm: Double?, val current: Boolean)
 
 /** The card (§5.2): [tomorrow] when its day isn't the phone's today ("I morgen"), the columns, the foot (the low,
- * high, the dark), and the "Oppdatert kl." time when due. */
+ * high, the dark), and the "Oppdatert kl." time when due. With [tonight] it is the evening card (18:00 to midnight,
+ * 2026-11-04): "I kveld" - the rest of this evening, current - beside "I morgen" with tomorrow's morning and afternoon
+ * as [columns]; the foot is tomorrow's. */
 data class WeatherCard(
     val tomorrow: Boolean,
     val columns: List<WeatherCardColumn>,
@@ -207,6 +221,7 @@ data class WeatherCard(
     val high: Int?,
     val dark: WeatherAnswerDark?,
     val updatedAtMs: Long?,
+    val tonight: WeatherCardColumn? = null,
 )
 
 /** The three parts the card knows, in order. */
@@ -215,7 +230,12 @@ val WEATHER_PARTS = listOf("morning", "afternoon", "evening")
 /** The dark kinds the card has words for. */
 val WEATHER_DARK_KINDS = setOf("at", "never", "all_day")
 
-/** The card for [line] (its day), or null when the line has no card. Unknown parts and dark kinds are left out. */
+/** The parts of tomorrow beside "I kveld" on the evening card. */
+val WEATHER_EVENING_PARTS = listOf("morning", "afternoon")
+
+/** The card for [line] (its day), or null when the line has no card. Unknown parts and dark kinds are left out. A
+ * line with the rest of this evening on tomorrow's card makes the evening card; without it (an older server, the
+ * phone's zone just changed) the plain one. */
 fun weatherCard(
     answer: WeatherAnswer,
     line: WeatherLine,
@@ -227,13 +247,14 @@ fun weatherCard(
     val day = answer.days.firstOrNull { it.date == date } ?: return null
     val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
     val tomorrow = runCatching { LocalDate.parse(date) != today }.getOrDefault(false)
-    val columns = WEATHER_PARTS.mapIndexedNotNull { i, part ->
+    val tonight = line.tonight?.takeIf { tomorrow }?.let { WeatherCardColumn("evening", it.symbol, it.temp, it.mm, current = true) }
+    val columns = (if (tonight != null) WEATHER_EVENING_PARTS else WEATHER_PARTS).mapIndexedNotNull { i, part ->
         val period = day.periods.firstOrNull { it.part == part } ?: return@mapIndexedNotNull null
         WeatherCardColumn(part, period.symbol?.takeIf(symbolKnown), period.temp, period.precipMm, !tomorrow && line.current == i)
     }
     if (columns.isEmpty()) return null
     val dark = day.dark?.takeIf { it.kind in WEATHER_DARK_KINDS && (it.kind != "at" || it.atMs != null) }
-    return WeatherCard(tomorrow, columns, day.low, day.high, dark, weatherUpdatedAt(answer, nowMs))
+    return WeatherCard(tomorrow, columns, day.low, day.high, dark, weatherUpdatedAt(answer, nowMs), tonight)
 }
 
 /** Where the mark sits (D15): beside the date or on its own line under it, with or without the words. */

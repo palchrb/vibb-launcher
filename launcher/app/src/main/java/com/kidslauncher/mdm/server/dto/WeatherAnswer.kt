@@ -40,8 +40,11 @@ data class WeatherAnswerHour(
     val card: String? = null,
     /** 0-2: the period of today's card containing the hour; `null` before 06:00 or on tomorrow's card. */
     val current: Int? = null,
+    /** From 18:00 to midnight, while the card is tomorrow's: what is left of this evening ("I kveld", 2026-11-04);
+     * `null` otherwise and from an older server. */
+    val tonight: WeatherAnswerPeriod? = null,
 ) {
-    override fun toString() = "WeatherAnswerHour(symbol=$symbol, words=$words, current=$current)"
+    override fun toString() = "WeatherAnswerHour(symbol=$symbol, words=$words, current=$current, tonight=${tonight != null})"
 }
 
 /** A rule key and its form (`from` carries [atMs]): `rain`/`from`, `very_cold`/`tomorrow`, ... (`weather.json`'s
