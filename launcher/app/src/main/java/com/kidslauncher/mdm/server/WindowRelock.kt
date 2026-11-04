@@ -389,6 +389,8 @@ object WindowRelock {
         askedTrigger.set(trigger)
         check(app, trigger)
         notifyListeners()
+        // The parent's app sees the window end now (2026-11-04); the sync's relock waits for this one's.
+        if (syncOnLockAgain(trigger)) com.kidslauncher.mdm.push.SyncRunner.request(app, "window_ended")
         return ended
     }
 

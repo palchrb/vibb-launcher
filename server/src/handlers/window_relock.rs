@@ -41,6 +41,23 @@ pub struct RelockCard {
     /// "Allow these apps…"'s hidden `blocks` value: the listed apps and the keys shown
     /// ([window_relock::allow_form_value], QA of cmd-expiry Low 1).
     pub allow_value: String,
+    /// How old the newest report is ("2 h ago"), once it is older than [REPORT_AGE_NOTE_MS]: what Quick actions says of
+    /// the pause is the phone's word at that report (QA of pause-end-report M1).
+    pub report_age: Option<String>,
+}
+
+/// From this age on, Quick actions says how old the phone's newest report is: a healthy phone reports at least every
+/// 30 minutes (its backstop sync), and every start and end of a pause at once.
+pub const REPORT_AGE_NOTE_MS: i64 = 35 * 60 * 1000;
+
+/// [RelockCard::report_age]: `None` while the report is fresh, unreadable or there is none.
+pub fn report_age(
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    let at = crate::display_time::parse_db_utc(&latest?.reported_at)?;
+    ((now - at).num_milliseconds() >= REPORT_AGE_NOTE_MS).then(|| zone.relative(at, now))
 }
 
 impl RelockCard {
@@ -125,6 +142,7 @@ pub async fn card(
         .map(|f| window_relock::foreign_view(zone.lang(), &f, paused, &names)),
         allow_value: window_relock::allow_form_value(&blocks.allow),
         blocks,
+        report_age: report_age(latest, zone, now),
     })
 }
 

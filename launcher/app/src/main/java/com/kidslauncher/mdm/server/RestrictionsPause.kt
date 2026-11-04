@@ -9,7 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** How long one "pause all restrictions" lasts. Re-entering the PIN starts a new window. */
+/** How long one "pause all restrictions" lasts. Re-entering the PIN starts a new window. The server's
+ * `RESTRICTIONS_PAUSE_MAX_MS` is the same, both pinned by `restrictions_pause.json` (RestrictionsPauseTest). */
 const val RESTRICTIONS_PAUSE_DURATION_MS = 2 * 60 * 60 * 1000L
 
 /** Where a time-limited override window started, by every clock we check. */

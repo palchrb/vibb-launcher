@@ -11,7 +11,8 @@ name: Launcher
 #   report (server/testdata/calendar_*.json, design 69) and the calendar links' contract
 #   (server/testdata/calendar_feeds.json, design 72), the weather's contract (server/testdata/weather.json,
 #   design 75), Leave Tailnet's answers (server/testdata/leave_tailnet.json, security review S-L10), the server address
-#   rule's vectors (server/testdata/server_url_vectors.json, security review S-M1) and the weather symbols' converter (scripts/yr-symbols.py and its vendored 11.svg; its --selftest runs in
+#   rule's vectors (server/testdata/server_url_vectors.json, security review S-M1), the pause's length
+#   (server/testdata/restrictions_pause.json, 2026-11-04) and the weather symbols' converter (scripts/yr-symbols.py and its vendored 11.svg; its --selftest runs in
 #   the always-run changes job),
 #   music's Gradle wrapper and verification
 #   metadata and music.yml - BuildChainTest checks them, security review L9): build and test (debug, unsigned release, lint, unit
@@ -79,7 +80,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$|scripts/yr-symbols(\.py|-11\.svg)$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$|scripts/yr-symbols(\.py|-11\.svg)$)'; then
           changed=true
         else
           changed=false

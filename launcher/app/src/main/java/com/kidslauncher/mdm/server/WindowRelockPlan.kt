@@ -55,13 +55,21 @@ fun endWindowsResult(ended: Set<WindowKind>, installMode: Boolean): String {
 }
 
 /**
- * Whether a relock asks for a sync at once (2026-11-04: a pause ended with Home's "Lock again" or the Settings switch
- * stayed "paused" in the parent's app until the next backstop sync, up to 30 minutes - the server shows the newest
- * report's `restrictions_paused`): its status report carries the window gone and the relock. Not a relock inside the
- * sync ([RelockTrigger.SYNC]), whose own report follows; only one that finished ([cleared]) - one that keeps its marker
- * runs again at the sync's own re-check, and asking each time would never stop.
+ * The parent's own ends - Home's and the notification's "Lock again", the Settings switch - ask for a sync at once,
+ * whatever their relock does (2026-11-04: a pause ended so stayed "paused" in the parent's app until the next backstop
+ * sync, up to 30 minutes - the server shows the newest report's `restrictions_paused`). `end_windows` runs inside a sync
+ * and asks for its follow-up itself; a press can't repeat by itself, so nothing loops (QA of pause-end-report L1).
  */
-fun syncAfterRelock(trigger: RelockTrigger, cleared: Boolean): Boolean = cleared && trigger != RelockTrigger.SYNC
+fun syncOnLockAgain(trigger: RelockTrigger): Boolean = trigger == RelockTrigger.LOCK_AGAIN || trigger == RelockTrigger.SETTINGS
+
+/**
+ * Whether a relock that ran by itself - a window's time ran out ([RelockTrigger.TIMER]), screen on, a boot - asks for a
+ * sync at once, so its report carries the window gone and the relock. Only one that finished ([cleared]): one that
+ * keeps its marker runs again at the sync's own re-check, and asking each time would never stop. The parent's ends
+ * asked already ([syncOnLockAgain]), the sync's own relock reports in that sync.
+ */
+fun syncAfterRelock(trigger: RelockTrigger, cleared: Boolean): Boolean =
+    cleared && (trigger == RelockTrigger.TIMER || trigger == RelockTrigger.SCREEN_ON || trigger == RelockTrigger.BOOT)
 
 /** At most this many package names per list in the report. */
 const val RELOCK_LIST_MAX = 8

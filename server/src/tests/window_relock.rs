@@ -208,6 +208,54 @@ async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
     assert!(!html.contains("data-attention=\"blocked-apps\""), "{html}");
 }
 
+/// QA of pause-end-report (M1, L2): Quick actions shows the pause as of the newest report - its age once it is old, and
+/// no pause (no Lock again, Unlock offered) once the report is older than the longest pause.
+#[tokio::test]
+async fn an_old_reports_pause_says_its_age_and_ends_by_the_clock() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let lock_again = format!("action=\"/devices/{id}/end-windows#quick\"");
+    let unlock = format!("action=\"/devices/{id}/start-pause#quick\"");
+    let quick = || async {
+        let html = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        group(&html, "quick").to_string()
+    };
+    let age = |minutes: i64| {
+        sqlx::query("UPDATE device_status SET reported_at = datetime('now', ?) WHERE device_id = ?")
+            .bind(format!("-{minutes} minutes"))
+            .bind(id)
+            .execute(&app.db)
+    };
+    post_status(&app, &token, json!({ "restrictions_paused": true })).await;
+    let fresh = quick().await;
+    assert!(
+        fresh.contains(&lock_again) && !fresh.contains("data-report-age"),
+        "{fresh}"
+    );
+    age(40).await.unwrap();
+    let old = quick().await;
+    assert!(old.contains(&lock_again), "{old}");
+    assert!(
+        old.contains("<p class=\"quick-note\" data-report-age>As of the phone&#39;s last report, 40 min ago.</p>"),
+        "{old}"
+    );
+    age(121).await.unwrap();
+    let over = quick().await;
+    assert!(
+        !over.contains(&lock_again) && over.contains(&unlock),
+        "{over}"
+    );
+    assert!(
+        !over.contains("data-warning=\"restrictions-paused\""),
+        "{over}"
+    );
+    assert!(over.contains("data-report-age"), "{over}");
+}
+
 #[tokio::test]
 async fn lock_again_follows_the_status_and_the_capability() {
     let app = TestApp::new().await;

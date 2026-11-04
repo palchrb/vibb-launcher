@@ -1008,6 +1008,7 @@
   "device.summary.foreign.step_pin.after_many": ": appene kan ha lest den.",
   "device.summary.quick": "Hurtighandlinger",
   "device.summary.pause_ends": "Pausen slutter av seg selv, eller trykk Lås igjen for å avslutte den nå.",
+  "device.summary.report_age": "Ifølge telefonens siste rapport, {age}.",
   "device.summary.pause_ends_old": "Pausen slutter av seg selv; denne versjonen av Vibb One kan ikke låses igjen herfra.",
   "device.summary.plus_hour": "+1 t",
   "device.summary.plus_minutes": "+{minutes} min",

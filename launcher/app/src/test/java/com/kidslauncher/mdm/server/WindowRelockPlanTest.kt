@@ -453,19 +453,22 @@ class WindowRelockPlanTest {
 
     @Test
     fun `a pause ended outside the sync asks for a sync at once - once (2026-11-04)`() {
-        // Home's "Lock again" ends the pause: the worker's relock finishes and the report goes now.
+        // The parent's ends ask whatever their relock does (QA of pause-end-report L1); end_windows has its follow-up.
+        assertEquals(setOf(RelockTrigger.LOCK_AGAIN, RelockTrigger.SETTINGS), RelockTrigger.entries.filter(::syncOnLockAgain).toSet())
+        // The pause runs out: the worker's relock finishes and the report goes now.
         open(WindowKind.PAUSE)
         end(WindowKind.PAUSE)
-        val ended = relock(RelockTrigger.LOCK_AGAIN)
-        assertTrue(syncAfterRelock(RelockTrigger.LOCK_AGAIN, ended.cleared))
+        assertTrue(syncAfterRelock(RelockTrigger.TIMER, relock(RelockTrigger.TIMER).cleared))
         // The sync's own re-check finds nothing left: no second sync.
         assertNull(relock().report)
-        // The sync's own relock reports in that sync.
-        assertFalse(syncAfterRelock(RelockTrigger.SYNC, cleared = true))
+        // The sync's own relock reports in that sync; the parent's ends asked already.
+        for (asked in listOf(RelockTrigger.SYNC, RelockTrigger.LOCK_AGAIN, RelockTrigger.SETTINGS, RelockTrigger.COMMAND)) {
+            assertFalse(asked.wire, syncAfterRelock(asked, cleared = true))
+        }
         // A relock that keeps its marker (apply threw) runs again at the sync's re-check: asking each time would loop.
         open(WindowKind.PAUSE)
         end(WindowKind.PAUSE)
         phone.applyThrows = true
-        assertFalse(syncAfterRelock(RelockTrigger.TIMER, relock(RelockTrigger.TIMER).cleared))
+        assertFalse(syncAfterRelock(RelockTrigger.SCREEN_ON, relock(RelockTrigger.SCREEN_ON).cleared))
     }
 }

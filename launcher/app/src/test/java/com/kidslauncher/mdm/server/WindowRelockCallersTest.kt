@@ -98,11 +98,12 @@ class WindowRelockCallersTest {
 
     @Test
     fun `a window ended on the phone reaches the server at once, from every path (2026-11-04)`() {
-        // Home's and the notification's "Lock again", the Settings switch, the timer, screen on, a boot: all end in the
-        // worker's relock, which asks for the sync after it finished - its report has the pause gone.
+        // The timer, screen on, a boot: the worker's relock asks for the sync after it finished. Home's and the
+        // notification's "Lock again" and the Settings switch ask in lockAgain, whatever the relock does (QA L1).
         val relock = body("server/WindowRelock.kt", "private fun relock(")
         assertBefore(relock, "runRelock(", "if (syncAfterRelock(trigger, outcome.cleared)) com.kidslauncher.mdm.push.SyncRunner.request(app,")
-        assertTrue("check(app, trigger)" in body("server/WindowRelock.kt", "fun lockAgain("))
+        val lockAgain = body("server/WindowRelock.kt", "fun lockAgain(")
+        assertBefore(lockAgain, "check(app, trigger)", "if (syncOnLockAgain(trigger)) com.kidslauncher.mdm.push.SyncRunner.request(app,")
         assertTrue("WindowRelock.lockAgainAsync(this, com.kidslauncher.mdm.server.RelockTrigger.LOCK_AGAIN)" in sources.getValue("ui/HomeActivity.kt"))
         assertTrue("WindowRelock.lockAgainAsync(context, RelockTrigger.SETTINGS)" in sources.getValue("ui/settings/launcher/SettingsFragmentLauncher.kt"))
         // The status report says what the pause is now.

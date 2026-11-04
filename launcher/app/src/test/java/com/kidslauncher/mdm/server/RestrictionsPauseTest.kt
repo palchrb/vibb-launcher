@@ -1,8 +1,14 @@
 package com.kidslauncher.mdm.server
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class RestrictionsPauseTest {
 
@@ -59,5 +65,17 @@ class RestrictionsPauseTest {
     fun `a window from an older build or with an unknown boot count is over`() {
         assertFalse(active(minute, s = WindowStart(0, 0, -1)))
         assertFalse(active(minute, bootCount = -1, s = start.copy(bootCount = -1)))
+    }
+
+    // The pause's length is the server's too (QA of pause-end-report M1): it treats a paused report older than it as over.
+
+    private val contract = javaClass.classLoader!!.getResource("restrictions_pause.json")!!.readText()
+
+    @Test
+    fun `the pause lasts the shared contract's length, identical to the server's copy`() {
+        assertEquals(Json.parseToJsonElement(contract).jsonObject.getValue("pause_max_ms").jsonPrimitive.long, RESTRICTIONS_PAUSE_DURATION_MS)
+        val serverCopy = File("../../server/testdata/restrictions_pause.json")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
     }
 }
