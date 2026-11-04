@@ -7,6 +7,8 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
@@ -112,7 +114,9 @@ object KidSounds {
 
     /**
      * The picker's preview: one sound at a time on the media stream (`USAGE_MEDIA`), so it is heard while the phone is
-     * in Lydløs, with a ducking focus request so music pauses or ducks. Main thread.
+     * in Lydløs, with a ducking transient focus request so music ducks or pauses. It plays only when the focus is
+     * granted (never in a call) and stops when the focus is lost (a ringing call); at its end, on an error, a new tap
+     * or [stop] the player is released and the focus given back. Main thread.
      */
     class Preview(context: Context) {
         private val app = context.applicationContext
@@ -123,24 +127,32 @@ object KidSounds {
             .build()
         private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(attributes)
+            .setOnAudioFocusChangeListener({ change ->
+                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stop()
+            }, Handler(Looper.getMainLooper()))
             .build()
         private var player: MediaPlayer? = null
 
         fun play(uri: String) {
             stop()
+            val granted = audio == null || audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            if (!granted) {
+                Log.i(TAG, "No preview: the audio focus wasn't granted")
+                return
+            }
+            // Assigned before anything can throw, so the catch's stop() releases it.
+            val mp = MediaPlayer()
+            player = mp
             try {
-                audio?.requestAudioFocus(focus)
-                player = MediaPlayer().apply {
-                    setAudioAttributes(attributes)
-                    setDataSource(app, plain(app, uri))
-                    setOnPreparedListener { it.start() }
-                    setOnCompletionListener { if (player === it) stop() }
-                    setOnErrorListener { mp, _, _ ->
-                        if (player === mp) stop()
-                        true
-                    }
-                    prepareAsync()
+                mp.setAudioAttributes(attributes)
+                mp.setDataSource(app, plain(app, uri))
+                mp.setOnPreparedListener { if (player === it) it.start() }
+                mp.setOnCompletionListener { if (player === it) this@Preview.stop() }
+                mp.setOnErrorListener { failed, _, _ ->
+                    if (player === failed) this@Preview.stop()
+                    true
                 }
+                mp.prepareAsync()
             } catch (e: Exception) {
                 Log.w(TAG, "Couldn't play the sound", e)
                 stop()
@@ -148,17 +160,16 @@ object KidSounds {
         }
 
         fun stop() {
-            val current = player ?: run {
-                audio?.abandonAudioFocusRequest(focus)
-                return
-            }
+            val current = player
             player = null
-            try {
-                current.reset()
-            } catch (e: Exception) {
-                // Already released or in an error state - harmless.
+            if (current != null) {
+                try {
+                    current.reset()
+                } catch (e: Exception) {
+                    // Already released or in an error state - harmless.
+                }
+                current.release()
             }
-            current.release()
             audio?.abandonAudioFocusRequest(focus)
         }
     }

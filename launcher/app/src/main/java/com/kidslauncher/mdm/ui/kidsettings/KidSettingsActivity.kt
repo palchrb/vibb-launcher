@@ -103,6 +103,7 @@ class KidSettingsActivity : UIObjectActivity() {
     /** The phone's ringtone and message sound as the rows show them ([KidSounds.currentValue]; main thread), the newest read wins. */
     private var soundValues: Map<SoundKind, SoundValue> = emptyMap()
     private var soundValuesJob: Job? = null
+    private var pickerOpening = false
 
     /** Volume keys, the volume panel or a DND schedule changed the ringer: show what is true now. */
     private val soundReceiver = object : BroadcastReceiver() {
@@ -176,7 +177,13 @@ class KidSettingsActivity : UIObjectActivity() {
             }
         }
         for ((row, kind) in pickRows()) {
-            row.setOnClickListener { if (it.isEnabled) KidSoundPickerActivity.start(this, kind) }
+            row.setOnClickListener {
+                // One picker per tap: a fast double tap would open two (cleared on the next resume).
+                if (it.isEnabled && !pickerOpening) {
+                    pickerOpening = true
+                    KidSoundPickerActivity.start(this, kind)
+                }
+            }
         }
         binding.kidSettingsHiddenRow.setOnClickListener {
             hiddenOpen = !hiddenOpen
@@ -206,6 +213,7 @@ class KidSettingsActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
+        pickerOpening = false
         if (redirectIfLocked()) return
         // Also refreshes whether the system wallpaper is still ours (in the background).
         WallpaperStore.refreshAsync(this)

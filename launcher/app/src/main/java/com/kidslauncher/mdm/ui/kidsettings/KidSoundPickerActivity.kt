@@ -34,9 +34,11 @@ class KidSoundPickerActivity : UIObjectActivity() {
     private lateinit var kind: SoundKind
     private lateinit var preview: KidSounds.Preview
 
-    /** The phone's sounds as listed at the start and the leading row ([leadSound], taken then; main thread). */
+    /** The phone's sounds as first listed (a failed or empty listing is read again on the next resume) and the leading
+     * row ([leadSound]), taken once when the page opened and kept across a recreate ([onSaveInstanceState]); main thread. */
     private var sounds: List<PickerSound>? = null
     private var lead: PickerSound? = null
+    private var leadTaken = false
     private var saved: String? = null
 
     /** The rows drawn now: their sounds and buttons, rebuilt only when the sounds change. */
@@ -59,8 +61,23 @@ class KidSoundPickerActivity : UIObjectActivity() {
         binding = ActivityKidSoundPickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
         preview = KidSounds.Preview(this)
+        if (savedInstanceState?.getBoolean(STATE_LEAD_TAKEN) == true) {
+            leadTaken = true
+            val uri = savedInstanceState.getString(STATE_LEAD_URI)
+            val title = savedInstanceState.getString(STATE_LEAD_TITLE)
+            lead = if (uri != null && title != null) PickerSound(uri, title) else null
+        }
         KidInsets.apply(binding.root)
         KidHeader.bind(this, binding.kidSoundHeader, titleFor(kind))
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_LEAD_TAKEN, leadTaken)
+        lead?.let {
+            outState.putString(STATE_LEAD_URI, it.uri)
+            outState.putString(STATE_LEAD_TITLE, it.title)
+        }
     }
 
     override fun onStart() {
@@ -79,6 +96,12 @@ class KidSoundPickerActivity : UIObjectActivity() {
         preview.stop()
         LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onStop()
+    }
+
+    /** A belt to [onStop]: the player is never left behind. */
+    override fun onDestroy() {
+        preview.stop()
+        super.onDestroy()
     }
 
     private fun redirectIfLocked(): Boolean {
@@ -105,11 +128,13 @@ class KidSoundPickerActivity : UIObjectActivity() {
     private fun load() {
         loadJob?.cancel()
         loadJob = lifecycleScope.launch {
-            val first = sounds == null
-            val list = sounds ?: KidSounds.sounds(this@KidSoundPickerActivity, kind).also { sounds = it }
+            val list = sounds ?: KidSounds.sounds(this@KidSoundPickerActivity, kind).also { if (it.isNotEmpty()) sounds = it }
             val (uri, value) = KidSounds.currentValue(this@KidSoundPickerActivity, kind)
             saved = uri
-            if (first) lead = leadSound(list, uri, (value as? SoundValue.Named)?.title)
+            if (!leadTaken && list.isNotEmpty()) {
+                lead = leadSound(list, uri, (value as? SoundValue.Named)?.title)
+                leadTaken = true
+            }
             if (writesRunning == 0) render(list)
         }
     }
@@ -154,6 +179,9 @@ class KidSoundPickerActivity : UIObjectActivity() {
 
     companion object {
         private const val EXTRA_KIND = "kind"
+        private const val STATE_LEAD_TAKEN = "lead_taken"
+        private const val STATE_LEAD_URI = "lead_uri"
+        private const val STATE_LEAD_TITLE = "lead_title"
 
         fun titleFor(kind: SoundKind): Int = when (kind) {
             SoundKind.RINGTONE -> R.string.kid_settings_ringtone

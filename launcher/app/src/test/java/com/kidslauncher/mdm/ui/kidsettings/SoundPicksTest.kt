@@ -88,6 +88,24 @@ class SoundPicksTest {
     }
 
     @Test
+    fun `the preview releases itself and gives the focus back - plays only with the focus`() {
+        val preview = code("ui/kidsettings/KidSounds.kt").substringAfter("class Preview(")
+        val play = preview.substringAfter("fun play(").substringBefore("fun stop()")
+        // The listeners stop the Preview (release + focus), never MediaPlayer.stop() - which throws in the Error state.
+        assertTrue(play.contains("setOnCompletionListener { if (player === it) this@Preview.stop() }"))
+        assertTrue(play.contains("if (player === failed) this@Preview.stop()"))
+        assertFalse(play.contains("apply {"))
+        // Assigned before setDataSource can throw, so the catch releases it.
+        assertTrue(play.indexOf("player = mp") in 0 until play.indexOf("setDataSource("))
+        // No focus, no sound (a call); a lost focus stops it.
+        assertTrue(play.indexOf("AUDIOFOCUS_REQUEST_GRANTED") in 0 until play.indexOf("MediaPlayer()"))
+        assertTrue(preview.contains("AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stop()"))
+        val stop = preview.substringAfter("fun stop()")
+        assertTrue(stop.contains("current.release()") && stop.contains("abandonAudioFocusRequest(focus)"))
+        assertTrue(code("ui/kidsettings/KidSoundPickerActivity.kt").substringAfter("override fun onDestroy()").contains("preview.stop()"))
+    }
+
+    @Test
     fun `the picker is not exported`() {
         val manifest = listOf(File("src/main/AndroidManifest.xml"), File("app/src/main/AndroidManifest.xml")).first { it.exists() }.readText()
         val entry = manifest.substringAfter("android:name=\".ui.kidsettings.KidSoundPickerActivity\"").substringBefore("/>")
