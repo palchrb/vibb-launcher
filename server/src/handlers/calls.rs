@@ -480,7 +480,7 @@ async fn load_page(
     );
     Ok(Some(DeviceCallsTemplate {
         lang,
-        title: format!("{} - Calls & Contacts", device.name),
+        title: format!("{} - {}", device.name, t(lang, "device.page.calls")),
         managed: policy.calls_managed,
         calls_enabled: policy.calls_enabled,
         sms_enabled: policy.sms_enabled,
@@ -1198,7 +1198,7 @@ pub async fn add_contact(
                 t_params(
                     lang,
                     "device.calls.number_refused",
-                    &[("why", &err.to_string())],
+                    &[("why", t(lang, err.key()))],
                 ),
             )
             .await;
@@ -1844,7 +1844,7 @@ pub async fn add_emergency(
                 t_params(
                     lang,
                     "device.calls.number_refused",
-                    &[("why", &err.to_string())],
+                    &[("why", t(lang, err.key()))],
                 ),
             )
             .await;

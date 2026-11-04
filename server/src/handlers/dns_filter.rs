@@ -626,10 +626,13 @@ async fn render_page(
         )
         .fetch_one(&state.db)
         .await?;
-        let blocklists =
+        let mut blocklists =
             sqlx::query_as::<_, DnsBlocklist>("SELECT * FROM dns_blocklists ORDER BY name")
                 .fetch_all(&state.db)
                 .await?;
+        for list in &mut blocklists {
+            list.name = crate::models::blocklist_name(lang, &list.name, &list.url);
+        }
         // Global (device_id IS NULL) custom domains only - the site-wide defaults. A phone's own
         // are on its Web Filter page.
         let custom = sqlx::query_as::<_, DnsCustomDomain>(

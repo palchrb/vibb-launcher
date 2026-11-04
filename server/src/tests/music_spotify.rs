@@ -2497,11 +2497,12 @@ pub(in crate::tests) mod listing {
             .unwrap();
         fails("spotify_off", 0).await;
         assert_eq!(
-            crate::music::sweep_error_text("spotify", "spotify_off"),
+            crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "spotify_off"),
             "no Spotify app is set up on this server"
         );
         assert_eq!(
-            crate::music::CheckError::Spotify("no_account".to_string()).message(),
+            crate::music::CheckError::Spotify("no_account".to_string())
+                .message(crate::i18n::Lang::En),
             "No Spotify account is logged in."
         );
     }
@@ -2573,7 +2574,7 @@ pub(in crate::tests) mod listing {
         assert_eq!(row.spotify_mode.as_deref(), Some("list"));
         assert_eq!(items(&app, id).await, good_items);
         assert_eq!(
-            crate::music::sweep_error_text("spotify", "key"),
+            crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "key"),
             "a saved Spotify login was locked with another key - log in again"
         );
     }
@@ -2684,11 +2685,12 @@ pub(in crate::tests) mod listing {
         assert_eq!((row.version, row.failures), (None, 1));
         assert!(items(&app, show).await.iter().all(|i| i.state != "ok"));
         assert_eq!(
-            crate::music::CheckError::Spotify("audiobook".to_string()).message(),
+            crate::music::CheckError::Spotify("audiobook".to_string())
+                .message(crate::i18n::Lang::En),
             "This is a Spotify audiobook - Spotify lets only its own apps play them."
         );
         assert_eq!(
-            crate::music::sweep_error_text("spotify", "audiobook"),
+            crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "audiobook"),
             "it is a Spotify audiobook, and Spotify lets only its own apps play them"
         );
         assert_eq!(
@@ -2791,11 +2793,12 @@ pub(in crate::tests) mod listing {
         let row = listing(&app, track).await;
         assert_eq!((row.version, row.failures), (None, 1));
         assert_eq!(
-            crate::music::CheckError::Spotify("no_items".to_string()).message(),
+            crate::music::CheckError::Spotify("no_items".to_string())
+                .message(crate::i18n::Lang::En),
             "Nothing in it can be played here."
         );
         assert_eq!(
-            crate::music::sweep_error_text("spotify", "no_items"),
+            crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "no_items"),
             "nothing in it can be played here"
         );
 
@@ -2900,7 +2903,7 @@ pub(in crate::tests) mod listing {
         }
         assert!(listing(&app, feed).await.version.is_some(), "RSS goes on");
         assert_eq!(
-            crate::music::sweep_error_text("spotify", "quota"),
+            crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "quota"),
             "Spotify's limit for this app was reached - it tries again later"
         );
         // An hour later Spotify is asked again.
@@ -3689,7 +3692,10 @@ mod entries {
             LinkKind::Episode,
         ] {
             assert!(
-                !kind.plain_name().to_lowercase().contains("spotify"),
+                !kind
+                    .plain_name(crate::i18n::Lang::En)
+                    .to_lowercase()
+                    .contains("spotify"),
                 "{kind:?}"
             );
         }

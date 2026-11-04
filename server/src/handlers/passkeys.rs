@@ -459,7 +459,7 @@ pub async fn add_options(
     let proof = Proof::of(&form.current_password, &form.assertion, &ceremony);
     match admin_auth::reauth(&state, &session, &admin, proof).await {
         Reauth::Right => {}
-        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::Busy => return admin_auth::busy_response(lang),
         Reauth::SignedOut => return signed_out_json(),
         // A passkey-only parent's empty password: nothing counted (qa-passkeys-2 M1).
         Reauth::NeedsPasskey => {
@@ -678,7 +678,7 @@ pub async fn remove(
     let proof = Proof::of(&form.current_password, &form.assertion, &ceremony);
     match admin_auth::reauth(&state, &session, &admin, proof).await {
         Reauth::Right => {}
-        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::Busy => return admin_auth::busy_response(lang),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
         reauth @ (Reauth::Wrong { .. } | Reauth::NeedsPasskey) => {
             let words = if let Reauth::Wrong { left } = reauth {
@@ -818,7 +818,7 @@ pub async fn passkey_only_on(
     };
     match admin_auth::reauth(&state, &session, &admin, proof).await {
         Reauth::Right => {}
-        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::Busy => return admin_auth::busy_response(lang),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
         // Never with a passkey's proof; answered as a missing one.
         Reauth::NeedsPasskey => {
@@ -1075,7 +1075,7 @@ pub async fn password_sign_in(
     };
     match admin_auth::reauth(&state, &session, &admin, proof).await {
         Reauth::Right => {}
-        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::Busy => return admin_auth::busy_response(lang),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
         // Never with a passkey's proof; answered as a missing one.
         Reauth::NeedsPasskey => {
@@ -1091,7 +1091,7 @@ pub async fn password_sign_in(
     }
     let hash = match state.passwords.hash(&form.new_password).await {
         Ok(hash) => hash,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        Err(admin_auth::Busy) => return admin_auth::busy_response(lang),
     };
     match passkeys::switch_off(&state.db, &admin, &hash, &secret, step).await {
         Ok(Some(_)) => {

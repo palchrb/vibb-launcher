@@ -182,7 +182,7 @@
                 <span class="row-label">{{ self.t("device.lock.timeout") }}</span>
                 <select class="pick" name="screen_timeout_seconds" data-autosave>
                     {% for (seconds, label) in screen_timeout_options %}
-                    <option value="{{ seconds }}"{% if *seconds == screen_timeout_seconds %} selected{% endif %}>{{ label }}</option>
+                    <option value="{{ seconds }}"{% if *seconds == screen_timeout_seconds %} selected{% endif %}>{{ self.t(label) }}</option>
                     {% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
@@ -289,7 +289,7 @@
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
-                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ note }}</span>{% endif %}</span>
+                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}</span>
                     <select class="pick" name="show" data-autosave>
                         <option value="off"{% if !app.on %} selected{% endif %}>{{ self.t("common.off") }}</option>
                         <option value="name"{% if app.on && !app.show_text %} selected{% endif %}>{{ self.t("device.lock.name_only") }}</option>
@@ -299,7 +299,7 @@
                 <noscript><button type="submit" class="row row-button">{{ self.tp("device.lock.save_app", [("app", app.label.as_str())]) }}</button></noscript>
             </form>
             {% else %}
-            <p class="row row-note" data-row="lock-screen-empty">{{ lock_screen.empty_text }}</p>
+            <p class="row row-note" data-row="lock-screen-empty">{{ self.t(lock_screen.empty_text) }}</p>
             {% endfor %}
             {% endif %}
         </div>

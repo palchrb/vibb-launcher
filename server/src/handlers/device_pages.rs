@@ -201,7 +201,11 @@ impl PlayNote {
                     "device.advanced.play.restart_sub",
                     &[(
                         "effects",
-                        &effects.join(t(lang, "device.advanced.play.restart_and")),
+                        &effects
+                            .iter()
+                            .map(|key| t(lang, key))
+                            .collect::<Vec<_>>()
+                            .join(t(lang, "device.advanced.play.restart_and")),
                     )],
                 )),
                 fix: None,
@@ -541,14 +545,14 @@ fn connection_rows(
         Some(access) => Row::new(
             "network",
             t(lang, "device.about.network"),
-            access.via.label(),
+            access.via.label(lang),
         )
         .class(if access.via == crate::limits::Via::Public {
             "row-value-action"
         } else {
             ""
         })
-        .detail(access.detail()),
+        .detail(access.detail(lang)),
         None => Row::new(
             "network",
             t(lang, "device.about.network"),
@@ -605,15 +609,19 @@ pub async fn view_about(
         );
         if let Some(ringer) = sound_state.ringer {
             sound.push(
-                Row::new("ringer", t(lang, "device.about.ringer"), ringer.label())
-                    .detail(ringer.detail()),
+                Row::new("ringer", t(lang, "device.about.ringer"), ringer.label(lang))
+                    .detail(ringer.detail(lang)),
             );
         }
         if let Some(dnd) = sound_state.dnd {
             sound.push(
-                Row::new("do-not-disturb", t(lang, "device.about.dnd"), dnd.label())
-                    .class(if dnd.is_on() { "row-value-alarm" } else { "" })
-                    .detail(dnd.detail()),
+                Row::new(
+                    "do-not-disturb",
+                    t(lang, "device.about.dnd"),
+                    dnd.label(lang),
+                )
+                .class(if dnd.is_on() { "row-value-alarm" } else { "" })
+                .detail(dnd.detail(lang)),
             );
         }
 
@@ -710,7 +718,7 @@ pub async fn view_about(
             )
         });
         diagnostics.push(match boots {
-            Some(boots) => Row::new("starts", t(lang, "device.about.starts"), boots.value())
+            Some(boots) => Row::new("starts", t(lang, "device.about.starts"), boots.value(lang))
                 .class("row-value-alarm")
                 .detail(Some(boots.detail(&zone, now))),
             None => Row::new(
@@ -1119,7 +1127,7 @@ pub async fn lock_action(
         }
     };
     let reveal = match crate::admin_auth::reauth(&state, &session, &admin, proof).await {
-        crate::admin_auth::Reauth::Busy => return crate::admin_auth::busy_response(),
+        crate::admin_auth::Reauth::Busy => return crate::admin_auth::busy_response(lang),
         crate::admin_auth::Reauth::SignedOut => {
             log("kid_pin_reveal_refused").await;
             return crate::admin_auth::signed_out_response();
@@ -1278,19 +1286,19 @@ async fn render_lock(
     let (child_warnings, mut child_rows): (Vec<Note>, Vec<Note>) = child
         .notes
         .iter()
-        .map(|n| n.note(reported.as_deref()))
+        .map(|n| n.note(lang, reported.as_deref()))
         .partition(|n| n.warning);
     if let Some(send) = pin_send.filter(|_| child.pin_set) {
-        child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(None));
+        child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
-    let parent = crate::handlers::parent_pin::card(&policy, latest.as_ref(), notice);
+    let parent = crate::handlers::parent_pin::card(lang, &policy, latest.as_ref(), notice);
     let weather =
         match crate::handlers::weather_page::card(state, id, &policy, latest.as_ref()).await {
             Ok(weather) => weather,
             Err(err) => return read_failed(lang, id, "the phone's zones", err),
         };
 
-    let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, id)
+    let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, lang, id)
         .await
         .unwrap_or_else(|err| {
             tracing::error!(device_id = id, %err, "couldn't load the lock screen's backgrounds");
@@ -1315,11 +1323,11 @@ async fn render_lock(
     child_rows.extend(
         crate::kid_lock::rang_notes(&child, lock_state.as_ref(), &labels, &zone, now)
             .iter()
-            .map(|n| n.note(None)),
+            .map(|n| n.note(lang, None)),
     );
     let screen_timeout_seconds =
         crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
-    let child_flash = notice.and_then(crate::kid_lock::flash_text);
+    let child_flash = notice.and_then(|code| crate::kid_lock::flash_text(lang, code));
     let reveal_answer = reveal.is_some();
     let mut reveal_view = reveal.map(|reveal| RevealView::of(lang, reveal));
     let reveal_error = reveal_view.as_mut().and_then(|r| r.error.take());
@@ -1357,11 +1365,11 @@ async fn render_lock(
             .as_ref()
             .and_then(|s| s.screen_timeout_seconds)
             .filter(|applied| *applied != screen_timeout_seconds)
-            .map(crate::models::screen_timeout_label),
+            .map(|seconds| crate::models::screen_timeout_label(lang, seconds)),
         background_same_as_home: !backgrounds.iter().any(|w| w.lock),
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
-        lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note()).collect(),
+        lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,
         parent,
@@ -1467,7 +1475,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
     // A failed read must not render an empty grid: its Save would untick every wallpaper.
-    let wallpapers = match crate::handlers::wallpapers::device_choices(&state, id).await {
+    let wallpapers = match crate::handlers::wallpapers::device_choices(&state, lang, id).await {
         Ok(wallpapers) => wallpapers,
         Err(err) => return read_failed(lang, id, "the wallpapers", err),
     };
@@ -1577,8 +1585,8 @@ pub async fn view_filter(
         Ok(policy) => policy,
         Err((status, key)) => return crate::i18n::error(lang, status, key),
     };
-    let lists = match sqlx::query_as::<_, (i64, String, bool, Option<bool>)>(
-        "SELECT b.id, b.name, b.enabled, o.enabled FROM dns_blocklists b \
+    let lists = match sqlx::query_as::<_, (i64, String, String, bool, Option<bool>)>(
+        "SELECT b.id, b.name, b.url, b.enabled, o.enabled FROM dns_blocklists b \
          LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ? \
          ORDER BY b.name",
     )
@@ -1593,7 +1601,7 @@ pub async fn view_filter(
         let compiled = state.dns_compiled.read().await;
         lists
             .into_iter()
-            .map(|(list_id, name, everyone_on, own)| FilterList {
+            .map(|(list_id, name, url, everyone_on, own)| FilterList {
                 setting: match own {
                     None => "default",
                     Some(true) => "on",
@@ -1603,7 +1611,7 @@ pub async fn view_filter(
                 problem: crate::handlers::dns_filter::FeedState::of(&compiled, list_id)
                     .problem(lang),
                 id: list_id,
-                name,
+                name: crate::models::blocklist_name(lang, &name, &url),
             })
             .collect()
     };
@@ -1978,7 +1986,7 @@ pub(crate) async fn render_apps(
     let network = rows
         .downloads
         .as_ref()
-        .and_then(crate::app_downloads::network)
+        .and_then(|downloads| crate::app_downloads::network(lang, downloads))
         .map(|value| {
             let at = latest
                 .as_ref()
@@ -2392,9 +2400,7 @@ mod tests {
             vec![
                 PlayNote::InstallMode { until_ms: 10_000 },
                 PlayNote::UpdateWindow,
-                PlayNote::RestartOnce(vec![
-                    "keep the power button's camera gesture from opening the camera over the lock"
-                ]),
+                PlayNote::RestartOnce(vec!["device.advanced.play.effect.camera"]),
                 PlayNote::NotSuspendable { block_on: false },
             ]
         );

@@ -642,10 +642,9 @@ fn reword(lang: Lang, raw: &str) -> Option<String> {
     if !known.is_empty() {
         return Some(t(lang, known).to_string());
     }
-    // Design 59: `set_kid_pin`'s answers, in the summary's Activity (the Lock page words them too;
-    // English until slice 4 moves `kid_lock`'s words).
+    // Design 59: `set_kid_pin`'s answers, in the summary's Activity (the Lock page words them too).
     if let Some(answer) = crate::kid_lock::PinAnswer::parse(raw) {
-        return Some(answer.words().to_string());
+        return Some(t(lang, answer.words()).to_string());
     }
     if let Some(count) = raw
         .strip_prefix("allowed: ")

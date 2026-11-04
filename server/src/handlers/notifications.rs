@@ -310,7 +310,7 @@ pub async fn page(
         .await?;
         // This parent's own devices only (design 62 §5, qa-62-step345-code P62b-1).
         let lines = delivery_lines(&state.db, admin.id, &shown).await?;
-        let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
+        let subscriptions = push::subscriptions(&state.db, lang, admin.id, now).await?;
         Ok::<_, sqlx::Error>((phones, raw, unread_after, badge, lines, subscriptions))
     };
     let (phones, raw, unread_after, badge, mut lines, subscriptions) = match read.await {
@@ -370,7 +370,7 @@ pub async fn settings_page(
     let now = chrono::Utc::now();
     let read = async {
         let settings = read_switches(&state.db, admin.id).await?;
-        let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
+        let subscriptions = push::subscriptions(&state.db, lang, admin.id, now).await?;
         let known = push::active_endpoint_hashes(&state.db).await?;
         Ok::<_, sqlx::Error>((settings, subscriptions, known))
     };
@@ -440,7 +440,7 @@ pub async fn subscriptions_json(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let now = chrono::Utc::now();
-    let subscriptions = match push::subscriptions(&state.db, admin.id, now).await {
+    let subscriptions = match push::subscriptions(&state.db, lang, admin.id, now).await {
         Ok(subscriptions) => subscriptions,
         Err(err) => return read_error(lang, err),
     };
@@ -887,7 +887,7 @@ pub async fn warning_row(
     admin_id: i64,
     lang: Lang,
 ) -> Option<crate::handlers::auth::WarningRow> {
-    let subscriptions = push::subscriptions(&state.db, admin_id, chrono::Utc::now())
+    let subscriptions = push::subscriptions(&state.db, lang, admin_id, chrono::Utc::now())
         .await
         .unwrap_or_else(|err| {
             tracing::error!(%err, "can't read the notification subscriptions");

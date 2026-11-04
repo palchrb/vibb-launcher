@@ -263,17 +263,7 @@ pub(crate) fn read_failed_in(lang: Lang, err: sqlx::Error, what: &str) -> Respon
     crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_rules")
 }
 
-/// A page that didn't render (never in practice: no reader's language at hand).
-fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
-    tracing::error!(%err, "{what}");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
-    )
-        .into_response()
-}
-
-/// [server_error] in the reader's language (Device › Time's saves and the bedtime, design 70 slice 3a).
+/// A failed save or read, in the reader's language (Device › Time's saves and the bedtime, design 70 slice 3a).
 pub(crate) fn server_error_in(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     crate::i18n::error(
@@ -283,10 +273,10 @@ pub(crate) fn server_error_in(lang: Lang, err: impl std::fmt::Display, what: &st
     )
 }
 
-pub(crate) fn render(template: impl Template, status: StatusCode) -> Response {
+pub(crate) fn render(template: impl Template + Words, status: StatusCode) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
-        Err(err) => server_error(err, "failed to render a time page"),
+        Err(err) => server_error_in(template.lang(), err, "failed to render a time page"),
     }
 }
 
@@ -1911,17 +1901,17 @@ async fn render_device_time(
             );
             let lock = match &badge {
                 // The footer says when the report came, so the badge needn't repeat it.
-                Some(badge) => badge.text_beside(&zone.relative(*reported_at, now)),
+                Some(badge) => badge.words(lang, Some(&zone.relative(*reported_at, now))),
                 None => t(lang, "device.about.none").to_string(),
             };
             let screen = screen.map(|st| {
                 (
-                    st.text(),
+                    st.text(lang),
                     report.extra_minutes.map(|m| {
                         t_params(
                             lang,
                             "device.time.includes_extra",
-                            &[("extra", &crate::handlers::lifts::minutes_text(m))],
+                            &[("extra", &crate::display_time::duration(lang, m))],
                         )
                     }),
                 )

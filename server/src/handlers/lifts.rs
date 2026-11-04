@@ -21,17 +21,18 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
+use crate::i18n::{Lang, t, t_params};
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{self, BUDGET_LIFT_DELIVERY_HOURS, TimeLiftRow};
 
-fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+fn server_error(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
-    (
+    crate::i18n::error(
+        lang,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't save - nothing was changed. Check the server log.",
+        "error.save_failed_log",
     )
-        .into_response()
 }
 
 /// Where a lift form returns (§5.1): the summary's group for it ([summary_group]), with `done` for
@@ -57,6 +58,7 @@ pub(crate) fn summary_group(_time_group: &str) -> &'static str {
 pub async fn create_lift(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -66,8 +68,10 @@ pub async fn create_lift(
         .await
     {
         Ok(Some(_)) => {}
-        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => return server_error(err, "failed to read a device"),
+        Ok(None) => {
+            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+        }
+        Err(err) => return server_error(lang, err, "failed to read a device"),
     }
 
     let target = form.get("target").map(String::as_str).unwrap_or("");
@@ -76,7 +80,7 @@ pub async fn create_lift(
         .and_then(|m| m.trim().parse::<i64>().ok())
         .unwrap_or(0);
     if !time_rules::valid_lift(target, minutes) {
-        return (StatusCode::BAD_REQUEST, "Unknown lift or length").into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_lift");
     }
 
     let (rule_id, rule_name) = if target == "rule" {
@@ -84,11 +88,11 @@ pub async fn create_lift(
             "all" | "" => (None, None),
             raw => {
                 let Ok(rule_id) = raw.parse::<i64>() else {
-                    return (StatusCode::BAD_REQUEST, "Unknown rule").into_response();
+                    return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_rule");
                 };
                 let rules = match time_rules::effective_rule_rows(&state.db, id).await {
                     Ok(rules) => rules,
-                    Err(err) => return server_error(err, "failed to read time rules"),
+                    Err(err) => return server_error(lang, err, "failed to read time rules"),
                 };
                 let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
                     // Deleted, or switched off for the phone, since the page loaded.
@@ -120,7 +124,7 @@ pub async fn create_lift(
     .execute(&state.db)
     .await
     {
-        return server_error(err, "failed to record a lift");
+        return server_error(lang, err, "failed to record a lift");
     }
 
     let device = id.to_string();
@@ -165,6 +169,7 @@ pub async fn create_lift(
 pub async fn end_lift(
     State(state): State<AppState>,
     Path((id, lift_id)): Path<(i64, i64)>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     match sqlx::query(
@@ -186,8 +191,8 @@ pub async fn end_lift(
             .await
             {
                 Ok(Some(_)) => back_to(id, "lifts", "over"),
-                Ok(None) => (StatusCode::NOT_FOUND, "No such pause").into_response(),
-                Err(err) => server_error(err, "failed to read a lift"),
+                Ok(None) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.no_such_pause"),
+                Err(err) => server_error(lang, err, "failed to read a lift"),
             }
         }
         Ok(_) => {
@@ -208,42 +213,21 @@ pub async fn end_lift(
             let _ = state.command_notify.send(id);
             back_to(id, "lifts", "ended")
         }
-        Err(err) => server_error(err, "failed to end a lift"),
+        Err(err) => server_error(lang, err, "failed to end a lift"),
     }
 }
 
 /// A flash after a lift form (`?done=`): Device › Time's group it belongs to ([summary_group]
-/// maps it on the summary), its text, and whether it is a refusal. `None` for an unknown code.
+/// maps it on the summary), its key, and whether it is a refusal. `None` for an unknown code.
 pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool)> {
     Some(match code {
-        "extra" => (
-            "extra",
-            "Added. The phone gets it within seconds when online.",
-            false,
-        ),
-        "pause" => ("pause", "Paused. The rule comes back by itself.", false),
-        "gone" => (
-            "pause",
-            "That rule no longer applies to this phone. Nothing was paused.",
-            true,
-        ),
-        "ended" => (
-            "lifts",
-            "Ended. The rule is back once the phone syncs.",
-            false,
-        ),
-        "over" => ("lifts", "That pause was already over.", false),
+        "extra" => ("extra", "device.summary.flash.extra", false),
+        "pause" => ("pause", "device.summary.flash.pause", false),
+        "gone" => ("pause", "device.summary.flash.gone", true),
+        "ended" => ("lifts", "device.summary.flash.ended", false),
+        "over" => ("lifts", "device.summary.flash.over", false),
         _ => return None,
     })
-}
-
-/// "15 min", "1 h", "1 h 30 min".
-pub(crate) fn minutes_text(minutes: i64) -> String {
-    match (minutes / 60, minutes % 60) {
-        (0, m) => format!("{m} min"),
-        (h, 0) => format!("{h} h"),
-        (h, m) => format!("{h} h {m} min"),
-    }
 }
 
 /// Where a lift stands, typed (design 31 M5). A rule pause the server still sends follows the
@@ -287,27 +271,33 @@ impl LiftState {
         }
     }
 
-    /// The row's value, in the Phone Setup zone: "Until 10:42", "Ended early 10:20".
+    /// The row's value, in the Phone Setup zone and the reader's language: "Until 10:42", "Ended early 10:20".
     pub(crate) fn text(
         &self,
         expires_at: Option<DateTime<Utc>>,
         zone: &Zone,
         now: DateTime<Utc>,
     ) -> String {
+        let lang = zone.lang();
+        let at = |key, at: String| t_params(lang, key, &[("at", &at)]);
         match self {
-            LiftState::Waiting => "Waiting for the phone".to_string(),
+            LiftState::Waiting => t(lang, "device.summary.lift_state.waiting").to_string(),
             LiftState::OnPhone => match expires_at {
-                Some(end) => format!("Until {}", zone.until(end, now)),
-                None => "On the phone".to_string(),
+                Some(end) => at("device.summary.lift_state.until", zone.until(end, now)),
+                None => t(lang, "device.summary.lift_state.on_phone").to_string(),
             },
-            LiftState::EndedOnPhone => "Ended on the phone".to_string(),
-            LiftState::EndedEarly(at) => format!("Ended early {}", zone.when(*at, now)),
+            LiftState::EndedOnPhone => {
+                t(lang, "device.summary.lift_state.ended_on_phone").to_string()
+            }
+            LiftState::EndedEarly(when) => {
+                at("device.summary.lift.ended_early", zone.when(*when, now))
+            }
             LiftState::Over => match expires_at {
-                Some(end) => format!("Ended {}", zone.when(end, now)),
-                None => "Ended".to_string(),
+                Some(end) => at("device.summary.lift.ended", zone.when(end, now)),
+                None => t(lang, "device.summary.lift.over").to_string(),
             },
-            LiftState::Sent => "Sent".to_string(),
-            LiftState::Done => "Done".to_string(),
+            LiftState::Sent => t(lang, "device.summary.lift_state.sent").to_string(),
+            LiftState::Done => t(lang, "device.summary.lift_state.done").to_string(),
         }
     }
 }
@@ -371,8 +361,9 @@ pub(crate) async fn today(
         .map(|LiftWithState { lift, active }| {
             let created = parse_db_utc(&lift.created_at);
             let expires = parse_db_utc(&lift.expires_at);
+            let lang = zone.lang();
+            let length = crate::display_time::duration(lang, lift.minutes);
             let (what, state) = if lift.target == "rule" {
-                let rule = lift.rule_name.as_deref().unwrap_or("All rules");
                 let state = match (
                     lift.ended_early_at.as_deref().and_then(parse_db_utc),
                     active,
@@ -385,13 +376,22 @@ pub(crate) async fn today(
                     ),
                     (None, false) => LiftState::Over,
                 };
-                (
-                    format!("{rule} paused for {}", minutes_text(lift.minutes)),
-                    state,
-                )
+                let what = match lift.rule_name.as_deref() {
+                    Some(rule) => t_params(
+                        lang,
+                        "device.summary.lift.rule",
+                        &[("rule", rule), ("duration", &length)],
+                    ),
+                    None => t_params(
+                        lang,
+                        "device.summary.lift.all_rules",
+                        &[("duration", &length)],
+                    ),
+                };
+                (what, state)
             } else {
                 (
-                    format!("+{} screen time", minutes_text(lift.minutes)),
+                    t_params(lang, "device.summary.today.extra", &[("duration", &length)]),
                     if active {
                         LiftState::Sent
                     } else {
@@ -479,10 +479,25 @@ mod tests {
 
     #[test]
     fn durations_read_short() {
-        assert_eq!(minutes_text(15), "15 min");
-        assert_eq!(minutes_text(60), "1 h");
-        assert_eq!(minutes_text(120), "2 h");
-        assert_eq!(minutes_text(90), "1 h 30 min");
+        use crate::display_time::duration;
+        assert_eq!(duration(Lang::En, 15), "15 min");
+        assert_eq!(duration(Lang::En, 60), "1 h");
+        assert_eq!(duration(Lang::En, 120), "2 h");
+        assert_eq!(duration(Lang::En, 90), "1 h 30 min");
+        assert_eq!(duration(Lang::Nb, 90), "1 t 30 min");
+    }
+
+    #[test]
+    fn lift_states_read_in_norwegian() {
+        let oslo = Zone::from_setting("Europe/Oslo").in_lang(Lang::Nb);
+        let now = utc("2026-10-05 10:00:00");
+        let end = Some(utc("2026-10-05 10:30:00"));
+        assert_eq!(LiftState::OnPhone.text(end, &oslo, now), "Til 12:30");
+        assert_eq!(
+            LiftState::Waiting.text(end, &oslo, now),
+            "Venter på telefonen"
+        );
+        assert_eq!(LiftState::Done.text(end, &oslo, now), "Ferdig");
     }
 
     #[test]
@@ -491,7 +506,9 @@ mod tests {
             let (group, text, _) = done_flash(code).unwrap();
             assert!(["extra", "pause", "lifts"].contains(&group), "{code}");
             assert_eq!(summary_group(group), "quick", "{code}");
-            assert!(!text.is_empty());
+            for lang in Lang::ALL {
+                assert!(crate::i18n::has(lang, text), "{text}");
+            }
         }
         assert_eq!(done_flash("<script>"), None);
     }

@@ -65,7 +65,7 @@ const EVENTS_PER_PAGE: i64 = 200;
 pub(crate) fn event_label(lang: Lang, kind: &str) -> String {
     match label_key(lang, kind) {
         Some(key) => crate::i18n::t(lang, &key).to_string(),
-        None => words_of(kind),
+        None => words_of(lang, kind),
     }
 }
 
@@ -80,8 +80,9 @@ fn label_key(lang: Lang, kind: &str) -> Option<String> {
     (shaped && crate::i18n::has(lang, &key)).then_some(key)
 }
 
-/// "music_entry_moved" -> "Music entry moved"; an empty id reads "Event".
-fn words_of(kind: &str) -> String {
+/// "music_entry_moved" -> "Music entry moved" (an id is its own words, in no language); an empty id reads
+/// "Event" in `lang`.
+fn words_of(lang: Lang, kind: &str) -> String {
     let words = kind
         .split(|c: char| c == '_' || c == '-' || c.is_whitespace())
         .filter(|w| !w.is_empty())
@@ -90,7 +91,7 @@ fn words_of(kind: &str) -> String {
     let mut chars = words.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => "Event".to_string(),
+        None => crate::i18n::t(lang, "security_log.event").to_string(),
     }
 }
 

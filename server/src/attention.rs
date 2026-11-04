@@ -20,6 +20,7 @@ use crate::AppState;
 use crate::handlers::calls::CallProblem;
 use crate::handlers::device_pages::PlayNote;
 use crate::handlers::window_relock::RelockCard;
+use crate::i18n::{Lang, t, t_count};
 use crate::kiosk_escapes::EscapeNote;
 use crate::models::{Device, DevicePolicy, DeviceStatus};
 use crate::streams::ConnectionState;
@@ -202,8 +203,8 @@ pub struct Facts {
     pub music: crate::handlers::music::MusicWarnings,
 }
 
-/// The rows for one phone, alarms first.
-pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
+/// The rows for one phone, alarms first, worded in `lang`.
+pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     if facts.not_set_up {
         return Vec::new();
     }
@@ -265,7 +266,7 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         .map(|kind| AttentionItem {
             kind,
             level: level(kind),
-            title: title(kind),
+            title: title(lang, kind),
             target: target(kind, device_id),
             at_last_report: facts.report_stale && kind.read_from_report(),
         })
@@ -310,46 +311,52 @@ fn level(kind: Kind) -> Level {
     }
 }
 
-fn title(kind: Kind) -> String {
+/// The row's words in `lang` (`device.attention.*`).
+fn title(lang: Lang, kind: Kind) -> String {
     match kind {
-        Kind::RestrictionsPaused => "Restrictions paused",
-        Kind::ForeignAccess => "Unknown app may read the Parent PIN",
-        Kind::DoNotDisturb => "Do Not Disturb is on",
-        Kind::GoogleBackup => "Backup to Google is on",
-        Kind::NoParentPin => "No Parent PIN set",
-        Kind::EasyParentPin => "Parent PIN easy to guess",
-        Kind::AccessRevoked => "Access removed",
-        Kind::PolicyProblem => "Phone can't apply its settings",
-        Kind::UnseenRestarts => "Phone started without Vibb One",
-        Kind::IncomingCallsNotBlocked => "Incoming calls aren't blocked",
-        Kind::ChildLockOff => "Lock is off on the phone",
-        Kind::ChildPinChanged => "Phone's PIN isn't the Child PIN",
-        Kind::BlockedApps(1) => "1 blocked app waits",
-        Kind::BlockedApps(n) => return format!("{n} blocked apps wait"),
-        Kind::RestartOnce => "Restart the phone once",
-        Kind::PlayInstallMode => "Play Store open (install mode)",
-        Kind::PlayStoreOpenable => "Play Store can be opened",
-        Kind::NotHomeApp => "Vibb One isn't the Home app",
-        Kind::BootCoverNotShown => "Boot cover wasn't shown",
-        Kind::NoNotificationAccess => "Notification access off",
-        // Attention's words move in design 70's slice 4; until then its rows are English.
-        Kind::Calls(problem) => problem.title(crate::i18n::Lang::En),
-        Kind::LedgerUnreadable => "Screen-time record unreadable",
-        Kind::LauncherWithoutRules => "Vibb One too old for time rules",
-        Kind::MusicCantDeliver => "Vibb One can't deliver music yet",
-        Kind::MusicUnreachable => "Music app not reachable",
-        Kind::MusicStorytelRefused => "Storytel refused the phone's login",
-        Kind::MusicOverLimit => "Music over the storage limit",
-        Kind::MusicOlderPhone(apps) => apps.title(),
-        Kind::MusicFailing(1) => "1 music entry fails on the phone",
-        Kind::MusicFailing(n) => return format!("{n} music entries fail on the phone"),
-        Kind::MusicSpotify => "Spotify can't play on this phone",
-        Kind::MusicSpotifyLogin => "Spotify login needs renewing",
-        Kind::MusicSpotifyEnding => "Spotify login ends soon",
-        Kind::MusicSpotifyShared => "Two phones share a Spotify account",
-        Kind::MusicSpotifyNoApp => "No Spotify app set up",
+        Kind::RestrictionsPaused => t(lang, "device.attention.restrictions_paused"),
+        Kind::ForeignAccess => t(lang, "device.attention.foreign_access"),
+        Kind::DoNotDisturb => t(lang, "device.attention.do_not_disturb"),
+        Kind::GoogleBackup => t(lang, "device.attention.google_backup"),
+        Kind::NoParentPin => t(lang, "device.attention.no_parent_pin"),
+        Kind::EasyParentPin => t(lang, "device.attention.easy_parent_pin"),
+        Kind::AccessRevoked => t(lang, "device.attention.access_revoked"),
+        Kind::PolicyProblem => t(lang, "device.attention.policy_problem"),
+        Kind::UnseenRestarts => t(lang, "device.attention.unseen_restarts"),
+        Kind::IncomingCallsNotBlocked => t(lang, "device.attention.incoming_calls"),
+        Kind::ChildLockOff => t(lang, "device.attention.child_lock_off"),
+        Kind::ChildPinChanged => t(lang, "device.attention.child_pin_changed"),
+        Kind::BlockedApps(n) => {
+            return t_count(lang, "device.attention.blocked_apps", count(n), &[]);
+        }
+        Kind::RestartOnce => t(lang, "device.attention.restart_once"),
+        Kind::PlayInstallMode => t(lang, "device.attention.play_install_mode"),
+        Kind::PlayStoreOpenable => t(lang, "device.attention.play_store_openable"),
+        Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
+        Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
+        Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
+        Kind::Calls(problem) => problem.title(lang),
+        Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
+        Kind::LauncherWithoutRules => t(lang, "device.attention.launcher_without_rules"),
+        Kind::MusicCantDeliver => t(lang, "device.attention.music_cant_deliver"),
+        Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
+        Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
+        Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
+        Kind::MusicOlderPhone(apps) => t(lang, apps.title_key()),
+        Kind::MusicFailing(n) => {
+            return t_count(lang, "device.attention.music_failing", count(n), &[]);
+        }
+        Kind::MusicSpotify => t(lang, "device.attention.music_spotify"),
+        Kind::MusicSpotifyLogin => t(lang, "device.attention.music_spotify_login"),
+        Kind::MusicSpotifyEnding => t(lang, "device.attention.music_spotify_ending"),
+        Kind::MusicSpotifyShared => t(lang, "device.attention.music_spotify_shared"),
+        Kind::MusicSpotifyNoApp => t(lang, "device.attention.music_spotify_no_app"),
     }
     .to_string()
+}
+
+fn count(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 /// The page that fixes it: a sub-page's group, or (design 31 step 10) a group of the summary
@@ -612,7 +619,9 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: {
-            let mut music = crate::handlers::music::music_warnings(policy, latest, s.music_ticked);
+            // Only whether each warning holds: no words needed.
+            let mut music =
+                crate::handlers::music::music_warnings(Lang::En, policy, latest, s.music_ticked);
             music.spotify_account = s.spotify_account;
             // A login to renew is one row: the phone's `reauthorize` says the same.
             let reported = crate::music::parse_music_state(
@@ -676,13 +685,13 @@ mod tests {
 
     #[test]
     fn nothing_to_say_is_no_rows() {
-        assert!(items(3, &Facts::default()).is_empty());
+        assert!(items(Lang::En, 3, &Facts::default()).is_empty());
         // "Waiting for the phone" isn't a problem.
         let waiting = Facts {
             calls: vec![CallProblem::Waiting],
             ..Default::default()
         };
-        assert!(items(3, &waiting).is_empty());
+        assert!(items(Lang::En, 3, &waiting).is_empty());
     }
 
     #[test]
@@ -691,21 +700,21 @@ mod tests {
             not_set_up: true,
             ..everything()
         };
-        assert!(items(3, &new).is_empty());
+        assert!(items(Lang::En, 3, &new).is_empty());
     }
 
     #[test]
     fn a_stale_phones_report_rows_say_at_last_report() {
-        let rows = items(3, &everything());
+        let rows = items(Lang::En, 3, &everything());
         assert!(rows.iter().all(|r| !r.at_last_report));
         let stale = Facts {
             report_stale: true,
             ..everything()
         };
-        let rows = items(3, &stale);
+        let rows = items(Lang::En, 3, &stale);
         assert_eq!(
             rows.len(),
-            items(3, &everything()).len(),
+            items(Lang::En, 3, &everything()).len(),
             "they still count"
         );
         let current: Vec<&str> = rows
@@ -726,7 +735,7 @@ mod tests {
 
     #[test]
     fn alarms_come_first_in_the_specs_order() {
-        let rows = items(3, &everything());
+        let rows = items(Lang::En, 3, &everything());
         let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -778,7 +787,7 @@ mod tests {
         // Each kind has its own key; the calls rows share "calls" (several can show at once).
         let mut with_calls = everything();
         with_calls.calls.push(CallProblem::NoRedirection);
-        let rows = items(3, &with_calls);
+        let rows = items(Lang::En, 3, &with_calls);
         let keys: std::collections::HashSet<&str> = rows.iter().map(AttentionItem::key).collect();
         assert_eq!(keys.len(), rows.len() - 1);
         assert_eq!(rows.iter().filter(|r| r.key() == "calls").count(), 2);
@@ -786,7 +795,7 @@ mod tests {
 
     #[test]
     fn titles_are_short_facts_without_package_names() {
-        let mut kinds: Vec<Kind> = items(3, &everything())
+        let mut kinds: Vec<Kind> = items(Lang::En, 3, &everything())
             .into_iter()
             .map(|r| r.kind)
             .collect();
@@ -794,7 +803,7 @@ mod tests {
         kinds.push(Kind::MusicFailing(1));
         kinds.extend(CallProblem::ALL.iter().map(|p| Kind::Calls(*p)));
         for kind in kinds {
-            let title = title(kind);
+            let title = title(Lang::En, kind);
             let words = title.split_whitespace().count();
             assert!((1..=8).contains(&words), "{title}");
             assert!(!title.contains('.') && !title.ends_with('!'), "{title}");
@@ -805,16 +814,16 @@ mod tests {
                 );
             }
         }
-        assert_eq!(title(Kind::BlockedApps(1)), "1 blocked app waits");
+        assert_eq!(title(Lang::En, Kind::BlockedApps(1)), "1 blocked app waits");
         assert_eq!(
-            title(Kind::MusicFailing(1)),
+            title(Lang::En, Kind::MusicFailing(1)),
             "1 music entry fails on the phone"
         );
     }
 
     #[test]
     fn rows_link_to_the_card_that_fixes_them() {
-        let rows = items(7, &everything());
+        let rows = items(Lang::En, 7, &everything());
         let target = |key: &str| {
             rows.iter()
                 .find(|r| r.key() == key)

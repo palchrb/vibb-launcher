@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::display_time::Zone;
+use crate::i18n::{t, t_count, t_params};
 
 /// The launcher reports `relock` and handles the two commands.
 pub const WINDOW_RELOCK_CAPABILITY: &str = "window_relock_v1";
@@ -369,7 +370,7 @@ fn reported_when(zone: &Zone, at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     }
 }
 
-/// Why the phone keeps an app hidden (typed; [BlockWhy::text] words it).
+/// Why the phone keeps an app hidden (typed; [BlockWhy::key] words it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockWhy {
     /// Installed from outside Play (a download or adb).
@@ -384,12 +385,13 @@ pub enum BlockWhy {
 }
 
 impl BlockWhy {
-    pub fn text(self) -> &'static str {
+    /// Its words' key (`device.summary.blocked.why.*`).
+    pub fn key(self) -> &'static str {
         match self {
-            BlockWhy::OutsidePlay => "From outside Play",
-            BlockWhy::OtherKey => "Replaced while the phone was open",
-            BlockWhy::NotCatalogs => "Not the catalog's app: uninstall it",
-            BlockWhy::Relock => "Blocked when the phone locked again",
+            BlockWhy::OutsidePlay => "device.summary.blocked.why.outside_play",
+            BlockWhy::OtherKey => "device.summary.blocked.why.other_key",
+            BlockWhy::NotCatalogs => "device.summary.blocked.why.not_catalogs",
+            BlockWhy::Relock => "device.summary.blocked.why.relock",
         }
     }
 
@@ -583,8 +585,11 @@ pub fn blocks_log_line(
         .iter()
         .filter(|b| !previous.is_some_and(|p| p.iter().any(|q| q.package_name == b.package_name)))
         .map(|b| {
-            let key = b.signer.as_deref().map(short_key).unwrap_or_default();
-            format!("{} ({}, {}, key {key})", b.package_name, b.reason, b.found)
+            // Facts only, in no language: the phone's codes and the shortened key when known.
+            match b.signer.as_deref().map(short_key) {
+                Some(key) => format!("{} ({}, {}, {key})", b.package_name, b.reason, b.found),
+                None => format!("{} ({}, {})", b.package_name, b.reason, b.found),
+            }
         })
         .collect();
     (!new.is_empty()).then(|| {
@@ -612,6 +617,7 @@ pub struct ForeignView {
 }
 
 pub fn foreign_view(
+    lang: crate::i18n::Lang,
     found: &ForeignAccess,
     paused: bool,
     names: &HashMap<String, String>,
@@ -626,12 +632,17 @@ pub fn foreign_view(
     }
     let mut packages = Vec::new();
     if !found.admins.is_empty() {
-        packages.push(format!("Device admin: {}.", found.admins.join(", ")));
+        packages.push(t_params(
+            lang,
+            "device.summary.foreign.packages_admins",
+            &[("apps", &found.admins.join(", "))],
+        ));
     }
     if !found.accessibility.is_empty() {
-        packages.push(format!(
-            "Accessibility: {}.",
-            found.accessibility.join(", ")
+        packages.push(t_params(
+            lang,
+            "device.summary.foreign.packages_accessibility",
+            &[("apps", &found.accessibility.join(", "))],
         ));
     }
     ForeignView {
@@ -692,14 +703,6 @@ fn and_list(parts: &[String]) -> String {
     }
 }
 
-fn count(n: i64, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
-    }
-}
-
 /// The last relock's findings (§1.7), typed for the summary's Locked Again group: only while the
 /// relock is under 7 days old and found something. Its blocked apps are [Blocks]'.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -707,7 +710,7 @@ pub struct Findings {
     /// When it locked again, in the Phone Setup zone with its age, and the exact time.
     pub when: String,
     pub exact: String,
-    /// Why it locked again ("Its time was up"); `None` when the phone didn't say.
+    /// Why it locked again ("Its time was up"), in the reader's language; `None` when the phone didn't say.
     pub trigger: Option<&'static str>,
     /// What it removed: "2 Wi-Fi proxies", "1 certificate", "an Android screen lock".
     pub removed: Vec<String>,
@@ -716,36 +719,36 @@ pub struct Findings {
     /// Apps turned off that can't be turned back on remotely, by name.
     pub turned_off: Vec<String>,
     pub own_notifications_off: bool,
-    /// The steps that failed, in words ("Certificates").
+    /// The steps that failed, in the reader's words ("Certificates").
     pub failures: Vec<&'static str>,
 }
 
-fn trigger_text(trigger: &str) -> Option<&'static str> {
+fn trigger_key(trigger: &str) -> Option<&'static str> {
     Some(match trigger {
-        "timer" => "Its time was up",
-        "lock_again" => "Lock again on the phone",
-        "command" => "Lock again from here",
-        "sync" => "When it reached this server",
-        "boot" => "After a restart",
-        "screen_on" => "When the screen came on",
-        "settings" => "Pause switched off in Settings",
+        "timer" => "device.summary.relock.why.timer",
+        "lock_again" => "device.summary.relock.why.lock_again",
+        "command" => "device.summary.relock.why.command",
+        "sync" => "device.summary.relock.why.sync",
+        "boot" => "device.summary.relock.why.boot",
+        "screen_on" => "device.summary.relock.why.screen_on",
+        "settings" => "device.summary.relock.why.settings",
         _ => return None,
     })
 }
 
-/// A failed step's words (the codes are the sanitized [FAILURES] only).
-fn failure_text(code: &str) -> &'static str {
+/// A failed step's key (the codes are the sanitized [FAILURES] only).
+fn failure_key(code: &str) -> &'static str {
     match code {
-        "credential" => "Screen lock",
-        "signer_check" => "Signing-key check",
-        "apply" => "Restrictions",
-        "permitted_lists" => "Allowed keyboards and services",
-        "proxies" => "Proxies",
-        "ca_certs" => "Certificates",
-        "notifications" => "Notifications",
-        "detections" => "App checks",
-        "finish" => "Finishing up",
-        _ => "Another step",
+        "credential" => "device.summary.relock.step.credential",
+        "signer_check" => "device.summary.relock.step.signer_check",
+        "apply" => "device.summary.relock.step.apply",
+        "permitted_lists" => "device.summary.relock.step.permitted_lists",
+        "proxies" => "device.summary.relock.step.proxies",
+        "ca_certs" => "device.summary.relock.step.ca_certs",
+        "notifications" => "device.summary.relock.step.notifications",
+        "detections" => "device.summary.relock.step.detections",
+        "finish" => "device.summary.relock.step.finish",
+        _ => "device.summary.relock.step.another",
     }
 }
 
@@ -759,40 +762,61 @@ pub fn findings(
         return None;
     }
     let at = DateTime::from_timestamp_millis(r.at_ms)?;
+    let lang = zone.lang();
     let mut removed = Vec::new();
     if r.proxies_cleared > 0 {
-        removed.push(count(r.proxies_cleared, "Wi-Fi proxy", "Wi-Fi proxies"));
+        removed.push(t_count(
+            lang,
+            "device.summary.relock.proxies",
+            r.proxies_cleared,
+            &[],
+        ));
     }
     if r.ca_certs_removed > 0 {
-        removed.push(count(r.ca_certs_removed, "certificate", "certificates"));
+        removed.push(t_count(
+            lang,
+            "device.summary.relock.certificates",
+            r.ca_certs_removed,
+            &[],
+        ));
     }
+    let screen_lock = t(lang, "device.summary.relock.screen_lock");
     if r.credential_removed {
-        removed.push("an Android screen lock".to_string());
+        removed.push(screen_lock.to_string());
     }
     let mut still_on = Vec::new();
-    let named = |label: &str, list: &[String]| {
+    let named = |key: &str, list: &[String]| {
         list.iter()
-            .map(|p| format!("{label}: {}", name_of(p, names)))
+            .map(|p| t_params(lang, key, &[("app", &name_of(p, names))]))
             .collect::<Vec<_>>()
     };
-    still_on.extend(named("Accessibility", &r.accessibility_enabled));
-    still_on.extend(named("Notification access", &r.notification_listeners));
-    still_on.extend(named("Device admin", &r.admins_enabled));
+    still_on.extend(named(
+        "device.summary.relock.accessibility",
+        &r.accessibility_enabled,
+    ));
+    still_on.extend(named(
+        "device.summary.relock.notification_access",
+        &r.notification_listeners,
+    ));
+    still_on.extend(named(
+        "device.summary.relock.device_admin",
+        &r.admins_enabled,
+    ));
     if r.proxy_left {
-        still_on.push("a proxy on a network".to_string());
+        still_on.push(t(lang, "device.summary.relock.proxy_left").to_string());
     }
     if r.credential_left {
-        still_on.push("an Android screen lock".to_string());
+        still_on.push(screen_lock.to_string());
     }
     Some(Findings {
         when: reported_when(zone, at, now),
         exact: zone.exact(at),
-        trigger: trigger_text(&r.trigger),
+        trigger: trigger_key(&r.trigger).map(|key| t(lang, key)),
         removed,
         still_on,
         turned_off: r.apps_disabled.iter().map(|p| name_of(p, names)).collect(),
         own_notifications_off: r.own_notifications_off,
-        failures: r.failures.iter().map(|f| failure_text(f)).collect(),
+        failures: r.failures.iter().map(|f| t(lang, failure_key(f))).collect(),
     })
 }
 
@@ -946,21 +970,12 @@ pub fn allowed_since_relock(answer: Option<&CommandAnswer>, relock_at_ms: i64) -
 }
 
 /// The one-shot flash after a command was queued (`?notice=`): the summary group its form is in
-/// (where the redirect lands, design 31 §3.0), and the text.
+/// (where the redirect lands, design 31 §3.0), and its key.
 pub fn flash(code: &str) -> Option<(&'static str, &'static str)> {
     Some(match code {
-        "end_windows_sent" => (
-            "quick",
-            "Sent. The phone locks again within seconds when online.",
-        ),
-        "start_pause_sent" => (
-            "quick",
-            "Sent. The phone unlocks for 2 hours within seconds when online.",
-        ),
-        "allow_blocked_sent" => (
-            "blocked-apps",
-            "Sent. The apps allowed under Apps show again within seconds when online.",
-        ),
+        "end_windows_sent" => ("quick", "device.summary.flash.end_windows_sent"),
+        "start_pause_sent" => ("quick", "device.summary.flash.start_pause_sent"),
+        "allow_blocked_sent" => ("blocked-apps", "device.summary.flash.allow_blocked_sent"),
         _ => return None,
     })
 }
@@ -1076,7 +1091,7 @@ mod tests {
         assert_eq!(
             blocks_log_line(Some(&blocks[1..]), &blocks).map(|d| crate::security::worded_test(&d)),
             Some(
-                "Blocked me.vibb.music.debug (outside_play, install, key 3f2a0000…0000c0de)"
+                "Blocked me.vibb.music.debug (outside_play, install, 3f2a0000…0000c0de)"
                     .to_string()
             )
         );
@@ -1433,7 +1448,10 @@ mod tests {
         assert_eq!(first.name, "Vibb Music");
         assert_eq!(first.key.as_deref(), Some("3f2a0000…0000c0de"));
         assert_eq!(first.why, BlockWhy::OutsidePlay);
-        assert_eq!(first.why.text(), "From outside Play");
+        assert_eq!(
+            t(crate::i18n::Lang::En, first.why.key()),
+            "From outside Play"
+        );
         assert!(first.at_install);
         assert_eq!(first.when, "14:40 · 3 h ago");
         assert_eq!(first.ticked, None);
@@ -1558,7 +1576,7 @@ mod tests {
             accessibility: vec!["com.evil.admin".to_string(), "com.evil.reader".to_string()],
         };
         let names = HashMap::from([("com.evil.admin".to_string(), "Spy Kit".to_string())]);
-        let view = foreign_view(&found, false, &names);
+        let view = foreign_view(crate::i18n::Lang::En, &found, false, &names);
         assert_eq!(
             view,
             ForeignView {
@@ -1572,12 +1590,12 @@ mod tests {
                 paused: false,
             }
         );
-        assert!(foreign_view(&found, true, &names).paused);
+        assert!(foreign_view(crate::i18n::Lang::En, &found, true, &names).paused);
         let one = ForeignAccess {
             admins: Vec::new(),
             accessibility: vec!["com.evil.reader".to_string()],
         };
-        let view = foreign_view(&one, false, &HashMap::new());
+        let view = foreign_view(crate::i18n::Lang::En, &one, false, &HashMap::new());
         assert_eq!((view.admins.as_str(), view.many), ("", false));
         assert_eq!(view.packages, "Accessibility: com.evil.reader.");
         assert_eq!(

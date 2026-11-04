@@ -30,6 +30,18 @@ pub enum PhoneError {
     BadCountryCode,
 }
 
+impl PhoneError {
+    /// The refusal's words' key (the form says it in the reader's language; [std::fmt::Display] is the log's).
+    pub fn key(&self) -> &'static str {
+        match self {
+            PhoneError::Empty => "device.calls.number.empty",
+            PhoneError::InvalidCharacter => "device.calls.number.invalid_character",
+            PhoneError::BadLength => "device.calls.number.bad_length",
+            PhoneError::BadCountryCode => "device.calls.number.bad_country_code",
+        }
+    }
+}
+
 impl std::fmt::Display for PhoneError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

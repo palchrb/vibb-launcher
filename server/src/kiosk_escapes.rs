@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{t, t_params};
+
 /// Status-report capability of a launcher that has the update fence, the night update window and
 /// the notification rule.
 pub const KIOSK_ESCAPES_CAPABILITY: &str = "kiosk_escapes_v1";
@@ -189,19 +191,19 @@ impl Release {
     }
 }
 
-/// Why the night window's gate waited last (`update_fence.waiting_for`).
-fn wait_text(reason: &str) -> Option<&'static str> {
+/// Why the night window's gate waited last (`update_fence.waiting_for`): its words' key.
+fn wait_key(reason: &str) -> Option<&'static str> {
     Some(match reason {
-        "call" => "a call was on",
-        "emergency" => "an emergency call was recent",
-        "screen_on" => "the screen was on",
-        "screen_off_short" => "the screen had only just gone off",
-        "outside_window" => "waiting for the night window",
+        "call" => "device.advanced.escape.wait.call",
+        "emergency" => "device.advanced.escape.wait.emergency",
+        "screen_on" => "device.advanced.escape.wait.screen_on",
+        "screen_off_short" => "device.advanced.escape.wait.screen_off_short",
+        "outside_window" => "device.advanced.escape.wait.outside_window",
         // Install Now (design 37 §2.4); `install_now_download` comes without a pending tag, so
         // the "Update waiting" note never shows it.
-        crate::install_now::WAIT_CALL => "Install Now waits for the call to end",
-        crate::install_now::WAIT_EMERGENCY => "Install Now waits: an emergency call was recent",
-        crate::install_now::WAIT_READY => "Install Now is installing it",
+        crate::install_now::WAIT_CALL => "device.advanced.escape.wait.install_call",
+        crate::install_now::WAIT_EMERGENCY => "device.advanced.escape.wait.install_emergency",
+        crate::install_now::WAIT_READY => "device.advanced.escape.wait.install_ready",
         _ => return None,
     })
 }
@@ -290,193 +292,170 @@ impl EscapeNote {
                 .map(|t| zone.when(t, now))
                 .unwrap_or_default()
         };
-        let (title, value, detail): (String, Option<String>, Option<String>) = match self {
+        let lang = zone.lang();
+        let w = |key: &str| Some(t(lang, key).to_string());
+        let (title, value, detail): (&str, Option<String>, Option<String>) = match self {
             EscapeNote::NeedsUpdate => (
-                "Update Vibb One for these switches".into(),
+                "device.advanced.escape.needs_update",
                 None,
-                Some(
-                    "This phone's Vibb One has neither the update fence nor the notification filter \
-                     yet. Until it updates, an update shows Android's own home screen for about a \
-                     minute, and other apps' notifications can open screens outside the allowed \
-                     apps."
-                        .into(),
-                ),
+                w("device.advanced.escape.needs_update_sub"),
             ),
             EscapeNote::Fencing {
                 started_at_ms,
                 stale: false,
             } => (
-                "Update installing".into(),
+                "device.advanced.escape.installing",
                 Some(
                     started_at_ms
-                        .map(|ms| format!("Since {}", when(ms)))
-                        .unwrap_or_else(|| "Now".into()),
+                        .map(|ms| {
+                            t_params(lang, "device.advanced.escape.since", &[("at", &when(ms))])
+                        })
+                        .unwrap_or_else(|| t(lang, "device.advanced.escape.now").to_string()),
                 ),
-                Some(
-                    "Other home screens and the notification shade are paused until Vibb One is back."
-                        .into(),
-                ),
+                w("device.advanced.escape.installing_sub"),
             ),
             EscapeNote::Fencing {
                 started_at_ms,
                 stale: true,
             } => (
-                "Update started".into(),
+                "device.advanced.escape.started",
                 started_at_ms.map(when),
-                Some("The phone hasn't reported since.".into()),
+                w("device.advanced.escape.started_sub"),
             ),
             EscapeNote::Unsuspendable(packages) => (
-                "Some home screens weren't paused".into(),
+                "device.advanced.escape.unsuspendable",
                 None,
-                Some(format!(
-                    "Android refused to pause these during the update: {}.",
-                    packages.join(", ")
+                Some(t_params(
+                    lang,
+                    "device.advanced.escape.unsuspendable_sub",
+                    &[("apps", &packages.join(", "))],
                 )),
             ),
             EscapeNote::PartialFence => (
-                "Vibb One isn't the Home app".into(),
+                "device.advanced.escape.partial",
                 None,
-                Some(
-                    "So the update fence is only partial. Check that the phone is still managed \
-                     by Vibb One (device owner)."
-                        .into(),
-                ),
+                w("device.advanced.escape.partial_sub"),
             ),
             EscapeNote::LastRelease(release) => {
                 let (title, value, detail) = match release {
                     Release::Replaced => (
-                        "Last update",
-                        Some("Installed"),
-                        "It went in; the update fence was lifted once Vibb One was back.".to_string(),
+                        "device.advanced.escape.last",
+                        w("device.advanced.escape.installed"),
+                        w("device.advanced.escape.installed_sub"),
                     ),
                     Release::InstallFailed => (
-                        "Last update failed to install",
+                        "device.advanced.escape.install_failed",
                         None,
-                        "The fence was lifted at once. The phone keeps the download and tries \
-                         again in a night window an hour or more later (a wrong signing key or an \
-                         older version waits for a new release)."
-                            .to_string(),
+                        w("device.advanced.escape.install_failed_sub"),
                     ),
                     Release::CommitFailed => (
-                        "Last update couldn't start",
+                        "device.advanced.escape.commit_failed",
                         None,
-                        "The fence was lifted at once. The phone keeps the download and tries \
-                         again in a night window an hour or more later."
-                            .to_string(),
+                        w("device.advanced.escape.commit_failed_sub"),
                     ),
                     Release::Orphan => (
-                        "Update fence record lost",
+                        "device.advanced.escape.orphan",
                         None,
-                        "A paused home screen was found without its record (lost or corrupt); \
-                         the phone lifted it."
-                            .to_string(),
+                        w("device.advanced.escape.orphan_sub"),
                     ),
                     Release::Rebooted => (
-                        "Last update",
-                        Some("Interrupted by a restart"),
-                        "The phone restarted during the update; the fence was lifted at boot."
-                            .to_string(),
+                        "device.advanced.escape.last",
+                        w("device.advanced.escape.rebooted"),
+                        w("device.advanced.escape.rebooted_sub"),
                     ),
                     Release::Expired => (
-                        "Last update",
-                        Some("Took too long"),
-                        "It took longer than 10 minutes; the fence was lifted.".to_string(),
+                        "device.advanced.escape.last",
+                        w("device.advanced.escape.expired"),
+                        w("device.advanced.escape.expired_sub"),
                     ),
                     Release::Other(reason) => (
-                        "Last update",
-                        Some("Ended"),
-                        format!("The phone said: {reason}."),
+                        "device.advanced.escape.last",
+                        w("device.advanced.escape.ended"),
+                        Some(t_params(
+                            lang,
+                            "device.advanced.escape.ended_sub",
+                            &[("reason", reason)],
+                        )),
                     ),
                 };
-                (title.into(), value.map(Into::into), Some(detail))
+                (title, value, detail)
             }
             EscapeNote::UpdateWaiting {
                 tag,
                 overdue,
                 waiting_for,
             } => {
-                let mut detail = format!(
-                    "Downloaded ({tag}). It goes in at night (02:00-05:00, screen off for 30 \
-                     seconds, no call)"
-                );
+                let mut detail = vec![t_params(
+                    lang,
+                    "device.advanced.escape.waiting_sub",
+                    &[("tag", tag)],
+                )];
                 if *overdue {
-                    detail.push_str(". It has waited a day, so any quiet screen-off will do");
+                    detail.push(t(lang, "device.advanced.escape.waiting_overdue").to_string());
                 }
                 if let Some(why) = waiting_for {
-                    detail.push_str(&format!(". Last check: {why}"));
+                    detail.push(t_params(
+                        lang,
+                        "device.advanced.escape.waiting_last_check",
+                        &[("why", t(lang, why))],
+                    ));
                 }
-                detail.push('.');
                 (
-                    "Update waiting".into(),
+                    "device.advanced.escape.waiting",
                     Some(tag.strip_prefix("launcher-v").unwrap_or(tag).to_string()),
-                    Some(detail),
+                    Some(format!("{}.", detail.join(". "))),
                 )
             }
             EscapeNote::FilterWithoutAccess => (
-                "Filter has no notification access".into(),
+                "device.advanced.escape.filter_no_access",
                 None,
-                Some(
-                    "Vibb One has no notification access (\"App badges\"), so nothing is removed. \
-                     Grant it with adb before setting the phone up."
-                        .into(),
-                ),
+                w("device.advanced.escape.filter_no_access_sub"),
             ),
             EscapeNote::FilterNotActive => (
-                "Notification filter".into(),
-                Some("Not active yet".into()),
-                Some(
-                    "It waits for the next sync, and pauses while the Parent PIN's override or a \
-                     pause is in use."
-                        .into(),
-                ),
+                "device.advanced.escape.filter",
+                w("device.advanced.escape.filter_not_active"),
+                w("device.advanced.escape.filter_not_active_sub"),
             ),
             EscapeNote::BootCoverNeedsUpdate => (
-                "Update Vibb One for the boot cover".into(),
+                "device.advanced.escape.cover_needs_update",
                 None,
-                Some(
-                    "This phone's Vibb One doesn't have it yet; until then the switch does nothing."
-                        .into(),
-                ),
+                w("device.advanced.escape.cover_needs_update_sub"),
             ),
             EscapeNote::BootCoverTripped => (
-                "Boot cover switched itself off".into(),
+                "device.advanced.escape.cover_tripped",
                 None,
-                Some(
-                    "It crashed twice during one start. Turn the switch off and on to try again \
-                     (after a Vibb One update)."
-                        .into(),
-                ),
+                w("device.advanced.escape.cover_tripped_sub"),
             ),
             EscapeNote::BootCoverArmed => (
-                "Cover at the next start".into(),
-                Some("Ready".into()),
-                Some(
-                    "It shows from the phone's next shutdown or restart from its power menu; a \
-                     crash or a forced restart skips it."
-                        .into(),
-                ),
+                "device.advanced.escape.cover_next",
+                w("device.advanced.escape.cover_ready"),
+                w("device.advanced.escape.cover_ready_sub"),
             ),
             EscapeNote::BootCoverShown { at_ms, handover } => (
-                "Cover at the last start".into(),
-                Some(format!("Shown {}", when(*at_ms))),
-                handover.map(|h| {
-                    match h {
-                        Handover::ByItself => "It handed over to Vibb One by itself.",
-                        Handover::WhenVibbStarted => "It handed over when Vibb One started.",
-                    }
-                    .to_string()
+                "device.advanced.escape.cover_last",
+                Some(t_params(
+                    lang,
+                    "device.advanced.escape.cover_shown",
+                    &[("at", &when(*at_ms))],
+                )),
+                handover.and_then(|h| {
+                    w(match h {
+                        Handover::ByItself => "device.advanced.escape.cover_by_itself",
+                        Handover::WhenVibbStarted => "device.advanced.escape.cover_when_started",
+                    })
                 }),
             ),
             EscapeNote::BootCoverNotShown { armed_at_ms } => (
-                "Boot cover wasn't shown".into(),
+                "device.attention.boot_cover_not_shown",
                 None,
-                Some(format!(
-                    "It was armed at the shutdown at {} but not shown at the start after it: \
-                     Android picked another home screen on this phone. Switch it off here.",
-                    when(*armed_at_ms)
+                Some(t_params(
+                    lang,
+                    "device.advanced.escape.cover_not_shown_sub",
+                    &[("at", &when(*armed_at_ms))],
                 )),
             ),
         };
+        let title = t(lang, title).to_string();
         crate::handlers::device_pages::Note {
             warning: self.is_warning(),
             title,
@@ -535,7 +514,7 @@ pub fn escapes_card(
                 overdue: fence
                     .pending_since_ms
                     .is_some_and(|since| now_ms.saturating_sub(since) >= 24 * 60 * 60 * 1000),
-                waiting_for: fence.waiting_for.as_deref().and_then(wait_text),
+                waiting_for: fence.waiting_for.as_deref().and_then(wait_key),
             });
         }
     }
@@ -825,7 +804,7 @@ mod tests {
                 EscapeNote::UpdateWaiting {
                     tag: "launcher-v1.4.0".to_string(),
                     overdue: true,
-                    waiting_for: Some("waiting for the night window"),
+                    waiting_for: Some("device.advanced.escape.wait.outside_window"),
                 },
             ]
         );
@@ -1013,18 +992,18 @@ mod tests {
     #[test]
     fn install_now_waits_have_words() {
         assert_eq!(
-            wait_text("install_now_call"),
+            wait_key("install_now_call").map(|key| t(crate::i18n::Lang::En, key)),
             Some("Install Now waits for the call to end")
         );
         assert_eq!(
-            wait_text("install_now_emergency"),
+            wait_key("install_now_emergency").map(|key| t(crate::i18n::Lang::En, key)),
             Some("Install Now waits: an emergency call was recent")
         );
         assert_eq!(
-            wait_text("install_now_ready"),
+            wait_key("install_now_ready").map(|key| t(crate::i18n::Lang::En, key)),
             Some("Install Now is installing it")
         );
-        assert_eq!(wait_text("install_now_download"), None);
+        assert_eq!(wait_key("install_now_download"), None);
         for word in [
             crate::install_now::WAIT_DOWNLOAD,
             crate::install_now::WAIT_CALL,

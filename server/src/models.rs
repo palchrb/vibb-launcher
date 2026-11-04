@@ -221,12 +221,12 @@ pub struct DevicePolicy {
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
 pub const SCREEN_TIMEOUTS: [(i64, &str); 6] = [
-    (15, "15 seconds"),
-    (30, "30 seconds"),
-    (60, "1 minute"),
-    (120, "2 minutes"),
-    (300, "5 minutes"),
-    (600, "10 minutes"),
+    (15, "device.lock.timeout.15"),
+    (30, "device.lock.timeout.30"),
+    (60, "device.lock.timeout.60"),
+    (120, "device.lock.timeout.120"),
+    (300, "device.lock.timeout.300"),
+    (600, "device.lock.timeout.600"),
 ];
 pub const DEFAULT_SCREEN_TIMEOUT_SECONDS: i64 = 60;
 
@@ -240,13 +240,19 @@ pub fn screen_timeout_seconds(stored: i64) -> i64 {
     }
 }
 
-/// "1 minute", or "45 s" for a value that isn't one of the choices (what a phone reported).
-pub fn screen_timeout_label(seconds: i64) -> String {
+/// "1 minute", or "45 s" for a value that isn't one of the choices (what a phone reported), in `lang`.
+pub fn screen_timeout_label(lang: crate::i18n::Lang, seconds: i64) -> String {
     SCREEN_TIMEOUTS
         .iter()
         .find(|(s, _)| *s == seconds)
-        .map(|(_, label)| (*label).to_string())
-        .unwrap_or_else(|| format!("{seconds} s"))
+        .map(|(_, key)| crate::i18n::t(lang, key).to_string())
+        .unwrap_or_else(|| {
+            crate::i18n::t_params(
+                lang,
+                "device.lock.timeout.seconds",
+                &[("seconds", &seconds.to_string())],
+            )
+        })
 }
 
 /// The launcher languages a parent can choose; "system" follows the phone's language.
@@ -604,6 +610,42 @@ pub struct DnsBlocklist {
     pub name: String,
     pub url: String,
     pub enabled: bool,
+}
+
+/// The lists migration 0009 seeded, by name and address: their names are words (`settings.web_filter.seeded.*`).
+/// A list can't be renamed, so one with both is the seeded list; a parent's own keeps its name.
+const SEEDED_BLOCKLISTS: [(&str, &str, &str); 4] = [
+    (
+        "Ads & tracking",
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "settings.web_filter.seeded.ads",
+    ),
+    (
+        "Adult content",
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
+        "settings.web_filter.seeded.adult",
+    ),
+    (
+        "Gambling",
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling/hosts",
+        "settings.web_filter.seeded.gambling",
+    ),
+    (
+        "Social media",
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social/hosts",
+        "settings.web_filter.seeded.social",
+    ),
+];
+
+/// A blocklist's name as a page shows it in `lang` ([SEEDED_BLOCKLISTS]).
+pub fn blocklist_name(lang: crate::i18n::Lang, name: &str, url: &str) -> String {
+    SEEDED_BLOCKLISTS
+        .iter()
+        .find(|(seeded, address, _)| *seeded == name && *address == url)
+        .map_or_else(
+            || name.to_string(),
+            |(_, _, key)| crate::i18n::t(lang, key).to_string(),
+        )
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -1742,17 +1784,14 @@ pub struct TrackedAppUpdate {
 const ADMIN_POLICY_EFFECTS: [(&str, &str); 4] = [
     (
         "disable-keyguard-features",
-        "turn off the camera on the lock screen",
+        "device.advanced.play.effect.keyguard_features",
     ),
-    (
-        "disable-camera",
-        "keep the power button's camera gesture from opening the camera over the lock",
-    ),
+    ("disable-camera", "device.advanced.play.effect.camera"),
     (
         "limit-password",
-        "notice at once when an Android screen lock is removed",
+        "device.advanced.play.effect.limit_password",
     ),
-    ("force-lock", "lock the screen from the Locate page"),
+    ("force-lock", "device.advanced.play.effect.force_lock"),
 ];
 
 /// `StatusReportRequest.admin_policies_pending` as stored: the known tags only (the wipe's too),
@@ -1770,7 +1809,7 @@ pub fn admin_policies_json(pending: Option<&Vec<String>>) -> Option<String> {
 
 /// What the launcher can't do yet while its admin lacks policies Android grants at the next
 /// restart (an Android 16 emulator refused the lock-screen camera switch that way): "Restart the
-/// phone once" (an Attention row, and Advanced › App screens with these). Empty: nothing pending.
+/// phone once" (an Attention row, and Advanced › App screens with these), as keys. Empty: nothing pending.
 pub fn admin_policy_effects(json: Option<&str>) -> Vec<&'static str> {
     let Some(pending) = json.and_then(|j| serde_json::from_str::<Vec<String>>(j).ok()) else {
         return Vec::new();

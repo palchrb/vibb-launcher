@@ -494,7 +494,7 @@ fn download_words(lang: Lang, entry: Option<&AppDownloadEntry>) -> String {
         "waiting_network" => t(lang, "apps.install.waiting_network").to_string(),
         "waiting_space" => t(lang, "apps.install.waiting_space").to_string(),
         "waiting_roaming" => t(lang, "apps.install.waiting_roaming").to_string(),
-        _ => match crate::app_downloads::progress(entry) {
+        _ => match crate::app_downloads::progress(lang, entry) {
             Some(progress) => t_params(
                 lang,
                 "apps.install.downloading_progress",

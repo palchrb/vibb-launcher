@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::device_pages::Note;
+use crate::i18n::{Lang, t, t_count, t_params};
 use crate::kid_pin::KidPin;
 use crate::models::{DevicePolicy, KidLock};
 use crate::music_secret::MusicKey;
@@ -510,47 +511,41 @@ impl PinAnswer {
         })
     }
 
-    /// The answer in a few words (Activity's line, `locate::reword`).
+    /// The answer in a few words (Activity's line, `locate::reword`): its key.
     pub fn words(self) -> &'static str {
         match self {
-            PinAnswer::Set => "Child PIN set on the phone",
-            PinAnswer::OwnLock => "Not needed: Vibb One's lock is on",
-            PinAnswer::NoToken => "Refused: Vibb One can't change Android's PIN yet",
-            PinAnswer::Mismatch => "Refused: not the phone's new Child PIN",
-            PinAnswer::NoPin => "Refused: the server sent no PIN",
-            PinAnswer::Failed => "Android refused the new PIN",
+            PinAnswer::Set => "device.lock.pin_answer.set",
+            PinAnswer::OwnLock => "device.lock.pin_answer.own_lock",
+            PinAnswer::NoToken => "device.lock.pin_answer.no_token",
+            PinAnswer::Mismatch => "device.lock.pin_answer.mismatch",
+            PinAnswer::NoPin => "device.lock.pin_answer.no_pin",
+            PinAnswer::Failed => "device.lock.pin_answer.failed",
         }
     }
 
-    /// The Lock page's value word and the sentence behind the row's ⓘ.
+    /// The Lock page's value word and the sentence behind the row's ⓘ: their keys.
     fn row(self) -> (&'static str, Option<&'static str>) {
         match self {
-            PinAnswer::Set => ("Set", None),
+            PinAnswer::Set => ("device.lock.pin_row.set", None),
             PinAnswer::OwnLock => (
-                "Not needed",
-                Some("Vibb One's lock was chosen again before the phone got it."),
+                "device.lock.pin_row.not_needed",
+                Some("device.lock.pin_row.own_lock_sub"),
             ),
             PinAnswer::NoToken => (
-                "Refused",
-                Some(
-                    "Vibb One can't change Android's PIN until the child unlocks the phone once. \
-                     Then send it again.",
-                ),
+                "device.lock.pin_row.refused",
+                Some("device.lock.pin_row.no_token_sub"),
             ),
             PinAnswer::Mismatch => (
-                "Refused",
-                Some("It didn't match the Child PIN the phone had just been given. Send it again."),
+                "device.lock.pin_row.refused",
+                Some("device.lock.pin_row.mismatch_sub"),
             ),
             PinAnswer::NoPin => (
-                "Refused",
-                Some(
-                    "This server had no copy of the Child PIN it could send. Set the Child PIN \
-                     again.",
-                ),
+                "device.lock.pin_row.refused",
+                Some("device.lock.pin_row.no_pin_sub"),
             ),
             PinAnswer::Failed => (
-                "Failed",
-                Some("Android didn't take it. Send it again, or set another Child PIN."),
+                "device.lock.pin_row.failed",
+                Some("device.lock.pin_row.failed_sub"),
             ),
         }
     }
@@ -569,7 +564,10 @@ pub fn pin_send(
         return None;
     }
     let at = |t: Option<chrono::DateTime<chrono::Utc>>| {
-        t.map_or_else(|| "time unknown".to_string(), |t| zone.at(t, now))
+        t.map_or_else(
+            || crate::i18n::t(zone.lang(), "device.lock.time_unknown").to_string(),
+            |t| zone.at(t, now),
+        )
     };
     Some(match command.status(now.naive_utc(), receipts) {
         CommandStatus::Done { at: answered } | CommandStatus::Failed { at: answered } => {
@@ -614,215 +612,232 @@ pub fn pin_send(
 }
 
 impl LockNote {
-    /// The words (§4.2): a warning's title and sentence, or a row's label and value; an adb fix
+    /// The words (§4.2) in `lang`: a warning's title and sentence, or a row's label and value; an adb fix
     /// behind the ⓘ. `reported`: when the phone sent this ("10:59", "yesterday 21:40"), on the
     /// "On the phone" row, so an old report doesn't read as now.
-    pub fn note(&self, reported: Option<&str>) -> Note {
+    pub fn note(&self, lang: Lang, reported: Option<&str>) -> Note {
         let warning = |title: &str, detail: String, fix: Option<String>| Note {
             warning: true,
-            title: title.to_string(),
+            title: t(lang, title).to_string(),
             value: None,
             detail: Some(detail),
             fix,
         };
-        let row = |title: &str, value: String, detail: Option<&str>| Note {
+        let row = |title: String, value: String, detail: Option<&str>| Note {
             warning: false,
-            title: title.to_string(),
+            title,
             value: Some(value),
-            detail: detail.map(str::to_string),
+            detail: detail.map(|key| t(lang, key).to_string()),
             fix: None,
         };
+        let w = |key: &str| t(lang, key).to_string();
+        let times = |n: i64| t_count(lang, "device.lock.note.times", n, &[]);
         match self {
             LockNote::SafeModeAllowed => warning(
-                "Safe mode is allowed",
-                "Safe mode starts the phone without Vibb One, so it skips the lock. Turn on Block \
-                 safe mode in Advanced › Restrictions."
-                    .to_string(),
+                "device.lock.note.safe_mode",
+                w("device.lock.note.safe_mode_sub"),
                 None,
             ),
             LockNote::NeedsUpdate => warning(
-                "Vibb One needs an update",
-                "This version has no lock. Until it updates, the phone keeps its own screen lock, if any."
-                    .to_string(),
+                "device.lock.note.needs_update",
+                w("device.lock.note.needs_update_sub"),
                 None,
             ),
             LockNote::Off(Inactive::Unmanaged) => warning(
-                "Lock off: phone not managed",
-                "The lock works only on a phone with an app list or managed calls.".to_string(),
+                "device.lock.note.unmanaged",
+                w("device.lock.note.unmanaged_sub"),
                 None,
             ),
             LockNote::Off(Inactive::AndroidCredential) => warning(
-                "Android's screen lock is still on",
-                "Remove it so Vibb One's lock can take over: enter the Parent PIN on the phone, then \
-                 Settings › Security › Screen lock › None."
-                    .to_string(),
-                Some("With USB debugging allowed: adb shell locksettings clear --old <PIN>".to_string()),
+                "device.lock.note.android_credential",
+                w("device.lock.note.android_credential_sub"),
+                Some(t_params(
+                    lang,
+                    "device.lock.note.android_credential_fix",
+                    &[("command", "adb shell locksettings clear --old <PIN>")],
+                )),
             ),
             LockNote::Off(Inactive::KeyguardNotDisabled) => warning(
-                "Android's lock can't be turned off",
-                "Android refused, so Vibb One's lock stays off. Vibb One may no longer manage this phone."
-                    .to_string(),
-                Some("Check that Vibb One is still the device owner: adb shell dpm list-owners".to_string()),
+                "device.lock.note.keyguard",
+                w("device.lock.note.keyguard_sub"),
+                Some(t_params(
+                    lang,
+                    "device.lock.note.keyguard_fix",
+                    &[("command", "adb shell dpm list-owners")],
+                )),
             ),
             LockNote::Off(Inactive::CrashGuard) => warning(
-                "Lock turned off after crashes",
-                "It crashed several times in a row. The phone tries it again within 10 minutes of \
-                 its next check-in; update Vibb One if this repeats."
-                    .to_string(),
+                "device.lock.note.crash_guard",
+                w("device.lock.note.crash_guard_sub"),
                 None,
             ),
             LockNote::Off(Inactive::BadHash) => warning(
-                "Phone can't read the Child PIN",
-                "Only the Parent PIN (\"Parent code\" on the lock) opens it now. Set the Child PIN \
-                 again."
-                    .to_string(),
+                "device.lock.note.bad_hash",
+                w("device.lock.note.bad_hash_sub"),
                 None,
             ),
             LockNote::Off(Inactive::Other(code)) => warning(
-                "Lock is off on the phone",
-                "Vibb One reported a reason this server doesn't know.".to_string(),
-                Some(format!("The phone reported \"{code}\".")),
-            ),
-            LockNote::CallsCantRing(package) => warning(
-                "Calls can't ring over the lock",
-                "An allowed call app rings only once the phone is unlocked.".to_string(),
-                Some(format!(
-                    "{package} may not show full-screen notifications. Allow it once with adb: \
-                     adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"
+                "device.attention.child_lock_off",
+                w("device.lock.note.other_sub"),
+                Some(t_params(
+                    lang,
+                    "device.lock.note.other_fix",
+                    &[("code", code)],
                 )),
             ),
-            LockNote::Waiting => row("On the phone", "Waiting for a report".to_string(), None),
+            LockNote::CallsCantRing(package) => warning(
+                "device.lock.note.calls_cant_ring",
+                w("device.lock.note.calls_cant_ring_sub"),
+                Some(t_params(
+                    lang,
+                    "device.lock.note.calls_cant_ring_fix",
+                    &[
+                        ("package", package),
+                        (
+                            "command",
+                            &format!("adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"),
+                        ),
+                    ],
+                )),
+            ),
+            LockNote::Waiting => row(
+                w("device.lock.note.on_phone"),
+                w("device.lock.note.waiting_report"),
+                None,
+            ),
             LockNote::On { locked, android } => {
-                let state = match (*locked, *android) {
-                    (true, false) => "Locked",
-                    (false, false) => "Unlocked",
-                    (true, true) => "Locked · Android's lock",
-                    (false, true) => "Unlocked · Android's lock",
-                };
+                let state = w(match (*locked, *android) {
+                    (true, false) => "device.lock.note.locked",
+                    (false, false) => "device.lock.note.unlocked",
+                    (true, true) => "device.lock.note.locked_android",
+                    (false, true) => "device.lock.note.unlocked_android",
+                });
                 row(
-                    "On the phone",
+                    w("device.lock.note.on_phone"),
                     match reported {
                         Some(when) => format!("{state} · {when}"),
-                        None => state.to_string(),
+                        None => state,
                     },
-                    reported.is_some().then_some("At the phone's last report."),
+                    reported
+                        .is_some()
+                        .then_some("device.lock.note.at_last_report"),
                 )
             }
-            LockNote::WrongPins(n) => row("Wrong PINs in a row", n.to_string(), None),
+            LockNote::WrongPins(n) => row(w("device.lock.note.wrong_pins"), n.to_string(), None),
             LockNote::Backoff { minutes } => row(
-                "Next try in",
-                format!("About {minutes} min"),
-                Some("Too many wrong PINs. The Parent PIN (\"Parent code\" on the lock) still opens it."),
+                w("device.lock.note.next_try"),
+                t_params(
+                    lang,
+                    "device.lock.note.about_minutes",
+                    &[("minutes", &minutes.to_string())],
+                ),
+                Some("device.lock.note.backoff_sub"),
             ),
             LockNote::SteppedAside(n) => row(
-                "Stepped aside",
-                if *n == 1 {
-                    "1 time".to_string()
-                } else {
-                    format!("{n} times")
-                },
-                Some("For a call, the emergency dialer or an alarm, since the last report."),
+                w("device.lock.note.stepped_aside"),
+                times(*n),
+                Some("device.lock.note.stepped_aside_sub"),
             ),
             LockNote::RangOverLock { label, when } => row(
-                &format!("Calls from {label}"),
-                format!("Rang over the lock · {when}"),
-                Some(
-                    "An allowed app rang while the phone was locked. Answering opens that app \
-                     without the Child PIN, for the call.",
-                ),
+                t_params(lang, "device.lock.note.calls_from", &[("app", label)]),
+                t_params(lang, "device.lock.note.rang", &[("at", when)]),
+                Some("device.lock.note.rang_sub"),
             ),
             LockNote::AndroidNeedsUpdate => warning(
-                "Update Vibb One for Android's lock",
-                "Until Vibb One on this phone is updated, it keeps Vibb One's lock.".to_string(),
+                "device.lock.note.android_needs_update",
+                w("device.lock.note.android_needs_update_sub"),
                 None,
             ),
             LockNote::AndroidWaiting { sending: false } => row(
-                "Android's lock",
-                "Waiting".to_string(),
-                Some("It starts the next time the Child PIN is typed on the phone."),
+                w("device.lock.android_lock"),
+                w("device.lock.note.waiting"),
+                Some("device.lock.note.android_waiting_sub"),
             ),
             LockNote::AndroidWaiting { sending: true } => row(
-                "Android's lock",
-                "Sending the PIN".to_string(),
-                Some("It starts when the phone gets the Child PIN."),
+                w("device.lock.android_lock"),
+                w("device.lock.note.sending"),
+                Some("device.lock.note.sending_sub"),
             ),
             LockNote::PinNotChildPin { stored } => warning(
-                "Phone's PIN isn't the Child PIN",
-                if *stored {
-                    "It was probably changed on the phone. Sending the Child PIN again puts it back."
+                "device.attention.child_pin_changed",
+                w(if *stored {
+                    "device.lock.note.pin_changed_send"
                 } else {
-                    "It was probably changed on the phone. Set a new Child PIN above."
-                }
-                .to_string(),
+                    "device.lock.note.pin_changed_set"
+                }),
                 None,
             ),
             LockNote::PinBehind => row(
-                "Child PIN on the phone",
-                "An earlier one".to_string(),
-                Some("The phone still uses an earlier Child PIN until it gets the new one."),
+                w("device.lock.note.pin_on_phone"),
+                w("device.lock.note.earlier"),
+                Some("device.lock.note.earlier_sub"),
             ),
             LockNote::NoResetToken => warning(
-                "Vibb One can't change Android's PIN",
-                "Until the child unlocks the phone once, Vibb One can't change the PIN or switch \
-                 back to its own lock."
-                    .to_string(),
+                "device.lock.note.no_token",
+                w("device.lock.note.no_token_sub"),
                 None,
             ),
             LockNote::SwitchingBack { stuck: false } => row(
-                "Android's lock",
-                "Switching back…".to_string(),
-                Some("Vibb One's lock takes over when the phone checks in."),
+                w("device.lock.android_lock"),
+                w("device.lock.note.switching_back"),
+                Some("device.lock.note.switching_back_sub"),
             ),
             LockNote::SwitchingBack { stuck: true } => warning(
-                "Android's PIN is still on",
-                "It goes after the child next unlocks the phone, or clear it in Settings › \
-                 Security while the phone is open (Parent PIN › pause)."
-                    .to_string(),
+                "device.lock.note.stuck",
+                w("device.lock.note.stuck_sub"),
                 None,
             ),
             LockNote::Relocked(n) => row(
-                "Locked again by Vibb One",
-                if *n == 1 {
-                    "1 time".to_string()
-                } else {
-                    format!("{n} times")
-                },
-                Some(
-                    "Android's lock wasn't locked under Vibb One's lock screen, so Vibb One \
-                     locked it. Since the last report.",
-                ),
+                w("device.lock.note.relocked"),
+                times(*n),
+                Some("device.lock.note.relocked_sub"),
             ),
             LockNote::PinSent(send) => {
+                let at = |key: &str, at: &str| t_params(lang, key, &[("at", at)]);
                 let (value, detail): (String, Option<&str>) = match send {
                     PinSend::Waiting => (
-                        "Waiting".to_string(),
-                        Some("It goes out when the phone checks in."),
+                        w("device.lock.note.waiting"),
+                        Some("device.lock.note.pin_waiting_sub"),
                     ),
-                    PinSend::Sent { at } => (format!("Sent · {at}"), Some("Not confirmed yet.")),
-                    PinSend::Unconfirmed { at } => (
-                        format!("Sent · {at}"),
-                        Some("Never confirmed: it may not have reached the phone. Send it again."),
+                    PinSend::Sent { at: when } => (
+                        at("device.lock.note.sent_at", when),
+                        Some("device.lock.note.sent_sub"),
                     ),
-                    PinSend::Taken { sent, taken } => (format!("Sent {sent} · taken {taken}"), None),
+                    PinSend::Unconfirmed { at: when } => (
+                        at("device.lock.note.sent_at", when),
+                        Some("device.lock.note.unconfirmed_sub"),
+                    ),
+                    PinSend::Taken { sent, taken } => (
+                        t_params(
+                            lang,
+                            "device.lock.note.sent_taken",
+                            &[("sent", sent), ("taken", taken)],
+                        ),
+                        None,
+                    ),
                     PinSend::NoAnswer { taken } => (
-                        format!("Taken · {taken}"),
-                        Some("The phone got it but never answered. Send it again."),
+                        at("device.lock.note.taken_at", taken),
+                        Some("device.lock.note.no_answer_sub"),
                     ),
-                    PinSend::Answered { answer, at } => {
+                    PinSend::Answered { answer, at: when } => {
                         let (word, detail) = answer.row();
-                        (format!("{word} · {at}"), detail)
+                        (format!("{} · {when}", t(lang, word)), detail)
                     }
-                    PinSend::Other { raw, at } => {
+                    PinSend::Other { raw, at: when } => {
                         return Note {
                             warning: false,
-                            title: "Child PIN to the phone".to_string(),
-                            value: Some(format!("Answered · {at}")),
-                            detail: Some(format!("The phone said \"{raw}\".")),
+                            title: w("device.lock.note.pin_to_phone"),
+                            value: Some(at("device.lock.note.answered_at", when)),
+                            detail: Some(t_params(
+                                lang,
+                                "device.lock.note.phone_said",
+                                &[("answer", raw)],
+                            )),
                             fix: None,
                         };
                     }
                 };
-                row("Child PIN to the phone", value, detail)
+                row(w("device.lock.note.pin_to_phone"), value, detail)
             }
         }
     }
@@ -1114,59 +1129,26 @@ pub fn shown_pin(
 }
 
 /// The flash after a Child PIN save (`?notice=<code>`), inside the Child PIN group (design 31
-/// §3.0); `true` = a refusal. The Parent PIN's codes are `parent_pin::flash_text`'s.
-pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
-    Some(match code {
-        "saved" => (
-            "Child PIN saved. The phone uses it as soon as it checks in.",
-            false,
-        ),
-        "saved_safe_boot" => (
-            "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock.",
-            false,
-        ),
+/// §3.0), in `lang`; `true` = a refusal. The Parent PIN's codes are `parent_pin::flash_text`'s.
+pub fn flash_text(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
+    let (key, refused) = match code {
+        "saved" => ("device.lock.flash.saved", false),
+        "saved_safe_boot" => ("device.lock.flash.saved_safe_boot", false),
         // Design 59 §2.1: the key file couldn't be read at the start (the server log says why).
-        "saved_not_kept" => (
-            "Child PIN saved. This server can't keep a copy to show later or send for Android's \
-             lock: its key file couldn't be read.",
-            false,
-        ),
-        "saved_safe_boot_not_kept" => (
-            "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock. This \
-             server can't keep a copy to show later or send for Android's lock: its key file \
-             couldn't be read.",
-            false,
-        ),
-        "cleared" => (
-            "Child PIN removed. The phone opens without a code once it checks in.",
-            false,
-        ),
+        "saved_not_kept" => ("device.lock.flash.saved_not_kept", false),
+        "saved_safe_boot_not_kept" => ("device.lock.flash.saved_safe_boot_not_kept", false),
+        "cleared" => ("device.lock.flash.cleared", false),
         // Design 59 §2.3: "Send the Child PIN again" and the lock switch.
-        "pin_sent" => (
-            "Sent. The phone takes the Child PIN as soon as it checks in.",
-            false,
-        ),
-        "pin_not_sent" => (
-            "Not sent: one is already on its way, or Vibb One on the phone can't take it yet.",
-            true,
-        ),
-        "pin_not_kept" => (
-            "Not sent: this server keeps no copy of the Child PIN. Set it again, then it goes \
-             out by itself.",
-            true,
-        ),
-        "keyguard_no_pin" => ("Set a Child PIN first: Android's lock needs one.", true),
-        "invalid" => ("Not saved: a Child PIN is 4 to 6 digits.", true),
-        "needs_override" => (
-            "Not saved: set a Parent PIN first. It opens the lock if the Child PIN is forgotten.",
-            true,
-        ),
-        "same_as_override" => (
-            "Not saved: the Child PIN must differ from the Parent PIN.",
-            true,
-        ),
+        "pin_sent" => ("device.lock.flash.pin_sent", false),
+        "pin_not_sent" => ("device.lock.flash.pin_not_sent", true),
+        "pin_not_kept" => ("device.lock.flash.pin_not_kept", true),
+        "keyguard_no_pin" => ("device.lock.flash.keyguard_no_pin", true),
+        "invalid" => ("device.lock.flash.invalid", true),
+        "needs_override" => ("device.lock.flash.needs_override", true),
+        "same_as_override" => ("device.lock.flash.same_as_override", true),
         _ => return None,
-    })
+    };
+    Some((t(lang, key), refused))
 }
 
 #[cfg(test)]
@@ -1312,7 +1294,7 @@ mod tests {
             };
             let card = lock_card(&p, &phone(Some(&state), true, true), 0);
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
-            assert!(card.notes[0].note(None).warning, "{inactive}");
+            assert!(card.notes[0].note(Lang::En, None).warning, "{inactive}");
         }
         let state = LockState {
             inactive: Some("no_pin".to_string()),
@@ -1353,7 +1335,7 @@ mod tests {
         let words: Vec<(String, Option<String>)> = card
             .notes
             .iter()
-            .map(|n| n.note(None))
+            .map(|n| n.note(Lang::En, None))
             .map(|n| {
                 assert!(!n.warning);
                 (n.title, n.value)
@@ -1384,7 +1366,7 @@ mod tests {
             LockNote::CallsCantRing("io.element.android.x".to_string()),
         ];
         for note in notes {
-            let words = note.note(None);
+            let words = note.note(Lang::En, None);
             assert!(words.warning, "{note:?}");
             // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
@@ -1401,7 +1383,7 @@ mod tests {
             }
         }
         let fix = LockNote::Off(Inactive::AndroidCredential)
-            .note(None)
+            .note(Lang::En, None)
             .fix
             .unwrap();
         assert!(fix.contains("adb shell locksettings clear --old <PIN>"));
@@ -1427,7 +1409,7 @@ mod tests {
                 },
             ]
         );
-        let fix = card.notes[0].note(None).fix.unwrap();
+        let fix = card.notes[0].note(Lang::En, None).fix.unwrap();
         assert!(fix.contains("io.element.android.x"));
         assert!(fix.contains("USE_FULL_SCREEN_INTENT"));
     }
@@ -1612,7 +1594,7 @@ mod tests {
         let notes = rang_notes(&card, Some(&state), &labels, &zone, now);
         let words: Vec<(String, Option<String>, bool)> = notes
             .iter()
-            .map(|n| n.note(None))
+            .map(|n| n.note(Lang::En, None))
             .map(|n| (n.title, n.value, n.warning))
             .collect();
         assert_eq!(
@@ -1772,16 +1754,16 @@ mod tests {
             LockNote::NoResetToken,
             LockNote::SwitchingBack { stuck: true },
         ] {
-            let words = note.note(None);
+            let words = note.note(Lang::En, None);
             assert!(words.warning, "{note:?}");
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
         }
         assert_eq!(
-            on(true).note(Some("10:59")).value.as_deref(),
+            on(true).note(Lang::En, Some("10:59")).value.as_deref(),
             Some("Locked · Android's lock · 10:59")
         );
         assert_eq!(
-            LockNote::Relocked(1).note(None).value.as_deref(),
+            LockNote::Relocked(1).note(Lang::En, None).value.as_deref(),
             Some("1 time")
         );
     }
@@ -1818,7 +1800,7 @@ mod tests {
             .with_timezone(&chrono::Utc);
         let value = |c: &crate::models::DeviceCommand| {
             pin_send(c, true, &zone, now)
-                .map(|send| LockNote::PinSent(send).note(None))
+                .map(|send| LockNote::PinSent(send).note(Lang::En, None))
                 .map(|n| (n.value.unwrap(), n.detail))
         };
         assert_eq!(value(&command(None, false, false)).unwrap().0, "Waiting");

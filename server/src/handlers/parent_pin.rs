@@ -10,6 +10,7 @@ use axum::extract::{Form, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::i18n::Lang;
 use crate::models::{DevicePolicy, DeviceStatus};
 use crate::security::{self, AuthedDevice, CurrentAdmin};
 use crate::{AppState, parent_pin};
@@ -28,6 +29,7 @@ pub struct ParentPinCard {
 }
 
 pub fn card(
+    lang: Lang,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
@@ -41,12 +43,10 @@ pub fn card(
     ParentPinCard {
         pin_set,
         easy: pin_set && policy.override_pin_easy == Some(true),
-        notice: notice.and_then(parent_pin::flash_text),
+        notice: notice.and_then(|code| parent_pin::flash_text(lang, code)),
         capable,
     }
 }
-
-const SAVE_FAILED: &str = "Couldn't save - nothing was changed. Check the server log.";
 
 /// `POST /devices/{id}/parent-pin` (behind full auth): `new_pin` (6-10 digits) or `clear_pin`.
 /// - Refused, nothing written: not 6-10 digits (`parent_pin_invalid`), the kid's PIN
@@ -59,9 +59,17 @@ const SAVE_FAILED: &str = "Couldn't save - nothing was changed. Check the server
 pub async fn update_parent_pin(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
+    let save_failed = || {
+        crate::i18n::error(
+            lang,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error.save_failed_log",
+        )
+    };
     let back = |code: &str| {
         Redirect::to(&format!("/devices/{id}/lock?notice={code}#parent-pin")).into_response()
     };
@@ -72,10 +80,12 @@ pub async fn update_parent_pin(
             .await
         {
             Ok(Some(policy)) => policy,
-            Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+            Ok(None) => {
+                return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+            }
             Err(err) => {
                 tracing::error!(device_id = id, %err, "can't read the policy for the parent PIN");
-                return (StatusCode::INTERNAL_SERVER_ERROR, SAVE_FAILED).into_response();
+                return save_failed();
             }
         };
 
@@ -101,7 +111,7 @@ pub async fn update_parent_pin(
             Ok(_) => ("override_pin_cleared", "parent_pin_cleared"),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "failed to remove the parent PIN");
-                return (StatusCode::INTERNAL_SERVER_ERROR, SAVE_FAILED).into_response();
+                return save_failed();
             }
         }
     } else {
@@ -129,7 +139,7 @@ pub async fn update_parent_pin(
             Ok(None) => return crate::settings_log::refused(back("override_is_kid_pin")),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "parent PIN hashing failed");
-                return (StatusCode::INTERNAL_SERVER_ERROR, SAVE_FAILED).into_response();
+                return save_failed();
             }
         };
         let result = sqlx::query(
@@ -146,7 +156,7 @@ pub async fn update_parent_pin(
         .await;
         if let Err(err) = result {
             tracing::error!(device_id = id, %err, "failed to save the parent PIN");
-            return (StatusCode::INTERNAL_SERVER_ERROR, SAVE_FAILED).into_response();
+            return save_failed();
         }
         let code = if easy {
             "parent_pin_saved_easy"

@@ -859,7 +859,8 @@ async fn settings_page(
         orphans: music::orphan_files(&state.db, &state.music_files_dir)
             .await
             .map(|o| {
-                (!o.files.is_empty()).then(|| (o.files.len(), music::megabytes(o.bytes as i64)))
+                (!o.files.is_empty())
+                    .then(|| (o.files.len(), music::megabytes(lang, o.bytes as i64)))
             })?,
         sweep_hours: crate::music_sweep::sweep_hours(&state.db).await?,
         sweep_choices: crate::music_sweep::SWEEP_HOURS
@@ -1028,7 +1029,7 @@ pub async fn delete_orphans(
         security::Detail::counted(
             "security.detail.music.orphans",
             deleted as i64,
-            &[("size", &music::megabytes(orphans.bytes as i64))],
+            &[("size", &music::megabytes(Lang::En, orphans.bytes as i64))],
         ),
     )
     .await;
@@ -1169,10 +1170,10 @@ pub async fn add_link(
         }
         Err(err) => return server_error(lang, err, "music category lookup failed"),
     };
-    let title = match music::check_link(state.music_fetch.as_ref(), &link).await {
+    let title = match music::check_link(state.music_fetch.as_ref(), &link, lang).await {
         Ok(title) => title,
         Err(err) => {
-            return refused_add(&state, admin.id, refuse(err.message()), lang).await;
+            return refused_add(&state, admin.id, refuse(err.message(lang)), lang).await;
         }
     };
     // The limit is checked in the INSERT itself (qa-21-step1-code #6): two adds can't pass it.
@@ -2545,7 +2546,7 @@ async fn render_entry(
                     f.artist.clone(),
                     f.album.clone(),
                     duration_text(f.duration_ms),
-                    Some(music::megabytes(f.size)),
+                    Some(music::megabytes(lang, f.size)),
                     Some(f.original_name.clone()),
                 ]
                 .into_iter()
@@ -3781,12 +3782,15 @@ impl SweepView {
                         "music.status.failed_gated",
                         &[
                             ("when", &failed_at),
-                            ("error", &music::sweep_error_text(&entry.source, &code)),
+                            (
+                                "error",
+                                &music::sweep_error_text(lang, &entry.source, &code)
+                            ),
                         ],
                     )
                 ),
                 (Some(_), listed_at) => {
-                    let error = music::sweep_error_text(&entry.source, &code);
+                    let error = music::sweep_error_text(lang, &entry.source, &code);
                     let text = match listed_at {
                         Some(listed) => t_params(
                             lang,
@@ -3813,9 +3817,9 @@ impl SweepView {
                         &[(
                             "error",
                             &match entry.source.as_str() {
-                                "storytel" => music::CheckError::Storytel(code).message(),
-                                "spotify" => music::CheckError::Spotify(code).message(),
-                                _ => music::CheckError::from_code(&code).message(),
+                                "storytel" => music::CheckError::Storytel(code).message(lang),
+                                "spotify" => music::CheckError::Spotify(code).message(lang),
+                                _ => music::CheckError::from_code(&code).message(lang),
                             }
                         )],
                     )
@@ -4160,7 +4164,7 @@ impl SweepView {
                             ("count", &failing.len().to_string()),
                             (
                                 "error",
-                                &music::sweep_error_text(&entry.source, &first.error),
+                                &music::sweep_error_text(lang, &entry.source, &first.error),
                             ),
                         ],
                     ));
@@ -4213,7 +4217,7 @@ impl SweepView {
                         ("count", &failing.len().to_string()),
                         (
                             "error",
-                            &music::sweep_error_text(&entry.source, &first.error),
+                            &music::sweep_error_text(lang, &entry.source, &first.error),
                         ),
                     ],
                 ));
@@ -4701,8 +4705,10 @@ impl MusicWarnings {
     }
 }
 
-/// [MusicWarnings] from the phone's settings, its last report and the entries on for it (`ticked`).
+/// [MusicWarnings] from the phone's settings, its last report and the entries on for it (`ticked`); the
+/// over-limit size in `lang`.
 pub fn music_warnings(
+    lang: Lang,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     ticked: &[i64],
@@ -4723,6 +4729,7 @@ pub fn music_warnings(
             .and_then(|r| {
                 r.cache_bytes.map(|bytes| {
                     music::storage(
+                        lang,
                         bytes,
                         r.audio_bytes,
                         r.extra_bytes,
@@ -4794,7 +4801,7 @@ pub(crate) async fn device_card(
     let errors: HashMap<i64, String> = state_report
         .iter()
         .flat_map(|report| &report.entry_errors)
-        .map(|e| (e.entry, music::entry_error_text(&e.error)))
+        .map(|e| (e.entry, music::entry_error_text(lang, &e.error)))
         .collect();
     let row_notice = notice_entry.zip(
         notice
@@ -4880,7 +4887,7 @@ pub(crate) async fn device_card(
     .fetch_one(&state.db)
     .await?;
 
-    let found = music_warnings(policy, latest_status, &ticked);
+    let found = music_warnings(lang, policy, latest_status, &ticked);
     let mut on_phone = Vec::new();
     let mut warnings = Vec::new();
     let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
@@ -4941,8 +4948,13 @@ pub(crate) async fn device_card(
             }
             if let Some(bytes) = report.cache_bytes {
                 // An app from before design 30 step 3a sends no `audio_bytes`: only what it stores.
-                let stored =
-                    music::storage(bytes, report.audio_bytes, report.extra_bytes, storage_limit);
+                let stored = music::storage(
+                    lang,
+                    bytes,
+                    report.audio_bytes,
+                    report.extra_bytes,
+                    storage_limit,
+                );
                 on_phone.push(Row::new(
                     "stored",
                     t(lang, "device.music.stored"),
@@ -5606,25 +5618,29 @@ pub async fn save_device_settings(
         Err(err) => return server_error(lang, err, "couldn't save a phone's music settings"),
     };
     nudge(&state, &[id]);
+    // "2 GB" and "80 %" are facts; "no limit" and "off" words of ours, worded for the reader.
+    let device = id.to_string();
+    let limit = music::storage_limit(stored_limit).map(|gb| format!("{gb} GB"));
+    let cap_text = cap.map(|c| format!("{c} %"));
+    let mut params = vec![("device", device.as_str())];
+    params.extend(limit.as_deref().map(|limit| ("limit", limit)));
+    params.extend(cap_text.as_deref().map(|cap| ("cap", cap)));
+    let mut detail = security::Detail::words("security.detail.music.phone_settings", &params);
+    if limit.is_none() {
+        detail = detail.word("limit", "music.size.no_limit");
+    }
+    if cap_text.is_none() {
+        detail = detail.word("cap", "security.detail.off");
+    }
     log_event(
         &state,
         &admin,
         "music_phone_settings",
-        security::Detail::words(
-            "security.detail.music.phone_settings",
-            &[
-                ("device", &id.to_string()),
-                (
-                    "limit",
-                    &music::storage_limit_label(music::storage_limit(stored_limit)),
-                ),
-                ("cap", &cap.map_or("off".to_string(), |c| format!("{c} %"))),
-            ],
-        )
-        .word("stream", on_off_key(stream))
-        .word("download", on_off_key(download))
-        .word("storytel", on_off_key(storytel))
-        .with_facts(format!("device {id}")),
+        detail
+            .word("stream", on_off_key(stream))
+            .word("download", on_off_key(download))
+            .word("storytel", on_off_key(storytel))
+            .with_facts(format!("device {id}")),
     )
     .await;
     Redirect::to(&format!("/devices/{id}/music#music-settings")).into_response()

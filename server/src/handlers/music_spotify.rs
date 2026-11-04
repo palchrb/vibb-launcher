@@ -1441,11 +1441,11 @@ pub async fn add(
             .await;
             match resolved {
                 Ok(Ok(reference)) => reference,
-                Ok(Err(err)) => refused!(err.message(), "link"),
+                Ok(Err(err)) => refused!(err.message(lang), "link"),
                 Err(_) => refused!(t(lang, "music.spotify.error.unreachable"), "link"),
             }
         }
-        Err(err) => refused!(err.message(), "link"),
+        Err(err) => refused!(err.message(lang), "link"),
     };
     let target = reference.target();
     let existing: Option<i64> =
@@ -1485,7 +1485,7 @@ pub async fn add(
                 if let spotify::SpotifyError::Database(err) = &none.err {
                     return server_error(lang, err, "couldn't read the Spotify accounts");
                 }
-                refused!(spotify::add_refusal(&none), "link")
+                refused!(spotify::add_refusal(lang, &none), "link")
             }
             Err(_) => refused!(t(lang, "music.spotify.error.unreachable"), "link"),
         };
@@ -1496,7 +1496,7 @@ pub async fn add(
         .and_then(|name| music::cut_title(name, MAX_NAME_CHARS))
         // No name from Spotify (a playlist's is optional): the kind's word, never the source's -
         // the name is the kid's tile and lock screen (design 26c step 8, qa-26c-step8-code L2).
-        .unwrap_or_else(|| reference.kind.plain_name().to_string());
+        .unwrap_or_else(|| reference.kind.plain_name(lang).to_string());
     // The entry and its ticks in one write transaction: the limit is the INSERT's own condition,
     // each tick's size check and write the import's (`music::tick_fits`).
     let mut on = Vec::new();

@@ -47,6 +47,7 @@ use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 
 use crate::AppState;
+use crate::i18n::{Lang, t, t_params};
 use crate::music_net::{FetchError, Kind, Reach, Source, SourceRequest, SourceResponse};
 use crate::music_sweep::{parse_stamp, stamp};
 
@@ -197,15 +198,19 @@ impl LinkKind {
     /// word without the source's, because the name is the kid's tile, notification and lock
     /// screen, which never name Spotify (design 26c step 8, qa-26c-step8-code L2). The PWA's
     /// labels stay `music::kind_label`'s ("Spotify playlist" ...).
-    pub fn plain_name(self) -> &'static str {
-        match self {
-            LinkKind::Playlist => "Playlist",
-            LinkKind::Album => "Album",
-            LinkKind::Track => "Track",
-            LinkKind::Artist => "Artist",
-            LinkKind::Show => "Podcast",
-            LinkKind::Episode => "Episode",
-        }
+    /// In the language of the parent who adds it (it is stored as the entry's name).
+    pub fn plain_name(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                LinkKind::Playlist => "music.default_name.playlist",
+                LinkKind::Album => "music.default_name.album",
+                LinkKind::Track => "music.default_name.track",
+                LinkKind::Artist => "music.default_name.artist",
+                LinkKind::Show => "music.default_name.podcast",
+                LinkKind::Episode => "music.default_name.episode",
+            },
+        )
     }
 
     fn parse(text: &str) -> Option<Self> {
@@ -267,17 +272,18 @@ pub enum LinkError {
 }
 
 impl LinkError {
-    /// The add form's sentence (2b).
-    pub fn message(self) -> &'static str {
+    /// The add form's sentence (2b): its key.
+    pub fn key(self) -> &'static str {
         match self {
-            LinkError::NotALink => {
-                "That isn't a Spotify link to a playlist, album, track, artist, podcast or episode."
-            }
-            LinkError::Audiobook => "Spotify audiobooks can't be played here.",
-            LinkError::Collection => {
-                "Liked Songs and Spotify profiles can't be added - make a playlist instead."
-            }
+            LinkError::NotALink => "music.spotify.link_error.not_a_link",
+            LinkError::Audiobook => "music.spotify.link_error.audiobook",
+            LinkError::Collection => "music.spotify.link_error.collection",
         }
+    }
+
+    /// The add form's sentence in `lang`.
+    pub fn message(self, lang: Lang) -> &'static str {
+        t(lang, self.key())
     }
 }
 
@@ -884,38 +890,31 @@ impl SpotifyError {
         }
     }
 
-    /// One line for a page.
-    pub fn message(&self) -> String {
-        match self {
-            SpotifyError::Off => "No Spotify app is set up on this server.".to_string(),
-            SpotifyError::NoAccount => "No Spotify account is logged in.".to_string(),
-            SpotifyError::Reauthorize => "The Spotify login needs renewing.".to_string(),
-            SpotifyError::AppRefused => {
-                "Spotify doesn't accept this server's client ID any more.".to_string()
+    /// One line for a page, in `lang`.
+    pub fn message(&self, lang: Lang) -> String {
+        let key = match self {
+            SpotifyError::Off => "music.spotify.fail.off",
+            SpotifyError::NoAccount => "music.spotify.fail.no_account",
+            SpotifyError::Reauthorize => "music.spotify.fail.reauthorize",
+            SpotifyError::AppRefused => "music.spotify.fail.app_refused",
+            SpotifyError::NotFound => "music.spotify.fail.not_found",
+            SpotifyError::RateLimited(_) => "music.spotify.fail.rate_limited",
+            SpotifyError::Quota => "music.spotify.fail.quota",
+            SpotifyError::Fetch(FetchError::Timeout) => "music.spotify.fail.timeout",
+            SpotifyError::Fetch(_) => "music.spotify.fail.network",
+            SpotifyError::Status(status) => {
+                return t_params(
+                    lang,
+                    "music.spotify.fail.status",
+                    &[("status", &status.to_string())],
+                );
             }
-            SpotifyError::NotFound => {
-                "Spotify doesn't let this app open it (or it was deleted).".to_string()
-            }
-            SpotifyError::RateLimited(_) => {
-                "Spotify asked this server to slow down - it tries again later.".to_string()
-            }
-            SpotifyError::Quota => {
-                "Spotify's limit for this app was reached - it tries again later.".to_string()
-            }
-            SpotifyError::Fetch(FetchError::Timeout) => {
-                "Spotify didn't answer in time.".to_string()
-            }
-            SpotifyError::Fetch(_) => "Spotify couldn't be reached.".to_string(),
-            SpotifyError::Status(status) => format!("Spotify answered {status}."),
-            SpotifyError::TooBig => "Spotify's answer was too big to read.".to_string(),
-            SpotifyError::BadAnswer => "Spotify sent an answer this server can't read.".to_string(),
-            SpotifyError::Key => {
-                "The saved Spotify login was locked with another key - log in again.".to_string()
-            }
-            SpotifyError::Database(_) => {
-                "Couldn't read the Spotify accounts - check the server log.".to_string()
-            }
-        }
+            SpotifyError::TooBig => "music.spotify.fail.too_big",
+            SpotifyError::BadAnswer => "music.spotify.fail.bad_answer",
+            SpotifyError::Key => "music.spotify.fail.key",
+            SpotifyError::Database(_) => "music.spotify.fail.database",
+        };
+        t(lang, key).to_string()
     }
 }
 
@@ -2249,32 +2248,21 @@ pub async fn add_check(state: &AppState, reference: &SpotifyRef) -> Result<AddCh
 /// The add form's sentence for a failed check (§3.2): every account refused (404/403) - Spotify
 /// won't let this app open it; the network, a timeout, Spotify's 5xx or a rate limit - try again;
 /// otherwise the error's own line.
-pub fn add_refusal(none: &NoReader) -> String {
-    match &none.err {
-        SpotifyError::NotFound | SpotifyError::Status(403) => {
-            "Spotify doesn't let this app open it - Spotify's own playlists (made by Spotify) \
-             aren't available to developer apps, or the link is private or deleted."
-                .to_string()
-        }
-        SpotifyError::Fetch(_) | SpotifyError::RateLimited(_) => {
-            "Spotify couldn't be reached - try again.".to_string()
-        }
-        SpotifyError::Status(status) if *status >= 500 => {
-            "Spotify couldn't be reached - try again.".to_string()
-        }
-        SpotifyError::Quota => {
-            "Spotify's limit for this app was reached - try again in an hour.".to_string()
-        }
+pub fn add_refusal(lang: Lang, none: &NoReader) -> String {
+    let key = match &none.err {
+        SpotifyError::NotFound | SpotifyError::Status(403) => "music.spotify.refusal.not_open",
+        SpotifyError::Fetch(_) | SpotifyError::RateLimited(_) => "music.spotify.error.unreachable",
+        SpotifyError::Status(status) if *status >= 500 => "music.spotify.error.unreachable",
+        SpotifyError::Quota => "music.spotify.refusal.quota",
         // No status codes or parser words on the form (qa-26c-step2b-code L4).
         SpotifyError::Status(_) | SpotifyError::TooBig | SpotifyError::BadAnswer => {
-            "Spotify couldn't open it just now - try again.".to_string()
+            "music.spotify.refusal.not_now"
         }
-        SpotifyError::NoAccount => "Log in with a Spotify account first.".to_string(),
-        SpotifyError::Reauthorize => {
-            "The Spotify logins need renewing - log in again first.".to_string()
-        }
-        other => other.message(),
-    }
+        SpotifyError::NoAccount => "music.spotify.error.no_account",
+        SpotifyError::Reauthorize => "music.spotify.refusal.reauthorize",
+        other => return other.message(lang),
+    };
+    t(lang, key).to_string()
 }
 
 /// One listed track or episode (§3.4): the id (the item's key), the title (`"<name> — <artist>,
@@ -2692,13 +2680,13 @@ pub enum ShortLinkError {
 }
 
 impl ShortLinkError {
-    /// The add form's sentence (2b).
-    pub fn message(&self) -> String {
+    /// The add form's sentence (2b), in `lang`.
+    pub fn message(&self, lang: Lang) -> String {
         match self {
-            ShortLinkError::Dead => "That Spotify link didn't lead anywhere.".to_string(),
-            ShortLinkError::Link(err) => err.message().to_string(),
+            ShortLinkError::Dead => t(lang, "music.spotify.link_error.dead").to_string(),
+            ShortLinkError::Link(err) => err.message(lang).to_string(),
             ShortLinkError::Unreachable(_) => {
-                "Spotify couldn't be reached - try again.".to_string()
+                t(lang, "music.spotify.error.unreachable").to_string()
             }
         }
     }
@@ -2855,7 +2843,7 @@ pub(crate) mod tests {
             assert_eq!(parse_link(&text), Err(LinkError::Audiobook), "{text}");
         }
         assert_eq!(
-            LinkError::Audiobook.message(),
+            LinkError::Audiobook.message(Lang::En),
             "Spotify audiobooks can't be played here."
         );
         for text in [
@@ -2868,7 +2856,11 @@ pub(crate) mod tests {
         ] {
             assert_eq!(parse_link(text), Err(LinkError::Collection), "{text}");
         }
-        assert!(LinkError::Collection.message().contains("Liked Songs"));
+        assert!(
+            LinkError::Collection
+                .message(Lang::En)
+                .contains("Liked Songs")
+        );
         // Junk, bad ids, other hosts and shapes.
         for text in [
             String::new(),
@@ -3950,7 +3942,7 @@ pub(crate) mod tests {
                 .await
                 .expect_err("the request fails");
             let err = SpotifyError::Fetch(err);
-            secret_free(&format!("{err:?} {} {}", err.message(), err.code()));
+            secret_free(&format!("{err:?} {} {}", err.message(Lang::En), err.code()));
         }
         // Through the account: answers that echo the token never reach the error.
         let app = TestApp::new().await;
@@ -3969,7 +3961,9 @@ pub(crate) mod tests {
                 .await
             {
                 Ok(_) => panic!("{status}: no token"),
-                Err(err) => secret_free(&format!("{err:?} {} {}", err.message(), err.code())),
+                Err(err) => {
+                    secret_free(&format!("{err:?} {} {}", err.message(Lang::En), err.code()))
+                }
             }
         }
         let stored: Vec<(Option<String>,)> =
@@ -4577,14 +4571,20 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, ShortLinkError::Link(LinkError::Audiobook));
-        assert_eq!(err.message(), "Spotify audiobooks can't be played here.");
+        assert_eq!(
+            err.message(Lang::En),
+            "Spotify audiobooks can't be played here."
+        );
         let err = resolve_short_link(source, "https://spotify.link/Unknown1")
             .await
             .unwrap_err();
         assert!(matches!(err, ShortLinkError::Unreachable(_)));
-        assert_eq!(err.message(), "Spotify couldn't be reached - try again.");
         assert_eq!(
-            ShortLinkError::Dead.message(),
+            err.message(Lang::En),
+            "Spotify couldn't be reached - try again."
+        );
+        assert_eq!(
+            ShortLinkError::Dead.message(Lang::En),
             "That Spotify link didn't lead anywhere."
         );
         // Only a short link is asked at all.

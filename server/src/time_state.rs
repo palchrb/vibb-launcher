@@ -109,8 +109,8 @@ impl TimeReport {
         matches!((self.used_minutes, self.budget_minutes), (Some(used), Some(budget)) if used >= budget)
     }
 
-    /// The badge's name: the rule's, else the kind of lock - in English and as its catalog key
-    /// (the status lines', 2026-11-01).
+    /// The badge's name: the rule's, else the kind of lock as its catalog key (the status lines',
+    /// 2026-11-01; the name is then empty).
     fn lock_name(&self) -> Option<(String, Option<&'static str>)> {
         if !self.locking() {
             return None;
@@ -118,14 +118,14 @@ impl TimeReport {
         if let Some(name) = &self.active_rule_name {
             return Some((name.clone(), None));
         }
-        let (name, key) = match self.lock_reason.as_str() {
-            "SCREEN_TIME" => ("Screen time used up", "devices.status.lock.screen_time"),
-            "BEDTIME" => ("Bedtime", "devices.status.lock.bedtime"),
-            "SCHOOL" => ("School", "devices.status.lock.school"),
-            "RULE" => ("Time rule", "devices.status.lock.rule"),
-            _ => ("Locked", "devices.status.lock.locked"),
+        let key = match self.lock_reason.as_str() {
+            "SCREEN_TIME" => "devices.status.lock.screen_time",
+            "BEDTIME" => "devices.status.lock.bedtime",
+            "SCHOOL" => "devices.status.lock.school",
+            "RULE" => "devices.status.lock.rule",
+            _ => "devices.status.lock.locked",
         };
-        Some((name.to_string(), Some(key)))
+        Some((String::new(), Some(key)))
     }
 }
 
@@ -147,6 +147,7 @@ pub fn rule_days(rules: &[crate::time_rules::TimeRuleRow]) -> Vec<(i64, Vec<Opti
 /// The lock badge, while something locks the phone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockBadge {
+    /// The rule's own name; empty when [Self::name_key] names the kind of lock.
     pub name: String,
     /// The name's catalog key when it is the kind of lock, not a rule's own name.
     pub name_key: Option<&'static str>,
@@ -158,33 +159,6 @@ pub struct LockBadge {
 }
 
 impl LockBadge {
-    /// "Skole until 14:30 · calls off", "Leggetid · at last report (yesterday 21:40)".
-    pub fn text(&self) -> String {
-        let mut text = self.name.clone();
-        if let Some(until) = &self.until {
-            text.push_str(&format!(" until {until}"));
-        }
-        if self.calls_off {
-            text.push_str(" · calls off");
-        }
-        if let Some(when) = &self.at_last_report {
-            text.push_str(&format!(" · at last report ({when})"));
-        }
-        text
-    }
-
-    /// As [LockBadge::text], without the time when the row already says it ("seen 3 h ago").
-    pub fn text_beside(&self, seen: &str) -> String {
-        match &self.at_last_report {
-            Some(when) if when == seen => {
-                let mut short = self.clone();
-                short.at_last_report = None;
-                format!("{} · at last report", short.text())
-            }
-            _ => self.text(),
-        }
-    }
-
     /// The status lines' words for the lock in `lang` (the user's pick C, 2026-11-01): "Leggetid
     /// til 07:00 · samtaler av", "Skole · ved siste melding (i går 21:40)"; the time of the last
     /// report left out when it is `contact`'s (the phone's last contact, worded the same way).
@@ -265,17 +239,24 @@ impl ScreenTime {
         )
     }
 
-    /// "42 of 90 min today", "42 min today" without a limit, "42 of 90 min on 13 Oct" in the
-    /// fallback zone.
-    pub fn text(&self) -> String {
-        let when = match &self.day {
-            Some(day) => format!("on {day}"),
-            None => "today".to_string(),
+    /// Device › Time's words in `lang`: "42 of 90 min today", "42 min today" without a limit, "42 of 90
+    /// min on 13 Oct" in the fallback zone.
+    pub fn text(&self, lang: Lang) -> String {
+        let key = match (self.budget, &self.day) {
+            (Some(_), None) => "device.time.screen.today_budget",
+            (None, None) => "device.time.screen.today",
+            (Some(_), Some(_)) => "device.time.screen.on_day_budget",
+            (None, Some(_)) => "device.time.screen.on_day",
         };
-        match self.budget {
-            Some(budget) => format!("{} of {budget} min {when}", self.used),
-            None => format!("{} min {when}", self.used),
-        }
+        t_params(
+            lang,
+            key,
+            &[
+                ("used", &self.used.to_string()),
+                ("budget", &self.budget.unwrap_or_default().to_string()),
+                ("day", self.day.as_deref().unwrap_or_default()),
+            ],
+        )
     }
 }
 
@@ -510,7 +491,7 @@ mod tests {
             now,
         )
         .unwrap()
-        .text()
+        .words(Lang::En, None)
     }
 
     #[test]
@@ -592,7 +573,7 @@ mod tests {
             now,
         )
         .unwrap()
-        .text();
+        .words(Lang::En, None);
         assert_eq!(text, "Skole · at last report (7 h ago)");
     }
 
@@ -880,12 +861,18 @@ mod tests {
             now,
         )
         .unwrap();
-        assert_eq!(badge.text(), "Leggetid · at last report (yesterday 21:40)");
         assert_eq!(
-            badge.text_beside("yesterday 21:40"),
+            badge.words(Lang::En, None),
+            "Leggetid · at last report (yesterday 21:40)"
+        );
+        assert_eq!(
+            badge.words(Lang::En, Some("yesterday 21:40")),
             "Leggetid · at last report"
         );
-        assert_eq!(badge.text_beside("2 min ago"), badge.text());
+        assert_eq!(
+            badge.words(Lang::En, Some("2 min ago")),
+            badge.words(Lang::En, None)
+        );
         assert_eq!(screen_time(&stale, &oslo(), now), None);
         let today = TimeReport {
             day: NaiveDate::from_ymd_opt(2026, 10, 14),
@@ -893,7 +880,7 @@ mod tests {
         };
         let bar = screen_time(&today, &oslo(), now).unwrap();
         assert_eq!(
-            (bar.text(), bar.percent()),
+            (bar.text(Lang::En), bar.percent()),
             ("42 of 90 min today".to_string(), Some(46))
         );
     }
@@ -926,7 +913,7 @@ mod tests {
                 now,
             )
             .unwrap()
-            .text()
+            .words(Lang::En, None)
         };
         assert_eq!(badge(10, true), "Skole until 14:30");
         assert_eq!(badge(15, true), "Skole until 14:30");
@@ -969,7 +956,7 @@ mod tests {
                 now,
             )
             .unwrap()
-            .text()
+            .words(Lang::En, None)
         };
         assert_eq!(badge(true), "Skole until 14:30 · calls off");
         assert_eq!(badge(false), "Skole until 14:30");
@@ -993,7 +980,7 @@ mod tests {
             ..Default::default()
         };
         let badge = lock_badge(&used_up, &ctx, &zone, now).unwrap();
-        assert_eq!(badge.text(), "Screen time used up");
+        assert_eq!(badge.words(Lang::En, None), "Screen time used up");
         assert_eq!(
             screen_time(&used_up, &zone, now).unwrap().percent(),
             Some(100)
@@ -1012,7 +999,7 @@ mod tests {
         };
         let st = screen_time(&unlimited, &zone, now).unwrap();
         assert_eq!(
-            (st.text(), st.percent()),
+            (st.text(Lang::En), st.percent()),
             ("42 min today".to_string(), None)
         );
         let idle = TimeReport {
@@ -1023,7 +1010,9 @@ mod tests {
         // An older launcher: the reason's word, no end.
         let old = TimeReport::from_lock_reason("BEDTIME");
         assert_eq!(
-            lock_badge(&old, &ctx, &zone, now).unwrap().text(),
+            lock_badge(&old, &ctx, &zone, now)
+                .unwrap()
+                .words(Lang::En, None),
             "Bedtime"
         );
     }
@@ -1053,9 +1042,13 @@ mod tests {
             now,
         )
         .unwrap();
-        assert_eq!(badge.text(), "Bedtime", "no end, and not stale");
+        assert_eq!(
+            badge.words(Lang::En, None),
+            "Bedtime",
+            "no end, and not stale"
+        );
         let bar = screen_time(&bedtime, &zone, now).unwrap();
-        assert_eq!(bar.text(), "42 of 90 min on 13 Oct");
+        assert_eq!(bar.text(Lang::En), "42 of 90 min on 13 Oct");
         // Two days off is another day.
         let old = TimeReport {
             day: NaiveDate::from_ymd_opt(2026, 10, 11),

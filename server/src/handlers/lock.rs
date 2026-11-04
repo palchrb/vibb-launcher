@@ -325,7 +325,7 @@ pub async fn set(
     };
     match admin_auth::reauth(&state, &session, &admin, proof).await {
         Reauth::Right => {}
-        Reauth::Busy => return admin_auth::busy_response(),
+        Reauth::Busy => return admin_auth::busy_response(lang),
         Reauth::SignedOut => return admin_auth::signed_out_response(),
         Reauth::NeedsPasskey => {
             return render(refuse(t(lang, "passkeys.only.needs_passkey").to_string())).await;

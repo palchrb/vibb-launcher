@@ -204,7 +204,7 @@ pub async fn add(
     let (reauth, changed) =
         match admin_auth::reauth_and_hash(&state, &session, &actor, proof, &otp).await {
             Ok(answer) => answer,
-            Err(admin_auth::Busy) => return admin_auth::busy_response(),
+            Err(admin_auth::Busy) => return admin_auth::busy_response(lang),
         };
     if !matches!(
         reauth,
@@ -380,7 +380,7 @@ pub async fn reset(
     let (reauth, changed) =
         match admin_auth::reauth_and_hash(&state, &session, &actor, proof, &otp).await {
             Ok(answer) => answer,
-            Err(admin_auth::Busy) => return admin_auth::busy_response(),
+            Err(admin_auth::Busy) => return admin_auth::busy_response(lang),
         };
     if !matches!(
         reauth,
@@ -528,7 +528,7 @@ pub async fn remove(
     let proof = admin_auth::Proof::of(&form.current_password, &form.assertion, &ceremony);
     match admin_auth::reauth(&state, &session, &actor, proof).await {
         admin_auth::Reauth::Right => {}
-        admin_auth::Reauth::Busy => return admin_auth::busy_response(),
+        admin_auth::Reauth::Busy => return admin_auth::busy_response(lang),
         admin_auth::Reauth::NeedsPasskey => {
             let answer = refuse(t(lang, "passkeys.only.needs_passkey").to_string());
             return render_account(

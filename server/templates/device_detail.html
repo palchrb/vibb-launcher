@@ -213,7 +213,7 @@
             {% for b in relock.blocks.items %}
             <details class="info cell" data-block="{{ b.package_name }}">
                 <summary class="row">
-                    <span class="row-label">{{ b.name }}<span class="row-sub{% if b.why.imposter() %} text-alarm{% endif %}">{{ b.why.text() }}{% if !b.when.is_empty() %} · <span title="{{ b.exact }}">{{ b.when }}</span>{% endif %}</span></span>
+                    <span class="row-label">{{ b.name }}<span class="row-sub{% if b.why.imposter() %} text-alarm{% endif %}">{{ self.t(b.why.key()) }}{% if !b.when.is_empty() %} · <span title="{{ b.exact }}">{{ b.when }}</span>{% endif %}</span></span>
                     {% if let Some(ticked) = b.ticked %}<span class="row-value">{% if ticked %}{{ self.t("device.summary.blocked.allowed") }}{% else %}{{ self.t("device.summary.blocked.not_allowed") }}{% endif %}</span>{% endif %}
                     <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                 </summary>

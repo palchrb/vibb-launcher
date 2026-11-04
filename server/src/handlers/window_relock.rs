@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
+use crate::i18n::Lang;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
@@ -29,7 +30,7 @@ pub struct RelockCard {
     /// The page reloads itself (`static/auto-reload.js`) while the phone hasn't shown what Lock
     /// again or Unlock 2 h… did, for at most 2 minutes ([window_relock::waiting_for_phone]).
     pub wait_for_phone: bool,
-    /// The flash after a command was queued (`?notice=`): its summary group and text.
+    /// The flash after a command was queued (`?notice=`): its summary group and key.
     pub notice: Option<(&'static str, &'static str)>,
     /// The last relock's findings, for a week ([window_relock::findings]).
     pub findings: Option<Findings>,
@@ -121,7 +122,7 @@ pub async fn card(
         foreign: window_relock::parse_foreign_access(
             latest.and_then(|s| s.foreign_access_json.as_deref()),
         )
-        .map(|f| window_relock::foreign_view(&f, paused, &names)),
+        .map(|f| window_relock::foreign_view(zone.lang(), &f, paused, &names)),
         allow_value: window_relock::allow_form_value(&blocks.allow),
         blocks,
     })
@@ -230,6 +231,7 @@ async fn queue_own_command(
 
 async fn queue(
     state: &AppState,
+    lang: Lang,
     id: i64,
     admin: &crate::models::AdminUser,
     command: &str,
@@ -262,14 +264,14 @@ async fn queue(
             let group = window_relock::flash(notice).map_or("quick", |(group, _)| group);
             Redirect::to(&format!("/devices/{id}?notice={notice}#{group}")).into_response()
         }
-        Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(false) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
         Err(err) => {
             tracing::error!(device_id = id, %err, command, "can't queue the command");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't send it - nothing was queued. Check the server log.",
+                "error.command_send",
             )
-                .into_response()
         }
     }
 }
@@ -279,9 +281,19 @@ async fn queue(
 pub async fn end_windows(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(&state, id, &admin, END_WINDOWS, "end_windows_sent", None).await
+    queue(
+        &state,
+        lang,
+        id,
+        &admin,
+        END_WINDOWS,
+        "end_windows_sent",
+        None,
+    )
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -297,19 +309,17 @@ pub struct AllowForm {
 pub async fn allow_blocked(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<AllowForm>,
 ) -> Response {
     let allow = window_relock::parse_allow_form(&form.blocks);
     if allow.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "No app to allow - reload the phone's page and try \"Allow these apps\" again.",
-        )
-            .into_response();
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.no_app_to_allow");
     }
     queue(
         &state,
+        lang,
         id,
         &admin,
         ALLOW_BLOCKED,
@@ -325,9 +335,19 @@ pub async fn allow_blocked(
 pub async fn start_pause(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(&state, id, &admin, START_PAUSE, "start_pause_sent", None).await
+    queue(
+        &state,
+        lang,
+        id,
+        &admin,
+        START_PAUSE,
+        "start_pause_sent",
+        None,
+    )
+    .await
 }
 
 /// The latest report's `relock_blocks`, read before a new report is stored.

@@ -326,26 +326,30 @@ impl Limits {
 impl Via {
     /// About This Phone's "Network" value (design 31 §3.2; it replaces the Access card's "Last
     /// access" sentence).
-    pub fn label(self) -> &'static str {
-        match self {
-            Via::Tailnet => "Over the tailnet",
-            Via::Loopback => "This machine",
-            Via::Public => "Outside the tailnet",
-        }
+    pub fn label(self, lang: crate::i18n::Lang) -> &'static str {
+        crate::i18n::t(
+            lang,
+            match self {
+                Via::Tailnet => "device.about.via.tailnet",
+                Via::Loopback => "device.about.via.loopback",
+                Via::Public => "device.about.via.public",
+            },
+        )
     }
 }
 
 impl LastAccess {
     /// The ⓘ under the "Network" row: the outside addresses, or why it says "This machine".
-    pub fn detail(&self) -> Option<String> {
+    pub fn detail(&self, lang: crate::i18n::Lang) -> Option<String> {
         if !self.public_ips.is_empty() {
-            return Some(format!(
-                "Addresses outside the tailnet, newest first: {}.",
-                self.public_ips.join(", ")
+            return Some(crate::i18n::t_params(
+                lang,
+                "device.about.via.public_sub",
+                &[("addresses", &self.public_ips.join(", "))],
             ));
         }
         (self.via == Via::Loopback)
-            .then(|| "No proxy, or a proxy that sent no client address.".to_string())
+            .then(|| crate::i18n::t(lang, "device.about.via.loopback_sub").to_string())
     }
 }
 
@@ -685,9 +689,12 @@ mod tests {
             via: Via::Public,
             public_ips: vec!["203.0.113.7".into(), "198.51.100.2".into()],
         };
-        assert_eq!(outside.via.label(), "Outside the tailnet");
         assert_eq!(
-            outside.detail().unwrap(),
+            outside.via.label(crate::i18n::Lang::En),
+            "Outside the tailnet"
+        );
+        assert_eq!(
+            outside.detail(crate::i18n::Lang::En).unwrap(),
             "Addresses outside the tailnet, newest first: 203.0.113.7, 198.51.100.2."
         );
         // Over the tailnet now, the outside addresses from before still show.
@@ -695,20 +702,30 @@ mod tests {
             via: Via::Tailnet,
             ..outside
         };
-        assert_eq!(tailnet.via.label(), "Over the tailnet");
-        assert!(tailnet.detail().unwrap().contains("203.0.113.7"));
+        assert_eq!(tailnet.via.label(crate::i18n::Lang::En), "Over the tailnet");
+        assert!(
+            tailnet
+                .detail(crate::i18n::Lang::En)
+                .unwrap()
+                .contains("203.0.113.7")
+        );
         let clean = LastAccess {
             at,
             via: Via::Tailnet,
             public_ips: Vec::new(),
         };
-        assert_eq!(clean.detail(), None);
+        assert_eq!(clean.detail(crate::i18n::Lang::En), None);
         let local = LastAccess {
             via: Via::Loopback,
             ..clean
         };
-        assert_eq!(local.via.label(), "This machine");
-        assert!(local.detail().unwrap().contains("no client address"));
+        assert_eq!(local.via.label(crate::i18n::Lang::En), "This machine");
+        assert!(
+            local
+                .detail(crate::i18n::Lang::En)
+                .unwrap()
+                .contains("no client address")
+        );
     }
 
     #[test]

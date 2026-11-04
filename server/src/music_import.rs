@@ -17,6 +17,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
+use crate::i18n::{Lang, t, t_params};
 use crate::music::{self, DEFAULT_CACHE, MAX_ENTRIES, MAX_NAME_CHARS};
 
 /// The largest file read (and the largest preview document accepted back).
@@ -48,8 +49,10 @@ pub enum Skip {
     /// A `spotify.link` short link: resolving it needs a request (design 26c §3.2).
     SpotifyShortLink,
     Folder,
-    /// `parse_link` refused it (its reason).
+    /// `parse_link` refused it: its reason's key.
     BadLink(&'static str),
+    /// A `storytel:` target outside the grammar.
+    BadStorytel,
     NoName,
     /// An entry of a section that follows a Spotify profile.
     SpotifyProfile,
@@ -59,25 +62,37 @@ pub enum Skip {
 }
 
 impl Skip {
-    pub fn reason(&self) -> String {
-        match self {
-            Skip::SpotifyShortLink => {
-                "a Spotify short link - resolve it by adding it on the Spotify page".to_string()
+    /// Why, in `lang` (a refusal's sentence without its full stop).
+    pub fn reason(&self, lang: Lang) -> String {
+        let key = match self {
+            Skip::SpotifyShortLink => "music.import.skip.short_link",
+            Skip::Folder => "music.import.skip.folder",
+            Skip::BadLink(key) => {
+                return t(lang, key).trim_end_matches('.').to_string();
             }
-            Skip::Folder => {
-                "a folder on the Vibb box - upload the files as an own-files entry".to_string()
+            Skip::BadStorytel => {
+                return t_params(
+                    lang,
+                    "music.import.skip.storytel_target",
+                    &[
+                        ("series", "storytel:series:<id>"),
+                        ("book", "storytel:book:<id>"),
+                    ],
+                );
             }
-            Skip::BadLink(reason) => reason.trim_end_matches('.').to_string(),
-            Skip::NoName => "it has no name".to_string(),
-            Skip::SpotifyProfile => {
-                "it comes from a Spotify profile, which can't be followed here - add its playlists \
-                 on the Spotify page"
-                    .to_string()
+            Skip::NoName => "music.import.skip.no_name",
+            Skip::SpotifyProfile => "music.import.skip.profile",
+            Skip::InLibrary => "music.import.skip.in_library",
+            Skip::Repeat => "music.import.skip.repeat",
+            Skip::Full => {
+                return t_params(
+                    lang,
+                    "music.import.skip.full",
+                    &[("max", &MAX_ENTRIES.to_string())],
+                );
             }
-            Skip::InLibrary => "already in the library".to_string(),
-            Skip::Repeat => "it is in the file twice - the first one is used".to_string(),
-            Skip::Full => format!("the library holds at most {MAX_ENTRIES} entries"),
-        }
+        };
+        t(lang, key).to_string()
     }
 }
 
@@ -136,10 +151,10 @@ fn classify(target: &str, spotify_user: bool) -> Result<music::Link, Skip> {
         Err(
             err @ (crate::spotify::LinkError::Audiobook | crate::spotify::LinkError::Collection),
         ) => {
-            return Err(Skip::BadLink(err.message()));
+            return Err(Skip::BadLink(err.key()));
         }
         Err(crate::spotify::LinkError::NotALink) if lower.starts_with("spotify:") => {
-            return Err(Skip::BadLink(crate::spotify::LinkError::NotALink.message()));
+            return Err(Skip::BadLink(crate::spotify::LinkError::NotALink.key()));
         }
         Err(crate::spotify::LinkError::NotALink) => {}
     }
@@ -147,16 +162,12 @@ fn classify(target: &str, spotify_user: bool) -> Result<music::Link, Skip> {
         // vibb's grammar, as the shelf picker writes it (no fetch: the sweep lists it).
         return crate::storytel::parse_target(trimmed)
             .map(|(kind, id)| music::Link::Storytel { kind, id })
-            .ok_or(Skip::BadLink(
-                "That Storytel target isn't storytel:series:<id> or storytel:book:<id>.",
-            ));
+            .ok_or(Skip::BadStorytel);
     }
     if trimmed.starts_with('/') {
         return Err(Skip::Folder);
     }
-    // The import's skip reasons stay English until design 70's slice 4.
-    music::parse_link(trimmed)
-        .map_err(|key| Skip::BadLink(crate::i18n::t(crate::i18n::Lang::En, key)))
+    music::parse_link(trimmed).map_err(Skip::BadLink)
 }
 
 fn row_of(entry: &serde_json::Map<String, Value>, spotify_user: bool) -> Row {
@@ -401,10 +412,7 @@ mod tests {
                 Err(Skip::SpotifyShortLink),
                 Ok("storytel:series:9"),
                 Err(Skip::Folder),
-                Err(Skip::BadLink(
-                    "That NRK link is neither a podcast (radio.nrk.no/podkast/...) nor a series \
-                     (radio.nrk.no/serie/...)."
-                )),
+                Err(Skip::BadLink("music.link.not_nrk")),
                 Err(Skip::NoName),
                 Err(Skip::SpotifyProfile),
             ]
@@ -588,7 +596,7 @@ mod tests {
         );
         for row in &rows[2..] {
             assert!(
-                matches!(&row.outcome, Err(Skip::BadLink(reason)) if reason.contains("storytel:series:<id>")),
+                matches!(&row.outcome, Err(skip @ Skip::BadStorytel) if skip.reason(Lang::En).contains("storytel:series:<id>")),
                 "{}",
                 row.target
             );
@@ -640,14 +648,20 @@ mod tests {
             ("spotify:album:2FakeAlbumX00000000001", 0)
         );
         assert_eq!(rows[2].outcome, Err(Skip::SpotifyShortLink));
-        assert!(Skip::SpotifyShortLink.reason().contains("Spotify page"));
+        assert!(
+            Skip::SpotifyShortLink
+                .reason(Lang::En)
+                .contains("Spotify page")
+        );
         assert_eq!(
             rows[3].outcome,
-            Err(Skip::BadLink("Spotify audiobooks can't be played here."))
+            Err(Skip::BadLink("music.spotify.link_error.audiobook"))
         );
-        assert!(matches!(&rows[4].outcome, Err(Skip::BadLink(r)) if r.contains("Liked Songs")));
         assert!(
-            matches!(&rows[5].outcome, Err(Skip::BadLink(r)) if r.contains("isn't a Spotify link"))
+            matches!(&rows[4].outcome, Err(Skip::BadLink(r)) if t(Lang::En, r).contains("Liked Songs"))
+        );
+        assert!(
+            matches!(&rows[5].outcome, Err(Skip::BadLink(r)) if t(Lang::En, r).contains("isn't a Spotify link"))
         );
         assert_eq!(rows[6].outcome.as_ref().unwrap().source, "rss");
         assert_eq!(sections[1].rows[0].outcome, Err(Skip::SpotifyProfile));
