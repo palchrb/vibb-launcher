@@ -138,8 +138,8 @@ pub async fn remove_parent(
     .execute(&mut *tx)
     .await?;
     if done.rows_affected() == 1 {
+        let labels = delete_subscriptions(&mut tx, target).await?;
         for table in [
-            "push_subscriptions",
             "notification_prefs",
             "parent_event_reads",
             // Design 74 D1.3b: no way back leaves a lost phone's passkey working.
@@ -151,6 +151,14 @@ pub async fn remove_parent(
                 .await?;
         }
         tx.commit().await?;
+        crate::push::trace_forgotten(
+            db,
+            target,
+            crate::push::Forget::ParentRemoved,
+            &labels,
+            None,
+        )
+        .await;
         return Ok(Removed::Done);
     }
     tx.rollback().await?;
@@ -217,14 +225,14 @@ pub async fn reset_parent(
     .fetch_optional(&mut *tx)
     .await?;
     if let Some((expires_at, username, display_name)) = done {
-        sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
-            .bind(target)
-            .execute(&mut *tx)
-            .await?;
+        let labels = delete_subscriptions(&mut tx, target).await?;
         // Design 74 D1.3b: the target onboards again with a one-time password, and no passkey of
         // theirs keeps working (a Reset is the way back for a lost phone).
         crate::passkeys::delete_all(&mut *tx, target).await?;
         tx.commit().await?;
+        // Never silent (2026-11-04): the security log and every parent's inbox say whose devices stopped.
+        crate::push::trace_forgotten(db, target, crate::push::Forget::ParentReset, &labels, None)
+            .await;
         return Ok(Reset::Done {
             expires_at,
             name: display_name.unwrap_or_else(|| username.clone()),
@@ -236,6 +244,24 @@ pub async fn reset_parent(
         return Ok(Reset::SignedOut);
     }
     Ok(Reset::Gone)
+}
+
+/// Deletes `admin_id`'s push subscriptions in `tx`: the labels of the active ones, for the trace
+/// (`push::trace_forgotten`, after the commit).
+async fn delete_subscriptions(
+    tx: &mut sqlx::SqliteConnection,
+    admin_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("DELETE FROM push_subscriptions WHERE admin_id = ? RETURNING label, state")
+            .bind(admin_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, state)| state == "active")
+        .map(|(label, _)| label)
+        .collect())
 }
 
 /// The actor condition on its own, for the answer after a statement wrote nothing.

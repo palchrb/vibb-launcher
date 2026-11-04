@@ -234,7 +234,7 @@ pub async fn reauth(
             ceremony,
         } => passkey_proves(state, session, admin, assertion, ceremony).await,
     };
-    record_reauth(&state.db, session, admin, right).await
+    record_reauth(state, session, admin, right).await
 }
 
 /// Whether `assertion` proves the signed-in parent; a refusal is logged.
@@ -281,7 +281,7 @@ pub async fn reauth_and_hash(
                 .passwords
                 .change(current, &admin.password_hash, new)
                 .await?;
-            let reauth = record_reauth(&state.db, session, admin, changed.is_some()).await;
+            let reauth = record_reauth(state, session, admin, changed.is_some()).await;
             Ok((reauth, changed))
         }
         Proof::Passkey {
@@ -289,7 +289,7 @@ pub async fn reauth_and_hash(
             ceremony,
         } => {
             let right = passkey_proves(state, session, admin, assertion, ceremony).await;
-            let reauth = record_reauth(&state.db, session, admin, right).await;
+            let reauth = record_reauth(state, session, admin, right).await;
             if reauth != Reauth::Right {
                 return Ok((reauth, None));
             }
@@ -307,11 +307,12 @@ pub async fn reauth_and_hash(
 /// session of the account - also one a request still in flight writes back later -, flushes this
 /// one and logs `reauth_signed_out`. A database error ends the session too: the limit never lapses.
 pub async fn record_reauth(
-    db: &sqlx::SqlitePool,
+    state: &AppState,
     session: &tower_sessions::Session,
     admin: &crate::models::AdminUser,
     right: bool,
 ) -> Reauth {
+    let db = &state.db;
     if right {
         match sqlx::query("UPDATE admin_users SET reauth_wrong = 0 WHERE id = ?")
             .bind(admin.id)
@@ -351,8 +352,9 @@ pub async fn record_reauth(
         }
     }
     // Every device's notifications end with the sessions, at once (security review M1,
-    // qa-pwa-fixes-a-code Q-1): whoever guessed may have turned them on in their own browser.
-    crate::push::forget_subscriptions(db, admin.id).await;
+    // qa-pwa-fixes-a-code Q-1): whoever guessed may have turned them on in their own browser - this one's
+    // too (this session ends; a new sign-in here sends it again, static/register-sw.js). Traced and told.
+    crate::push::forget_subscriptions(state, admin, crate::push::Forget::ReauthLockout, None).await;
     session.flush().await.ok();
     crate::security::record_security_event(
         db,
@@ -697,12 +699,20 @@ pub async fn reset_2fa(
     .await
     .map_err(|err: sqlx::Error| format!("couldn't reset: {err}"))?;
     let (passkeys, passkey_only) = passkeys;
-    // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
-    sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
-        .bind(id)
-        .execute(db)
-        .await
-        .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
+    // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7) - traced and
+    // told (Push never lost silently, 2026-11-04).
+    let gone: Vec<(String, String)> =
+        sqlx::query_as("DELETE FROM push_subscriptions WHERE admin_id = ? RETURNING label, state")
+            .bind(id)
+            .fetch_all(db)
+            .await
+            .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
+    let labels: Vec<String> = gone
+        .into_iter()
+        .filter(|(_, state)| state == "active")
+        .map(|(label, _)| label)
+        .collect();
+    crate::push::trace_forgotten(db, id, crate::push::Forget::ShellReset, &labels, None).await;
     if removed {
         // A restored parent starts with nothing unread, as an added one (design 62 §2, step 5).
         crate::parent_events::read_everything(db, id)

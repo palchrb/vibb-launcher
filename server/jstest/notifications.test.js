@@ -58,12 +58,16 @@ function fakePage({
     subscription = null,
     subscribe,
     words = WORDS,
+    sync = [],
+    off = null,
 } = {}) {
     const calls = [];
     const submitted = [];
+    const posted = [];
+    const storage = { "vibb.push-off": off };
     const field = () => ({ value: "" });
     const form = element({
-        elements: { endpoint: field(), p256dh: field(), auth: field() },
+        elements: { endpoint: field(), p256dh: field(), auth: field(), replaces: field() },
         getAttribute: (name) => ({ "data-key": KEY, "data-subscribed": known.join(","), ...words })[name],
         submit: () => submitted.push("on"),
     });
@@ -98,11 +102,43 @@ function fakePage({
         isSecureContext: secure,
         Notification: { permission },
         atob: (s) => Buffer.from(s, "base64").toString("binary"),
+        btoa: (s) => Buffer.from(s, "binary").toString("base64"),
         TextEncoder,
         crypto: { subtle: syncSubtle },
+        localStorage: {
+            getItem: (k) => (k in storage ? storage[k] : null),
+            setItem: (k, v) => { storage[k] = v; },
+            removeItem: (k) => { storage[k] = null; },
+        },
+        // The sync route, answering from `sync` in order.
+        fetch: (url, options) => {
+            posted.push([url, options.method, options.redirect, new URLSearchParams(options.body)]);
+            const next = sync.shift();
+            if (!next) return Promise.reject(new Error("offline"));
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(next) });
+        },
     };
     if (pushManager) win.PushManager = function () {};
-    return { win, nodes, calls, submitted, form, offForm };
+    return { win, nodes, calls, submitted, form, offForm, posted, storage };
+}
+
+// A browser subscription: its endpoint, the key it was made for (`key`, base64url; null = the browser doesn't say)
+// and whether it was ended.
+function browserSubscription(key = KEY) {
+    const sub = {
+        endpoint: ENDPOINT,
+        ended: false,
+        toJSON: () => ({ endpoint: ENDPOINT, keys: { p256dh: "p-key", auth: "a-key" } }),
+        unsubscribe: () => {
+            sub.ended = true;
+            return Promise.resolve(true);
+        },
+    };
+    if (key) {
+        const bytes = Buffer.from(key, "base64url");
+        sub.options = { applicationServerKey: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) };
+    }
+    return sub;
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -174,7 +210,7 @@ test("a refused prompt shows Blocked and sends nothing", async () => {
     assert.deepStrictEqual(page.submitted, []);
 });
 
-test("a subscription the server knows is On, and Turn Off ends it there too", async () => {
+test("a subscription the server knows is On, and Turn Off ends it there too and is remembered", async () => {
     let ended = false;
     const subscription = {
         endpoint: ENDPOINT,
@@ -193,23 +229,90 @@ test("a subscription the server knows is On, and Turn Off ends it there too", as
     assert.ok(ended);
     assert.deepStrictEqual(page.submitted, ["off"]);
     assert.strictEqual(page.offForm.elements.endpoint.value, ENDPOINT);
+    // The app never turns it on again by itself (register-sw.js reads it); Turn On forgets it.
+    assert.strictEqual(page.storage["vibb.push-off"], "1");
 });
 
-test("a subscription the server doesn't know is dropped and shows Off", async () => {
-    let ended = false;
-    const subscription = {
-        endpoint: ENDPOINT,
-        unsubscribe: () => {
-            ended = true;
-            return Promise.resolve(true);
-        },
-    };
-    const page = fakePage({ subscription, known: ["0123456789abcdef"] });
+test("a known subscription is noted as this session's browser; a failed Turn Off forgets the Off", async () => {
+    const subscription = browserSubscription();
+    subscription.unsubscribe = () => Promise.reject(new Error("failed"));
+    const page = fakePage({ subscription, known: [hashOf(ENDPOINT)], sync: [{ state: "known" }] });
     install(page.win);
     await settle();
-    assert.ok(ended);
+    assert.strictEqual(page.nodes["push-state"].textContent, "På");
+    assert.strictEqual(page.posted.length, 1, "the server notes it (review L-4)");
+    assert.strictEqual(page.posted[0][3].get("endpoint"), ENDPOINT);
+    page.nodes["push-off"].click();
+    await settle();
+    assert.strictEqual(page.nodes["push-state"].textContent, "Fikk ikke slått av - prøv igjen");
+    assert.strictEqual(page.storage["vibb.push-off"], null, "still on: the app keeps it on (review L-1)");
+    assert.deepStrictEqual(page.submitted, []);
+});
+
+// Push never lost silently (2026-11-04): an unknown subscription made for the server's key is the server's loss,
+// not the browser's - sent again, never dropped.
+test("a subscription the server lost is sent again and shows On", async () => {
+    for (const key of [KEY, null]) {
+        const subscription = browserSubscription(key);
+        const page = fakePage({ subscription, known: ["0123456789abcdef"], sync: [{ state: "stored" }] });
+        install(page.win);
+        await settle();
+        assert.strictEqual(subscription.ended, false, String(key));
+        assert.strictEqual(page.nodes["push-state"].textContent, "På");
+        assert.ok(!page.nodes["push-off"].hidden);
+        assert.strictEqual(page.posted.length, 1);
+        const [url, method, redirect, body] = page.posted[0];
+        assert.deepStrictEqual([url, method, redirect], ["/notifications/subscriptions/sync", "POST", "manual"]);
+        assert.strictEqual(body.get("endpoint"), ENDPOINT);
+        assert.strictEqual(body.get("p256dh"), "p-key");
+        assert.strictEqual(body.get("auth"), "a-key");
+        assert.strictEqual(body.get("key"), key);
+    }
+});
+
+test("one made for another key, or ended by its push service, is dropped; the next Turn On replaces it", async () => {
+    const other = "BPmRsEk2bg2pTq7XvgQsSdpS1hNlDXT1txWOP4h0lZlqOYuKrHiIWZQVA1Ey7k3T9ajW6JrSoZJqxmn4mtHL0K0";
+    let subscription = browserSubscription(other);
+    let page = fakePage({ subscription, known: [] });
+    install(page.win);
+    await settle();
+    assert.ok(subscription.ended);
+    assert.deepStrictEqual(page.posted, [], "another key's is never sent");
     assert.strictEqual(page.nodes["push-state"].textContent, "Av");
+    assert.strictEqual(page.form.elements.replaces.value, ENDPOINT);
     assert.ok(!page.nodes["push-on"].disabled);
+
+    subscription = browserSubscription();
+    page = fakePage({ subscription, sync: [{ state: "gone", key: KEY }] });
+    install(page.win);
+    await settle();
+    assert.ok(subscription.ended);
+    assert.strictEqual(page.form.elements.replaces.value, ENDPOINT);
+    page.nodes["push-on"].click();
+    await settle();
+    assert.deepStrictEqual(page.submitted, ["on"]);
+});
+
+test("one a parent removed, one after Turn Off here, or an answer that fails stays Off and kept", async () => {
+    for (const [options, posts] of [
+        [{ sync: [{ state: "removed" }] }, 1],
+        [{ sync: [{ state: "refused", notice: "push_many" }] }, 1],
+        [{ sync: [] }, 1], // offline
+        [{ off: "1" }, 0],
+    ]) {
+        const subscription = browserSubscription();
+        const page = fakePage(Object.assign({ subscription }, options));
+        install(page.win);
+        await settle();
+        const what = JSON.stringify(options);
+        assert.strictEqual(subscription.ended, false, what);
+        assert.strictEqual(page.posted.length, posts, what);
+        assert.strictEqual(page.nodes["push-state"].textContent, "Av", what);
+        assert.strictEqual(page.form.elements.replaces.value, "", what);
+        // Turn On forgets a Turn Off.
+        page.nodes["push-on"].click();
+        assert.strictEqual(page.storage["vibb.push-off"], null, what);
+    }
 });
 
 test("the key decodes and the hash matches the server's", async () => {
@@ -334,6 +437,7 @@ function offerPage({
     subscribe,
     stored = null,
     storageThrows = false,
+    sync = [],
 } = {}) {
     const calls = [];
     const submitted = [];
@@ -345,7 +449,7 @@ function offerPage({
         "[data-offer-line]": element({ textContent: "Hear at once" }),
     };
     const card = element({
-        elements: { endpoint: field(), p256dh: field(), auth: field() },
+        elements: { endpoint: field(), p256dh: field(), auth: field(), replaces: field() },
         getAttribute: (name) => ({
             "data-key": KEY,
             "data-subscribed": known.join(","),
@@ -390,8 +494,14 @@ function offerPage({
         Notification: { permission },
         PushManager: function () {},
         atob: (s) => Buffer.from(s, "base64").toString("binary"),
+        btoa: (s) => Buffer.from(s, "binary").toString("base64"),
         TextEncoder,
         crypto: { subtle: syncSubtle },
+        fetch: () => {
+            const next = sync.shift();
+            if (!next) return Promise.reject(new Error("offline"));
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(next) });
+        },
     };
     return { win, card, parts, calls, submitted, listeners, storage };
 }
@@ -436,7 +546,7 @@ test("a plain tab shows nothing, until Chrome says the app was installed", async
     assert.strictEqual(page.card.hidden, false);
 });
 
-test("a subscription the server knows keeps it hidden; one it doesn't is dropped first", async () => {
+test("a subscription the server knows keeps it hidden; one it lost is sent again, another key's dropped", async () => {
     let page = offerPage({
         subscription: { endpoint: ENDPOINT, unsubscribe: () => Promise.resolve(true) },
         known: [hashOf(ENDPOINT)],
@@ -444,15 +554,20 @@ test("a subscription the server knows keeps it hidden; one it doesn't is dropped
     install(page.win);
     await settle();
     assert.strictEqual(page.card.hidden, true);
-    let ended = false;
-    page = offerPage({
-        subscription: { endpoint: ENDPOINT, unsubscribe: () => { ended = true; return Promise.resolve(true); } },
-        known: ["0123456789abcdef"],
-    });
+    let subscription = browserSubscription();
+    page = offerPage({ subscription, known: ["0123456789abcdef"], sync: [{ state: "stored" }] });
     install(page.win);
     await settle();
-    assert.ok(ended);
+    assert.strictEqual(subscription.ended, false);
+    assert.strictEqual(page.card.hidden, true, "known now");
+    subscription = browserSubscription(null);
+    subscription.options = { applicationServerKey: new Uint8Array(65).fill(4).buffer };
+    page = offerPage({ subscription, known: ["0123456789abcdef"] });
+    install(page.win);
+    await settle();
+    assert.ok(subscription.ended);
     assert.strictEqual(page.card.hidden, false);
+    assert.strictEqual(page.card.elements.replaces.value, ENDPOINT);
 });
 
 test("an asked permission, or Not Now tapped before, shows nothing", async () => {

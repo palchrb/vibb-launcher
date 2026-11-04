@@ -312,7 +312,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The switch** (`POST /account/passkey-only`, `handlers::passkeys::passkey_only_on`, Account's `#passkey-only`): only a
   passkey confirms it (a `reauth` challenge bound to the route; a password or an empty assertion is refused, a bad one
   counts in `reauth_wrong`), then `passkeys::switch_on`'s one `UPDATE` - the password and the TOTP (and its lock) go,
-  `session_epoch + 1` with this session keeping it, every push subscription goes - for this session's epoch, an account
+  `session_epoch + 1` with this session keeping it, every push subscription goes (but this browser's, since
+  2026-11-04: notifications.md, "Push never lost silently") - for this session's epoch, an account
   not removed and ready, **with at least one passkey counted in the statement**. `passkey_only_on`, PRG
   `/account?done=passkey_only_on#passkey-only`. The confirm says what it does and the way back; with one passkey "We
   recommend two passkeys…" (+ "…, or else the server's command line is the way back" with no other ready parent,
@@ -440,8 +441,21 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   right, `cycle_id`, `used_at` now, `app_unlocked` (one row per parent and hour, "×N"), answer `{next}` (a local path,
   `lock::local_next`: one leading `/`, printable ASCII, never `/lock`, `/login`, `/logout`, `/auth/…`; else `/`) and
   the page replaces itself with it; a bad assertion is `app_unlock_failed` (its code; a copied counter also
-  `passkey_cloned`) and counts in `reauth_wrong` (the third ends every session: `{signed_out: true}`). The red line
-  shows after a tap's failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`: `/logout` then answers
+  `passkey_cloned`) and counts in `reauth_wrong` (the third ends every session: `{signed_out: true}`). **What counts**
+  (Push never lost silently, 2026-11-04: three stale challenges - a lock screen shown again after a while, each
+  automatic try posting a challenge the store had dropped - signed the parent out and ended every device's
+  notifications): only an assertion the browser answered that fails on its own - a credential that isn't the parent's
+  here (`unknown_credential`, `user_handle`), a bad signature, origin, RP ID hash or flags (`user_presence`,
+  `user_verification`, `backup_*`), a counter that didn't move (`counter`, a possible copy), or JSON/CBOR that doesn't
+  read. The server's own refusals (`webauthn::Refused::servers_own`) don't count: `challenge` - expired, dropped from
+  the session's 8 newest, already used, or bound to another session or epoch - and `database` (a read or store error,
+  its own code since then; it was `unknown_credential` before). They answer 400 with the same words and are logged
+  `app_unlock_failed` with their code, nothing else - one line per parent, client and code each 10 minutes, "challenge
+  ×N" past the first (`handlers::lock::log_servers_own`; review I-3: they aren't bounded by the third wrong try, so a
+  held locked cookie could otherwise fill the log). A wrong try still counts 1 of 3 in a row, reset by any right
+  re-auth; the re-auth forms (password or passkey) are unchanged. The red line
+  shows after a tap's failed or cancelled try. "Sign Out" is Settings' Sign Out with `next`, behind an in-page confirm since 2026-11-04 ("Logge ut? Varsler på denne
+  telefonen slås også av."): `/logout` then answers
   `/login?next=…`, and the passkey sign-in (`POST /auth/passkey`'s `next`, the sign-in page's hidden field) goes on
   there (step 3: D1.5's Devices only without one). The unlock is no sign-in: `SIGNED_IN_AT_KEY` stays.
 - **The fix round** (`docs/review/qa-passkeys-3-*`, the coordinator's copies in the scratchpad): a lock-on session's

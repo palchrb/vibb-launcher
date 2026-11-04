@@ -38,7 +38,10 @@ const MOVED = {
     // 3d: Music (the status blocks come worded from /music/cards): a selector.
     "music-cards.js": [".music-card, .card"],
     // 3e: Settings (subscriptions.json's rows come worded): an API's name, a media query, an error's message.
-    "notifications.js": ["PushManager", "(display-mode: standalone)", "status "],
+    "notifications.js": ["PushManager", "(display-mode: standalone)", "status ", "Content-Type"],
+    // Push never lost silently (2026-11-04): the banner's words come worded in the sync's answer; an API's name, a
+    // header, an error's message, class names.
+    "register-sw.js": ["PushManager", "Content-Type", "status ", "attention push-banner"],
     // Design 74: DOM exception names, a header and selectors.
     "passkey.js": [
         "NotAllowedError",

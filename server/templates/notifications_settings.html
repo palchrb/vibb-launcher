@@ -32,6 +32,7 @@
             <input type="hidden" name="endpoint" value="">
             <input type="hidden" name="p256dh" value="">
             <input type="hidden" name="auth" value="">
+            <input type="hidden" name="replaces" value="">
             <div class="row">
                 <span class="row-label">{{ self.t("settings.notifications.title") }}</span>
                 <span class="row-value" id="push-state">{{ self.t("settings.notifications.needs_js") }}</span>
@@ -121,6 +122,6 @@
         <p class="group-footer">{{ self.t("settings.notifications.events_footer") }}</p>
     </section>
 </main>
-{% if push_key.is_some() %}<script src="/static/notifications.js?v=4" defer></script>{% endif %}
+{% if push_key.is_some() %}<script src="/static/notifications.js?v=5" defer></script>{% endif %}
 </body>
 </html>

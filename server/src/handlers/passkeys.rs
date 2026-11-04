@@ -709,10 +709,18 @@ pub async fn remove(
             .await;
         }
     }
-    match passkeys::remove(&state.db, &admin, id).await {
+    let kept = crate::push::kept_row(&state.db, &admin, &session).await;
+    match passkeys::remove(&state.db, &admin, id, kept).await {
         Ok(passkeys::Removed::Done { name, epoch }) => {
             session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
-            crate::push::forget_subscriptions(&state.db, admin.id).await;
+            // The other sessions end, their notifications too; this browser keeps its own (2026-11-04).
+            crate::push::forget_subscriptions(
+                &state,
+                &admin,
+                crate::push::Forget::PasskeyRemoved,
+                kept,
+            )
+            .await;
             security::record_security_event(
                 &state.db,
                 "passkey_removed",
@@ -848,12 +856,20 @@ pub async fn passkey_only_on(
             .await;
         }
     }
-    match passkeys::switch_on(&state.db, &admin).await {
+    let kept = crate::push::kept_row(&state.db, &admin, &session).await;
+    match passkeys::switch_on(&state.db, &admin, kept).await {
         Ok(passkeys::SwitchedOn::Done(epoch)) => {
             session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
             // The password that is gone may be known: whatever it opened ends, its notifications too (as a
-            // password change, security review M1).
-            crate::push::forget_subscriptions(&state.db, admin.id).await;
+            // password change, security review M1) - but this browser's, the session that made the change and goes
+            // on (Push never lost silently, 2026-11-04).
+            let kept = crate::push::forget_subscriptions(
+                &state,
+                &admin,
+                crate::push::Forget::PasskeyOnly,
+                kept,
+            )
+            .await;
             security::record_security_event(
                 &state.db,
                 "passkey_only_on",
@@ -865,7 +881,12 @@ pub async fn passkey_only_on(
                 )),
             )
             .await;
-            Redirect::to("/account?done=passkey_only_on#passkey-only").into_response()
+            Redirect::to(if kept {
+                "/account?done=passkey_only_on&kept=1#passkey-only"
+            } else {
+                "/account?done=passkey_only_on#passkey-only"
+            })
+            .into_response()
         }
         Ok(passkeys::SwitchedOn::Already) => Redirect::to("/account#passkey-only").into_response(),
         Ok(passkeys::SwitchedOn::NoPasskey) => {

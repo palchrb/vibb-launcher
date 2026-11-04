@@ -643,7 +643,12 @@ pub enum Removed {
 /// Removes one of `admin`'s passkeys and moves the session epoch in the same transaction (D1.3):
 /// every other session ends with it, as with a password change. Never a passkey-only account's
 /// last one (D2.3): the count is the `DELETE`'s own condition, never a read before it.
-pub async fn remove(db: &sqlx::SqlitePool, admin: &AdminUser, id: i64) -> sqlx::Result<Removed> {
+pub async fn remove(
+    db: &sqlx::SqlitePool,
+    admin: &AdminUser,
+    id: i64,
+    kept: Option<i64>,
+) -> sqlx::Result<Removed> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let name: Option<String> = sqlx::query_scalar(concat!(
         "DELETE FROM admin_passkeys WHERE id = ?1 AND admin_id = ?2 AND EXISTS \
@@ -679,6 +684,8 @@ pub async fn remove(db: &sqlx::SqlitePool, admin: &AdminUser, id: i64) -> sqlx::
     .bind(admin.id)
     .fetch_one(&mut *tx)
     .await?;
+    // This browser's subscription moves with the epoch (Push never lost silently, `push::keep_row`).
+    crate::push::keep_row(&mut tx, admin.id, kept).await?;
     tx.commit().await?;
     Ok(Removed::Done { name, epoch })
 }
@@ -712,7 +719,12 @@ pub enum SwitchedOn {
 /// the TOTP goes, the session epoch moves (this session keeps it) - only for this session's epoch, an account not
 /// removed and ready, and **at least one passkey counted in the statement itself**, so a removal in flight can't
 /// slip between a read and the write.
-pub async fn switch_on(db: &sqlx::SqlitePool, admin: &AdminUser) -> sqlx::Result<SwitchedOn> {
+pub async fn switch_on(
+    db: &sqlx::SqlitePool,
+    admin: &AdminUser,
+    kept: Option<i64>,
+) -> sqlx::Result<SwitchedOn> {
+    let mut tx = db.begin().await?;
     let epoch: Option<i64> = sqlx::query_scalar(concat!(
         "UPDATE admin_users SET passkey_only = 1, password_hash = '!passkey', totp_secret = NULL, \
          totp_enabled = 0, totp_last_step = NULL, failed_login_attempts = 0, lock_count = 0, \
@@ -724,11 +736,15 @@ pub async fn switch_on(db: &sqlx::SqlitePool, admin: &AdminUser) -> sqlx::Result
     ))
     .bind(admin.id)
     .bind(admin.session_epoch)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
     if let Some(epoch) = epoch {
+        // This browser's subscription moves with the epoch (Push never lost silently, `push::keep_row`).
+        crate::push::keep_row(&mut tx, admin.id, kept).await?;
+        tx.commit().await?;
         return Ok(SwitchedOn::Done(epoch));
     }
+    tx.rollback().await?;
     if !actor_ok(db, admin).await? {
         return Ok(SwitchedOn::SignedOut);
     }
@@ -816,7 +832,7 @@ async fn find(db: &sqlx::SqlitePool, credential_id: &[u8]) -> sqlx::Result<Optio
 /// A refusal that a database error caused (logged; the ceremony is refused).
 fn db_refused(err: sqlx::Error) -> Refused {
     tracing::error!(%err, "couldn't read or store a passkey");
-    Refused::UnknownCredential
+    Refused::Database
 }
 
 /// The stored credential's check and the use's store, after the account was found.

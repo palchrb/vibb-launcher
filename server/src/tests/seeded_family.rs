@@ -325,6 +325,13 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             ago(70),
         ),
         parent_events::passkey_added(1, "Mamma", "Sikkerhetsnøkkel", ago(100)),
+        parent_events::push_off(
+            1,
+            "Mamma",
+            &["iPhone · Safari".to_string()],
+            crate::push::Forget::Password,
+            ago(110),
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

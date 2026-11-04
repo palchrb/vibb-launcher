@@ -8,7 +8,9 @@
 //!   asks with the hint on its own once per showing of the screen, and without it on every tap.
 //! - `POST /lock` (form `assertion`, `next`): the parent's own credential only; done, the session's use moves, its
 //!   id is cycled (D3.7) and the answer is `{"next": <local path>}` (the page replaces itself with it, so Back never
-//!   returns to the lock); a bad assertion is `app_unlock_failed` and counts in `reauth_wrong` (3 end every session).
+//!   returns to the lock); a bad assertion is `app_unlock_failed` and counts in `reauth_wrong` (3 end every session) -
+//!   but the server's own refusals (`webauthn::Refused::servers_own`: a stale challenge, a read error), which are only
+//!   logged, one line per parent, client and code each 10 minutes with "×N" ([log_servers_own]).
 //! - `POST /api/used`: the page's input beacon (D3.3) - the lock's check moved the session's use already; 204.
 //! - `POST /account/lock` (form `minutes`, `assertion`): the lock time for this browser (D3.1, D3.2) behind a passkey
 //!   that works here, PRG `/account?done=lock#app-lock`, `app_lock_set`, the lock cookie set or deleted.
@@ -182,6 +184,42 @@ pub struct UnlockForm {
     next: String,
 }
 
+/// How long one `app_unlock_failed` line gathers the server's own refusals ([log_servers_own]).
+const SERVERS_OWN_MINUTES: i64 = 10;
+
+/// An unlock the server refused on its own (a stale challenge, a read error - never counted): one `app_unlock_failed`
+/// line per parent, client and code each [SERVERS_OWN_MINUTES], "challenge ×N" past the first (review I-3: those
+/// aren't bounded by the third wrong try, so a held locked cookie could otherwise fill the log). One statement adds
+/// to the window's line; only without one is a line written.
+async fn log_servers_own(db: &sqlx::SqlitePool, username: &str, client: &str, code: &str) {
+    let merged = sqlx::query(
+        "UPDATE security_events SET detail = ?1 || ' ×' || \
+           (COALESCE(NULLIF(CAST(substr(detail, length(?1) + 3) AS INTEGER), 0), 1) + 1) \
+         WHERE id = (SELECT id FROM security_events WHERE event_type = 'app_unlock_failed' \
+           AND username = ?2 AND ip_address IS ?3 AND (detail = ?1 OR detail LIKE ?1 || ' ×%') \
+           AND created_at > datetime('now', '-' || ?4 || ' minutes') ORDER BY id DESC LIMIT 1)",
+    )
+    .bind(code)
+    .bind(username)
+    .bind(client)
+    .bind(SERVERS_OWN_MINUTES)
+    .execute(db)
+    .await;
+    match merged {
+        Ok(done) if done.rows_affected() > 0 => {}
+        _ => {
+            security::record_security_event(
+                db,
+                "app_unlock_failed",
+                Some(username),
+                Some(client),
+                Some(security::Detail::facts(code)),
+            )
+            .await
+        }
+    }
+}
+
 /// `POST /lock` (D3.5, D3.7).
 pub async fn unlock(
     State(state): State<AppState>,
@@ -209,16 +247,31 @@ pub async fn unlock(
             .await;
         }
         // The client as the sign-in events name it (its limit key, qa-passkeys-3 server N1).
-        security::record_security_event(
-            &state.db,
-            "app_unlock_failed",
-            Some(&admin.username),
-            Some(&ceremony.client_key),
-            Some(security::Detail::facts(why.code())),
-        )
-        .await;
+        if why.servers_own() {
+            log_servers_own(&state.db, &admin.username, &ceremony.client_key, why.code()).await;
+        } else {
+            security::record_security_event(
+                &state.db,
+                "app_unlock_failed",
+                Some(&admin.username),
+                Some(&ceremony.client_key),
+                Some(security::Detail::facts(why.code())),
+            )
+            .await;
+        }
     }
-    match admin_auth::record_reauth(&state.db, &session, &admin, proved.is_ok()).await {
+    // Only the parent's own failed try counts toward the third that signs every session out (and ends every
+    // device's notifications): a challenge that expired or was dropped while the screen waited, or the server's own
+    // read error, is answered as a refusal and logged, never counted (Push never lost silently, 2026-11-04).
+    if let Err(why) = proved
+        && why.servers_own()
+    {
+        return json(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({ "error": t(lang, "lock.page.failed") }),
+        );
+    }
+    match admin_auth::record_reauth(&state, &session, &admin, proved.is_ok()).await {
         Reauth::Right => {}
         Reauth::SignedOut => {
             return json(

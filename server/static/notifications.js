@@ -2,8 +2,12 @@
 // this order (qa-35-design H2): an iPhone/iPad Safari tab (navigator.standalone false) needs the
 // Home Screen first; no Push API or not a secure context is "Not available"; a denied permission
 // is "Blocked"; subscribed here and known to the server (its endpoint's SHA-256 prefix is in the
-// form's data-subscribed) is "On" with Turn Off; else "Off" with Turn On (a local subscription the
-// server doesn't know is dropped first). Turn On waits for the
+// form's data-subscribed) is "On" with Turn Off; else "Off" with Turn On. A local subscription the
+// server doesn't know (Push never lost silently, 2026-11-04: `reconcile`) is sent to it again when it was made for
+// the server's key - it is the parent's browser and session, so the server makes it active again - and dropped only
+// when it was made for another key or its push service ended it (the next Turn On then replaces it). Turn Off is
+// remembered in this browser (localStorage `vibb.push-off`), so the app never turns it on again by itself
+// (static/register-sw.js); Turn On forgets it. Turn On waits for the
 // service worker's registration (fetched at load) and its click handler's first call is
 // pushManager.subscribe - Apple wants it at once in the tap; subscribe asks for the permission
 // itself. The subscription goes to the server in the form (a 303 back to #this-device). ES5 syntax.
@@ -40,6 +44,101 @@
             var hex = "";
             for (var i = 0; i < 8; i++) hex += (view[i] < 16 ? "0" : "") + view[i].toString(16);
             return hex;
+        });
+    }
+
+    // Turn Off in this browser (Push never lost silently, 2026-11-04), read by static/register-sw.js too: the app
+    // never sends this browser's subscription again by itself after it. Every access in try/catch.
+    var OFF_KEY = "vibb.push-off";
+
+    function turnedOff(win) {
+        try {
+            return win.localStorage.getItem(OFF_KEY) === "1";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function markOff(win, off) {
+        try {
+            if (off) win.localStorage.setItem(OFF_KEY, "1");
+            else win.localStorage.removeItem(OFF_KEY);
+        } catch (e) {
+            // Nothing kept: This Device's state is the server's.
+        }
+    }
+
+    // The base64url of the key a browser subscription was made for, or "" when the browser doesn't say.
+    function keyOf(subscription, win) {
+        try {
+            var key = subscription.options && subscription.options.applicationServerKey;
+            if (!key) return "";
+            var bytes = new Uint8Array(key);
+            var raw = "";
+            for (var i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+            return win.btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        } catch (e) {
+            return "";
+        }
+    }
+
+    // POST /notifications/subscriptions/sync with this browser's subscription; resolves with the answer.
+    function syncPost(win, subscription, own) {
+        // A subscription that can't be read rejects, never throws into the caller.
+        return Promise.resolve().then(function () {
+            return syncSend(win, subscription, own);
+        });
+    }
+
+    function syncSend(win, subscription, own) {
+        var json = subscription.toJSON();
+        var fields = {
+            endpoint: json.endpoint,
+            p256dh: json.keys.p256dh,
+            auth: json.keys.auth,
+            key: own
+        };
+        var body = [];
+        for (var name in fields) {
+            if (fields[name]) body.push(encodeURIComponent(name) + "=" + encodeURIComponent(fields[name]));
+        }
+        return win.fetch("/notifications/subscriptions/sync", {
+            method: "POST",
+            credentials: "same-origin",
+            redirect: "manual",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                Accept: "application/json"
+            },
+            body: body.join("&")
+        }).then(function (res) {
+            if (!res.ok) throw new Error("status " + res.status);
+            return res.json();
+        });
+    }
+
+    // A browser subscription the page's list doesn't name: made for another key - dropped, as before (a subscribe
+    // with another key over it fails); else, unless Turn Off was tapped here, sent to the server again (the server
+    // lost it: an account change on another device, a re-auth sign-out). Resolves with {on, replaces}: on = the
+    // server has it now; replaces = a dropped one's endpoint, for the next Turn On to replace its dead row.
+    function reconcile(win, subscription, key) {
+        function drop() {
+            var old = subscription.endpoint;
+            return subscription.unsubscribe().then(function () {
+                return { on: false, replaces: old };
+            }, function () {
+                return { on: false, replaces: old };
+            });
+        }
+        var own = keyOf(subscription, win);
+        if (own && own !== String(key || "").replace(/=+$/, "")) return drop();
+        if (turnedOff(win) || !win.fetch) return Promise.resolve({ on: false, replaces: null });
+        return syncPost(win, subscription, own).then(function (answer) {
+            if (answer.state === "known" || answer.state === "stored") return { on: true, replaces: null };
+            if (answer.state === "gone" || answer.state === "other_key") return drop();
+            return { on: false, replaces: null };
+        }, function () {
+            return { on: false, replaces: null };
         });
     }
 
@@ -112,7 +211,7 @@
     // tab it was installed from); Push here (PushManager, a secure context, a service worker); the
     // permission not asked yet ("default"); Not Now not tapped in this browser (localStorage).
     // Then, once the worker is ready, no subscription the server knows: a known one keeps the card
-    // hidden, an unknown one is dropped first, as on This Device. A plain Safari tab never shows it.
+    // hidden, an unknown one is reconciled first, as on This Device. A plain Safari tab never shows it.
     var OFFER_KEY = "vibb.push-offer";
 
     function offerShown(s) {
@@ -182,10 +281,9 @@
                 return endpointHash(subscription.endpoint, win).then(function (hash) {
                     var known = (card.getAttribute("data-subscribed") || "").split(",");
                     if (known.indexOf(hash) >= 0) return true;
-                    return subscription.unsubscribe().then(function () {
-                        return false;
-                    }, function () {
-                        return false;
+                    return reconcile(win, subscription, card.getAttribute("data-key")).then(function (r) {
+                        if (r.replaces && card.elements.replaces) card.elements.replaces.value = r.replaces;
+                        return r.on;
                     });
                 });
             }).then(function (known) {
@@ -200,6 +298,7 @@
         onButton.addEventListener("click", function () {
             if (!registration || onButton.disabled) return;
             // One subscribe and one post per tap: a second tap while the prompt or the post runs does nothing.
+            markOff(win, false);
             var asked = registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: decodeKey(card.getAttribute("data-key"), win)
@@ -279,18 +378,23 @@
             if (!subscription) return false;
             return endpointHash(subscription.endpoint, win).then(function (hash) {
                 var known = (form.getAttribute("data-subscribed") || "").split(",");
-                // One the server doesn't know (removed there, or made for an older server key)
-                // is dropped here, so Turn On makes a fresh one: a subscribe with another key
-                // over an old subscription fails.
-                if (known.indexOf(hash) < 0) {
-                    return subscription.unsubscribe().then(function () {
-                        return false;
-                    }, function () {
-                        return false;
-                    });
+                if (known.indexOf(hash) >= 0) {
+                    current = subscription;
+                    // The server notes it as this session's browser (review L-4: an account change made here then
+                    // keeps it); the answer changes nothing on the page.
+                    if (win.fetch) syncPost(win, subscription, keyOf(subscription, win)).catch(function () {});
+                    return true;
                 }
-                current = subscription;
-                return true;
+                // One the server doesn't know: sent again when it is for the server's key, dropped when it was made
+                // for another key or its push service ended it (reconcile above).
+                return reconcile(win, subscription, form.getAttribute("data-key")).then(function (r) {
+                    if (r.on) {
+                        current = subscription;
+                        return true;
+                    }
+                    if (r.replaces && form.elements.replaces) form.elements.replaces.value = r.replaces;
+                    return false;
+                });
             });
         }).then(function (on) {
             if (on) {
@@ -306,6 +410,7 @@
 
         onButton.addEventListener("click", function () {
             if (!registration) return;
+            markOff(win, false);
             registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: decodeKey(form.getAttribute("data-key"), win)
@@ -328,10 +433,14 @@
         offButton.addEventListener("click", function () {
             if (!current) return;
             var endpoint = current.endpoint;
+            // Before the unsubscribe: the app must not send it again by itself (static/register-sw.js).
+            markOff(win, true);
             current.unsubscribe().then(function () {
                 offForm.elements.endpoint.value = endpoint;
                 offForm.submit();
             }, function () {
+                // Still on (review L-1): the app must keep sending it again if the server loses it.
+                markOff(win, false);
                 show("off-failed");
             });
         });
@@ -343,7 +452,10 @@
         decodeKey: decodeKey,
         endpointHash: endpointHash,
         testedRow: testedRow,
-        pollRows: pollRows
+        pollRows: pollRows,
+        keyOf: keyOf,
+        reconcile: reconcile,
+        OFF_KEY: OFF_KEY
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
