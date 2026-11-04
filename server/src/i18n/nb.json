@@ -2906,7 +2906,7 @@
   "settings.updates.docker_set": "Er HANDY_VERSION låst i .env, setter du den til {version} først.",
   "settings.updates.docker_command": "docker compose pull && docker compose up -d",
   "settings.updates.docker_backup": "Databasen tar sikkerhetskopi av seg selv først.",
-  "settings.updates.up_to_date": "Oppdatert",
+  "settings.updates.up_to_date": "Du har nyeste versjon",
   "settings.updates.how": "Slik oppdaterer du",
   "settings.updates.how_label": "Kommandoene",
   "settings.updates.docker_how": "Oppdateres ved å hente et nytt image: Watchtower gjør det av seg selv, eller for hånd på verten:",

@@ -731,7 +731,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Software Updates shows versions only** (the user, 2026-11-04: the server never acts on its host): this server's
   version (with "(Docker image)" in the container), the newest stable `server-v*` release from the in-memory cache
   (`system_update::ServerRelease`, read at start and in the background when an hour old - "Checking…", "Couldn't
-  check", "Version X is out" or "Up to date"), and How to Update behind its ⓘ: in Docker the image pull (Watchtower by
+  check", "Version X is out" or "You have the latest version", nb "Du har nyeste versjon" - E9 L5), and How to Update behind its ⓘ: in Docker the image pull (Watchtower by
   itself, or `docker compose pull && docker compose up -d`, and the version for a pinned `HANDY_VERSION`), on a systemd
   install the project's `update.sh` command (`settings.updates.update_command`, always `palchrb/vibb-launcher`; a
   `SERVER_RELEASE_REPO` that differs is named in a line under it, never put in the command - `.env` is the service

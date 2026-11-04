@@ -2906,7 +2906,7 @@
   "settings.updates.docker_set": "With HANDY_VERSION pinned in .env, set it to {version} first.",
   "settings.updates.docker_command": "docker compose pull && docker compose up -d",
   "settings.updates.docker_backup": "The database backs itself up first.",
-  "settings.updates.up_to_date": "Up to date",
+  "settings.updates.up_to_date": "You have the latest version",
   "settings.updates.how": "How to update",
   "settings.updates.how_label": "The commands",
   "settings.updates.docker_how": "Updated by pulling a new image: Watchtower does it by itself, or by hand on the host:",

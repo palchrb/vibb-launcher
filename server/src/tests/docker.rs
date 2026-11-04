@@ -476,7 +476,7 @@ fn the_updates_page_says_how_to_update() {
     assert!(panel.contains("HANDY_VERSION pinned in .env, set it to 0.24.0"));
     assert!(!panel.contains("update.sh"));
     let current = page(true, "v0.23.0", false);
-    assert!(current.contains("Up to date"));
+    assert!(current.contains("You have the latest version"), "{current}");
     assert!(!current.contains("HANDY_VERSION"));
 
     let pi = page(false, "v0.24.0", true);

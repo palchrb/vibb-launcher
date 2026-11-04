@@ -2245,16 +2245,22 @@ input.row-input {
     padding: 12px 8px 0;
 }
 
+/* 76px, or as wide as the label's longest word (E9 L8: "Kveldshimmel" broke as "Kveldshimm / el"): the label wraps
+   between words only; a single word longer than the row still breaks (break-word, unlike anywhere, leaves min-content
+   at the longest word). */
 .wallpaper-choice {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 76px;
+    width: min-content;
+    min-width: 76px;
+    max-width: 100%;
+    box-sizing: border-box;
     margin: 0 4px 12px;
     font-size: 0.8125rem;
     font-weight: 400;
     text-align: center;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     cursor: pointer;
 }
 
