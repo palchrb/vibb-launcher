@@ -381,6 +381,18 @@
         <item name="android:textSize">14sp</item>
     </style>
 
+    <!-- The sound picker's caption lines (mockup "Velg ringetone"). -->
+    <style name="KidSoundCaption">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:alpha">0.8</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:paddingStart">2dp</item>
+        <item name="android:paddingEnd">2dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
     <style name="KidDivider">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">1dp</item>

@@ -119,6 +119,14 @@
     <string name="kid_settings_touch_vibration">Vibrasjon ved trykk</string>
     <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
     <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
+    <!-- Barnets ringetone og meldingslyd (2026-11-04). -->
+    <string name="kid_settings_ringtone">Ringetone</string>
+    <string name="kid_settings_message_sound">Meldingslyd</string>
+    <string name="kid_settings_sound_none">Ingen lyd</string>
+    <string name="kid_settings_sound_unnamed">Annen lyd</string>
+    <string name="kid_sound_caption">Trykk på en lyd for å høre den. Den du trykker på sist, blir valgt.</string>
+    <string name="kid_sound_footer">Lydene er telefonens egne. Lyden stopper når du går tilbake.</string>
+    <string name="kid_sound_empty">Fant ingen lyder på telefonen.</string>
     <string name="kid_settings_location_shared">Telefonen deler hvor den er med mamma og pappa.</string>
     <!-- Barnets skjulte apper i barnets innstillinger (2026-11-03): raden, ordet ved en app, TalkBack-navnet, listen åpen eller lukket. -->
     <string name="kid_settings_hidden_apps">Skjulte apper</string>

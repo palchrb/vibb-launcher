@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One sound in KidSoundPickerActivity: a radio row in the accent, the sound's name (wraps, so it grows with the font
+     scale). A direct child of the picker's RadioGroup, so TalkBack reads a radio button in a list with its state. -->
+<RadioButton xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:buttonTint="@color/kid_accent"
+    android:fontFamily="@font/nunito_bold"
+    android:minHeight="52dp"
+    android:paddingStart="10dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="6dp"
+    android:textColor="@color/kid_ink"
+    android:textSize="16sp" />

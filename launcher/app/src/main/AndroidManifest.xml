@@ -234,6 +234,13 @@
             android:configChanges="orientation|screenSize"
             android:excludeFromRecents="true"
             android:exported="false" />
+        <!-- The kid's ringtone / message sound picker (2026-11-04): our own list, never the system picker; not
+             exported, so only Kid Settings opens it, and as our own page it runs in the launcher's lock task. -->
+        <activity
+            android:name=".ui.kidsettings.KidSoundPickerActivity"
+            android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"
             android:configChanges="orientation|screenSize"

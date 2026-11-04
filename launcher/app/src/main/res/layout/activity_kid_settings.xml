@@ -218,6 +218,128 @@
                 <View style="@style/KidDivider" />
             </LinearLayout>
 
+            <!-- The kid's ringtone and message sound (PLAN, approved 2026-11-04; ui/kidsettings/SoundPicks.kt): with the
+                 sound bit, each row the sound's name and a chevron, opening our own picker (KidSoundPickerActivity -
+                 never the system's). Without the "Modify system settings" app-op both at 50 %, not clickable, with the
+                 touch row's "can't be changed" line. No vibration rows (SoundPicks.kt says why). The row is one
+                 button; TalkBack reads its label and value. -->
+            <LinearLayout
+                android:id="@+id/kid_settings_picks_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/kid_settings_ringtone_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minHeight="52dp"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="10dp"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:id="@+id/kid_settings_ringtone_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:text="@string/kid_settings_ringtone"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/kid_settings_ringtone_value"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:gravity="end"
+                        android:maxLines="2"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="15sp" />
+
+                    <ImageView
+                        android:id="@+id/kid_settings_ringtone_chevron"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="6dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_kid_chevron" />
+                </LinearLayout>
+
+                <View style="@style/KidDivider" />
+
+                <LinearLayout
+                    android:id="@+id/kid_settings_message_sound_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minHeight="52dp"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="10dp"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:id="@+id/kid_settings_message_sound_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:text="@string/kid_settings_message_sound"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/kid_settings_message_sound_value"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:gravity="end"
+                        android:maxLines="2"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="15sp" />
+
+                    <ImageView
+                        android:id="@+id/kid_settings_message_sound_chevron"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="6dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_kid_chevron" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/kid_settings_picks_read_only"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp"
+                    android:text="@string/kid_settings_touch_read_only"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
             <!-- Touch sounds and vibration (design r9 §4): Android's two switches for taps, while the parent's
                  bit is on. Without the "Modify system settings" app-op both show the phone's state at 50 % with
                  the "can't be changed" line; no vibration switch on a phone without a vibrator. The keyboard's
