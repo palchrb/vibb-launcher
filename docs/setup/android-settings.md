@@ -88,3 +88,30 @@ instead of the glance's music tile. Switch it off once per phone (the Secure set
 Outside a pause the row says to pause first (Android's Settings is hidden while the phone is managed). The manual
 path, before enrolling or on a phone without the row: Settings › Sound & vibration › Media › "Show media on lock
 screen" off. Confirmed by the user on their emulator 2026-10-24 ("den fiksen funket").
+
+## Google Maps links open in Organic Maps through GeoShare (2026-11-04)
+
+A Google Maps share link (`https://maps.app.goo.gl/...`) tapped in Element X or a browser goes to Google Play services,
+which holds `*.app.goo.gl` by Android's own system configuration (`pm get-app-links com.google.android.gms` shows it
+`system_configured`). Without Google Maps installed, Play services answers "App isn't available - Google Play services
+isn't available right now" ("Appen er ikke tilgjengelig"). Selecting GeoShare (F-Droid `page.ooooo.geoshare`, which
+turns map links into a `geo:` place) for those domains is not enough on its own: the system-configured approval beats
+a user's selection. Switching off Play services' link handling does it - checked by the user on their emulator
+2026-11-04 (the link went through GeoShare into Organic Maps). Once per phone, in a pause:
+
+1. Allow GeoShare and Organic Maps in the PWA (Device › Apps); in GeoShare, pick Organic Maps as the app it opens.
+2. Settings › Apps › Google Play services › Open by default › **"Open supported links" off** ("Google Play-tjenester ›
+   Åpne som standard › Åpne støttede linker"). Play services keeps working (FCM, sign-in); only its web-link handling
+   goes, which the kid's phone doesn't use.
+3. Settings › Apps › GeoShare › Open by default › "Open supported links" on, and **Add links**: at least
+   `maps.app.goo.gl`, `app.goo.gl`, `goo.gl`, `google.com`, `www.google.com`, `maps.google.com`, `maps.google.no`,
+   `www.google.no`.
+
+The same over adb (emulator or a phone with debugging on):
+
+    adb shell pm set-app-links-allowed --user 0 --package com.google.android.gms false
+    adb shell pm set-app-links-user-selection --user 0 --package page.ooooo.geoshare true maps.app.goo.gl app.goo.gl goo.gl google.com www.google.com maps.google.com maps.google.no www.google.no
+
+A short link is resolved by GeoShare asking Google where it points (Google learns that this phone opened a link Google
+made for the sender; the place is the sender's, not the kid's): the DNS filter must let GeoShare reach those hosts. A
+device owner has no API for either setting, so this stays a manual step.
