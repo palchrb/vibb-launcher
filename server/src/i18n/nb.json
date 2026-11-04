@@ -2896,6 +2896,8 @@
   "settings.updates.scripts_version": "Installasjonsskriptene på Pi-en har versjon {version}.",
   "settings.updates.docker_image": "(Docker-image)",
   "settings.updates.checking": "Ser etter en ny versjon…",
+  "settings.updates.checking_updates": "Ser etter oppdateringer…",
+  "settings.updates.tailscale_upstream_unknown": "Kunne ikke spørre etter nyeste Tailscale-versjon, så det er ukjent om denne er oppdatert.",
   "settings.updates.check_failed": "Kunne ikke se etter en ny versjon akkurat nå.",
   "settings.updates.version_out": "Versjon {version} er ute",
   "settings.updates.image_label": "Slik oppdaterer du imaget",

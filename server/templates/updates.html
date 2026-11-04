@@ -106,6 +106,8 @@
         <div class="group">
             {% if os.watcher_busy %}
             <p class="row row-note" data-row="os-status">{{ self.t("settings.updates.shown_again") }}</p>
+            {% else if os.os_checking %}
+            <p class="row row-note" data-row="os-status">{{ self.t("settings.updates.checking_updates") }}</p>
             {% else if let Some(count) = os.os_update_count %}
             <div class="row" data-row="os-status"><span class="row-label">{% if *count == 0 %}{{ self.t("settings.updates.up_to_date") }}{% else %}{{ self.tc("settings.updates.os_waiting", count, []) }}{% endif %}</span></div>
             {% else %}
@@ -147,6 +149,8 @@
         <div class="group">
             {% if os.watcher_busy %}
             <p class="row row-note" data-row="tailscale-status">{{ self.t("settings.updates.shown_again") }}</p>
+            {% else if os.tailscale_checking %}
+            <p class="row row-note" data-row="tailscale-status">{{ self.t("settings.updates.checking_updates") }}</p>
             {% else if let Some(current) = os.tailscale_current %}
             <div class="row" data-row="tailscale-version">
                 <span class="row-label">{{ self.t("settings.updates.version") }}</span>
@@ -157,6 +161,8 @@
             <form method="post" action="/system/tailscale/update#tailscale" class="cell">
                 <button type="submit" class="row row-button">{{ self.t("settings.updates.update_tailscale") }}</button>
             </form>
+            {% else if os.tailscale_upstream_unknown %}
+            <p class="row row-note" data-row="tailscale-status">{{ self.t("settings.updates.tailscale_upstream_unknown") }}</p>
             {% else %}
             <div class="row" data-row="tailscale-status"><span class="row-label">{{ self.t("settings.updates.up_to_date") }}</span></div>
             {% endif %}

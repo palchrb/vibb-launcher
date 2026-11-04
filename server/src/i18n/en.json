@@ -2896,6 +2896,8 @@
   "settings.updates.scripts_version": "The Pi's installer scripts are version {version}.",
   "settings.updates.docker_image": "(Docker image)",
   "settings.updates.checking": "Checking for a new version…",
+  "settings.updates.checking_updates": "Checking for updates…",
+  "settings.updates.tailscale_upstream_unknown": "Couldn't ask for the newest Tailscale version, so it isn't known whether this one is up to date.",
   "settings.updates.check_failed": "Couldn't check for a new version right now.",
   "settings.updates.version_out": "Version {version} is out",
   "settings.updates.image_label": "How to update the image",

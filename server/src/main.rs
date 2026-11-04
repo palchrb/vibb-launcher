@@ -187,6 +187,9 @@ pub struct AppState {
     /// The newest server release, read from GitHub off the request path
     /// (`handlers::system_update::ServerRelease`).
     pub server_release: std::sync::Arc<handlers::system_update::ServerRelease>,
+    /// `apt list --upgradable` and `tailscale version --upstream`, read off the request path
+    /// (`handlers::system_maintenance::OsChecks`).
+    pub os_checks: std::sync::Arc<handlers::system_maintenance::OsChecks>,
     /// MET's requests (design 75 §3.3): their own `music_net::HttpSource` behind their own gate, never the music
     /// fetch's (a card's nowcast must not queue behind a 120 s feed); canned in the tests.
     pub weather_fetch: std::sync::Arc<dyn music_net::Source>,
@@ -528,6 +531,7 @@ async fn main() {
         ),
         kid_writes: Default::default(),
         server_release: Default::default(),
+        os_checks: Default::default(),
         weather_fetch: std::sync::Arc::new(music_net::Gated::new(
             std::sync::Arc::new(music_net::HttpSource::new()),
             music_net::REQUEST_SPACING,
@@ -560,6 +564,9 @@ async fn main() {
     // The live mirror feeds an external drive and the app-update schedule a root helper - neither
     // exists in the container (design 22 §6: nothing writes update_requested there).
     if state.net.deploy_kind == net::DeployKind::Systemd {
+        // Software Updates' apt and Tailscale checks, read once so the first visit has them.
+        let checks = state.os_checks.clone();
+        tokio::task::spawn(async move { checks.refresh().await });
         tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
         tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
             state.clone(),

@@ -42,7 +42,7 @@ pub(crate) async fn render_page(
     let os = if docker {
         system_maintenance::not_managed()
     } else {
-        system_maintenance::gather(&state.data_dir).await
+        system_maintenance::gather(state).await
     };
     page(docker, app, os, flash, lang)
 }

@@ -766,6 +766,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Testable without the working directory or the network**: `AppState::data_dir` (`data/`, a temp dir in tests)
   holds the backups, the schedules and the root helper's request file; `ForkConfig::github_api` is a closed local port
   in tests, so Software Updates renders at once.
+- **Software Updates never waits on a command or on GitHub** (2026-11-03/04): the newest server tag
+  (`system_update::ServerRelease`; hourly, 5 min after a failure) and `apt list --upgradable` and `tailscale version
+  --upstream` (`system_maintenance::OsChecks`, `AppState::os_checks`; 6 h, 5 min after a failure) live in memory. A page
+  that finds one due starts one read in the background and shows the last good value; a failed read keeps it. Before the
+  first read has ended (the checks are also read once at start, systemd installs only) the group says "Checking for
+  updates…" - never "Up to date". Tailscale's version without its upstream answer says it can't tell, never "Up to
+  date". Check for Updates, Install Updates and Update Tailscale read the checks again once the root helper is done
+  (`refresh_after_action`: polls the updater unit, then reads), so a reload shows the result; while the helper is busy
+  the page starts no read. The tests' default runner runs nothing (`OsChecks::with_runner` gives a canned one).
 - **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a waiting parent's Withdraw…, a photo's Delete Photo…, a backup's Restore… and
   Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
   Updates and Update Tailscale stay one tap.

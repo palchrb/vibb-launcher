@@ -251,6 +251,7 @@ impl TestApp {
             )),
             kid_writes: Default::default(),
             server_release: Default::default(),
+            os_checks: Default::default(),
             // MET through its own real gate, Kartverket ungated, both answered by the same canned fetch; a short wait
             // so a slow fetch's test takes no 6 s.
             weather_fetch: std::sync::Arc::new(crate::music_net::Gated::new(
