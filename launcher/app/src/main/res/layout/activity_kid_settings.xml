@@ -221,7 +221,7 @@
             <!-- The kid's ringtone and message sound (PLAN, approved 2026-11-04; ui/kidsettings/SoundPicks.kt): with the
                  sound bit, each row the sound's name and a chevron, opening our own picker (KidSoundPickerActivity -
                  never the system's). Without the "Modify system settings" app-op both at 50 %, not clickable, with the
-                 touch row's "can't be changed" line. No vibration rows (SoundPicks.kt says why). The row is one
+                 touch row's "can't be changed" line, and no chevron (E9 L7). No vibration rows (SoundPicks.kt says why). The row is one
                  button; TalkBack reads its label and value. -->
             <LinearLayout
                 android:id="@+id/kid_settings_picks_row"

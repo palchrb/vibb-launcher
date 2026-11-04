@@ -16,7 +16,9 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.KeyEvent
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.badges.BadgeListenerService
 import com.kidslauncher.mdm.lock.VisibleSender
@@ -328,29 +330,75 @@ object MusicSessions {
     private const val BROWSER_PROBE_HTTP = "http://example.invalid/"
 
     /**
-     * Play or pause the live session (its transport controls - nothing is opened). A pause always
-     * goes; play, next and previous only while the session's app can be used, looked up at the tap
-     * (qa-21-step4-code M1: a time rule may have suspended it since the surface was drawn).
+     * Play or pause the live session - nothing is opened. A pause always goes; play, next and previous
+     * only while the session's app can be used, looked up at the tap (qa-21-step4-code M1: a time rule
+     * may have suspended it since the surface was drawn). [vibb]: Vibb music's session, sent by its
+     * transport controls as before; another app's goes as a media button ([tileMediaKey], E9 M1).
      */
-    fun playPause(context: Context, controller: MediaController?, session: MusicSession?) {
+    fun playPause(context: Context, controller: MediaController?, session: MusicSession?, vibb: Boolean) {
         val c = controller ?: return
-        val controls = c.transportControls
-        runCatching {
-            when {
-                session?.playing == true -> controls.pause()
-                usable(context, c.packageName) -> controls.play()
-            }
+        when {
+            session?.playing == true -> send(context, c, TileAction.PAUSE, vibb)
+            usable(context, c.packageName) -> send(context, c, TileAction.PLAY, vibb)
         }
     }
 
-    fun next(context: Context, controller: MediaController?) {
+    fun next(context: Context, controller: MediaController?, vibb: Boolean) {
         val c = controller ?: return
-        if (usable(context, c.packageName)) runCatching { c.transportControls.skipToNext() }
+        if (usable(context, c.packageName)) send(context, c, TileAction.NEXT, vibb)
     }
 
-    fun previous(context: Context, controller: MediaController?) {
+    fun previous(context: Context, controller: MediaController?, vibb: Boolean) {
         val c = controller ?: return
-        if (usable(context, c.packageName)) runCatching { c.transportControls.skipToPrevious() }
+        if (usable(context, c.packageName)) send(context, c, TileAction.PREVIOUS, vibb)
+    }
+
+    /** Every tile tap's number ([send], main thread): a fallback check acts only for the newest (QA M1). */
+    private var tileTap = 0
+
+    /**
+     * [action] on [c]: its transport control for Vibb music; for another app the media button
+     * ([tileMediaKey]; a skip the session doesn't advertise as the transport control), the transport
+     * control instead when the session takes no button, and a play or pause the session hasn't followed
+     * after [TILE_FALLBACK_MS] again as the transport control ([tileFallback]; only while no newer tap
+     * came, a play only while the app is still usable). Main thread.
+     */
+    private fun send(context: Context, c: MediaController, action: TileAction, vibb: Boolean) {
+        val tap = ++tileTap
+        val advertised = runCatching { c.playbackState?.actions ?: 0L }.getOrDefault(0L)
+        val key = tileMediaKey(vibb, action, advertised)
+        if (key == null || !runCatching { mediaButton(c, key) }.getOrDefault(false)) {
+            runCatching { control(c, action) }
+            return
+        }
+        if (action != TileAction.PLAY && action != TileAction.PAUSE) return
+        val app = context.applicationContext
+        main.postDelayed({
+            runCatching {
+                val playing = sessionPlay(c.playbackState?.state) == SessionPlay.PLAYING
+                if (tileFallback(action, playing, newest = tap == tileTap) && (action == TileAction.PAUSE || usable(app, c.packageName))) control(c, action)
+            }
+        }, TILE_FALLBACK_MS)
+    }
+
+    private fun control(c: MediaController, action: TileAction) {
+        val controls = c.transportControls
+        when (action) {
+            TileAction.PLAY -> controls.play()
+            TileAction.PAUSE -> controls.pause()
+            TileAction.NEXT -> controls.skipToNext()
+            TileAction.PREVIOUS -> controls.skipToPrevious()
+        }
+    }
+
+    /** A media button's press and release on [c]'s own session (never the system's media-button route): sent once the
+     * press was taken - the action runs on it, so a release that fails never makes a skip go twice (QA L-a). */
+    private fun mediaButton(c: MediaController, key: Int): Boolean {
+        val at = SystemClock.uptimeMillis()
+        val down = KeyEvent(at, at, KeyEvent.ACTION_DOWN, key, 0)
+        if (!c.dispatchMediaButtonEvent(down)) return false
+        runCatching { c.dispatchMediaButtonEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP)) }
+        return true
     }
 
     /**

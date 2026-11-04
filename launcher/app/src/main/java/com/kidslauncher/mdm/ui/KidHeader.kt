@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import android.view.View
 import androidx.activity.ComponentActivity
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.IncludeKidHeaderBinding
 
 /**
@@ -18,9 +19,10 @@ object KidHeader {
         header: IncludeKidHeaderBinding,
         title: Int,
         action: Int? = null,
+        back: Int = R.string.kid_back_home,
         onAction: (() -> Unit)? = null,
     ) {
-        header.kidHeaderBack.setOnClickListener { activity.onBackPressedDispatcher.onBackPressed() }
+        backButton(activity, header, back)
         header.kidHeaderTitle.setText(title)
         if (action != null && onAction != null) {
             header.kidHeaderAction.setText(action)
@@ -39,9 +41,10 @@ object KidHeader {
         title: CharSequence,
         subtitle: CharSequence?,
         action: CharSequence?,
+        back: Int = R.string.kid_back_home,
         onAction: (() -> Unit)?,
     ) {
-        header.kidHeaderBack.setOnClickListener { activity.onBackPressedDispatcher.onBackPressed() }
+        backButton(activity, header, back)
         header.kidHeaderTitle.text = title
         header.kidHeaderSubtitle.text = subtitle
         header.kidHeaderSubtitle.visibility = if (subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
@@ -52,5 +55,13 @@ object KidHeader {
         } else {
             header.kidHeaderAction.visibility = View.GONE
         }
+    }
+
+    /** The back button, which says where it goes ([back], E9 L6): kid Settings (only ever opened from Home)
+     * [R.string.kid_back_home], its own pages [R.string.kid_back_settings], the rest [R.string.kid_back] - Dagen and the
+     * phone book open from the lock and a notification too (QA L-b), and Back then goes there. */
+    private fun backButton(activity: ComponentActivity, header: IncludeKidHeaderBinding, back: Int) {
+        header.kidHeaderBack.contentDescription = activity.getString(back)
+        header.kidHeaderBack.setOnClickListener { activity.onBackPressedDispatcher.onBackPressed() }
     }
 }

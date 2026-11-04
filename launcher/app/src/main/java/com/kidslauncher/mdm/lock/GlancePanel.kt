@@ -1559,6 +1559,7 @@ class GlancePanel(
         val moved = clockFace.place(width)
         // The calmer glance: the alarm on the date line or under it, by the line's room at this width.
         val alarmMoved = clockFace.placeAlarm()
+        fitEmergency()
         val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         if (layout != laidOut || room != loggedFor) logLayout(layout, room)
         if (layout != laidOut || moved || alarmMoved) refitPending = true
@@ -1566,6 +1567,22 @@ class GlancePanel(
         apply(layout)
         // Design 75 D15: a new page width decides the weather mark's place again.
         weather.resume()
+    }
+
+    /** Nødsamtale's label at a size whose longest word fits beside the side buttons ([glanceEmergencyScale], E9 L3);
+     * from the full sp at every layout, so a font-scale change ([refit]) sizes it again. */
+    private fun fitEmergency() {
+        val label = glance.lockGlanceEmergency
+        val box = glance.lockGlanceBottom
+        val margins = label.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+        val room = box.width - box.paddingStart - box.paddingEnd - margins.marginStart - margins.marginEnd - label.paddingStart - label.paddingEnd
+        if (room <= 0) return
+        val full = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, GLANCE_EMERGENCY_SP, activity.resources.displayMetrics)
+        val paint = android.text.TextPaint(label.paint).apply { textSize = full }
+        val longest = label.text.split(' ', '\u00A0', '\n').maxOfOrNull { paint.measureText(it) } ?: return
+        // A pixel to spare: a word exactly as wide as the line must not break either.
+        val px = full * glanceEmergencyScale(longest, room - 1f)
+        if (label.textSize != px) label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, px)
     }
 
     /** What the open weather card adds above the rows: its height with its margin, less the 8 dp the list's margin

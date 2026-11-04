@@ -76,7 +76,7 @@ class EventEditActivity : UIObjectActivity() {
                 )
             }
         }
-        KidHeader.bind(this, binding.eventEditHeader, getString(if (eventId == null) R.string.event_new_title else R.string.event_edit_title), null, null, null)
+        KidHeader.bind(this, binding.eventEditHeader, getString(if (eventId == null) R.string.event_new_title else R.string.event_edit_title), null, action = null, back = R.string.kid_back, onAction = null)
         binding.eventEditDay.setOnClickListener { pickDay() }
         binding.eventEditFrom.setOnClickListener { pickStart() }
         binding.eventEditLength.setOnClickListener { pickLength() }

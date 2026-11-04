@@ -50,7 +50,7 @@ class WifiNetworksActivity : UIObjectActivity() {
         setContentView(binding.root)
 
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
-        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.wifiNetworksHeader, R.string.wifi_networks_title, R.string.wifi_networks_scan) { scan() }
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.wifiNetworksHeader, R.string.wifi_networks_title, R.string.wifi_networks_scan, back = R.string.kid_back_settings) { scan() }
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)

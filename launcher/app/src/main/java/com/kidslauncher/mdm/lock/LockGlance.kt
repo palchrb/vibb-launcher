@@ -519,6 +519,17 @@ fun glanceTorchButton(hasFlash: Boolean, refusedWhileLocked: Boolean, lit: Boole
     else -> GlanceTorchButton.OFF
 }
 
+/** Nødsamtale's label size in sp (`view_lock_glance.xml`'s `lock_glance_emergency`, kept equal). */
+const val GLANCE_EMERGENCY_SP = 15f
+
+/**
+ * E9 L3: Nødsamtale never splits inside a word (at font 2.0 it drew "Nødsamtal / e"): the label's size is its
+ * [GLANCE_EMERGENCY_SP] times this - 1, or less so the longest word ([longestWordPx] at the full size) fits the
+ * [roomPx] between the side buttons. It still wraps between words.
+ */
+fun glanceEmergencyScale(longestWordPx: Float, roomPx: Float): Float =
+    if (longestWordPx <= roomPx || longestWordPx <= 0f || roomPx <= 0f) 1f else roomPx / longestWordPx
+
 // ---- the layout (design r11 §1.2-1.3; r9's fit is gone) ----------------------------------------------
 
 /** The page binds at most this many rows (r11 §1.3: two to three screens at 320 dp); the rest is the "more" line's

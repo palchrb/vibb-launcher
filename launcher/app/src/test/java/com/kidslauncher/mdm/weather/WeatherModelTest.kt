@@ -245,4 +245,11 @@ class WeatherModelTest {
         // Already tall enough: only wider.
         assertEquals(listOf(92, 100, 208, 160), weatherHitRect(100, 100, 200, 160, 48, 8, capTop = 0).toList())
     }
+
+    @Test
+    fun `the spoken text has no soft hyphen (E9 L4)`() {
+        assertEquals("Ettermiddag: Klarvær.", WeatherWords.spoken("Etter\u00ADmiddag: Klarvær."))
+        val panel = java.io.File("src/main/java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
+        assertEquals("the mark, the card and the card with its nowcast line", 3, Regex("return WeatherWords\\.spoken\\(").findAll(panel).count())
+    }
 }

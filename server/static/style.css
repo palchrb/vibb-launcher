@@ -2238,10 +2238,15 @@ input.row-input {
     font-size: 1.0625rem;
 }
 
-/* The wallpapers a phone may use: a thumbnail and a switch each (no flex gap: Safari 14.0). */
+/* The wallpapers a phone may use: a thumbnail and a switch each, in even columns (QA L-c of e9-fixes: the
+   min-content items of E9 L8 made a ragged grid). Columns of at least 84px share the row equally - as many as the old
+   76px items with their 4px margins fitted - and the label is 0.75rem, so the longest built-in word ("Kveldshimmel",
+   ~75px at 12px in Arial's metrics, ~81px at 13px) fits a column's 80px or more and wraps between words only (E9 L8:
+   "Kveldshimm / el"). Only a single word longer than its column (a long uploaded name) still breaks (break-word).
+   No grid gap needed: the items' own margins (no flex gap: Safari 14.0). */
 .wallpaper-grid {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
     padding: 12px 8px 0;
 }
 
@@ -2249,12 +2254,12 @@ input.row-input {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 76px;
-    margin: 0 4px 12px;
-    font-size: 0.8125rem;
+    min-width: 0;
+    margin: 0 2px 12px;
+    font-size: 0.75rem;
     font-weight: 400;
     text-align: center;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     cursor: pointer;
 }
 

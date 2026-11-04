@@ -197,7 +197,11 @@ class LockClockFace(
         }
         if (time != null && !beside) {
             val line = alarmLine("", time, alarm)
-            if (alarm.text?.toString() != line.toString()) alarm.text = line
+            // E9 L2: the glyph is drawn at the size it was built at - a font-scale change resizes the text in place.
+            if (alarm.text?.toString() != line.toString() || alarm.textSize != lastOwnAlarmPx) {
+                alarm.text = line
+                lastOwnAlarmPx = alarm.textSize
+            }
         }
         alarm.contentDescription = spoken
         row?.contentDescription = spoken
@@ -208,6 +212,9 @@ class LockClockFace(
 
     /** The date-line alarm's text size its text was last built at (the glyph follows the size). */
     private var lastAlarmPx = 0f
+
+    /** The own line's alarm likewise ([lastAlarmPx]). */
+    private var lastOwnAlarmPx = 0f
 
     private fun show(view: View, on: Boolean): Boolean {
         val wanted = if (on) View.VISIBLE else View.GONE

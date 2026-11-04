@@ -154,8 +154,9 @@ waits for a device capture of the Play Protect / account-security channel ids.
   any other address goes through `UserDial` as before - only https goes there, and TLS with the system CAs covers it;
   TCP only. `go test ./tsembed/` (`TestRouteFor`) runs in the build-tsnet action.
 - **Where it is refused**: the setup QR (`applyProvisioningExtras`, Android's provisioning and the in-app scanner) saves
-  nothing and enrolls nothing; Settings' Server URL edit doesn't save it (toast `server_url_refused`); "Sync now" says
-  why instead of "couldn't reach". The Server URL row's summary says "Not used: ..." under a refused stored address and
+  nothing and enrolls nothing; Settings' Server URL edit doesn't save it (the dialog opens again with the typed text and
+  `server_url_refused` above it); "Sync now" and the in-app scanner say why instead of "couldn't reach", in a dialog (E9
+  L1: a toast showed two lines and cut the advice). The Server URL row's summary says "Not used: ..." under a refused stored address and
   "Plain http, only through the tailnet" under a tailnet one.
 - **A phone set up earlier with a plain-http address other than a tailnet IP** - a LAN address (the server took one
   with a warning from 0.55.0 until this rule) or `http://<name>.ts.net` (the old rule took it silently as Tailscale): it stops talking to the server at this update - no fallback, since a last report over it would carry the token

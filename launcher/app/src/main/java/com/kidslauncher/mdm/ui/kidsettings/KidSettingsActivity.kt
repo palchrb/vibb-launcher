@@ -430,7 +430,7 @@ class KidSettingsActivity : UIObjectActivity() {
     /**
      * The ringtone and message sound rows ([soundPicksState]) with the parent's sound bit - also on a phone without a
      * vibrator, where the sound row is hidden: each the phone's sound ([soundValue]) and a chevron; without the
-     * "Modify system settings" app-op both at 50 %, not clickable, with the touch row's line. Returns whether they show.
+     * "Modify system settings" app-op both at 50 %, not clickable, without the chevron, with the touch row's line. Returns whether they show.
      */
     private fun renderPicks(wanted: Boolean): Boolean {
         val state = soundPicksState(wanted, KidSounds.canWrite(this))
@@ -439,6 +439,8 @@ class KidSettingsActivity : UIObjectActivity() {
         for ((row, kind) in pickRows()) {
             row.isEnabled = state.writable
             row.alpha = if (state.writable) 1.0f else 0.5f
+            // E9 L7: a read-only row leads nowhere - no chevron.
+            chevronView(kind).visibility = if (state.writable) View.VISIBLE else View.GONE
             val value = when (val v = soundValues[kind]) {
                 is SoundValue.Named -> v.title
                 SoundValue.NoSound -> getString(R.string.kid_settings_sound_none)
@@ -470,6 +472,11 @@ class KidSettingsActivity : UIObjectActivity() {
     private fun valueView(kind: SoundKind): TextView = when (kind) {
         SoundKind.RINGTONE -> binding.kidSettingsRingtoneValue
         SoundKind.MESSAGE -> binding.kidSettingsMessageSoundValue
+    }
+
+    private fun chevronView(kind: SoundKind): View = when (kind) {
+        SoundKind.RINGTONE -> binding.kidSettingsRingtoneChevron
+        SoundKind.MESSAGE -> binding.kidSettingsMessageSoundChevron
     }
 
     /** Showing the phone's state must not write it. */

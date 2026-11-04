@@ -218,7 +218,7 @@ class DayActivity : UIObjectActivity() {
             TodayJump.FORWARD_FROM_EARLIER -> getString(R.string.day_jump_forward)
             null -> null
         }
-        KidHeader.bind(this, binding.dayHeader, weekday, date, label) {
+        KidHeader.bind(this, binding.dayHeader, weekday, date, label, back = R.string.kid_back) {
             binding.dayPager.setCurrentItem(DAY_CENTER, false)
         }
     }

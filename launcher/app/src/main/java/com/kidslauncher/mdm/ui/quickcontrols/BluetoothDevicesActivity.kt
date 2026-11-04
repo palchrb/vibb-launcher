@@ -80,7 +80,7 @@ class BluetoothDevicesActivity : UIObjectActivity() {
         setContentView(binding.root)
 
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
-        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.bluetoothDevicesHeader, R.string.bluetooth_devices_title, R.string.bluetooth_devices_scan) { scan() }
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.bluetoothDevicesHeader, R.string.bluetooth_devices_title, R.string.bluetooth_devices_scan, back = R.string.kid_back_settings) { scan() }
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)

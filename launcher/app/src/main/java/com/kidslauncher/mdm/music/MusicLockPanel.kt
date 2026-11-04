@@ -61,8 +61,8 @@ class MusicLockPanel(
 
     init {
         glance.lockMediaPlay.setOnClickListener { playPause() }
-        glance.lockMediaPrevious.setOnClickListener { usablePick()?.let { MusicSessions.previous(activity, it.controller) } }
-        glance.lockMediaNext.setOnClickListener { usablePick()?.let { MusicSessions.next(activity, it.controller) } }
+        glance.lockMediaPrevious.setOnClickListener { usablePick()?.let { MusicSessions.previous(activity, it.controller, it.vibb) } }
+        glance.lockMediaNext.setOnClickListener { usablePick()?.let { MusicSessions.next(activity, it.controller, it.vibb) } }
         glance.lockMediaCompactPlay.setOnClickListener { playPause() }
     }
 
@@ -132,7 +132,7 @@ class MusicLockPanel(
     /** A pause always goes; a play only while the app may be used ([usablePick]). */
     private fun playPause() {
         val p = (if (session?.playing == true) picked else usablePick()) ?: return
-        MusicSessions.playPause(activity, p.controller, session)
+        MusicSessions.playPause(activity, p.controller, session, p.vibb)
     }
 
     private fun render() {

@@ -349,14 +349,15 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     }
 
     /** The Server URL edit (security review S-M1): https, or http to a tailnet IP; anything else isn't saved, and the
-     * dialog opens again with what was typed. */
-    private fun editServerUrl(row: Preference, current: String?) {
+     * dialog opens again with what was typed and the whole refusal above it ([refused]; E9 L1: a toast cut it at two
+     * lines). */
+    private fun editServerUrl(row: Preference, current: String?, refused: Boolean = false) {
         val mdm = LauncherPreferences.mdm()
-        showEditTextDialog(requireContext(), getString(R.string.settings_mdm_server_url), current) { typed ->
+        val message = if (refused) getString(R.string.server_url_refused) else null
+        showEditTextDialog(requireContext(), getString(R.string.settings_mdm_server_url), current, message) { typed ->
             val value = typed.trim()
             if (value.isNotEmpty() && !com.kidslauncher.mdm.server.serverUrlUsable(value, BuildConfig.DEBUG)) {
-                Toast.makeText(requireContext(), R.string.server_url_refused, Toast.LENGTH_LONG).show()
-                editServerUrl(row, typed)
+                editServerUrl(row, typed, refused = true)
                 return@showEditTextDialog
             }
             mdm.serverUrl(value)
@@ -366,6 +367,15 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 com.kidslauncher.mdm.push.SyncRunner.request(requireContext().applicationContext, "server_url")
             }
         }
+    }
+
+    /** Why the phone won't use a server address, whole (E9 L1: a toast shows two lines, and the advice was cut). */
+    private fun showServerUrlRefused(context: Context) {
+        AlertDialog.Builder(context, R.style.AlertDialogCustom)
+            .setTitle(R.string.settings_mdm_server_url)
+            .setMessage(R.string.server_url_refused)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     /** The address, and under it why the phone won't use it or how (security review S-M1). */
@@ -534,10 +544,12 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         context: Context,
         title: String,
         currentValue: String?,
+        message: String? = null,
         onSave: (String) -> Unit,
     ) {
         val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom).apply {
             setTitle(title)
+            message?.let { setMessage(it) }
             setView(R.layout.dialog_edit_text)
             setNegativeButton(android.R.string.cancel) { d, _ -> d.cancel() }
             setPositiveButton(android.R.string.ok) { d, _ ->
@@ -645,6 +657,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             return
         }
 
+        // Security review S-M1: applyProvisioningExtras refuses it too; here the whole reason shows (E9 L1).
+        if (!com.kidslauncher.mdm.server.serverUrlUsable(extras.serverUrl, BuildConfig.DEBUG)) {
+            showServerUrlRefused(context)
+            return
+        }
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             val outcome = applyProvisioningExtras(appContext, extras)
@@ -690,7 +707,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
         // Security review S-M1: the phone sends nothing to such an address - say why, not "couldn't reach".
         if (!com.kidslauncher.mdm.server.serverUrlUsable(mdm.serverUrl(), BuildConfig.DEBUG)) {
-            Toast.makeText(context, R.string.server_url_refused, Toast.LENGTH_LONG).show()
+            showServerUrlRefused(context)
             return
         }
 

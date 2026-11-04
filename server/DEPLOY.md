@@ -401,7 +401,7 @@ and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` 
 (The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
 
 Updates only ever go forward: `update.sh` refuses a release that isn't newer than the installed one (and Software
-Updates calls an older release "Up to date"). To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
+Updates calls an older release "You have the latest version"). To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
 `KPS_ALLOW_DOWNGRADE=1` - it then installs the newest release even if older.
 
 ### Release signing (server >= 0.24.0)

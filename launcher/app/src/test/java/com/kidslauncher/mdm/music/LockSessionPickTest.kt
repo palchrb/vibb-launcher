@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.music
 
 import android.content.pm.ApplicationInfo
+import android.media.session.PlaybackState
+import android.view.KeyEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -114,5 +116,27 @@ class LockSessionPickTest {
         assertEquals(0L, bogus.durationMs)
         val stream = MusicSession("org.player", SessionPlay.PLAYING, null, "t", 0, 1, 4f, 0)
         assertEquals("a carried-forward stream stops at the bound (code QA L3)", FOREIGN_TIME_MAX_MS, lockPositionNow(stream, nowElapsedMs = 5 * 24 * 3_600_000L))
+    }
+
+    @Test
+    fun `another app's transport goes as its own media keys, Vibb music's by its controls, and only play or pause again`() {
+        val skips = PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        TileAction.values().forEach { assertNull("Vibb music: transport controls ($it)", tileMediaKey(vibb = true, it, skips)) }
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PLAY, tileMediaKey(vibb = false, TileAction.PLAY, 0L))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PAUSE, tileMediaKey(vibb = false, TileAction.PAUSE, 0L))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_NEXT, tileMediaKey(vibb = false, TileAction.NEXT, skips))
+        assertEquals(KeyEvent.KEYCODE_MEDIA_PREVIOUS, tileMediaKey(vibb = false, TileAction.PREVIOUS, skips))
+        // QA L-a: a skip the session doesn't advertise (or no actions at all) goes as the transport control.
+        assertNull(tileMediaKey(vibb = false, TileAction.NEXT, PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_PAUSE))
+        assertNull(tileMediaKey(vibb = false, TileAction.PREVIOUS, PlaybackState.ACTION_SKIP_TO_NEXT))
+        assertNull(tileMediaKey(vibb = false, TileAction.NEXT, 0L))
+        assertTrue("a pause the app didn't follow", tileFallback(TileAction.PAUSE, playingNow = true, newest = true))
+        assertFalse(tileFallback(TileAction.PAUSE, playingNow = false, newest = true))
+        assertTrue("a play the app didn't follow", tileFallback(TileAction.PLAY, playingNow = false, newest = true))
+        assertFalse(tileFallback(TileAction.PLAY, playingNow = true, newest = true))
+        // QA M1: pause, then play within the second - the pause's check must not stop the music again.
+        assertFalse(tileFallback(TileAction.PAUSE, playingNow = true, newest = false))
+        assertFalse(tileFallback(TileAction.PLAY, playingNow = false, newest = false))
+        assertFalse("a skip is never sent twice", tileFallback(TileAction.NEXT, playingNow = true, newest = true) || tileFallback(TileAction.PREVIOUS, playingNow = false, newest = true))
     }
 }
