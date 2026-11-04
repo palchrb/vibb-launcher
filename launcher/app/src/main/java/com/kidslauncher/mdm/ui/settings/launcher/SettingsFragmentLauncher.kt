@@ -171,16 +171,9 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         val mdm = LauncherPreferences.mdm()
 
         val serverUrl = findPreference<Preference>(mdm.keys().serverUrl())
-        serverUrl?.summary = mdm.serverUrl().orNotSet()
+        serverUrl?.summary = serverUrlSummary(mdm.serverUrl())
         serverUrl?.setOnPreferenceClickListener {
-            showEditTextDialog(
-                requireContext(),
-                getString(R.string.settings_mdm_server_url),
-                mdm.serverUrl()
-            ) { value ->
-                mdm.serverUrl(value)
-                serverUrl.summary = value.orNotSet()
-            }
+            editServerUrl(serverUrl, mdm.serverUrl())
             true
         }
 
@@ -353,6 +346,39 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.server.TsnetClient.joined(requireContext()) -> getString(R.string.settings_mdm_tailscale_joined)
             else -> getString(R.string.settings_mdm_not_set)
         }
+    }
+
+    /** The Server URL edit (security review S-M1): https, or http to a tailnet IP; anything else isn't saved, and the
+     * dialog opens again with what was typed. */
+    private fun editServerUrl(row: Preference, current: String?) {
+        val mdm = LauncherPreferences.mdm()
+        showEditTextDialog(requireContext(), getString(R.string.settings_mdm_server_url), current) { typed ->
+            val value = typed.trim()
+            if (value.isNotEmpty() && !com.kidslauncher.mdm.server.serverUrlUsable(value, BuildConfig.DEBUG)) {
+                Toast.makeText(requireContext(), R.string.server_url_refused, Toast.LENGTH_LONG).show()
+                editServerUrl(row, typed)
+                return@showEditTextDialog
+            }
+            mdm.serverUrl(value)
+            row.summary = serverUrlSummary(value)
+            // The stream retries a closed path every 30 s; a sync now uses the new address at once.
+            if (value.isNotEmpty() && com.kidslauncher.mdm.server.DeviceToken.present()) {
+                com.kidslauncher.mdm.push.SyncRunner.request(requireContext().applicationContext, "server_url")
+            }
+        }
+    }
+
+    /** The address, and under it why the phone won't use it or how (security review S-M1). */
+    private fun serverUrlSummary(url: String?): String {
+        val shown = url.orNotSet()
+        if (url.isNullOrBlank()) return shown
+        val note = when (com.kidslauncher.mdm.server.serverUrlVerdict(url)) {
+            com.kidslauncher.mdm.server.ServerUrlVerdict.HTTPS -> null
+            com.kidslauncher.mdm.server.ServerUrlVerdict.TAILNET_HTTP -> R.string.settings_mdm_server_url_tailnet_http
+            com.kidslauncher.mdm.server.ServerUrlVerdict.REFUSED ->
+                if (com.kidslauncher.mdm.server.serverUrlUsable(url, BuildConfig.DEBUG)) null else R.string.settings_mdm_server_url_not_used
+        }
+        return if (note == null) shown else "$shown\n${getString(note)}"
     }
 
     private fun String?.orNotSet(): String = this?.takeIf { it.isNotBlank() }
@@ -634,7 +660,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     // the scanned QR leaves whatever key was already configured untouched, and the
                     // summary should reflect that instead of falsely showing "Not set".
                     val mdm = LauncherPreferences.mdm()
-                    findPreference<Preference>(mdm.keys().serverUrl())?.summary = mdm.serverUrl()
+                    findPreference<Preference>(mdm.keys().serverUrl())?.summary = serverUrlSummary(mdm.serverUrl())
                     findPreference<Preference>(mdm.keys().tailscaleAuthKey())?.summary = tailscaleKeySummary()
                 }.onFailure { e ->
                     Toast.makeText(
@@ -660,6 +686,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         if (mdm.serverUrl().isNullOrBlank() || !com.kidslauncher.mdm.server.DeviceToken.present()) {
             Toast.makeText(context, R.string.toast_mdm_enroll_missing_fields, Toast.LENGTH_LONG)
                 .show()
+            return
+        }
+        // Security review S-M1: the phone sends nothing to such an address - say why, not "couldn't reach".
+        if (!com.kidslauncher.mdm.server.serverUrlUsable(mdm.serverUrl(), BuildConfig.DEBUG)) {
+            Toast.makeText(context, R.string.server_url_refused, Toast.LENGTH_LONG).show()
             return
         }
 

@@ -243,10 +243,10 @@ fn locale_and_time_zone_validation() {
     }
 }
 
-/// Security review L8 (the user's rule): https and http to a Tailscale address are saved
-/// silently; http to another private address is saved with a warning under the field and on the
-/// Connect page; http to a public host writes nothing and says why. An address saved before the
-/// rule that it refuses now is never put in the QR, and Phone Setup says so (QA L-e).
+/// Launcher security review S-M1 (the user's rule of 2026-11-04): https is saved silently; http to
+/// a Tailscale IP is saved with a warning under the field and on the Connect page; any other http
+/// (a private address and a `*.ts.net` name too) writes nothing and says why. An address saved
+/// before the rule that it refuses now is never put in the QR, and Phone Setup says so (QA L-e).
 #[tokio::test]
 async fn the_server_address_is_judged_on_save_and_shown() {
     let app = TestApp::new().await;
@@ -280,6 +280,9 @@ async fn the_server_address_is_judged_on_save_and_shown() {
     for bad in [
         "http://vibb.example.org",
         "http://203.0.113.5",
+        "http://192.168.1.5:3100",
+        "http://vibb.tail1234.ts.net",
+        "http://100.64.0.1@evil.example",
         "vibb.example",
     ] {
         let res = save(bad).await;
@@ -289,12 +292,7 @@ async fn the_server_address_is_judged_on_save_and_shown() {
         assert!(page.contains(&format!("value=\"{bad}\"")), "{bad}");
         assert_eq!(stored().await, "", "{bad}");
     }
-    for fine in [
-        "http://100.101.102.103:3100",
-        "http://[fd7a:115c:a1e0::1]:3100",
-        "http://vibb.tail1234.ts.net",
-        "https://vibb.example.org",
-    ] {
+    for fine in ["https://vibb.example.org", "https://vibb.tail1234.ts.net"] {
         assert!(save(fine).await.status.is_redirection(), "{fine}");
         assert_eq!(stored().await, fine);
         assert!(
@@ -306,27 +304,33 @@ async fn the_server_address_is_judged_on_save_and_shown() {
             "{fine}"
         );
     }
-    assert!(
-        save("http://192.168.1.5:3100")
-            .await
-            .status
-            .is_redirection()
-    );
-    assert_eq!(stored().await, "http://192.168.1.5:3100");
-    for page in [setup().await, connect().await] {
-        assert!(page.contains("data-warning=\"plain-http\""), "{page}");
-        assert!(
-            page.contains("The phones will use plain http to 192.168.1.5."),
-            "{page}"
-        );
+    for (tailnet, host) in [
+        ("http://100.101.102.103:3100", "100.101.102.103"),
+        ("http://[fd7a:115c:a1e0::1]:3100", "fd7a:115c:a1e0::1"),
+    ] {
+        assert!(save(tailnet).await.status.is_redirection(), "{tailnet}");
+        assert_eq!(stored().await, tailnet);
+        for page in [setup().await, connect().await] {
+            assert!(page.contains("data-warning=\"plain-http\""), "{page}");
+            assert!(
+                page.contains(&format!("The phones will use plain http to {host}")),
+                "{page}"
+            );
+            assert!(page.contains("https://vibb.your-tailnet.ts.net."), "{page}");
+        }
     }
     // Saved before the rule: shown as not used, and the QR has no address from it.
-    sqlx::query("UPDATE provisioning_settings SET server_url = 'http://vibb.example.org'")
-        .execute(&app.db)
-        .await
-        .unwrap();
-    assert!(setup().await.contains("isn&#39;t put in the setup QR"));
-    assert!(connect().await.contains("data-missing=\"server-url\""));
+    for before in ["http://vibb.example.org", "http://192.168.1.5:3100"] {
+        sqlx::query("UPDATE provisioning_settings SET server_url = ?")
+            .bind(before)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let page = setup().await;
+        assert!(page.contains("isn&#39;t put in the setup QR"), "{before}");
+        assert!(page.contains("stop reaching the server"), "{before}");
+        assert!(connect().await.contains("data-missing=\"server-url\""));
+    }
 }
 
 /// Defaults nb_NO / Europe/Oslo (migrations/0034), editable on the provisioning page, invalid
@@ -793,7 +797,7 @@ async fn a_payload_too_big_for_a_qr_code_keeps_the_live_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Anna").await;
-    let huge = format!("https://{}.example.invalid", "a".repeat(3000));
+    let huge = format!("https://vibb.example.invalid/{}", "a".repeat(3000));
     sqlx::query("UPDATE provisioning_settings SET server_url = ?")
         .bind(&huge)
         .execute(&app.db)

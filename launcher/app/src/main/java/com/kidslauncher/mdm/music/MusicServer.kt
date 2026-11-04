@@ -1,6 +1,6 @@
 package com.kidslauncher.mdm.music
 
-import com.kidslauncher.mdm.server.TsnetClient
+import com.kidslauncher.mdm.server.toServer
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -71,13 +71,15 @@ private interface MusicApi {
     suspend fun storytelToken(@Body body: RequestBody): Response<ResponseBody>
 }
 
-/** Like `createMdmApi`: the bearer (to the server's own host only, review L8), the tailnet proxy when tsnet runs. */
+/** Like `createMdmApi`: the bearer (to the server's own host only, review L8), the way to the server
+ * [com.kidslauncher.mdm.server.serverPathNow]'s (security review S-M1: no request on a closed path). */
 fun createMusicServer(baseUrl: String, token: String): MusicServer {
-    val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+    val path = com.kidslauncher.mdm.server.serverPathNow(baseUrl)
+    val normalizedBaseUrl = path.baseUrl
     val client = OkHttpClient.Builder()
+        .toServer(path)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .apply { TsnetClient.proxy()?.let { proxy(it) } }
         .addInterceptor(com.kidslauncher.mdm.server.bearerInterceptor(normalizedBaseUrl, token))
         .build()
     val api = Retrofit.Builder()

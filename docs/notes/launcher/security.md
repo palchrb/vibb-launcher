@@ -116,3 +116,59 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `zone_watch::here_now_counts_the_served_interval_and_a_still_re_send`'s "no new row").
 - **S-L5, audio devices only** (Bluetooth page, server switch `bluetooth_any_device`): see `kid-settings.md`,
   "Bluetooth headphones in Kid Settings". L4 did the sharing restriction and the page's finish.
+
+## The server address: https only (security review S-M1, the user's decision of 2026-11-04)
+
+- **The rule** (`server/ServerUrlRule.kt`, pure; the server's `config::check_server_url` is the same rule): `https://`
+  to any host, or `http://` to a Tailscale IP literal (100.64.0.0/10, `fd7a:115c:a1e0::/48`) - nothing else. No name is
+  looked up, so a `*.ts.net` name must be https. The grammar is narrower than a URL (after trimming ASCII whitespace:
+  `scheme://host[:port][/path]`, path `A-Z a-z 0-9 . _ ~ / -`; a strict dotted quad, a bracketed IPv6 of hex groups,
+  or a DNS name whose last label isn't a number), so no userinfo, query, fragment, `%` or `\` can make OkHttp see
+  another host than the rule did. `server/testdata/server_url_vectors.json`, byte-identical in
+  `launcher/app/src/test/resources/`, is every row both sides run (`ServerTransportTest`, `config::tests::the_server_url_vectors`).
+- **The paths** (`server/ServerTransport.kt`, `serverPath` pure, `serverPathNow` with `TsnetClient.proxy()` and
+  `BuildConfig.DEBUG`): `createMdmApi`, the SSE client (`CommandListenerService.buildClient`) and `createMusicServer`
+  call `OkHttpClient.Builder().toServer(path)` before anything else. `Direct` = https, through tsnet's proxy while it
+  runs, else the phone's own network (as before). `Tailnet` = http to a tailnet IP, only through tsnet's proxy.
+  `Closed` (`NOT_HTTPS`, or `TAILNET_DOWN` while tsnet isn't up) = the client's first interceptor throws
+  `ServerPathClosed` (an `IOException`) before the bearer or a socket; the stream doesn't open and retries every 30 s
+  like an unenrolled phone. No other file calls `TsnetClient.proxy()` (pinned).
+- **Cleartext** (`res/xml/network_security_config.xml`, the manifest's `networkSecurityConfig`; `usesCleartextTraffic`
+  is gone): off for the whole app, system CAs only, one exception - the name `tailnet-server.vibb.invalid`
+  (`TAILNET_SERVER_HOST`). A network security config names hosts, never ranges, and OkHttp checks cleartext against the
+  URL's host, so the tailnet path's base URL names that host: its `Dns` answers it with the tailnet address and refuses
+  every other name, its `SocketFactory` makes SOCKS sockets to tsnet's proxy on loopback (a plain socket, not an HTTP
+  request: no loopback exception), `NO_PROXY`, no redirects, and an interceptor sends the real `Host`. The name is under
+  `.invalid` (RFC 6761) and no client but the tailnet one asks for it (another would ask the network's DNS, which a
+  hostile resolver could answer - nothing of ours does). A tailnet socket refuses when tsnet's proxy is no longer the
+  one its client was made with, and `TsnetClient.close()` drops the process `Authenticator` (QA L1: an app that binds
+  the freed loopback port gets neither the credential nor the request). The SOCKS request carries the IP, never a name
+  (`ServerTransportTest` runs it against a fake SOCKS5 proxy). `src/debug/res/xml/` adds `10.0.2.2`, and a debug build
+  alone takes `http://10.0.2.2[:port]` as the address (`EMULATOR_HOST`, the emulator loop).
+- **The proxy is ours** (`launcher/mobile/tsembed/dial.go`, the security QA of S-M1, H1): tsnet's `Loopback()` SOCKS
+  server dials with tsdial's `UserDial`, which takes netstack only for a current peer and dials any other address - a
+  Tailscale one included - on an OS socket (tailscale.com v1.104.0 `net/tsdial/tsdial.go` `dialOneUser`; `Server.Dial`
+  is the same). So `StartProxy` runs its own `socks5.Server` (user `tsnet`, a random password, 127.0.0.1:0) whose
+  dialer resolves once (`UserDialPlan`) and then: an address in 100.64.0.0/10 or `fd7a:115c:a1e0::/48` goes through
+  `NetstackDialTCP` (never the OS network) and only while it is a peer (`UseNetstackForIP`), else it is refused;
+  any other address goes through `UserDial` as before - only https goes there, and TLS with the system CAs covers it;
+  TCP only. `go test ./tsembed/` (`TestRouteFor`) runs in the build-tsnet action.
+- **Where it is refused**: the setup QR (`applyProvisioningExtras`, Android's provisioning and the in-app scanner) saves
+  nothing and enrolls nothing; Settings' Server URL edit doesn't save it (toast `server_url_refused`); "Sync now" says
+  why instead of "couldn't reach". The Server URL row's summary says "Not used: ..." under a refused stored address and
+  "Plain http, only through the tailnet" under a tailnet one.
+- **A phone set up earlier with a plain-http address other than a tailnet IP** - a LAN address (the server took one
+  with a warning from 0.55.0 until this rule) or `http://<name>.ts.net` (the old rule took it silently as Tailscale): it stops talking to the server at this update - no fallback, since a last report over it would carry the token
+  in clear. It keeps enforcing its cached policy. The parent fixes it on the phone without adb: Settings (the parent
+  code, checked offline against the vault) › Server URL › the https address; the next sync and stream use it at once.
+  The PWA can't hear from such a phone (it shows as not seen since); Phone Setup says under a saved refused address that
+  phones set up with it stop reaching the server and how to fix it.
+  A phone with no parent code on it yet has its Settings locked (`settings_gate_no_pin`): it needs a factory reset and
+  a new setup QR.
+- **Release order**: the server first, then the launcher. Android's QR provisioning installs `releases/latest`, so an
+  older server could still print a QR with a plain-http address that the new launcher refuses (the phone ends up
+  Device Owner but not enrolled; fixable in its Settings, open until the first policy). Before the launcher ships,
+  check which address the phones store (Settings › Server URL).
+- **Not device-tested**: the tailnet path on a phone (our SOCKS proxy with an IPv4/IPv6 destination instead of a name,
+  the NSC exception for the `.invalid` name), the proxy refusing a tailnet IP that isn't a peer (no packet on Wi-Fi or
+  mobile), a MagicDNS https name through it, the refused-address summary and toast, a QR with an http LAN address.

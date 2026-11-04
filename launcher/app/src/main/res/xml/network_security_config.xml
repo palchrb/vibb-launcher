@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher's network security config (security review S-M1, the user's decision of 2026-11-04).
+  - Cleartext is off for the whole app, and only the system's CAs are trusted (never a user-installed one).
+  - The one exception is the name tailnet-server.vibb.invalid (server/ServerTransport.kt, TAILNET_SERVER_HOST): a
+    config names hosts, never address ranges, so a server at http://<tailnet IP> is given to OkHttp under that name.
+    Only that client resolves it - to the tailnet address, with sockets through tsnet's SOCKS proxy on loopback (the
+    proxy hop is a plain socket, not an HTTP request: no loopback exception is needed). The name is under `.invalid`
+    (RFC 6761) and no client but the tailnet one asks for it.
+  The debug build's copy (src/debug/res/xml/) also allows the emulator's host, 10.0.2.2. ServerTransportTest
+  pins both and the manifest's reference.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">tailnet-server.vibb.invalid</domain>
+    </domain-config>
+</network-security-config>

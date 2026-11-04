@@ -44,6 +44,8 @@ runs:
         fi
         go mod download
         go mod verify
+        # The proxy's dial rule (tsembed/dial.go, the security QA of S-M1, H1), run on the host.
+        go test -ldflags=-checklinkname=0 ./tsembed/
         go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
         go install "golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION"
         mkdir -p ../app/libs

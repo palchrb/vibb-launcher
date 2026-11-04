@@ -140,21 +140,22 @@ interface MdmApi {
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.
  * [token] is omitted for the enroll-only call (no token exists yet); pass it for every
- * subsequent authenticated call. Routes through [TsnetClient]'s embedded-tailnet SOCKS5 proxy
- * whenever one is running, so calls reach the server over the tailnet without needing the
- * standalone Tailscale app - falls back to the device's normal network path (plain internet
- * routing, whatever that resolves to) if tsnet hasn't connected yet, same as before this existed. */
+ * subsequent authenticated call. The way to the server is [serverPathNow]'s (security review S-M1): https direct or
+ * through [TsnetClient]'s embedded-tailnet SOCKS5 proxy while it runs; http to a tailnet IP only through that proxy;
+ * any other address, or a tailnet one while tsnet is down, gives a client whose every call throws [ServerPathClosed]
+ * before anything is sent. */
 fun createMdmApi(baseUrl: String, token: String? = null, callTimeoutMs: Long? = null): MdmApi {
+    val path = serverPathNow(baseUrl)
     val clientBuilder = OkHttpClient.Builder()
+        // First: a closed path refuses before any other interceptor sees the request.
+        .toServer(path)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
     // The whole call within this (design 38: the shutdown's POST holds the broadcast at most 3 s).
     callTimeoutMs?.let { clientBuilder.callTimeout(it, TimeUnit.MILLISECONDS) }
 
-    TsnetClient.proxy()?.let { clientBuilder.proxy(it) }
-
-    val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+    val normalizedBaseUrl = path.baseUrl
 
     // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
     if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))

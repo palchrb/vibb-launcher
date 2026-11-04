@@ -246,8 +246,8 @@ pub async fn update_provisioning_settings(
     // written (fix round 2026-10-06).
     let locale = form.get("locale").map(|s| s.trim()).unwrap_or("");
     let time_zone = form.get("time_zone").map(|s| s.trim()).unwrap_or("");
-    // Empty = .env's PHONE_SERVER_URL, else the one rule for the QR's address (security review L8):
-    // a refused one isn't saved, a plain-http one to a private address is, with its warning.
+    // Empty = .env's PHONE_SERVER_URL, else the one rule for the QR's address (launcher security
+    // review S-M1): a refused one isn't saved, a plain-http one to a Tailscale IP is, with its warning.
     let url_refusal = match crate::config::check_server_url(server_url) {
         crate::config::ServerUrl::Refused(why) if !server_url.is_empty() => Some(why),
         _ => None,

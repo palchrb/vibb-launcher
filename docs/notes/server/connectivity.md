@@ -97,16 +97,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
   the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes). The QR's
-  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule since 0.55.0, security review L8 and
-  the user's rule of 2026-10-26, `config::check_server_url`): `https://` and a host, or `http://` to a Tailscale address
-  (100.64.0.0/10, `fd7a:115c:a1e0::/48`, `*.ts.net`) - fine, silent; `http://` to another private address (RFC 1918,
-  loopback, link-local, `fc00::/7`, a `.local`/`.internal`/single-label name) - saved and put in the QR, with "The
-  phones will use plain http to <host>. That is safe only if the path is an encrypted tunnel (WireGuard, Tailscale).
-  The server can't tell." under the field and on the Connect page (`.env`'s: a log line), since a WireGuard or
-  Headscale path can't be told from a cleartext LAN; `http://` to a public host - the form refuses it (400, the reason
-  under the field, nothing saved), `.env`'s is ignored with a log line. A saved one the rule refuses (saved before
-  0.55.0) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field (QA L-e;
-  `config::tests::a_server_address_is_judged_in_four_classes`, `provisioning::the_server_address_is_judged_on_save_and_shown`).
+  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule, `config::check_server_url`; since the
+  launcher's security review S-M1 and the user's decision of 2026-11-04 the same rule as the phone's, which replaced
+  L8's four classes of 2026-10-26): `https://` and a host - fine, silent; `http://` to a Tailscale IP literal
+  (100.64.0.0/10, `fd7a:115c:a1e0::/48`; `ServerUrl::TailnetHttp`) - saved and put in the QR, with "The phones will
+  use plain http to <host>, only through their own tailnet connection. ... Prefer an https:// name from tailscale serve, like
+  https://vibb.your-tailnet.ts.net." under the field and on the Connect page (`.env`'s: a log line); any other `http://` (a LAN or loopback
+  address, a `*.ts.net` or other name - nothing is looked up) - the form refuses it (400, `url_plain_http` under the
+  field, nothing saved), `.env`'s is ignored with a log line; a bad shape (userinfo, query, fragment, `%`, `\`, a
+  numeric last label, another scheme) - `url_shape`. The grammar and the rows are shared with the launcher
+  (`testdata/server_url_vectors.json`, byte-identical in `launcher/app/src/test/resources/`;
+  `config::tests::the_server_url_vectors` runs every row and compares the copies). A saved one the rule refuses (saved
+  before it) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field, with how to
+  fix the phones already set up with it - they stop reaching the server once Vibb One is updated (QA L-e;
+  `provisioning::the_server_address_is_judged_on_save_and_shown`).
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by

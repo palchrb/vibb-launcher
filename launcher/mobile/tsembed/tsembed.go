@@ -8,16 +8,18 @@
 // from plain Go inside this package and never crosses the binding boundary
 // directly.
 //
-// The embedding pattern used here - tsnet's own Loopback() SOCKS5 proxy,
-// rather than trying to bridge Dial()/net.Conn into Java - is tsnet's
-// intended mechanism for exactly this "give a non-Go program tailnet
-// access" use case (see Loopback's doc comment in tsnet.Server). Kotlin
-// talks to the resulting loopback address as a plain SOCKS5 proxy via
-// java.net.Proxy, so no Go network types ever need a Java binding at all.
+// Kotlin reaches the tailnet through a local SOCKS5 proxy (java.net.Proxy, so no Go network types
+// ever need a Java binding). The proxy is our own, not tsnet's Loopback(): Loopback's SOCKS server
+// dials with the tsdial UserDial, which falls back to an ordinary OS socket (the phone's Wi-Fi or
+// mobile network) for any address that isn't a current peer - an http request to a tailnet IP
+// whose node is gone would then leave the phone in clear (security QA of S-M1, H1). Ours dials a
+// Tailscale address only over netstack and only when it is a current peer (see dial.go).
 package tsembed
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net"
 	"os"
@@ -26,7 +28,9 @@ import (
 
 	"github.com/wlynxg/anet"
 	"tailscale.com/net/netmon"
+	"tailscale.com/net/socks5"
 	"tailscale.com/tsnet"
+	"tailscale.com/types/logger"
 )
 
 func init() {
@@ -87,10 +91,10 @@ var _ = net.Interface{} // keep "net" import even if only used via anet's return
 // goroutines/threads without external synchronization - callers should treat
 // it as owned by a single Kotlin-side service instance.
 type Client struct {
-	srv          *tsnet.Server
-	proxyAddr    string
-	proxyCred    string
-	localAPICred string
+	srv       *tsnet.Server
+	proxyLn   net.Listener
+	proxyAddr string
+	proxyCred string
 }
 
 // New creates (but does not yet connect) a client. stateDir must be a
@@ -143,35 +147,49 @@ func (c *Client) Up(timeoutSeconds int) (string, error) {
 
 // StartProxy starts (or returns the already-running) local SOCKS5 proxy onto
 // the tailnet, returning the loopback address to point a SOCKS5 client at
-// (e.g. "127.0.0.1:1080"). Call ProxyUsername/ProxyPassword afterward for the
-// credentials the proxy requires - tsnet.Server.Loopback returns three
-// values plus an error, which gobind can't bind directly (see package doc),
-// so this wraps it and caches the credentials as separate zero-argument
-// getters instead.
+// (e.g. "127.0.0.1:40123"). The proxy wants the username "tsnet" and the
+// password ProxyCredential returns - as tsnet's own Loopback() proxy did, so
+// the Kotlin side is unchanged. Its dialer is [Client.dial]: a Tailscale
+// address only through netstack and only while it is a peer.
 func (c *Client) StartProxy() (string, error) {
 	if c.proxyAddr != "" {
 		return c.proxyAddr, nil
 	}
-	addr, proxyCred, localAPICred, err := c.srv.Loopback()
+	var cred [16]byte
+	if _, err := crand.Read(cred[:]); err != nil {
+		return "", err
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}
-	c.proxyAddr = addr
-	c.proxyCred = proxyCred
-	c.localAPICred = localAPICred
-	return addr, nil
+	s5 := &socks5.Server{
+		Logf:     logger.Discard,
+		Dialer:   c.dial,
+		Username: "tsnet",
+		Password: hex.EncodeToString(cred[:]),
+	}
+	go s5.Serve(ln)
+	c.proxyLn = ln
+	c.proxyAddr = ln.Addr().String()
+	c.proxyCred = s5.Password
+	return c.proxyAddr, nil
 }
 
-// ProxyCredential returns the credential tsnet's local SOCKS5 proxy requires
-// for authentication (opaque from this package's perspective - passed
-// through exactly as tsnet.Server.Loopback returned it). Empty until
-// StartProxy has succeeded at least once. Exact format/usage against
-// java.net.Authenticator to be confirmed once this is wired up client-side.
+// ProxyCredential returns the credential the local SOCKS5 proxy requires
+// for authentication: random per process, made by StartProxy. Empty until
+// StartProxy has succeeded.
 func (c *Client) ProxyCredential() string {
 	return c.proxyCred
 }
 
-// Close shuts down the tailnet connection and proxy.
+// Close shuts down the proxy and the tailnet connection.
 func (c *Client) Close() error {
+	if c.proxyLn != nil {
+		c.proxyLn.Close()
+		c.proxyLn = nil
+		c.proxyAddr = ""
+		c.proxyCred = ""
+	}
 	return c.srv.Close()
 }
