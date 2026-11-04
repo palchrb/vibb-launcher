@@ -431,53 +431,77 @@ fn hour_containing(hours: &[Hour], tz: Tz, at: NaiveDateTime) -> Option<&Hour> {
     hours.iter().find(|h| h.t <= t && t < h.t + 3600)
 }
 
-/// Morning 06-12, afternoon 12-18 and evening 18-24 of `date`: the symbol of the hour containing the start
-/// (`next_6_hours`), the temperature of the hour containing the middle (09, 15, 21), the hours' precipitation summed
-/// and rounded to 0.1. Without the start's symbol or the middle's temperature, the period's first hour we have gives
-/// them (its `next_6_hours`, else its `next_1_hours`). A period with none of its hours has all three null.
+/// Morning 06-12, afternoon 12-18 and evening 18-24 of `date`, each a [span].
 pub fn periods(hours: &[Hour], tz: Tz, date: NaiveDate) -> [Period; 3] {
-    let period = |part: &'static str, from: u32, to: u32| {
-        let start = at_hour(date, from);
-        let end = if to == 24 {
+    let at = |hour: u32| {
+        if hour == 24 {
             at_hour(date + Duration::days(1), 0)
         } else {
-            at_hour(date, to)
-        };
-        let inside: Vec<&Hour> = hours
-            .iter()
-            .filter(|h| {
-                let s = local(tz, h.start());
-                s >= start && s < end
-            })
-            .collect();
-        if inside.is_empty() {
-            return Period {
-                part,
-                symbol: None,
-                temp: None,
-                precip_mm: None,
-            };
-        }
-        let mm: f64 = inside.iter().map(|h| f64::from(h.mm.unwrap_or(0.0))).sum();
-        Period {
-            part,
-            // A cell's first fetch starts at the current hour: the period now running has lost its start (and
-            // maybe its middle) - its first hour we have stands in (code QA M1).
-            symbol: hour_containing(hours, tz, start)
-                .and_then(|h| h.sym6.clone())
-                .or_else(|| inside[0].sym6.clone().or_else(|| inside[0].sym.clone())),
-            temp: hour_containing(hours, tz, at_hour(date, (from + to) / 2))
-                .and_then(|h| h.temp)
-                .or(inside[0].temp)
-                .map(degrees),
-            precip_mm: Some((mm * 10.0).round() / 10.0),
+            at_hour(date, hour)
         }
     };
     [
-        period("morning", 6, 12),
-        period("afternoon", 12, 18),
-        period("evening", 18, 24),
+        span(hours, tz, "morning", at(6), at(12)),
+        span(hours, tz, "afternoon", at(12), at(18)),
+        span(hours, tz, "evening", at(18), at(24)),
     ]
+}
+
+/// The local `[start, end)` as one column: the symbol of the hour containing the start (`next_6_hours`), the
+/// temperature of the hour containing the middle (09, 15, 21 for the day's periods), the hours' precipitation summed
+/// and rounded to 0.1. Without the start's symbol or the middle's temperature, the span's first hour we have gives
+/// them (its `next_6_hours`, else its `next_1_hours`). A span with none of its hours has all three null.
+fn span(
+    hours: &[Hour],
+    tz: Tz,
+    part: &'static str,
+    start: NaiveDateTime,
+    end: NaiveDateTime,
+) -> Period {
+    let inside: Vec<&Hour> = hours
+        .iter()
+        .filter(|h| {
+            let s = local(tz, h.start());
+            s >= start && s < end
+        })
+        .collect();
+    if inside.is_empty() {
+        return Period {
+            part,
+            symbol: None,
+            temp: None,
+            precip_mm: None,
+        };
+    }
+    let mm: f64 = inside.iter().map(|h| f64::from(h.mm.unwrap_or(0.0))).sum();
+    Period {
+        part,
+        // A cell's first fetch starts at the current hour: the period now running has lost its start (and
+        // maybe its middle) - its first hour we have stands in (code QA M1).
+        symbol: hour_containing(hours, tz, start)
+            .and_then(|h| h.sym6.clone())
+            .or_else(|| inside[0].sym6.clone().or_else(|| inside[0].sym.clone())),
+        temp: hour_containing(hours, tz, start + (end - start) / 2)
+            .and_then(|h| h.temp)
+            .or(inside[0].temp)
+            .map(degrees),
+        precip_mm: Some((mm * 10.0).round() / 10.0),
+    }
+}
+
+/// The evening card's "I kveld" (2026-11-04, the user: "fortsatt vise kvelden nå"): from 18:00 until midnight, when
+/// the card already shows tomorrow, what is left of this evening - the [span] from the start of the forecast hour
+/// containing `at` (never before 18:00) to midnight, part `evening`. None before 18:00 and when no hour of it is
+/// stored. At midnight the card is the new day's, as it always was.
+pub fn tonight(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Period> {
+    let t = local(tz, at);
+    if t.hour() < TOMORROW_FROM {
+        return None;
+    }
+    let start = local(tz, hour_floor(at)).max(at_hour(t.date(), TOMORROW_FROM));
+    let end = at_hour(t.date() + Duration::days(1), 0);
+    let rest = span(hours, tz, "evening", start, end);
+    (rest.symbol.is_some() || rest.temp.is_some()).then_some(rest)
 }
 
 /// When it gets dark (D10): the end of civil twilight after the date's solar noon, or never, or not at all that day.
@@ -649,6 +673,8 @@ pub struct Entry {
     pub card: String,
     /// The period of today's card containing it (0-2), null before 06:00 or on tomorrow's card.
     pub current: Option<u8>,
+    /// From 18:00 to midnight (the card is tomorrow's then): the rest of this evening, [tonight]; else null.
+    pub tonight: Option<Period>,
 }
 
 /// Four entries from the UTC hour containing `now` (the first one judged at `now`, the rest at their start); an
@@ -680,6 +706,7 @@ pub fn entries(hours: &[Hour], tz: Tz, now: DateTime<Utc>) -> Vec<Entry> {
                 }),
                 card: card.format("%Y-%m-%d").to_string(),
                 current,
+                tonight: tonight(hours, tz, at),
             })
         })
         .collect()

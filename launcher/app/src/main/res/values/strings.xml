@@ -591,12 +591,16 @@
     <string name="weather_part_afternoon">Afternoon</string>
     <string name="weather_part_evening">Evening</string>
     <string name="weather_card_tomorrow">Tomorrow</string>
+    <!-- The evening card (18:00 to midnight): the rest of this evening, beside "Tomorrow". -->
+    <string name="weather_card_tonight">Tonight</string>
     <string name="weather_dark_at">Dark at %1$s</string>
     <string name="weather_dark_never">Light all night</string>
     <string name="weather_dark_all_day">Dark all day</string>
     <string name="weather_updated">Updated %1$s</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
+    <!-- The evening card's foot: tomorrow's low and high. -->
+    <string name="weather_low_high_tomorrow">Tomorrow %1$s / %2$s</string>
     <!-- TalkBack (launcher QA M5): whole sentences joined with a space, never a sentence glued from parts. -->
     <string name="weather_spoken_now">Weather now: %1$s.</string>
     <string name="weather_spoken_now_plain">Weather now.</string>

@@ -516,12 +516,16 @@
     <string name="weather_part_afternoon">Etter\u00ADmiddag</string>
     <string name="weather_part_evening">Kveld</string>
     <string name="weather_card_tomorrow">I morgen</string>
+    <!-- The evening card (18:00 to midnight): the rest of this evening, beside "I morgen". -->
+    <string name="weather_card_tonight">I kveld</string>
     <string name="weather_dark_at">Mørkt kl. %1$s</string>
     <string name="weather_dark_never">Lyst hele natta</string>
     <string name="weather_dark_all_day">Mørkt hele dagen</string>
     <string name="weather_updated">Oppdatert kl. %1$s</string>
     <string name="weather_mm">%1$s mm</string>
     <string name="weather_low_high">%1$s / %2$s</string>
+    <!-- The evening card's foot: tomorrow's low and high. -->
+    <string name="weather_low_high_tomorrow">I morgen %1$s / %2$s</string>
     <string name="weather_spoken_now">Været nå: %1$s.</string>
     <string name="weather_spoken_now_plain">Været nå.</string>
     <plurals name="weather_spoken_degrees">

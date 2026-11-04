@@ -16,6 +16,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -356,14 +357,24 @@ class WeatherLockPanel(
 
     private fun bindCard(model: WeatherCard, now: Long) {
         val view = card.root
-        card.weatherCardTomorrow.visibility = if (model.tomorrow) View.VISIBLE else View.GONE
-        val anyMm = model.columns.any { (it.mm ?: 0.0) >= 0.1 }
+        val tonight = model.tonight
+        // The evening card (18:00 to midnight): "I kveld" in the first group, on the raised tone, its label held empty;
+        // "I morgen" over tomorrow's morning and afternoon; a line between them; no title.
+        card.weatherCardTomorrow.visibility = if (model.tomorrow && tonight == null) View.VISIBLE else View.GONE
+        val evening = if (tonight != null) View.VISIBLE else View.GONE
+        card.weatherGroup0Head.visibility = evening
+        card.weatherGroup1Head.visibility = evening
+        card.weatherCardSplit.visibility = evening
+        card.weatherGroup0.setBackgroundResource(if (tonight != null) R.drawable.bg_weather_now else 0)
+        val shown = if (tonight != null) listOf(tonight) + model.columns else model.columns
+        val anyMm = shown.any { (it.mm ?: 0.0) >= 0.1 }
         val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
         columns.forEachIndexed { i, col ->
-            val c = model.columns.getOrNull(i)
+            val c = shown.getOrNull(i)
             col.root.visibility = if (c != null) View.VISIBLE else View.GONE
             if (c == null) return@forEachIndexed
-            col.part.text = WeatherWords.partRes(c.part)?.let(activity::getString).orEmpty()
+            val isTonight = tonight != null && i == 0
+            col.part.text = if (isTonight) "" else WeatherWords.partRes(c.part)?.let(activity::getString).orEmpty()
             val symbol = c.symbol?.let { WeatherSymbols.drawable(it) }
             if (symbol != null) col.symbol.setImageResource(symbol) else col.symbol.setImageDrawable(null)
             col.temp.text = c.temp?.let(::weatherDegrees) ?: "–"
@@ -375,7 +386,17 @@ class WeatherLockPanel(
                 mm == null -> View.INVISIBLE
                 else -> View.VISIBLE
             }
-            col.root.setBackgroundResource(if (c.current) R.drawable.bg_weather_now else 0)
+            col.root.setBackgroundResource(if (c.current && !isTonight) R.drawable.bg_weather_now else 0)
+        }
+        // The groups keep the columns equal: each weighs its shown columns (a group with none is gone).
+        for ((group, cols) in listOf(card.weatherGroup0 to columns.take(1), card.weatherGroup1 to columns.drop(1))) {
+            val count = cols.count { it.root.visibility == View.VISIBLE }
+            group.visibility = if (count > 0) View.VISIBLE else View.GONE
+            val params = group.layoutParams as LinearLayout.LayoutParams
+            if (count > 0 && params.weight != count.toFloat()) {
+                params.weight = count.toFloat()
+                group.layoutParams = params
+            }
         }
         // E8's L2: a label that wraps ("Etter-/middag" at a large font) gives the three the same lines, so the symbols
         // and degrees stay on one line across the card.
@@ -386,7 +407,8 @@ class WeatherLockPanel(
             }
         }
         val lowHigh = if (model.low != null && model.high != null) {
-            activity.getString(R.string.weather_low_high, weatherDegrees(model.low), weatherDegrees(model.high))
+            val res = if (tonight != null) R.string.weather_low_high_tomorrow else R.string.weather_low_high
+            activity.getString(res, weatherDegrees(model.low), weatherDegrees(model.high))
         } else null
         val dark = darkText(model).orEmpty()
         card.weatherCardDark.text = dark
@@ -552,6 +574,13 @@ class WeatherLockPanel(
         val res = activity.resources
         val locale = res.configuration.locales[0] ?: Locale.getDefault()
         val parts = mutableListOf<String>()
+        // The evening card reads "I kveld: ... I morgen. Morgen: ... Ettermiddag: ...", as it shows.
+        model.tonight?.takeIf { it.symbol != null || it.temp != null }?.let { c ->
+            parts += activity.getString(R.string.weather_spoken_period, activity.getString(R.string.weather_card_tonight))
+            c.symbol?.let { WeatherSymbols.name(it) }?.let { parts += sentence(activity.getString(it)) }
+            c.temp?.let { parts += res.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
+            c.mm?.let { weatherMm(it, locale) }?.let { parts += activity.getString(R.string.weather_spoken_mm, it) }
+        }
         if (model.tomorrow) parts += sentence(activity.getString(R.string.weather_card_tomorrow))
         for (c in model.columns) {
             // E8's L1: a period without its hours says nothing (no bare "Morgen:").

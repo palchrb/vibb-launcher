@@ -372,7 +372,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   No place name since 2026-11-04 (the user: "Vi dropper navnet"; design 75 §13): the card's foot is the low and high
   alone ("8° / 13°", the dark text beside it as before), TalkBack names no place, the DTO has no `place` (an older
   server's is an unknown key, ignored; `WeatherContractTest`), and E8's L3 re-pull of a place-less answer after 2 min
-  is gone.
+  is gone. The evening card (2026-11-04, design 75 §14): from 18:00 to midnight an entry's `tonight` makes the card
+  "I kveld" | "I morgen" (`WeatherCard.tonight`; the layout's two groups `weather_group_0`/`_1` with their heads and
+  the `weather_card_split` line, weighed 1 | 2 so a plain card's three columns stay equal; the foot
+  `weather_low_high_tomorrow`).
   Not emulator-checked yet: `docs/testing/emulator.md` §6x.
 - **The calmer glance** (2026-11-04, branch `lock-glance-calm`, PLAN "A calmer lock glance and \"I morgen\"", the
   user's mockups boards A-D: fewer lines, closer to Android's own lock screen; the expanded weather pushes the lines

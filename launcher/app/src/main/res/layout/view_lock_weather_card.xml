@@ -3,9 +3,11 @@
      at its top the nowcast's one line of text only when rain is due or falling within ~90 min (gone otherwise - no
      bars, no radar), "I morgen" when the card is tomorrow's, then morning / afternoon / evening (the part, yr's symbol,
      the degrees, the period's summed precipitation in the rain blue; the current period on the raised tone), then the
-     foot "Nydalen · 2° / 7°" with "Mørkt kl. 17:02" at its end, and "Oppdatert kl." under it when the answer is more
-     than an hour old. The compact tile's ground and the rule card's 12 dp padding; calm - no colour field, no motion.
-     The whole card is its own target: a tap folds it. One TalkBack node (lock.WeatherLockPanel describes it). -->
+     foot "2° / 7°" with "Mørkt kl. 17:02" at its end, and "Oppdatert kl." under it when the answer is more than an
+     hour old. From 18:00 to midnight the evening card instead (2026-11-04, its mockup v2): "I kveld" | "I morgen"
+     with tomorrow's morning and afternoon, no title, the foot "I morgen 1° / 7°". The compact tile's ground and the
+     rule card's 12 dp padding; calm - no colour field, no motion. The whole card is its own target: a tap folds it.
+     One TalkBack node (lock.WeatherLockPanel describes it). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -43,6 +45,10 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
+    <!-- Two groups. On a plain card their headings and the line between them are gone, and the three columns are
+         equal (1 + 2). On the evening card (18:00 to midnight, 2026-11-04) the first is "I kveld" - the rest of this
+         evening, on the raised tone, its part label held empty so the symbols line up - and the second "I morgen" with
+         tomorrow's morning and afternoon, a clear line between them. -->
     <LinearLayout
         android:id="@+id/weather_card_columns"
         android:layout_width="match_parent"
@@ -51,162 +57,224 @@
         android:orientation="horizontal">
 
         <LinearLayout
-            android:id="@+id/weather_col_0"
+            android:id="@+id/weather_group_0"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:gravity="center_horizontal"
             android:importantForAccessibility="no"
-            android:orientation="vertical"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp">
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/weather_col_0_part"
+                android:id="@+id/weather_group_0_head"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
-                android:gravity="center_horizontal"
-                android:hyphenationFrequency="normal"
-                android:importantForAccessibility="no"
-                android:maxLines="2"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="12sp" />
-
-            <ImageView
-                android:id="@+id/weather_col_0_symbol"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginTop="2dp"
-                android:importantForAccessibility="no"
-                android:scaleType="fitCenter" />
-
-            <TextView
-                android:id="@+id/weather_col_0_temp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:paddingTop="6dp"
                 android:fontFamily="@font/nunito_extrabold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
                 android:maxLines="1"
+                android:text="@string/weather_card_tonight"
                 android:textColor="@color/kid_ink"
-                android:textSize="16sp" />
+                android:textSize="13sp"
+                android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/weather_col_0_mm"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:id="@+id/weather_col_0"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_rain"
-                android:textSize="12sp" />
+                android:orientation="vertical"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:id="@+id/weather_col_0_part"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:gravity="center_horizontal"
+                    android:hyphenationFrequency="normal"
+                    android:importantForAccessibility="no"
+                    android:maxLines="2"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="12sp" />
+
+                <ImageView
+                    android:id="@+id/weather_col_0_symbol"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginTop="2dp"
+                    android:importantForAccessibility="no"
+                    android:scaleType="fitCenter" />
+
+                <TextView
+                    android:id="@+id/weather_col_0_temp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:fontFamily="@font/nunito_extrabold"
+                    android:importantForAccessibility="no"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/weather_col_0_mm"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:importantForAccessibility="no"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_rain"
+                    android:textSize="12sp" />
+            </LinearLayout>
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/weather_col_1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
+        <View
+            android:id="@+id/weather_card_split"
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:background="@color/kid_divider"
             android:importantForAccessibility="no"
-            android:orientation="vertical"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp">
-
-            <TextView
-                android:id="@+id/weather_col_1_part"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
-                android:gravity="center_horizontal"
-                android:hyphenationFrequency="normal"
-                android:importantForAccessibility="no"
-                android:maxLines="2"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="12sp" />
-
-            <ImageView
-                android:id="@+id/weather_col_1_symbol"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginTop="2dp"
-                android:importantForAccessibility="no"
-                android:scaleType="fitCenter" />
-
-            <TextView
-                android:id="@+id/weather_col_1_temp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:fontFamily="@font/nunito_extrabold"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_ink"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/weather_col_1_mm"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_rain"
-                android:textSize="12sp" />
-        </LinearLayout>
+            android:visibility="gone" />
 
         <LinearLayout
-            android:id="@+id/weather_col_2"
+            android:id="@+id/weather_group_1"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
+            android:layout_weight="2"
             android:importantForAccessibility="no"
-            android:orientation="vertical"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp">
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/weather_col_2_part"
+                android:id="@+id/weather_group_1_head"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
-                android:gravity="center_horizontal"
-                android:hyphenationFrequency="normal"
-                android:importantForAccessibility="no"
-                android:maxLines="2"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="12sp" />
-
-            <ImageView
-                android:id="@+id/weather_col_2_symbol"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginTop="2dp"
-                android:importantForAccessibility="no"
-                android:scaleType="fitCenter" />
-
-            <TextView
-                android:id="@+id/weather_col_2_temp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:paddingTop="6dp"
                 android:fontFamily="@font/nunito_extrabold"
+                android:gravity="center_horizontal"
                 android:importantForAccessibility="no"
                 android:maxLines="1"
+                android:text="@string/weather_card_tomorrow"
                 android:textColor="@color/kid_ink"
-                android:textSize="16sp" />
+                android:textSize="13sp"
+                android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/weather_col_2_mm"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_bold"
                 android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_rain"
-                android:textSize="12sp" />
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/weather_col_1"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_horizontal"
+                    android:importantForAccessibility="no"
+                    android:orientation="vertical"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:id="@+id/weather_col_1_part"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:gravity="center_horizontal"
+                        android:hyphenationFrequency="normal"
+                        android:importantForAccessibility="no"
+                        android:maxLines="2"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="12sp" />
+
+                    <ImageView
+                        android:id="@+id/weather_col_1_symbol"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_marginTop="2dp"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitCenter" />
+
+                    <TextView
+                        android:id="@+id/weather_col_1_temp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/weather_col_1_mm"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_rain"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/weather_col_2"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_horizontal"
+                    android:importantForAccessibility="no"
+                    android:orientation="vertical"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:id="@+id/weather_col_2_part"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:gravity="center_horizontal"
+                        android:hyphenationFrequency="normal"
+                        android:importantForAccessibility="no"
+                        android:maxLines="2"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="12sp" />
+
+                    <ImageView
+                        android:id="@+id/weather_col_2_symbol"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_marginTop="2dp"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitCenter" />
+
+                    <TextView
+                        android:id="@+id/weather_col_2_temp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/weather_col_2_mm"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/nunito_bold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_rain"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 

@@ -139,6 +139,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   of 0.02° x 0.04° (`weather::Cell`): what MET and the cache see.
 - **The pure part** (`weather.rs`): MET's hourly entries as `Hour`s, `merge` (24 h back), the words (D3-D4's window and
   rule table, the forms), the periods, the dusk (NOAA, the end of civil twilight after solar noon), the four entries
+  (from 18:00 to midnight each with `tonight`, the rest of this evening beside tomorrow's card - design 75 §14)
   and the nowcast line - all in the phone's zone (`device_api::phone_zone`). Every row of `testdata/weather.json` runs
   in `weather::tests`; `WEATHER_CONTRACT_WRITE=1` rewrites the computed parts from `testdata/weather/` (recorded MET
   answers).
