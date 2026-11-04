@@ -13,7 +13,7 @@ Result: 0 H / 1 M / 3 L / 3 nit.
 **M1. Half of the approved item is not built: the words.** PLAN.md line 88 (the approved entry) and the mockup's board 3 and
 note 3 say the glance line's words "cover the rest of the evening first and tomorrow only when the evening is dry"
 ("Regn fra kl. 21", else "Regn i morgen"). The diff touches only the card. `weather::words` still switches to
-tomorrow's `[07:00, 18:00)` window at 18:00 (`word_day`, `server/src/weather.rs:281`), design §14 does not mention the
+tomorrow's `[07:00, 18:00)` window at 18:00 (`word_day`, `server/src/weather.rs:280`), design §14 does not mention the
 words and does not say they were left out. Result at 19:04 with rain due at 21:00: the open card says "I kveld" with a
 rain symbol, the closed line says nothing (or tomorrow's words). Either build it (server-side `words` for
 `[now hour, midnight)` first, then tomorrow's when dry; the `from`/`today` forms exist, the contract's `words` rows gain
@@ -23,7 +23,7 @@ user approved the mockup with that board in it.
 ## L
 
 **L1. "I kveld" symbol looks past midnight.** `span` takes the symbol from the start hour's `next_6_hours`
-(`weather.rs:482`). For `tonight` that window is `[start, start+6h)`, so at 19:00 it reaches 01:00 and at 23:30 it is the
+(`weather.rs:481`). For `tonight` that window is `[start, start+6h)`, so at 19:00 it reaches 01:00 and at 23:30 it is the
 23:00-05:00 outlook, while the mm are summed only to midnight. A rain symbol with no mm (hidden under 0.1) at 23:30
 because rain starts at 03:00 reads wrong, and the "Morgen" column then repeats the same hours. Not reachable at 18:00
 (exactly the old evening). Cheap fix: in `tonight`, when less than ~5 h remain use the start hour's `next_1_hours`
