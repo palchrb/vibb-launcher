@@ -2976,3 +2976,42 @@ async fn a_gone_row_keeps_no_keys() {
             .unwrap();
     assert_eq!(keys, ("gone".to_string(), 0, 0));
 }
+
+/// Review R-1: removing a row its push service ended only clears the warning - that device's later sync makes a new
+/// subscription; removing an active row turns the device off (`removed`).
+#[tokio::test]
+async fn removing_a_gone_row_leaves_the_device_free() {
+    const NEW: &str = "https://web.push.apple.com/QK1-fake-new";
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let iphone = app.admin_cookie().await;
+    subscribe(&app, &iphone, ENDPOINT).await;
+    sqlx::query("UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{id}/delete"),
+        Some(&mamma),
+        &[("from", "devices")],
+    )
+    .await;
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM push_removed").await, 0);
+    assert_eq!(
+        sync(&app, &iphone, &with_keys(NEW, &[])).await.json()["state"],
+        "stored"
+    );
+    // The new one is active: removing it turns the device off.
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{id}/delete"),
+        Some(&mamma),
+        &[("from", "devices")],
+    )
+    .await;
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM push_removed").await, 1);
+    assert_eq!(sync(&app, &iphone, &[]).await.json()["state"], "removed");
+}

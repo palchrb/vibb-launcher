@@ -613,7 +613,7 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
 - **A deliberate Off is kept** (fix round, `docs/review/qa-push-never-silent.md` M-1: it must outlive one endpoint, a
   cleared localStorage and an expiry): This Device's Turn Off and Getting Notifications' Remove note the endpoint's
   hash in `push_removed` (0128: `endpoint_hash` 16 hex, never the endpoint; `admin_id` - the row's own parent, and only
-  for a row that went, L-6; `removed_at`; **never pruned**, so a tap is the only way back - 0128's comment still says
+  for an active row that went, L-6 and R-1: removing a gone row only clears its warning; `removed_at`; **never pruned**, so a tap is the only way back - 0128's comment still says
   "as long as the security log", the plan changed after it was pushed). Turn Off, the banner's Hide (the sync's `off=1`)
   and every `removed` answer also set the browser's mark, the cookie `__Host-handy-push-off=1` (`handy-push-off` with
   `INSECURE_COOKIES`; HttpOnly, Strict, 400 days, renewed by each `removed`). The sync answers `removed` - no store,

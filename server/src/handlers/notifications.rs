@@ -1372,7 +1372,8 @@ pub async fn unsubscribe(
 }
 
 /// Getting Notifications' Remove…: the device gets nothing more (its browser keeps a
-/// subscription nobody sends to - and the app on it never sends it again by itself, [REMOVED]). Logged.
+/// subscription nobody sends to - and the app on it never sends it again by itself, [REMOVED]: an active row only;
+/// a gone row's Remove only clears the warning). Logged.
 pub async fn remove(
     State(state): State<AppState>,
     lang: Lang,
@@ -1380,8 +1381,8 @@ pub async fn remove(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let done: Result<Option<(String, String)>, sqlx::Error> = sqlx::query_as(
-        "DELETE FROM push_subscriptions WHERE id = ? AND admin_id = ? RETURNING endpoint, label",
+    let done: Result<Option<(String, String, String)>, sqlx::Error> = sqlx::query_as(
+        "DELETE FROM push_subscriptions WHERE id = ? AND admin_id = ? RETURNING endpoint, label, state",
     )
     .bind(id)
     .bind(admin.id)
@@ -1389,8 +1390,12 @@ pub async fn remove(
     .await;
     match done {
         Ok(gone) => {
-            if let Some((endpoint, label)) = gone {
-                note_removed(&state.db, admin.id, &endpoint).await;
+            if let Some((endpoint, label, row_state)) = gone {
+                // Only an active row is a device turned off (review R-1): removing a row its push service ended
+                // clears the Devices warning, and that device may turn notifications on again by itself.
+                if row_state == "active" {
+                    note_removed(&state.db, admin.id, &endpoint).await;
+                }
                 log_turned_off(
                     &state.db,
                     &[(admin.username.clone(), label)],
