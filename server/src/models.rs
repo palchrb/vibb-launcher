@@ -504,6 +504,62 @@ pub struct DeviceStatus {
     // handlers::calls::call_report.
 }
 
+/// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
+/// parent's Unlock; a reboot ends it sooner) - both pinned by `testdata/restrictions_pause.json`.
+pub const RESTRICTIONS_PAUSE_MAX_MS: i64 = 2 * 60 * 60 * 1000;
+
+impl DeviceStatus {
+    /// Whether this report's pause can still be on at `now_ms` - what every page shows (2026-11-04). The phone reports
+    /// a pause's end at once; one that ended while the phone sent nothing (no network) is over by the clock: a report
+    /// older than the longest pause isn't paused any more. An unreadable `reported_at` keeps the report's word.
+    pub fn paused_at(&self, now_ms: i64) -> bool {
+        self.restrictions_paused
+            && crate::display_time::parse_db_utc(&self.reported_at)
+                .is_none_or(|at| now_ms - at.timestamp_millis() < RESTRICTIONS_PAUSE_MAX_MS)
+    }
+}
+
+#[cfg(test)]
+mod paused_at_tests {
+    use super::*;
+
+    fn report(paused: bool, reported_at: &str) -> DeviceStatus {
+        DeviceStatus {
+            restrictions_paused: paused,
+            reported_at: reported_at.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_paused_report_is_over_at_the_longest_pause() {
+        let at = "2026-11-04 10:00:00";
+        let at_ms = crate::display_time::parse_db_utc(at)
+            .unwrap()
+            .timestamp_millis();
+        assert!(report(true, at).paused_at(at_ms));
+        assert!(report(true, at).paused_at(at_ms + RESTRICTIONS_PAUSE_MAX_MS - 1));
+        assert!(!report(true, at).paused_at(at_ms + RESTRICTIONS_PAUSE_MAX_MS));
+        // Not paused stays not paused; a report time ahead of now (the server clock stepped back) and an unreadable
+        // one keep the report's word.
+        assert!(!report(false, at).paused_at(at_ms));
+        assert!(report(true, at).paused_at(at_ms - 3_600_000));
+        assert!(report(true, "yesterday").paused_at(at_ms));
+    }
+
+    #[test]
+    fn the_longest_pause_is_the_shared_contracts() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ours = std::fs::read_to_string(dir.join("testdata/restrictions_pause.json")).unwrap();
+        let contract: serde_json::Value = serde_json::from_str(&ours).unwrap();
+        assert_eq!(contract["pause_max_ms"], RESTRICTIONS_PAUSE_MAX_MS);
+        let launcher = dir.join("../launcher/app/src/test/resources/restrictions_pause.json");
+        let theirs = std::fs::read_to_string(&launcher)
+            .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
+        assert_eq!(ours, theirs, "testdata/restrictions_pause.json differs");
+    }
+}
+
 #[derive(sqlx::FromRow, Clone)]
 pub struct SecurityEvent {
     pub id: i64,

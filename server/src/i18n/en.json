@@ -1008,6 +1008,7 @@
   "device.summary.foreign.step_pin.after_many": ": they may have read it.",
   "device.summary.quick": "Quick Actions",
   "device.summary.pause_ends": "The pause ends by itself, or tap Lock again to end it now.",
+  "device.summary.report_age": "As of the phone's last report, {age}.",
   "device.summary.pause_ends_old": "The pause ends by itself; this version of Vibb One can't be locked again from here.",
   "device.summary.plus_hour": "+1 h",
   "device.summary.plus_minutes": "+{minutes} min",

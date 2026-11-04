@@ -450,4 +450,25 @@ class WindowRelockPlanTest {
         assertTrue(permittedListChanged(listOf("a.b"), null))
         assertTrue(permittedListChanged(emptyList(), listOf("a.b")))
     }
+
+    @Test
+    fun `a pause ended outside the sync asks for a sync at once - once (2026-11-04)`() {
+        // The parent's ends ask whatever their relock does (QA of pause-end-report L1); end_windows has its follow-up.
+        assertEquals(setOf(RelockTrigger.LOCK_AGAIN, RelockTrigger.SETTINGS), RelockTrigger.entries.filter(::syncOnLockAgain).toSet())
+        // The pause runs out: the worker's relock finishes and the report goes now.
+        open(WindowKind.PAUSE)
+        end(WindowKind.PAUSE)
+        assertTrue(syncAfterRelock(RelockTrigger.TIMER, relock(RelockTrigger.TIMER).cleared))
+        // The sync's own re-check finds nothing left: no second sync.
+        assertNull(relock().report)
+        // The sync's own relock reports in that sync; the parent's ends asked already.
+        for (asked in listOf(RelockTrigger.SYNC, RelockTrigger.LOCK_AGAIN, RelockTrigger.SETTINGS, RelockTrigger.COMMAND)) {
+            assertFalse(asked.wire, syncAfterRelock(asked, cleared = true))
+        }
+        // A relock that keeps its marker (apply threw) runs again at the sync's re-check: asking each time would loop.
+        open(WindowKind.PAUSE)
+        end(WindowKind.PAUSE)
+        phone.applyThrows = true
+        assertFalse(syncAfterRelock(RelockTrigger.SCREEN_ON, relock(RelockTrigger.SCREEN_ON).cleared))
+    }
 }

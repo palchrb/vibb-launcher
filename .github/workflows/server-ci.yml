@@ -57,8 +57,9 @@ jobs:
           # events' write-back contract (design 72b, calendar_kid_events.json; calendar_kid_events compares it); and the
           # weather's contract (design 75, weather.json; weather::tests compares it); and Leave Tailnet's answers
           # (security review S-L10, leave_tailnet.json; tests::leave_tailnet compares them); and the server
-          # address rule's vectors (launcher security review S-M1, server_url_vectors.json; config::tests compares them).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
+          # address rule's vectors (launcher security review S-M1, server_url_vectors.json; config::tests compares them); and
+          # the pause's length (2026-11-04, restrictions_pause.json; models::paused_at_tests compares it).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
             changed=true
           else
             changed=false

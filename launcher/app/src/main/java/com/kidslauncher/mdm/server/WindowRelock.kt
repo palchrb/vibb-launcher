@@ -366,6 +366,8 @@ object WindowRelock {
         // A device admin or accessibility service the window let in: the parent PIN is refused (QA High 1).
         ForeignAccess.checkInBackground(app)
         notifyListeners()
+        // The parent's app sees the window end now, not at the next backstop sync (2026-11-04).
+        if (syncAfterRelock(trigger, outcome.cleared)) com.kidslauncher.mdm.push.SyncRunner.request(app, "window_ended")
     }
 
     /**
@@ -387,6 +389,8 @@ object WindowRelock {
         askedTrigger.set(trigger)
         check(app, trigger)
         notifyListeners()
+        // The parent's app sees the window end now (2026-11-04); the sync's relock waits for this one's.
+        if (syncOnLockAgain(trigger)) com.kidslauncher.mdm.push.SyncRunner.request(app, "window_ended")
         return ended
     }
 
