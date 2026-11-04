@@ -88,6 +88,9 @@ class KidVpnService : VpnService() {
     /** Cloudflare's and Quad9's DoH on 443 where 853 is blocked (design 36 step 3): IP-literal URLs,
      * this service's protected sockets, no proxy - [buildDohClient], never tsnet. */
     private val providerDoh = lazy { buildDohClient(IP_LITERAL_DNS, ::protect) }
+    /** The DoT connections kept for the next query (security review S-L9), the public resolvers' and the parent's
+     * servers' alike: this service's protected sockets, so evicted on a network change and closed at stop. */
+    private val dotPool = DotPool()
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     /** Read by every query (design 67 §3.1: a failure counts only on a validated network). */
     @Volatile
@@ -200,7 +203,7 @@ class KidVpnService : VpnService() {
         // parent typed. Also at a start with none, after a Forget while the VPN was off (qa-36-s3-code M1).
         if (!BootstrapDiskCache.keptFor(wanted)) cacheFile.delete()
         if (!changed) return
-        custom = config?.let { CustomDns(it, ::protect, scope, cacheFile = cacheFile).also(CustomDns::start) }
+        custom = config?.let { CustomDns(it, ::protect, scope, cacheFile = cacheFile, dotPool = dotPool).also(CustomDns::start) }
         // Other servers: an ongoing outage ends now, into the report's last one (design 67 §3.1).
         reach.rekey(reachKey(config, LauncherPreferences.mdm().dnsUpstreamProvider()))
         Log.i(LOG_TAG, "Custom DNS server: ${config?.primary?.kind ?: "none"}")
@@ -241,6 +244,7 @@ class KidVpnService : VpnService() {
             PublicResolvers.reset()
             custom?.networkReset()
             evictProviderDoh()
+            Thread(dotPool::evictAll, "dns-evict").start()
         }
     }
 
@@ -373,7 +377,7 @@ class KidVpnService : VpnService() {
                     .also { reach.after(it, reachKey(custom.config, null), lastNetwork?.validated == true) }.bytes
             } else {
                 val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
-                DnsFilterEngine.resolveProvider(query, upstream, ::protect) { providerDoh.value }
+                DnsFilterEngine.resolveProvider(query, upstream, ::protect, dotPool) { providerDoh.value }
                     .also { reach.after(it, reachKey(null, upstream), lastNetwork?.validated == true) }.bytes
             }
             if (responseBytes == null) return
@@ -443,6 +447,7 @@ class KidVpnService : VpnService() {
         }
         scope.cancel()
         evictProviderDoh()
+        Thread(dotPool::close, "dns-evict").start()
         try {
             fd?.close()
         } catch (e: Exception) {

@@ -44,13 +44,15 @@ class CustomDns(
     private val cloudflare: PublicResolver = PublicResolvers.cloudflare,
     /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
     private val cacheFile: File? = null,
+    /** The VPN's kept DoT connections (S-L9, [DotPool]); `null` = a fresh connection per query (tests). */
+    dotPool: DotPool? = null,
 ) {
     private val state = AtomicReference(ChooserState(sinceMs = elapsed()))
     private val canaryInFlight = AtomicReference<CompletableFuture<CanaryVerdict>?>(null)
     private val resolvers = bootstrapResolvers(config)
     private val bootstrap = BootstrapDns(elapsed) { host -> scope.launch { lookUp(host) } }
     private val client = buildDohClient(bootstrap, protect)
-    private val transport = transport ?: targetTransport({ client }, protect)
+    private val transport = transport ?: targetTransport({ client }, protect, dotPool)
 
     /** Set by [close]: a look-up still running for old servers writes no cache. */
     private var closed = false

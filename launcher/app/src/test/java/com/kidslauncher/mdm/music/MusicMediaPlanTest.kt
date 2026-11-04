@@ -125,13 +125,15 @@ class MusicMediaPlanTest {
     }
 
     @Test
-    fun `a playing music app is paused before it is suspended, nothing else is`() {
-        assertTrue(pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = false))
-        assertTrue(pauseBeforeSuspend("me.vibb.music.debug", shouldBeSuspended = true, currentlySuspended = false, debugBuild = true))
-        assertFalse("already suspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = true, currentlySuspended = true))
-        assertFalse("unsuspended", pauseBeforeSuspend("me.vibb.music", shouldBeSuspended = false, currentlySuspended = true))
-        assertFalse("another app", pauseBeforeSuspend("org.other", shouldBeSuspended = true, currentlySuspended = false))
-        assertFalse("a release build never trusts the debug name (S-L8)", pauseBeforeSuspend("me.vibb.music.debug", true, false, debugBuild = false))
+    fun `every app's playing sessions are paused before it is suspended - only then`() {
+        // The user, 2026-11-04: every app, not only Vibb music.
+        val playing = mapOf("me.vibb.music" to listOf("vibb"), "com.spotify.music" to listOf("spotify-1", "spotify-2"))
+        assertEquals(listOf("spotify-1", "spotify-2"), sessionsToPause("com.spotify.music", shouldBeSuspended = true, currentlySuspended = false, playing))
+        assertEquals(listOf("vibb"), sessionsToPause("me.vibb.music", shouldBeSuspended = true, currentlySuspended = false, playing))
+        assertEquals("nothing plays there", emptyList<String>(), sessionsToPause("org.other", true, false, playing))
+        assertEquals("already suspended", emptyList<String>(), sessionsToPause("com.spotify.music", true, currentlySuspended = true, playing))
+        assertEquals("unsuspended", emptyList<String>(), sessionsToPause("com.spotify.music", false, currentlySuspended = true, playing))
+        assertEquals("the budget's Vibb music stays unsuspended: not paused", emptyList<String>(), sessionsToPause("me.vibb.music", false, false, playing))
     }
 
     @Test
@@ -250,10 +252,14 @@ class MusicSuspensionGuardTest {
     }
 
     @Test
-    fun `apply pauses a playing music app before it suspends it`() {
+    fun `apply pauses a playing app before it suspends it`() {
         val enforcer = file("server/AppEnforcer.kt")
         val block = enforcer.substringAfter("if (shouldBeSuspended != currentlySuspended) {").substringBefore("if (shouldBeHidden != currentlyHidden)")
-        val pause = block.indexOf("MusicSessions.pauseBeforeSuspend(context, packageName)")
+        val pause = block.indexOf("com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(")
+        assertTrue(block.contains("sessionsToPause(packageName, shouldBeSuspended, currentlySuspended, toPause)"))
+        // One read of the sessions per pass, lazily - only once a package is about to be suspended.
+        assertTrue(enforcer.contains("val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }"))
+        assertTrue(block.contains("val toPause = if (shouldBeSuspended && !currentlySuspended) playingSessions else emptyMap()"))
         val suspend = block.indexOf("dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)")
         assertTrue("pause at $pause, suspend at $suspend", pause in 0 until suspend)
     }
@@ -287,10 +293,12 @@ class MusicSuspensionGuardTest {
             assertFalse(source.contains("playbackInfo"))
             assertFalse(source.contains("PLAYBACK_TYPE"))
         }
-        assertTrue(sessions.contains("val music = controllers.firstOrNull { app != null && MusicTrust.trusted(app, it.packageName) }"))
-        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(newArt = true)"))
-        assertTrue(lock.contains("val art = MusicSessions.reading.art"))
-        assertTrue(lock.contains("val position = positionNow(s, SystemClock.elapsedRealtime())"))
+        // Home's pick is the first Vibb music session (by name and signer); the lock's art is its pick's (2026-11-04).
+        assertTrue(sessions.contains("(app != null && MusicTrust.trusted(app, c.packageName)).let { vibb ->"))
+        assertTrue(sessions.contains("val music = watched.firstOrNull { it.vibb }"))
+        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) {\n                newMetadata(metadata)"))
+        assertTrue(lock.contains("val art = picked?.art"))
+        assertTrue(lock.contains("val position = lockPositionNow(s, SystemClock.elapsedRealtime())"))
         // a room's poll-anchored position: PLAYING from the poll's measuredAt, paused stands still
         val room = MusicSession("me.vibb.music", SessionPlay.PLAYING, "Abels tårn", "Episode 12", 120_000, 50_000, 1f, 1_800_000)
         assertEquals(125_000, positionNow(room, nowElapsedMs = 55_000))
@@ -340,11 +348,12 @@ class MusicSuspensionGuardTest {
         for (call in listOf("MusicListening.addListener(changed)", "MusicListening.removeListener(changed)", "handler.removeCallbacks(expiry)")) {
             assertTrue(call, setActive.contains(call))
         }
-        // the lock: the pure lockTileSession (MusicWindowTest holds its rule), read once in shown() (step 3 code QA L1)
+        // the lock: the pure lockTilePick over lockTileSession (LockSessionPickTest, MusicWindowTest hold the rules), read once
+        // in shown() (step 3 code QA L1)
         val lock = file("music/MusicLockPanel.kt")
-        assertEquals(1, Regex("lockTileSession\\(").findAll(lock).count())
-        assertTrue(body(lock, "private fun shown(").contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
-        for (direct in listOf("windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
+        assertEquals(1, Regex("lockTilePick\\(").findAll(lock).count())
+        assertTrue(body(lock, "private fun shown(").contains("lockTilePick(reading.access, candidates, MusicListening.listening(), now)"))
+        for (direct in listOf("lockTileSession(", "windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
         val lookUp = body(lock, "fun lookUp(")
         assertTrue(lookUp.contains("val tileNow = shown(now)\n        session = tileNow.session"))
         assertTrue(body(lock, "private fun render(").contains("session = shown().session"))

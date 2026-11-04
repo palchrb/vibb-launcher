@@ -18,7 +18,9 @@ import com.kidslauncher.mdm.lock.glanceTimes
 import kotlin.math.ceil
 
 /**
- * Vibb music on the PIN lock (design 21 step 4, design 25): the glance page's full and compact
+ * Media on the PIN lock (design 21 step 4, design 25; since 2026-11-04 any app the parent allowed
+ * and that is usable now, `lockTilePick`: the playing one first, Vibb music first among equals - Home's
+ * card stays Vibb music's): the glance page's full and compact
  * tiles, bound while a session is live and inside the listening window (design 28: playing, or 10
  * minutes after the end of play or a fresh headset - Home's card's rule, [shown]; never the
  * snapshot, which has no controls without opening the player) (the keypad stage has no music since
@@ -30,8 +32,9 @@ import kotlin.math.ceil
  * §2). The once-a-second tick moves only the bars and the full tile's times ([tick]): no text that
  * changes the tile's height, and no layout while the times keep their shape.
  *
- * It weakens nothing (LockMediaGuardTest): the session's play/pause, previous and next are all it
- * does - it never opens the music app, its session activity, a setting or a notification.
+ * It weakens nothing (LockMediaGuardTest): the picked session's play/pause, previous and next are all
+ * it does - on that app's own session - it never opens the app, its session activity, a custom action,
+ * a setting or a notification.
  */
 class MusicLockPanel(
     private val activity: Activity,
@@ -41,7 +44,12 @@ class MusicLockPanel(
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
     private var session: MusicSession? = null
-    private var usable = false
+    /** The session [shown] picked, whose controller the buttons act on. */
+    private var picked: MusicSessions.Live? = null
+    /** The apps whose session may show ([MusicSessions.lockUsableApps]), looked up by [lookUp] only at the
+     * start and when [MusicSessions.lockGeneration] moved (a sessions-list change, a suspension). */
+    private var usableApps: Set<String> = emptySet()
+    private var usableGeneration = -1
     private var tile = GlanceTileSize.NONE
     private var pageShown = false
     private var shownArt: Bitmap? = null
@@ -53,8 +61,8 @@ class MusicLockPanel(
 
     init {
         glance.lockMediaPlay.setOnClickListener { playPause() }
-        glance.lockMediaPrevious.setOnClickListener { MusicSessions.previous(activity, MusicSessions.reading.controller) }
-        glance.lockMediaNext.setOnClickListener { MusicSessions.next(activity, MusicSessions.reading.controller) }
+        glance.lockMediaPrevious.setOnClickListener { usablePick()?.let { MusicSessions.previous(activity, it.controller) } }
+        glance.lockMediaNext.setOnClickListener { usablePick()?.let { MusicSessions.next(activity, it.controller) } }
         glance.lockMediaCompactPlay.setOnClickListener { playPause() }
     }
 
@@ -62,7 +70,8 @@ class MusicLockPanel(
     fun start() {
         if (started) return
         started = true
-        MusicSessions.addListener(activity, changed)
+        usableGeneration = -1
+        MusicSessions.addListener(activity, changed, everyApp = true)
         MusicListening.addListener(changed)
     }
 
@@ -80,8 +89,10 @@ class MusicLockPanel(
      * rechecked once (at least 1 ms later, so the end is never re-rendered in a loop). */
     fun lookUp(): MusicSession? {
         handler.removeCallbacks(expiry)
-        val reading = MusicSessions.reading
-        usable = MusicSessions.usable(activity, reading.session?.packageName)
+        if (usableGeneration != MusicSessions.lockGeneration || !started) {
+            usableGeneration = MusicSessions.lockGeneration
+            usableApps = MusicSessions.lockUsableApps(activity, MusicSessions.reading.live)
+        }
         val now = SystemClock.elapsedRealtime()
         val tileNow = shown(now)
         session = tileNow.session
@@ -92,14 +103,18 @@ class MusicLockPanel(
 
     /**
      * The one read of what the lock shows, for [lookUp] and [render] alike: the pure
-     * [lockTileSession] (none without listener access, with the music app suspended or gone; kept only
-     * while it plays or inside the listening window - design 28, QA L7 - a live session only, never
-     * the snapshot), with the window's end for [lookUp]'s recheck (null while playing).
+     * [lockTilePick] over every live session (none without listener access; an app not allowed,
+     * suspended or gone never; each kept only while it plays or inside its listening window - design
+     * 28, QA L7 - a live session only, never the snapshot), with the window's end for [lookUp]'s
+     * recheck (null while playing). Sets [picked].
      */
     private fun shown(nowElapsedMs: Long = SystemClock.elapsedRealtime()): WindowedSession {
         val reading = MusicSessions.reading
         val now = BootStamp(nowElapsedMs, MusicListening.bootCount())
-        return lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)
+        val candidates = reading.live.map { LockCandidate(it.session, it.vibb, it.session.packageName in usableApps) }
+        val pick = lockTilePick(reading.access, candidates, MusicListening.listening(), now)
+        picked = pick?.let { reading.live[it.index] }
+        return pick?.tile ?: WindowedSession(null, null)
     }
 
     /** The glance panel's choice: the full tile, the compact one or none; [page]: the glance page
@@ -110,7 +125,15 @@ class MusicLockPanel(
         render()
     }
 
-    private fun playPause() = MusicSessions.playPause(activity, MusicSessions.reading.controller, session)
+    /** The picked session if its app may still be used on the lock - the full check again at the tap (code QA L1). */
+    private fun usablePick(): MusicSessions.Live? =
+        picked?.takeIf { it.session.packageName in MusicSessions.lockUsableApps(activity, listOf(it)) }
+
+    /** A pause always goes; a play only while the app may be used ([usablePick]). */
+    private fun playPause() {
+        val p = (if (session?.playing == true) picked else usablePick()) ?: return
+        MusicSessions.playPause(activity, p.controller, session)
+    }
 
     private fun render() {
         handler.removeCallbacks(ticker)
@@ -122,7 +145,7 @@ class MusicLockPanel(
         if (s == null) return
         val playIcon = if (s.playing) R.drawable.ic_music_pause else R.drawable.ic_music_play
         val playLabel = activity.getString(if (s.playing) R.string.music_pause else R.string.music_play)
-        val art = MusicSessions.reading.art
+        val art = picked?.art
         if (!artShown || art !== shownArt) {
             artShown = true
             shownArt = art
@@ -149,7 +172,7 @@ class MusicLockPanel(
     private fun tick() {
         handler.removeCallbacks(ticker)
         val s = session ?: return
-        val position = positionNow(s, SystemClock.elapsedRealtime())
+        val position = lockPositionNow(s, SystemClock.elapsedRealtime())
         val progress = progressPermille(position, s.durationMs)
         val progressText = if (s.durationMs > 0) {
             activity.getString(R.string.music_time_of, clockText(position), clockText(s.durationMs))

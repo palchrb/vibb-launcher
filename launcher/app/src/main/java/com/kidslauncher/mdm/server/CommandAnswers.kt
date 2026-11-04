@@ -67,6 +67,12 @@ object CommandAnswers {
     suspend fun result(context: Context, api: MdmApi, command: PendingCommand, success: Boolean, message: String?) =
         send(context, api, CommandAnswer(command.id, ANSWER_RESULT, success, message, command.requestedAt))
 
+    /** What the command did, into the outbox without a call - sent after the status report ([flush]). For a command
+     * that took this sync's way to the server away (`leave_tailnet`, S-L10's fix round). */
+    fun keep(context: Context, command: PendingCommand, success: Boolean, message: String?) {
+        update(context) { withAnswer(it, CommandAnswer(command.id, ANSWER_RESULT, success, message, command.requestedAt)) }
+    }
+
     private suspend fun send(context: Context, api: MdmApi, answer: CommandAnswer) {
         when (answerFate(post(api, answer))) {
             AnswerFate.SENT -> {}

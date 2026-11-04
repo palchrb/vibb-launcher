@@ -1219,4 +1219,13 @@ class PolicyResponseCompatTest {
         val shown = upstream("""{"kind": "doh", "url": "https://abc123.dns.example/dns-query", "rev": 4, $backup}""").toString()
         assertFalse(shown, shown.contains("abc123") || shown.contains("1.1.1.3"))
     }
+
+    /** Security review S-L5: `bluetooth_any_device` (the server's `policy_json_keys_snapshot`, always sent) - off from an
+     * older server, so the Bluetooth page pairs headphones and speakers only. */
+    @Test
+    fun `bluetooth_any_device decodes and is off without it`() {
+        assertTrue(ServerJson.decodeFromString(PolicyResponse.serializer(), """{"bluetooth_any_device":true}""").bluetoothAnyDevice)
+        assertFalse(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").bluetoothAnyDevice)
+        assertFalse((decodeCached(serverResponse) as CachedPolicy.Ok).policy.bluetoothAnyDevice)
+    }
 }

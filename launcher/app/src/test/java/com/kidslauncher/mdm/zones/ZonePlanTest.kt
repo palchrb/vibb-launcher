@@ -474,7 +474,8 @@ class ZonePlanTest {
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
-        assertTrue(sync.contains("still = reportStill(zonesOn, action, motion, now, lastFreshFix),"))
+        assertTrue(sync.contains("val still = reportStill(zonesOn, action, motion, now, lastFreshFix)"))
+        assertTrue(sync.contains("still = still,"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
         assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))
         assertTrue(sync.contains("val extraFixes = if (queueOff) null else extraLocations(ZoneWatch.queue(context), location.fix)"))
@@ -523,9 +524,9 @@ class ZonePlanTest {
         assertTrue(keep.contains("putString(KEPT_FIX_KEY"))
         assertFalse(keep.contains("cachedLocationJson"))
         assertFalse(keep.contains("saveCachedFix"))
-        // Only promoteKept and the own-fix save write the cached fix.
-        assertEquals(2, Regex("""keys\(\)\.cachedLocationJson\(\)""").findAll(locate).count())
+        // Only promoteKept and the own-fix save write the cached fix; clearCachedFix (location Off, P-L3) removes it.
+        assertEquals(3, Regex("""keys\(\)\.cachedLocationJson\(\)""").findAll(locate).count())
         assertTrue(locate.contains("requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) }"))
-        assertTrue(locate.contains(".filter { ZoneWatch.accept(context, it) }"))
+        assertTrue(locate.contains(".filter { ZoneWatch.accept(context, it) && reportable(it) }"))
     }
 }

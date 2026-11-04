@@ -123,14 +123,14 @@ fun volumeCapIndex(maxIndex: Int, minIndex: Int, pct: Int?): Int? {
 /** The index to set the stream back to, or null when [current] is within [capIndex]. */
 fun volumeToSet(current: Int, capIndex: Int?): Int? = capIndex?.takeIf { current > it }
 
-/** Before suspending [pkg], pause the music app's session there if it plays (21 §3) - only a name this build trusts
- * ([trustedMusicNames], S-L8 with code QA L3; the signer is checked where the session is paused). */
-fun pauseBeforeSuspend(
-    pkg: String,
-    shouldBeSuspended: Boolean,
-    currentlySuspended: Boolean,
-    debugBuild: Boolean = com.kidslauncher.mdm.BuildConfig.DEBUG,
-): Boolean = shouldBeSuspended && !currentlySuspended && pkg in trustedMusicNames(debugBuild)
+/**
+ * Before `apply()` suspends [pkg] (a time rule, the used-up budget, the allowlist), its playing sessions are paused (21
+ * §3; since 2026-11-04 every app's, the user: "pause every app before a suspension") - from [playing], every app's
+ * playing sessions read once per pass. None for a package that isn't being suspended now (already suspended, or
+ * unsuspended) - so the budget's Vibb music, which stays unsuspended, is never paused by it.
+ */
+fun <T> sessionsToPause(pkg: String, shouldBeSuspended: Boolean, currentlySuspended: Boolean, playing: Map<String, List<T>>): List<T> =
+    if (shouldBeSuspended && !currentlySuspended) playing[pkg].orEmpty() else emptyList()
 
 /** `POST_NOTIFICATIONS` for the music app (21 QA #6): granted by the device owner while managed,
  * else back to the phone's own choice (the default state keeps the current grant). */

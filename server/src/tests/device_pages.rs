@@ -256,6 +256,7 @@ async fn advanced_forms_return_to_their_groups() {
         &'a [(&'a str, &'a str)],
         Option<(String, Option<&'a str>)>,
     );
+    // Leave Tailnet shows only for a phone on the tailnet: `tests::leave_tailnet` checks its return.
     let table: [Row; 6] = [
         (
             "hardening#restrictions",
@@ -967,6 +968,8 @@ async fn home_screen_holds_the_moved_forms() {
         ("quick_control_brightness", true),
         ("quick_control_sound", true),
         ("quick_control_touch", false),
+        // Security review S-L5: any Bluetooth device, off by default (headphones and speakers only).
+        ("bluetooth_any_device", false),
     ] {
         assert_eq!(form_action_of(&html, name), Some(policy.as_str()), "{name}");
         assert_eq!(input_checked(&html, name, "on"), Some(on), "{name}");

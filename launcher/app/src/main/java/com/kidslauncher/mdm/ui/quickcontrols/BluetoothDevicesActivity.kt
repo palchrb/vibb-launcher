@@ -24,6 +24,10 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.btAttemptStep
 import com.kidslauncher.mdm.server.AppEnforcer
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.server.btPairOffered
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.kidsettings.bluetoothPageAllowed
 import com.kidslauncher.mdm.ui.kidsettings.controlsSection
@@ -95,8 +99,21 @@ class BluetoothDevicesActivity : UIObjectActivity() {
         registerStateReceiver()
     }
 
-    /** Security review S-L5: the page leaves as soon as the parent takes the Bluetooth row away (a sync's apply). */
-    private val appliedListener: () -> Unit = { finishIfNotAllowed() }
+    /** Security review S-L5: the page leaves as soon as the parent takes the Bluetooth row away (a sync's apply), and
+     * a found device it may no longer pair leaves the list. */
+    private val appliedListener: () -> Unit = { if (!finishIfNotAllowed()) dropUnoffered() }
+
+    /** S-L5: a device the scan found may be paired ([btPairOffered]): an audio device, or any while the parent allows
+     * it (the cached policy's `bluetooth_any_device`) or the pause/override is on. */
+    private fun pairOffered(info: QuickControls.BluetoothDeviceInfo): Boolean = btPairOffered(
+        info.audioClass,
+        parentAllowsAny = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.bluetoothAnyDevice == true,
+        overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive(),
+    )
+
+    private fun dropUnoffered() {
+        if (discovered.values.removeAll { !it.bonded && !pairOffered(it) }) refreshList()
+    }
 
     /** True when it finished: the cached policy no longer shows the Bluetooth row ([bluetoothPageAllowed]). */
     private fun finishIfNotAllowed(): Boolean {
@@ -156,6 +173,8 @@ class BluetoothDevicesActivity : UIObjectActivity() {
                 // The receiver runs on main; the device's row (UUIDs, ACL link) is read on IO.
                 lifecycleScope.launch {
                     val info = QuickControls.foundBluetoothDevice(device)
+                    // S-L5: a device it may not pair isn't listed at all (a bonded one keeps its row: Forget).
+                    if (!info.bonded && !pairOffered(info)) return@launch
                     // A bonded device keeps its proxy-read row.
                     if (discovered[info.address]?.bonded != true) {
                         discovered[info.address] = info
@@ -270,6 +289,11 @@ class BluetoothDevicesActivity : UIObjectActivity() {
     private fun showAttempts() = adapter.setAttempts(attempts.keys.toSet(), failed.toSet())
 
     private fun onPairTapped(device: QuickControls.BluetoothDeviceInfo) {
+        // S-L5: checked again at the tap - the parent's switch may have gone since the row was listed.
+        if (!pairOffered(device)) {
+            dropUnoffered()
+            return
+        }
         pairingAddress = device.address
         adapter.setPairing(device.address)
         val started = QuickControls.pairBluetoothDevice(this, device.address)

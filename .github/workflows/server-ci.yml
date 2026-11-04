@@ -55,8 +55,9 @@ jobs:
           # hosts (design 67, testdata/doh_hosts.txt; dns_server compares them); and the calendar
           # links' contract (design 72, calendar_feeds.json; calendar_feeds compares it); and the kid's
           # events' write-back contract (design 72b, calendar_kid_events.json; calendar_kid_events compares it); and the
-          # weather's contract (design 75, weather.json; weather::tests compares it).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
+          # weather's contract (design 75, weather.json; weather::tests compares it); and Leave Tailnet's answers
+          # (security review S-L10, leave_tailnet.json; tests::leave_tailnet compares them).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
             changed=true
           else
             changed=false
