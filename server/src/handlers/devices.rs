@@ -363,7 +363,7 @@ pub(crate) fn badge_and_screen(
     use crate::time_state::{BadgeContext, lock_badge, screen_time};
     (
         lock_badge(
-            report,
+            &report.named_by(rules, zone.lang()),
             &BadgeContext {
                 rules: &crate::time_state::rule_days(rules),
                 reported_at,
@@ -1931,7 +1931,7 @@ async fn render_device(
                 .as_deref()
                 .unwrap_or(&[])
                 .iter()
-                .map(|r| (r.id, r.name.clone()))
+                .map(|r| (r.id, crate::time_rules::shown_name(lang, &r.name)))
                 .collect(),
             asked,
             done,

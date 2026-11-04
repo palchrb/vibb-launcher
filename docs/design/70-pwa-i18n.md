@@ -1,7 +1,8 @@
 # 70 - The PWA in Norwegian and English (round S-i18n)
 
 Status: design note, architect 2026-10-27, on `main` at bc7408b3; revised 2026-10-27 after `docs/review/qa-70-design.md`
-(H1-H3, M1-M6, L1, L6 taken; the rest in "Carried into the briefs"). Not built. Server only (no launcher or contract
+(H1-H3, M1-M6, L1, L6 taken; the rest in "Carried into the briefs"). Built: slices 1-4 on `main`, slice 5 (§7)
+on `pwa-i18n-5` (2026-11-04). Server only (no launcher or contract
 change). PLAN: "Round S-i18n". The user, 2026-10-26: "Husk at jeg ønsker i18n på ting her ... Ønsker det på hele
 oppsettet vårt". Standing rule: no new user-facing string is hardcoded.
 

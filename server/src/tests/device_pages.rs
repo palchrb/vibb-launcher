@@ -16,7 +16,7 @@ use super::{
 };
 
 /// The text of About's row `key` (`data-row`) value, tags dropped ("Online since 08:12").
-fn value(html: &str, key: &str) -> Option<String> {
+pub(super) fn value(html: &str, key: &str) -> Option<String> {
     let row = &html[html.find(&format!("data-row=\"{key}\""))?..];
     let value = &row[row.find("class=\"row-value")?..];
     let value = &value[value.find('>')? + 1..];

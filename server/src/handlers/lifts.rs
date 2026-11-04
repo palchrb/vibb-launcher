@@ -380,7 +380,10 @@ pub(crate) async fn today(
                     Some(rule) => t_params(
                         lang,
                         "device.summary.lift.rule",
-                        &[("rule", rule), ("duration", &length)],
+                        &[
+                            ("rule", &crate::time_rules::shown_name(lang, rule)),
+                            ("duration", &length),
+                        ],
                     ),
                     None => t_params(
                         lang,

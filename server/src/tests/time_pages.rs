@@ -1922,3 +1922,69 @@ async fn the_silent_switch_saves_serves_and_shows() {
     let html = app.get_page(&page, &cookie).await.text();
     assert_eq!(input_checked(&html, "silent", "on"), Some(false));
 }
+
+/// Design 70 §7: a name the server made goes to the phone blank, so the phone reports it blank;
+/// the badge and Diagnostics name the rule by its id as the rules list does, in the parent's
+/// language, and a save of the shown name keeps the server's (no rename).
+#[tokio::test]
+async fn the_badge_names_a_blank_reported_rule_by_its_id() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let rule = add_rule(&app, None, "Outside allowed hours", SCHOOL_DAYS).await;
+    report(
+        &app,
+        &token,
+        json!({"active_rule_id": rule, "active_rule_name": "", "lock_reason": "RULE",
+               "lifts_active": []}),
+    )
+    .await;
+    let time = device_page(id, Section::Time);
+    let html = app.get_page(&time, &cookie).await.text();
+    assert!(
+        section(&html, "now")
+            .contains("<span class=\"badge badge-lock\">Outside allowed hours</span>"),
+        "{html}"
+    );
+    let html = app
+        .get_page(&format!("{time}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(
+        section(&html, "now")
+            .contains("<span class=\"badge badge-lock\">Utenfor tillatte tider</span>"),
+        "{html}"
+    );
+    assert!(!html.contains("Outside allowed hours"), "{html}");
+    let about = device_page(id, Section::About);
+    let html = app
+        .get_page(&format!("{about}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert_eq!(
+        super::device_pages::value(&html, "time-lock").as_deref(),
+        Some("Utenfor tillatte tider")
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}?lang=nb"),
+            Some(&cookie),
+            &[
+                ("scope", ""),
+                ("name", "Utenfor tillatte tider"),
+                ("kind", "custom"),
+                ("d0_start", "08:00"),
+                ("d0_end", "13:00"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let name: String = sqlx::query_scalar("SELECT name FROM time_rules WHERE id = ?")
+        .bind(rule)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Outside allowed hours");
+}

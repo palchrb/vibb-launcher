@@ -216,7 +216,7 @@ fn rule_rows(lang: Lang, rows: &[TimeRuleRow]) -> Vec<RuleRow> {
                         ),
                         silent_tag(lang, row.silent)
                     ),
-                    name: row.name.clone(),
+                    name: time_rules::shown_name(lang, &row.name),
                     corrupt: false,
                     own: row.device_id.is_some(),
                     off: false,
@@ -224,7 +224,7 @@ fn rule_rows(lang: Lang, rows: &[TimeRuleRow]) -> Vec<RuleRow> {
                 },
                 _ => RuleRow {
                     id: row.id,
-                    name: row.name.clone(),
+                    name: time_rules::shown_name(lang, &row.name),
                     summary: t(lang, "settings.time_rules.unreadable").to_string(),
                     corrupt: true,
                     own: row.device_id.is_some(),
@@ -1054,7 +1054,8 @@ pub async fn show_rule(
         } else {
             "custom".to_string()
         },
-        name: row.name,
+        // A name the server made in the parent's words (design 70 §7); saved unchanged, it stays.
+        name: time_rules::shown_name(lang, &row.name),
         calls_allowed: row.calls_allowed,
         silent: row.silent,
         days: day_inputs(lang, &days),
@@ -1436,12 +1437,17 @@ pub async fn update_rule(
         Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone_unsaved")),
         Err(response) => return *response,
     };
-    let input = match parse_rule_form(lang, &fields) {
+    let mut input = match parse_rule_form(lang, &fields) {
         Ok(input) => input,
         Err(error) => {
             return refuse_rule(&state, &scope, Some(&stored), &fields, error, lang).await;
         }
     };
+    // The name the form showed (`shown_name`) is no rename: the server's own name stays, and the
+    // phone keeps naming the rule itself (design 70 §7).
+    if input.name == time_rules::shown_name(lang, &stored.name) {
+        input.name = stored.name.clone();
+    }
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
          calendar_allowed = ?, silent = ?, days_json = ? WHERE id = ? AND device_id IS ? \

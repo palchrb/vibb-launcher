@@ -37,6 +37,50 @@ pub const NOON: i64 = 720;
 /// The stored name of a phone's bedtime (the lift's `rule_name`, Pause a Rule's picker); the
 /// phone gets an empty name and says "Leggetid" itself (design 66 §3.4).
 pub const BEDTIME_NAME: &str = "Bedtime";
+/// The legacy schedule's allowed hours as one rule ([legacy_to_rules]).
+const OUTSIDE_HOURS_NAME: &str = "Outside allowed hours";
+/// What a split rule's morning half is called after its name ([morning_name]).
+const MORNING_SUFFIX: &str = " (morning)";
+/// The names this server gives a rule itself, each with its words in the PWA (design 70 §7): the
+/// phone gets them empty and names the rule by its kind ("Leggetid", "Skjermfri tid"), the PWA
+/// says them in the parent's language until the parent renames the rule.
+pub const SERVER_NAMES: [(&str, &str); 4] = [
+    (BEDTIME_NAME, "device.time.rule.default.0"),
+    (OUTSIDE_HOURS_NAME, "device.time.rule.default.1"),
+    (
+        "Outside allowed hours (morning)",
+        "device.time.rule.default.2",
+    ),
+    (
+        "Outside allowed hours (evening)",
+        "device.time.rule.default.3",
+    ),
+];
+
+/// A rule's name as the phone gets it (design 70 §7): empty for a name in [SERVER_NAMES], else
+/// without a trailing " (morning)" / " (evening)", so both halves of a split rule show the
+/// parent's name (a typed suffix goes too).
+pub fn phone_name(name: &str) -> String {
+    if SERVER_NAMES.iter().any(|(server, _)| *server == name) {
+        return String::new();
+    }
+    name.strip_suffix(MORNING_SUFFIX)
+        .or_else(|| name.strip_suffix(" (evening)"))
+        .unwrap_or(name)
+        .to_string()
+}
+
+/// A rule's name as the PWA shows it in `lang` (design 70 §7): a name in [SERVER_NAMES] in the
+/// parent's words, "<name> (morning)" with its suffix worded, anything else as the parent typed it.
+pub fn shown_name(lang: crate::i18n::Lang, name: &str) -> String {
+    if let Some((_, key)) = SERVER_NAMES.iter().find(|(server, _)| *server == name) {
+        return crate::i18n::t(lang, key).to_string();
+    }
+    match name.strip_suffix(MORNING_SUFFIX) {
+        Some(base) => crate::i18n::t_params(lang, "device.time.rule.morning", &[("name", base)]),
+        None => name.to_string(),
+    }
+}
 
 /// One day's window, minutes since local midnight.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,8 +156,8 @@ pub struct TimeRuleRow {
 
 impl TimeRuleRow {
     /// The wire form; an unreadable stored value is an error (the policy endpoint answers 500,
-    /// never a rule-less default). The bedtime goes with an empty name, so the phone names it in
-    /// its own language ("Leggetid", design 66 §3.4).
+    /// never a rule-less default). The bedtime and a name the server made go with an empty name, so
+    /// the phone names them in its own language ("Leggetid", design 66 §3.4, design 70 §7).
     pub fn to_policy(&self) -> Result<PolicyTimeRule, String> {
         if !RULE_KINDS.contains(&self.kind.as_str()) {
             return Err(format!("rule {}: unknown kind {:?}", self.id, self.kind));
@@ -123,7 +167,7 @@ impl TimeRuleRow {
             name: if self.bedtime {
                 String::new()
             } else {
-                self.name.clone()
+                phone_name(&self.name)
             },
             kind: self.kind.clone(),
             calls_allowed: self.calls_allowed,
@@ -333,7 +377,7 @@ pub fn legacy_to_rules(legacy: &LegacySchedule) -> Vec<NewRule> {
     let mut rules = Vec::new();
     if let Some((bs, be)) = legacy_pair(legacy.bedtime_start, legacy.bedtime_end) {
         rules.push(NewRule {
-            name: "Bedtime".to_string(),
+            name: BEDTIME_NAME.to_string(),
             kind: "bedtime",
             calls_allowed: true,
             days: vec![Some(DayWindow { start: bs, end: be }); 7],
@@ -364,7 +408,7 @@ pub fn legacy_to_rules(legacy: &LegacySchedule) -> Vec<NewRule> {
             })
             .collect();
         rules.push(NewRule {
-            name: "Outside allowed hours".to_string(),
+            name: OUTSIDE_HOURS_NAME.to_string(),
             kind: "custom",
             calls_allowed: true,
             days,
@@ -395,10 +439,7 @@ pub fn legacy_to_rules(legacy: &LegacySchedule) -> Vec<NewRule> {
             None => None,
         })
         .collect();
-    for (name, days) in [
-        ("Outside allowed hours (morning)", morning),
-        ("Outside allowed hours (evening)", evening),
-    ] {
+    for (name, days) in [(SERVER_NAMES[2].0, morning), (SERVER_NAMES[3].0, evening)] {
         if days.iter().any(Option::is_some) {
             rules.push(NewRule {
                 name: name.to_string(),
@@ -577,9 +618,11 @@ fn split_days(days: &[Option<DayWindow>]) -> Option<(Days, Days)> {
 
 /// "<name> (morning)", the name cut so it fits in [MAX_RULE_NAME_CHARS].
 fn morning_name(name: &str) -> String {
-    const SUFFIX: &str = " (morning)";
-    let keep = MAX_RULE_NAME_CHARS - SUFFIX.chars().count();
-    format!("{}{SUFFIX}", name.chars().take(keep).collect::<String>())
+    let keep = MAX_RULE_NAME_CHARS - MORNING_SUFFIX.chars().count();
+    format!(
+        "{}{MORNING_SUFFIX}",
+        name.chars().take(keep).collect::<String>()
+    )
 }
 
 /// The index of the rule that becomes a bedtime: the first bedtime-shaped one, kind bedtime
@@ -1204,6 +1247,40 @@ mod tests {
             MAX_RULE_NAME_CHARS
         );
         assert_eq!(morning_name("Natt"), "Natt (morning)");
+    }
+
+    /// Design 70 §7: the names the server made go blank, a split rule's halves both by the
+    /// parent's name; the PWA words them in the parent's language.
+    #[test]
+    fn server_names_go_to_the_phone_blank() {
+        let row = |name: &str| TimeRuleRow {
+            id: 1,
+            device_id: None,
+            name: name.to_string(),
+            kind: "custom".to_string(),
+            calls_allowed: true,
+            exempt_apps_json: "[]".to_string(),
+            days_json: UNLIMITED_BUDGET_JSON.to_string(),
+            sort_order: 0,
+            bedtime: false,
+            calendar_allowed: false,
+            silent: false,
+        };
+        for (name, _) in SERVER_NAMES {
+            assert_eq!(row(name).to_policy().unwrap().name, "", "{name}");
+        }
+        assert_eq!(row(&morning_name("Natt")).to_policy().unwrap().name, "Natt");
+        assert_eq!(row("Natt (evening)").to_policy().unwrap().name, "Natt");
+        assert_eq!(row("Morning run").to_policy().unwrap().name, "Morning run");
+        use crate::i18n::Lang;
+        assert_eq!(shown_name(Lang::Nb, "Bedtime"), "Leggetid");
+        assert_eq!(
+            shown_name(Lang::Nb, "Outside allowed hours (evening)"),
+            "Utenfor tillatte tider (kveld)"
+        );
+        assert_eq!(shown_name(Lang::Nb, "Natt (morning)"), "Natt (morgen)");
+        assert_eq!(shown_name(Lang::En, "Natt (morning)"), "Natt (morning)");
+        assert_eq!(shown_name(Lang::Nb, "Morning run"), "Morning run");
     }
 
     type Served = Vec<(Days, bool, Vec<String>)>;
