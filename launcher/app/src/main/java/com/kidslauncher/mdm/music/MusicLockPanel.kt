@@ -165,6 +165,10 @@ class MusicLockPanel(
             button.setImageResource(playIcon)
             button.contentDescription = playLabel
         }
+        // A skip the session doesn't advertise is hidden in its place (another app's; Vibb music's always show).
+        val vibb = picked?.vibb ?: true
+        glance.lockMediaPrevious.visibility = if (lockSkipShown(vibb, s.actions, next = false)) View.VISIBLE else View.INVISIBLE
+        glance.lockMediaNext.visibility = if (lockSkipShown(vibb, s.actions, next = true)) View.VISIBLE else View.INVISIBLE
         tick()
     }
 

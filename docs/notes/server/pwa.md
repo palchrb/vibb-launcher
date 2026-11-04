@@ -411,6 +411,30 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   <app> once while restrictions are paused" - Etar's first start outside a pause crashes, E4's M2). A stored row for an app that no
   longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
   `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
+- **Show as a media player on the lock screen** (2026-11-04, the user: "En bryter per app i pwa, tastefully
+  implementert"; migration `0127_lock_media_apps.sql`, `device_lock_media_apps`): the phone's lock tile shows another
+  app's playback only for a media app (its manifest's category audio or video, or a browser - so a messenger's voice
+  message never shows); this switch counts one more app on this phone (a podcast app without a category, AntennaPod in
+  E9's M2). In the same Permissions details, after the camera switch, for every allowed app the last report has
+  installed and not preinstalled (`app_permissions::lock_media_offered`, `UnifiedAppRow.third_party`; a package in the
+  grammar, never Vibb, Vibb music or Play's core) - so an app the report says nothing else about gets the details with
+  this switch alone. Default off; its help says plainly what it shows and where ("While it plays, the app's title and
+  picture show on the lock screen - before the code is typed. Music, video and browser apps do this already; turn on
+  for other apps that play audio, such as podcast apps." - QA L1: a messenger switched on shows the sender and the
+  avatar there): the report has no category, so the switch is never hidden for an app that already counts, and
+  turning it on there changes nothing. It needs no look, so it adds nothing to the row's line. Its own auto-saving
+  form, `POST /devices/{id}/apps/lock-media` (`devices::save_lock_media`, the checkbox `lock_media=on`, missing = off,
+  another value a 400 `error.not_lock_media`), back to the details open as the camera's
+  (`?perms=<package>#perms-<package>`); the camera's and its handler share `devices::perms_target` (the grammar, the
+  phone, Play's core and Vibb refused at the row as `perms`; Vibb music too for this switch). **On** only for an app
+  the page offers it for (`devices::lock_media_offered_apps`: allowed by the stored allowlist and installed third-party
+  in the last report; else refused as `perms`), and it first prunes the phone's rows of apps no longer offered (one
+  uninstalled or switched off since), so stale rows never fill the cap of `MAX_ROWS_PER_DEVICE` 200 a phone
+  (`?notice=lock_media_full`); **off** is accepted for any package in the grammar, so a row can always be cleared. A
+  stale row until then is inert (the launcher checks the allowlist itself). The policy's `lock_media_apps` (a sorted
+  list of package names, always sent; a failing read sends `[]` with an error log - losing it only hides a tile, QA
+  L4). Tests: `device_pages::the_lock_media_switch_returns_to_its_open_details`, `app_permissions::tests`,
+  `device_api::policy_json_keys_snapshot`, `device_api::a_lost_lock_media_list_sends_none`.
 - **Every word is in one table**, `app_permissions::words` (the refusals too, through `devices::toggle_refusal`'s
   `perms`/`perms_full`), marked `// i18n: moves to i18n.rs (design 69)`; the templates print fields only.
 - **The form** (`POST /devices/{id}/apps/permissions`, `devices::save_app_permissions`): `package_name`, the checkbox

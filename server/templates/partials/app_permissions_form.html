@@ -1,7 +1,9 @@
 {#- An allowed app's Permissions on Device › Apps (design 68 §4.1; `app_permissions::PermsView`, as `perms`): the
     camera switch - only when the phone reports the app asks for the camera; its own auto-saving form, back to this
-    details, open (`?perms=<package>#perms-<package>`) - and one line per special access the app declares, with the way
-    to approve it on the phone while it isn't. Every word comes from `app_permissions::words`. -#}
+    details, open (`?perms=<package>#perms-<package>`) -, the lock screen's media player switch (2026-11-04; a
+    third-party app, `app_permissions::lock_media_offered`; its own auto-saving form, back here the same way) and one
+    line per special access the app declares, with the way to approve it on the phone while it isn't. Every word comes
+    from `PermsView`. -#}
 <details class="app-display" id="{{ perms.anchor }}"{% if perms.open %} open{% endif %}>
     <summary class="row"><span class="row-label">{{ perms.title }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
     {% if let Some((on, help)) = perms.camera %}
@@ -11,6 +13,17 @@
         <label class="row">
             <span class="row-label">{{ perms.camera_label }}<span class="row-sub">{{ help }}</span></span>
             <input type="checkbox" role="switch" class="sw" name="camera" value="default"{% if on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+        </label>
+        <noscript><button type="submit" class="row row-button">{{ perms.save }}</button></noscript>
+    </form>
+    {% endif %}
+    {% if let Some(on) = perms.lock_media %}
+    <form method="post" action="{{ perms.lock_media_action }}">
+        <input type="hidden" name="package_name" value="{{ perms.package_name }}">
+        {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+        <label class="row">
+            <span class="row-label">{{ perms.lock_media_label }}<span class="row-sub">{{ perms.lock_media_help }}</span></span>
+            <input type="checkbox" role="switch" class="sw" name="lock_media" value="on"{% if on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
         </label>
         <noscript><button type="submit" class="row row-button">{{ perms.save }}</button></noscript>
     </form>

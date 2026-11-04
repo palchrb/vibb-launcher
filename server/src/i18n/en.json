@@ -1432,6 +1432,9 @@
   "apps.perms.camera_help": "Off: {app} can't use the camera - a video call or a QR scan stops working. Turning it off closes {app} if it was allowed the camera.",
   "apps.perms.how": "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}",
   "apps.perms.how_alarm": "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}, then open {app} once while restrictions are paused",
+  "apps.perms.lock_media": "Show as a media player on the lock screen",
+  "apps.perms.lock_media_help": "While it plays, the app's title and picture show on the lock screen - before the code is typed. Music, video and browser apps do this already; turn on for other apps that play audio, such as podcast apps.",
+  "apps.perms.lock_media_full": "This phone already has 200 apps shown as media players on the lock screen - turn some off first.",
 
   "devices.add.name_empty": "Give the phone a name.",
   "devices.add.name_long": "Use at most 40 characters.",
@@ -1458,6 +1461,7 @@
   "error.make_code": "Couldn't make a code - nothing was changed. Check the server log.",
   "error.not_an_app_name": "Not an app this page can name.",
   "error.not_camera": "Not a camera setting.",
+  "error.not_lock_media": "Not a lock screen setting.",
   "error.not_an_app": "Not an app - nothing was changed.",
   "error.change_app": "Couldn't change this app - check the server log.",
   "error.launcher_always_on": "Vibb One is always on.",

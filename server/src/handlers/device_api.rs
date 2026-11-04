@@ -351,6 +351,14 @@ pub(crate) async fn build_policy(
     // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
     let app_permissions =
         crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
+    // 2026-11-04: losing the list only hides a tile on the lock, so a failed read sends none (the launcher reads a
+    // missing or empty list as none), never a 500 for the whole policy.
+    let lock_media_apps = crate::app_permissions::lock_media_apps(&state.db, device_id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id, %err, "couldn't read the lock-screen media apps - policy sent with none");
+            Vec::new()
+        });
 
     // Vibb music (design 21): `null` when it can't be read (QA #3) - the phone keeps what it has; a
     // made-up empty library would make it delete its downloads. Never fails the policy.
@@ -535,6 +543,7 @@ pub(crate) async fn build_policy(
         lock_glance,
         calendar,
         app_permissions,
+        lock_media_apps,
     })
 }
 

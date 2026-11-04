@@ -812,6 +812,9 @@ pub(crate) struct UnifiedAppRow {
     pub(crate) show_no_release_hint: bool,
     /// What the phone's report says about the app's camera and special accesses (design 68), for an installed app.
     pub(crate) access: Option<crate::app_permissions::AppAccess>,
+    /// The phone's last report has the app installed and not preinstalled: the lock-screen media switch's apps
+    /// (2026-11-04, `app_permissions::lock_media_offered`) - the Permissions are a third-party app's.
+    pub(crate) third_party: bool,
 }
 
 /// The six parent-facing LockTask features, decoded from/encoded into the
@@ -1219,6 +1222,139 @@ pub async fn save_app_permissions(
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let deny = match form.get("camera").map(String::as_str) {
+        None | Some("deny") => true,
+        Some("default") => false,
+        Some(_) => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_camera"),
+    };
+    let target = match perms_target(&state, lang, id, &form, false).await {
+        Ok(target) => target,
+        Err(response) => return *response,
+    };
+    match crate::app_permissions::set_camera(&state.db, id, &target.package, deny).await {
+        Ok(true) => target.saved(&state),
+        Ok(false) => target.refused("perms_full"),
+        Err(err) => perms_save_failed(lang, id, err),
+    }
+}
+
+/// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Show as a media player on the lock screen" - the
+/// auto-saving checkbox `lock_media=on`, its field missing = off; another value is a 400 - in its Permissions. Saved,
+/// refused and failed as [save_app_permissions] (`?notice=lock_media_full` past `app_permissions::MAX_ROWS_PER_DEVICE`);
+/// refused at the row for Vibb music too, whose player always shows. On only for an app the page offers it for
+/// ([lock_media_offered_apps]; else refused as `perms`), pruning the phone's rows for apps no longer offered; off is
+/// always accepted, so any row can be cleared.
+pub async fn save_lock_media(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let on = match form.get("lock_media").map(String::as_str) {
+        None => false,
+        Some("on") => true,
+        Some(_) => {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_lock_media");
+        }
+    };
+    let target = match perms_target(&state, lang, id, &form, true).await {
+        Ok(target) => target,
+        Err(response) => return *response,
+    };
+    let offered = if on {
+        match lock_media_offered_apps(&state, id).await {
+            Ok(offered) => offered,
+            Err(err) => return perms_save_failed(lang, id, err),
+        }
+    } else {
+        Vec::new()
+    };
+    if on && !offered.contains(&target.package) {
+        return target.refused("perms");
+    }
+    match crate::app_permissions::set_lock_media(&state.db, id, &target.package, on, &offered).await
+    {
+        Ok(true) => target.saved(&state),
+        Ok(false) => target.refused("lock_media_full"),
+        Err(err) => perms_save_failed(lang, id, err),
+    }
+}
+
+/// The apps the lock-screen media switch is offered for on this phone, as Device › Apps shows it: allowed (the stored
+/// allowlist; none when it is missing or unreadable) and installed and not preinstalled in the last report
+/// (`app_permissions::lock_media_offered`).
+async fn lock_media_offered_apps(state: &AppState, id: i64) -> Result<Vec<String>, sqlx::Error> {
+    let allowlist: Option<Option<String>> =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    let allowed: std::collections::HashSet<String> = allowlist
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    Ok(latest_installed(state, id)
+        .await?
+        .into_iter()
+        .filter(|a| {
+            allowed.contains(&a.package_name)
+                && crate::app_permissions::lock_media_offered(
+                    &a.package_name,
+                    false,
+                    !a.preinstalled,
+                )
+        })
+        .map(|a| a.package_name)
+        .collect())
+}
+
+/// The app a Permissions form saves for (design 68 §4.1), checked: its package in the grammar, a known phone, not
+/// Play's core or Vibb (nor Vibb music with [music_refused]).
+struct PermsTarget {
+    id: i64,
+    package: String,
+    from: Option<crate::handlers::device_pages::AppsFrom>,
+}
+
+impl PermsTarget {
+    /// Back to the app's Permissions, open, with the phone nudged.
+    fn saved(&self, state: &AppState) -> Response {
+        let _ = state.command_notify.send(self.id);
+        Redirect::to(&crate::handlers::device_pages::apps_url(
+            self.id,
+            &format!("perms={}", self.package),
+            self.from,
+            &format!("perms-{}", self.package),
+        ))
+        .into_response()
+    }
+
+    /// Refused at the app's row (`?notice=<code>&app=app-<package>`).
+    fn refused(&self, code: &str) -> Response {
+        let anchor = app_anchor(&self.package, None);
+        crate::settings_log::refused(Redirect::to(&crate::handlers::device_pages::apps_url(
+            self.id,
+            &format!("notice={code}&app={anchor}"),
+            self.from,
+            &anchor,
+        )))
+    }
+}
+
+fn perms_save_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {
+    tracing::error!(device_id = id, %err, "couldn't save an app's permissions");
+    crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
+}
+
+async fn perms_target(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    form: &std::collections::HashMap<String, String>,
+    music_refused: bool,
+) -> Result<PermsTarget, Box<Response>> {
     let package = form
         .get("package_name")
         .map(|p| p.trim())
@@ -1227,20 +1363,15 @@ pub async fn save_app_permissions(
     let from = form
         .get("from")
         .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
-    let deny = match form.get("camera").map(String::as_str) {
-        None | Some("deny") => true,
-        Some("default") => false,
-        Some(_) => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_camera"),
-    };
     // No row has a name outside the grammar (the launcher's `isValidPackageName`, stricter than the status intake's),
     // so there is no row to return to (no page sends one).
     if !crate::app_display::valid_package_name(&package) {
-        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
+        return Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::BAD_REQUEST,
+            "error.not_an_app",
+        )));
     }
-    let failed = |err: sqlx::Error| {
-        tracing::error!(device_id = id, %err, "couldn't save an app's permissions");
-        crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.save_failed")
-    };
     match sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -1248,19 +1379,14 @@ pub async fn save_app_permissions(
     {
         Ok(Some(_)) => {}
         Ok(None) => {
-            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
+            return Err(Box::new(crate::i18n::error(
+                lang,
+                StatusCode::NOT_FOUND,
+                "error.device_not_found",
+            )));
         }
-        Err(err) => return failed(err),
+        Err(err) => return Err(Box::new(perms_save_failed(lang, id, err))),
     }
-    let anchor = app_anchor(&package, None);
-    let refused = |code: &str| {
-        crate::settings_log::refused(Redirect::to(&crate::handlers::device_pages::apps_url(
-            id,
-            &format!("notice={code}&app={anchor}"),
-            from,
-            &anchor,
-        )))
-    };
     let vibb = match sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM tracked_apps WHERE is_launcher = 1 AND package_name = ?",
     )
@@ -1269,25 +1395,14 @@ pub async fn save_app_permissions(
     .await
     {
         Ok(count) => count > 0 || package.starts_with("me.vibb.launcher"),
-        Err(err) => return failed(err),
+        Err(err) => return Err(Box::new(perms_save_failed(lang, id, err))),
     };
-    if crate::play::is_play_core(&package) || vibb {
-        return refused("perms");
+    let target = PermsTarget { id, package, from };
+    let music = music_refused && crate::music::MUSIC_PACKAGES.contains(&target.package.as_str());
+    if crate::play::is_play_core(&target.package) || vibb || music {
+        return Err(Box::new(target.refused("perms")));
     }
-    match crate::app_permissions::set_camera(&state.db, id, &package, deny).await {
-        Ok(true) => {
-            let _ = state.command_notify.send(id);
-            Redirect::to(&crate::handlers::device_pages::apps_url(
-                id,
-                &format!("perms={package}"),
-                from,
-                &format!("perms-{package}"),
-            ))
-            .into_response()
-        }
-        Ok(false) => refused("perms_full"),
-        Err(err) => failed(err),
-    }
+    Ok(target)
 }
 
 /// "Download on Wi-Fi only" on Device › Apps (design 13; design 31 step 6): catalog apps download
@@ -1524,6 +1639,7 @@ pub(crate) async fn app_rows(
             own_label,
             is_launcher: false,
             access: app.access.clone(),
+            third_party: !app.preinstalled,
         });
         seen_packages.insert(app.package_name.clone());
     }
@@ -1584,6 +1700,7 @@ pub(crate) async fn app_rows(
             own_label,
             is_launcher: false,
             access: None,
+            third_party: false,
         });
     }
 
@@ -1613,6 +1730,7 @@ pub(crate) async fn app_rows(
                 own_label: None,
                 is_launcher: true,
                 access: None,
+                third_party: false,
             },
         );
     }
@@ -2016,6 +2134,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
         "not_an_app" => Some(t(lang, "device.apps.refused_changed")),
         "perms" => Some(t(lang, "apps.perms.refused")),
         "perms_full" => Some(t(lang, "apps.perms.full")),
+        "lock_media_full" => Some(t(lang, "apps.perms.lock_media_full")),
         _ => None,
     }
 }

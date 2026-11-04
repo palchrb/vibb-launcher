@@ -93,6 +93,17 @@ class PolicyResponseCompatTest {
         assertNull(appPermissionsOf(LastEnforcedPlan.of(policy("[]")).toPolicy().appPermissions))
     }
 
+    /** 2026-11-04: `lock_media_apps` (the server's `policy_json_keys_snapshot`, `[]` for a fresh phone) - raw JSON read by
+     * `lockMediaAppsOf`, so nothing in it fails the policy; missing = none; not carried by the fallback. */
+    @Test
+    fun `lock_media_apps decodes, never fails the policy, and missing means none`() {
+        fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"lock_media_apps": $value}""")
+        assertEquals(setOf("de.danoeh.antennapod"), com.kidslauncher.mdm.music.lockMediaAppsOf(policy("""["de.danoeh.antennapod"]""").lockMediaApps))
+        assertEquals(emptySet<String>(), com.kidslauncher.mdm.music.lockMediaAppsOf(policy("""[7, {"a": 1}]""").lockMediaApps))
+        assertNull(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").lockMediaApps)
+        assertNull(LastEnforcedPlan.of(policy("""["de.danoeh.antennapod"]""")).toPolicy().lockMediaApps)
+    }
+
     @Test
     fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)

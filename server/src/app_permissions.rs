@@ -1,6 +1,8 @@
 //! Per-app permissions (design 68, `docs/design/68-app-permissions.md` at the monorepo root): the parent's "camera
 //! off" per phone and app (`device_app_permissions`, migration 0102), sent as the policy's `app_permissions`, and
-//! what the phone reports about each app's camera and special accesses (`installed_apps[].access`).
+//! what the phone reports about each app's camera and special accesses (`installed_apps[].access`). Since 2026-11-04
+//! also "Show as a media player on the lock screen" per phone and app (`device_lock_media_apps`, migration 0127), sent
+//! as the policy's `lock_media_apps`.
 //!
 //! The phone works out which special accesses an app wants from its own manifest; the server sends none of them and
 //! only shows what the report says. A special access is approved on the phone alone (Settings › App access, in a
@@ -92,6 +94,79 @@ pub async fn camera_denied(db: &SqlitePool, device_id: i64) -> Result<Vec<String
 
 const ACCESS_STATES: [&str; 3] = ["granted", "denied", "unknown"];
 const CAMERA_STATES: [&str; 2] = ["requested", "admin_denied"];
+
+/// The policy's `lock_media_apps` for a phone (2026-11-04), sorted: the apps the parent switched on as media players on
+/// the lock screen - the phone's lock tile then shows their playback as it does a music, video or browser app's.
+pub async fn lock_media_apps(db: &SqlitePool, device_id: i64) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT package_name FROM device_lock_media_apps WHERE device_id = ? ORDER BY package_name",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Switches one app's "Show as a media player on the lock screen" on (a row) or off (none). Turning on first prunes
+/// the phone's rows outside [offered] (the apps the switch is offered for now: an app uninstalled or no longer
+/// allowed since keeps no row, so stale rows never fill the cap). `Ok(false)`: the phone still has
+/// [MAX_ROWS_PER_DEVICE] rows (nothing written). Off always deletes, whatever the app is now.
+pub async fn set_lock_media(
+    db: &SqlitePool,
+    device_id: i64,
+    package: &str,
+    on: bool,
+    offered: &[String],
+) -> Result<bool, sqlx::Error> {
+    if on {
+        sqlx::query(
+            "DELETE FROM device_lock_media_apps WHERE device_id = ? \
+             AND package_name NOT IN (SELECT value FROM json_each(?))",
+        )
+        .bind(device_id)
+        .bind(serde_json::to_string(offered).unwrap_or_else(|_| "[]".to_string()))
+        .execute(db)
+        .await?;
+    }
+    if !on {
+        sqlx::query("DELETE FROM device_lock_media_apps WHERE device_id = ? AND package_name = ?")
+            .bind(device_id)
+            .bind(package)
+            .execute(db)
+            .await?;
+        return Ok(true);
+    }
+    let others: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM device_lock_media_apps WHERE device_id = ? AND package_name != ?",
+    )
+    .bind(device_id)
+    .bind(package)
+    .fetch_one(db)
+    .await?;
+    if others >= MAX_ROWS_PER_DEVICE {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO device_lock_media_apps (device_id, package_name) VALUES (?, ?) \
+         ON CONFLICT(device_id, package_name) DO UPDATE SET updated_at = datetime('now')",
+    )
+    .bind(device_id)
+    .bind(package)
+    .execute(db)
+    .await?;
+    Ok(true)
+}
+
+/// Whether an allowed app on Device › Apps gets the lock-screen media switch, on the page and at the route alike: a
+/// third-party app the phone's last report has installed ([third_party]: reported and not preinstalled - the
+/// Permissions are a third-party app's), never Vibb, Vibb music (its player always shows) or Play's core.
+pub fn lock_media_offered(package: &str, is_launcher: bool, third_party: bool) -> bool {
+    !is_launcher
+        && third_party
+        && crate::app_display::valid_package_name(package)
+        && !crate::play::is_play_core(package)
+        && !crate::music::MUSIC_PACKAGES.contains(&package)
+        && !package.starts_with("me.vibb.launcher")
+}
 
 /// `installed_apps[].access` as stored: only the keys the app declares, each a known value. `camera` is
 /// `requested` | `admin_denied` (only for the third-party apps the phone may deny), the five special accesses
@@ -211,14 +286,20 @@ pub struct PermsView {
     pub camera: Option<(bool, String)>,
     /// One line per declared access: `(text, how to approve it while it isn't)`.
     pub accesses: Vec<(String, Option<String>)>,
+    /// "Show as a media player on the lock screen" (2026-11-04), only where [lock_media_offered]: on or off.
+    pub lock_media: Option<bool>,
+    pub lock_media_action: String,
     pub title: &'static str,
     pub camera_label: &'static str,
+    pub lock_media_label: &'static str,
+    pub lock_media_help: &'static str,
     pub save: &'static str,
 }
 
 impl PermsView {
-    /// For an allowed app: `None` when the report says nothing about it (no `access`). [paused]: the phone's last
-    /// report says restrictions are paused, which lifts the camera off.
+    /// For an allowed app: `None` when the report says nothing about it (no `access`) and it has no lock-screen media
+    /// switch ([lock_media]: `None` = not offered, else on or off). [paused]: the phone's last report says restrictions
+    /// are paused, which lifts the camera off.
     #[allow(clippy::too_many_arguments)]
     pub fn of(
         lang: crate::i18n::Lang,
@@ -229,8 +310,13 @@ impl PermsView {
         camera_off: bool,
         paused: bool,
         open: bool,
+        lock_media: Option<bool>,
     ) -> Option<Self> {
-        let access = access?;
+        if access.is_none() && lock_media.is_none() {
+            return None;
+        }
+        let none = AppAccess::default();
+        let access = access.unwrap_or(&none);
         let mut parts = Vec::new();
         match (camera_off, access.camera) {
             (true, Some("admin_denied")) => {
@@ -270,8 +356,12 @@ impl PermsView {
                 .camera
                 .map(|_| (!camera_off, words::camera_help(lang, label))),
             accesses,
+            lock_media,
+            lock_media_action: format!("/devices/{device_id}/apps/lock-media#perms-{package}"),
             title: t(lang, "apps.perms.title"),
             camera_label: t(lang, "apps.perms.camera"),
+            lock_media_label: t(lang, "apps.perms.lock_media"),
+            lock_media_help: t(lang, "apps.perms.lock_media_help"),
             save: t(lang, "common.save"),
         })
     }
@@ -321,6 +411,7 @@ mod tests {
             true,
             false,
             false,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -336,6 +427,7 @@ mod tests {
             true,
             true,
             false,
+            None,
         )
         .unwrap();
         assert!(
@@ -364,6 +456,7 @@ mod tests {
             true,
             false,
             false,
+            None,
         )
         .unwrap();
         // An approval stays out of the row's line and lives in the details.
@@ -374,11 +467,41 @@ mod tests {
         );
         // No camera key: no switch, and a stored row is inert.
         let none = AppAccess::of(&json!({"full_screen": "granted"}));
-        let view =
-            PermsView::of(Lang::En, 1, "app.x", "X", none.as_ref(), true, false, false).unwrap();
+        let view = PermsView::of(
+            Lang::En,
+            1,
+            "app.x",
+            "X",
+            none.as_ref(),
+            true,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
         assert!(view.camera.is_none());
         assert_eq!(view.line, "");
-        assert!(PermsView::of(Lang::En, 1, "app.x", "X", None, true, false, false).is_none());
+        assert!(PermsView::of(Lang::En, 1, "app.x", "X", None, true, false, false, None).is_none());
+        // 2026-11-04: an app the phone says nothing about still gets the lock-screen media switch, alone.
+        let switch = PermsView::of(
+            Lang::En,
+            1,
+            "app.x",
+            "X",
+            None,
+            false,
+            false,
+            false,
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(switch.lock_media, Some(true));
+        assert!(switch.camera.is_none() && switch.accesses.is_empty());
+        assert_eq!(switch.line, "", "the switch needs no look on the row");
+        assert_eq!(
+            switch.lock_media_action,
+            "/devices/1/apps/lock-media#perms-app.x"
+        );
         // E4's M2: an alarm access's way says to open the app once in the pause.
         let alarm = AppAccess::of(&json!({"exact_alarm": "denied"}));
         let view = PermsView::of(
@@ -390,6 +513,7 @@ mod tests {
             false,
             false,
             false,
+            None,
         )
         .unwrap();
         assert!(
@@ -402,5 +526,19 @@ mod tests {
             "{:?}",
             view.accesses
         );
+    }
+
+    #[test]
+    fn the_lock_media_switch_is_a_third_party_apps() {
+        assert!(lock_media_offered("de.danoeh.antennapod", false, true));
+        assert!(
+            !lock_media_offered("de.danoeh.antennapod", false, false),
+            "preinstalled, or not installed"
+        );
+        assert!(!lock_media_offered("me.vibb.launcher", true, true));
+        assert!(!lock_media_offered("me.vibb.launcher.debug", false, true));
+        assert!(!lock_media_offered("me.vibb.music", false, true));
+        assert!(!lock_media_offered("com.google.android.gms", false, true));
+        assert!(!lock_media_offered("", false, true));
     }
 }
