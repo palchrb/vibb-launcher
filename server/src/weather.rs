@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 // ---- the grid cell (D6) -------------------------------------------------------------------------
 
-/// A grid cell of 0.02° latitude by 0.04° longitude (about 2 x 2 km in Norway), kept as two integers: what MET,
-/// Kartverket and the cache see - never the phone's own position.
+/// A grid cell of 0.02° latitude by 0.04° longitude (about 2 x 2 km in Norway), kept as two integers: what MET and
+/// the cache see - never the phone's own position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Cell {
     /// `round(lat / 0.02)`, the latitude clamped to ±90.
@@ -45,7 +45,7 @@ impl Cell {
         format!("lat={lat}&lon={lon}")
     }
 
-    /// The cell's centre, for the dusk and Kartverket.
+    /// The cell's centre, for the dusk.
     pub fn centre(&self) -> (f64, f64) {
         (f64::from(self.lat_i) * 0.02, f64::from(self.lon_i) * 0.04)
     }
@@ -788,11 +788,10 @@ pub fn nowcast_line(nowcast: &Nowcast, now: DateTime<Utc>) -> Option<NowLine> {
 // ---- the answer (§3.5) --------------------------------------------------------------------------
 
 #[derive(Serialize)]
-struct Answer<'a> {
+struct Answer {
     v: u8,
     status: &'static str,
     checked_at_ms: i64,
-    place: Option<&'a str>,
     hours: Vec<Entry>,
     days: Vec<Day>,
 }
@@ -808,7 +807,6 @@ pub fn answer(
     tz: Tz,
     now: DateTime<Utc>,
     checked_at: DateTime<Utc>,
-    place: Option<&str>,
     cell: Cell,
 ) -> serde_json::Value {
     let entries = entries(hours, tz, now);
@@ -826,7 +824,6 @@ pub fn answer(
         v: 1,
         status: "ok",
         checked_at_ms: checked_at.timestamp_millis(),
-        place,
         hours: entries,
         days,
     })

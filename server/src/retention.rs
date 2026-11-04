@@ -163,7 +163,7 @@ pub struct Pruned {
     pub lifts: u64,
     pub bans: u64,
     pub install_progress: u64,
-    /// The weather's cells and place names nobody asked for (design 75 §3.1).
+    /// The weather's cells nobody asked for (design 75 §3.1).
     pub weather: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
@@ -216,7 +216,7 @@ fn rows(
 /// - extra-time grants [LIFT_DAYS] after they ended, IP bans once they expired, a download's
 ///   progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
-///   phone, when that is shorter: code QA L3), and a cell's place name none asked for within that longest retention (design 75 §3.1; by age only - Location Off's erase is
+///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
@@ -483,16 +483,6 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
              || ' hours')",
         )
         .bind(crate::weather_cache::CELL_HOURS)
-        .bind(DEFAULT_LOCATION_RETENTION_DAYS)
-        .execute(db)
-        .await,
-    ) + rows(
-        failed,
-        "weather_places",
-        sqlx::query(
-            "DELETE FROM weather_places WHERE datetime(asked_at) < datetime('now', '-' || \
-             MAX(1, COALESCE((SELECT MAX(location_retention_days) FROM device_policy), ?)) || ' days')",
-        )
         .bind(DEFAULT_LOCATION_RETENTION_DAYS)
         .execute(db)
         .await,

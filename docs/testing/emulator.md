@@ -2396,7 +2396,7 @@ fresh fix, or a weather zone. Set the emulator's clock inside the answer's hours
    and 2.0 (`adb shell settings put system font_scale`): the place per design §5.3's table, words dropped - never cut.
    Across an hour's turn (clock to 15:59 -> 16:00) the words change to "Regn nå" and the mark does not move.
 2. **The card**: a tap on the mark (and on its 48 dp hit area just above/below it) folds the day out under the
-   face's lines; morning/afternoon/evening, the current column raised, the mm in the rain blue, "Nydalen · 2° / 7°" and
+   face's lines; morning/afternoon/evening, the current column raised, the mm in the rain blue, "2° / 7°" (no place name since 2026-11-04) and
    "Mørkt kl. 17:02"; a second tap or the card folds it; power off/on folds it; a swipe up from the mark still asks for
    the unlock. The "Neste" line stays when the card opens.
 3. **The nowcast**: open the card with `/weather/now` answering at once -> "Regn om ca. 25 min" at the card's top;

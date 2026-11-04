@@ -1,5 +1,5 @@
-//! Weather on the lock glance (design 75 §7.2): the two device routes through the router with canned MET, Nowcast and
-//! Kartverket answers (no network), the cache rules, the Location Off erase and the age prune, the logs, and
+//! Weather on the lock glance (design 75 §7.2): the two device routes through the router with canned MET and Nowcast
+//! answers (no network), the cache rules, the Location Off erase and the age prune, the logs, and
 //! Device › Weather's page and saves.
 
 use axum::http::{Method, StatusCode, header};
@@ -20,14 +20,6 @@ fn now() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-fn kartverket(radius: u32, page: u32, lat: &str, lon: &str) -> String {
-    format!(
-        "https://api.kartverket.no/stedsnavn/v1/punkt?nord={lat}&ost={lon}&koordsys=4258&radius={radius}\
-         &utkoordsys=4258&treffPerSide=500&side={page}&filtrer=navn.stedsnavn.skrivem%C3%A5te,\
-         navn.navneobjekttype,navn.meterFraPunkt,metadata.totaltAntallTreff"
-    )
-}
-
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("testdata/weather/{name}")).unwrap()
 }
@@ -44,7 +36,7 @@ fn met_ok(date: &str, expires: &str) -> Canned {
     }
 }
 
-/// The canned outside world: MET's forecast and nowcast, Kartverket's two pages for the Oslo cell.
+/// The canned outside world: MET's forecast and nowcast for the Oslo cell.
 fn outside(app: &TestApp) {
     app.fetch.canned(
         MET,
@@ -54,16 +46,6 @@ fn outside(app: &TestApp) {
         ),
     );
     app.fetch.answer(NOWCAST, 200, fixture("met_nowcast.json"));
-    app.fetch.answer(
-        &kartverket(2000, 1, "59.94", "10.76"),
-        200,
-        fixture("kartverket_p1.json"),
-    );
-    app.fetch.answer(
-        &kartverket(2000, 2, "59.94", "10.76"),
-        200,
-        fixture("kartverket_p2.json"),
-    );
 }
 
 /// An enrolled phone with the switch and the location mode.
@@ -122,23 +104,6 @@ fn met_asks(app: &TestApp) -> usize {
         .count()
 }
 
-/// Waits until the place lookup for the Oslo cell stored its row.
-async fn place_stored(app: &TestApp) -> Option<String> {
-    for _ in 0..500 {
-        let name: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT name FROM weather_places WHERE lat_i = 2997 AND lon_i = 269",
-        )
-        .fetch_optional(&app.db)
-        .await
-        .unwrap();
-        if let Some(name) = name {
-            return name;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    panic!("the place lookup never stored its row");
-}
-
 async fn cell_row(app: &TestApp) -> (Option<String>, Option<String>, i64, Option<String>) {
     sqlx::query_as(
         "SELECT checked_at, next_fetch_at, failures, last_error FROM weather_cells \
@@ -179,7 +144,7 @@ async fn the_switch_off_answers_off_and_asks_nothing_outside() {
 }
 
 /// D5's first source and D7's cache: one MET request with MET's User-Agent for a cell, shared by a second phone in
-/// it; the first answer has no place yet, one lookup follows, the next answer has it.
+/// it; the answer carries no place, and nothing but MET is asked (2026-11-04: the place-name lookup went).
 #[tokio::test]
 async fn a_fresh_fix_is_one_met_request_shared_by_the_cell() {
     let app = TestApp::new().await;
@@ -193,7 +158,7 @@ async fn a_fresh_fix_is_one_met_request_shared_by_the_cell() {
     );
     let first = weather(&app, &token).await;
     assert_eq!(first["status"], "ok", "{first}");
-    assert_eq!(first["place"], Value::Null, "looked up after the answer");
+    assert!(first.get("place").is_none(), "no place: {first}");
     assert_eq!(first["hours"].as_array().unwrap().len(), 4);
     assert!(
         !first.to_string().contains("59.9"),
@@ -215,19 +180,9 @@ async fn a_fresh_fix_is_one_met_request_shared_by_the_cell() {
         );
         assert_eq!(met[0].last_modified, None);
     }
-    assert_eq!(place_stored(&app).await.as_deref(), Some("Bjølsen"));
-    // Kartverket gets the neutral client's User-Agent, never MET's.
-    assert!(
-        app.fetch
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|r| r.url.contains("kartverket"))
-            .all(|r| r.header("user-agent").is_none())
-    );
     let second = weather(&app, &token).await;
-    assert_eq!(second["place"], "Bjølsen");
+    assert!(second.get("place").is_none(), "{second}");
+    assert_eq!(app.fetch.count(), met_asks(&app), "only MET is asked");
     let (_, other) = phone(&app, "b", true, "on_request").await;
     let other_id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'b'")
         .fetch_one(&app.db)
@@ -613,26 +568,16 @@ async fn a_phones_asks_are_limited() {
     );
 }
 
-async fn weather_rows(app: &TestApp) -> (i64, i64) {
-    sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM weather_cells), (SELECT COUNT(*) FROM weather_places)",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap()
+async fn weather_rows(app: &TestApp) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM weather_cells")
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
 }
 
 async fn seed_caches(app: &TestApp) {
     sqlx::query(
         "INSERT INTO weather_cells (lat_i, lon_i, asked_at) VALUES (2997, 269, ?) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
-    .execute(&app.db)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO weather_places (lat_i, lon_i, name, asked_at) VALUES (2997, 269, 'Bjølsen', ?) \
          ON CONFLICT DO NOTHING",
     )
     .bind(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
@@ -658,7 +603,7 @@ async fn location_off_erases_the_caches_and_the_prune_does_not() {
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
-    assert_eq!(weather_rows(&app).await, (0, 0));
+    assert_eq!(weather_rows(&app).await, 0);
     // Already Off: neither a save of Off again nor the prune erases.
     seed_caches(&app).await;
     app.request_form(
@@ -669,10 +614,10 @@ async fn location_off_erases_the_caches_and_the_prune_does_not() {
     )
     .await;
     crate::retention::prune(&app.db).await;
-    assert_eq!(weather_rows(&app).await, (1, 1));
+    assert_eq!(weather_rows(&app).await, 1);
 }
 
-/// §3.1's retention, by age only: a cell nobody asked for in 48 h, a place past the longest location retention.
+/// §3.1's retention, by age only: a cell nobody asked for in 48 h.
 #[tokio::test]
 async fn the_prune_drops_what_nobody_asked_for() {
     let app = TestApp::new().await;
@@ -693,22 +638,12 @@ async fn the_prune_drops_what_nobody_asked_for() {
             .await
             .unwrap();
     }
-    for (lat, days) in [(1, 13), (2, 15)] {
-        sqlx::query("INSERT INTO weather_places (lat_i, lon_i, asked_at) VALUES (?, 0, ?)")
-            .bind(lat)
-            .bind(ago(days * 24))
-            .execute(&app.db)
-            .await
-            .unwrap();
-    }
-    assert_eq!(crate::retention::prune(&app.db).await.weather, 2);
-    let left: Vec<(i64, i64)> = sqlx::query_as(
-        "SELECT (SELECT lat_i FROM weather_cells), (SELECT lat_i FROM weather_places)",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(left, [(1, 1)]);
+    assert_eq!(crate::retention::prune(&app.db).await.weather, 1);
+    let left: Vec<i64> = sqlx::query_scalar("SELECT lat_i FROM weather_cells")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [1]);
 }
 
 /// Server QA L10: a failed fetch's log line and `last_error` name the cell's row and a code - never a coordinate, a
@@ -813,88 +748,8 @@ async fn two_asks_at_once_make_one_fetch() {
     assert_eq!(met_asks(&app), 1);
 }
 
-/// Code QA L5: a cell outside Kartverket's box stores no name at once and asks nothing; an empty 2000 m search asks
-/// again at 5000 m.
-#[tokio::test]
-async fn kartverkets_edges() {
-    let app = TestApp::new().await;
-    app.state.weather.set_now(now());
-    let copenhagen =
-        "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=55.68&lon=12.56";
-    app.fetch.canned(
-        copenhagen,
-        met_ok(
-            "Tue, 03 Nov 2026 14:00:22 GMT",
-            "Tue, 03 Nov 2026 14:29:48 GMT",
-        ),
-    );
-    let (id, token) = phone(&app, "k", true, "interval").await;
-    fix(&app, id, 55.676, 12.568, Duration::minutes(5), None).await;
-    assert_eq!(weather(&app, &token).await["status"], "ok");
-    let stored: Vec<(i64, i64, Option<String>)> =
-        sqlx::query_as("SELECT lat_i, lon_i, name FROM weather_places")
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
-    assert_eq!(stored, [(2784, 314, None)]);
-    assert!(
-        !app.fetch
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|u| u.contains("kartverket"))
-    );
-
-    let fetch = super::music::CannedFetch::default();
-    let cell = crate::weather::Cell::of(59.94, 10.76).unwrap();
-    let hit = |kind: &str, name: &str, metres: u32| json!({"meterFraPunkt": metres, "navneobjekttype": kind, "stedsnavn": [{"skrivemåte": name}]});
-    fetch.answer(
-        &kartverket(2000, 1, "59.94", "10.76"),
-        200,
-        json!({"metadata": {"totaltAntallTreff": 1}, "navn": [hit("Adressenavn", "Vei 1", 40)]})
-            .to_string(),
-    );
-    fetch.answer(
-        &kartverket(5000, 1, "59.94", "10.76"),
-        200,
-        json!({"metadata": {"totaltAntallTreff": 2},
-               "navn": [hit("Grend", "Lia", 2500), hit("Tettsted", "Nydalen", 3000)]})
-        .to_string(),
-    );
-    assert_eq!(
-        crate::weather_cache::find_place(&fetch, cell).await,
-        Ok(Some("Nydalen".to_string()))
-    );
-    assert_eq!(
-        fetch.count(),
-        2,
-        "one page each, no second page under 500 hits"
-    );
-    fetch.answer(
-        &kartverket(5000, 1, "59.94", "10.76"),
-        200,
-        json!({"metadata": {"totaltAntallTreff": 0}, "navn": []}).to_string(),
-    );
-    assert_eq!(
-        crate::weather_cache::find_place(&fetch, cell).await,
-        Ok(None)
-    );
-}
-
-/// Waits until no place lookup is running.
-async fn lookups_done(app: &TestApp) {
-    for _ in 0..500 {
-        if app.state.weather.lookups_running() == 0 {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    panic!("a place lookup never finished");
-}
-
-/// Code QA L1, L2: what was in flight when Location went Off writes nothing back - a place lookup, a nowcast fill,
-/// a forecast ask (which answers `unavailable`, never a 500) - and the failed lookups' cells go with the erase.
+/// Code QA L1: what was in flight when Location went Off writes nothing back - a nowcast fill, a forecast ask (which
+/// answers `unavailable`, never a 500).
 #[tokio::test]
 async fn an_erase_keeps_what_was_in_flight_from_writing_back() {
     let app = TestApp::new().await;
@@ -902,21 +757,6 @@ async fn an_erase_keeps_what_was_in_flight_from_writing_back() {
     outside(&app);
     let state = app.state.clone();
     let cell = crate::weather::Cell::of(59.94, 10.76).unwrap();
-    // A place lookup held at Kartverket while the erase runs.
-    app.fetch.hold();
-    assert_eq!(
-        crate::weather_cache::place(&state, cell).await.unwrap(),
-        None
-    );
-    app.fetch.wait_in_flight().await;
-    crate::weather_cache::erase(&state).await.unwrap();
-    app.fetch.release();
-    lookups_done(&app).await;
-    assert_eq!(
-        weather_rows(&app).await,
-        (0, 0),
-        "the lookup's row isn't written back"
-    );
     // A forecast ask, then a nowcast fill, each held at MET while the erase runs.
     app.fetch.hold();
     let forecast_task = tokio::spawn({
@@ -940,28 +780,6 @@ async fn an_erase_keeps_what_was_in_flight_from_writing_back() {
     app.fetch.release();
     assert_eq!(now_task.await.unwrap(), None);
     assert_eq!(state.weather.nowcast_cells(), 0);
-    // A failed lookup waits an hour - until an erase forgets it.
-    let kart = kartverket(2000, 1, "59.94", "10.76");
-    app.fetch.fail(&kart, crate::music_net::FetchError::Timeout);
-    crate::weather_cache::place(&state, cell).await.unwrap();
-    lookups_done(&app).await;
-    let asks = |app: &TestApp| {
-        app.fetch
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|u| **u == kart)
-            .count()
-    };
-    assert_eq!(asks(&app), 2);
-    crate::weather_cache::place(&state, cell).await.unwrap();
-    lookups_done(&app).await;
-    assert_eq!(asks(&app), 2, "not again within the hour");
-    crate::weather_cache::erase(&state).await.unwrap();
-    crate::weather_cache::place(&state, cell).await.unwrap();
-    lookups_done(&app).await;
-    assert_eq!(asks(&app), 3, "the erase forgot the failure");
 }
 
 /// Code QA L3: with every phone's location history at one day, a cell goes after a day, not two.

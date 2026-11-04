@@ -160,7 +160,7 @@ The weather's contract (design 75 §7.1) is `server/testdata/weather.json`, byte
 `launcher/app/src/test/resources/`: `forms` and `now_keys` (every key and form the server may send), the rule vectors
 (`words`, `periods`, `dark`, `cells`, `nowcast`) and the answers (`answer`, `answer_now_ms`, `answer_line`,
 `now_answers`, `statuses`). The server's `weather::tests` runs every row and writes the computed parts from the
-recorded MET and Kartverket answers in `server/testdata/weather/` (`WEATHER_CONTRACT_WRITE=1`); the launcher's
+recorded MET answers in `server/testdata/weather/` (`WEATHER_CONTRACT_WRITE=1`); the launcher's
 `WeatherContractTest` decodes the answers into its DTOs and checks every symbol code; both compare the copies. The
 policy's `launcher_ui.lock_weather` is pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.

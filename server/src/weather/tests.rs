@@ -267,20 +267,8 @@ fn recorded_hours() -> Vec<Hour> {
     parse_forecast(&std::fs::read("testdata/weather/met_complete.json").unwrap()).unwrap()
 }
 
-fn recorded_place() -> Option<String> {
-    let mut names = Vec::new();
-    for page in ["kartverket_p1", "kartverket_p2"] {
-        let value: Value = serde_json::from_slice(
-            &std::fs::read(format!("testdata/weather/{page}.json")).unwrap(),
-        )
-        .unwrap();
-        names.extend(value["navn"].as_array().unwrap().iter().cloned());
-    }
-    crate::weather_cache::pick_place(&names)
-}
-
 /// The contract's computed parts: everything the server may send (`forms`, `now_keys`), the dusk rows' `expect`, the
-/// answer from the recorded MET and Kartverket answers at [ANSWER_NOW] in Oslo, the line a phone shows then
+/// answer from the recorded MET answer at [ANSWER_NOW] in Oslo, the line a phone shows then
 /// (`answer_line`), the nowcast answers and the bare statuses. `WEATHER_CONTRACT_WRITE=1` rewrites them; the
 /// launcher's `WeatherContractTest` decodes them.
 #[test]
@@ -299,20 +287,7 @@ fn the_contract() {
         .collect();
     let now = utc(ANSWER_NOW);
     let cell = Cell::of(59.94, 10.76).unwrap();
-    let place = recorded_place();
-    assert_eq!(
-        place.as_deref(),
-        Some("Bjølsen"),
-        "the nearest settlement, from page 2"
-    );
-    let answer = answer(
-        &recorded_hours(),
-        oslo,
-        now,
-        utc(CHECKED_AT),
-        place.as_deref(),
-        cell,
-    );
+    let answer = answer(&recorded_hours(), oslo, now, utc(CHECKED_AT), cell);
     let line = answer["hours"]
         .as_array()
         .unwrap()
@@ -334,8 +309,7 @@ fn the_contract() {
             hour.pop = Some(80.0);
         }
     }
-    let answer_words =
-        crate::weather::answer(&wet, oslo, now, utc(CHECKED_AT), place.as_deref(), cell);
+    let answer_words = crate::weather::answer(&wet, oslo, now, utc(CHECKED_AT), cell);
     let forms_sent: Vec<&str> = answer_words["hours"]
         .as_array()
         .unwrap()
@@ -496,22 +470,4 @@ fn degrees_never_say_minus_zero() {
     assert_eq!(degrees(-0.5), -1);
     assert_eq!(degrees(0.5), 1);
     assert_eq!(degrees(6.49), 6);
-}
-
-#[test]
-fn a_place_name_is_cleaned_and_cut() {
-    use crate::weather_cache::clean_name;
-    assert_eq!(clean_name("  Nydalen\n "), Some("Nydalen".to_string()));
-    assert_eq!(
-        clean_name("Sagene\u{202E}\u{0007}"),
-        Some("Sagene".to_string())
-    );
-    assert_eq!(clean_name(" \u{200F} "), None);
-    let long = "Ein svært lang stadnamn som held fram og fram og fram";
-    let cut = clean_name(long).unwrap();
-    assert!(
-        cut.chars().count() <= 40 && long.starts_with(&cut) && !cut.ends_with(' '),
-        "{cut}"
-    );
-    assert_eq!(clean_name(&"x".repeat(50)).unwrap().chars().count(), 40);
 }

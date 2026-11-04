@@ -43,10 +43,8 @@ are converted from [Yr's weather symbols](https://github.com/nrkno/yr-weather-sy
 [`launcher/app/src/main/assets/licenses/CC-BY-4.0.txt`](launcher/app/src/main/assets/licenses/CC-BY-4.0.txt). Changes:
 converted from SVG to Android VectorDrawables, the soft blurred cloud shading removed, the multiply blend layers merged into the
 shapes they shade; each file says so. The forecast the lock screen shows is MET Norway's
-([CC BY 4.0](https://api.met.no/doc/License)), the place names Kartverket's (© Kartverket, CC BY 4.0, the place-name
-register "Stedsnavn", kartkatalog.geonorge.no entry `30caed2f-454e-44be-b5cc-26bb5c0110ca`, open data under CC BY
-4.0, checked 2026-11-03): the server fetches them, the launcher shows them; neither is
-bundled.
+([CC BY 4.0](https://api.met.no/doc/License)): the server fetches it, the launcher shows it; it is not bundled. (No
+place names are shown: Kartverket's lookup went on 2026-11-04.)
 
 The server's table of Windows time zone names (`server/src/windows_zones.txt`, read by `server/src/ics.rs` for a
 calendar link's Outlook/Exchange TZIDs, design 72) is the territory "001" rows of the Unicode CLDR's

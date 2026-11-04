@@ -9,7 +9,10 @@ import kotlinx.serialization.Serializable
  * know: a newer server never breaks this launcher; [v] changes only for a breaking shape). Pinned by `weather.json`'s
  * `answer` and `statuses` (byte-identical with `server/testdata/`, `WeatherContractTest`).
  *
- * Never logged as it is: every `toString()` here leaves out the place, the temperatures and the times.
+ * Since 2026-11-04 the answer carries no place name (the user: "Vi dropper navnet"): an older server's `place` is an
+ * unknown key and ignored, and an older launcher's `place` defaults to null when it is missing.
+ *
+ * Never logged as it is: every `toString()` here leaves out the temperatures and the times.
  */
 @Serializable
 data class WeatherAnswer(
@@ -17,16 +20,13 @@ data class WeatherAnswer(
     val status: String = "",
     /** When MET last answered for the cell (D11: "Oppdatert kl." past 60 min, hidden past 3 h). */
     val checkedAtMs: Long? = null,
-    /** The nearest settlement's name (Kartverket), `null` when none (yet). */
-    val place: String? = null,
     /** Four entries from the UTC hour containing the server's now (D2): the phone shows the one whose hour holds
      * its clock. */
     val hours: List<WeatherAnswerHour> = emptyList(),
     /** Every date an entry's [WeatherAnswerHour.card] names. */
     val days: List<WeatherAnswerDay> = emptyList(),
 ) {
-    override fun toString() = "WeatherAnswer(v=$v, status=$status, hours=${hours.size}, days=${days.size}, " +
-        "place=${if (place != null) "yes" else "no"})"
+    override fun toString() = "WeatherAnswer(v=$v, status=$status, hours=${hours.size}, days=${days.size})"
 }
 
 /** One hour of the schedule: MET's `symbol_code`, the degrees, the words, the card's date and current period. */

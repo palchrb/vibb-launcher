@@ -99,7 +99,7 @@
         <h2>Weather</h2>
         The weather symbols on the lock screen: Yr weather symbols © 2015 by Yr/NRK, converted to Android vectors (the soft blurred cloud shading removed, the blend layers merged; see res/drawable/weather_*.xml).
         <p><a href=\"https://github.com/nrkno/yr-weather-symbols\">github.com/nrkno/yr-weather-symbols</a></p>
-        <p>Weather data: MET Norway (<a href=\"https://api.met.no/doc/License\">api.met.no</a>). Place names: © Kartverket. Both fetched by the server, never by the phone.</p>
+        <p>Weather data: MET Norway (<a href=\"https://api.met.no/doc/License\">api.met.no</a>). Fetched by the server, never by the phone.</p>
         <p>Creative Commons Attribution 4.0 International (CC BY 4.0)</p>
     ]]></string>
     <!-- Followed by assets/licenses/OFL.txt (LegalInfoActivity). -->

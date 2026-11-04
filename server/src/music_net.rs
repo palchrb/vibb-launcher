@@ -46,7 +46,7 @@ pub enum Kind {
     Token,
     /// A calendar link's body (design 72 §2.1): 5 MB decoded, past it `too_big` and the last set kept.
     Calendar,
-    /// MET's forecast and nowcast, and Kartverket's place names (design 75 §3.3): 1 MB decoded, 10 s.
+    /// MET's forecast and nowcast (design 75 §3.3): 1 MB decoded, 10 s.
     Weather,
 }
 

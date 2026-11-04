@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 const val LOCK_WEATHER_CAPABILITY = "lock_weather_v1"
 
 /**
- * The lock's weather pulls (design 75 §5.4), only ever to our own server's API client - never MET, yr or Kartverket
+ * The lock's weather pulls (design 75 §5.4), only ever to our own server's API client - never MET or yr
  * (`WeatherGuardTest`). When: at the end of every sync ([afterSync], before the self-update commit, inside the sync's
  * wake lock - about hourly with the 30-min backstop), at a screen-on ([atScreenOn]) and at once when the policy asks
  * ([WeatherStore.policyChanged]); always by [weatherPullDue], so never with the switch off. The R1 gap: a sync the
@@ -106,9 +106,8 @@ object WeatherPull {
                 is WeatherPullResult.Answered -> {
                     Log.i(
                         LOG_TAG,
-                        "Weather: pulled (${result.answer.status}, ${result.answer.hours.size} hours, place ${if (result.answer.place != null) "yes" else "no"})",
+                        "Weather: pulled (${result.answer.status}, ${result.answer.hours.size} hours)",
                     )
-                    placeLater(context, result.answer)
                 }
                 WeatherPullResult.Failed -> Unit
             }
@@ -143,24 +142,6 @@ object WeatherPull {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Weather: the answer doesn't decode (${e.javaClass.simpleName})")
             WeatherPullResult.Failed
-        }
-    }
-
-    /** E8's L3: a new cell's first answer has no place (Kartverket is asked after it): one more pull
-     * [WEATHER_PLACE_RETRY_MS] later, once until an answer with a place comes. */
-    private val placeRetried = AtomicBoolean(false)
-
-    private fun placeLater(context: Context, answer: WeatherAnswer) {
-        if (answer.status != "ok") return
-        if (answer.place != null) {
-            placeRetried.set(false)
-            return
-        }
-        if (!placeRetried.compareAndSet(false, true)) return
-        val app = context.applicationContext
-        CoroutineScope(Dispatchers.IO).launch {
-            kotlinx.coroutines.delay(WEATHER_PLACE_RETRY_MS)
-            if (WeatherStore.policyOn) pull(app)
         }
     }
 

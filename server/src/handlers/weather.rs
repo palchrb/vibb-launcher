@@ -169,16 +169,12 @@ pub async fn forecast(
     let Some(checked_at) = row.checked_at().filter(|_| !hours.is_empty()) else {
         return answer(&headers, &weather::status("unavailable"));
     };
-    let place = match weather_cache::place(&state, cell).await {
-        Ok(place) => place,
-        Err(err) => return failed(device.id, err),
-    };
     let tz = match zone_of(&state, device.id).await {
         Ok(tz) => tz,
         Err(err) => return failed(device.id, err),
     };
     let now = state.weather.now();
-    let body = weather::answer(&hours, tz, now, checked_at, place.as_deref(), cell);
+    let body = weather::answer(&hours, tz, now, checked_at, cell);
     let status = body["status"].as_str().unwrap_or_default();
     tracing::debug!(device_id = device.id, status, "weather: a phone's pull");
     answer(&headers, &body)

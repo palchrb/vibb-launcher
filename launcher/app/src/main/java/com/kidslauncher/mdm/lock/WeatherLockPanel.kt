@@ -390,25 +390,13 @@ class WeatherLockPanel(
         } else null
         val dark = darkText(model).orEmpty()
         card.weatherCardDark.text = dark
-        card.weatherCardFoot.text = footText(model.place, lowHigh, dark)
+        card.weatherCardFoot.text = lowHigh.orEmpty()
         val updated = model.updatedAtMs
         card.weatherCardUpdated.visibility = if (updated != null) View.VISIBLE else View.GONE
         if (updated != null) card.weatherCardUpdated.text = activity.getString(R.string.weather_updated, clockText(updated))
         view.visibility = View.VISIBLE
         view.contentDescription = withNow(spokenCard(model, lowHigh != null))
         view.stateDescription = activity.getString(R.string.weather_expanded)
-    }
-
-    /** "Nydalen · 2° / 7°" (code QA L6): the place cut to what the low and high, the dark text and the card's padding
-     * leave on the line - the low and high are never cut. */
-    private fun footText(place: String?, lowHigh: String?, dark: String): String {
-        if (place == null || lowHigh == null) return place ?: lowHigh.orEmpty()
-        val paint = card.weatherCardFoot.paint
-        val tail = activity.getString(R.string.weather_foot, "", lowHigh)
-        val room = contentWidth() - dp(CARD_PADDING_DP * 2 + DARK_GAP_DP) - Layout.getDesiredWidth(dark, card.weatherCardDark.paint) -
-            Layout.getDesiredWidth(tail, paint) - dp(SLACK_DP)
-        val cut = if (room > 0) android.text.TextUtils.ellipsize(place, paint, room, android.text.TextUtils.TruncateAt.END).toString() else ""
-        return if (cut.isEmpty()) lowHigh else activity.getString(R.string.weather_foot, cut, lowHigh)
     }
 
     private fun darkText(model: WeatherCard): String? {
@@ -574,7 +562,6 @@ class WeatherLockPanel(
             c.temp?.let { parts += res.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
             c.mm?.let { weatherMm(it, locale) }?.let { parts += activity.getString(R.string.weather_spoken_mm, it) }
         }
-        model.place?.let { parts += sentence(it) }
         if (lowHigh) {
             model.low?.let { parts += res.getQuantityString(R.plurals.weather_spoken_low, abs(it), weatherNumber(it)) }
             model.high?.let { parts += res.getQuantityString(R.plurals.weather_spoken_high, abs(it), weatherNumber(it)) }
@@ -628,8 +615,6 @@ class WeatherLockPanel(
         const val HIT_MIN_DP = 48f
         const val HIT_SIDE_DP = 8f
         const val TURN_MS = 150L
-        const val CARD_PADDING_DP = 12f
-        const val DARK_GAP_DP = 8f
 
         /** L4: the own line's room is held for a line that went stale less than this past its 3 h. */
         const val HOLD_EXTRA_MS = 3_600_000L
