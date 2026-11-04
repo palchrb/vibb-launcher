@@ -480,9 +480,9 @@ fn tonight_runs_from_18_to_midnight() {
     let base = json!({ "sym": "cloudy", "sym6": "cloudy", "temp": 4, "mm": 0 });
     let set = [
         json!({ "from": "18:00", "to": "19:00", "sym6": "rain", "temp": 8, "mm": 0.4 }),
-        json!({ "from": "19:00", "to": "20:00", "sym6": "clearsky_night" }),
+        json!({ "from": "19:00", "to": "20:00", "sym": "clearsky_night", "sym6": "clearsky_night" }),
         json!({ "from": "21:00", "to": "22:00", "temp": 2 }),
-        json!({ "from": "23:00", "to": "23:59", "sym6": "fair_night", "temp": -1 }),
+        json!({ "from": "23:00", "to": "23:59", "sym": "fair_night", "sym6": "fair_night", "temp": -1 }),
     ];
     let hours = hours_of(oslo, row_date("2026-11-04"), &base, &set);
     let at = |text: &str| local_instant(oslo, text);
@@ -525,4 +525,57 @@ fn tonight_runs_from_18_to_midnight() {
     );
     // No stored hour of the evening: none.
     assert_eq!(tonight(&[], oslo, at("2026-11-04T19:04")), None);
+}
+
+/// QA L1 (2026-11-04): from 19:00 the rest of the evening is under 6 h, so "I kveld"'s symbol comes from its own hours -
+/// a thunder hour, else the wettest hour (the first of equals), else the first hour - and never from a `next_6_hours`
+/// that reaches past midnight. The words read the same span, so they agree with the card.
+#[test]
+fn tonights_symbol_stays_inside_the_evening() {
+    let oslo: Tz = "Europe/Oslo".parse().unwrap();
+    let base = json!({ "sym": "cloudy", "sym6": "cloudy", "temp": 4, "mm": 0, "pop": 0 });
+    let tonight_at = |set: &[Value], now: &str| {
+        let hours = hours_of(oslo, row_date("2026-11-04"), &base, set);
+        let at = local_instant(oslo, now);
+        (tonight(&hours, oslo, at), words(&hours, oslo, at))
+    };
+    let symbol = |period: Option<Period>| period.and_then(|p| p.symbol);
+
+    // 23:30, the 23:00 hour's six hours rain (from 03:00 on): the evening is the hour's own cloudy, no rain words.
+    let late = [
+        json!({ "from": "23:00", "to": "23:59", "sym6": "rain" }),
+        json!({ "day": 1, "from": "03:00", "to": "05:00", "sym": "rain", "mm": 0.8, "pop": 80 }),
+    ];
+    let (night, said) = tonight_at(&late, "2026-11-04T23:30");
+    assert_eq!(symbol(night.clone()).as_deref(), Some("cloudy"));
+    assert_eq!(night.and_then(|p| p.precip_mm), Some(0.0));
+    assert_eq!(said, None);
+
+    // 19:04, rain 22:00-23:00 and a drizzle at 20:00: the wettest hour's symbol, the words and the mm agree.
+    let wet = [
+        json!({ "from": "20:00", "to": "21:00", "sym": "lightrain", "mm": 0.2 }),
+        json!({ "from": "22:00", "to": "23:00", "sym": "rain", "mm": 0.9, "pop": 80 }),
+    ];
+    let (evening, said) = tonight_at(&wet, "2026-11-04T19:04");
+    assert_eq!(symbol(evening.clone()).as_deref(), Some("rain"));
+    assert_eq!(evening.and_then(|p| p.precip_mm), Some(1.1));
+    let said = said.unwrap();
+    assert_eq!((said.key, said.form), ("rain", Form::From));
+
+    // A thunder hour wins over a wetter one.
+    let storm = [
+        json!({ "from": "20:00", "to": "21:00", "sym": "rainandthunder", "mm": 0.1 }),
+        json!({ "from": "22:00", "to": "23:00", "sym": "heavyrain", "mm": 3.0 }),
+    ];
+    assert_eq!(
+        symbol(tonight_at(&storm, "2026-11-04T19:04").0).as_deref(),
+        Some("rainandthunder")
+    );
+
+    // From 18:00 exactly the span is the whole evening: the six hours' symbol, as the periods read it.
+    let six = [json!({ "from": "18:00", "to": "19:00", "sym6": "snow" })];
+    assert_eq!(
+        symbol(tonight_at(&six, "2026-11-04T18:00").0).as_deref(),
+        Some("snow")
+    );
 }

@@ -1836,6 +1836,291 @@
         "temp": 5
       },
       "expect": {
+        "form": "now",
+        "key": "rain"
+      },
+      "name": "18:00 rain this evening is now",
+      "now": "2026-11-04T18:00",
+      "set": [
+        {
+          "day": 0,
+          "from": "18:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "19:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "21:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "rain from 21 this evening",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 0,
+          "from": "21:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "23:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "now",
+        "key": "rain"
+      },
+      "name": "rain falling now this evening",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 0,
+          "from": "19:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "22:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "at": "22:00",
+        "form": "from",
+        "key": "rain"
+      },
+      "name": "a wet evening beats tomorrow's rain",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 0,
+          "from": "22:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "23:00"
+        },
+        {
+          "day": 1,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "rain that stopped before this hour is dry, tomorrow is dry too",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 0,
+          "from": "18:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "19:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "tomorrow",
+        "key": "rain"
+      },
+      "name": "a dry evening gives tomorrow's rain",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 1,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "today",
+        "key": "maybe_rain"
+      },
+      "name": "a maybe evening still speaks of the evening",
+      "now": "2026-11-04T20:10",
+      "set": [
+        {
+          "day": 0,
+          "from": "21:00",
+          "pop": 40,
+          "to": "22:00"
+        },
+        {
+          "day": 1,
+          "from": "14:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "17:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "cold tonight is not evening words",
+      "now": "2026-11-04T19:04",
+      "set": [
+        {
+          "day": 0,
+          "feels": -15,
+          "from": "20:00",
+          "to": "22:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
+        "form": "now",
+        "key": "rain"
+      },
+      "name": "23:30 rain in the last hour is now",
+      "now": "2026-11-04T23:30",
+      "set": [
+        {
+          "day": 0,
+          "from": "23:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "23:59"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": null,
+      "name": "rain after midnight is neither the evening's nor tomorrow's day",
+      "now": "2026-11-04T23:30",
+      "set": [
+        {
+          "day": 1,
+          "from": "03:00",
+          "mm": 0.8,
+          "pop": 80,
+          "sym": "rain",
+          "to": "05:00"
+        }
+      ],
+      "zone": "Europe/Oslo"
+    },
+    {
+      "base": {
+        "feels": 3,
+        "gust": 4,
+        "mm": 0,
+        "pop": 0,
+        "sym": "cloudy",
+        "sym6": "cloudy",
+        "temp": 5
+      },
+      "expect": {
         "at": "10:00",
         "form": "from",
         "key": "rain"

@@ -2,7 +2,7 @@
 
 
 **Superseded in part (2026-11-04):** the place name is gone - the server no longer asks Kartverket and the answer carries no `place` (the user: "Vi dropper navnet"). Read §13 first; wherever this note still describes a place (§0, §3, §5.2, the logs, TalkBack, the tests, the licence paragraph), it is history.
-**Changed (2026-11-04):** from 18:00 to midnight the card is "I kveld" | "I morgen" (§14), no longer tomorrow alone.
+**Changed (2026-11-04):** from 18:00 to midnight the card is "I kveld" | "I morgen" and the words speak of the evening first (§14); D3's "from 18:00: tomorrow's window" now holds only when the evening is dry.
 Status: design note, 2026-11-03, on `main` at 6539d573; to be built on branch `lock-weather` (PLAN queue: "Weather on
 the lock glance - APPROVED 2026-11-03"). Both directories. Revised the same day after the two design QAs
 (`docs/review/qa-75-design-server.md`, `docs/review/qa-75-design-launcher.md`) and the user's answers (§11 lists what
@@ -993,3 +993,27 @@ delingen"; mockup v2 approved ("OK, det er greit!"). Built on branch `evening-ca
   "Mørkt kl. 15:59". On a plain card the headings and the line are gone and the three columns are equal as before.
   TalkBack: "I kveld: Klarvær. 2 grader. I morgen. Morgen: ... Ettermiddag: ... Laveste ... Høyeste ... Mørkt kl. ...".
   New strings `weather_card_tonight` ("I kveld" / "Tonight") and `weather_low_high_tomorrow` in both catalogs.
+
+### 14.1 The evening words and the fix round (QA `docs/review/qa-evening-card.md`)
+
+- **The words (QA M1; PLAN: "the words cover the rest of the evening first and tomorrow only when the evening is dry")**:
+  from 18:00 to midnight `weather::words` reads the evening span first - `[the start of the forecast hour containing
+  now (never before 18:00), midnight)`, the same span as `tonight` (`evening_span`), so the words and the card's "I kveld"
+  rain agree. On that span only the precipitation rules apply (D4's rules 1-6: thunder, snow, sleet, heavy rain, rain,
+  "Kanskje litt regn/snø"; cold, wind and warmth are the day's words). The forms are `now` (the first wet hour is the
+  span's first: "Regn nå") and `from` (a later wet hour: "Regn fra kl. 21"); never `tomorrow`, and a wet total no single
+  hour shows reads `now`; the "maybe" rules keep `today` ("Kanskje litt regn"). A "maybe" evening counts as not dry: it
+  is spoken of and tomorrow's words wait. If no rule matches (a dry evening, or no stored hour), D3's tomorrow window
+  and all its rules run as before (`tomorrow` forms). No new key or form: `forms` is unchanged and the launcher needs
+  nothing. Contract: ten new `words` rows (18:00, 19:04, 20:10, 23:30), among them the wet evening beating tomorrow's rain,
+  rain that stopped before this hour, a cold evening that is no evening word and rain after midnight (neither the
+  evening's nor tomorrow's 07-18). `answer`/`answer_line`/`answer_words` are unchanged (the recorded day is dry).
+- **The symbol (QA L1)**: when less than the 6 h of `next_6_hours` remain before midnight (every start after 18:00),
+  "I kveld"'s symbol comes from the span's own hours' `next_1_hours` (`weather::evening_symbol`), by one rule: a thunder
+  hour first (as words rule 1), else the hour with the most precipitation (at least 0.1 mm; the first of equals), else the
+  span's first hour. At 18:00 exactly the six hours' symbol is read as the periods do. At 23:30 with rain from 03:00 the
+  card shows the hour's cloud, not the rain (`tonights_symbol_stays_inside_the_evening`).
+- **Launcher (QA L2, L3, N1, N3)**: the foot (and the dark text) may wrap to two lines instead of being cut; the evening
+  card keeps its 1 : 2 weights when a tomorrow column is missing; `weather_group_0` is `match_parent` high, so the raised tone
+  fills the row; TalkBack's card text is the pure `spokenCardText` (`weather/WeatherSpoken.kt`, over a `SpokenText`) and
+  `WeatherSpokenTest` reads it in nb and en from the catalogs.

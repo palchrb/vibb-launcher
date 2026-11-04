@@ -26,6 +26,7 @@ import com.kidslauncher.mdm.databinding.ViewLockWeatherMarkBinding
 import com.kidslauncher.mdm.server.dto.WeatherAnswer
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.weather.WEATHER_HIDE_AFTER_MS
+import com.kidslauncher.mdm.weather.SpokenText
 import com.kidslauncher.mdm.weather.WEATHER_NOW_INSERT_MS
 import com.kidslauncher.mdm.weather.weatherNowAsk
 import com.kidslauncher.mdm.weather.WeatherCard
@@ -38,6 +39,7 @@ import com.kidslauncher.mdm.weather.WeatherSymbols
 import com.kidslauncher.mdm.weather.WeatherWords
 import com.kidslauncher.mdm.weather.WeatherWordsKey
 import com.kidslauncher.mdm.weather.beside
+import com.kidslauncher.mdm.weather.spokenCardText
 import com.kidslauncher.mdm.weather.weatherCard
 import com.kidslauncher.mdm.weather.weatherDegrees
 import com.kidslauncher.mdm.weather.weatherFold
@@ -388,13 +390,15 @@ class WeatherLockPanel(
             }
             col.root.setBackgroundResource(if (c.current && !isTonight) R.drawable.bg_weather_now else 0)
         }
-        // The groups keep the columns equal: each weighs its shown columns (a group with none is gone).
+        // The groups keep the columns equal: each weighs its shown columns (a group with none is gone). The evening card
+        // keeps its 1 : 2 even when a tomorrow column is missing (QA L3): the lone column sits in its group's room.
         for ((group, cols) in listOf(card.weatherGroup0 to columns.take(1), card.weatherGroup1 to columns.drop(1))) {
             val count = cols.count { it.root.visibility == View.VISIBLE }
             group.visibility = if (count > 0) View.VISIBLE else View.GONE
+            val weight = if (tonight != null) (if (group === card.weatherGroup0) 1f else 2f) else count.toFloat()
             val params = group.layoutParams as LinearLayout.LayoutParams
-            if (count > 0 && params.weight != count.toFloat()) {
-                params.weight = count.toFloat()
+            if (count > 0 && params.weight != weight) {
+                params.weight = weight
                 group.layoutParams = params
             }
         }
@@ -572,31 +576,12 @@ class WeatherLockPanel(
 
     private fun spokenCard(model: WeatherCard, lowHigh: Boolean): String {
         val res = activity.resources
+        val text = object : SpokenText {
+            override fun string(id: Int, vararg args: Any) = activity.getString(id, *args)
+            override fun plural(id: Int, quantity: Int, vararg args: Any) = res.getQuantityString(id, quantity, *args)
+        }
         val locale = res.configuration.locales[0] ?: Locale.getDefault()
-        val parts = mutableListOf<String>()
-        // The evening card reads "I kveld: ... I morgen. Morgen: ... Ettermiddag: ...", as it shows.
-        model.tonight?.takeIf { it.symbol != null || it.temp != null }?.let { c ->
-            parts += activity.getString(R.string.weather_spoken_period, activity.getString(R.string.weather_card_tonight))
-            c.symbol?.let { WeatherSymbols.name(it) }?.let { parts += sentence(activity.getString(it)) }
-            c.temp?.let { parts += res.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
-            c.mm?.let { weatherMm(it, locale) }?.let { parts += activity.getString(R.string.weather_spoken_mm, it) }
-        }
-        if (model.tomorrow) parts += sentence(activity.getString(R.string.weather_card_tomorrow))
-        for (c in model.columns) {
-            // E8's L1: a period without its hours says nothing (no bare "Morgen:").
-            if (c.symbol == null && c.temp == null) continue
-            val label = WeatherWords.partRes(c.part)?.let(activity::getString) ?: continue
-            parts += activity.getString(R.string.weather_spoken_period, label)
-            c.symbol?.let { WeatherSymbols.name(it) }?.let { parts += sentence(activity.getString(it)) }
-            c.temp?.let { parts += res.getQuantityString(R.plurals.weather_spoken_degrees, abs(it), weatherNumber(it)) }
-            c.mm?.let { weatherMm(it, locale) }?.let { parts += activity.getString(R.string.weather_spoken_mm, it) }
-        }
-        if (lowHigh) {
-            model.low?.let { parts += res.getQuantityString(R.plurals.weather_spoken_low, abs(it), weatherNumber(it)) }
-            model.high?.let { parts += res.getQuantityString(R.plurals.weather_spoken_high, abs(it), weatherNumber(it)) }
-        }
-        darkText(model)?.let { parts += sentence(it) }
-        return WeatherWords.spoken(parts.joinToString(" "))
+        return spokenCardText(model, lowHigh, darkText(model), locale, text)
     }
 
     /** The mark is a button with expand/collapse actions and its state (launcher QA M5). */

@@ -283,6 +283,9 @@ class WeatherModelTest {
     fun `the spoken text has no soft hyphen (E9 L4)`() {
         assertEquals("Ettermiddag: Klarvær.", WeatherWords.spoken("Etter\u00ADmiddag: Klarvær."))
         val panel = java.io.File("src/main/java/com/kidslauncher/mdm/lock/WeatherLockPanel.kt").readText()
-        assertEquals("the mark, the card and the card with its nowcast line", 3, Regex("return WeatherWords\\.spoken\\(").findAll(panel).count())
+        val spoken = java.io.File("src/main/java/com/kidslauncher/mdm/weather/WeatherSpoken.kt").readText()
+        val call = Regex("return WeatherWords\\.spoken\\(")
+        assertEquals("the mark and the card with its nowcast line", 2, call.findAll(panel).count())
+        assertEquals("the card (WeatherSpoken.kt)", 1, call.findAll(spoken).count())
     }
 }

@@ -286,35 +286,80 @@ fn word_day(tz: Tz, at: DateTime<Utc>) -> (NaiveDate, bool) {
     }
 }
 
-/// The words at `at` in the phone's zone (D3-D4): the first rule that matches over the window's hours, or none.
-pub fn words(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Words> {
-    let t = local(tz, at);
-    let (day, tomorrow) = word_day(tz, at);
-    let end = at_hour(day, WINDOW.end);
-    let start = if tomorrow {
-        at_hour(day, WINDOW.start)
-    } else {
-        at_hour(day, WINDOW.start).max(local(tz, hour_floor(at)))
-    };
-    let window: Vec<&Hour> = hours
+/// The hours whose local start is in `[start, end)`.
+fn hours_between(hours: &[Hour], tz: Tz, start: NaiveDateTime, end: NaiveDateTime) -> Vec<&Hour> {
+    hours
         .iter()
         .filter(|h| {
             let s = local(tz, h.start());
             s >= start && s < end
         })
-        .collect();
+        .collect()
+}
+
+/// What is left of this evening at `at` (from 18:00): the local `[start of the forecast hour containing at (never
+/// before 18:00), midnight)`. The card's "I kveld" and the words read the same span, so they agree.
+fn evening_span(tz: Tz, at: DateTime<Utc>) -> (NaiveDateTime, NaiveDateTime) {
+    let t = local(tz, at);
+    let start = local(tz, hour_floor(at)).max(at_hour(t.date(), TOMORROW_FROM));
+    (start, at_hour(t.date() + Duration::days(1), 0))
+}
+
+/// Which window [judge] reads: the rest of today's 07-18, the rest of this evening, or tomorrow's 07-18.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Today { after_seven: bool },
+    Tonight,
+    Tomorrow,
+}
+
+/// The words at `at` in the phone's zone (D3-D4, §14): before 18:00 the first rule that matches over today's rest;
+/// from 18:00 to midnight the rest of this evening first - the precipitation rules only (rules 1-6, in the forms `now`
+/// and `from`, never `tomorrow`), so a wet evening is spoken of as such - and tomorrow's window (all rules, the
+/// form `tomorrow`) only when the evening has none, i.e. is dry. None when nothing matches.
+pub fn words(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Words> {
+    let t = local(tz, at);
+    let (day, tomorrow) = word_day(tz, at);
+    if !tomorrow {
+        let window = hours_between(
+            hours,
+            tz,
+            at_hour(day, WINDOW.start).max(local(tz, hour_floor(at))),
+            at_hour(day, WINDOW.end),
+        );
+        let after_seven =
+            t.time() >= NaiveTime::from_hms_opt(WINDOW.start, 0, 0).unwrap_or_default();
+        return judge(&window, Scope::Today { after_seven });
+    }
+    let (start, end) = evening_span(tz, at);
+    judge(&hours_between(hours, tz, start, end), Scope::Tonight).or_else(|| {
+        let window = hours_between(
+            hours,
+            tz,
+            at_hour(day, WINDOW.start),
+            at_hour(day, WINDOW.end),
+        );
+        judge(&window, Scope::Tomorrow)
+    })
+}
+
+/// The rule table over one window.
+fn judge(window: &[&Hour], scope: Scope) -> Option<Words> {
     let first_hour = window.first()?.t;
-    let after_seven = t.time() >= NaiveTime::from_hms_opt(WINDOW.start, 0, 0).unwrap_or_default();
+    let after_seven = matches!(scope, Scope::Today { after_seven: true });
     let form_of = |first_wet: Option<&&Hour>| -> (Form, Option<DateTime<Utc>>) {
         match first_wet {
-            _ if tomorrow => (Form::Tomorrow, None),
+            _ if scope == Scope::Tomorrow => (Form::Tomorrow, None),
+            // The rest of this evening: the first hour is wet now, else from the hour it is (an unplaced wet total: now).
+            Some(h) if scope == Scope::Tonight && h.t == first_hour => (Form::Now, None),
+            None if scope == Scope::Tonight => (Form::Now, None),
             Some(h) if h.t == first_hour && after_seven => (Form::Now, None),
             Some(h) if h.t == first_hour => (Form::Today, None),
             Some(h) => (Form::From, Some(h.start())),
             None => (Form::Today, None),
         }
     };
-    let day_form = if tomorrow {
+    let day_form = if scope == Scope::Tomorrow {
         Form::Tomorrow
     } else {
         Form::Today
@@ -385,6 +430,10 @@ pub fn words(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Words> {
         } else {
             "maybe_rain"
         });
+    }
+    // The evening speaks of precipitation only: cold, wind and warmth are the day's words (tomorrow's, when dry).
+    if scope == Scope::Tonight {
+        return None;
     }
     let feels = window
         .iter()
@@ -458,13 +507,7 @@ fn span(
     start: NaiveDateTime,
     end: NaiveDateTime,
 ) -> Period {
-    let inside: Vec<&Hour> = hours
-        .iter()
-        .filter(|h| {
-            let s = local(tz, h.start());
-            s >= start && s < end
-        })
-        .collect();
+    let inside = hours_between(hours, tz, start, end);
     if inside.is_empty() {
         return Period {
             part,
@@ -490,18 +533,41 @@ fn span(
 }
 
 /// The evening card's "I kveld" (2026-11-04, the user: "fortsatt vise kvelden nå"): from 18:00 until midnight, when
-/// the card already shows tomorrow, what is left of this evening - the [span] from the start of the forecast hour
-/// containing `at` (never before 18:00) to midnight, part `evening`. None before 18:00 and when no hour of it is
-/// stored. At midnight the card is the new day's, as it always was.
+/// the card already shows tomorrow, what is left of this evening - the [span] over [evening_span] (the start of the
+/// forecast hour containing `at`, never before 18:00, to midnight), part `evening`. When less than the 6 h of
+/// `next_6_hours` remain (every start after 18:00) that symbol would reach past midnight, so the symbol is read from the
+/// span's own hours, [evening_symbol]. None before 18:00 and when no hour of it is stored. At midnight the card is the
+/// new day's, as it always was.
 pub fn tonight(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Period> {
-    let t = local(tz, at);
-    if t.hour() < TOMORROW_FROM {
+    if local(tz, at).hour() < TOMORROW_FROM {
         return None;
     }
-    let start = local(tz, hour_floor(at)).max(at_hour(t.date(), TOMORROW_FROM));
-    let end = at_hour(t.date() + Duration::days(1), 0);
-    let rest = span(hours, tz, "evening", start, end);
+    let (start, end) = evening_span(tz, at);
+    let mut rest = span(hours, tz, "evening", start, end);
+    if end - start < Duration::hours(6)
+        && let Some(symbol) = evening_symbol(&hours_between(hours, tz, start, end))
+    {
+        rest.symbol = Some(symbol);
+    }
     (rest.symbol.is_some() || rest.temp.is_some()).then_some(rest)
+}
+
+/// The symbol of a span shorter than 6 h from its own hours' `next_1_hours`, by one rule: a thunder hour first (as the
+/// words' rule 1), else the hour with the most precipitation (at least [WET_HOUR_MM]; the first of equals), else, dry,
+/// the span's first hour - and in each case the first hour with a symbol at all stands in for a missing one.
+fn evening_symbol(inside: &[&Hour]) -> Option<String> {
+    let thunder = inside
+        .iter()
+        .find(|h| h.sym.as_deref().is_some_and(is_thunder));
+    let wettest = inside
+        .iter()
+        .filter(|h| h.sym.is_some() && h.mm.unwrap_or(0.0) >= WET_HOUR_MM)
+        .reduce(|best, h| if h.mm > best.mm { h } else { best });
+    thunder
+        .or(wettest)
+        .or_else(|| inside.iter().find(|h| h.sym.is_some()))
+        .and_then(|h| h.sym.clone())
+        .or_else(|| inside.iter().find_map(|h| h.sym6.clone()))
 }
 
 /// When it gets dark (D10): the end of civil twilight after the date's solar noon, or never, or not at all that day.

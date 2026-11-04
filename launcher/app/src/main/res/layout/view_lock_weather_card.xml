@@ -59,7 +59,7 @@
         <LinearLayout
             android:id="@+id/weather_group_0"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="1"
             android:importantForAccessibility="no"
             android:orientation="vertical">
@@ -286,7 +286,7 @@
         android:importantForAccessibility="no"
         android:orientation="horizontal">
 
-        <!-- "2° / 7°": the low and high (no place name since 2026-11-04). -->
+        <!-- "2° / 7°": the low and high (no place name since 2026-11-04); two lines at a large font, never cut (QA L2). -->
         <TextView
             android:id="@+id/weather_card_foot"
             android:layout_width="0dp"
@@ -294,7 +294,7 @@
             android:layout_weight="1"
             android:fontFamily="@font/nunito_bold"
             android:importantForAccessibility="no"
-            android:maxLines="1"
+            android:maxLines="2"
             android:textColor="@color/kid_core_dim"
             android:textSize="13sp" />
 
@@ -303,9 +303,10 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
+            android:gravity="end"
             android:fontFamily="@font/nunito_bold"
             android:importantForAccessibility="no"
-            android:maxLines="1"
+            android:maxLines="2"
             android:textColor="@color/kid_ink"
             android:textSize="13sp" />
     </LinearLayout>

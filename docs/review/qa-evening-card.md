@@ -90,3 +90,20 @@ note it. `periods()` always returns all three parts, so on a current server this
 - **Tests**: lean and on the boundaries; the one server test and one launcher test cover what a regression would break.
   Docs (design §14, the two area notes) match the code. PLAN.md was not touched by the build (not in scope here): its
   entry should move to "built, awaiting QA" and keep M1's words part visible.
+
+## Fix round (2026-11-04, on `evening-card`)
+
+Done by the reviewer at the coordinator's request; design 75 §14.1 has the rules.
+
+| Finding | Fix |
+|---|---|
+| M1 | `weather::words` reads the evening span first (precipitation rules only, forms `now`/`from`), tomorrow's window only when the evening has no match. Ten new `words` rows in `weather.json` (both copies identical, computed parts unchanged). |
+| L1 | `tonight` reads the symbol from the span's own hours when under 6 h remain: thunder hour, else the wettest hour, else the first (`evening_symbol`). Test: 23:30 with rain at 03:00, wettest, thunder, 18:00. |
+| L2 | The foot and the dark text: `maxLines=2` (the dark text right-aligned). |
+| L3 | The evening card's group weights are fixed 1 : 2. |
+| N1 | `weather_group_0` is `match_parent` high. |
+| N2 | Left as is (emulator check). |
+| N3 | `spokenCardText` extracted (`WeatherSpoken.kt`), `WeatherSpokenTest` (nb and en, evening and plain card). `WeatherModelTest`'s source-count of `WeatherWords.spoken(` follows the move. |
+
+Tests: server `cargo fmt --check`, `cargo clippy --all-targets` clean, `cargo test` 1734 passed (29 weather); launcher
+`assembleDebug testDebugUnitTest -PwarningsAsErrors=true` 2081 passed, 0 failed.
