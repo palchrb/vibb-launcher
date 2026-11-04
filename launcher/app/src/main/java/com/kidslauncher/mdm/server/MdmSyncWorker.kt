@@ -98,7 +98,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 38 (QA N1): the shutdown's prepared client follows the base URL, the token and the proxy.
     PowerEvents.prepare(context)
 
-    val api = createMdmApi(serverUrl, deviceToken)
+    var api = createMdmApi(serverUrl, deviceToken)
     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
@@ -165,6 +165,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
+        // S-L10's fix round (nit 1): after Leave Tailnet no call of this sync goes through the closed proxy - the
+        // client is built again, on the direct path.
+        if (ranCommand?.command == LEAVE_TAILNET_COMMAND) api = createMdmApi(serverUrl, deviceToken)
         // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
         // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
         // Design 72b: the kid's own events handed over for the marked CalDAV calendar first (never throws), so the
@@ -331,6 +334,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
                 battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
                 writeSettingsGranted = WriteSettingsAccess.granted(context),
+                // S-L10's fix round: the server shows Leave Tailnet only while this says true.
+                tailnetJoined = TsnetClient.joined(context),
                 extraLocations = extraFixes?.map { it.toReport() },
                 zoneWatch = ZoneWatch.report(context, still = location.still),
                 calendar = try {
@@ -524,12 +529,13 @@ private suspend fun dispatchPendingCommand(
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
-        // Security review S-L10: the parent's "Leave tailnet" - tsnet stops and its node state goes. This sync's API
-        // client still points at the closed proxy, so the answer may wait in the outbox for the follow-up sync, which
-        // takes the direct path.
+        // Security review S-L10: the parent's "Leave tailnet" - tsnet stops and its node state goes (refused while the
+        // server address is a tailnet one). This sync's API client pointed at the closed proxy: the answer waits in the
+        // outbox, and performMdmSync rebuilds the client before its next call (the fix round's nit 1); the outbox is
+        // flushed after the status report.
         LEAVE_TAILNET_COMMAND -> {
             val (ok, message) = TsnetClient.leave(context)
-            reportCommandResult(context, api, pending, success = ok, message = message)
+            CommandAnswers.keep(context, pending, ok, message)
             requestFollowUpSync(context)
         }
 
@@ -662,6 +668,7 @@ private suspend fun currentLocationReport(
     staysOn: Boolean,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
+    LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)
     val now = System.currentTimeMillis()
     val lastOwnFix = LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
     val motion = if (zonesOn) MotionGate.motion(context) else Motion.NO_SENSOR

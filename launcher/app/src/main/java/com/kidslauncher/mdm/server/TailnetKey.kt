@@ -37,7 +37,7 @@ fun forgetTailnetKey(storedKey: String?, connected: Boolean): Boolean = connecte
  * Security review S-L10 (round L4b): a Go panic or abort after `connect` returned kills the process outside any
  * try - the crash guard's pending flag is cleared by then. So the time a connect returned is kept, and the next
  * process counts the death that followed as a crash when Android's own record of it ([android.app.ApplicationExitInfo])
- * says the process ended itself or by a signal within [TSNET_DEATH_WINDOW_MS]: a Go `exit(2)` or abort, or a native
+ * says the process ended itself with Go's status 2 or by a signal within [TSNET_DEATH_WINDOW_MS]: a Go `exit(2)` or abort, or a native
  * crash. Android's kills (low memory, an update, a force stop, a reboot) never count.
  */
 
@@ -51,10 +51,15 @@ val TSNET_CRASH_EXITS = setOf(
     android.app.ApplicationExitInfo.REASON_CRASH_NATIVE,
 )
 
-/** The last process's death ([exitAtMs], [reason]; null = none recorded) after a connect returned at [returnedAtMs]
- * counts as a tsnet crash. */
-fun deathAfterConnectIsCrash(returnedAtMs: Long, exitAtMs: Long?, reason: Int?): Boolean =
+/** Go's runtime exits with this on a panic or a fatal error; our own crash handler's `exitProcess(1)` never counts. */
+const val GO_FATAL_EXIT_STATUS = 2
+
+/** The last process's death ([exitAtMs], [reason], [status]; null = none recorded) after a connect returned at
+ * [returnedAtMs] counts as a tsnet crash. A `REASON_EXIT_SELF` counts only with Go's status ([GO_FATAL_EXIT_STATUS],
+ * the QA fix round's M1): a Kotlin crash ends the process with 1 and is no tsnet crash. */
+fun deathAfterConnectIsCrash(returnedAtMs: Long, exitAtMs: Long?, reason: Int?, status: Int?): Boolean =
     returnedAtMs > 0 && exitAtMs != null && reason in TSNET_CRASH_EXITS &&
+        (reason != android.app.ApplicationExitInfo.REASON_EXIT_SELF || status == GO_FATAL_EXIT_STATUS) &&
         exitAtMs >= returnedAtMs && exitAtMs - returnedAtMs <= TSNET_DEATH_WINDOW_MS
 
 /**
@@ -73,6 +78,30 @@ const val LEAVE_TAILNET_COMMAND = "leave_tailnet"
 const val LEFT_TAILNET = "left the tailnet"
 const val NOT_ON_TAILNET = "not on the tailnet"
 const val LEAVE_TAILNET_FAILED = "failed to leave the tailnet"
+const val TAILNET_ONLY_SERVER = "server is reached only over the tailnet"
+
+/**
+ * The QA fix round's M2: [serverUrl]'s host is a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48) - off the
+ * tailnet that address is the carrier's CGNAT or the Wi-Fi's gateway, so the phone refuses to leave
+ * ([TAILNET_ONLY_SERVER]). An IP literal only, never a look-up; a name (`*.ts.net`, with its certificate) is no such
+ * address.
+ */
+fun tailnetOnlyServer(serverUrl: String?): Boolean {
+    val host = try {
+        java.net.URI(serverUrl?.trim() ?: return false).host
+    } catch (e: Exception) {
+        null
+    } ?: return false
+    val bytes = ipLiteral(host)?.address ?: return false
+    return when (bytes.size) {
+        4 -> (bytes[0].toInt() and 0xFF) == 100 && (bytes[1].toInt() and 0xC0) == 0x40
+        16 -> listOf(0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0).withIndex().all { (i, b) -> (bytes[i].toInt() and 0xFF) == b }
+        else -> false
+    }
+}
+
+/** The answer when the phone won't leave ([tailnetOnlyServer]). */
+fun leaveTailnetRefusal(): Pair<Boolean, String> = false to TAILNET_ONLY_SERVER
 
 /** The answer: [wasOn] the phone had a key, the joined mark, node state or a running client; [cleared] all of it went. */
 fun leaveTailnetAnswer(wasOn: Boolean, cleared: Boolean): Pair<Boolean, String> = when {

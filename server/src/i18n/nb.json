@@ -1730,6 +1730,7 @@
   "locate.answer.left_tailnet": "Forlot tailnettet",
   "locate.answer.not_on_tailnet": "Var ikke på tailnettet",
   "locate.answer.leave_tailnet_failed": "Klarte ikke å forlate tailnettet",
+  "locate.answer.tailnet_only": "Ble på tailnettet: serveradressen er en tailnet-adresse",
   "locate.answer.allowed.one": "{count} app tillatt",
   "locate.answer.allowed.other": "{count} apper tillatt",
   "locate.answer.locked_again": "Låst igjen",

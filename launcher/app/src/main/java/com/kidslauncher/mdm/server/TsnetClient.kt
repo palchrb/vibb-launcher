@@ -273,7 +273,7 @@ object TsnetClient {
             Log.w(LOG_TAG, "Couldn't read the last exit: ${e.javaClass.simpleName}")
             null
         }
-        return deathAfterConnectIsCrash(returnedAt, exit?.timestamp, exit?.reason)
+        return deathAfterConnectIsCrash(returnedAt, exit?.timestamp, exit?.reason, exit?.status)
     }
 
     /**
@@ -284,12 +284,19 @@ object TsnetClient {
      */
     @Synchronized
     fun leave(context: Context): Pair<Boolean, String> {
+        // The QA fix round's M2: a server at a tailnet address isn't reached safely any other way.
+        if (tailnetOnlyServer(LauncherPreferences.mdm().serverUrl())) {
+            Log.i(LOG_TAG, "Leave tailnet refused: the server address is a tailnet address")
+            return leaveTailnetRefusal()
+        }
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val keyName = LauncherPreferences.mdm().keys().tailscaleAuthKey()
         val stateDir = context.filesDir.resolve("tailscale")
         val wasOn = client != null || prefs.getBoolean(TAILNET_JOINED_KEY, false) ||
             !prefs.getString(keyName, null).isNullOrBlank() || stateDir.exists()
         close()
+        // Nothing answers for the closed proxy's port any more (the fix round's nit 1).
+        Authenticator.setDefault(null)
         // The marks first: a death mid-way leaves a phone that doesn't start tsnet, never one that rejoins.
         val saved = prefs.edit()
             .remove(TAILNET_JOINED_KEY)

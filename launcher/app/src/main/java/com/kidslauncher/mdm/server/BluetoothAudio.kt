@@ -60,10 +60,15 @@ fun hasLeAudio(uuids: Collection<String>): Boolean = uuids.any { it.equals(LE_AU
 /**
  * Security review S-L5: an audio device - headphones, a speaker, a car - by what it says of itself: an A2DP sink or LE
  * Audio among its UUIDs ([kind]), or the audio/video major class ([majorDeviceClass], `BluetoothClass`; a device the
- * scan found has its class long before its UUIDs). Never a service bit: phones set "audio" too.
+ * scan found has its class long before its UUIDs), never a phone or a computer. Never a service bit: phones set "audio" too.
  */
-fun btAudioClass(majorDeviceClass: Int?, kind: BtKind): Boolean =
-    kind != BtKind.OTHER || majorDeviceClass == android.bluetooth.BluetoothClass.Device.Major.AUDIO_VIDEO
+fun btAudioClass(majorDeviceClass: Int?, kind: BtKind): Boolean = when (majorDeviceClass) {
+    // The QA fix round's L3: a phone or a computer is never audio, whatever its UUIDs say (a Linux laptop's PipeWire
+    // advertises an A2DP sink).
+    android.bluetooth.BluetoothClass.Device.Major.PHONE, android.bluetooth.BluetoothClass.Device.Major.COMPUTER -> false
+    android.bluetooth.BluetoothClass.Device.Major.AUDIO_VIDEO -> true
+    else -> kind != BtKind.OTHER
+}
 
 /**
  * Security review S-L5: Kid Settings' Bluetooth page offers pairing for an audio device ([btAudioClass]) only, unless

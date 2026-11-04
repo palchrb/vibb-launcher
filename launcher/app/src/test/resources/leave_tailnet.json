@@ -3,6 +3,8 @@
   "answers": [
     {"success": true, "message": "left the tailnet"},
     {"success": true, "message": "not on the tailnet"},
-    {"success": false, "message": "failed to leave the tailnet"}
-  ]
+    {"success": false, "message": "failed to leave the tailnet"},
+    {"success": false, "message": "server is reached only over the tailnet"}
+  ],
+  "report": {"tailnet_joined": true}
 }

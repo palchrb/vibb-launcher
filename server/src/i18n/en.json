@@ -1730,6 +1730,7 @@
   "locate.answer.left_tailnet": "Left the tailnet",
   "locate.answer.not_on_tailnet": "Wasn't on the tailnet",
   "locate.answer.leave_tailnet_failed": "Couldn't leave the tailnet",
+  "locate.answer.tailnet_only": "Stayed on the tailnet: its server address is a tailnet address",
   "locate.answer.allowed.one": "{count} app allowed",
   "locate.answer.allowed.other": "{count} apps allowed",
   "locate.answer.locked_again": "Locked again",

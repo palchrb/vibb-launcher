@@ -47,6 +47,10 @@ private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 // crossing, never the cached (reported) fix. Default prefs, a CachedFix JSON.
 private const val KEPT_FIX_KEY = "zone_kept_fix"
 
+// Security review P-L2's fix round (L2): set, in one commit, before a fix switches Location on, cleared after its
+// restore - a process that dies mid-fix leaves it, and the next sync switches Location back off.
+private const val LOCATION_SWITCHED_ON_KEY = "location_switched_on_by_fix"
+
 // Android's location-in-use indicator fires on *any* LocationManager query that returns a fix -
 // confirmed live, the passive getLastKnownLocation() fallback below was still triggering it (and
 // still touching LocationManager) on every throttled-skip sync, even after gating the active fetch
@@ -127,7 +131,10 @@ object LocateCommands {
         Log.i(LOG_TAG, "currentLocation: ACCESS_BACKGROUND_LOCATION granted=$backgroundGranted")
 
         val switchedOn = !QuickControls.isLocationEnabled(context)
-        if (switchedOn) QuickControls.setLocationEnabled(dpm, admin, true)
+        if (switchedOn) {
+            markSwitchedOn(context, true)
+            QuickControls.setLocationEnabled(dpm, admin, true)
+        }
         try {
             return freshOrLastKnown(context, action, ::reportable)
         } finally {
@@ -135,7 +142,28 @@ object LocateCommands {
                 Log.i(LOG_TAG, "Location back off after the fix")
                 QuickControls.setLocationEnabled(dpm, admin, false)
             }
+            if (switchedOn) markSwitchedOn(context, false)
         }
+    }
+
+    private fun markSwitchedOn(context: Context, on: Boolean) {
+        val edit = PreferenceManager.getDefaultSharedPreferences(context).edit()
+        (if (on) edit.putBoolean(LOCATION_SWITCHED_ON_KEY, true) else edit.remove(LOCATION_SWITCHED_ON_KEY)).commit()
+    }
+
+    /**
+     * P-L2's fix round (L2): a fix whose process died before its restore left Location on - switched back off now
+     * ([locationBackOff], the same exceptions: [staysOn]). Called by the sync before its location step, so no fix of
+     * this process runs (the sync mutex; only the sync takes a fix through [currentLocation]).
+     */
+    fun restoreAfterDeadFix(context: Context, dpm: DevicePolicyManager, admin: ComponentName, staysOn: Boolean) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        if (!prefs.getBoolean(LOCATION_SWITCHED_ON_KEY, false)) return
+        if (locationBackOff(switchedOn = true, staysOn = staysOn) && QuickControls.isLocationEnabled(context)) {
+            Log.i(LOG_TAG, "Location back off after a fix that didn't finish")
+            QuickControls.setLocationEnabled(dpm, admin, false)
+        }
+        prefs.edit().remove(LOCATION_SWITCHED_ON_KEY).commit()
     }
 
     /** [currentLocation]'s fix with Location on: a fresh one, else the newest last-known, else the cached one - the

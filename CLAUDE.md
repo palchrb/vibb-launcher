@@ -165,9 +165,10 @@ recorded MET and Kartverket answers in `server/testdata/weather/` (`WEATHER_CONT
 policy's `launcher_ui.lock_weather` is pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.
 The `leave_tailnet` command's answers (security review S-L10, round L4b) are `server/testdata/leave_tailnet.json`
-(`{command, answers: [{success, message}]}`), byte-identical in `launcher/app/src/test/resources/`: the launcher's
-`SecurityLowsBTest` produces every row from `leaveTailnetAnswer`, the server's `tests::leave_tailnet` words each
-(`locate::reword`) and both compare the copies.
+(`{command, answers: [{success, message}], report}`), byte-identical in `launcher/app/src/test/resources/`: the
+launcher's `SecurityLowsBTest` produces every row from `leaveTailnetAnswer`/`leaveTailnetRefusal` and encodes the
+status report's `report` keys (`tailnet_joined`) exactly; the server's `tests::leave_tailnet` words each answer
+(`locate::reword`), posts `report` and shows Leave Tailnet only then; both compare the copies.
 The kid's own events written to the marked CalDAV calendar (design 72b §8) are `server/testdata/calendar_kid_events.json`,
 byte-identical in `launcher/app/src/test/resources/`: `provider` ("Min kalender"'s rows) and the exact POST body
 `snapshot` (and `cut_variant` past the limits), `canonical` (D2.7's form and hash, row by row), `policy` /

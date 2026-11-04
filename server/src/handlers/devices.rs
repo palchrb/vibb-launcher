@@ -705,6 +705,9 @@ pub struct AccessCard {
     pub typed_paused_until: Option<String>,
     /// The flash after Disconnect Phone: the text, and whether it is a refusal.
     pub notice: Option<(&'static str, bool)>,
+    /// The last report says the phone is on the tailnet (`tailnet_joined`): "Leave Tailnet…" shows. Set by
+    /// Advanced only; false from an older launcher.
+    pub tailnet_joined: bool,
 }
 
 impl AccessCard {
@@ -754,6 +757,7 @@ pub(crate) fn access_card(
             .typed_paused_until(now)
             .map(|until| zone.until(until, now)),
         notice: notice.and_then(|code| access_notice(zone.lang(), code)),
+        tailnet_joined: false,
     }
 }
 

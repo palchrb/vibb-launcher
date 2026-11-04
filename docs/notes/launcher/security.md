@@ -93,16 +93,22 @@ waits for a device capture of the Play Protect / account-security channel ids.
   abort after `connect` returned kills the process outside any try. `connect`'s `finally` now clears the pending flag
   and keeps the time it returned (`tsnet_connect_returned_at`) instead of zeroing the streak; the next process's first
   `connectFromPreferences` reads Android's record of how the last one ended
-  (`getHistoricalProcessExitReasons`, the main process): `REASON_EXIT_SELF` (Go's `exit(2)`; also our own crash
-  handler's `exitProcess(1)`), `REASON_SIGNALED` or `REASON_CRASH_NATIVE` within `TSNET_DEATH_WINDOW_MS` (10 min)
+  (`getHistoricalProcessExitReasons`, the main process): `REASON_EXIT_SELF` with status 2 only (Go's panic/fatal
+  exit, `GO_FATAL_EXIT_STATUS`; QA M1: our own crash handler's `exitProcess(1)` never counts), `REASON_SIGNALED` or
+  `REASON_CRASH_NATIVE` within `TSNET_DEATH_WINDOW_MS` (10 min)
   counts as a crash (`deathAfterConnectIsCrash`); a process that lived on ends the streak (`crashStreakAfter`); low
   memory, an update, a force stop or a reboot never count. Two within the 15-min streak skip a connect, as before.
 - **S-L10, Leave Tailnet** (command `leave_tailnet`, Advanced › Connection on the server, behind a ticked box;
   contract `server/testdata/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
-  stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale`. Answers "left the
-  tailnet" / "not on the tailnet" (nothing was there) / "failed to leave the tailnet". The sync's API client still
-  points at the closed proxy, so the answer may wait in the outbox for the follow-up sync, which takes the direct
-  path. Joining again takes a new key (Settings or a new setup QR). Not device-tested (needs the real aar): a joined
+  stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale` and drops the global
+  `Authenticator`. Answers "left the tailnet" / "not on the tailnet" (nothing was there) / "failed to leave the
+  tailnet" / "server is reached only over the tailnet" (QA M2: refused, nothing changed, while the server URL's host
+  is a Tailscale address - 100.64.0.0/10 or fd7a:115c:a1e0::/48, `tailnetOnlyServer`; off the tailnet that address is
+  the carrier's CGNAT or the Wi-Fi's gateway). The answer goes into the outbox (`CommandAnswers.keep`) and the sync
+  builds its API client again before its next call (QA nit 1), so nothing goes through the closed proxy; the outbox
+  is flushed after the status report. Every status report sends `tailnet_joined` (`TsnetClient.joined`, the
+  contract's `report`): the server shows the row only while it is true. Joining again takes a new key (Settings or a
+  new setup QR). Not device-tested (needs the real aar): a joined
   phone leaves, Home resume and sync no longer start tsnet, the server still reachable directly.
 - **P-L2 + P-L3, Location after a fix and the cached fix** (`server/LocateCommands.kt`, pure rules in
   `server/LocationPolicies.kt`): see `time-rules.md`, "Location policy". The server half of P-L3 needed no change:

@@ -73,7 +73,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   Resolver's idle timeout) and `DOT_MAX_IDLE` (4) per server, one query at a time on it (no pipelining). A query takes
   the newest kept one first (`dotAttempt`); one the server closed while idle (EOF, a reset, an answer out of step)
   is let go with the rest for that server and the query asked again on a fresh connection - nothing counted against
-  the server; one silent to the deadline is silence after the write, as on a fresh one. The pool is evicted on a
+  the server; one silent to the deadline - the watchdog's close or the read's own timeout (QA L1) - is silence after
+  the write, as on a fresh one. A `give` also closes every server's connections idle past the limit (QA L4). The pool is evicted on a
   network change and closed at stop (off the main thread); the one deadline per attempt (`DotDeadline`, the
   handshake included) and the trickle-proof `readFully` stay. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
   `OkHttpClient.Builder()` (never `newBuilder()` of the API/SSE clients, which carry tsnet's SOCKS proxy)**,

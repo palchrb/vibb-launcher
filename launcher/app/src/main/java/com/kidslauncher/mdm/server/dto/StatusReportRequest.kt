@@ -105,6 +105,10 @@ data class StatusReportRequest(
      * app-op the touch sounds row and the clock format need ([com.kidslauncher.mdm.server.WriteSettingsAccess]);
      * `null` = unreadable, left out. The server names Settings' row while it is `false`. */
     val writeSettingsGranted: Boolean? = null,
+    /** Security review S-L10's fix round: the phone has been on the tailnet (`tsnet_node_joined`,
+     * [com.kidslauncher.mdm.server.TsnetClient.joined]) - the server's Advanced page offers Leave Tailnet only then.
+     * The shared contract `leave_tailnet.json`'s `report`. */
+    val tailnetJoined: Boolean? = null,
     /** Design 64 step 2: the fixes taken or kept since the last report the server took and not sent
      * as [location] (a crossing's fix and its confirming one, a report that didn't get through),
      * oldest first, at most 20 ([com.kidslauncher.mdm.zones.ZONE_QUEUE_MAX]); `null` = none (left

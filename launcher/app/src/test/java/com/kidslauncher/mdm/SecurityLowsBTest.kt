@@ -21,6 +21,10 @@ import com.kidslauncher.mdm.server.deathAfterConnectIsCrash
 import com.kidslauncher.mdm.server.dotAnswers
 import com.kidslauncher.mdm.server.dotAttempt
 import com.kidslauncher.mdm.server.leaveTailnetAnswer
+import com.kidslauncher.mdm.server.leaveTailnetRefusal
+import com.kidslauncher.mdm.server.tailnetOnlyServer
+import com.kidslauncher.mdm.server.ServerJson
+import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -126,6 +130,20 @@ class SecurityLowsBTest {
         assertTrue("$outcome", outcome is Attempt.Odd && outcome.kind == OddKind.TIMEOUT)
         assertEquals("no fresh connection past the deadline", 0, opened.size)
         assertEquals(0, pool.size())
+
+        // The QA fix round's L1: the read's own timeout (before the watchdog's close) is silence too, not a connection
+        // gone - no retry, no transport failure counted.
+        val timedOut = object : DotLink {
+            override fun ask(query: ByteArray, remainingMs: () -> Int, marks: CallMarks): ByteArray {
+                marks.written = true
+                throw java.net.SocketTimeoutException("read timed out")
+            }
+            override fun cut() {}
+        }
+        pool.give(key, timedOut)
+        val read = attempt(pool, opened) { FakeLink { answer } }
+        assertTrue("$read", read is Attempt.Odd && read.kind == OddKind.TIMEOUT)
+        assertEquals(0, opened.size)
     }
 
     @Test
@@ -140,6 +158,14 @@ class SecurityLowsBTest {
         now = 10_000L
         assertNull("idle too long", pool.take(key))
         assertTrue(links[1].cut)
+        // The QA fix round's L4: a give sweeps every server's expired connections, not only its own.
+        val other = DotPool.Key(server, 853, "other.example")
+        val stale = FakeLink { answer }
+        pool.give(other, stale)
+        now = 30_000L
+        pool.give(key, FakeLink { answer })
+        assertTrue(stale.cut)
+        assertEquals(1, pool.size())
         val last = FakeLink { answer }
         pool.close()
         pool.give(key, last)
@@ -152,19 +178,21 @@ class SecurityLowsBTest {
     @Test
     fun `S-L10 - a death soon after a tsnet connect counts toward the crash guard, Android's kills don't`() {
         val at = 1_793_000_000_000L
-        assertTrue(deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_CRASH_NATIVE))
-        assertTrue("Go's exit(2)", deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_EXIT_SELF))
-        assertTrue("an abort", deathAfterConnectIsCrash(at, at + TSNET_DEATH_WINDOW_MS, ApplicationExitInfo.REASON_SIGNALED))
-        assertFalse("past the window", deathAfterConnectIsCrash(at, at + TSNET_DEATH_WINDOW_MS + 1, ApplicationExitInfo.REASON_CRASH_NATIVE))
-        assertFalse("a death before this connect", deathAfterConnectIsCrash(at, at - 1, ApplicationExitInfo.REASON_CRASH_NATIVE))
+        assertTrue(deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_CRASH_NATIVE, 6))
+        assertTrue("Go's exit(2)", deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_EXIT_SELF, 2))
+        assertFalse("our own crash handler's exitProcess(1) (QA M1)", deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_EXIT_SELF, 1))
+        assertFalse(deathAfterConnectIsCrash(at, at + 60_000, ApplicationExitInfo.REASON_EXIT_SELF, null))
+        assertTrue("an abort", deathAfterConnectIsCrash(at, at + TSNET_DEATH_WINDOW_MS, ApplicationExitInfo.REASON_SIGNALED, 6))
+        assertFalse("past the window", deathAfterConnectIsCrash(at, at + TSNET_DEATH_WINDOW_MS + 1, ApplicationExitInfo.REASON_CRASH_NATIVE, 6))
+        assertFalse("a death before this connect", deathAfterConnectIsCrash(at, at - 1, ApplicationExitInfo.REASON_CRASH_NATIVE, 6))
         for (kill in listOf(
             ApplicationExitInfo.REASON_LOW_MEMORY, ApplicationExitInfo.REASON_USER_REQUESTED,
             ApplicationExitInfo.REASON_PACKAGE_UPDATED, ApplicationExitInfo.REASON_OTHER,
         )) {
-            assertFalse("$kill", deathAfterConnectIsCrash(at, at + 1_000, kill))
+            assertFalse("$kill", deathAfterConnectIsCrash(at, at + 1_000, kill, 2))
         }
-        assertFalse("no record", deathAfterConnectIsCrash(at, null, null))
-        assertFalse("no connect", deathAfterConnectIsCrash(0, at, ApplicationExitInfo.REASON_CRASH_NATIVE))
+        assertFalse("no record", deathAfterConnectIsCrash(at, null, null, null))
+        assertFalse("no connect", deathAfterConnectIsCrash(0, at, ApplicationExitInfo.REASON_CRASH_NATIVE, 6))
 
         // The streak: a connect that never returned or died soon after adds one; one that lived on ends it.
         assertEquals(2, crashStreakAfter(1, wasLeftPending = true, lastConnect = null))
@@ -186,11 +214,32 @@ class SecurityLowsBTest {
         val rows = parsed.getValue("answers").jsonArray.map {
             it.jsonObject.getValue("success").jsonPrimitive.boolean to it.jsonObject.getValue("message").jsonPrimitive.content
         }
-        assertEquals(rows, listOf(leaveTailnetAnswer(true, true), leaveTailnetAnswer(false, true), leaveTailnetAnswer(true, false)))
+        assertEquals(
+            rows,
+            listOf(leaveTailnetAnswer(true, true), leaveTailnetAnswer(false, true), leaveTailnetAnswer(true, false), leaveTailnetRefusal()),
+        )
         assertEquals(leaveTailnetAnswer(true, false), leaveTailnetAnswer(false, false))
-        // The sync runs it.
+        // The QA fix round's M2: a server at a Tailscale address - the phone stays.
+        for (url in listOf("http://100.101.102.103:8080", "http://100.64.0.1", "http://100.127.255.254/", "http://[fd7a:115c:a1e0::5]:3000")) {
+            assertTrue(url, tailnetOnlyServer(url))
+        }
+        for (url in listOf("http://100.63.255.255", "http://100.128.0.1", "https://vibb.tail0000.ts.net", "http://192.168.1.2:8080", "http://[fd7a:115c:a1e1::5]", "not a url", null)) {
+            assertFalse("$url", tailnetOnlyServer(url))
+        }
+        val tsnet = src("java/com/kidslauncher/mdm/server/TsnetClient.kt").readText()
+        val leave = tsnet.substringAfter("fun leave(context: Context)")
+        assertTrue(leave.indexOf("if (tailnetOnlyServer(") in 0 until leave.indexOf("close()"))
+        // The report's `tailnet_joined` (the server shows the row only while it is true).
+        val report = parsed.getValue("report").jsonObject
+        val encoded = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true, tailnetJoined = true)),
+        ).jsonObject
+        for ((key, value) in report) assertEquals(key, value, encoded[key])
+        // The sync runs it, keeps the answer for after the report and builds its client again (nit 1).
         val sync = src("java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
-        assertTrue(sync.contains("LEAVE_TAILNET_COMMAND -> {\n            val (ok, message) = TsnetClient.leave(context)"))
+        assertTrue(sync.contains("LEAVE_TAILNET_COMMAND -> {\n            val (ok, message) = TsnetClient.leave(context)\n            CommandAnswers.keep(context, pending, ok, message)"))
+        assertTrue(sync.contains("if (ranCommand?.command == LEAVE_TAILNET_COMMAND) api = createMdmApi(serverUrl, deviceToken)"))
+        assertTrue(sync.contains("tailnetJoined = TsnetClient.joined(context),"))
         // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
         val serverCopy = File("../../server/testdata/leave_tailnet.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
@@ -213,6 +262,10 @@ class SecurityLowsBTest {
         val locate = src("java/com/kidslauncher/mdm/server/LocateCommands.kt").readText()
         val restore = locate.substringAfter("if (switchedOn) QuickControls.setLocationEnabled(dpm, admin, true)").substringBefore("\n    }\n")
         assertTrue("restored in a finally", restore.contains("} finally {") && restore.contains("locationBackOff(switchedOn, staysOn)"))
+        // The fix round's L2: the mark is committed before the switch, and the next sync acts on one a dead process left.
+        assertTrue(locate.contains("markSwitchedOn(context, true)\n            QuickControls.setLocationEnabled(dpm, admin, true)"))
+        val report = sync.substringAfter("private suspend fun currentLocationReport(")
+        assertTrue(report.indexOf("LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)") in 0 until report.indexOf("LocateCommands.currentLocation("))
     }
 
     @Test
@@ -243,6 +296,9 @@ class SecurityLowsBTest {
             assertFalse("$major", btAudioClass(major, BtKind.OTHER))
         }
         assertFalse(btAudioClass(null, BtKind.OTHER))
+        // The QA fix round's L3: a laptop's PipeWire A2DP sink doesn't make it audio.
+        assertFalse(btAudioClass(BluetoothClass.Device.Major.COMPUTER, BtKind.A2DP))
+        assertFalse(btAudioClass(BluetoothClass.Device.Major.PHONE, BtKind.LE_ONLY))
         assertTrue(btPairOffered(audioClass = true, parentAllowsAny = false, overrideActive = false))
         assertFalse("a friend's phone", btPairOffered(audioClass = false, parentAllowsAny = false, overrideActive = false))
         assertTrue(btPairOffered(audioClass = false, parentAllowsAny = true, overrideActive = false))

@@ -641,6 +641,7 @@ pub(crate) fn reword(lang: Lang, raw: &str) -> Option<String> {
         "left the tailnet" => "locate.answer.left_tailnet",
         "not on the tailnet" => "locate.answer.not_on_tailnet",
         "failed to leave the tailnet" => "locate.answer.leave_tailnet_failed",
+        "server is reached only over the tailnet" => "locate.answer.tailnet_only",
         _ => "",
     };
     if !known.is_empty() {

@@ -150,7 +150,10 @@ internal fun dotAttempt(
                 return attempt
             } catch (e: Exception) {
                 kept.cut()
+                // Past the deadline - the watchdog's close, or the read's own timeout at it (the QA fix round's L1) - is
+                // silence after the write, never a connection gone.
                 if (!watch.end()) return afterWriteOutcome(java.net.SocketTimeoutException("DoT attempt past its deadline"))
+                if (e is InterruptedIOException) return afterWriteOutcome(e)
                 log("Kept DoT connection gone: ${e.javaClass.simpleName}")
                 pool.drop(key)
             }
@@ -325,13 +328,24 @@ class DotPool(
         return found
     }
 
-    /** [link] kept for [key]; closed instead once the pool is closed, and the oldest past [maxIdle]. */
+    /** [link] kept for [key]; closed instead once the pool is closed, and the oldest past [maxIdle]. Every server's
+     * connections idle past [idleMs] are closed too (the QA fix round's L4: a server no query asks any more - another
+     * provider, a rotated address - keeps none open). */
     internal fun give(key: Key, link: DotLink) {
         val over = synchronized(this) {
             if (closed) return@synchronized listOf(link)
+            val now = nowMs()
+            val gone = mutableListOf<DotLink>()
+            val each = idle.entries.iterator()
+            while (each.hasNext()) {
+                val queue = each.next().value
+                while (queue.isNotEmpty() && now - queue.first().sinceMs >= idleMs) gone += queue.removeFirst().link
+                if (queue.isEmpty()) each.remove()
+            }
             val queue = idle.getOrPut(key) { ArrayDeque() }
-            queue.addLast(Kept(link, nowMs()))
-            buildList { while (queue.size > maxIdle) add(queue.removeFirst().link) }
+            queue.addLast(Kept(link, now))
+            while (queue.size > maxIdle) gone += queue.removeFirst().link
+            gone
         }
         over.forEach(DotLink::cut)
     }

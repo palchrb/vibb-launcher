@@ -458,8 +458,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 Advanced › Connection has "Leave Tailnet…" (a `details.confirm` with a required box, like Disconnect Phone; while the
 phone has a token): `POST /devices/{id}/leave-tailnet` (`handlers::devices::leave_tailnet`) queues `leave_tailnet`
 through `locate::queue_command` (logged `device_command_queued`) and returns to `#connection` with
-`?notice=tailnet_leave_queued`; without the box `?notice=tailnet_unconfirmed` and nothing is queued. The server can't
-see whether a phone is on the tailnet, so the row is always there; the confirm says the phone then reaches the server
-only at its direct address. It never expires (like a lock). The launcher's answers are the shared contract
+`?notice=tailnet_leave_queued`; without the box `?notice=tailnet_unconfirmed` and nothing is queued. The row shows
+only while the phone's last status report says `tailnet_joined: true` (migration `0125_tailnet_joined.sql`,
+`device_status.tailnet_joined`, `DeviceStatus.tailnet_joined`; the contract's `report`): an older launcher (no field)
+or a phone not on the tailnet doesn't see it. The confirm says the phone then reaches the server only at its direct
+address; a phone whose server URL is a Tailscale address refuses ("Stayed on the tailnet",
+`locate.answer.tailnet_only`). It never expires (like a lock). The launcher's answers are the shared contract
 `testdata/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
-`not_on_tailnet`, `leave_tailnet_failed`); an older launcher answers "too old".
+`not_on_tailnet`, `leave_tailnet_failed`, `tailnet_only`); an older launcher answers "too old".

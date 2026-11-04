@@ -885,13 +885,17 @@ pub async fn view_advanced(
             escapes,
             escape_warnings,
             escape_rows,
-            access: crate::handlers::devices::access_card(
-                &state,
-                &device,
-                query.get("notice").map(String::as_str),
-                &zone,
-                now,
-            ),
+            access: crate::handlers::devices::AccessCard {
+                // Security review S-L10's fix round: Leave Tailnet only for a phone on the tailnet.
+                tailnet_joined: latest.as_ref().and_then(|s| s.tailnet_joined) == Some(true),
+                ..crate::handlers::devices::access_card(
+                    &state,
+                    &device,
+                    query.get("notice").map(String::as_str),
+                    &zone,
+                    now,
+                )
+            },
             spotify_diag: spotify_diag_card(&policy, &zone, now),
             device,
         }
