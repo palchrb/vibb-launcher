@@ -6,7 +6,7 @@ eMudhra follow-up (PLAN, "Assess the eMudhra CA key compromise", item 2). Both d
 **Revised 2026-11-04** after the security review (`docs/review/qa-76-design.md`) and the user's answers: Q1 everything
 goes through the user's Caddy (Let's Encrypt, ZeroSSL as fallback); Q2 recovery without the QR on the home network -
 by the tailnet, since home Wi-Fi isn't authenticated; Q3 "glem steg 2 per nå" (no parent extra roots, no allow list, no
-Phone Setup changes). §9 maps every finding to the change.
+Phone Setup changes). §9 maps every finding to the change; the re-review's R-1..R-5 are written in (§9's last item).
 
 ## 0. The shape
 
@@ -17,7 +17,8 @@ Caddy makes a new key at each renewal and can fall back to ZeroSSL on its own.
 
 **Enforcement is switched on per phone by the server**, after it has watched that phone: every phone always checks
 and reports what it sees (in the set or not, the anchor's name, the network); the server sends
-`server_tls.enforce: true` once that phone has seen only in-set chains for 72 hours; the phone enforces from the
+`server_tls.enforce: true` once that phone has shown only in-set chains for 72 hours (server time, on Wi-Fi and mobile
+data); the phone enforces from the
 first such policy that arrived over a connection that passed its pins, stores that, and from then on only a pinned
 connection or the tailnet can switch it off. A phone whose server is outside the set (another install's Cloudflare,
 GTS, a commercial CA) is never switched on: it works exactly as today, and the PWA says why. A refusal fails closed
@@ -102,28 +103,44 @@ written with `commit()`):
 | `enforce: true` over a connection that didn't pass, or over the tailnet | unchanged (nothing proves B works yet) |
 | `enforce: false` over a connection that passed B, or over the tailnet | off |
 | `enforce: false` over an https connection that didn't pass | unchanged (while on, no such policy can arrive) |
+| `server_tls` without an `enforce` key (the server's `watching`, R-1) | unchanged |
 | `server_tls` absent (an older server) or not an object with a Boolean `enforce` | unchanged |
 | a setup QR applied (`applyProvisioningExtras`: Android's provisioning or Settings' scanner) | off (a fresh setup) |
 | Settings › Server URL changed | unchanged (a new https host must pass B too) |
 
 "Passed" is judged on the policy response's own handshake (`response.raw().handshake()`: OkHttp keeps the chain
-cleaned by Android's `X509TrustManagerExtensions`, anchor included - qa I-1). While the flag is off the phone pins
+cleaned by Android's `X509TrustManagerExtensions`, anchor included - qa I-1); the policy is a plain `GET` without a
+304, so every applied `server_tls` has its own handshake. "Over the tailnet" means the request's path was
+`ServerPath.Tailnet`, never "no handshake" (a debug `http://10.0.2.2` answer has none and is "unchanged", R-5). The
+flag is computed only from a fresh policy response in the sync - never from `cachedPolicy()`, the start-up or
+`currentPolicyDecision` re-applies (R-5). While the flag is off the phone pins
 nothing and behaves as today. Switching it off needs a policy through B or through the tailnet: once on, there is no
 strip-by-MITM downgrade.
 
 **The server** (`server/src/server_tls.rs`, new; pure `next_state`), per device, from the phone's reports:
 
-- `watching` (the start, for a phone that reports `server_tls`): every report's `seen.in_set` and its `outside` rows.
-  After **72 hours** of reports since the first in-set one with no outside observation, go `on`. An outside
-  observation restarts the window. The window catches split horizon (another chain on mobile data) and a phone whose
-  store differs; an attacker on the path can only delay it, and is shown (D3).
+- `watching` (the start - also the migration's default, a restored backup, a re-created device row): the policy
+  carries `server_tls: {}`, **no `enforce` key**, so a phone keeps its flag (R-1). Only the parent's `off` ever sends
+  `false`. A phone reporting `enforcing: true` (it stored that only from a pinned `true`) is shown as on and the server
+  adopts `on`.
+  **Automatic switch-on** (R-3): in-set sightings spanning **72 hours of server receive time** (never the phone's
+  `at_ms`), on **at least three distinct days**, and on **both Wi-Fi and mobile** when the phone has ever reported
+  mobile. Both: the days catch a weekend at home, the networks catch split horizon (a CDN chain on mobile data); a
+  Wi-Fi-only phone has no second path to check.
+  **An outside sighting stops the automatic switch-on** (R-2) - it doesn't restart the window, so forged rows can't
+  quietly hold a phone off: the phone stays `watching`, the device page shows the sighting (name, network, time) and
+  offers the one-shot "Turn the check on now" (parent override, at once), and the first outside sighting raises a
+  parent event (push), at most one a day per phone - a split horizon or an attack, the parent hears of both.
 - `on`: the policy carries `enforce: true`. **Sticky**: an outside observation never switches it off (an attacker
-  could cause one); it is shown as an alarm.
-- `off`: only by the parent, on the device page ("Turn off the certificate check", one-shot, at once); the policy
-  carries `enforce: false`. Also sticky, until "Turn it on again", which goes back to `watching`.
+  could cause one); it is shown as an alarm (the same push, a `refused` row always).
+- `off`: only by the parent, on the device page ("Turn off the certificate check", one-shot); the policy carries
+  `enforce: false`. Loud (R-4): its own security event `server_tls_off` (and `server_tls_on` for the way back) with the
+  parent's name, a push to every parent ("The certificate check for <phone> was turned off by <parent>"), "Off since
+  %s by %s" on the device page, and an SSE nudge so the phone syncs at once. Sticky until "Turn it on again" (back to
+  `watching`) or "Turn the check on now" (`on`).
 - A phone without the capability `server_pin_v1` (an older launcher) gets no `server_tls`.
 
-So a fresh phone is unpinned for its first 72 hours, as every phone is today; the user's phones (Caddy, LE or ZeroSSL)
+So a fresh phone is unpinned for at least its first three days, as every phone is today; the user's phones (Caddy, LE or ZeroSSL)
 switch on by themselves, and a phone of another install whose server is outside B never does.
 
 ### D3. Failure: closed, never silent
@@ -142,8 +159,9 @@ switch on by themselves, and a phone of another install whose server is outside 
 - **Reported later** (qa M-3): the phone keeps up to 8 outside observations - `refused` (flag on) and `seen` (flag off)
   with time, host, the anchor's `{name, pin}` (name truncated to 64 characters) and the network type (Wi-Fi, mobile,
   other); one is added only when it differs from the last, so the SSE's 30 s retries don't rewrite prefs. They go in
-  the next status report that gets through (another network, the tailnet, the fixed server) and are dropped after its
-  2xx. The device page: "Refused a certificate for your server from emSign ECC Root CA - G3 on Wi-Fi at 14:02" - the
+  every status report and are dropped only after a 2xx **over a connection that passed B, or over the tailnet** (R-2):
+  a MITM answering 2xx with an emSign certificate can't erase them, so they reach the real server at the first honest
+  contact. The device page: "Refused a certificate for your server from emSign ECC Root CA - G3 on Wi-Fi at 14:02" - the
   brick diagnostic and the attack alarm in one.
 - **Recovery without adb or the QR** (the user's Q2): Settings (parent code) › Server URL › `http://<the server's
   Tailscale IP>[:port]`. The tailnet path is WireGuard-authenticated and never pinned: the phone syncs at once, sends
@@ -174,7 +192,9 @@ switch on by themselves, and a phone of another install whose server is outside 
 
 - **`server/ServerPins.kt`** (new): `BUILTIN_PINS` (D1's table, name + pin), the flag, the outside ring (prefs key
   `server_pins_outside`, JSON, at most 8), and pure rules: `inSet(spkiPins)`, `nextFlag(flag, enforce, passed,
-  tailnet)` (D2's table), `addOutside(ring, observation)`, `pinFailureAnchor(e)` (below).
+  tailnet)` (D2's table; `enforce` is true, false or absent; `tailnet` = `path is ServerPath.Tailnet`, `passed` = the
+  response's handshake in B), `addOutside(ring, observation)`, `dropOutside(ring, passed, tailnet)`,
+  `pinFailureAnchor(e)` (below). `nextFlag` has one caller, the sync's fresh policy fetch (a source scan pins it).
 - **`toServer`, `Direct` branch** (`ServerTransport.kt:130`), in this order:
   1. **The origin fence** (qa H-2, L-3), the first interceptor: a request whose scheme, host or port isn't the base's
      (`sameOrigin(path.baseUrl.toHttpUrl(), request.url)`) throws before a socket - an `@Url` the server named can't
@@ -228,18 +248,23 @@ switch on by themselves, and a phone of another install whose server is outside 
 ## 4. Server implementation sketch
 
 - `server_tls.rs`: the per-device state (a migration: `tls_state` `watching|on|off`, `tls_window_from`,
-  `tls_changed_at`, the last `seen`, the last 8 `outside` rows), `next_state` at each status report, the policy's
-  `server_tls: {enforce}` only for a phone with `server_pin_v1` (pinned by `policy_json_keys_snapshot`).
+  `tls_changed_at`, `tls_changed_by`, the receive times and networks of in-set sightings, the last 8 `outside` rows,
+  `tls_outside_pushed_on`), `next_state` at each status report (server receive time), the policy's `server_tls`
+  (`{}` watching, `{"enforce": true}` on, `{"enforce": false}` off) only for a phone with `server_pin_v1` (pinned by
+  `policy_json_keys_snapshot`). The buttons go through their own handler (not the settings-log middleware's generic
+  `settings_saved`), write the security event, push, and nudge the phone over the SSE.
 - Intake: `server_tls` in the status report, bounded (8 rows, names 64 characters, pins 44 characters of base64).
 - The device page, one row (no Phone Setup change, no allow list): "Certificate check: on - only Let's Encrypt or
   ZeroSSL" / "Sertifikatsjekk: på - bare Let's Encrypt eller ZeroSSL"; "Certificate check: watching - on from %s if
   every certificate stays with Let's Encrypt or ZeroSSL" / "Sertifikatsjekk: følger med - på fra %s hvis alle
   sertifikater er fra Let's Encrypt eller ZeroSSL"; "Certificate check: not on - this phone saw a certificate from %1$s
-  on %2$s at %3$s" / "Sertifikatsjekk: ikke på - telefonen så et sertifikat fra %1$s på %2$s kl. %3$s"; "Off since %s"
-  / "Av siden %s"; the alarm "Refused a certificate for your server from %1$s on %2$s at %3$s" / "Avviste et sertifikat
-  for serveren din fra %1$s på %2$s kl. %3$s"; buttons "Turn off the certificate check" / "Slå av sertifikatsjekken"
-  and "Turn it on again" / "Slå den på igjen". `en.json` and `nb.json` in the same commit; the save never jumps to the
-  top. A parent event (push) for a `refused` row, in the existing event list.
+  on %2$s at %3$s - not switched on by itself" / "Sertifikatsjekk: ikke på - telefonen så et sertifikat fra %1$s på
+  %2$s kl. %3$s - slås ikke på av seg selv"; "Off since %1$s, by %2$s" / "Av siden %1$s, av %2$s"; the alarm "Refused a certificate for your server from %1$s on %2$s at %3$s" / "Avviste et sertifikat
+  for serveren din fra %1$s på %2$s kl. %3$s"; buttons "Turn off the certificate check" / "Slå av sertifikatsjekken",
+  "Turn it on again" / "Slå den på igjen" and "Turn the check on now" / "Slå på sjekken nå"; the pushes "The
+  certificate check for %1$s was turned off by %2$s" / "Sertifikatsjekken for %1$s ble slått av av %2$s" and "%1$s saw
+  a certificate for your server from %2$s" / "%1$s så et sertifikat for serveren din fra %2$s". `en.json` and `nb.json`
+  in the same commit; the save never jumps to the top.
 - `server/DEPLOY.md`: one paragraph - the phones accept Let's Encrypt and ZeroSSL once on; behind a CDN that picks its
   own CA (Cloudflare's Universal SSL rotates LE, GTS, SSL.com) the check may switch on during an LE period and a later
   rotation then needs the tailnet recovery - turn such phones off, or use a fixed CA; optional CAA with `accounturi`.
@@ -248,8 +273,10 @@ switch on by themselves, and a phone of another install whose server is outside 
 
 `server/testdata/server_tls_report.json`, byte-identical in `launcher/app/src/test/resources/`: the status body's
 `server_tls` (with `outside` rows of both kinds) and the policy's `server_tls` rows (`{"enforce": true}`,
-`{"enforce": false}`, absent, malformed) with the flag each gives from each start state over a passing, a failing and a
-tailnet connection. The launcher's `ServerPinsTest` encodes the report exactly and runs every flag row; the server's
+`{"enforce": false}`, `{}`, absent, malformed) with the flag each gives from each start state over a passing, a
+failing, a tailnet and a debug-http connection - among them `watching`'s `{}` keeps an enforcing phone on over a
+passing connection - and the ring's drop rows (kept after a 2xx over a failing connection, dropped over a passing or a
+tailnet one). The launcher's `ServerPinsTest` encodes the report exactly and runs every flag row; the server's
 `server_tls::a_launcher_report_moves_the_state` posts the report (its instants moved to the last hour) and produces
 the policy rows; both compare the copies. One commit for both directories; CI: both copies in `launcher.yml`'s and
 `server-ci.yml`'s path lists; the root `CLAUDE.md`'s contract paragraph and CI list. B stays the launcher's alone (the
@@ -265,8 +292,10 @@ server never judges a chain).
   flag off passes and records `seen` outside; an IP-literal host; an off-origin `@Url` fails before a socket; a
   redirect not followed; `findMatchingPins(host)` non-empty; through the existing fake SOCKS5 proxy too. Source scans:
   every server client through `toServer`, `certificatePinner` nowhere else, the release NSC as above.
-- Server: `server_tls::tests` (`next_state`: the window, a restart by an outside row, sticky `on`, the parent's off and
-  on, no `server_tls` without the capability), the contract, `policy_json_keys_snapshot`, the device page's row.
+- Server: `server_tls::tests` (`next_state`: the window in receive time, three days, Wi-Fi only vs. both networks, an
+  outside row stopping the switch-on and the push once a day, sticky `on`, adopting a phone's `enforcing`, `watching`
+  sending `{}`, the parent's off/on/on-now with the event, push and nudge, no `server_tls` without the capability), the
+  contract, `policy_json_keys_snapshot`, the device page's row.
 - Emulator (QA): the user's server (watching, then `on` after a shortened window in a debug server config); mitmproxy
   with its CA as a user CA on a debug build (flag off: works, `seen` outside reported, the window restarts; flag on:
   refused, nothing in mitmproxy's log, Settings and "Sync now" say why, lock, calls and 112 keep working); the tailnet
@@ -283,8 +312,10 @@ server never judges a chain).
   DNS, or on the path to the server for HTTP-01; CAA with `accounturi` narrows it); a compromised server; a compromised
   phone; the tailnet's trust in Tailscale's coordination; Android's own validation bugs (we pin after it, never instead
   of it). **Before on** - the first 72 hours, a phone on a server outside B, a phone the parent turned off - the phone is
-  exactly as today: an attacker on the path can keep it off by staying there (each try restarts the window), but is
-  shown on the device page, and gains nothing beyond today.
+  exactly as today: an attacker on the path holds the bearer as today and can stop the automatic switch-on with a
+  sighting, but can't erase it (the ring drops only over a passing connection), the parent gets a push and can turn
+  the check on at once. A mis-issued LE certificate can send `enforce: false`; it lasts until the real server's next
+  `true` over a passing connection.
 - **No TOFU**: the phone learns no root; B is in the APK. The server learns only what phones report, and uses it only
   to decide when to switch on - a wrong report can delay enforcement, never widen trust.
 - **Downgrade paths**: no attacker can switch a phone off - `enforce: false` is taken only through B or the tailnet,
@@ -305,8 +336,8 @@ server never judges a chain).
 1. **Launcher (M)**: `ServerPins.kt`, `toServer`'s fence, catch, pinner and observer, the flag in the sync, the report
    and capability, the QR clearing the flag, Settings' row and "Sync now", the debug override, texts en + nb, the
    tests, `docs/notes/launcher/security.md` (a section after S-M1's, with D1's rule).
-2. **Server (S-M)**: `server_tls.rs`, the migration, the intake, the policy key, the device page's row, buttons and
-   event, texts en + nb, DEPLOY.md's paragraph, the server notes; the contract file lands with step 1 in one commit.
+2. **Server (M)**: `server_tls.rs`, the migration, the intake, the policy key, the device page's row, three buttons,
+   the security events, the pushes and the SSE nudge, texts en + nb, DEPLOY.md's paragraph, the server notes; the contract file lands with step 1 in one commit.
    Order: either may ship first - a new launcher on an old server is never switched on; a new server sends `enforce`
    only to `server_pin_v1` phones. One branch; the phones switch on 72 hours after both are out.
 
@@ -329,3 +360,8 @@ No open questions for the user.
 - L-4: no runtime pins to parse (B is constant, tested); a pinner build failure fails closed. L-5: the prefix only,
   the anchor parse pinned, names truncated. L-6: nb labels and "the admin site". I-3: the release NSC check.
 - I-5, I-6 and the user's Q2: no on-phone accept button; the tailnet address is the no-QR recovery.
+- Re-review (0b91ddfd): R-1 `watching` sends `{}`, only the parent's off sends `false`, a phone's `enforcing` is
+  believed; R-2 the ring drops only over a passing or tailnet connection, an outside sighting stops the switch-on,
+  "Turn the check on now", one push a day; R-3 receive time, three days, both networks; R-4 the security event, the
+  push to every parent, the name, the SSE nudge; R-5 `tailnet` from `ServerPath.Tailnet`, the flag only from a fresh
+  policy. R-6's future option (the QR carrying `enforce`) stays out with step 2.
