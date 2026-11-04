@@ -1259,6 +1259,12 @@ class LockGlanceLayoutTest {
         // Without the alarm line (the centred clock): music + 3 rows keeps row 3 whole with the line at both bars.
         val plain = content(three)
         assertTrue(glanceNextFits(scroller(48f), plain - parts.row, parts.alarm))
+        // The calmer glance (2026-11-04): the evening's alarm sits on the date line and the weather beside the date - the
+        // worst page has no line of its own for either, and "Neste" shows with 3-button navigation too (22.4 dp of row
+        // 3 in sight; the alarm's own line remains only where the date's line can't hold it).
+        val calm = content(three, profileParts) - parts.row
+        assertTrue(glanceNextFits(scroller(48f), calm, parts.alarm))
+        assertEquals(22.4f, scroller(48f) - (calm + parts.alarm), 0.1f)
         // Font 1.3: the same page's row 3 is under the fold already - the line never makes it worse.
         val at13 = partsAt(1.3f)
         val big = content(three, at13, alarm = true)
@@ -1334,7 +1340,7 @@ class LockGlanceLayoutTest {
     fun `the profile is the phone's own, its clock in Nunito Light, the date and alarm at its start`() {
         // Launcher round L6: the clock face moved out of the panel into LockClockFace, shared by both lock screens.
         val glancePanel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,"))
+        assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,\n        dateAlarm = glance.lockGlanceDateAlarm,"))
         assertTrue(glancePanel.contains("val pill = glanceHandle(profile)") && glancePanel.contains("private val profile: ClockGeometry? = clockFace.profile"))
         val panel = file("java/com/kidslauncher/mdm/lock/LockClockFace.kt").readText()
         assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp)"))
@@ -1456,8 +1462,12 @@ class LockGlanceLayoutTest {
     @Test
     fun `the order - the scroller with the whole top block, then the anchored bottom block (r11 §1_1)`() {
         val ids = root.all().map { it.id() }.filter { it.isNotEmpty() }
+        // The calmer glance (2026-11-04): the date line holds the date, " · " and the weather mark, the alarm; then the
+        // weather's own line, its card right under the line it belongs to (board C), the alarm's own line, "Neste".
         val order = listOf(
-            "lock_glance_scroll", "lock_glance_top", "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_rule_card", "lock_media_tile",
+            "lock_glance_scroll", "lock_glance_top", "lock_glance_clock", "lock_glance_date_row", "lock_glance_date", "lock_glance_weather_sep",
+            "lock_glance_weather", "lock_glance_date_alarm", "lock_glance_weather_line", "lock_weather_card", "lock_glance_alarm", "lock_glance_next",
+            "lock_rule_card", "lock_media_tile",
             "lock_media_compact", "lock_timer_tile", "lock_glance_list", "lock_glance_rows", "lock_glance_more",
             "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
         )

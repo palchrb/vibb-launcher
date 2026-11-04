@@ -346,9 +346,10 @@
     <!-- The lock's flashlight button (design 41 §1.3): its name and its state for TalkBack. -->
     <string name="lock_torch">Lommelykt</string>
     <string name="lock_torch_on">På</string>
-    <!-- The clock on the lock (design 42): the next alarm under the date, the timer tile's label and
-         what TalkBack reads for it. -->
-    <string name="lock_alarm">Alarm %1$s</string>
+    <!-- The clock on the lock (design 42): the next alarm - since the calmer glance (2026-11-04) an alarm glyph and
+         the time on screen (the glyph, then "07:00"), this TalkBack's text for it -, the timer tile's label and what TalkBack reads
+         for it. -->
+    <string name="lock_alarm">Vekkerklokke %1$s</string>
     <string name="lock_timer">Timer</string>
     <string name="lock_stopwatch">Stoppeklokke</string>
     <string name="lock_timer_stop">Stopp</string>
@@ -429,6 +430,9 @@
     <string name="event_change">Endre</string>
     <string name="event_delete">Slett</string>
     <string name="glance_next">Neste: %1$s %2$s</string>
+    <!-- The "Neste" line in the evening, once today's last timed event has started: tomorrow's first (the calmer
+         glance, 2026-11-04). %1$s the title, %2$s its start. -->
+    <string name="glance_tomorrow">I morgen: %1$s %2$s</string>
     <string name="glance_reminder_in">%1$s om %2$d min</string>
     <string name="glance_reminder_now">%1$s nå</string>
     <string name="glance_reminder_now_spoken">nå</string>

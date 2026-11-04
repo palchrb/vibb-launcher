@@ -60,10 +60,11 @@ import kotlin.math.roundToInt
  * the date or on its own line under it (two instances, at most one shown, nothing reparented - launcher QA L5), the
  * day's card, the open state and the mark's 48 dp hit area. The model is the pure `weather/WeatherModel.kt`'s.
  *
- * - **The place** (D15) is decided only at a lock-up, a refit (font scale), a change of the page's width and the first
- *   bind ([decidePlace]), from the widest words of the answer's four entries but never less than "Regn fra kl. 14" in
- *   this catalog; between those moments a model whose words don't fit the place shows without them - the mark never
- *   moves while the screen is on, and words are never cut.
+ * - **The place** (D15; the calmer glance, 2026-11-04, mockup boards A and B) is decided only at a lock-up, a refit
+ *   (font scale), a change of the page's width and the first bind ([decidePlace]): its own line when the weather has
+ *   words to say now and they fit there, else beside the date after a quiet " · " when the date's line holds it, else
+ *   its own line without words; between those moments a model whose words don't fit the place shows without them -
+ *   the mark never moves while the screen is on, and words are never cut.
  * - **The card** opens and folds by [weatherFold]: a tap on the mark or the card; a lock-up, leaving the glance, `stop`,
  *   the line hiding, the card going and the VoIP ring card fold it. Opening asks for the nowcast line (3 s), inserted
  *   only within [WEATHER_NOW_INSERT_MS] of the open, for the card opened, with no finger on the rows ([weatherNowShown]).
@@ -83,6 +84,9 @@ class WeatherLockPanel(
     private val onChanged: () -> Unit,
 ) {
     private val beside: ViewLockWeatherMarkBinding = glance.lockGlanceWeather
+
+    /** The " · " between the date and the mark beside it: shown with that mark. */
+    private val sep: TextView = glance.lockGlanceWeatherSep
     private val ownLine: ViewLockWeatherMarkBinding = glance.lockGlanceWeatherLine
     private val card = glance.lockWeatherCard
     private val columns = listOf(
@@ -114,10 +118,6 @@ class WeatherLockPanel(
             mark.root.setOnClickListener { guarded("tap") { tap() } }
             mark.weatherMarkText.setHorizontallyScrolling(true)
             markAccessibility(mark.root)
-        }
-        // The own line keeps no gap of its own; beside the date the mark stands 8 dp off it.
-        (beside.root.layoutParams as? ViewGroup.MarginLayoutParams)?.let {
-            beside.root.layoutParams = it.apply { marginStart = dp(GAP_DP) }
         }
         card.root.setOnClickListener { guarded("tap") { tap() } }
         // A new minute: the line's entry for this hour (D2), and the line hiding past its age.
@@ -174,11 +174,12 @@ class WeatherLockPanel(
 
     fun voip() = guarded("voip") { fold(WeatherEvent.VOIP) }
 
-    /** The open card's height with its margin (the glance's "Neste" rule measures without it), 0 while folded. */
+    /** The open card's height with its margins (the glance's "Neste" rule measures without it), 0 while folded. */
     fun cardHeight(): Int {
         val view = card.root
         if (view.visibility != View.VISIBLE) return 0
-        return view.height + ((view.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0)
+        val margins = view.layoutParams as? ViewGroup.MarginLayoutParams
+        return view.height + (margins?.topMargin ?: 0) + (margins?.bottomMargin ?: 0)
     }
 
     /** Whether the card is open (the glance's list sits 14 dp under it). */
@@ -207,9 +208,9 @@ class WeatherLockPanel(
             placedWidth = width
             place = null
         }
-        if (place == null && width > 0 && (model != null || slotHeld)) place = decidePlace(answer)
+        if (place == null && width > 0 && (model != null || slotHeld)) place = decidePlace(answer, model, now)
         if (model == null) {
-            beside.root.visibility = View.GONE
+            showBeside(View.GONE)
             // A line due from the screen-on pull keeps its own line's room until it lands (or the next lock-up).
             ownLine.root.visibility = if (slotHeld && place?.beside() == false) View.INVISIBLE else View.GONE
             card.root.visibility = View.GONE
@@ -218,18 +219,23 @@ class WeatherLockPanel(
         }
         // Not laid out yet: nothing shown until the place is known (the mark never shows in one place and moves).
         val at = place ?: run {
-            beside.root.visibility = View.GONE
+            showBeside(View.GONE)
             ownLine.root.visibility = View.GONE
             return
         }
         val mark = if (at.beside()) beside else ownLine
-        val other = if (at.beside()) ownLine else beside
-        other.root.visibility = View.GONE
+        if (at.beside()) ownLine.root.visibility = View.GONE else showBeside(View.GONE)
         bindMark(mark, model, at, cardModel != null)
-        mark.root.visibility = View.VISIBLE
+        if (at.beside()) showBeside(View.VISIBLE) else mark.root.visibility = View.VISIBLE
         slotHeld = false
         if (open && cardModel != null) bindCard(cardModel, now) else card.root.visibility = View.GONE
         onChanged()
+    }
+
+    /** The mark beside the date and its " · ", shown or gone together. */
+    private fun showBeside(visibility: Int) {
+        beside.root.visibility = visibility
+        sep.visibility = visibility
     }
 
     /** The mark: the symbol (1.4 x the text size, at least 22 dp), the degrees in the ink, the dot and the words when the
@@ -237,6 +243,7 @@ class WeatherLockPanel(
     private fun bindMark(mark: ViewLockWeatherMarkBinding, model: WeatherLine, at: WeatherPlace, hasCard: Boolean) {
         val text = mark.weatherMarkText
         text.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
+        sep.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
         val symbolPx = maxOf(ceil(glance.lockGlanceDate.textSize * SYMBOL_SCALE).toInt(), dp(SYMBOL_MIN_DP))
         // L3 (code QA): the mark is as tall as the date's line - the symbol centred on the text, overhanging it by its
         // negative margins (nothing clips it) -, so the row never grows when the mark comes and the text's baseline is
@@ -256,7 +263,7 @@ class WeatherLockPanel(
         val words = model.words?.let(::wordsText)
         val shownWords = words?.takeIf { w ->
             val laid = lineMeasure(mark) ?: return@takeIf false
-            weatherWordsFit(at, laid.lineDp, laid.dateDp, GAP_DP, laid.coreDp, wordsDp(mark, w))
+            weatherWordsFit(at, laid.lineDp, laid.coreDp, wordsDp(mark, w))
         }
         val built = SpannableStringBuilder()
         model.temp?.let {
@@ -301,10 +308,10 @@ class WeatherLockPanel(
 
     // ---- the place (D15) ---------------------------------------------------------------------------
 
-    private class LineMeasure(val lineDp: Float, val dateDp: Float, val coreDp: Float)
+    private class LineMeasure(val lineDp: Float, val dateDp: Float, val gapDp: Float, val coreDp: Float)
 
-    /** The room on the date's line and the date's and the core's widths, at the mark's paint (launcher QA L3:
-     * `getDesiredWidth` of what is shown, plus slack). */
+    /** The room on the date's line and the date's, the " · "'s and the core's widths, at the mark's paint (launcher QA
+     * L3: `getDesiredWidth` of what is shown, plus slack). */
     private fun lineMeasure(mark: ViewLockWeatherMarkBinding): LineMeasure? {
         val width = contentWidth().takeIf { it > 0 } ?: return null
         val density = activity.resources.displayMetrics.density
@@ -317,7 +324,8 @@ class WeatherLockPanel(
         val widestDegrees = listOf("${WEATHER_MINUS_SAMPLE}°", line?.temp?.let(::weatherDegrees) ?: "").maxOf { Layout.getDesiredWidth(it, paint) }
         val symbolDp = maxOf(date.textSize * SYMBOL_SCALE / density, SYMBOL_MIN_DP)
         val coreDp = symbolDp + 4f + widestDegrees / density + 4f + CHEVRON_DP + SLACK_DP
-        return LineMeasure(lineDp, dateDp, coreDp)
+        val gapDp = Layout.getDesiredWidth(sep.text, android.text.TextPaint(sep.paint).apply { textSize = date.textSize }) / density
+        return LineMeasure(lineDp, dateDp, gapDp, coreDp)
     }
 
     /** The dot and [words] at the words' size, in dp (plus slack). */
@@ -326,22 +334,18 @@ class WeatherLockPanel(
         return Layout.getDesiredWidth("$DOT$words", paint) / activity.resources.displayMetrics.density + SLACK_DP
     }
 
-    /** D15: the place from the widest words of the answer's entries, never less than the reference "Regn fra kl. 14". */
-    private fun decidePlace(answer: WeatherAnswer?): WeatherPlace? {
+    /** D15 (the calmer glance): the place from the words the weather has now - the [model]'s, or with none yet (a line
+     * held for the screen-on pull) the answer's entry for [now] -, none = beside the date when it fits. */
+    private fun decidePlace(answer: WeatherAnswer?, model: WeatherLine?, now: Long): WeatherPlace? {
         val mark = beside
         mark.weatherMarkText.setTextSize(TypedValue.COMPLEX_UNIT_PX, glance.lockGlanceDate.textSize)
         val measure = lineMeasure(mark) ?: return null
-        val reference = activity.getString(R.string.weather_rain_from, hourText(referenceHourMs()))
-        val texts = answer?.hours.orEmpty().mapNotNull { h -> h.words?.let { wordsText(WeatherWordsKey(it.key, it.form, it.atMs)) } } + reference
-        val wordsDp = texts.maxOf { wordsDp(mark, it) }
-        return weatherPlace(measure.lineDp, measure.dateDp, GAP_DP, measure.coreDp, wordsDp).also {
+        val words = model?.words ?: answer?.hours?.firstOrNull { it.atMs <= now && now < it.atMs + 3_600_000L }?.words?.let { WeatherWordsKey(it.key, it.form, it.atMs) }
+        val wordsDp = words?.let(::wordsText)?.let { wordsDp(mark, it) }
+        return weatherPlace(measure.lineDp, measure.dateDp, measure.gapDp, measure.coreDp, wordsDp).also {
             Log.i(LOG_TAG, "Weather mark: $it (line ${measure.lineDp.roundToInt()} dp)")
         }
     }
-
-    /** 14:00 today, the reference's hour. */
-    private fun referenceHourMs(): Long =
-        java.time.LocalDate.now().atTime(14, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
     private fun contentWidth(): Int {
         val top = glance.lockGlanceTop
@@ -616,7 +620,6 @@ class WeatherLockPanel(
 
     private companion object {
         const val LOG_TAG = "WeatherLockPanel"
-        const val GAP_DP = 8f
         const val SYMBOL_SCALE = 1.4f
         const val SYMBOL_MIN_DP = 22f
         const val CHEVRON_DP = 14f

@@ -32,7 +32,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   "›"; `FirstSentenceTest`), `DayPager.kt` (`DAY_CENTER`, `dayAt`/`positionOf`, `todayJump`: "← I dag" on a later day,
   "I dag →" on an earlier one; `DayPagerTest`), `Reminders.kt` (§5: `reminderStart` off / before N / own - the earliest
   alarm at most 120 min before, `MINUTES_DEFAULT` none -, `reminderNow` only under the master switch and Dagen on Home,
-  `glanceNext`, `nextReminderBoundary`; `RemindersTest`), `KidEvent.kt` (step 3: the form's input, its default start -
+  `glanceNext` - today's next, in the evening tomorrow's first -, `nextReminderBoundary`; `RemindersTest`), `KidEvent.kt` (step 3: the form's input, its default start -
   the next whole hour, tomorrow's midnight past 23:00 today -, `kidCalendarOf`, `kidMayEdit` - this phone's by the
   `vibb-<phone tag>-<uuid>` UID, or a `vibb-` UID with our `CUSTOM_APP_PACKAGE`, in the kid's calendar: a sibling's
   event in a shared calendar is not the kid's; `phoneTag` = 8 hex of SHA-256 over `vibb-calendar-uid:` + ANDROID_ID,
@@ -84,7 +84,10 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, under a time rule only when every rule
   in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`).
   A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
-  row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out.
+  row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out. Since the calmer glance
+  (2026-11-04): from 18:00, once today's last timed event has started, tomorrow's first timed event - "I morgen: Gym
+  09:00" (`GlanceNext.tomorrow`; tomorrow read only while `glance_next` is on; the evening's start and midnight are
+  boundaries) - `docs/notes/launcher/lock-and-glance.md`, "The calmer glance".
 - **Enforcement and Home**: `CALENDAR_SYNC_APPS` (ICSx5, DAVx5) are never suspended by a time rule while allowed
   (`EnforcementPlan`), and an app with `app_display.on_home: false` is off Home and the drawer except while the pause or
   the override is open (`onHomeListable` in `AppFilter`).
