@@ -99,6 +99,18 @@ impl TimeReport {
         }
     }
 
+    /// The report with its active rule named as the PWA names it (design 70 §7): the rule with
+    /// `active_rule_id` among `rules`, worded in `lang` (`time_rules::shown_name`). The phone
+    /// reports the name it was sent, empty for a name the server made; the reported name is only
+    /// the fallback, for a rule no longer there.
+    pub fn named_by(&self, rules: &[crate::time_rules::TimeRuleRow], lang: Lang) -> TimeReport {
+        let mut report = self.clone();
+        if let Some(rule) = rules.iter().find(|r| Some(r.id) == self.active_rule_id) {
+            report.active_rule_name = Some(crate::time_rules::shown_name(lang, &rule.name));
+        }
+        report
+    }
+
     /// Something is locking the phone.
     pub fn locking(&self) -> bool {
         !self.lock_reason.is_empty() && self.lock_reason != "NONE"

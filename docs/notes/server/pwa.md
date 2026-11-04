@@ -1660,6 +1660,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `setup-2fa`, `verify-2fa`). Still English by design: the raw technical details behind an ⓘ (a sync's or
   upload's `Failure::detail`, a feed's or a list's download error, `music_net::FetchError`'s reqwest text), an id no
   catalog names (`admin::words_of`, the id as words), a subscription's stored label fallback ("Device · Browser"),
-  the logs, and the names the phone sends (slice 5).
+  and the logs. A rule's name the server made (`time_rules::SERVER_NAMES`: "Bedtime", "Outside allowed hours" and its
+  "(morning)"/"(evening)" forms) is worded in the PWA (`time_rules::shown_name`: `device.time.rule.default.<n>`, a
+  "<name> (morning)" through `device.time.rule.morning`) until the parent renames it - a save of the shown name keeps the
+  server's - and goes to the phone blank, which names it by its kind (design 70 §7, slice 5; `time-rules.md`, "Wire").
   **No new
   user-facing word is hardcoded** (the user, 2026-10-26).

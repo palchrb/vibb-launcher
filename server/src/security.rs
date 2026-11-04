@@ -157,6 +157,10 @@ pub struct Sentence {
     /// Parameters that are lengths of time, in minutes (`display_time::duration`).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     d: std::collections::BTreeMap<String, i64>,
+    /// Parameters that are a time rule's stored name, shown as the PWA shows it
+    /// (`time_rules::shown_name`: the server's own names in the reader's language, design 70 §7).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    r: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     n: Option<i64>,
 }
@@ -172,6 +176,7 @@ impl Sentence {
             t: Default::default(),
             w: Default::default(),
             d: Default::default(),
+            r: Default::default(),
             n: None,
         }
     }
@@ -207,10 +212,25 @@ impl Sentence {
                 )
             })
             .collect();
+        let rules: Vec<(String, String)> = self
+            .r
+            .iter()
+            .map(|(name, stored)| {
+                (
+                    name.clone(),
+                    crate::time_rules::shown_name(zone.lang(), stored),
+                )
+            })
+            .collect();
         let params: Vec<(&str, &str)> = self
             .p
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
+            .chain(
+                rules
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            )
             .chain(
                 times
                     .iter()
@@ -279,6 +299,17 @@ impl Detail {
         );
         if let Some(last) = self.words.last_mut() {
             last.w.insert(name.to_string(), key.to_string());
+        }
+        self
+    }
+
+    /// A time rule's stored name as the last sentence's `{name}`, shown as the PWA shows it in the
+    /// reader's language ("Leggetid" for the server's "Bedtime", design 70 §7). Needs a sentence,
+    /// as [Detail::word].
+    pub fn rule(mut self, name: &str, stored: &str) -> Detail {
+        debug_assert!(!self.words.is_empty(), "a rule for no sentence: {name}");
+        if let Some(last) = self.words.last_mut() {
+            last.r.insert(name.to_string(), stored.to_string());
         }
         self
     }
