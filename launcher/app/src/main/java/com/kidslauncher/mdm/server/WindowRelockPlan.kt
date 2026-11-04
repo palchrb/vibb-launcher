@@ -54,6 +54,15 @@ fun endWindowsResult(ended: Set<WindowKind>, installMode: Boolean): String {
     return if (names.isEmpty()) "nothing was open" else "ended: ${names.joinToString(", ")}"
 }
 
+/**
+ * Whether a relock asks for a sync at once (2026-11-04: a pause ended with Home's "Lock again" or the Settings switch
+ * stayed "paused" in the parent's app until the next backstop sync, up to 30 minutes - the server shows the newest
+ * report's `restrictions_paused`): its status report carries the window gone and the relock. Not a relock inside the
+ * sync ([RelockTrigger.SYNC]), whose own report follows; only one that finished ([cleared]) - one that keeps its marker
+ * runs again at the sync's own re-check, and asking each time would never stop.
+ */
+fun syncAfterRelock(trigger: RelockTrigger, cleared: Boolean): Boolean = cleared && trigger != RelockTrigger.SYNC
+
 /** At most this many package names per list in the report. */
 const val RELOCK_LIST_MAX = 8
 

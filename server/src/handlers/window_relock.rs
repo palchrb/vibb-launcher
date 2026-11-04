@@ -72,7 +72,7 @@ pub async fn card(
             .is_some_and(|caps| caps.contains(&format!("\"{WINDOW_RELOCK_CAPABILITY}\"")))
     });
     let open = latest.is_some_and(|s| {
-        s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
+        s.paused_at(now_ms) || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
     let answers = last_answers(db, device_id).await?;
     let pins = catalog_pins(db).await?;
@@ -106,7 +106,7 @@ pub async fn card(
             None => Blocks::default(),
         },
     };
-    let paused = latest.is_some_and(|s| s.restrictions_paused);
+    let paused = latest.is_some_and(|s| s.paused_at(now_ms));
     let waited = window_relock::waited_for(&answers, paused, open, now_ms);
     Ok(RelockCard {
         lock_again: capable && open,

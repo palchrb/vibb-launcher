@@ -2001,7 +2001,9 @@ pub(crate) async fn render_apps(
         Ok(apps) => apps,
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
-    let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
+    let paused = latest
+        .as_ref()
+        .is_some_and(|s| s.paused_at(Utc::now().timestamp_millis()));
     let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from, lang).await {
         Ok(nav) => nav,
         Err(err) => return read_failed(lang, id, "the catalog app it came from", err),

@@ -558,7 +558,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             s.connection,
             ConnectionState::Offline { .. } | ConnectionState::Disconnected
         ),
-        restrictions_paused: latest.is_some_and(|st| st.restrictions_paused),
+        restrictions_paused: latest.is_some_and(|st| st.paused_at(now_ms)),
         foreign_access: s.relock.foreign.is_some(),
         do_not_disturb: crate::sound_mode::state(
             None,

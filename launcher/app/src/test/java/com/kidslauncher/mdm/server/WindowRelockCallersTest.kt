@@ -97,6 +97,19 @@ class WindowRelockCallersTest {
     }
 
     @Test
+    fun `a window ended on the phone reaches the server at once, from every path (2026-11-04)`() {
+        // Home's and the notification's "Lock again", the Settings switch, the timer, screen on, a boot: all end in the
+        // worker's relock, which asks for the sync after it finished - its report has the pause gone.
+        val relock = body("server/WindowRelock.kt", "private fun relock(")
+        assertBefore(relock, "runRelock(", "if (syncAfterRelock(trigger, outcome.cleared)) com.kidslauncher.mdm.push.SyncRunner.request(app,")
+        assertTrue("check(app, trigger)" in body("server/WindowRelock.kt", "fun lockAgain("))
+        assertTrue("WindowRelock.lockAgainAsync(this, com.kidslauncher.mdm.server.RelockTrigger.LOCK_AGAIN)" in sources.getValue("ui/HomeActivity.kt"))
+        assertTrue("WindowRelock.lockAgainAsync(context, RelockTrigger.SETTINGS)" in sources.getValue("ui/settings/launcher/SettingsFragmentLauncher.kt"))
+        // The status report says what the pause is now.
+        assertTrue("restrictionsPaused = RestrictionsPause.isActive()," in sources.getValue("server/MdmSyncWorker.kt"))
+    }
+
+    @Test
     fun `only the relock removes a credential, certificates or proxies`() {
         for (token in listOf("resetPasswordWithToken(", "uninstallCaCert(", "updateNetwork(")) {
             assertEquals(token, setOf("WindowRelock.kt"), sources.filterValues { token in it }.keys.map { File(it).name }.toSet())

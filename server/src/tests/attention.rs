@@ -39,6 +39,31 @@ async fn rows(app: &TestApp, cookie: &str, id: i64) -> Vec<String> {
         .collect()
 }
 
+/// 2026-11-04: a pause ended on the phone (Home's "Lock again") goes with the report that says so - the phone sends it
+/// at once -, and one whose end never got through is over by the clock once the report is older than the longest pause.
+#[tokio::test]
+async fn a_pause_goes_with_its_report_or_the_clock() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = clean_phone(&app, "Paused").await;
+    report(&app, &token, json!({"restrictions_paused": true})).await;
+    assert_eq!(rows(&app, &cookie, id).await, ["restrictions-paused"]);
+    report(&app, &token, json!({"restrictions_paused": false})).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+
+    report(&app, &token, json!({"restrictions_paused": true})).await;
+    let age = |minutes: i64| {
+        sqlx::query("UPDATE device_status SET reported_at = datetime('now', ?) WHERE device_id = ?")
+            .bind(format!("-{minutes} minutes"))
+            .bind(id)
+            .execute(&app.db)
+    };
+    age(119).await.unwrap();
+    assert_eq!(rows(&app, &cookie, id).await, ["restrictions-paused"]);
+    age(121).await.unwrap();
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn each_fact_raises_its_own_row() {
     let app = TestApp::new().await;

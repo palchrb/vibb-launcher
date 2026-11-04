@@ -450,4 +450,22 @@ class WindowRelockPlanTest {
         assertTrue(permittedListChanged(listOf("a.b"), null))
         assertTrue(permittedListChanged(emptyList(), listOf("a.b")))
     }
+
+    @Test
+    fun `a pause ended outside the sync asks for a sync at once - once (2026-11-04)`() {
+        // Home's "Lock again" ends the pause: the worker's relock finishes and the report goes now.
+        open(WindowKind.PAUSE)
+        end(WindowKind.PAUSE)
+        val ended = relock(RelockTrigger.LOCK_AGAIN)
+        assertTrue(syncAfterRelock(RelockTrigger.LOCK_AGAIN, ended.cleared))
+        // The sync's own re-check finds nothing left: no second sync.
+        assertNull(relock().report)
+        // The sync's own relock reports in that sync.
+        assertFalse(syncAfterRelock(RelockTrigger.SYNC, cleared = true))
+        // A relock that keeps its marker (apply threw) runs again at the sync's re-check: asking each time would loop.
+        open(WindowKind.PAUSE)
+        end(WindowKind.PAUSE)
+        phone.applyThrows = true
+        assertFalse(syncAfterRelock(RelockTrigger.TIMER, relock(RelockTrigger.TIMER).cleared))
+    }
 }

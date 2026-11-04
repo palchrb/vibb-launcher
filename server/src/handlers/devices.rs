@@ -2016,7 +2016,9 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
-    let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
+    let paused = latest
+        .as_ref()
+        .is_some_and(|s| s.paused_at(now.timestamp_millis()));
     let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
     {
         Ok(asked) => asked.map(|at| zone.clock(at)),

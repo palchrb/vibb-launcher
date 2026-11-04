@@ -504,6 +504,21 @@ pub struct DeviceStatus {
     // handlers::calls::call_report.
 }
 
+/// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
+/// parent's Unlock; a reboot ends it sooner).
+pub const RESTRICTIONS_PAUSE_MAX_MS: i64 = 2 * 60 * 60 * 1000;
+
+impl DeviceStatus {
+    /// Whether this report's pause can still be on at `now_ms` - what every page shows (2026-11-04). The phone reports
+    /// a pause's end at once; one that ended while the phone sent nothing (no network) is over by the clock: a report
+    /// older than the longest pause isn't paused any more. An unreadable `reported_at` keeps the report's word.
+    pub fn paused_at(&self, now_ms: i64) -> bool {
+        self.restrictions_paused
+            && crate::display_time::parse_db_utc(&self.reported_at)
+                .is_none_or(|at| now_ms - at.timestamp_millis() < RESTRICTIONS_PAUSE_MAX_MS)
+    }
+}
+
 #[derive(sqlx::FromRow, Clone)]
 pub struct SecurityEvent {
     pub id: i64,
