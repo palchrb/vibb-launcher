@@ -2273,11 +2273,16 @@ pub async fn add_storytel(
         if exists {
             continue;
         }
+        // No title from Storytel: the kind, in the adding parent's language (the name is stored, as Spotify's and a
+        // feed's fallback; design 70 §7).
         let name = music::cut_title(&group.name, MAX_NAME_CHARS).unwrap_or_else(|| {
-            match group.kind {
-                crate::storytel::TargetKind::Series => "Storytel series",
-                crate::storytel::TargetKind::Book => "Storytel book",
-            }
+            crate::i18n::t(
+                lang,
+                match group.kind {
+                    crate::storytel::TargetKind::Series => "music.default_name.storytel_series",
+                    crate::storytel::TargetKind::Book => "music.default_name.storytel_book",
+                },
+            )
             .to_string()
         });
         // The limit is the INSERT's own condition (phase 1).
@@ -5627,7 +5632,7 @@ pub async fn save_device_settings(
     params.extend(cap_text.as_deref().map(|cap| ("cap", cap)));
     let mut detail = security::Detail::words("security.detail.music.phone_settings", &params);
     if limit.is_none() {
-        detail = detail.word("limit", "music.size.no_limit");
+        detail = detail.word("limit", "security.detail.no_limit");
     }
     if cap_text.is_none() {
         detail = detail.word("cap", "security.detail.off");

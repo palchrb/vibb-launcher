@@ -379,7 +379,17 @@ impl Detail {
                 _ => format!("{words} · {facts}"),
             }),
             (Some(words), None) => Some(words),
-            (None, facts) => facts.map(str::to_string),
+            // A bare id alone reads in the reader's words ("phone 3", "telefon 3"); other facts as stored.
+            (None, Some(facts)) => Some(match id_fact(facts) {
+                Some(("device", id)) => {
+                    crate::i18n::t_params(zone.lang(), "security.detail.phone", &[("device", id)])
+                }
+                Some(("entry", id)) => {
+                    crate::i18n::t_params(zone.lang(), "security.detail.entry", &[("entry", id)])
+                }
+                _ => facts.to_string(),
+            }),
+            (None, None) => None,
         }
     }
 

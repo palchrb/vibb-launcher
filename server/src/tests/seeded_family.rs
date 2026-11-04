@@ -24,6 +24,10 @@ pub struct Family {
     pub app: i64,
     pub launcher: i64,
     pub entry: i64,
+    /// Anna's calendar link, CalDAV account and title rule (their own pages).
+    pub calendar_link: String,
+    pub caldav: i64,
+    pub calendar_rule: i64,
 }
 
 /// The family, its parent reading in `lang`.
@@ -329,7 +333,91 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     }
     drop(conn);
 
-    // A security line of each label, and a few with words.
+    // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
+    // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.
+    for (path, field, pin) in [
+        ("parent-pin", "new_pin", "246810"),
+        ("kid-lock", "new_kid_pin", "1357"),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{ola}/{path}"),
+                Some(&cookie),
+                &[(field, pin)],
+            )
+            .await;
+        assert!(res.status.is_redirection(), "{path}: {}", res.text());
+    }
+    sqlx::query("UPDATE device_policy SET kid_keyguard = 'android' WHERE device_id IN (?, ?)")
+        .bind(ola)
+        .bind(anna)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, first_delivered_at, \
+         deliveries, received_at, acknowledged_at, result, succeeded) VALUES \
+         (?, 'set_kid_pin', datetime('now', '-20 minutes'), datetime('now', '-19 minutes'), \
+         datetime('now', '-19 minutes'), 1, datetime('now', '-19 minutes'), datetime('now', '-18 minutes'), \
+         'refused: mismatch', 0), \
+         (?, 'set_kid_pin', datetime('now', '-2 minutes'), NULL, NULL, 0, NULL, NULL, NULL, NULL)",
+    )
+    .bind(ola)
+    .bind(anna)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // A pause through its form (a worded line).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{anna}/lifts"),
+            Some(&cookie),
+            &[
+                ("target", "rule"),
+                ("rule", &rule.to_string()),
+                ("minutes", "15"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "lift: {}", res.text());
+
+    // Design 72: a calendar link, a CalDAV account and a title rule on Anna, as `tests::shell` seeds them.
+    app.fetch.answer(
+        "https://skole.example.no/k.ics",
+        200,
+        "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+    );
+    let calendar_link = crate::calendar_feeds::add(
+        &app.state,
+        anna,
+        "https://skole.example.no/k.ics",
+        "Skolen",
+        now,
+    )
+    .await
+    .unwrap();
+    let caldav: i64 = sqlx::query_scalar(
+        "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         '[\"dav.example.net\"]', '/p/', \
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok') \
+         RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let calendar_rule: i64 = sqlx::query_scalar(
+        "INSERT INTO device_calendar_rules (device_id, sort_order, field, match_kind, pattern, action) \
+         VALUES (?, 1, 'title', 'contains', 'Trinn', 'hide') RETURNING id",
+    )
+    .bind(anna)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    // A security line of each label (the forms above wrote worded ones).
     for key in crate::i18n::keys_in("security.event.") {
         let id = key.trim_start_matches("security.event.");
         crate::security::record_security_event(
@@ -352,5 +440,8 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         app: tracked,
         launcher,
         entry,
+        calendar_link,
+        caldav,
+        calendar_rule,
     }
 }

@@ -1614,15 +1614,21 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `StorytelError::message`, `SpotifyError::message(lang)`, `spotify::add_refusal(lang, …)`, `LinkError::key`,
   `music_import::Skip::reason(lang)`, `music::storage(lang, …)`), a push failure (`push::failure_text(lang, …)`),
   a phone number's refusal (`PhoneError::key`), the built-in wallpapers' and seeded blocklists' names
-  (`WallpaperRow::shown_label`, `models::blocklist_name`: a built-in can't be renamed, so its name is ours) and the
-  error bodies (`i18n::error`). Sizes and other decimals: `i18n::number(lang, value, decimals)` ("1.5" / "1,5";
+  (`WallpaperRow::shown_label`, `models::blocklist_name`: a built-in can't be renamed, so its name is ours; lists
+  sorted by the shown name), the fallback name an entry is stored with when its source gives none (Spotify, a feed,
+  Storytel: `music.default_name.*`, in the adding parent's language - the kid sees it; design 70 §7), a bare id
+  fact alone in the security log ("phone 3" / "telefon 3") and the error bodies (`i18n::error`). Sizes and other decimals: `i18n::number(lang, value, decimals)` ("1.5" / "1,5";
   Format's typed size is accepted with either mark). Two scans keep it so: `i18n::tests::no_status_answers_with_literal_words`
   refuses a `StatusCode::X, "words"` pair outside tests (the phone's API in `device_api.rs` and `security.rs`'s log
   reasons are no parent's), and `tests::i18n_pages::nb_pages_have_no_english` signs a parent in on Norwegian over a
   seeded family (`tests::seeded_family`: three phones - a rich report, the other problems, one not set up - one
   event of each kind, a security line of each label, a tracked app, a music entry, a zone, a rule), GETs every page
-  and the JSON routes and fails on a whole word that is in some English value and in no Norwegian one (addresses,
-  paths, packages and codes left out). Still English by design: the raw technical details behind an ⓘ (a sync's or
+  and the JSON routes and fails on a whole word that is in some English value and in no Norwegian one, or on a `{param}` left
+  unfilled. Both sides read only language (`i18n::language_words`): addresses, paths, packages, codes, env vars, a
+  «quote», the names Vibb Phone/One/Music and an `adb …` command are left out, so "phone", "settings", "add" and
+  "password" are words it sees. Since the fix round it also follows redirects, reads every one-shot flash
+  (`?done=`, `?notice=`) on its page, a refused form, `/login` and the onboarding steps (`/auth/change-password`,
+  `setup-2fa`, `verify-2fa`). Still English by design: the raw technical details behind an ⓘ (a sync's or
   upload's `Failure::detail`, a feed's or a list's download error, `music_net::FetchError`'s reqwest text), an id no
   catalog names (`admin::words_of`, the id as words), a subscription's stored label fallback ("Device · Browser"),
   the logs, and the names the phone sends (slice 5).

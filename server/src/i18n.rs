@@ -185,18 +185,34 @@ pub fn keys_in(prefix: &str) -> Vec<String> {
     keys
 }
 
-/// Every whole word (letters, an apostrophe inside) of the catalog's values in `lang`, lower case, `{params}` left
+/// Every word a reader reads as language in the catalog's values in `lang` ([language_words]), `{params}` left
 /// out: `tests::i18n_pages` looks for English on a Norwegian page by them.
 #[cfg(test)]
 pub fn catalog_words(lang: Lang) -> std::collections::HashSet<String> {
-    let param = regex::Regex::new(r"\{[a-z_]+\}").unwrap();
+    static PARAM: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\{[a-z_]+\}").unwrap());
     lang.catalog()
         .values()
-        .flat_map(|text| words_of_text(&param.replace_all(text, " ")))
+        .flat_map(|text| language_words(&PARAM.replace_all(text, " ")))
         .collect()
 }
 
-/// The whole words of `text`, lower case (see [catalog_words]).
+/// The whole words of `text` that are language, lower case: not the facts - a token with `/`, `_`, `=`, `@`, a dot
+/// between letters or a letter beside a digit (addresses, paths, packages, codes, env vars, a key's groups) -,
+/// not a «quote» (another program's words), not the names Vibb Phone, Vibb One and Vibb Music, not an `adb …`
+/// command to the end of its sentence.
+#[cfg(test)]
+pub fn language_words(text: &str) -> Vec<String> {
+    static NOT_LANGUAGE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"«[^»]*»|\badb (?:[^.;()]|\.\S)*|\bVibb (?:Phone|One|Music)\b|\S*(?:[/_=@]|\p{L}\.\p{L}|\p{L}\p{N}|\p{N}\p{L})\S*",
+        )
+        .unwrap()
+    });
+    words_of_text(&NOT_LANGUAGE.replace_all(text, " "))
+}
+
+/// The whole words of `text`, lower case (see [language_words]).
 #[cfg(test)]
 pub fn words_of_text(text: &str) -> Vec<String> {
     static WORD: LazyLock<regex::Regex> =
@@ -873,6 +889,8 @@ mod tests {
             regex::Regex::new(r#"StatusCode::[A-Z_]+\s*,\s*(?:format!\(\s*)?"((?:[^"\\]|\\.)*)""#)
                 .unwrap();
         let words = regex::Regex::new(r"^[A-Z][a-z]|\p{L} \p{L}").unwrap();
+        let tests =
+            regex::Regex::new(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))? )?mod tests\b").unwrap();
         let mut files = Vec::new();
         let mut dirs = vec![std::path::PathBuf::from("src")];
         while let Some(dir) = dirs.pop() {
@@ -896,9 +914,10 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(path).unwrap();
-            let text = text
-                .find("#[cfg(test)]\nmod tests")
-                .map_or(text.as_str(), |cut| &text[..cut]);
+            // A module's tests, however declared, are cut (qa-s-i18n-4-code L10).
+            let text = tests
+                .find(&text)
+                .map_or(text.as_str(), |cut| &text[..cut.start()]);
             for caps in pair.captures_iter(text) {
                 if words.is_match(&caps[1]) {
                     found.push(format!("{shown}: {}", &caps[1]));

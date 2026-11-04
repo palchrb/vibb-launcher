@@ -3719,7 +3719,7 @@
   "device.lock.glance.needs_update": "Vibb One can't show these yet",
   "device.lock.glance.needs_update_sub": "Update Vibb One on the phone to show notifications on its lock screen.",
   "device.lock.glance.no_access": "Missed calls only",
-  "device.lock.glance.no_access_sub": "Vibb One has no notification access, so messages don't show. The fix is under Launcher on the phone's page.",
+  "device.lock.glance.no_access_sub": "Vibb One has no notification access, so messages don't show. The fix is under Home Screen on the phone's page.",
   "device.lock.glance.not_allowed": "Not allowed",
   "device.lock.glance.not_on_phone": "Not on the phone",
   "device.lock.glance.empty_unreported": "No apps yet: the phone hasn't reported its apps.",
@@ -3770,7 +3770,6 @@
   "settings.web_filter.seeded.gambling": "Gambling",
   "settings.web_filter.seeded.social": "Social media",
 
-  "music.size.no_limit": "no limit",
   "music.size.of_limit": "{size} of {limit} GB",
   "music.size.no_limit_of": "{size} (no limit)",
   "music.check.not_found": "NRK doesn't know that podcast or series - check the link.",
@@ -3898,5 +3897,11 @@
   "music.default_name.track": "Track",
   "music.default_name.artist": "Artist",
   "music.default_name.podcast": "Podcast",
-  "music.default_name.episode": "Episode"
+  "music.default_name.episode": "Episode",
+
+  "security.detail.entry": "entry {entry}",
+
+  "music.default_name.storytel_series": "Storytel series",
+  "music.default_name.storytel_book": "Storytel book",
+  "security.detail.no_limit": "no limit"
 }

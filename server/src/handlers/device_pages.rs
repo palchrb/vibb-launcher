@@ -1620,8 +1620,11 @@ pub async fn view_filter(
                 id: list_id,
                 name: crate::models::blocklist_name(lang, &name, &url),
             })
-            .collect()
+            .collect::<Vec<FilterList>>()
     };
+    // In the order the reader reads them (qa-s-i18n-4-code L6).
+    let mut lists = lists;
+    lists.sort_by_key(|list| list.name.to_lowercase());
     let domains = match sqlx::query_as::<_, crate::models::DnsCustomDomain>(
         "SELECT * FROM dns_custom_domains WHERE device_id = ? ORDER BY domain",
     )

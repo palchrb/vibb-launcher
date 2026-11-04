@@ -134,12 +134,12 @@
                 <input type="hidden" name="target" value="budget">
                 <input type="hidden" name="minutes" value="{{ minutes }}">
                 <input type="hidden" name="back" value="summary">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{% if *minutes == 60 %}{{ self.t("device.summary.plus_hour") }}{% else %}{{ self.tp("device.summary.plus_minutes", [("minutes", minutes.to_string().as_str())]) }}{% endif %}</button>
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{% if *minutes == 60 %}{{ self.t("device.summary.plus_hour") }}{% else %}{{ self.tp("device.summary.plus_minutes", [("minutes", minutes.to_string().as_str())]) }}{% endif %}</span></button>
             </form>
             {% endfor %}
             {% if !pause_rules.is_empty() %}
             <details class="act-sheet" id="pause-rule">
-                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 9v6M14 9v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("device.summary.pause_rule") }}&hellip;</summary>
+                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 9v6M14 9v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("device.summary.pause_rule") }}&hellip;</span></summary>
                 <form method="post" action="/devices/{{ device.id }}/lifts#quick" class="group act-sheet-body">
                     <input type="hidden" name="target" value="rule">
                     <input type="hidden" name="back" value="summary">
@@ -167,12 +167,12 @@
             {% endif %}
             {% if relock.lock_again %}
             <form method="post" action="/devices/{{ device.id }}/end-windows#quick">
-                <button type="submit" class="act act-strong"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>{{ self.t("device.summary.lock_again") }}</button>
+                <button type="submit" class="act act-strong"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("device.summary.lock_again") }}</span></button>
             </form>
             {% endif %}
             {% if relock.pause_button %}
             <details class="act-sheet confirm" id="unlock">
-                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{{ self.t("device.summary.unlock_2h") }}&hellip;</summary>
+                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("device.summary.unlock_2h") }}&hellip;</span></summary>
                 <form method="post" action="/devices/{{ device.id }}/start-pause#quick" class="confirm-body act-sheet-body">
                     <p>{{ self.tp("device.summary.unlock_confirm", [("name", device.name.as_str())]) }}</p>
                     <button type="submit" class="button-destructive">{{ self.t("device.summary.unlock") }}</button>
@@ -180,7 +180,7 @@
                 </form>
             </details>
             {% endif %}
-            <a class="act" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>{{ self.t("nav.locate") }}</a>
+            <a class="act" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("nav.locate") }}</span></a>
         </div>
         {#- Today's lifts and the pauses still running, with End now (back here, #quick): the end of
             Quick actions since Now went (the user, 2026-10-20); the flash below them. -#}

@@ -123,8 +123,7 @@ pub fn refused(entry: &AppDownloadEntry) -> bool {
 }
 
 /// What the download does, its key: lower case, so it reads after "update" ("waiting for Wi-Fi",
-/// "refused: signed with another key"); `.lead` the same capitalised, alone on a row. Never a raw code
-/// (design 31 §4.2).
+/// "refused: signed with another key"); alone on a row it is [capitalized]. Never a raw code (design 31 §4.2).
 fn state_key(state: &str) -> &'static str {
     match state {
         "waiting_wifi" => "device.apps.download.waiting_wifi",

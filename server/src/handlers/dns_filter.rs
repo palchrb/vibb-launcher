@@ -633,6 +633,8 @@ async fn render_page(
         for list in &mut blocklists {
             list.name = crate::models::blocklist_name(lang, &list.name, &list.url);
         }
+        // In the order the reader reads them (qa-s-i18n-4-code L6).
+        blocklists.sort_by_key(|list| list.name.to_lowercase());
         // Global (device_id IS NULL) custom domains only - the site-wide defaults. A phone's own
         // are on its Web Filter page.
         let custom = sqlx::query_as::<_, DnsCustomDomain>(
