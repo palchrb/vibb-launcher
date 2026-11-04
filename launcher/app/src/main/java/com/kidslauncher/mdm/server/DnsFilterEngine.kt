@@ -208,10 +208,16 @@ object DnsFilterEngine {
      * [PROVIDER_BUDGET] (2.5 s connect), and on a network that blocks 853 the same provider's DoH
      * on 443 through [dohClient], built at its first use (design 36 step 3). Returns the response to
      * relay, its bytes null on any failure (the query is dropped; the client's own retry handles it).
-     * The parent's own server goes through [CustomDns] instead.
+     * The parent's own server goes through [CustomDns] instead. DoT connections are kept in [dotPool] (S-L9).
      */
-    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean, dohClient: () -> OkHttpClient): Resolved =
-        relayed(PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket)))
+    fun resolveProvider(
+        query: ByteArray,
+        upstream: String,
+        protectSocket: (Socket) -> Boolean,
+        dotPool: DotPool?,
+        dohClient: () -> OkHttpClient,
+    ): Resolved =
+        relayed(PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket, dotPool)))
 }
 
 /** The phone's block answer: NODATA (NOERROR, empty answer, a negative-cache SOA in the authority
