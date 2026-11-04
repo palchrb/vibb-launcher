@@ -76,6 +76,15 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   lines, the grant order and the broadcasts.
 - Not device-tested: design 52 §4 (the emulator checks on API 34/35/36 and the Jelly Star with real headphones).
 
+- **Audio devices only** (security review S-L5, round L4b; L4 already set `DISALLOW_BLUETOOTH_SHARING` while managed
+  and finishes the page when the mask bit goes): the page lists and pairs a device the scan found only when it is an
+  audio device (`btAudioClass`: an A2DP sink or LE Audio among its UUIDs, or the `AUDIO_VIDEO` major class - a found
+  device has its class before its UUIDs; never a phone or a computer, whatever its UUIDs say - QA L3, a Linux
+  laptop's PipeWire advertises an A2DP sink; never a service bit, phones set "audio" too), unless the policy's
+  `bluetooth_any_device` (the server's "Any Bluetooth Device" switch, off by default) or the pause/override is on
+  (`btPairOffered`). The tap checks again; a sync's apply drops rows it may no longer pair. A paired device keeps its
+  row (Forget). Not device-tested: a friend's phone and a PC don't show, headphones and a speaker pair.
+
 ## The kid's hidden apps in Kid Settings (the user, 2026-11-03, branch `kid-unhide`)
 
 - **What**: Home's long-press "Skjul" (`ContextMenuActions.toggleHidden`, the local `LauncherPreferences.apps().hidden()`)

@@ -479,6 +479,7 @@ pub(crate) async fn build_policy(
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
+        bluetooth_any_device: policy.bluetooth_any_device,
         pending_command,
         vpn_filter_enabled: policy.vpn_filter_enabled,
         dns_filter_version,
@@ -1333,8 +1334,8 @@ pub async fn status(
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
-          write_settings_granted, zone_watch_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          write_settings_granted, zone_watch_json, tailnet_joined) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1390,6 +1391,7 @@ pub async fn status(
     .bind(&dns_upstream_json)
     .bind(report.write_settings_granted)
     .bind(&zone_watch_json)
+    .bind(report.tailnet_joined)
     .execute(&state.db)
     .await
     .ok();

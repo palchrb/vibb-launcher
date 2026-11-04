@@ -611,7 +611,7 @@ struct Answer {
 /// The launcher's answers (`MdmSyncWorker.dispatchPendingCommand`, `locateResultMessage`,
 /// `wipeResultMessage`, `endWindowsResult`) as §4 words in the reader's language. `None` for one it
 /// doesn't know.
-fn reword(lang: Lang, raw: &str) -> Option<String> {
+pub(crate) fn reword(lang: Lang, raw: &str) -> Option<String> {
     let known = match raw {
         "ringing" => "locate.answer.ringing",
         "stopped" => "locate.answer.stopped",
@@ -637,6 +637,11 @@ fn reword(lang: Lang, raw: &str) -> Option<String> {
         "no space" => "locate.answer.no_space",
         "superseded" => "locate.answer.superseded",
         "call never ended" => "locate.answer.call",
+        // Leave Tailnet (security review S-L10, `testdata/leave_tailnet.json`).
+        "left the tailnet" => "locate.answer.left_tailnet",
+        "not on the tailnet" => "locate.answer.not_on_tailnet",
+        "failed to leave the tailnet" => "locate.answer.leave_tailnet_failed",
+        "server is reached only over the tailnet" => "locate.answer.tailnet_only",
         _ => "",
     };
     if !known.is_empty() {
@@ -1850,7 +1855,7 @@ fn replaced_kinds(command: &str) -> &'static [&'static str] {
 /// confirm is no longer offered again (security review L12). Broadcasts on `command_notify`
 /// afterwards so a connected device's SSE listener (see `device_api::commands_stream`) wakes it
 /// immediately; a `send` with no subscribers (device offline/asleep) is expected and harmless.
-async fn queue_command(
+pub(crate) async fn queue_command(
     state: &AppState,
     device_id: i64,
     command: &str,

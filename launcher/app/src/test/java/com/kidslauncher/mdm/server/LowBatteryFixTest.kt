@@ -152,7 +152,7 @@ class LowBatteryFixTest {
         val take = sync.indexOf("val lowBatteryFix = LowBatteryFix.take(")
         assertTrue(take in 0 until sync.indexOf("val location = currentLocationReport("))
         assertTrue("ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs }," in sync)
-        assertTrue("locationPolicy, lowBatteryFix)" in sync)
+        assertTrue("locationPolicy, lowBatteryFix,\n" in sync)
         assertTrue("val action = withLowBatteryFix(sync.action, lowBatteryFix)" in sync)
         assertTrue("battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) }" in sync)
         // The glue only binds the episode; the flag is written synchronously; no coordinates logged.

@@ -885,13 +885,17 @@ pub async fn view_advanced(
             escapes,
             escape_warnings,
             escape_rows,
-            access: crate::handlers::devices::access_card(
-                &state,
-                &device,
-                query.get("notice").map(String::as_str),
-                &zone,
-                now,
-            ),
+            access: crate::handlers::devices::AccessCard {
+                // Security review S-L10's fix round: Leave Tailnet only for a phone on the tailnet.
+                tailnet_joined: latest.as_ref().and_then(|s| s.tailnet_joined) == Some(true),
+                ..crate::handlers::devices::access_card(
+                    &state,
+                    &device,
+                    query.get("notice").map(String::as_str),
+                    &zone,
+                    now,
+                )
+            },
             spotify_diag: spotify_diag_card(&policy, &zone, now),
             device,
         }
@@ -1445,6 +1449,8 @@ struct HomeTemplate {
     quick_brightness: bool,
     quick_sound: bool,
     quick_touch: bool,
+    /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
+    bluetooth_any_device: bool,
 }
 crate::i18n::words!(HomeTemplate);
 
@@ -1491,6 +1497,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_brightness: mask & QUICK_CONTROL_BRIGHTNESS != 0,
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
+            bluetooth_any_device: policy.bluetooth_any_device,
             device,
         }
         .render()

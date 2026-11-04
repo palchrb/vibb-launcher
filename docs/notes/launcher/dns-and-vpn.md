@@ -64,10 +64,19 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   2.5 s, canary 1-2 s, backup the rest, 1.3-2.5 s) keeps a failed canary's query inside the stub's first try. In a period one query per back-off probes the primary
   (`probing`), the rest go to the backup. `reset` (a network reset or new servers) tries the primary at once.
   Battery: one probe per back-off, one canary per 60 s at most.
-- **Transport** (`server/UpstreamTransport.kt`): `resolveDoT(query, addresses, host, port, budget, protect)` - at most
+- **Transport** (`server/UpstreamTransport.kt`): `resolveDoT(query, addresses, host, port, budget, protect, pool)` - at most
   two addresses, IPv4 first, one budget (1.5 s connect, 2.5 s in all for the parent's servers), the next address only
   while nothing was written; a name gets SNI + endpoint identification, an IP no SNI and the default hostname
-  verifier on the IP after the handshake. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
+  verifier on the IP after the handshake. **Kept DoT connections** (security review S-L9, round L4b): one `DotPool`
+  per `KidVpnService` instance (the providers' and the parent's servers' alike, keyed by address, port and name)
+  keeps a connection that gave a whole answer with the query's ID, at most `DOT_IDLE_MS` (10 s, below Knot
+  Resolver's idle timeout) and `DOT_MAX_IDLE` (4) per server, one query at a time on it (no pipelining). A query takes
+  the newest kept one first (`dotAttempt`); one the server closed while idle (EOF, a reset, an answer out of step)
+  is let go with the rest for that server and the query asked again on a fresh connection - nothing counted against
+  the server; one silent to the deadline - the watchdog's close or the read's own timeout (QA L1) - is silence after
+  the write, as on a fresh one. A `give` also closes every server's connections idle past the limit (QA L4). The pool is evicted on a
+  network change and closed at stop (off the main thread); the one deadline per attempt (`DotDeadline`, the
+  handshake included) and the trickle-proof `readFully` stay. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
   `OkHttpClient.Builder()` (never `newBuilder()` of the API/SSE clients, which carry tsnet's SOCKS proxy)**,
   `Proxy.NO_PROXY`, `ProtectedSocketFactory` (sockets protected before they connect), `BootstrapDns` as its `Dns`,
   1.5 s connect / 2.5 s call, no redirects, no cache, no cookies, system CAs; a per-call `EventListener` (`CallMarks`)

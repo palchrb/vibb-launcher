@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.calls.CallStateReport
 import com.kidslauncher.mdm.calls.callPrefsUpdate
 import com.kidslauncher.mdm.notifyAppInstallResult
@@ -97,7 +98,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 38 (QA N1): the shutdown's prepared client follows the base URL, the token and the proxy.
     PowerEvents.prepare(context)
 
-    val api = createMdmApi(serverUrl, deviceToken)
+    var api = createMdmApi(serverUrl, deviceToken)
     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
@@ -164,6 +165,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
+        // S-L10's fix round (nit 1): after Leave Tailnet no call of this sync goes through the closed proxy - the
+        // client is built again, on the direct path.
+        if (ranCommand?.command == LEAVE_TAILNET_COMMAND) api = createMdmApi(serverUrl, deviceToken)
         // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
         // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
         // Design 72b: the kid's own events handed over for the marked CalDAV calendar first (never throws), so the
@@ -227,10 +231,18 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // without zones the location step is exactly today's.
     val zonesOn = ZoneWatch.zonesOn(context, decision.policy)
     val zoneFix = ZoneWatch.takeFreshWanted()?.takeIf { zonesOn }
-    val commandFix = ranCommand?.command in setOf("ring", "locate")
+    // Security review P-L2: only `locate` asks where the phone is - a `ring` is no request for the location.
+    val commandFix = ranCommand?.command == "locate"
     val forceFreshLocation = commandFix || zoneFix != null
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+    // Security review P-L3: location "Off" - no fix from before the switch stays on the phone.
+    if (locationPolicy?.mode == "off") LocateCommands.clearCachedFix(context)
+    // P-L2: Location goes back off after a fix unless the CONFIG_LOCATION switch or the zone watch needs it on.
+    val hardeningForcesOn = hardeningPlan(
+        decision.policy?.hardening,
+        hardeningManaged(decision.policy?.allowlist, CallPolicyStore.state.managed),
+    ).forceLocationOn
     // 2026-10-25: the shutdown's last position goes by this policy (never "Off"), and the battery's
     // low edge takes one balanced fix in this sync (LowBatteryFix) - or reports a fix of its own
     // under 2 minutes old (qa-last-position-code Q-7).
@@ -242,7 +254,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         systemLocationOn = QuickControls.isLocationEnabled(context),
         ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs },
     )
-    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix)
+    val location = currentLocationReport(
+        context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix,
+        staysOn = locationStaysOn(locationPolicy, hardeningForcesOn, zonesOn),
+    )
     val locationOff = locationPolicy?.mode == "off"
     // Location Off, or no zones watched: the queue is emptied before the report, which carries no
     // extras - nothing kept from before the switch is sent (Q-5).
@@ -319,6 +334,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
                 battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
                 writeSettingsGranted = WriteSettingsAccess.granted(context),
+                // S-L10's fix round: the server shows Leave Tailnet only while this says true.
+                tailnetJoined = TsnetClient.joined(context),
                 extraLocations = extraFixes?.map { it.toReport() },
                 zoneWatch = ZoneWatch.report(context, still = location.still),
                 calendar = try {
@@ -512,6 +529,16 @@ private suspend fun dispatchPendingCommand(
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
+        // Security review S-L10: the parent's "Leave tailnet" - tsnet stops and its node state goes (refused while the
+        // server address is a tailnet one). This sync's API client pointed at the closed proxy: the answer waits in the
+        // outbox, and performMdmSync rebuilds the client before its next call (the fix round's nit 1); the outbox is
+        // flushed after the status report.
+        LEAVE_TAILNET_COMMAND -> {
+            val (ok, message) = TsnetClient.leave(context)
+            CommandAnswers.keep(context, pending, ok, message)
+            requestFollowUpSync(context)
+        }
+
         // Design 37: the parent's Install Now - this sync goes on to the list (download, settle)
         // and, last, the commit; the answer comes from the settle or a failure.
         INSTALL_NOW_COMMAND -> {
@@ -623,7 +650,7 @@ private class LocationOutcome(
  * than the interval and the motion sensor doesn't say the phone stayed put (at most 4 h of that),
  * else the cached fix, no LocationManager call; every due call and fresh fix stamps the beat. A
  * crossing's sync ([crossing], [forceFresh] through `ZoneWatch.takeFreshWanted`) and
- * `locate`/`ring` always fix - [precise] (`locate`/`ring`, a crossing's confirm) GPS first, a
+ * `locate` always fix - [precise] (`locate`, a crossing's confirm) GPS first, a
  * crossing's first fix and the heartbeat `FRESH_BALANCED`. The kept slot becomes the reported fix
  * only at a due `KEPT` or a crossing's sync (Q-1); the motion gate arms only after a genuinely
  * fresh fix (Q-6).
@@ -638,8 +665,10 @@ private suspend fun currentLocationReport(
     zonesOn: Boolean,
     policy: LocationPolicy?,
     lowBatteryFix: LowFix,
+    staysOn: Boolean,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
+    LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)
     val now = System.currentTimeMillis()
     val lastOwnFix = LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
     val motion = if (zonesOn) MotionGate.motion(context) else Motion.NO_SENSOR
@@ -666,7 +695,9 @@ private suspend fun currentLocationReport(
         // The kept fix (passive, a series check's) becomes the reported one only here (Q-1).
         if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
     }
-    val location = LocateCommands.currentLocation(context, dpm, admin, action)
+    // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
+    val still = reportStill(zonesOn, action, motion, now, lastFreshFix)
+    val location = LocateCommands.currentLocation(context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still))
         ?: return LocationOutcome(action, null, null, null)
     // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
     // sensor counts "moved" from here (Q-6).
@@ -680,7 +711,7 @@ private suspend fun currentLocationReport(
         location.toQueued(LocateCommands.providerOf(location)),
         accuracy,
         (System.currentTimeMillis() - location.time) / 1000,
-        still = reportStill(zonesOn, action, motion, now, lastFreshFix),
+        still = still,
     )
 }
 

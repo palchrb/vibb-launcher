@@ -203,11 +203,13 @@ class PublicResolverTest {
         val vpn = File(listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }, "main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
         assertTrue("buildDohClient(IP_LITERAL_DNS, ::protect)" in vpn)
         // Built at the first DoH use, not the first provider query (N2).
-        assertTrue("resolveProvider(query, upstream, ::protect) { providerDoh.value }" in vpn)
+        assertTrue("resolveProvider(query, upstream, ::protect, dotPool) { providerDoh.value }" in vpn)
         // A network reset puts both providers back on DoT (L2: the reset is wired).
         val onNetwork = vpn.substringAfter("private fun onNetwork(").substringBefore("\n    }\n")
         val changed = onNetwork.substringAfter("if (changed) {")
         assertTrue("PublicResolvers.reset()" in changed && "custom?.networkReset()" in changed)
+        // S-L9: the kept DoT connections ran over the old network.
+        assertTrue("dotPool::evictAll" in changed)
         assertEquals(listOf(InetAddress.getByName("192.0.2.1")), IP_LITERAL_DNS.lookup("192.0.2.1"))
         try {
             IP_LITERAL_DNS.lookup("dns.example")

@@ -648,6 +648,52 @@ pub async fn revoke_access(
     .into_response()
 }
 
+/// The command "Leave Tailnet…" queues (security review S-L10; `testdata/leave_tailnet.json`).
+pub const LEAVE_TAILNET: &str = "leave_tailnet";
+
+/// "Leave Tailnet…" on Advanced › Connection (security review S-L10): queues `leave_tailnet` - the phone stops its
+/// tailnet connection and forgets its node (the joined mark, any key, the node state), and reaches this server on
+/// its direct address from then on. It waits for the phone however long it takes, like a lock. Behind a ticked box;
+/// back to `#connection` with a flash either way.
+pub async fn leave_tailnet(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<RevokeForm>,
+) -> Response {
+    if form.confirm != "yes" {
+        return crate::settings_log::refused(Redirect::to(&format!(
+            "/devices/{id}/advanced?notice=tailnet_unconfirmed#connection"
+        )));
+    }
+    match crate::handlers::locate::queue_command(&state, id, LEAVE_TAILNET, &admin).await {
+        Ok(true) => {
+            security::record_security_event(
+                &state.db,
+                "device_command_queued",
+                Some(&admin.username),
+                None,
+                Some(security::Detail::facts(LEAVE_TAILNET)),
+            )
+            .await;
+            Redirect::to(&format!(
+                "/devices/{id}/advanced?notice=tailnet_leave_queued#connection"
+            ))
+            .into_response()
+        }
+        Ok(false) => crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found"),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't queue leave_tailnet");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.command_send",
+            )
+        }
+    }
+}
+
 /// A phone's connection to this server, for Advanced › Connection and the not-enrolled card
 /// (design 22 §3.1, design 31 §3.2): times in the Phone Setup zone.
 pub struct AccessCard {
@@ -659,6 +705,9 @@ pub struct AccessCard {
     pub typed_paused_until: Option<String>,
     /// The flash after Disconnect Phone: the text, and whether it is a refusal.
     pub notice: Option<(&'static str, bool)>,
+    /// The last report says the phone is on the tailnet (`tailnet_joined`): "Leave Tailnet…" shows. Set by
+    /// Advanced only; false from an older launcher.
+    pub tailnet_joined: bool,
 }
 
 impl AccessCard {
@@ -708,13 +757,17 @@ pub(crate) fn access_card(
             .typed_paused_until(now)
             .map(|until| zone.until(until, now)),
         notice: notice.and_then(|code| access_notice(zone.lang(), code)),
+        tailnet_joined: false,
     }
 }
 
 fn access_notice(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
         "access_revoked" => (t(lang, "devices.access.disconnected"), false),
-        "revoke_unconfirmed" => (t(lang, "devices.access.unconfirmed"), true),
+        "revoke_unconfirmed" | "tailnet_unconfirmed" => {
+            (t(lang, "devices.access.unconfirmed"), true)
+        }
+        "tailnet_leave_queued" => (t(lang, "devices.access.tailnet_leave_queued"), false),
         _ => return None,
     })
 }
@@ -2389,6 +2442,8 @@ pub async fn update_policy(
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
 
+    // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
+    let bluetooth_any_device = fields.contains_key("bluetooth_any_device");
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");
 
     // The parent PIN has its own card and save since design 24 (`handlers::parent_pin`): this
@@ -2396,11 +2451,13 @@ pub async fn update_policy(
     let result = sqlx::query(
         "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
          quick_controls_mask = COALESCE(?, quick_controls_mask), \
+         bluetooth_any_device = COALESCE(?, bluetooth_any_device), \
          vpn_filter_enabled = COALESCE(?, vpn_filter_enabled), updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
     .bind(quick.then_some(quick_controls_mask))
+    .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))
     .bind(id)
     .execute(&state.db)

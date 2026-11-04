@@ -112,6 +112,10 @@ pub struct DevicePolicy {
     pub override_pin_hash: Option<String>,
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
+    /// Security review S-L5 (migration 0124): Kid Settings' Bluetooth page may pair any device, not only headphones
+    /// and speakers. Off by default.
+    #[sqlx(default)]
+    pub bluetooth_any_device: bool,
     pub vpn_filter_enabled: bool,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
@@ -485,6 +489,11 @@ pub struct DeviceStatus {
     /// Vibb One holds Android's "Modify system settings" app-op (PLAN fix backlog, 2026-10-24,
     /// migrations/0090). `None` from older launchers, or when the phone couldn't read it.
     pub write_settings_granted: Option<bool>,
+    /// The phone has been on the tailnet (the launcher's `tsnet_node_joined` mark; security review S-L10's fix
+    /// round, migration 0125): Advanced › Connection's "Leave Tailnet…" shows only while true. `None` from older
+    /// launchers.
+    #[sqlx(default)]
+    pub tailnet_joined: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -956,6 +965,8 @@ pub fn command_label(command: &str) -> &'static str {
         "install_update" => "locate.command.install_update",
         // Design 59: the Child PIN for Android's lock (its answers: `kid_lock::PinAnswer`).
         "set_kid_pin" => "locate.command.set_kid_pin",
+        // Security review S-L10: Advanced › Connection's "Leave Tailnet" (`testdata/leave_tailnet.json`).
+        "leave_tailnet" => "locate.command.leave_tailnet",
         _ => "locate.command.unknown",
     }
 }
@@ -1038,6 +1049,9 @@ pub struct PolicyResponse {
     pub override_pin_hash: Option<String>,
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
+    /// Security review S-L5: the Bluetooth page pairs any device (`true`) or only headphones and speakers (`false`,
+    /// the default). Always sent; the launcher's `PolicyResponse.bluetoothAnyDevice`.
+    pub bluetooth_any_device: bool,
     pub pending_command: Option<PendingCommand>,
     /// Per-device on/off for the on-device DNS filter's VPN piece
     /// (KidVpnService) - see `AppEnforcer.applyVpnRestrictions` on the
@@ -1336,6 +1350,10 @@ pub struct StatusReportRequest {
     /// the phone couldn't read it.
     #[serde(default)]
     pub write_settings_granted: Option<bool>,
+    /// Security review S-L10's fix round: the phone has been on the tailnet (`testdata/leave_tailnet.json`'s
+    /// `report`). Absent from older launchers.
+    #[serde(default)]
+    pub tailnet_joined: Option<bool>,
     /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Absent from
     /// older launchers; anything that isn't one with a level in 0..=100 is dropped, never the
     /// report ([lenient_battery]).

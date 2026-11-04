@@ -100,8 +100,8 @@ class ProtectedSocketTest {
         assertFalse(unprotected(java.net.ConnectException()))
         // DoT and DoH map it to Unprotected before anything else (they log through android.util.Log, so by source).
         val transport = code(source("UpstreamTransport.kt"))
-        val dotCatch = transport.substringAfter("fun resolveDoT(").substringAfter("} catch (e: Exception) {")
-        assertTrue(dotCatch.indexOf("if (unprotected(e)) return Attempt.Unprotected") in 0 until dotCatch.indexOf("if (written)"))
+        val dotCatch = transport.substringAfter("fun dotAttempt(").substringAfter("link = open(").substringAfter("} catch (e: Exception) {")
+        assertTrue(dotCatch.indexOf("if (unprotected(e)) return Attempt.Unprotected") in 0 until dotCatch.indexOf("if (marks.written)"))
         val dohCatch = transport.substringAfter("fun resolveDoh(").substringAfter("when {")
         assertTrue(dohCatch.trimStart().startsWith("unprotected(e) -> Attempt.Unprotected"))
         // The public resolvers count nothing: no DoT-blocked period, no DoH tried, a probe given back.
@@ -131,7 +131,7 @@ class ProtectedSocketTest {
         val body = transport.substringAfter("fun protectedSocket(").substringBefore("\n}\n")
         assertTrue(body.indexOf("socket.bind(local)") in 0 until body.indexOf("protect(socket)"))
         // DoT and the DoH factory both take it.
-        assertTrue("protectedSocket(protect).use { plain ->" in transport.substringAfter("fun resolveDoT("))
+        assertTrue("val plain = protectedSocket(protect)" in transport.substringAfter("private fun openDot("))
         val factory = transport.substringAfter("class ProtectedSocketFactory(").substringBefore("\n}\n")
         assertTrue("override fun createSocket(): Socket = protectedSocket(protect)" in factory)
         assertFalse(Regex("""\bSocket\(\)""").containsMatchIn(factory))
