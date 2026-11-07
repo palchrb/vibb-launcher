@@ -173,6 +173,20 @@ async fn a_launcher_report_moves_the_state() {
         app.policy(&other_token).await["server_tls"],
         json!({"enforce": true})
     );
+    // Verification L-b: the adoption is a security line, by no parent, for this phone and naming it.
+    let adopted: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT detail, params FROM security_events WHERE event_type = 'server_tls_on' AND username IS NULL",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(adopted.len(), 1, "{adopted:?}");
+    assert_eq!(adopted[0].0, Some(format!("device {other}")));
+    let params = adopted[0].1.clone().unwrap_or_default();
+    assert!(
+        params.contains("Ola") && params.contains("server_tls.adopted"),
+        "{params}"
+    );
     let group = advanced(&app, other, &cookie, "").await.unwrap();
     assert!(
         group.contains("Certificate check: on - only Let&#39;s Encrypt or ZeroSSL"),

@@ -209,7 +209,7 @@ waits for a device capture of the Play Protect / account-security channel ids.
 - **On the phone**: Settings › "Server certificate" under Server URL (on / not on yet / the last refusal), its dialog
   names the recovery and the server's tailnet address when the server sent one (`server_tls.recovery_url`,
   `server_pin_recovery`, stored by `nextRecovery` only from a fresh policy over a passing or tailnet connection, only
-  as tailnet http - code QA H-1); "Sync now" says why in a dialog after a refusal, with the same address. The kid sees nothing. Offline the phone keeps
+  as tailnet http - code QA H-1; a setup QR clears it with the flag, verification n1); "Sync now" says why in a dialog after a refusal, with the same address. The kid sees nothing. Offline the phone keeps
   enforcing its cached policy, calls and 112 included.
 - **Recovery without adb or the QR**: Settings (parent code) › Server URL › `http://<the server's Tailscale IP>` -
   WireGuard-authenticated, never pinned; the phone syncs, sends its refusals and takes the server's `enforce`. Or

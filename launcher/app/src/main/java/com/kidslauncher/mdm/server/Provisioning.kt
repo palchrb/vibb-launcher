@@ -35,6 +35,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
     // Design 76 D2: a setup QR is a fresh setup - the certificate check is off until the server's `on` reaches the
     // phone over a connection that passes it (the enrolment itself may have to go unpinned, R-6).
     ServerPinStore.setEnforce(context, false)
+    // ... and the old server's tailnet recovery address goes with it (verification n1): the new server names its own.
+    ServerPinStore.setRecovery(context, null)
     if (extras.tailscaleAuthKey.isNotBlank()) {
         mdm.tailscaleAuthKey(extras.tailscaleAuthKey)
     }

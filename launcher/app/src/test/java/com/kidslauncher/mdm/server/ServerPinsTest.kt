@@ -241,7 +241,9 @@ class ServerPinsTest {
         }
         // The recovery address: one caller, the same fresh block, by the same connection.
         assertEquals(mapOf("ServerPins.kt" to 1, "MdmSyncWorker.kt" to 1), callers("nextRecovery("))
-        assertEquals(mapOf("MdmSyncWorker.kt" to 1), callers("ServerPinStore.setRecovery("))
+        // ... and a setup QR, which clears it with the flag (verification n1).
+        assertEquals(mapOf("MdmSyncWorker.kt" to 1, "Provisioning.kt" to 1), callers("ServerPinStore.setRecovery("))
+        assertTrue(File(main, "server/Provisioning.kt").readText().contains("ServerPinStore.setRecovery(context, null)"))
         assertTrue(fresh.substringBefore("CallPolicyStore.refresh(context)").contains(
             "nextRecovery(ServerPinStore.recovery(context), freshPolicy.serverTls, pinConnection(apiPath, policyHandshake))",
         ))

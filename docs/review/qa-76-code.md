@@ -430,3 +430,48 @@ Nits:
 - Launcher (`--no-daemon --max-workers=2`): `ServerPinsTest` 13, `ServerPinTransportTest` 7, `ServerTransportTest` 10,
   `PolicyResponseCompatTest` 49 - 0 failures.
 - No emulator was started.
+
+### Verification fixes (on `server-issuer-pin-2`)
+
+Every verification finding is fixed.
+
+- **L-a.** `trim_outside` cuts the kept rows to 8 in this order:
+  - `seen` rows first, oldest first;
+  - then refusals the phone no longer sends that arrived more than a week ago;
+  - only then the oldest refusal.
+
+  So a refusal stays on the page for its week. Test `seen_rows_never_push_a_refusal_off`: 8 `seen` rows after a
+  refusal, twice, and the alarm is still shown 6 days later.
+- **L-b.** Every adoption of a phone's `enforcing: true` writes the security line `server_tls_on`, with no parent,
+  naming the phone (`security.detail.server_tls.adopted`). A stopped phone still gets `server_tls_phone_on` instead.
+  Tested in `next_state` and in `a_launcher_report_moves_the_state`.
+- **L-c.** DEPLOY.md's firewall lines:
+  - allow 3101 on `tailscale0` and from the reverse proxy's address (the generic rule, with
+    `ufw allow from 10.73.10.81 …` as the example), then deny it;
+  - say that binding only the tailnet IP cuts off a proxy on the LAN.
+- **n1.** A setup QR clears `server_pin_recovery` along with the flag (`Provisioning.kt`). `ServerPinsTest`'s source
+  scan pins both callers.
+- **n2.** The server trusts its own tailnet address only while a Tailscale interface is up: an `fd7a:115c:a1e0::/48`
+  address in `/proc/net/if_inet6`, or `/sys/class/net/tailscale0`. Both are read-only files. Otherwise the page
+  points to `PHONE_RECOVERY_URL`. Test: `a_tailscale_interface_is_needed`.
+- **n3.** The address the server finds for itself is offered only on a listener that surely answers it:
+  - `IPV6_V6ONLY` is read from each listener's socket after its bind (`note_listener`, rustix `net`, read only);
+  - `[::]` counts for an IPv4 address only when that option is off;
+  - a listener whose option wasn't read counts for its own family only.
+
+  Tested in `the_recovery_address`.
+- **n4.** U+2028 and U+2029 are dropped from names and hosts. Tested in `hidden_characters_are_dropped`.
+- **n5.** The card says what the phone reports:
+  - `seen_in_set` is `None` when the last report had no certificate (the tailnet).
+  - A watched phone then shows "The phone's last report came without a certificate…".
+  - An `on` phone that reports its check still off reads "on here - the phone says its check is still off", plus the
+    same sentence when the report had no certificate.
+  - "The phone says its check is on" shows whether or not the switch-on is stopped. "Turn the check on now" is then
+    offered.
+
+  Test: `adoption_is_told_and_the_card_says_what_the_phone_reports`.
+
+Tests of the verification fixes:
+- Server: `cargo fmt --check` clean, `cargo clippy --all-targets` no warnings, `cargo test` 1752 passed, 0 failed.
+- Launcher: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 2099 tests, 0 failures.
+- No emulator was started.

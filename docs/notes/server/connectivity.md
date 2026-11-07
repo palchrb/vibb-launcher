@@ -500,19 +500,24 @@ one row per phone, no row = `watching`):
   `next_state` at the **receive time**. `watching` -> `on` when in-set `seen`
   sightings span 72 hours, on 3 distinct (UTC) days, on Wi-Fi and mobile data when the phone has reported mobile at
   all (R-3); a phone reporting `enforcing: true` with an in-set `seen` is adopted as `on` (it stored that only from a
-  pinned `true`) - never while `stopped_at` is set: then the security line `server_tls_phone_on` (once per change,
-  code QA L-3) and the page says so. An outside sighting (a new `outside` row, or `seen.in_set: false`) sets
+  pinned `true`) and written as the security line `server_tls_on` with no parent (verification L-b) - never while
+  `stopped_at` is set: then the security line `server_tls_phone_on` (once per change, code QA L-3) and the page says
+  so. An outside sighting (a new `outside` row, or `seen.in_set: false`) sets
   `stopped_at`: never switched on by itself, the window isn't restarted (R-2). `on` is sticky against outside rows. A
   new outside row of a phone that has shown an in-set chain at all (`in_set_seen`, R-2(c), code QA L-2) raises
   `server_tls_seen` (`parent_events`, no switch, "Anna saw a certificate for your server from …"), at most one a day
   per phone, never while `off`. Each kept row is `open` while the phone's last report still carries it (it drops a
-  row only after a 2xx over a working connection); the last report's `seen` is kept (`seen_in_set`, `seen_name`).
+  row only after a 2xx over a working connection); past 8 rows `seen` rows go first, then refusals no longer sent and
+  older than a week, only then the oldest refusal (verification L-a). The last report's `seen` is kept
+  (`seen_in_set`, `None` for a report without one - the tailnet -, `seen_name`).
 - **Policy** (`server_tls::policy`, in `build_policy`): only for a phone whose last report has `server_pin_v1` -
   `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
   with `recovery_url` when the server knows its tailnet recovery address (`server_tls::recovery_url`: `PHONE_RECOVERY_URL`,
   else the setup QR's address when it is tailnet http, else this box's tailnet address - the source picked toward
-  100.100.100.100 / `fd7a:115c:a1e0::53` on a connected UDP socket, nothing sent, never in the tests - on a listener
-  bound to it or to `0.0.0.0`/`[::]`; code QA H-1); a read error fails the policy. Pinned by
+  100.100.100.100 / `fd7a:115c:a1e0::53` on a connected UDP socket, nothing sent, never in the tests, and only while
+  a Tailscale interface is up (an `fd7a:115c:a1e0::/48` address in `/proc/net/if_inet6`, or `tailscale0`;
+  verification n2) - on a listener bound to it, to `0.0.0.0` for IPv4, or to `[::]` for IPv6 and for IPv4 only when
+  that socket's `IPV6_V6ONLY` read off at its bind (`note_listener`, verification n3); code QA H-1); a read error fails the policy. Pinned by
   `policy_json_keys_snapshot`.
 - **Device › Advanced › Certificate check** (`#server-tls`, after Connection, only with the capability): the state as
   one row, from the server's state and what the phone reports (code QA M-1: "on - only Let's Encrypt or ZeroSSL" only
