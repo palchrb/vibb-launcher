@@ -2,7 +2,9 @@
 //! nowcast in memory. MET is the only outside service that sees a cell (the place-name lookup went 2026-11-04).
 //!
 //! - **On demand, politely** (D7): a cell is fetched only when a phone asks and its `next_fetch_at` has passed -
-//!   `max(now + (Expires − Date), now + 30 min) + 0-120 s` (MET's clock never compared with ours), conditionally
+//!   `max(now + (Expires − Date), now + the cell's floor) + 0-120 s` (MET's clock never compared with ours; the floor
+//!   is MET's per-location minimum of 2026-11-05: 30 min inside the Nordic region, [Cell::is_nordic], 3 h outside it,
+//!   after a 200, a 304 and a cut body alike; the 5xx retry and the failure backoff are not under it), conditionally
 //!   (`If-Modified-Since` = the stored `Last-Modified`, verbatim), one forecast fetch at a time server-wide (the row
 //!   read again under the lock). A phone waits at most [FORECAST_WAIT]; the fetch carries on in its own task.
 //! - **MET's terms**: its own User-Agent (`ForkConfig::met_user_agent`, D8), a 203 logged once a day, a 429 backs off
@@ -38,9 +40,13 @@ pub const NOWCAST_ASKS_AN_HOUR: usize = 60;
 /// A cell nobody asked for in this long goes (`retention::prune`), or within the longest location retention when
 /// that is shorter (a 1-day history: D13, the cache lives no longer than the fixes it came from).
 pub const CELL_HOURS: i64 = 48;
-/// A fetched forecast is never asked again before this (MET's `Expires` is ~30 min).
-const FORECAST_FLOOR_MINUTES: i64 = 30;
+/// A fetched forecast is never asked again before this (MET's terms of 2026-11-05: its cache headers are an absolute
+/// minimum, and per location at most once per 30 min in the Nordic region, once per 3 h in the rest of the world).
+const FORECAST_FLOOR_NORDIC_MINUTES: i64 = 30;
+const FORECAST_FLOOR_WORLD_MINUTES: i64 = 180;
 const FORECAST_JITTER_SECONDS: u32 = 120;
+/// Nowcast is Nordic only (MET answers 422 elsewhere) and is not named in the per-location terms; its `Expires`
+/// (~5 min) is honoured and this is only the least it waits.
 const NOWCAST_FLOOR_MINUTES: i64 = 3;
 const NOWCAST_JITTER_SECONDS: u32 = 20;
 /// Nowcast steps from a fetch older than this are never used (radar data is stale after ~5 min).
@@ -147,6 +153,23 @@ fn http_date(text: Option<&str>) -> Option<DateTime<Utc>> {
 }
 
 /// `Expires − Date` as MET sent them (D7, server QA L2): never its clock against ours.
+/// The least a cell's forecast waits after a successful fetch (a 200, 203, 304 or cut body): 30 min in the Nordic
+/// region ([Cell::is_nordic]), 3 h elsewhere. A longer `Expires` still wins; the 5xx quick retry and the failure
+/// backoff do not use it (they retry a failed request, not a cached answer).
+fn forecast_floor(cell: Cell) -> Duration {
+    Duration::minutes(if cell.is_nordic() {
+        FORECAST_FLOOR_NORDIC_MINUTES
+    } else {
+        FORECAST_FLOOR_WORLD_MINUTES
+    })
+}
+
+/// `max(now + (Expires − Date), now + the cell's floor)`, before the jitter.
+fn forecast_next(cell: Cell, now: DateTime<Utc>, expires_in: Option<Duration>) -> DateTime<Utc> {
+    let floor = now + forecast_floor(cell);
+    expires_in.map_or(floor, |left| (now + left).max(floor))
+}
+
 fn expires_in(response: &SourceResponse) -> Option<Duration> {
     let left = http_date(response.expires.as_deref())? - http_date(response.date.as_deref())?;
     (left >= Duration::zero()).then_some(left)
@@ -386,9 +409,7 @@ async fn fill_forecast(
     }
     let now = state.weather.now();
     let next_after = |response: &SourceResponse| {
-        let floor = now + Duration::minutes(FORECAST_FLOOR_MINUTES);
-        expires_in(response).map_or(floor, |left| (now + left).max(floor))
-            + jitter(FORECAST_JITTER_SECONDS)
+        forecast_next(cell, now, expires_in(response)) + jitter(FORECAST_JITTER_SECONDS)
     };
     let fetched = match &result {
         Ok(response) if matches!(response.status, 200 | 203) => {
@@ -719,6 +740,91 @@ mod tests {
             date: Some("Wed, 04 Nov 2026 20:00:00 GMT".to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_floor_is_30_minutes_in_the_nordic_region_and_3_hours_outside() {
+        let cell = |lat, lon| Cell::of(lat, lon).unwrap();
+        let (oslo, cupertino) = (cell(59.9412, 10.7598), cell(37.42, -122.08));
+        assert!(oslo.is_nordic() && !cupertino.is_nordic());
+        let t = now();
+        assert_eq!(forecast_next(oslo, t, None), t + Duration::minutes(30));
+        assert_eq!(
+            forecast_next(oslo, t, Some(Duration::minutes(5))),
+            t + Duration::minutes(30)
+        );
+        assert_eq!(forecast_next(cupertino, t, None), t + Duration::hours(3));
+        assert_eq!(
+            forecast_next(cupertino, t, Some(Duration::minutes(30))),
+            t + Duration::hours(3)
+        );
+        // A longer `Expires` wins in both.
+        assert_eq!(
+            forecast_next(oslo, t, Some(Duration::hours(2))),
+            t + Duration::hours(2)
+        );
+        assert_eq!(
+            forecast_next(cupertino, t, Some(Duration::hours(5))),
+            t + Duration::hours(5)
+        );
+    }
+
+    /// The boxes are cut tight (compliance first): the Nordic towns at 30 min, every neighbour at 3 h; a box's edge
+    /// cells are inclusive and one step beyond is out.
+    #[test]
+    fn the_nordic_boxes() {
+        let nordic = |lat, lon| Cell::of(lat, lon).unwrap().is_nordic();
+        for (name, lat, lon) in [
+            ("Oslo", 59.91, 10.75),
+            ("Stockholm", 59.33, 18.07),
+            ("Copenhagen", 55.68, 12.57),
+            ("Helsinki", 60.17, 24.94),
+            ("Kirkenes", 69.73, 30.05),
+            ("Vardo", 70.37, 31.1),
+            ("Rønne, Bornholm", 55.1, 14.7),
+            ("Tórshavn", 62.01, -6.77),
+            ("Longyearbyen", 78.22, 15.65),
+            ("Reykjavik", 64.15, -21.94),
+            ("Jan Mayen", 71.0, -8.5),
+            ("Gedser", 54.57, 11.93),
+            ("Haparanda", 65.84, 24.14),
+            ("Joensuu", 62.6, 29.76),
+            ("Lappeenranta", 61.06, 28.19),
+            ("Kuusamo", 65.97, 29.19),
+            ("Tromsø", 69.65, 18.96),
+            ("Skagen", 57.72, 10.59),
+            ("Malmö", 55.6, 13.0),
+        ] {
+            assert!(nordic(lat, lon), "{name}");
+        }
+        for (name, lat, lon) in [
+            ("Tallinn", 59.44, 24.75),
+            ("Kuressaare", 58.25, 22.48),
+            ("Riga", 56.95, 24.1),
+            ("Vilnius", 54.69, 25.28),
+            ("Murmansk", 68.97, 33.07),
+            ("St Petersburg", 59.93, 30.34),
+            ("Vyborg", 60.71, 28.75),
+            ("Alakurtti", 67.0, 30.34),
+            ("Petrozavodsk", 61.78, 34.35),
+            ("Kaliningrad", 54.71, 20.51),
+            ("Lerwick", 60.15, -1.14),
+            ("Flensburg", 54.78, 9.44),
+            ("Kiel", 54.32, 10.14),
+            ("Gdańsk", 54.35, 18.65),
+            ("Nuuk", 64.18, -51.72),
+            ("Scoresbysund", 70.48, -21.96),
+            ("Franz Josef Land", 80.5, 55.0),
+            ("Berlin", 52.52, 13.4),
+            ("London", 51.5, -0.12),
+            ("dateline", 60.0, 179.9),
+            ("far south", -33.9, 18.4),
+        ] {
+            assert!(!nordic(lat, lon), "{name}");
+        }
+        // The inclusive edges of a box (Denmark Jutland): its corners are in, a step out is not.
+        assert!(nordic(54.8, 8.0) && nordic(57.8, 11.2) && nordic(54.8, 11.2) && nordic(57.8, 8.0));
+        assert!(!nordic(54.78, 9.0) && !nordic(57.82, 9.0) && !nordic(56.0, 7.96));
     }
 
     fn now() -> DateTime<Utc> {

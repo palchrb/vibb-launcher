@@ -533,6 +533,75 @@ async fn a_cut_body_keeps_its_whole_hours_until_expires() {
     assert!(at(&next) >= now() + Duration::minutes(59), "{next:?}");
 }
 
+/// MET's per-location minimum (2026-11-05): outside the Nordic region a cell waits 3 h after a 200, a 304 and a cut
+/// body, though MET's `Expires` says 30 min; the Nordic cells keep 30 (`the_cache_follows_mets_rules`).
+#[tokio::test]
+async fn a_cell_outside_the_nordic_region_waits_three_hours() {
+    let app = TestApp::new().await;
+    app.state.weather.set_now(now());
+    let url = "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=37.42&lon=-122.08";
+    let ok = || {
+        met_ok(
+            "Tue, 03 Nov 2026 14:00:22 GMT",
+            "Tue, 03 Nov 2026 14:29:48 GMT",
+        )
+    };
+    app.fetch.canned(url, ok());
+    let (id, token) = phone(&app, "w", true, "interval").await;
+    fix(&app, id, 37.42, -122.08, Duration::minutes(5), None).await;
+    let next = || async {
+        let (checked, next): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT checked_at, next_fetch_at FROM weather_cells WHERE lat_i = 1871 AND lon_i = -3052",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        (at(&checked), at(&next))
+    };
+    let within = |t: DateTime<Utc>, (_, next): (DateTime<Utc>, DateTime<Utc>)| {
+        assert!(
+            next >= t + Duration::hours(3) && next <= t + Duration::hours(3) + Duration::minutes(2),
+            "{next}"
+        );
+    };
+    assert_eq!(weather(&app, &token).await["status"], "ok");
+    within(now(), next().await);
+    // Asked again at 2 h 59 min: nothing goes out. Past 3 h: a 304 takes another 3 h.
+    app.state.weather.set_now(now() + Duration::minutes(179));
+    weather(&app, &token).await;
+    assert_eq!(met_asks(&app), 1);
+    let later = now() + Duration::minutes(183);
+    app.state.weather.set_now(later);
+    app.fetch.canned_once(
+        url,
+        Canned {
+            status: 304,
+            ..Default::default()
+        },
+    );
+    weather(&app, &token).await;
+    assert_eq!(met_asks(&app), 2);
+    within(later, next().await);
+    // A cut body, too.
+    let later = later + Duration::minutes(190);
+    app.state.weather.set_now(later);
+    // The phone's last fix is hours old by now: a fresh one.
+    fix(
+        &app,
+        id,
+        37.42,
+        -122.08,
+        Duration::minutes(-(183 + 190 - 5)),
+        None,
+    )
+    .await;
+    let mut cut = ok();
+    cut.body.truncate(cut.body.len() * 38 / 65);
+    app.fetch.canned_once(url, cut);
+    weather(&app, &token).await;
+    within(later, next().await);
+}
+
 async fn hours_json(app: &TestApp) -> String {
     sqlx::query_scalar("SELECT hours_json FROM weather_cells WHERE lat_i = 2997 AND lon_i = 269")
         .fetch_one(&app.db)
