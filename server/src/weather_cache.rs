@@ -7,9 +7,9 @@
 //!   read again under the lock). A phone waits at most [FORECAST_WAIT]; the fetch carries on in its own task.
 //! - **MET's terms**: its own User-Agent (`ForkConfig::met_user_agent`, D8), a 203 logged once a day, a 429 backs off
 //!   (`Retry-After`, at least 10 min, doubling to 2 h), a 403 waits 6 h, other failures 5-60 min (never before a
-//!   `Retry-After`). A 500, 502, 503 or 504 is first tried again within seconds ([quick_wait], 2026-11-04: MET's edge
+//!   `Retry-After`, two hours at most). A 500, 502, 503 or 504 is first tried again within seconds ([quick_wait], 2026-11-04: MET's edge
 //!   answers a cold point 503, `Retry-After: 5`, then serves it): after its `Retry-After` when that is 0-60 s (at
-//!   least 1 s), else 5 s then 15 s, at most [QUICK_TRIES] requests a fetch; the server-wide lock is let go while it
+//!   least 1 s), else 5 s then 15 s, at most [QUICK_TRIES] requests a fetch (a phone whose cell has hours doesn't wait for them); the server-wide lock is let go while it
 //!   waits, the row's `next_fetch_at` meanwhile set to the retry so no other ask fetches the cell. A body MET cut short
 //!   keeps its whole hours (`weather::parse_cut_forecast`, code `cut`) and is asked again only after its `Expires`.
 //!   The old hours stay.
@@ -121,6 +121,11 @@ fn stamp(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// [stamp] rounded up to the whole second: a wait stamped as `next_fetch_at` never ends before it is over.
+fn stamp_up(t: DateTime<Utc>) -> String {
+    stamp(t + Duration::nanoseconds(999_999_999))
+}
+
 fn parse_stamp(text: Option<&str>) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(text?)
         .ok()
@@ -153,6 +158,8 @@ fn retry_after_seconds(response: &SourceResponse, now: DateTime<Utc>) -> Option<
     let text = response.retry_after.as_deref()?.trim();
     let seconds = match text.parse::<i64>() {
         Ok(seconds) => seconds,
+        // Digits too many for a number are a very long wait, not garbage.
+        Err(_) if text.bytes().all(|b| b.is_ascii_digit()) && !text.is_empty() => i64::MAX,
         Err(_) => {
             let at = http_date(Some(text))?;
             (at - http_date(response.date.as_deref()).unwrap_or(now)).num_seconds()
@@ -256,8 +263,11 @@ pub async fn forecast(state: &AppState, cell: Cell) -> Result<Option<CellRow>, s
     if !row.due(now) {
         return Ok(Some(row));
     }
-    let task = tokio::spawn(fill_forecast(state.clone(), cell));
-    let _ = tokio::time::timeout(state.weather.forecast_wait, task).await;
+    // The fetch carries on in its own task. The ask waits for it to end (the sender dropped), for its signal that the
+    // row already has hours and only a quick retry is left, or for [FORECAST_WAIT].
+    let (early, settled) = tokio::sync::oneshot::channel();
+    tokio::spawn(fill_forecast(state.clone(), cell, Some(early)));
+    let _ = tokio::time::timeout(state.weather.forecast_wait, settled).await;
     read_row(&state.db, cell).await
 }
 
@@ -283,7 +293,11 @@ enum Fetched {
 /// worth a quick retry ([quick_wait]) lets the lock go for the wait, with the row's `next_fetch_at` set to the retry
 /// (no other ask fetches the cell meanwhile), and goes on only while the row still says so (an erase, or a newer fetch,
 /// ends it).
-async fn fill_forecast(state: AppState, cell: Cell) {
+async fn fill_forecast(
+    state: AppState,
+    cell: Cell,
+    mut early: Option<tokio::sync::oneshot::Sender<()>>,
+) {
     let mut one = state.weather.forecast_lock.lock().await;
     let mut row = match read_row(&state.db, cell).await {
         Ok(Some(row)) => row,
@@ -324,7 +338,7 @@ async fn fill_forecast(state: AppState, cell: Cell) {
         else {
             break result;
         };
-        let retry_at = stamp(now + wait);
+        let retry_at = stamp_up(now + wait);
         let held = sqlx::query("UPDATE weather_cells SET next_fetch_at = ? WHERE id = ?")
             .bind(&retry_at)
             .bind(row.id)
@@ -334,12 +348,23 @@ async fn fill_forecast(state: AppState, cell: Cell) {
             tracing::error!(cell = row.id, %err, "weather: couldn't store a forecast fetch");
             return;
         }
+        // A phone that has hours to show needn't wait for the retry.
+        if !row.hours().is_empty()
+            && let Some(early) = early.take()
+        {
+            let _ = early.send(());
+        }
         drop(one);
         let seconds = u32::try_from(wait.num_seconds()).unwrap_or(u32::MAX);
         tokio::time::sleep(state.weather.quick_second.saturating_mul(seconds)).await;
         one = state.weather.forecast_lock.lock().await;
         row = match read_row(&state.db, cell).await {
-            Ok(Some(row)) if row.next_fetch_at.as_deref() == Some(retry_at.as_str()) => row,
+            Ok(Some(again))
+                if again.id == row.id
+                    && again.next_fetch_at.as_deref() == Some(retry_at.as_str()) =>
+            {
+                again
+            }
             // Erased, or another fetch wrote the row meanwhile.
             Ok(_) => return,
             Err(err) => {
@@ -395,11 +420,23 @@ async fn fill_forecast(state: AppState, cell: Cell) {
             {
                 Some((json, note)) => Fetched::Hours {
                     json,
-                    last_modified: response.last_modified.clone(),
+                    // A cut body's validator is never sent back: MET could answer 304 and keep the cut.
+                    last_modified: response.last_modified.clone().filter(|_| note.is_none()),
                     next: next_after(response),
                     note,
                 },
-                None => unusable(&row, now, next_after(response)),
+                None => {
+                    // Only the length and the kind of it, never the content.
+                    let (bytes, kind) = (response.body.len(), weather::body_kind(&response.body));
+                    tracing::warn!(
+                        cell = row.id,
+                        bytes,
+                        kind,
+                        truncated = response.truncated,
+                        "weather: MET's forecast was unreadable"
+                    );
+                    unusable(&row, now, next_after(response))
+                }
             }
         }
         Ok(response) if response.status == 304 => Fetched::NotModified {
@@ -446,7 +483,7 @@ async fn fill_forecast(state: AppState, cell: Cell) {
         Fetched::NotModified { next } => {
             sqlx::query(
                 "UPDATE weather_cells SET checked_at = ?, next_fetch_at = ?, failures = 0, \
-                 last_error = NULL WHERE id = ?",
+                 last_error = CASE WHEN last_error = 'cut' THEN last_error END WHERE id = ?",
             )
             .bind(stamp(now))
             .bind(stamp(*next))
@@ -506,8 +543,9 @@ fn failed(
             retry.unwrap_or(Duration::zero()).max(doubled)
         }
         "status_403" => Duration::hours(6),
+        // A 5xx's `Retry-After` is a floor, but one header never holds a cell longer than two hours.
         _ => Duration::minutes([5, 10, 20, 40, 60][failures.min(4) as usize])
-            .max(retry.unwrap_or(Duration::zero())),
+            .max(retry.unwrap_or(Duration::zero()).min(Duration::hours(2))),
     };
     Fetched::Failed {
         code,
@@ -700,19 +738,13 @@ mod tests {
         assert_eq!(wait("60"), Some(Duration::seconds(60)));
         assert_eq!(wait("61"), None, "longer than the cap: the old backoff");
         assert_eq!(wait("86400"), None);
+        assert_eq!(wait("99999999999999999999"), None, "too many digits: long");
         assert_eq!(
             wait("Wed, 04 Nov 2026 20:00:20 GMT"),
             Some(Duration::seconds(20))
         );
         assert_eq!(wait("Wed, 04 Nov 2026 20:05:00 GMT"), None);
-        for garbage in [
-            "-5",
-            "soon",
-            "5.5",
-            "",
-            "99999999999999999999",
-            "Wed, 04 Nov 2026 19:59:00 GMT",
-        ] {
+        for garbage in ["-5", "soon", "5.5", "", "Wed, 04 Nov 2026 19:59:00 GMT"] {
             assert_eq!(wait(garbage), Some(Duration::seconds(5)), "{garbage:?}");
         }
     }
@@ -738,7 +770,7 @@ mod tests {
                 "{status}"
             );
         }
-        // The old backoff, at least a 5xx's longer `Retry-After`.
+        // The old backoff, at least a 5xx's longer `Retry-After` (two hours at most).
         let row = CellRow {
             id: 1,
             hours_json: None,
@@ -747,7 +779,12 @@ mod tests {
             next_fetch_at: None,
             failures: 0,
         };
-        for (retry, wait) in [(None, 5), (Some(120), 5), (Some(600), 10)] {
+        for (retry, wait) in [
+            (None, 5),
+            (Some(120), 5),
+            (Some(600), 10),
+            (Some(86_400), 120),
+        ] {
             let Fetched::Failed { next, .. } =
                 failed(&row, "status_5xx", now(), retry.map(Duration::seconds))
             else {

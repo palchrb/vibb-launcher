@@ -484,6 +484,57 @@ fn a_cut_body_keeps_its_whole_hours() {
         Err(Unreadable),
         "no properties"
     );
+    // The keys are found by structure: a `properties` or `timeseries` inside a string or a deeper object is not them.
+    for head in [
+        r#"{"type":"Feature","geometry":{"properties":{"timeseries":[{"time":"2026-11-03T13:00:00Z","data":{"next_1_hours":{}}},"#,
+        r#"{"note":"\"properties\":{\"timeseries\":[","properties":{"meta":{"timeseries":[{"time":"2026-11-03T13:00:00Z","data":{"next_1_hours":{}}},"#,
+    ] {
+        assert_eq!(
+            parse_cut_forecast(head.as_bytes()),
+            Err(Unreadable),
+            "{head}"
+        );
+    }
+}
+
+/// A forecast that ends early says nothing about what comes after its last hour: a window, period or day that runs
+/// past it is unknown (null, no words), never dry (M-2). A whole forecast reaches further than any window asked.
+#[test]
+fn what_runs_past_the_last_hour_is_unknown() {
+    let whole = recorded_hours();
+    let oslo: Tz = "Europe/Oslo".parse().unwrap();
+    // The last hour starts 09:00 on 2026-11-04 local (08:00Z) and ends at 10:00.
+    let cut_at = utc("2026-11-04T08:00:00Z").timestamp();
+    let short: Vec<Hour> = whole.iter().filter(|h| h.t <= cut_at).cloned().collect();
+    let date = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let periods_of = |hours: &[Hour]| periods(hours, oslo, date);
+    assert!(periods_of(&whole).iter().all(|p| p.precip_mm.is_some()));
+    // The morning (06-12) is cut at 10:00 local: unknown, all null - as is every later period.
+    for period in periods_of(&short) {
+        assert_eq!(
+            (period.symbol, period.temp, period.precip_mm),
+            (None, None, None),
+            "{}",
+            period.part
+        );
+    }
+    // The day before the cut is whole: its periods and its low and high stay.
+    let today = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+    let cell = Cell::of(59.94, 10.76).unwrap();
+    assert_eq!(
+        day(&short, oslo, today, cell).low,
+        day(&whole, oslo, today, cell).low
+    );
+    assert!(day(&whole, oslo, date, cell).high.is_some());
+    let cut_day = day(&short, oslo, date, cell);
+    assert_eq!((cut_day.low, cut_day.high), (None, None));
+    // Tomorrow's words from the evening before need tomorrow's 07-18; the cut has 07-10 only.
+    let evening = utc("2026-11-03T20:00:00Z");
+    assert!(words(&short, oslo, evening).is_none_or(|w| w.form != Form::Tomorrow));
+    // Tonight's span on 11-04 (18-24) is past the cut; whole, it is there.
+    let night = utc("2026-11-04T19:00:00Z");
+    assert!(tonight(&whole, oslo, night).is_some());
+    assert!(tonight(&short, oslo, night).is_none());
 }
 
 #[test]

@@ -111,3 +111,16 @@ generic failed line), so the next occurrence can be told from a shape change.
 - `weather_cache.rs:152`: `Retry-After: 99999999999999999999` (overflows i64) falls to the ladder, although "over 60 s ends the quick
   tries" would be the consistent reading; the unit test pins the ladder for it.
 - Fixture README: "recorded 21:18 UTC" next to `updated_at` 19:18Z in the body; correct (model run vs fetch) but worth one word.
+
+## Fix round (2026-11-04, same branch)
+
+| Finding | Fix |
+|---|---|
+| M-1 | A cut body is stored with `last_modified = NULL` (`weather_cache.rs`, `Fetched::Hours`), so the next ask is unconditional; the 304 branch keeps `last_error = 'cut'` (`CASE WHEN last_error = 'cut'`). Test `a_cut_body_over_stored_hours_keeps_them_and_sends_no_validator` (also: the old hours past a cut stay, byte for byte). |
+| M-2 | `weather::covers(hours, tz, end)`: the last stored hour must end at or after the window's end. `span` (periods, tonight's span), `words` (today's window, tonight, tomorrow), `tonight` and `day`'s low and high return unknown (null period, no words, no card) otherwise. The launcher contract (`weather.json`) is unchanged: every vector and the launcher copy still pass, so no launcher run was needed. Test `what_runs_past_the_last_hour_is_unknown`. |
+| L-1 | `failed()`: a 5xx's `Retry-After` floor is at most 2 h (unit test: 86400 gives 120 min). |
+| L-2 | `forecast()` waits on a one-shot the fetch task fires when it goes to sleep for a quick retry and the row has stored hours (or ends); a cell without hours waits up to `FORECAST_WAIT` as before. Test `a_phone_with_hours_does_not_wait_for_the_quick_retry` (answers in under 300 ms, a second ask makes no request, the retry lands in its task). |
+| L-3 | `stamp_up` rounds `retry_at` up to the whole second; the sleeper also compares the row id. |
+| L-4 | Tests: erase mid-wait (`an_erase_in_the_quick_retrys_wait_ends_it`), a second ask in the wait, `If-Modified-Since` on the retry, a cut over stored hours, M-1. The tests' `quick_second` is 10 ms (was 1 ms) so a 60 s `Retry-After` is 600 ms, longer than the tests' 500 ms phone wait. |
+| L-5 | The `unreadable` path logs `bytes`, `kind` (`json`, `json_prefix`, `not_json`) and `truncated`, by row id only; the log lint test still holds. |
+| nit | An all-digit `Retry-After` that overflows i64 counts as very long (ends the quick tries). `"properties"` and `"timeseries"` are found structurally (`key_at`: right depth, strings skipped; test heads with the names inside a string or a deeper object). README wording fixed. |

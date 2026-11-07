@@ -156,6 +156,16 @@ fn hours_of(series: &[serde_json::Value]) -> Result<Vec<Hour>, Unreadable> {
     Ok(hours)
 }
 
+/// What a body is, for the log (never its content): `json`, `json_prefix` (right as far as it goes, then ends) or
+/// `not_json`.
+pub fn body_kind(body: &[u8]) -> &'static str {
+    match serde_json::from_slice::<serde::de::IgnoredAny>(body) {
+        Ok(_) => "json",
+        Err(err) if err.is_eof() => "json_prefix",
+        Err(_) => "not_json",
+    }
+}
+
 /// A `complete` body MET cut short (emulator session E9, 2026-11-04: a 200 of 38 038 of ~65 000 bytes, served so from
 /// MET's cache until its `Expires`): the hourly entries that arrived whole, read as [parse_forecast] reads them. Only
 /// JSON that is right as far as it goes and ends early, with `properties.timeseries` before the cut and at least one
@@ -180,14 +190,9 @@ fn read_cut_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
             .count()
     };
     // The head as MET writes it: `{"type":"Feature","geometry":{...},"properties":{"meta":{...},"timeseries":[`.
-    const PROPERTIES: &[u8] = b"\"properties\"";
-    const SERIES: &[u8] = b"\"timeseries\"";
-    let find = |bytes: &[u8], what: &[u8]| bytes.windows(what.len()).position(|w| w == what);
-    let props = find(body, PROPERTIES).ok_or(Unreadable)?;
-    let start = props + find(&body[props..], SERIES).ok_or(Unreadable)? + SERIES.len();
+    let props = key_at(body, 0, 1, b"properties").ok_or(Unreadable)?;
+    let start = props + key_at(&body[props..], 1, 2, b"timeseries").ok_or(Unreadable)?;
     let mut rest = &body[start..];
-    rest = &rest[ws(rest)..];
-    rest = rest.strip_prefix(b":").ok_or(Unreadable)?;
     rest = &rest[ws(rest)..];
     rest = rest.strip_prefix(b"[").ok_or(Unreadable)?;
     let mut series = Vec::new();
@@ -207,6 +212,49 @@ fn read_cut_forecast(body: &[u8]) -> Result<Vec<Hour>, Unreadable> {
         }
     }
     hours_of(&series)
+}
+
+/// The offset just past the colon after the object key `name` that sits `depth` brackets deep (`bytes[from..]` starts
+/// at depth `from_depth`), by a scan that keeps strings and brackets: a name inside a string or a deeper object never
+/// matches, and the scan ends when the object holding the key closes. Only for JSON already known to be right as far
+/// as it goes ([read_cut_forecast]).
+fn key_at(bytes: &[u8], from_depth: usize, depth: usize, name: &[u8]) -> Option<usize> {
+    let mut level = from_depth;
+    let mut entered = from_depth >= depth;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' | b'[' => {
+                level += 1;
+                entered |= level >= depth;
+            }
+            b'}' | b']' => {
+                level = level.saturating_sub(1);
+                if entered && level < depth {
+                    return None;
+                }
+            }
+            b'"' => {
+                let begin = i + 1;
+                i = begin;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                let text = bytes.get(begin..i)?;
+                let after = bytes.get(i + 1..)?;
+                let skipped = after
+                    .iter()
+                    .take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+                    .count();
+                if level == depth && text == name && after.get(skipped) == Some(&b':') {
+                    return Some(i + 1 + skipped + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The stored hours after a new fetch: the new ones win; the old ones before the new series' first hour are kept
@@ -354,6 +402,17 @@ fn word_day(tz: Tz, at: DateTime<Utc>) -> (NaiveDate, bool) {
     }
 }
 
+/// Whether the stored hours reach the local `end`: the last whole hour ends at or after it. A window or period that
+/// runs past it is unknown, not dry - a forecast MET cut short (or an old one) says nothing about what comes after its
+/// last hour, so the words, the periods and the day's low and high leave such a part out. A whole body reaches about
+/// 60 h ahead, further than any window the card asks for, so it never changes that.
+fn covers(hours: &[Hour], tz: Tz, end: NaiveDateTime) -> bool {
+    hours.iter().map(|h| h.t).max().is_some_and(|t| {
+        let last_end = DateTime::from_timestamp(t + 3600, 0).unwrap_or_default();
+        local(tz, last_end) >= end
+    })
+}
+
 /// The hours whose local start is in `[start, end)`.
 fn hours_between(hours: &[Hour], tz: Tz, start: NaiveDateTime, end: NaiveDateTime) -> Vec<&Hour> {
     hours
@@ -389,6 +448,9 @@ pub fn words(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Words> {
     let t = local(tz, at);
     let (day, tomorrow) = word_day(tz, at);
     if !tomorrow {
+        if !covers(hours, tz, at_hour(day, WINDOW.end)) {
+            return None;
+        }
         let window = hours_between(
             hours,
             tz,
@@ -400,7 +462,15 @@ pub fn words(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Words> {
         return judge(&window, Scope::Today { after_seven });
     }
     let (start, end) = evening_span(tz, at);
-    judge(&hours_between(hours, tz, start, end), Scope::Tonight).or_else(|| {
+    let evening = if covers(hours, tz, end) {
+        judge(&hours_between(hours, tz, start, end), Scope::Tonight)
+    } else {
+        None
+    };
+    evening.or_else(|| {
+        if !covers(hours, tz, at_hour(day, WINDOW.end)) {
+            return None;
+        }
         let window = hours_between(
             hours,
             tz,
@@ -576,7 +646,7 @@ fn span(
     end: NaiveDateTime,
 ) -> Period {
     let inside = hours_between(hours, tz, start, end);
-    if inside.is_empty() {
+    if inside.is_empty() || !covers(hours, tz, end) {
         return Period {
             part,
             symbol: None,
@@ -611,6 +681,9 @@ pub fn tonight(hours: &[Hour], tz: Tz, at: DateTime<Utc>) -> Option<Period> {
         return None;
     }
     let (start, end) = evening_span(tz, at);
+    if !covers(hours, tz, end) {
+        return None;
+    }
     let mut rest = span(hours, tz, "evening", start, end);
     if end - start < Duration::hours(6)
         && let Some(symbol) = evening_symbol(&hours_between(hours, tz, start, end))
@@ -777,11 +850,13 @@ pub fn day(hours: &[Hour], tz: Tz, date: NaiveDate, cell: Cell) -> Day {
         )
     });
     let (lat, lon) = cell.centre();
+    // A day the stored hours don't reach the end of has no low and high yet (the highest hour may be the next).
+    let whole = covers(hours, tz, at_hour(date + Duration::days(1), 0));
     Day {
         date: date.format("%Y-%m-%d").to_string(),
         periods: periods(hours, tz, date),
-        low: low.map(degrees),
-        high: high.map(degrees),
+        low: low.filter(|_| whole).map(degrees),
+        high: high.filter(|_| whole).map(degrees),
         dark: dusk(lat, lon, date).into(),
     }
 }

@@ -10,7 +10,7 @@ the network.
   dry).
 
 - `met_complete_mountain_view.json` - the same product for `lat=37.42&lon=-122.08` (Mountain View, the emulator's
-  default position), recorded on 2026-11-04 at 21:18 UTC, whole and as sent (minified by MET): 90 entries, 63 hourly,
+  default position), fetched on 2026-11-04 at 21:18 UTC (its model run is `updated_at` 19:18Z), whole and as sent (minified by MET): 90 entries, 63 hourly,
   ECMWF's shape outside MEPS (no `wind_speed_of_gust`, no `probability_of_precipitation`, the last five hourly entries
   without `next_6_hours`). Sent with `Date: Wed, 04 Nov 2026 21:18:08 GMT`, `Expires: Wed, 04 Nov 2026 21:48:16 GMT`.
   Read by `weather::tests::the_mountain_view_forecast_reads` only, not by the contract.
