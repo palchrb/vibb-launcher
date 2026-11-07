@@ -19,6 +19,16 @@ pub struct Cell {
     pub lon_i: i32,
 }
 
+/// MET's "Nordic region" as one bounding box in cell steps (inclusive; a cell of 0.02° x 0.04°): latitude 54.5° to
+/// 81.0° (`54.5 / 0.02 = 2725`, `81 / 0.02 = 4050`), longitude -25.0° to 32.0° (`-25 / 0.04 = -625`, `32 / 0.04 = 800`).
+/// It covers Norway with Svalbard and Jan Mayen, Sweden, Finland, Denmark (Gedser, 54.56°, is in) and Iceland.
+/// No coverage check exists to reuse (the nowcast learns it from MET's 422), and MET publishes no coordinates for
+/// its "Nordic region" in the mail of 2026-11-05, so this is our reading of the MEPS/Nowcast area, rounded to the
+/// countries. A box overshoots: the Baltic states, north-west Russia, the Faroes, Shetland and Greenland's east coast
+/// fall inside it too, and so do get the 30-minute floor; widen or narrow it here, nowhere else.
+pub const NORDIC_LAT_I: std::ops::RangeInclusive<i32> = 2725..=4050;
+pub const NORDIC_LON_I: std::ops::RangeInclusive<i32> = -625..=800;
+
 impl Cell {
     /// The cell of a position; `None` for a value that isn't a finite number.
     pub fn of(lat: f64, lon: f64) -> Option<Cell> {
@@ -43,6 +53,12 @@ impl Cell {
     pub fn query(&self) -> String {
         let (lat, lon) = self.coordinates();
         format!("lat={lat}&lon={lon}")
+    }
+
+    /// Whether the cell is in MET's Nordic region (see [NORDIC_LAT_I]): the Locationforecast terms' 30-minute
+    /// minimum applies there, 3 hours everywhere else (2026-11-05).
+    pub fn is_nordic(&self) -> bool {
+        NORDIC_LAT_I.contains(&self.lat_i) && NORDIC_LON_I.contains(&self.lon_i)
     }
 
     /// The cell's centre, for the dusk.

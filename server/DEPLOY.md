@@ -856,7 +856,8 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
 ## Weather on the lock screen (design 75, migrations 0122 and 0126)
 
 Device › Weather turns it on per phone (off by default). The server then asks, only when a phone asks it and its
-cached answer is due (about once an hour per grid cell of about 2 x 2 km), one outside service:
+cached answer is due (per grid cell of about 2 x 2 km: at least 30 minutes apart in the Nordic region, at least 3 hours
+apart in the rest of the world, or longer when MET's own cache headers say so - MET's terms of 2026-11-05), one outside service:
 
 - **MET Norway** (`api.met.no`, HTTPS 443): Locationforecast 2.0 for the forecast, Nowcast 2.0 when the kid opens the
   card. MET's terms ask every client to identify itself with a way to contact its operator, and block clients that
