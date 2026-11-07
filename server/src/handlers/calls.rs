@@ -535,14 +535,25 @@ pub(crate) struct CallReport {
     pub screening_hint: bool,
     /// Waiting for the phone to confirm a role change (reload the page).
     pub auto_refresh: bool,
+    /// The emergency call has left Attention: a parent has read its inbox event, or 24 h have
+    /// passed ([EMERGENCY_ATTENTION_HOURS]). The calls page keeps the finding for 7 days.
+    pub emergency_left_attention: bool,
 }
 
 impl CallReport {
-    /// What each finding is about (the Attention rows).
+    /// What each finding is about (the Attention rows). The calls page reads `findings` itself.
     pub fn problems(&self) -> Vec<CallProblem> {
-        self.findings.iter().map(Finding::problem).collect()
+        self.findings
+            .iter()
+            .map(Finding::problem)
+            .filter(|p| !(self.emergency_left_attention && *p == CallProblem::EmergencyCall))
+            .collect()
     }
 }
+
+/// How long an emergency call stays in Attention at most (the inbox event's push lives that
+/// long, `Kind::EmergencyCall.ttl()`); the calls page keeps it for 7 days.
+pub(crate) const EMERGENCY_ATTENTION_HOURS: i64 = 24;
 
 /// One thing the last report says about calls, with what its words need. Nothing a phone sent is
 /// shown as visible text except as escaped data behind an ⓘ (a package name, the phone's error).
@@ -796,6 +807,7 @@ pub(crate) async fn call_report(
         findings: Vec::new(),
         screening_hint: false,
         auto_refresh: false,
+        emergency_left_attention: false,
     };
     let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT capabilities_json, call_state_json, reported_at FROM device_status \
@@ -829,6 +841,12 @@ pub(crate) async fn call_report(
         && now - at < chrono::Duration::days(7)
     {
         findings.push(Finding::EmergencyCall { at });
+        // Out of Attention after a day, or once any parent has read this call's inbox event
+        // (its dedup key is the call's instant, `parent_events::Builder::emergency_call`). No
+        // event (the switch is off, a clamped clock) = the day alone.
+        report.emergency_left_attention = now - at
+            >= chrono::Duration::hours(EMERGENCY_ATTENTION_HOURS)
+            || crate::parent_events::emergency_call_read(&state.db, policy.device_id, at).await?;
     }
     if let Some(until) = text("callback_window_until").and_then(|t| parse_time(&t))
         && until > now
@@ -952,7 +970,7 @@ pub(crate) async fn call_report(
 /// this, never from the warning's first sentence (package names, 40 words).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallProblem {
-    /// An emergency call in the last 7 days.
+    /// An emergency call in the last 7 days (its Attention row: until read, 24 h at most).
     EmergencyCall,
     /// The emergency services' callback window is open.
     CallbackWindow,
