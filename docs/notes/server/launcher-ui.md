@@ -147,11 +147,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `MET_CONTACT`), the only outside service the weather asks. A cell is fetched only when asked and past
   `max(now + (Expires − Date), now + the cell's floor) + 0-120 s`, conditionally, one forecast fetch at a time. **The floor
   is per cell** (MET's mail of 2026-11-05: the cache headers are an absolute minimum, and per location at most one fetch
-  per 30 min in the Nordic region, per 3 h elsewhere): 30 min inside `weather::NORDIC_LAT_I`/`NORDIC_LON_I` (one box,
-  54.5-81.0° N, 25° W-32° E in cell steps, `Cell::is_nordic`: Norway with Svalbard, Sweden, Finland, Denmark, Iceland;
-  there is no coverage check to reuse - the nowcast learns it from MET's 422 - so it is our reading of the MEPS/Nowcast
-  area, which overshoots into the Baltic states, north-west Russia, the Faroes and Greenland's east coast), 3 h outside
-  it; applied after every success (200, 203, 304 and a cut body), not to the 5xx quick retry or the failure backoff.
+  per 30 min in the Nordic region, per 3 h elsewhere): 30 min inside `weather::NORDIC_BOXES` (15 rectangles in
+  degrees, `Cell::is_nordic`, each with its known overshoot in its comment: mainland Norway, Sweden, Finland and
+  Denmark, Bornholm, Svalbard, Jan Mayen, Iceland and the Faroes). **Compliance first**: MET gives no coordinates and
+  there is no coverage check to reuse (the nowcast learns it from MET's 422), so the boxes are cut tight and a cell
+  they miss gets 3 h, which is within the terms anywhere; Estonia, Latvia, Lithuania, Russia (Kola, Karelia, St
+  Petersburg, Kaliningrad), Poland, northern Germany, Shetland and Greenland are out (Finland's eastern boxes
+  overshoot into the border strip only, no town). 3 h outside it; applied after every success (200, 203, 304 and a cut body), not to the 5xx quick retry or the failure backoff.
   Nowcast (Nordic only) is unchanged: its `Expires` (~5 min) with a 3-min least; a phone waits at
   most 6 s (the nowcast 3 s). 429 backs off (`Retry-After`, ≥ 10 min, doubling to 2 h), 403 waits 6 h, others 5-60
   min (never before a `Retry-After`, a 5xx's counted to 2 h at most); the old hours are served. **The quick retry** (2026-11-04; MET's edge answers a

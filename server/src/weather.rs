@@ -19,15 +19,69 @@ pub struct Cell {
     pub lon_i: i32,
 }
 
-/// MET's "Nordic region" as one bounding box in cell steps (inclusive; a cell of 0.02° x 0.04°): latitude 54.5° to
-/// 81.0° (`54.5 / 0.02 = 2725`, `81 / 0.02 = 4050`), longitude -25.0° to 32.0° (`-25 / 0.04 = -625`, `32 / 0.04 = 800`).
-/// It covers Norway with Svalbard and Jan Mayen, Sweden, Finland, Denmark (Gedser, 54.56°, is in) and Iceland.
-/// No coverage check exists to reuse (the nowcast learns it from MET's 422), and MET publishes no coordinates for
-/// its "Nordic region" in the mail of 2026-11-05, so this is our reading of the MEPS/Nowcast area, rounded to the
-/// countries. A box overshoots: the Baltic states, north-west Russia, the Faroes, Shetland and Greenland's east coast
-/// fall inside it too, and so do get the 30-minute floor; widen or narrow it here, nowhere else.
-pub const NORDIC_LAT_I: std::ops::RangeInclusive<i32> = 2725..=4050;
-pub const NORDIC_LON_I: std::ops::RangeInclusive<i32> = -625..=800;
+/// One rectangle of MET's Nordic region, in degrees (inclusive at the cell: a cell is 0.02° latitude by 0.04°
+/// longitude, compared by its integers).
+pub struct NordicBox {
+    pub lat: (f64, f64),
+    pub lon: (f64, f64),
+}
+
+const fn nb(lat: (f64, f64), lon: (f64, f64)) -> NordicBox {
+    NordicBox { lat, lon }
+}
+
+/// MET's "Nordic region" (its mail of 2026-11-05 gives no coordinates) as a few rectangles per country. There is no
+/// coverage check to reuse (the nowcast learns it from MET's 422), so this is our reading of the MEPS/Nowcast area.
+/// **Compliance first**: a cell no box covers gets the 3 h floor, which is within MET's terms for any place; a box that
+/// is too generous gets the 30 min floor where MET may mean 3 h. So the boxes are cut tight to the countries'
+/// mainland and named islands, and the excluded neighbours are Estonia, Latvia, Lithuania, Russia (Kola, Karelia, St
+/// Petersburg, Kaliningrad), Poland, northern Germany, Shetland and Greenland. Rectangles overshoot a little at land
+/// borders (named below); where Finnish towns sit by the border the box keeps them and the overshoot is Russian land.
+pub const NORDIC_BOXES: [NordicBox; 15] = [
+    // Norway: the south and west coast (Lindesnes 57.98 N, Utvaer 4.5 E) up to Bodo and Lofoten; east of 11 E the
+    // Sweden boxes cover the rest of the country. Overshoot: the North Sea and Skagerrak, nothing foreign.
+    nb((57.9, 69.1), (4.3, 11.0)),
+    // Norway: Troms and Finnmark (Nordkapp 71.17 N, Vardo 31.1 E, Kirkenes 30.05 E). Overshoot: Russia's Pechenga strip
+    // (about 69.4 N, 30.5-31.2 E) and Finnish Lapland, which is Nordic anyway.
+    nb((69.0, 71.2), (15.0, 31.2)),
+    // Sweden: the south to Smygehuk 55.34 N and up the east coast to 63.5 N (Gotland 19.4 E at most). The lon limit
+    // 19.6 keeps out Estonia's islands (22.5 E), Latvia (21 E), Lithuania and Kaliningrad. Overshoot: Norway, Bornholm,
+    // Aland and the Baltic Sea.
+    nb((55.3, 63.5), (10.9, 19.6)),
+    // Sweden: Norrland to Haparanda (24.17 E) and the Treriksroysa (69.06 N). Overshoot: Norway's Nordland and the
+    // Finnish west coast and Lapland (Nordic).
+    nb((63.5, 69.1), (10.9, 24.2)),
+    // Finland: the south coast and the archipelago, Aland (19.1 E) to Hamina and Vaalimaa (27.7 E). Lat 59.7 keeps out
+    // Tallinn (59.44 N), 27.9 E keeps out Vyborg (28.75 E) and St Petersburg. Overshoot: a few Estonian islets in
+    // the Gulf of Finland (Vaindloo, 59.82 N) and the Russian island Suursaari, no town.
+    nb((59.7, 61.0), (19.0, 27.9)),
+    // Finland: Lappeenranta, Imatra and Parikkala (29.5 E). Overshoot: the Russian border strip (Svetogorsk, 28.85 E).
+    nb((61.0, 62.0), (19.0, 29.7)),
+    // Finland: Joensuu, Ilomantsi (30.9 E) and Lieksa. Overshoot: the Russian strip east of the border up to 31.6 E
+    // (no town; Suojarvi, 32.4 E, and Sortavala, 30.7 E at 61.7 N, are out).
+    nb((62.0, 64.0), (19.0, 31.6)),
+    // Finland: Kuhmo, Suomussalmi, Kuusamo, Salla and Lapland to Nuorgam (70.08 N). 30.0 E keeps out Kostomuksha
+    // (30.6 E), Alakurtti (30.3 E), Kandalaksha and Murmansk. Overshoot: the Russian border strip, no town.
+    nb((64.0, 70.1), (19.0, 30.0)),
+    // Denmark: Jutland, Samso and Laeso, from the German border at Flensburg Fjord (54.8 N; Flensburg is 54.78 N and
+    // out, Kiel is out) to Skagen. Overshoot: Sylt and Fanoe's German neighbours, the sea, Swedish Kattegat coast.
+    nb((54.8, 57.8), (8.0, 11.2)),
+    // Denmark: Funen, Zealand, Lolland-Falster (Gedser 54.57 N, 11.97 E) and Moen. Overshoot: southern Sweden
+    // (Nordic), the sea; Fehmarn (54.44 N) and Kiel are out.
+    nb((54.55, 56.2), (10.5, 12.7)),
+    // Denmark: Bornholm and Christianso. Overshoot: the sea only.
+    nb((54.95, 55.35), (14.6, 15.3)),
+    // Svalbard (Bjornoya 74.4 N, Hopen, Nordaustlandet, Kvitoya 32.5 E). Overshoot: open sea; Franz Josef Land
+    // (45 E and beyond) is out.
+    nb((74.0, 81.0), (9.5, 33.5)),
+    // Jan Mayen. Greenland's coast (-20 E and west) is out.
+    nb((70.8, 71.2), (-9.2, -7.8)),
+    // Iceland with the Westman Islands and Grimsey. Overshoot: the sea; Greenland (north of 66.6 N or west of -25 E)
+    // is out.
+    nb((63.3, 66.6), (-24.6, -13.4)),
+    // The Faroes (Torshavn 62.01 N, -6.77 E). Overshoot: the sea; Shetland (Lerwick, 60.15 N, -1.14 E) is out.
+    nb((61.3, 62.4), (-7.7, -6.2)),
+];
 
 impl Cell {
     /// The cell of a position; `None` for a value that isn't a finite number.
@@ -55,10 +109,14 @@ impl Cell {
         format!("lat={lat}&lon={lon}")
     }
 
-    /// Whether the cell is in MET's Nordic region (see [NORDIC_LAT_I]): the Locationforecast terms' 30-minute
+    /// Whether the cell is in MET's Nordic region (see [NORDIC_BOXES]): the Locationforecast terms' 30-minute
     /// minimum applies there, 3 hours everywhere else (2026-11-05).
     pub fn is_nordic(&self) -> bool {
-        NORDIC_LAT_I.contains(&self.lat_i) && NORDIC_LON_I.contains(&self.lon_i)
+        let steps = |deg: f64, per_degree: f64| (deg * per_degree).round() as i32;
+        NORDIC_BOXES.iter().any(|b| {
+            (steps(b.lat.0, 50.0)..=steps(b.lat.1, 50.0)).contains(&self.lat_i)
+                && (steps(b.lon.0, 25.0)..=steps(b.lon.1, 25.0)).contains(&self.lon_i)
+        })
     }
 
     /// The cell's centre, for the dusk.

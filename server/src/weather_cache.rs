@@ -769,37 +769,62 @@ mod tests {
         );
     }
 
-    /// The box's edges are inclusive, to the cell: its lowest and highest cells are Nordic, one step beyond is not.
+    /// The boxes are cut tight (compliance first): the Nordic towns at 30 min, every neighbour at 3 h; a box's edge
+    /// cells are inclusive and one step beyond is out.
     #[test]
-    fn the_nordic_box_edges() {
+    fn the_nordic_boxes() {
         let nordic = |lat, lon| Cell::of(lat, lon).unwrap().is_nordic();
-        // Corners and one step out on each side (0.02° latitude, 0.04° longitude).
-        assert!(nordic(54.5, -25.0) && nordic(81.0, 32.0));
-        assert!(nordic(54.5, 32.0) && nordic(81.0, -25.0));
-        assert!(!nordic(54.48, 10.0) && !nordic(81.02, 10.0));
-        assert!(!nordic(60.0, -25.04) && !nordic(60.0, 32.04));
-        // Places in the countries: Longyearbyen, Reykjavik, Gedser, Vardo, Helsinki, Stockholm, Copenhagen.
-        for (lat, lon) in [
-            (78.22, 15.65),
-            (64.15, -21.94),
-            (54.57, 11.93),
-            (70.37, 31.1),
-            (60.17, 24.94),
-            (59.33, 18.07),
-            (55.68, 12.57),
+        for (name, lat, lon) in [
+            ("Oslo", 59.91, 10.75),
+            ("Stockholm", 59.33, 18.07),
+            ("Copenhagen", 55.68, 12.57),
+            ("Helsinki", 60.17, 24.94),
+            ("Kirkenes", 69.73, 30.05),
+            ("Vardo", 70.37, 31.1),
+            ("Rønne, Bornholm", 55.1, 14.7),
+            ("Tórshavn", 62.01, -6.77),
+            ("Longyearbyen", 78.22, 15.65),
+            ("Reykjavik", 64.15, -21.94),
+            ("Jan Mayen", 71.0, -8.5),
+            ("Gedser", 54.57, 11.93),
+            ("Haparanda", 65.84, 24.14),
+            ("Joensuu", 62.6, 29.76),
+            ("Lappeenranta", 61.06, 28.19),
+            ("Kuusamo", 65.97, 29.19),
+            ("Tromsø", 69.65, 18.96),
+            ("Skagen", 57.72, 10.59),
+            ("Malmö", 55.6, 13.0),
         ] {
-            assert!(nordic(lat, lon), "{lat} {lon}");
+            assert!(nordic(lat, lon), "{name}");
         }
-        // Not: Berlin, London, Madrid, the dateline, the far south.
-        for (lat, lon) in [
-            (52.52, 13.4),
-            (51.5, -0.12),
-            (40.4, -3.7),
-            (60.0, 179.9),
-            (-33.9, 18.4),
+        for (name, lat, lon) in [
+            ("Tallinn", 59.44, 24.75),
+            ("Kuressaare", 58.25, 22.48),
+            ("Riga", 56.95, 24.1),
+            ("Vilnius", 54.69, 25.28),
+            ("Murmansk", 68.97, 33.07),
+            ("St Petersburg", 59.93, 30.34),
+            ("Vyborg", 60.71, 28.75),
+            ("Alakurtti", 67.0, 30.34),
+            ("Petrozavodsk", 61.78, 34.35),
+            ("Kaliningrad", 54.71, 20.51),
+            ("Lerwick", 60.15, -1.14),
+            ("Flensburg", 54.78, 9.44),
+            ("Kiel", 54.32, 10.14),
+            ("Gdańsk", 54.35, 18.65),
+            ("Nuuk", 64.18, -51.72),
+            ("Scoresbysund", 70.48, -21.96),
+            ("Franz Josef Land", 80.5, 55.0),
+            ("Berlin", 52.52, 13.4),
+            ("London", 51.5, -0.12),
+            ("dateline", 60.0, 179.9),
+            ("far south", -33.9, 18.4),
         ] {
-            assert!(!nordic(lat, lon), "{lat} {lon}");
+            assert!(!nordic(lat, lon), "{name}");
         }
+        // The inclusive edges of a box (Denmark Jutland): its corners are in, a step out is not.
+        assert!(nordic(54.8, 8.0) && nordic(57.8, 11.2) && nordic(54.8, 11.2) && nordic(57.8, 8.0));
+        assert!(!nordic(54.78, 9.0) && !nordic(57.82, 9.0) && !nordic(56.0, 7.96));
     }
 
     fn now() -> DateTime<Utc> {
