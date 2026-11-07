@@ -138,6 +138,12 @@ data class PolicyResponse(
      * older server) = every calendar shown, no rules, nothing on the lock. Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]: without a usable cache Dagen is off. */
     val calendar: kotlinx.serialization.json.JsonElement? = null,
+    /** Design 76 D2: `{"enforce": true}` (the server's `on`), `{"enforce": false}` (the parent's off) or `{}` (the
+     * server's `watching`: keep the flag, R-1); absent from an older server or for a launcher without
+     * `server_pin_v1`. Raw JSON read by [com.kidslauncher.mdm.server.enforceOf], so nothing in it can fail the
+     * policy; taken only by the sync's fresh fetch with that response's handshake ([com.kidslauncher.mdm.server.nextFlag]),
+     * never from the cache. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val serverTls: kotlinx.serialization.json.JsonElement? = null,
     /** Per-app permissions (design 68 §3.1): `[{package_name, camera: "deny"}]`, the packages the parent switched
      * away from the default on this phone. Raw JSON read field by field by
      * [com.kidslauncher.mdm.server.appPermissionsOf], so nothing in it can fail the policy; missing or not a list

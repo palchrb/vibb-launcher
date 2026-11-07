@@ -1,0 +1,477 @@
+# Code QA: 76 - pin the server's certificate issuer (`server-issuer-pin-2`, ae3006fa)
+
+Security review by Opus, 2026-11-04, of the one commit ae3006fa on main 6061715c (61 files, both directories), against
+`docs/design/76-server-issuer-pin.md` and the design reviews `docs/review/qa-76-design.md` (C-1, H-1, H-2, R-1..R-5).
+
+Read in full: `ServerPins.kt`, `ServerPinStore.kt`, `ServerTransport.kt`, the diffs of `MdmApi.kt`, `MdmSyncWorker.kt`,
+`PowerEvents.kt`, `Provisioning.kt`, `SettingsFragmentLauncher.kt`, both network security configs, the strings, the
+tests (`ServerPinsTest`, `ServerPinTransportTest`, `TestOnlyChain`, `ServerTransportTest`, `PolicyResponseCompatTest`);
+`server_tls.rs`, migration 0129, `handlers::devices::server_tls`, the `device_api`/`device_pages`/`parent_events`
+changes, the template, both i18n files, `tests::server_tls`; the CI path lists, `CLAUDE.md`, `DEPLOY.md`. Checked
+around them: every OkHttp client in the launcher (`grep OkHttpClient.Builder`, `createMdmApi`, `createMusicServer`,
+`toServer`), `HttpURLConnection`/WebView/`@Url` uses, the music app's server references (comments only), the server's
+device-route redirects, `csrf_guard`, `settings_log::log_saves`, `foreign_keys(true)`, DEPLOY.md's listener and Caddy
+sections.
+
+**Verdict: the mechanism is right and honours every design finding; one deployment gap breaks the user's no-QR
+recovery, and the device page misleads the parent in exactly the lockout case.** The pin, the flag's rule, the fence,
+fail-closed, the ring's drop rule, the server's window and stickiness, auth and CSRF all hold. Fix H-1 and M-1 before
+merge (both small); the Lows can go in the same round.
+
+Counts: **0 Critical, 1 High, 1 Medium, 5 Low, 4 nits.**
+
+## What holds (verified)
+
+- **B is right.** Recomputed every pin with design D1's command from the ten PEMs in `src/test/resources/server_pins/`:
+  all eight `BUILTIN_PINS` (`ServerPins.kt:32-41`) match. X1, X2, USERTrust RSA/ECC and Sectigo R46/E46 are
+  byte-identical (DER) to Debian's `/etc/ssl/certs`; `root-yr.pem`, `root-ye.pem`, `root-yr-by-x1.pem` and
+  `root-ye-by-x2.pem` fetched from `letsencrypt.org/certs/gen-y/` today are byte-identical to the test copies, and each
+  cross-sign carries its root's key. YR and YE are in (C-1). The test resources hold certificates only.
+- **The pinner's host** is `origin.host` from `path.baseUrl.toHttpUrlOrNull()` (`ServerTransport.kt:194,218`), the
+  string OkHttp compares; `serverPinner` returns `null` unless `findMatchingPins(host)` is non-empty, and `null` gives
+  an interceptor that throws `ServerPinRefused` before a socket (`:106-111,219`): it fails closed, never open (H-2,
+  L-4). Tested for a name and an IP literal.
+- **Every server client goes through `toServer`'s Direct branch**: `createMdmApi` (sync, enroll, PowerEvents' shutdown
+  client, WeatherPull, AppDownloads/self-update via `downloadTrackedApp(@Url)`, AppInstallReceiver),
+  `CommandListenerService.buildClient` (the SSE, per connect) and `createMusicServer` (the courier, the music files,
+  Spotify/Storytel tokens). The only other OkHttp client is `buildDohClient` (third-party DoH). No
+  `HttpURLConnection`, `DownloadManager` or WebView reaches the server; the music app has no server client. The tsnet
+  SOCKS path is Direct with a proxy and is pinned end to end (tested through a SOCKS5 relay).
+- **The origin fence** is the first interceptor (`:200-204`) and `followRedirects(false)`/`followSslRedirects(false)`
+  are set (`:197-198`); the server's device routes never redirect (all `Redirect::` uses are PWA pages); download URLs
+  are relative (`/api/devices/apps/{id}/download`, `device_api.rs:2179`), so the fence changes nothing real.
+- **The refusal catch** matches only the `Certificate pinning failure!` prefix (`ServerPins.kt:129`); OkHttp's
+  `RetryAndFollowUpInterceptor` rethrows the original `SSLPeerUnverifiedException` (not recoverable: no second route),
+  so it is seen. `ServerPinRefused`/`ServerOriginRefused` are `IOException`s: every caller already treats them as an
+  unreachable server (`fetchPolicy` catches `Exception`, the report is best-effort, the SSE retries).
+- **The flag** (`nextFlag`, `ServerPins.kt:96-100`): on only from `enforce: true` over `PASSED`; off only from
+  `enforce: false` over `PASSED` or `TAILNET`; everything else keeps it. `PASSED` is judged on the policy response's
+  own cleaned chain (`response.raw().handshake`, `MdmSyncWorker.kt:118`), `TAILNET` from `apiPath is
+  ServerPath.Tailnet` (R-5), `NONE` (no handshake, not tailnet) keeps it. One caller, inside `if (freshPolicy != null)`
+  after `storeAcceptedPolicy` - a rejected-suspect or undecodable policy never reaches it, the cache paths never call
+  it (source scan). A MITM with a store-valid certificate outside B gets `FAILED`: it can neither switch the flag on
+  nor off, and stripping `server_tls` keeps it. `enforce` must be a JSON Boolean (`"true"`, `null`, arrays: keep).
+  Only a setup QR clears it (`Provisioning.kt:37`, before the enroll); `applyProvisioningExtras` is reached only from
+  Settings' scanner (parent code) and `onProfileProvisioningComplete` (a system broadcast). The Server URL edit and
+  the lock's "Ny oppsettkode" don't touch it.
+- **`debug_http` can't occur in a release build**: a Direct http path exists only with `BuildConfig.DEBUG`
+  (`serverPath`, `:139-140`), and even an https answer without a handshake would only keep the flag.
+- **Network security config**: the release file has no `debug-overrides` and no `src="user"` (asserted by
+  `ServerTransportTest`); `debug-overrides` lives in `src/debug/res/xml/` and Android honours it only for a
+  debuggable app; release has no `isDebuggable`, and there is no third build type.
+- **The ring** drops sent rows only after a 2xx over `PASSED` or `TAILNET` (`dropOutside`, judged on the report's own
+  handshake, `MdmSyncWorker.kt:370`): a MITM answering 2xx can't erase them (R-2a).
+- **The server**: `next_state` uses `Utc::now()` (receive time), 72 h from the first in-set sighting, 3 distinct UTC
+  days, Wi-Fi and mobile once mobile was reported (R-3); an outside row or `seen.in_set: false` sets `stopped_at`
+  without restarting the window (R-2b); `on` and `off` never move on a report; `enforcing: true` adopts `on` only from
+  `watching`; `watching` sends `{}` (R-1). `sanitize` keeps 8 rows, names 64, hosts 253 (chars), pins 1..44 of the
+  base64 alphabet, networks `wifi`/`mobile`/`other`; junk drops a row, never the report. The push is one a day per
+  phone (UTC date), never while `off`. The policy carries `server_tls` only for a `server_pin_v1` phone (last
+  report's capabilities). Concurrent intake and a parent action are each one transaction; SQLite refuses the stale
+  writer (BUSY / BUSY_SNAPSHOT), so no lost update.
+- **The parent's actions**: in the signed-in admin router, behind `csrf_guard` (every non-GET outside `/api/devices/`);
+  `off` needs the ticked box; each writes its own security event under `admin.username` (so `log_saves` skips the
+  generic `settings_saved`), `off` raises `server_tls_off` to every parent (no switch), every action sends the SSE
+  nudge, and each lands on `#server-tls` (form action and redirect), never the top of the page.
+- **Migration 0129**: one row per phone, `ON DELETE CASCADE` with `foreign_keys(true)` (`main.rs:1784`) and
+  `AUTOINCREMENT` ids, so a deleted phone's state can't pass to a new one; `CHECK` on `state`.
+- **i18n**: the server's strings are in `en.json` and `nb.json` (the only two), the launcher's in `values/` and
+  `values-nb/`; the nb labels match the app's ("Serveradresse", "Skann oppsettskode", "adminsiden").
+- **Contract**: `server/testdata/server_tls_report.json` and `launcher/app/src/test/resources/server_tls_report.json`
+  are byte-identical (`cmp`), compared by `tests::server_tls::the_contract_matches_the_launchers_copy` and
+  `ServerPinsTest`; both copies are in `launcher.yml`'s and `server-ci.yml`'s path lists and in the root `CLAUDE.md`.
+- **Test material**: no `PRIVATE KEY` anywhere in the tree; `TestOnlyChain` makes its keys in memory per run. The
+  okhttp-tls 4.12.0 entries in `verification-metadata.xml` (jar `969896cc…`, module `1b2cd709…`) equal Maven
+  Central's `.sha256` files, and the downloaded files' SHA-1 equal Central's `.sha1`.
+- **Offline**: a refusal is an unreachable server - the cached policy, time rules, the PIN lock, calls and 112
+  (Telecom, read from `CallPolicyStore`'s memory) are untouched; no code path treats a TLS failure differently from a
+  dead server.
+
+## High
+
+**H-1 - The no-QR recovery over the tailnet doesn't exist in the documented deployment.**
+- The user's requirement: recovery without the QR on the home network, by `http://<the server's Tailscale IP>`
+  (`ServerPath.Tailnet`). The code, `server_cert_explain`, `server_tls.footer` (`en.json:2239`) and the new DEPLOY.md
+  paragraph (`DEPLOY.md:222-237`) all say it "works at once".
+- But nothing answers plain http on the tailnet IP in any setup DEPLOY.md describes:
+  - the server "never listens publicly by itself: it binds loopback" (`BIND_ADDR` `127.0.0.1:3100`,
+    `DEVICE_BIND_ADDR` `127.0.0.1:3101`, DEPLOY.md's table);
+  - the Caddy example (the user's setup, "alt går via caddy") has `https` sites only: `pi.tail1234.ts.net` and
+    `:8444` bound to the tailnet IP, and the public `phones.example.com`. Caddy's port 80 only redirects its named
+    hosts to https, and a request to `http://100.x.y.z/` carries the IP as its Host, which matches no site. The
+    launcher doesn't follow redirects, so either way no policy arrives;
+  - `tailscale serve` gives https only, unless configured with `--http`;
+  - DEPLOY.md recommends `ADMIN_DEVICE_API=off` and a tailnet ACL that lets phones reach the phone port only.
+- Scenario: the check is on; one day the chain Android validates leaves B (an LE root change before a launcher update
+  ships, an Android store change, Caddy pointed at another CA). The parent follows the phone's dialog and sets Server
+  URL to `http://100.101.102.103`. Nothing comes back, and the dialog promised it would. What remains is the QR re-scan
+  with the parent code; a phone whose parent code isn't set needs a factory reset.
+- Step 0 of the design ("that the server answers plain http on its Tailscale IP from a phone") isn't done.
+  `security.md` says so, but it is the precondition of the user's decision, not a QA nicety.
+- Fix (docs and config, no new mechanism):
+  - DEPLOY.md, "The phones' certificate check": a Caddy site that serves the phone listener over plain http on the
+    tailnet IP only, for example
+    ```
+    http://100.101.102.103:3102 {
+        bind 100.101.102.103
+        reverse_proxy 127.0.0.1:3101 { header_up -Tailscale-User-Login }
+    }
+    ```
+    (or the `tailscale serve` equivalent), the ACL line that lets phones reach that port, and that the recovery
+    address is then `http://<IP>:3102`.
+  - The same address in the device page's footer and the phone's explanation (the IP and the port, not "the
+    server's Tailscale IP" alone).
+  - Do step 0 on the user's server before release: from a phone with the tailnet joined, `http://<IP>:<port>` set in
+    Settings gives "Sync now" success.
+  - Name the partial alternative in DEPLOY.md: a phone on a public name can switch to `https://<host>.ts.net:8444`
+    (`tailscale cert` is Let's Encrypt, in B). That only helps when the public certificate left B, not when B itself
+    is the problem.
+
+## Medium
+
+**M-1 - The device page says the phone took the change when it can't have; the parent is misled in the lockout
+case.**
+- The card is drawn from the server's `state` alone (`server_tls.rs:564-630`). The phone's own `phone_enforcing` is
+  stored but never shown (R-1 asked for "on (the phone's)").
+- Lockout scenario: the phone enforces and refuses the server's new chain. The parent presses "Turn off the
+  certificate check". The flash says "The certificate check is off. The phone hears it now." (`en.json:2240`), the
+  line says "Off since …, by …", and the refused alarm is hidden while `off` (`.filter(|_| row.state != State::Off)`,
+  `server_tls.rs:611`). But the phone can't hear it: its only way in is the tailnet (H-1), and the SSE nudge goes to
+  a stream it can't open. The parent waits for a phone that will never sync.
+- The other way round: "Turn the check on now" for a phone whose chain is outside B (it reports `seen` rows) shows "on
+  - only Let's Encrypt or ZeroSSL" for good, while the phone never takes `true` (`FAILED`) and stays unpinned.
+- Fix:
+  - While `phone_enforcing` differs from what the state sends (`off` with `Some(true)`, `on` with `Some(false)`), the
+    line adds "the phone hasn't taken it yet (last report …)". For `off`, add "if the phone refuses this server, set
+    its Server URL to <recovery address> (H-1)".
+  - Keep the refused alarm visible while `off` until a report with `enforcing: false` arrives.
+  - Word the flash "… The phone takes it at its next sync" rather than "hears it now".
+
+## Low
+
+**L-1 - The refused anchor is parsed from text the attacker's certificate partly writes.**
+- `pinFailureAnchor` (`ServerPins.kt:127-134`) cuts the chain block at the **first** "Pinned certificates for"
+  (`:130`). OkHttp writes each certificate's `subjectDN.name` into that block, and the leaf's subject belongs to whoever
+  got it issued.
+- Scenario: the attacker the design exists for is one with a compromised store CA key (the eMudhra case), who can mint
+  any subject. A leaf CN `ISRG Root X1 Pinned certificates for x` cuts the block inside the leaf's own line. The "last
+  line" is then the leaf's, and the ring, the report, the device page's alarm and the push all say "Refused a
+  certificate … from ISRG Root X1". The parent reads it as a store change, not an attack. The parsed pin isn't
+  checked either. A malformed pin makes the server's `sanitize` drop the row, while the phone drops it from its ring
+  after the next passing 2xx: the alarm is silently gone.
+- Fix: `substringBeforeLast("\n  Pinned certificates for ")`. Take the last line matching
+  `^    sha256/[A-Za-z0-9+/]{43}=: `, and return `null` (an "unknown issuer" refusal, still recorded) when it doesn't
+  match. Add a test row with such a subject.
+
+**L-2 - A phone of an install outside B pushes "saw a certificate…" every day, for good.**
+- R-2(c) says "the first outside sighting **of a phone that had in-set ones**". `next_state` pushes any new outside
+  row, once a UTC day (`server_tls.rs:287-296`).
+- On an install behind Cloudflare/GTS (never switched on, "works as today"), the phone's ring never drops (no
+  connection passes). Each Wi-Fi/mobile switch adds a row, so a kid who goes to school and comes home makes a new row
+  every day, and every day brings one push to every parent, forever.
+- The parents learn to swipe it away, which costs the alarm its value on the installs that do switch on. The only
+  way to silence it is to turn the check off.
+- Fix: push only when the phone had in-set sightings (`row.window_from.is_some()` or `state == On`), as R-2(c)
+  says. Otherwise the device page shows it and no push is sent.
+
+**L-3 - A stolen device token can switch a phone on early, silently.**
+- `enforcing: true` in any report adopts `on` from `watching`, even when `stopped_at` is set (`server_tls.rs:258-262`).
+  No event, no push.
+- Whoever held a MITM before `on` holds the bearer (as today). On a split-horizon install (the case R-3 guards
+  against), a forged `enforcing: true` turns the server `on`. The phone then takes `true` at its next passing sync,
+  and later refuses on the other network, which is the brick R-3 exists to prevent.
+- Not an escalation of trust, a lockout lever. Fix: adopt only from a report that also has a `seen.in_set: true`, and
+  not while `stopped_at` is set (there, show "on (the phone's)" and offer the buttons). Or write it as a security
+  event `server_tls_on` with "the phone's report" as the actor, so it is at least seen.
+
+**L-4 - Phone-supplied text reaches pushes unfiltered.**
+- `sanitize` clips `name` and `host` but keeps control and bidi characters (`server_tls.rs:131-133`).
+- Askama escapes the page, but the push title and the inbox read "{phone} saw a certificate for your server from
+  {issuer}". With the bearer (or the L-1 subject) the issuer can be a 64-character phrase with U+202E or newlines,
+  in a notification every parent trusts.
+- Fix: in `text()`, drop `char::is_control` and the bidi controls (U+200E/F, U+202A-E, U+2066-9).
+
+**L-5 - The alarm's time is when the server heard it, not when it happened.**
+- `received()` (`server_tls.rs:559-561`) shows the receive time. A refusal on hostile Wi-Fi at 14:02, reported over
+  mobile data at 18:30, reads "Refused … on Wi-Fi at 18:30".
+- Receive time is right for the window (R-3), not for the diagnostic. Fix: show the phone's `at_ms` when it is
+  within a day of `received_at` and not in the future, otherwise the receive time.
+
+## Nits
+
+- `PowerEvents.prepare` runs at the sync's start (`MdmSyncWorker.kt:99`), before `nextFlag`. After the flag turns on,
+  the shutdown's prepared client (the location fix and the bearer) stays unpinned until the next sync's `prepare`.
+  Call `PowerEvents.prepare(context)` again after `setEnforce` when the flag changed.
+- `ServerPinStore.enforce(null)` reads as off (`ServerPinStore.kt:30`), which is fail-open in form. It is unreachable
+  today: `Application.instance` is set before any client, and the boot-cover process has no server client. Say so,
+  or read the flag from the passed context in `toServer`.
+- `POST /devices/{id}/server-tls/watch` is accepted in any state (the page offers it only while `off`). From `on` it
+  moves the server to `watching` without telling anyone. It is harmless, since `{}` keeps the phones' flags, but
+  refuse it outside `off`, as the page does.
+- A phone stopped only by `seen.in_set: false` with no outside row shows "watching - on from …" (`card`'s `(Some(_),
+  None)` arm), although it won't switch on. It is unlikely in practice, because the observer records the same chain
+  as a row.
+
+## Lockout review (the brief's item 4)
+
+- **Caddy's fallback to ZeroSSL**: ZeroSSL's RSA/ECC intermediates are under USERTrust RSA/ECC (in Android's store,
+  in B). The AAA Certificate Services cross-sign carries USERTrust's key, so it passes whichever anchor Android
+  picks. R46/E46 cover Sectigo's dedicated TLS roots. **In the set.**
+- **Let's Encrypt's Generation Y**: YR/YE and their cross-signs share keys, so a Conscrypt update adding YR doesn't
+  matter (C-1 resolved).
+- **A CDN, or split horizon**: never switched on by itself while mobile shows a CDN chain (R-3). A forged
+  `enforcing: true` can force it (L-3). DEPLOY.md's CDN paragraph is right.
+- **A school or captive-portal proxy**: its private CA fails Android's validation before the pin (release trusts no
+  user CA), so nothing changes and no row is written.
+- **Lock, calls, 112**: unaffected (see "What holds").
+- **Recovery without adb**: the QR re-scan (parent code) works. **Without the QR**: only once H-1 is fixed.
+
+## Tests run
+
+- Server (`CARGO_TARGET_DIR=~/cargo-targets/qa-pin`, `line-tables-only`): `cargo test` 1743 passed, 0 failed;
+  `cargo fmt --check` clean; `cargo clippy --all-targets` no warnings.
+- Launcher (`--no-daemon --max-workers=2`, debug with the tsnet stub): `ServerPinsTest`, `ServerPinTransportTest`,
+  `ServerTransportTest`, `PolicyResponseCompatTest`, `PowerEventsTest`, `SecurityLowsBTest` - BUILD SUCCESSFUL.
+- No emulator was started. Design step 0 and section 6's emulator rows are still open (H-1 depends on step 0).
+
+## Fix round (on `server-issuer-pin-2`, 2026-11-04)
+
+Every finding is fixed. The setup-dependent part of H-1 is still owed: step 0 on the user's server.
+
+- **H-1, the tailnet recovery address.**
+  - DEPLOY.md has a new "Tailnet recovery address" section. It covers:
+    - a server listening beyond loopback (`DEVICE_BIND_ADDR=0.0.0.0:3101` or the tailnet IP, the firewall line,
+      Docker with `network_mode: host`);
+    - a Caddy `http://<tailnet IP>:3102` site bound to the tailnet IP, on the same box or on another host;
+    - `tailscale serve --http`;
+    - the ACL line;
+    - the `curl …/healthz` check from another tailnet device, then a phone's "Sync now".
+  - `PHONE_RECOVERY_URL` is new (`config.rs`, `.env.example`, the env table). It takes plain http to a Tailscale IP
+    only; anything else is logged and ignored.
+  - `server_tls::recovery_url` picks the address in this order:
+    - `PHONE_RECOVERY_URL`;
+    - the setup QR's own address, when it is tailnet http;
+    - this box's tailnet address on a listener bound to it or to `0.0.0.0`/`[::]`. The device listener comes first;
+      the admin listener counts only while `ADMIN_DEVICE_API` is on.
+  - The box's tailnet address is the source the kernel picks on a UDP socket connected toward 100.100.100.100 /
+    `fd7a:115c:a1e0::53`. Nothing is sent and nothing on the host changes. It is accepted only inside 100.64.0.0/10 or
+    `fd7a:115c:a1e0::/48`, and never read in the tests.
+  - The device page shows the address. When the server can't tell, the page says what the address looks like and
+    points to DEPLOY.md.
+  - The policy's `server_tls` carries the address as `recovery_url` in every state; `watching` still sends no
+    `enforce`.
+  - The phone stores it (`server_pin_recovery`) only from a fresh policy over a passing or tailnet connection, and
+    only as tailnet http (`nextRecovery`, the contract's new `recovery` rows). It shows it in the Server certificate
+    dialog and in "Sync now"'s refusal dialog.
+  - Nothing else is accepted: `server_url_vectors.json` and both address rules are untouched.
+  - Design 76 step 0 is now marked owed before the release, with the user's setup spelled out (the Docker VM's
+    `0.0.0.0:3101`, `network_mode: host`, Caddy on 10.73.10.81).
+- **M-1, the card.**
+  - The card uses `phone_enforcing` and the last report's `seen` (new columns `seen_in_set` and `seen_name`).
+  - **On**: "only Let's Encrypt or ZeroSSL" shows only while the phone says it enforces. Otherwise it reads "the
+    phone takes it at its next sync", or, when the phone's own chain is outside the set, "on here, but this phone
+    can't take it - … comes from X".
+  - **Off** while the phone still enforces: a second sentence says how to reach it.
+  - **The flash**: "hears it now" is gone. It now says "takes it at its next sync". After "Turn off" on a refusing
+    phone it says the phone can't hear it and names the recovery address.
+  - **The refusal alarm** shows in every state, `off` included:
+    - while the phone still sends the row. A row is `open` per report; the phone drops a row only after a 2xx over a
+      working connection.
+    - and for a week after the row arrived, then marked "the phone has reached this server through a working
+      connection since".
+- **L-1.** The anchor is now read as the last strict `    sha256/<43>=: ` line before the *last* "Pinned certificates
+  for". A message of another shape still refuses, with no anchor and no sighting. New test rows cover leaf subjects
+  carrying OkHttp's phrases, a newline, and a pinned root's line.
+- **L-2.** A sighting is pushed only for a phone that has shown an in-set chain at all (`in_set_seen`, sticky), or one
+  that is `on` (R-2(c)).
+- **L-3.** `enforcing: true` is adopted only with an in-set `seen` in the same report, and never while `stopped_at` is
+  set. In that case the server writes the security event `server_tls_phone_on` once per change, and the page says "The
+  phone says its check is on" with "Turn the check on now".
+- **L-4.** `sanitize` drops control characters and bidi or invisible format characters (U+061C, U+200B-F, U+202A-E,
+  U+2060-9, U+FEFF) from names and hosts.
+- **L-5.** A row's time is the phone's own when it lies within a week before its receive time (or 5 minutes after).
+  Otherwise the row is worded "reported at" with the receive time.
+- **Nits.**
+  - PowerEvents' shutdown client is rebuilt in the sync when the flag moved.
+  - `ServerPinStore.enforce(null)` now reads as on.
+  - `/server-tls/watch` is refused outside `off` (`?notice=server_tls_unchanged`).
+  - A stopped phone without its own row reads "not on - this phone saw a certificate from outside Let's Encrypt and
+    ZeroSSL".
+- **Migration 0129** gains `in_set_seen`, `seen_in_set` and `seen_name`. It isn't released yet, so it is edited in
+  place.
+
+Tests of the fix round:
+- Server: `cargo fmt --check` clean, `cargo clippy --all-targets` no warnings, `cargo test` 1749 passed. That run
+  came before a one-line refinement of the card's "can't pin" judgement; `cargo test server_tls`, fmt and clippy
+  passed again after it.
+- Launcher: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 2099 tests, 0 failures.
+- No emulator was started.
+
+## Verification (independent, 2026-11-04, f69ecce9)
+
+Security re-check of the fix round on `server-issuer-pin-2` by Opus, branch `verify-server-issuer-pin`. Read: the
+fix diff in full, `server_tls.rs` at f69ecce9, `config.rs`, `handlers::devices::server_tls`, the template, both i18n
+files, `ServerPins.kt`, `ServerPinStore.kt`, `ServerUrlRule.kt`, the sync's fresh-policy block, `Provisioning.kt`,
+the Settings dialogs, DEPLOY.md's new section, and the tests.
+
+**Verdict: every fix holds, and the new recovery-address surface is sound. There are no Critical, High or Medium
+findings.** Counts: **0 C, 0 H, 0 M, 3 L, 5 nits.**
+
+### The fixes
+
+- **H-1.** `PHONE_RECOVERY_URL` is taken only as `check_server_url`'s `TailnetHttp`
+  (`config::tests::the_recovery_url_is_a_tailnet_address_only`). `recovery_from` runs that same check on every source
+  (`the_recovery_address`). The page and the phone's two dialogs show the full address with its port.
+  DEPLOY.md's section covers the listener, Caddy, `tailscale serve`, the ACL and the check. Step 0 is still owed on
+  the user's server, as the design says.
+- **M-1.** The card follows `phone_enforcing` and the last `seen`. The alarm is not filtered by state. The flash no
+  longer says "hears it now". All of it is tested (`the_card_follows_the_phone`, `a_kept_row_is_open_...`).
+- **L-1.** The block ends at the last `"\n  Pinned certificates for "`, lines are strict, and a message of another
+  shape still refuses. Tested with three hostile CNs against OkHttp 4.12's real message.
+- **L-2.** Pushes need `in_set_seen` or `on`. **L-3:** see L-b below. **L-4:** tested. **L-5:** tested.
+- **Nits.** All four are fixed. The `/watch` refusal is tested. `enforce(null)` reading as on is a one-liner with no
+  test, which is fine.
+
+### The new surface
+
+- **`server_tls.recovery_url`, as stored on the phone.**
+  - `nextRecovery` stores the address only from the sync's fresh policy, and only over a `PASSED` or `TAILNET`
+    connection. It is judged on the policy response's own handshake. A source scan pins it to one caller in that
+    block.
+  - It stores only an address whose `serverUrlVerdict` is `TAILNET_HTTP`. The contract has 11 `recovery` rows,
+    covering failing, debug_http, absent, malformed, https and LAN.
+  - A MITM with a certificate outside the set gets `FAILED`, so it can neither plant the address nor clear it. Only an
+    in-set mis-issuance could plant one, and design §7 already puts that out of scope.
+  - The stored address is read in exactly one place, `serverCertRecovery`, which is dialog text.
+  - Nothing writes the Server URL from it, no token goes to it, and nothing follows it on its own. The branch adds no
+    `serverUrl(...)` writer.
+  - Even a planted address would be dialled only through tsnet to a current tailnet peer.
+- **`own_tailnet_ip`.**
+  - It only does `bind` and `connect` on a UDP socket. `connect(2)` on a datagram socket sends nothing, and nothing
+    on the host changes.
+  - It is `cfg!(test)` → `None`. Every server test is in-crate (there is no `server/tests/`), and the tests assert it
+    is `None`.
+  - Every error gives `None`.
+  - It accepts only `is_tailnet_ip`: `a == 100 && b in 64..=127`, or `fd7a:115c:a1e0::/48`.
+  - `recovery_url` never fails the policy.
+- **Migration 0129.**
+  - It was first added in 821587c5 (branch `server-issuer-pin`), then in ae3006fa.
+  - `git tag --contains` is empty for every commit that touches it, and origin/main ends at 0128. The latest tag is
+    `server-v0.68.0`.
+  - sqlx's `migrate!` checks checksums, so a database that ran an earlier 0129 would refuse to start. No released build
+    has one, and no local database here has one (`~/e*-data-pre-start`: 121 at most). Only a dev or emulator database
+    that ran these branch commits would need its 0129 row and table dropped by hand.
+- **Contract.** The fix commit changes `server_tls_report.json` in both directories, and `cmp` finds the two copies
+  identical. `policy_json_keys_snapshot` stays `{}` (no address in the tests), and the launcher reads `server_tls` raw.
+- **Lockout.** No new path touches lock, calls or 112. The fail-closed `enforce(null)` has no reachable null caller
+  (`Application.instance` is set before any client, and the boot cover has none). The PowerEvents rebuild only follows
+  the flag.
+- **Standing rules.**
+  - There are no fallbacks, no adb step and no host actions.
+  - There is no private key on the branch: the 10 PEMs are certificates only, and the only `tskey-` strings are the
+    old fake test keys.
+  - All 45 `server_tls` keys are in both `en.json` and `nb.json`, with no key missing from either.
+  - Every form and redirect lands on `#server-tls`.
+
+### Findings
+
+**L-a - The refusal alarm can be drained by phone-sent rows.** `server_tls.rs:308-310` drains the kept rows oldest
+first, whatever their kind, and `card` (`:796`) shows only the newest `refused` row.
+- Forged reports: one report from a token holder with 8 distinct `seen` rows removes the stored `refused` row, and the
+  alarm is gone from the page at once. If the day's push has already gone out, no new push follows. The real
+  refusal's push stays in the inbox, but not on the page. A newer forged `refused` row also replaces the issuer the
+  alarm names.
+- Without forgery: a phone whose parent turned the check off on a server outside the set never drops its ring
+  (`FAILED`). It adds a `seen` row at each Wi-Fi/mobile switch, so the refusal leaves the page in about two days, not
+  the week M-1 promises.
+- Fix: drain `seen` rows before `refused` rows, and keep the newest `refused` row through the cap while it is `open`
+  or within `ALARM_KEPT`. Add a test with 8 new rows.
+
+**L-b - L-3 is closed only for a stopped phone.** Adoption from `watching` without a stop (`:319-325`) still leaves no
+security line, only a `tracing::info`.
+- The `seen.in_set: true` that the fix now requires is as easy for the token holder L-3 is about to forge as
+  `enforcing: true`.
+- So on a split-horizon install whose phone has not reported mobile data yet, one forged report still switches the
+  phone `on` silently. It is not a brick: Wi-Fi keeps working, and the refusals on mobile reach the server over Wi-Fi
+  as an alarm.
+- Fix (the review's second option): write `server_tls_on`, with the phone's report as actor, on every adoption.
+
+**L-c - DEPLOY.md's firewall advice cuts off the user's own proxy.** `DEPLOY.md:249` says to firewall 3101 to the
+tailnet and "deny it elsewhere", or to bind the tailnet IP.
+- In the setup design step 0 names (the server on `0.0.0.0:3101`, Caddy on 10.73.10.81 proxying over the LAN), either
+  step blocks Caddy.
+- Every phone then loses the server until the host's firewall is fixed. This is not a phone brick, and the tailnet
+  path still works.
+- Fix: "and from your reverse proxy (`ufw allow from 10.73.10.81 to any port 3101`)". Also say that binding the tailnet
+  IP fits only when the proxy reaches the server over the tailnet.
+
+Nits:
+- **n1 - The recovery address outlives the server it belongs to.** A setup QR clears the flag
+  (`Provisioning.kt:37`) but not `server_pin_recovery`. After re-provisioning to another server, Settings keeps
+  showing the old server's address as "This server's tailnet address". That lasts until a passing policy with
+  `server_tls` arrives, and it never happens on a server without `server_pin_v1`. Clear the address with the flag.
+- **n2 - A CGNAT host can show a false address.** `own_tailnet_ip` (`:463`) takes any 100.64/10 source address. A host
+  that is not on Tailscale but has a CGNAT address on its uplink would show that address as the recovery address.
+  Nothing leaks, since the phone dials it only through tsnet, but the page shows a false address. Name
+  `PHONE_RECOVERY_URL` as the override in DEPLOY.md.
+- **n3 - `[::]` does not always answer IPv4.** `listener_port` (`:485`) counts `[::]` as answering an IPv4 address,
+  which is false with `net.ipv6.bindv6only=1`.
+- **n4 - Two line-breaking characters pass the filter.** `hidden_char` (`:158`) misses U+2028 and U+2029. They are
+  not `is_control`, and some notification renderers break lines on them.
+- **n5 - Two card lines don't say what the phone reports.** A phone that enforces over the tailnet (no `seen`) while
+  the server is `watching` without a stop is not adopted, which is correct. But the card shows only "watching - on
+  from …", because `phone_says_on` (`:866`) requires a stop. In the same way, "on - the phone takes it at its next
+  sync" never comes true for a phone that only uses the tailnet.
+
+### Tests run
+
+- Server (`CARGO_TARGET_DIR=~/cargo-targets/verify-pin`, `line-tables-only`): `cargo test` 1749 passed, 0 failed;
+  `cargo fmt --check` clean.
+- Launcher (`--no-daemon --max-workers=2`): `ServerPinsTest` 13, `ServerPinTransportTest` 7, `ServerTransportTest` 10,
+  `PolicyResponseCompatTest` 49 - 0 failures.
+- No emulator was started.
+
+### Verification fixes (on `server-issuer-pin-2`)
+
+Every verification finding is fixed.
+
+- **L-a.** `trim_outside` cuts the kept rows to 8 in this order:
+  - `seen` rows first, oldest first;
+  - then refusals the phone no longer sends that arrived more than a week ago;
+  - only then the oldest refusal.
+
+  So a refusal stays on the page for its week. Test `seen_rows_never_push_a_refusal_off`: 8 `seen` rows after a
+  refusal, twice, and the alarm is still shown 6 days later.
+- **L-b.** Every adoption of a phone's `enforcing: true` writes the security line `server_tls_on`, with no parent,
+  naming the phone (`security.detail.server_tls.adopted`). A stopped phone still gets `server_tls_phone_on` instead.
+  Tested in `next_state` and in `a_launcher_report_moves_the_state`.
+- **L-c.** DEPLOY.md's firewall lines:
+  - allow 3101 on `tailscale0` and from the reverse proxy's address (the generic rule, with
+    `ufw allow from 10.73.10.81 …` as the example), then deny it;
+  - say that binding only the tailnet IP cuts off a proxy on the LAN.
+- **n1.** A setup QR clears `server_pin_recovery` along with the flag (`Provisioning.kt`). `ServerPinsTest`'s source
+  scan pins both callers.
+- **n2.** The server trusts its own tailnet address only while a Tailscale interface is up: an `fd7a:115c:a1e0::/48`
+  address in `/proc/net/if_inet6`, or `/sys/class/net/tailscale0`. Both are read-only files. Otherwise the page
+  points to `PHONE_RECOVERY_URL`. Test: `a_tailscale_interface_is_needed`.
+- **n3.** The address the server finds for itself is offered only on a listener that surely answers it:
+  - `IPV6_V6ONLY` is read from each listener's socket after its bind (`note_listener`, rustix `net`, read only);
+  - `[::]` counts for an IPv4 address only when that option is off;
+  - a listener whose option wasn't read counts for its own family only.
+
+  Tested in `the_recovery_address`.
+- **n4.** U+2028 and U+2029 are dropped from names and hosts. Tested in `hidden_characters_are_dropped`.
+- **n5.** The card says what the phone reports:
+  - `seen_in_set` is `None` when the last report had no certificate (the tailnet).
+  - A watched phone then shows "The phone's last report came without a certificate…".
+  - An `on` phone that reports its check still off reads "on here - the phone says its check is still off", plus the
+    same sentence when the report had no certificate.
+  - "The phone says its check is on" shows whether or not the switch-on is stopped. "Turn the check on now" is then
+    offered.
+
+  Test: `adoption_is_told_and_the_card_says_what_the_phone_reports`.
+
+Tests of the verification fixes:
+- Server: `cargo fmt --check` clean, `cargo clippy --all-targets` no warnings, `cargo test` 1752 passed, 0 failed.
+- Launcher: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 2099 tests, 0 failures.
+- No emulator was started.

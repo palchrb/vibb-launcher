@@ -98,7 +98,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Design 38 (QA N1): the shutdown's prepared client follows the base URL, the token and the proxy.
     PowerEvents.prepare(context)
 
-    var api = createMdmApi(serverUrl, deviceToken)
+    // Design 76: the sync judges its answers by the path its client was built for (R-5).
+    var apiPath = serverPathNow(serverUrl)
+    var api = createMdmApi(serverUrl, deviceToken, path = apiPath)
     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
@@ -111,7 +113,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     var freshPolicy: PolicyResponse? = null
     // The command this sync ran (not one delivered again that ran before - security review L12).
     var ranCommand: PendingCommand? = null
-    val freshOutcome = when (val fetched = fetchPolicy(api)) {
+    // Design 76: the policy response's own handshake (`null` without TLS) - the certificate check's flag and `seen`.
+    var policyHandshake: okhttp3.Handshake? = null
+    val freshOutcome = when (val fetched = fetchPolicy(api) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
@@ -132,6 +136,20 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 76 D2: the certificate check's flag - from this fresh policy over its own connection only, never from
+        // the cache (R-5): on only through the built-in set, off only through it or the tailnet.
+        val pinnedBefore = ServerPinStore.enforce(context)
+        ServerPinStore.setEnforce(
+            context,
+            nextFlag(ServerPinStore.enforce(context), enforceOf(freshPolicy.serverTls), pinConnection(apiPath, policyHandshake)),
+        )
+        // Code QA H-1: the server's tailnet recovery address, by the same connection rule.
+        ServerPinStore.setRecovery(
+            context,
+            nextRecovery(ServerPinStore.recovery(context), freshPolicy.serverTls, pinConnection(apiPath, policyHandshake)),
+        )
+        // The shutdown's prepared client follows the flag at once, not at the next sync (code QA nit).
+        if (ServerPinStore.enforce(context) != pinnedBefore) PowerEvents.prepare(context)
         // The call services read the rules from memory, never per call.
         CallPolicyStore.refresh(context)
         // The parent's language choice, switched when Home is next in front (LauncherLocales).
@@ -167,7 +185,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
         // S-L10's fix round (nit 1): after Leave Tailnet no call of this sync goes through the closed proxy - the
         // client is built again, on the direct path.
-        if (ranCommand?.command == LEAVE_TAILNET_COMMAND) api = createMdmApi(serverUrl, deviceToken)
+        if (ranCommand?.command == LEAVE_TAILNET_COMMAND) {
+            apiPath = serverPathNow(serverUrl)
+            api = createMdmApi(serverUrl, deviceToken, path = apiPath)
+        }
         // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
         // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
         // Design 72b: the kid's own events handed over for the marked CalDAV calendar first (never throws), so the
@@ -278,6 +299,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // The current blocks and how many in all (design 24b fix, QA of cmd-expiry Low 2).
         val blocks = WindowRelock.reportBlocks(context)
         val lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context)
+        // Design 76 D3: the outside sightings go in every report; they leave the phone only after a 2xx over a
+        // connection that passed the built-in set, or over the tailnet (R-2).
+        val tlsSent = ServerPinStore.ring(context)
         val sent = api.sendStatus(
             StatusReportRequest(
                 lockReason = reason.name,
@@ -344,8 +368,14 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
                     null
                 },
+                serverTls = ServerTlsReport(
+                    enforcing = ServerPinStore.enforce(context),
+                    seen = seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
+                    outside = tlsSent,
+                ),
             )
         )
+        if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
         // its fix there for the next one.
         afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)
@@ -1172,9 +1202,10 @@ private val POLICY_SERVER_ERROR = FreshDecode.Failed("server error")
 /** `null` when the server couldn't be reached (or answered a non-5xx error), [POLICY_SERVER_ERROR]
  * (compared by identity) on a 5xx, otherwise the decoded body or why it didn't decode. Doesn't
  * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
-private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
+private suspend fun fetchPolicy(api: MdmApi, onResponse: (okhttp3.Response) -> Unit = {}): FreshDecode? {
     return try {
         val response = api.getPolicy()
+        onResponse(response.raw())
         if (!response.isSuccessful) {
             Log.w(LOG_TAG, "Policy fetch returned HTTP ${response.code()}, keeping the current policy")
             response.errorBody()?.close()

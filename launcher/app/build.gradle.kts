@@ -365,6 +365,8 @@ dependencies {
     implementation(libs.jonahbauer.android.preference.annotations)
     kapt(libs.jonahbauer.android.preference.annotations)
     testImplementation(libs.junit)
+    // Design 76: ServerPinTransportTest makes its throwaway TLS chain at test time (HeldCertificate) - no key in the repo.
+    testImplementation(libs.squareup.okhttp.tls)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }

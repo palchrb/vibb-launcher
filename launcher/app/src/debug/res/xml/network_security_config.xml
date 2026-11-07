@@ -3,6 +3,9 @@
   Debug build only: the release config (src/main/res/xml/network_security_config.xml, read its comment) plus the
   emulator's address for its host, 10.0.2.2, over plain http - the emulator loop's server (docs/testing/emulator.md),
   which a debug build alone takes as the server address (ServerTransport.kt, EMULATOR_HOST).
+  Design 76: debug-overrides trust user-installed CAs too (Android applies them to a debuggable build only), so
+  mitmproxy's CA on the emulator passes Android's validation and the certificate check is what refuses it. The release
+  config never trusts a user CA (ServerTransportTest).
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
@@ -14,4 +17,10 @@
         <domain includeSubdomains="false">tailnet-server.vibb.invalid</domain>
         <domain includeSubdomains="false">10.0.2.2</domain>
     </domain-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>

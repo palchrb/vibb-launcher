@@ -70,6 +70,12 @@ pub struct ForkConfig {
     /// Setup's field ([check_server_url]): a refused one is ignored (logged), a plain-http one to
     /// a Tailscale IP is taken with a warning in the log.
     pub phone_server_url: Option<String>,
+    /// `PHONE_RECOVERY_URL` (design 76's fix round, H-1): the address a phone whose certificate check refuses this
+    /// server can be pointed at - plain `http://` to a Tailscale IP literal only ([check_server_url]'s
+    /// `TailnetHttp`; anything else is logged and ignored). Shown on Device › Advanced › Certificate check and sent
+    /// to the phone in the policy's `server_tls.recovery_url`; unset = the server's own tailnet address on a
+    /// listener that answers it, when it can tell (`server_tls::recovery_url`).
+    pub phone_recovery_url: Option<String>,
     /// `SSE_KEEPALIVE_SECS` (5-240, default 240 since design 19, 120 before): how often the
     /// command stream sends a keepalive comment. Every phone holds the stream (no FCM); its read
     /// timeout is 300 s (launcher `SSE_READ_TIMEOUT_MS`, also in launchers already shipped), so
@@ -171,6 +177,17 @@ impl ForkConfig {
                     );
                     false
                 }
+            }),
+            phone_recovery_url: read("PHONE_RECOVERY_URL", |url| {
+                let tailnet = matches!(check_server_url(url), ServerUrl::TailnetHttp(_));
+                if !tailnet {
+                    tracing::warn!(
+                        "PHONE_RECOVERY_URL is not used: it must be plain http:// to a Tailscale IP address \
+                         (100.64.0.0/10, fd7a:115c:a1e0::/48), the way a phone reaches this server past its \
+                         certificate check."
+                    );
+                }
+                tailnet
             }),
             sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
                 .and_then(|v| v.parse().ok())
@@ -340,7 +357,7 @@ fn parse_server_url(value: &str) -> Option<ServerUrlParts> {
 }
 
 /// 100.64.0.0/10 or `fd7a:115c:a1e0::/48` (an IPv4-mapped IPv6 address is neither).
-fn is_tailnet_ip(ip: std::net::IpAddr) -> bool {
+pub(crate) fn is_tailnet_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(ip) => {
             let [a, b, ..] = ip.octets();
@@ -494,6 +511,24 @@ mod tests {
         let taken = "http://100.101.102.103:3100";
         let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", taken)]));
         assert_eq!(config.phone_server_url.as_deref(), Some(taken));
+    }
+
+    /// Design 76's fix round (H-1): the recovery address is plain http to a Tailscale IP or nothing - an https one
+    /// would be checked by the very pins it is meant to get past, a LAN address carries the token in clear.
+    #[test]
+    fn the_recovery_url_is_a_tailnet_address_only() {
+        let taken = "http://100.101.102.103:3101";
+        let config = ForkConfig::from_vars(&vars(&[("PHONE_RECOVERY_URL", taken)]));
+        assert_eq!(config.phone_recovery_url.as_deref(), Some(taken));
+        for refused in [
+            "https://vibb.example.ts.net",
+            "http://192.168.1.10:3101",
+            "http://vibb.example.ts.net:3101",
+        ] {
+            let config = ForkConfig::from_vars(&vars(&[("PHONE_RECOVERY_URL", refused)]));
+            assert_eq!(config.phone_recovery_url, None, "{refused}");
+        }
+        assert_eq!(ForkConfig::from_vars(&vars(&[])).phone_recovery_url, None);
     }
 
     /// Launcher security review S-M1, the user's rule of 2026-11-04: every row of the vectors the

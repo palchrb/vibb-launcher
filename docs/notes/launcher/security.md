@@ -173,3 +173,56 @@ waits for a device capture of the Play Protect / account-security channel ids.
 - **Not device-tested**: the tailnet path on a phone (our SOCKS proxy with an IPv4/IPv6 destination instead of a name,
   the NSC exception for the `.invalid` name), the proxy refusing a tailnet IP that isn't a peer (no packet on Wi-Fi or
   mobile), a MagicDNS https name through it, the refused-address summary and toast, a QR with an http LAN address.
+
+## The server's certificate issuer, pinned (design 76, `docs/design/76-server-issuer-pin.md`)
+
+- **The shape.** Over https the phone talks to the server only through a chain Android validated (system CAs, as
+  before) that holds a key of the **built-in set B** (`server/ServerPins.kt`, `BUILTIN_PINS`): ISRG Root X1, X2, YR,
+  YE (Let's Encrypt) and USERTrust RSA/ECC, Sectigo R46/E46 (ZeroSSL's operator). Any certificate of the chain counts,
+  so a cross-sign carrying a pinned root's key passes wherever Android's store ends the path. Pins are `base64(SHA-256(
+  DER SubjectPublicKeyInfo))`; `ServerPinsTest` computes each from the root's certificate in
+  `src/test/resources/server_pins/`, so a typo fails.
+- **The rule for B**: a pinned operator's new root goes in as soon as its certificate is published, never when a store
+  adds it; B never gains another operator without the user's decision. PLAN chore at every launcher release:
+  re-check `letsencrypt.org/certificates` and Sectigo's root page and re-run the derivation (`openssl x509 -in F -noout
+  -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64`).
+- **Switched on per phone by the server** (`server/src/server_tls.rs`): one Boolean `server_pin_enforce` (default
+  prefs, `commit()`, `ServerPinStore`). `nextFlag` (one caller: the sync's fresh policy fetch, right after
+  `storeAcceptedPolicy`, with that response's own handshake and the client's `ServerPath`; never the cache, a source
+  scan pins it): `enforce: true` over a connection that passed B -> on; `enforce: false` over one that passed B or
+  over `ServerPath.Tailnet` -> off; anything else (`{}` - the server's `watching` -, absent, malformed, a failing
+  connection, a debug build's plain http) keeps it. A setup QR (`applyProvisioningExtras`) clears it; the Settings
+  address edit doesn't.
+- **`toServer`'s direct path** (`ServerTransport.kt`), in this order: the origin fence (a request to another scheme,
+  host or port throws `ServerOriginRefused` before a socket; redirects are never followed), the refusal catch
+  (OkHttp's `Certificate pinning failure!` only -> `ServerPinRefused`, and a `refused` sighting when the anchor reads:
+  the last strict `    sha256/<44>: ` line before the **last** "Pinned certificates for", so a leaf's subject can't
+  name the anchor, code QA L-1), the pinner with the
+  flag on (`CertificatePinner` for exactly `HttpUrl.host`, after Android's validation; one that can't be built fails
+  closed), and always the observer (each new connection's chain once; one outside B is kept as `seen`). The flag is
+  read where the path is read (each `createMdmApi`, SSE connect, `createMusicServer`). The tailnet path and a debug
+  build's `http://10.0.2.2` are never pinned.
+- **Reported**: capability `server_pin_v1`; every status report's `server_tls: {enforcing, seen?, outside}` - `seen`
+  is this sync's policy connection, `outside` the ring (`server_pins_outside`, at most 8, a row added only when it
+  differs from the last). The ring's sent rows leave only after a 2xx over a connection that passed B or over the
+  tailnet (R-2: a MITM answering 2xx can't erase them). Contract: `server_tls_report.json` (root `CLAUDE.md`).
+- **On the phone**: Settings › "Server certificate" under Server URL (on / not on yet / the last refusal), its dialog
+  names the recovery and the server's tailnet address when the server sent one (`server_tls.recovery_url`,
+  `server_pin_recovery`, stored by `nextRecovery` only from a fresh policy over a passing or tailnet connection, only
+  as tailnet http - code QA H-1; a setup QR clears it with the flag, verification n1); "Sync now" says why in a dialog after a refusal, with the same address. The kid sees nothing. Offline the phone keeps
+  enforcing its cached policy, calls and 112 included.
+- **Recovery without adb or the QR**: Settings (parent code) › Server URL › `http://<the server's Tailscale IP>` -
+  WireGuard-authenticated, never pinned; the phone syncs, sends its refusals and takes the server's `enforce`. Or
+  Scan setup QR (the flag goes off).
+- **Debug only**: the debug network security config's `debug-overrides` trust user CAs (mitmproxy on the emulator),
+  so the pin is what refuses there; `ServerTransportTest` asserts the release config has neither.
+- **Tests**: `ServerPinsTest` (B, the contract's flag and drop rows, the report's encoding, OkHttp 4.12's failure
+  message, the source scans), `ServerPinTransportTest` (a local TLS server with `TestOnlyChain`, a throwaway chain made
+  in memory at each run by okhttp-tls's `HeldCertificate` - no key in the repo: pass, refuse before a request line,
+  report-only, an IP literal, the origin fence and no redirect, a broken pinner, through a SOCKS5 relay). okhttp-tls
+  4.12.0 is a test dependency only, its checksums in `gradle/verification-metadata.xml` (checked against Maven
+  Central's `.sha256` and `.sha1`).
+- The flag reads as on without a context (fail closed in form; never in practice), and PowerEvents' prepared shutdown
+  client is rebuilt in the sync when the flag moved (code QA nits).
+- **Not device-tested yet** (design 76 step 0 and §6's emulator rows): the anchor Android validates for the user's
+  host and for a ZeroSSL host, mitmproxy with the check off and on, the tailnet recovery end to end, a QR re-scan.

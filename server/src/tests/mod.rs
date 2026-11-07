@@ -56,6 +56,7 @@ mod play;
 mod power;
 mod provisioning;
 pub(crate) mod seeded_family;
+mod server_tls;
 mod settings_log;
 pub(crate) mod settings_pages;
 mod shell;

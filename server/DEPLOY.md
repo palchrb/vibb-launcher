@@ -219,6 +219,75 @@ nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` 
 buffering and no compression on it** - for nginx `proxy_buffering off; proxy_read_timeout 330s; proxy_http_version
 1.1;`. Cloudflare's proxy cuts connections idle for 100 s: use DNS-only there, or `SSE_KEEPALIVE_SECS=90`.
 
+### The phones' certificate check (design 76)
+
+Vibb One (with `server_pin_v1`) talks to this server over https only through a certificate chain from **Let's Encrypt
+or ZeroSSL** (Sectigo) once the check is on for that phone. The server switches it on by itself after the phone has
+shown only such certificates for three days (on Wi-Fi and mobile data); Device › Advanced › Certificate check shows
+where each phone is, and a certificate from another issuer - an attack, or a proxy with its own CA - is told there and
+pushed. Caddy's Let's Encrypt, its ZeroSSL fallback and `tailscale cert` are all in the set. **Behind a CDN that picks
+its own CA** (Cloudflare's Universal SSL rotates Let's Encrypt, Google Trust Services and SSL.com) the check may switch
+on during a Let's Encrypt period and a later rotation then cuts the phones off: turn such phones' check off on that
+page, or give the CDN a fixed CA (Cloudflare: an Advanced certificate with Let's Encrypt) - or keep the phones on
+DNS-only as above. A CAA record naming the CA, ideally with `accounturi` (`0 issue "letsencrypt.org;
+accounturi=..."`), narrows who can issue for the name. **Recovery** for a phone that refuses the server's
+certificate: on the phone, Settings (parent code) › Server URL › the **tailnet recovery address** below - the tailnet
+path is never pinned - then fix the certificate (switch the address back to https) or turn the phone's check off on
+its Advanced page. Re-scanning the setup QR also clears the check on the phone.
+
+#### Tailnet recovery address
+
+The one way back without the setup QR is plain `http://` to a **Tailscale IP literal** (`100.64.0.0/10` or
+`fd7a:115c:a1e0::/48`): the phone sends it only through its own embedded Tailscale, WireGuard proves the peer, and no
+certificate is checked. Nothing else is taken - not a LAN address, not a `*.ts.net` name over http. **Something must
+answer the phones' API there**, and with the setups above nothing does by default: the server binds loopback, and
+Caddy's and `tailscale serve`'s sites are https. Set one up before a phone needs it, and check it:
+
+- **Server on a tailnet host, listening beyond loopback** (`DEVICE_BIND_ADDR=0.0.0.0:3101`, or the box's own
+  tailnet IP `DEVICE_BIND_ADDR=100.101.102.103:3101`; Docker with `network_mode: host` the same): the address is
+  `http://<the box's tailnet IP>:3101`. With `0.0.0.0` the phone listener answers every network the box is on, so
+  firewall 3101 to the tailnet **and to your reverse proxy** - the address the proxy connects from - and deny it
+  everywhere else:
+  ```
+  ufw allow in on tailscale0 to any port 3101 proto tcp
+  ufw allow from <your proxy's address> to any port 3101 proto tcp   # e.g. ufw allow from 10.73.10.81 ...
+  ufw deny 3101/tcp
+  ```
+  Leave out the proxy's line and every phone that comes in through the proxy loses the server. **Binding only the
+  tailnet IP** (`DEVICE_BIND_ADDR=100.101.102.103:3101`) does the same to a proxy on the LAN, which connects to the
+  box's LAN address: bind the tailnet IP only when nothing but the tailnet reaches the phone listener (no proxy, or
+  a proxy that connects over the tailnet). The phone listener serves only `/api/devices/*` and `/healthz`, every
+  request behind a phone's token.
+- **Caddy on the same box, server on loopback**: one more site, plain http, on the tailnet IP only:
+  ```
+  http://100.101.102.103:3102 {
+  	bind 100.101.102.103
+  	reverse_proxy 127.0.0.1:3101 {
+  		header_up -Tailscale-User-Login
+  	}
+  }
+  ```
+  The address is then `http://100.101.102.103:3102`. Caddy on **another** host can do the same with its own tailnet
+  IP, proxying to the server's phone listener.
+- **`tailscale serve`**: `tailscale serve --bg --http=3102 http://127.0.0.1:3101` gives `http://<the box's tailnet IP>:3102`
+  (not Funnel: the tailnet only).
+- **The tailnet policy**: the phones' tag must reach that port, e.g. `{"action": "accept", "src": ["tag:phone"],
+  "dst": ["tag:server:3101"]}` (or the box's name or IP, and 3102 for the Caddy or serve site).
+- **Check** from another tailnet device (not the box itself): `curl http://100.101.102.103:3101/healthz` says `ok`.
+  On a phone with the tailnet joined, Settings › Server URL › that address, then "Sync now" says it synced; switch the
+  address back to https afterwards.
+
+The device page (Advanced › Certificate check) shows the address and sends it to the phones (Settings › Server
+certificate). It is `PHONE_RECOVERY_URL` when set (plain `http://` to a Tailscale IP only - anything else is ignored
+with a log line), else the setup QR's own address when that is one, else this box's tailnet address on the phone
+listener (or on the admin listener while `ADMIN_DEVICE_API` is on) when that listener surely answers it (bound to the
+tailnet IP, to `0.0.0.0` for an IPv4 address, or to `[::]` for an IPv6 one - and for IPv4 only when that socket isn't
+IPv6-only). The server reads its tailnet address as the source the system picks toward Tailscale's resolver, without
+sending anything, and only while a Tailscale interface is up (an address in `fd7a:115c:a1e0::/48`, or `tailscale0`),
+so a carrier-NAT uplink in `100.64.0.0/10` isn't taken for the tailnet. Behind Caddy on loopback or on another host,
+with Tailscale in userspace networking or in another container, it can't tell: set `PHONE_RECOVERY_URL` to the site
+above.
+
 ### Changing how it's exposed
 
 To stop the public phone URL: point the phones back at the tailnet URL first, then remove the Caddy site (or the
@@ -475,6 +544,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
 | `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://`, or `http://` to a Tailscale IP address (100.64.0.0/10, `fd7a:115c:a1e0::/48`) - taken with a warning in the log, on Phone Setup and on the Connect page (Tailscale encrypts the way, but only https proves the server to the phone; prefer `https://<name>.ts.net` from `tailscale serve`); any other `http://` (a LAN address, a `*.ts.net` name) is ignored with a log line, and Phone Setup refuses it the same way. The phones apply the same rule to the address they store (launcher security review S-M1): a phone set up earlier with a plain-http LAN address stops reaching the server once Vibb One is updated, until the https address is typed in its Settings (Server URL, behind the parent code) |
+| `PHONE_RECOVERY_URL` | none - the tailnet recovery address for a phone whose certificate check refuses this server (design 76; "Tailnet recovery address" above): plain `http://` to a Tailscale IP only, e.g. `http://100.101.102.103:3101`; anything else is ignored with a log line. Unset: the setup QR's address when it is one, else this box's tailnet address on a listener that answers it, when the server can tell |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
 | `MET_CONTACT` | none - your e-mail address or website, added to the User-Agent of the server's requests to MET Norway for the lock screen's weather (design 75; "Weather on the lock screen" below). MET asks for it and may block clients without a contact; with it MET can tie the grid cells it is asked for to that address. 3-100 printable ASCII characters without quotes (no æ, ø, å), else ignored with a log line |
 | `PWA_DEFAULT_LANG` | none - `en` or `nb`: the admin pages' language for sign-in pages and for an account's first signed-in request (stored once as that account's language), ahead of the browser's `Accept-Language`; unset = the browser's language, else English. `?lang=` and an account's own choice (Settings > Account > Language) always win; any other value is ignored with a log line |

@@ -104,6 +104,19 @@ class PolicyResponseCompatTest {
         assertNull(LastEnforcedPlan.of(policy("""["de.danoeh.antennapod"]""")).toPolicy().lockMediaApps)
     }
 
+    /** Design 76: `server_tls` (the server's `policy_json_keys_snapshot`: `{}` for a watched phone with `server_pin_v1`,
+     * absent without it) - raw JSON read by `enforceOf`, so nothing in it fails the policy; never in the fallback. */
+    @Test
+    fun `server_tls decodes raw, never fails the policy, and the fallback never carries it`() {
+        fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"server_tls": $value}""")
+        assertNull(enforceOf(policy("{}").serverTls))
+        assertEquals(true, enforceOf(policy("""{"enforce": true}""").serverTls))
+        assertEquals(false, enforceOf(policy("""{"enforce": false}""").serverTls))
+        assertNull(enforceOf(policy("""[7, "x"]""").serverTls))
+        assertNull(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").serverTls)
+        assertNull(LastEnforcedPlan.of(policy("""{"enforce": true}""")).toPolicy().serverTls)
+    }
+
     @Test
     fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)

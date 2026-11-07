@@ -122,6 +122,10 @@ data class StatusReportRequest(
      * read yet (left out). Never an event, a title, a count or a time. Pinned by `calendar_status_report.json`
      * (`CalendarReportTest`). */
     val calendar: CalendarReport? = null,
+    /** Design 76 (capability `server_pin_v1`): the certificate check - the stored flag, this sync's chain as seen
+     * and the outside sightings ([com.kidslauncher.mdm.server.ServerTlsReport]). Pinned by `server_tls_report.json`
+     * (`ServerPinsTest`). */
+    val serverTls: com.kidslauncher.mdm.server.ServerTlsReport? = null,
 )
 
 /**

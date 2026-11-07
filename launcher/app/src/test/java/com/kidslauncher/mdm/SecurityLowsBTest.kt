@@ -238,7 +238,7 @@ class SecurityLowsBTest {
         // The sync runs it, keeps the answer for after the report and builds its client again (nit 1).
         val sync = src("java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         assertTrue(sync.contains("LEAVE_TAILNET_COMMAND -> {\n            val (ok, message) = TsnetClient.leave(context)\n            CommandAnswers.keep(context, pending, ok, message)"))
-        assertTrue(sync.contains("if (ranCommand?.command == LEAVE_TAILNET_COMMAND) api = createMdmApi(serverUrl, deviceToken)"))
+        assertTrue(sync.contains("if (ranCommand?.command == LEAVE_TAILNET_COMMAND) {\n            apiPath = serverPathNow(serverUrl)\n            api = createMdmApi(serverUrl, deviceToken, path = apiPath)"))
         assertTrue(sync.contains("tailnetJoined = TsnetClient.joined(context),"))
         // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
         val serverCopy = File("../../server/testdata/leave_tailnet.json")

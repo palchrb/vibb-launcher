@@ -50,6 +50,8 @@ import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 import com.kidslauncher.mdm.server.performMdmSync
+import com.kidslauncher.mdm.server.OutsideRow
+import com.kidslauncher.mdm.server.ServerPinStore
 import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.LegalInfoActivity
@@ -65,6 +67,7 @@ private const val WRITE_SETTINGS = "settings_mdm_write_settings"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
 private const val MEDIA_LOCK = "settings_mdm_media_lock"
 private const val APP_ACCESS = "settings_mdm_app_access"
+private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -174,6 +177,18 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         serverUrl?.summary = serverUrlSummary(mdm.serverUrl())
         serverUrl?.setOnPreferenceClickListener {
             editServerUrl(serverUrl, mdm.serverUrl())
+            true
+        }
+
+        // Design 76 D3: the certificate check - on, not on yet, or the last refusal; tapping it explains the recovery.
+        val serverCert = findPreference<Preference>(SERVER_CERT_ROW)
+        serverCert?.summary = serverCertSummary(requireContext())
+        serverCert?.setOnPreferenceClickListener {
+            AlertDialog.Builder(requireContext(), R.style.AlertDialogCustom)
+                .setTitle(R.string.settings_mdm_server_cert)
+                .setMessage(getString(R.string.server_cert_explain) + "\n\n" + serverCertRecovery(requireContext()))
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
             true
         }
 
@@ -369,6 +384,25 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
     }
 
+    /** Where to point a phone that refuses its server (code QA H-1): the server's tailnet address when it named one. */
+    private fun serverCertRecovery(context: Context): String =
+        ServerPinStore.recovery(context)?.let { context.getString(R.string.server_cert_recovery, it) }
+            ?: context.getString(R.string.server_cert_recovery_unknown)
+
+    /** The certificate check's row (design 76 D3): the last refusal not yet told to the server, else on or off. */
+    private fun serverCertSummary(context: Context): String {
+        val refused = ServerPinStore.ring(context).lastOrNull { it.kind == OutsideRow.REFUSED }
+        return when {
+            refused != null -> getString(
+                R.string.settings_mdm_server_cert_refused,
+                refused.name,
+                com.kidslauncher.mdm.ui.ClockFormat.formatClock(context, refused.atMs),
+            )
+            ServerPinStore.enforce(context) -> getString(R.string.settings_mdm_server_cert_on)
+            else -> getString(R.string.settings_mdm_server_cert_off)
+        }
+    }
+
     /** Why the phone won't use a server address, whole (E9 L1: a toast shows two lines, and the advice was cut). */
     private fun showServerUrlRefused(context: Context) {
         AlertDialog.Builder(context, R.style.AlertDialogCustom)
@@ -399,6 +433,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         // Re-read every time: a pause started or ended, or the dialog answered; and after each apply while shown.
         AppEnforcer.addAppliedListener(appliedListener)
         updateSystemPageRows()
+        findPreference<Preference>(SERVER_CERT_ROW)?.summary = serverCertSummary(requireContext())
     }
 
     override fun onPause() {
@@ -711,6 +746,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             return
         }
 
+        val started = System.currentTimeMillis()
         CoroutineScope(Dispatchers.IO).launch {
             val reachedServer = try {
                 performMdmSync(context).also {
@@ -721,6 +757,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 false
             }
             withContext(Dispatchers.Main) {
+                // Design 76 D3: a refused certificate says why, whole, like S-M1's closed path (E9 L1).
+                val refused = ServerPinStore.lastRefusal?.takeIf { !reachedServer && it.atMs >= started }
+                if (refused != null) {
+                    AlertDialog.Builder(context, R.style.AlertDialogCustom)
+                        .setTitle(R.string.settings_mdm_server_cert)
+                        .setMessage(context.getString(R.string.server_cert_refused_sync, refused.name) + "\n\n" + serverCertRecovery(context))
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                    if (isAdded) findPreference<Preference>(SERVER_CERT_ROW)?.summary = serverCertSummary(context)
+                    return@withContext
+                }
                 val messageRes =
                     if (reachedServer) R.string.toast_mdm_sync_done else R.string.toast_mdm_sync_failed
                 Toast.makeText(context, messageRes, Toast.LENGTH_SHORT).show()

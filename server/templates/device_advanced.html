@@ -279,6 +279,55 @@
         </div>
         <p class="group-footer">{{ self.t("device.advanced.connection_footer") }}</p>
     </section>
+
+    {#- Design 76: the certificate check - the state as one row, the last refusal as an alarm, the parent's one-shots
+        (each lands back here, #server-tls, scroll-restore.js). Only for a phone whose last report has server_pin_v1. -#}
+    {% if let Some(tls) = server_tls %}
+    <section id="server-tls" aria-labelledby="server-tls-title">
+        <h2 class="group-header" id="server-tls-title">{{ self.t("server_tls.title") }}</h2>
+        {% if let Some(alarm) = tls.alarm %}
+        <div class="attention attention-alarm" data-warning="server-tls-refused">
+            <span class="attention-text">{{ alarm }}</span>
+        </div>
+        {% endif %}
+        <div class="group">
+            <div class="row" data-row="server-tls">
+                <span class="row-label">{{ tls.line }}{% if let Some(detail) = tls.detail %} {{ detail }}{% endif %}</span>
+            </div>
+            <div class="row" data-row="server-tls-recovery">
+                <span class="row-label">{{ tls.recovery }}</span>
+            </div>
+            {% if tls.can_turn_on %}
+            <form method="post" action="/devices/{{ device.id }}/server-tls/on#server-tls" class="cell">
+                <button type="submit" class="row row-button">{{ self.t("server_tls.turn_on_now") }}</button>
+            </form>
+            {% endif %}
+            {% if tls.can_watch %}
+            <form method="post" action="/devices/{{ device.id }}/server-tls/watch#server-tls" class="cell">
+                <button type="submit" class="row row-button">{{ self.t("server_tls.turn_on_again") }}</button>
+            </form>
+            {% endif %}
+            {% if tls.can_turn_off %}
+            <details class="confirm cell">
+                <summary class="row">{{ self.t("server_tls.turn_off") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/server-tls/off#server-tls" class="confirm-body">
+                    <p>{{ self.tp("server_tls.turn_off_confirm", [("name", device.name.as_str())]) }}</p>
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="confirm" value="yes" required>
+                        <span>{{ self.t("server_tls.turn_off_yes") }}</span>
+                    </label>
+                    <button type="submit" class="button-destructive">{{ self.t("server_tls.turn_off") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+            {% endif %}
+            {% if let Some((text, error)) = tls.notice %}
+            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("server_tls.footer") }}</p>
+    </section>
+    {% endif %}
     {% endif %}
 
     <section id="remove" aria-label="{{ self.t("device.advanced.remove_label") }}">

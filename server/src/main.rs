@@ -53,6 +53,7 @@ mod play;
 mod push;
 mod retention;
 mod security;
+mod server_tls;
 mod settings_log;
 mod sound_mode;
 mod spotify;
@@ -660,7 +661,11 @@ async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>)
     }
 
     let admin_listener = match tokio::net::TcpListener::bind(&net.bind_addr).await {
-        Ok(listener) => listener,
+        Ok(listener) => {
+            // Design 76's recovery address: whether `[::]` answers IPv4 here (read-only, verification n3).
+            server_tls::note_listener(false, &listener);
+            listener
+        }
         Err(err) => {
             tracing::error!("can't listen on BIND_ADDR {}: {err}", net.bind_addr);
             std::process::exit(1);
@@ -668,7 +673,10 @@ async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>)
     };
     let device_listener = match &net.device_bind_addr {
         Some(addr) => match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => Some(listener),
+            Ok(listener) => {
+                server_tls::note_listener(true, &listener);
+                Some(listener)
+            }
             Err(err) => {
                 tracing::error!("can't listen on DEVICE_BIND_ADDR {addr}: {err}");
                 std::process::exit(1);
@@ -1146,6 +1154,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/leave-tailnet",
             post(handlers::devices::leave_tailnet),
+        )
+        .route(
+            "/devices/{id}/server-tls/{action}",
+            post(handlers::devices::server_tls),
         )
         .route(
             "/devices/{id}/delete",

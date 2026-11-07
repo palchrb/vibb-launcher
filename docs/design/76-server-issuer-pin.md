@@ -330,9 +330,13 @@ server never judges a chain).
 
 ## 8. Steps and sizes
 
-0. **Check (S, no code)**: `openssl s_client -connect <the user's host>:443 -showcerts` (the chain's pins against B);
-   on the emulator, the anchor Android validates for it and for a ZeroSSL-issued host; that the server answers plain
-   http on its Tailscale IP from a phone (the recovery path).
+0. **Check (S, no code) - OWED before the release that ships this** (code QA H-1, `docs/review/qa-76-code.md`):
+   `openssl s_client -connect <the user's host>:443 -showcerts` (the chain's pins against B); on the emulator, the
+   anchor Android validates for it and for a ZeroSSL-issued host; and **the recovery path on the user's server**: from
+   another tailnet device `curl http://<the Docker VM's Tailscale IP>:3101/healthz` says `ok` (the install binds
+   `0.0.0.0:3101` with `network_mode: host`, Caddy is on another host), the tailnet policy lets the phones' tag reach
+   that port, the device page's Certificate check shows that address, and a phone with the tailnet joined syncs with
+   it as its Server URL. Until it holds, the only recovery is the setup QR (DEPLOY.md, "Tailnet recovery address").
 1. **Launcher (M)**: `ServerPins.kt`, `toServer`'s fence, catch, pinner and observer, the flag in the sync, the report
    and capability, the QR clearing the flag, Settings' row and "Sync now", the debug override, texts en + nb, the
    tests, `docs/notes/launcher/security.md` (a section after S-M1's, with D1's rule).

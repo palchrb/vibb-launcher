@@ -249,6 +249,7 @@ class PowerEventsTest {
         assertTrue("the proxy came up", rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN", "127.0.0.1:1055")))
         assertTrue(rebuildNeeded(key, clientKeyOf("https://other.example", "FAKE-TOKEN", null)))
         assertTrue(rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN-2", null)))
+        assertTrue("design 76: the certificate check came on", rebuildNeeded(key, clientKeyOf("https://kidphone.example", "FAKE-TOKEN", null, pinned = true)))
         assertNull(clientKeyOf("https://kidphone.example", "", null))
         assertNull(clientKeyOf(null, "FAKE-TOKEN", null))
         assertTrue("unenrolled: dropped", rebuildNeeded(key, null))
