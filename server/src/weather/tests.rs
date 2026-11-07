@@ -433,6 +433,110 @@ fn the_recorded_forecast_reads() {
     assert_eq!(odd[0].sym, None);
 }
 
+/// The emulator's cell (Mountain View, 37.42/-122.08), recorded 2026-11-04 (`testdata/weather/README.md`): outside
+/// MEPS, so ECMWF's shape - no gust, no chance of rain, the last five hourly entries without `next_6_hours`, then the
+/// 6-hourly tail. It reads whole.
+#[test]
+fn the_mountain_view_forecast_reads() {
+    let hours =
+        parse_forecast(&std::fs::read("testdata/weather/met_complete_mountain_view.json").unwrap())
+            .unwrap();
+    assert_eq!(hours.len(), 63);
+    assert_eq!(hours[0].t, utc("2026-11-04T21:00:00Z").timestamp());
+    assert_eq!(hours[0].sym.as_deref(), Some("clearsky_day"));
+    assert_eq!(hours[0].temp, Some(18.3));
+    assert_eq!(hours[62].t, utc("2026-11-07T11:00:00Z").timestamp());
+    assert!(hours.iter().all(|h| h.gust.is_none() && h.pop.is_none()));
+    assert!(hours.iter().all(|h| h.temp.is_some() && h.sym.is_some()));
+    assert_eq!(hours.iter().filter(|h| h.sym6.is_some()).count(), 58);
+}
+
+/// E9 (2026-11-04): MET served a `complete` cut short. Every cut keeps exactly the whole hourly entries before it -
+/// the first hours as the whole body reads them - and anything but a cut stays unreadable.
+#[test]
+fn a_cut_body_keeps_its_whole_hours() {
+    let body = std::fs::read("testdata/weather/met_complete.json").unwrap();
+    let whole = recorded_hours();
+    assert_eq!(parse_cut_forecast(&body), Err(Unreadable), "a whole body");
+    let mut kept = 0;
+    for cut in (0..body.len()).step_by(997) {
+        match parse_cut_forecast(&body[..cut]) {
+            Ok(hours) => {
+                assert!(hours.len() >= kept && hours.len() < whole.len(), "at {cut}");
+                assert_eq!(hours[..], whole[..hours.len()], "at {cut}");
+                kept = hours.len();
+            }
+            Err(Unreadable) => assert_eq!(kept, 0, "at {cut}: unreadable after a readable cut"),
+        }
+    }
+    assert!(kept > 30, "{kept}");
+    // E9's own cut: 38 038 of ~65 000 bytes, here the same share.
+    let e9 = parse_cut_forecast(&body[..body.len() * 38 / 65]).unwrap();
+    assert!((15..30).contains(&e9.len()), "{}", e9.len());
+    // Wrong before its end, or not MET's head.
+    let mut wrong = body[..body.len() / 2].to_vec();
+    let at = wrong.windows(7).rposition(|w| w == b"\"data\":").unwrap() + 6;
+    wrong[at] = b';';
+    assert_eq!(parse_cut_forecast(&wrong), Err(Unreadable));
+    assert_eq!(parse_cut_forecast(b"<html><body>503"), Err(Unreadable));
+    assert_eq!(
+        parse_cut_forecast(br#"{"type":"Feature","timeseries":[{"time":"2026-11-03T13:00:00Z""#),
+        Err(Unreadable),
+        "no properties"
+    );
+    // The keys are found by structure: a `properties` or `timeseries` inside a string or a deeper object is not them.
+    for head in [
+        r#"{"type":"Feature","geometry":{"properties":{"timeseries":[{"time":"2026-11-03T13:00:00Z","data":{"next_1_hours":{}}},"#,
+        r#"{"note":"\"properties\":{\"timeseries\":[","properties":{"meta":{"timeseries":[{"time":"2026-11-03T13:00:00Z","data":{"next_1_hours":{}}},"#,
+    ] {
+        assert_eq!(
+            parse_cut_forecast(head.as_bytes()),
+            Err(Unreadable),
+            "{head}"
+        );
+    }
+}
+
+/// A forecast that ends early says nothing about what comes after its last hour: a window, period or day that runs
+/// past it is unknown (null, no words), never dry (M-2). A whole forecast reaches further than any window asked.
+#[test]
+fn what_runs_past_the_last_hour_is_unknown() {
+    let whole = recorded_hours();
+    let oslo: Tz = "Europe/Oslo".parse().unwrap();
+    // The last hour starts 09:00 on 2026-11-04 local (08:00Z) and ends at 10:00.
+    let cut_at = utc("2026-11-04T08:00:00Z").timestamp();
+    let short: Vec<Hour> = whole.iter().filter(|h| h.t <= cut_at).cloned().collect();
+    let date = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let periods_of = |hours: &[Hour]| periods(hours, oslo, date);
+    assert!(periods_of(&whole).iter().all(|p| p.precip_mm.is_some()));
+    // The morning (06-12) is cut at 10:00 local: unknown, all null - as is every later period.
+    for period in periods_of(&short) {
+        assert_eq!(
+            (period.symbol, period.temp, period.precip_mm),
+            (None, None, None),
+            "{}",
+            period.part
+        );
+    }
+    // The day before the cut is whole: its periods and its low and high stay.
+    let today = NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+    let cell = Cell::of(59.94, 10.76).unwrap();
+    assert_eq!(
+        day(&short, oslo, today, cell).low,
+        day(&whole, oslo, today, cell).low
+    );
+    assert!(day(&whole, oslo, date, cell).high.is_some());
+    let cut_day = day(&short, oslo, date, cell);
+    assert_eq!((cut_day.low, cut_day.high), (None, None));
+    // Tomorrow's words from the evening before need tomorrow's 07-18; the cut has 07-10 only.
+    let evening = utc("2026-11-03T20:00:00Z");
+    assert!(words(&short, oslo, evening).is_none_or(|w| w.form != Form::Tomorrow));
+    // Tonight's span on 11-04 (18-24) is past the cut; whole, it is there.
+    let night = utc("2026-11-04T19:00:00Z");
+    assert!(tonight(&whole, oslo, night).is_some());
+    assert!(tonight(&short, oslo, night).is_none());
+}
+
 #[test]
 fn merge_keeps_a_day_back() {
     let hour = |h: i64, temp: f32| Hour {
@@ -462,6 +566,12 @@ fn merge_keeps_a_day_back() {
             .all(|h| h.temp == Some(2.0)),
         "the new hours win"
     );
+    // After a cut body the old hours past the new series' last stay too.
+    let cut: Vec<Hour> = (26..28).map(|h| hour(h, 2.0)).collect();
+    let merged = merge_cut(&old, &cut, utc("2026-11-04T03:00:00Z"));
+    assert_eq!(merged.len(), 27);
+    assert_eq!(merged.last().unwrap().temp, Some(1.0));
+    assert_eq!(merge(&old, &cut, utc("2026-11-04T03:00:00Z")).len(), 25);
 }
 
 #[test]

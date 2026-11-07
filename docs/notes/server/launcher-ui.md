@@ -147,7 +147,24 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `MET_CONTACT`), the only outside service the weather asks. A cell is fetched only when asked and past
   `max(now + (Expires − Date), now + 30 min) + 0-120 s`, conditionally, one forecast fetch at a time; a phone waits at
   most 6 s (the nowcast 3 s). 429 backs off (`Retry-After`, ≥ 10 min, doubling to 2 h), 403 waits 6 h, others 5-60
-  min; the old hours are served. Logs name a cell's row id and a code, never a coordinate
+  min (never before a `Retry-After`, a 5xx's counted to 2 h at most); the old hours are served. **The quick retry** (2026-11-04; MET's edge answers a
+  cold point - a rarely asked one, just past its `Expires` - with a fast 503 and `Retry-After: 5`, then serves it; MET's
+  status-code page documents neither, so nothing depends on it): a 500/502/503/504 is asked again within the same fetch
+  task (`weather_cache::quick_wait`) after its `Retry-After` when that is 0-60 s (seconds or an HTTP date, at least
+  1 s; a longer one ends the quick tries), else 5 s then 15 s - at most 3 requests, then the old backoff unchanged.
+  A phone whose cell has stored hours gets them at once and does not wait for the retry (a cell with none waits up to
+  6 s as before).
+  The server-wide lock is let go during the wait and the row's `next_fetch_at` set to the retry, so other cells fetch
+  and no second ask fetches this one; the task goes on only while the row still holds that stamp (an erase ends it).
+  A retried success logs one `info!`, no error. The nowcast keeps its own path (any failure: next ask after 2 min,
+  longer than a quick retry's cap, and the card waits only 3 s). **A body MET cut short** (E9, 2026-11-04: a 200 of
+  38 038 of ~65 000 bytes, from MET's cache until its `Expires`; the reason cells read `unreadable` that day) keeps its
+  whole hourly entries (`weather::parse_cut_forecast`: only JSON that is right up to an early end; `merge_cut` keeps the
+  old hours past the cut too), stored with `last_error = cut` and without its `Last-Modified` (so the next ask is unconditional; a 304 keeps `cut`),
+  asked again after its `Expires`. A window, period or day the stored hours do not reach the end of is unknown, not dry
+  (`weather::covers`: null period, no words, no low and high); a whole body never meets that. The Mountain View
+  cell's answer (`testdata/weather/met_complete_mountain_view.json`, ECMWF's shape: no gust, no chance of rain, no
+  `next_6_hours` on the last hourly entries) reads whole. Logs name a cell's row id and a code, never a coordinate
   (`tests::weather::a_failed_fetch_keeps_only_a_code`).
 - **Retention**: `retention::prune` drops a cell not asked for in 48 h (or the longest `location_retention_days`, when
   shorter); a change of a phone's Location to Off (`update_location_policy`) erases `weather_cells` and the nowcasts

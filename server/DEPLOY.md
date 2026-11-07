@@ -795,6 +795,11 @@ cached answer is due (about once an hour per grid cell of about 2 x 2 km), one o
   than block every install that shares the string (the log warns once while it is unset). With it, MET can tie the
   cells it is asked for - roughly where your family is, to about 2 km - to that address. MET's data is CC BY 4.0.
 
+MET's edge sometimes answers a rarely asked cell with a quick 503 before it serves it: the server asks again within
+seconds (MET's `Retry-After` when it is at most a minute, else after 5 s and 15 s; at most three requests) and only then
+waits 5-60 minutes, serving the old forecast. The log shows `status_5xx` only when the quick tries did not get it, and an `info` line
+when a retry got it; `cut` means MET sent a forecast cut short, whose whole hours were kept.
+
 No place name is looked up: until 2026-11-04 the server also asked Kartverket (`api.kartverket.no`) for the nearest
 settlement's name once per cell; that lookup is gone, and migration 0126 drops its cache (`weather_places`).
 
