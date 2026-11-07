@@ -1111,6 +1111,24 @@ pub async fn battery_report(
 pub const UNREAD: &str =
     "NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.admin_id = ?1 AND r.event_id = e.id)";
 
+/// Whether any parent has read the device's `emergency_call` event for the call at `at` (the
+/// event's dedup key is the call's instant). `false` when no such event exists.
+pub async fn emergency_call_read<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    device_id: i64,
+    at: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM parent_events e JOIN parent_event_reads r ON r.event_id = e.id \
+         WHERE e.device_id = ? AND e.kind = ? AND e.dedup_key = ?)",
+    )
+    .bind(device_id)
+    .bind(Kind::EmergencyCall.wire())
+    .bind(instant(at))
+    .fetch_one(db)
+    .await
+}
+
 /// The events `admin_id` hasn't read.
 pub async fn unread_count<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,

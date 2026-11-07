@@ -1023,6 +1023,73 @@ async fn emergency_call_is_shown_on_the_device_page() {
     assert_eq!(warnings(&calls_page(&app, &cookie, id).await), 0);
 }
 
+/// An emergency call leaves Attention once a parent has read its inbox event, and at the latest
+/// 24 h after the call; the calls page keeps its line for 7 days.
+#[tokio::test]
+async fn an_emergency_call_leaves_attention_when_read_or_after_a_day() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, true).await;
+    let post_call = |at: chrono::DateTime<chrono::Utc>| {
+        let mut call_state = good_call_state();
+        call_state["last_emergency_call_at"] =
+            json!(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        app.post_status(
+            &token,
+            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
+        )
+    };
+    let in_attention = || async {
+        app.get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text()
+            .contains("Emergency call made from this phone")
+    };
+    let on_calls_page = || async {
+        calls_page(&app, &cookie, id)
+            .await
+            .contains("emergency number (")
+    };
+
+    // A fresh call, its event unread: in Attention.
+    post_call(chrono::Utc::now() - chrono::Duration::minutes(5)).await;
+    assert!(in_attention().await);
+    // A parent opens the event in the inbox: gone from Attention, still on the calls page.
+    let event: i64 = sqlx::query_scalar(
+        "SELECT id FROM parent_events WHERE device_id = ? AND kind = 'emergency_call'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/{event}/open"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    assert!(!in_attention().await);
+    assert!(on_calls_page().await);
+
+    // A call with no event (the switch is off or the event is gone) stays the day, then leaves.
+    sqlx::query("DELETE FROM parent_events WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    post_call(chrono::Utc::now() - chrono::Duration::hours(23)).await;
+    assert!(in_attention().await);
+    post_call(chrono::Utc::now() - chrono::Duration::hours(25)).await;
+    assert!(!in_attention().await);
+    assert!(on_calls_page().await);
+
+    // Past 7 days it is on neither.
+    post_call(chrono::Utc::now() - chrono::Duration::days(8)).await;
+    assert!(!on_calls_page().await);
+}
+
 /// §5.1's table for Calls & Contacts, built from the rendered forms: the switches return to their
 /// group (`#settings`; scroll-restore keeps the place), a contact's forms to its row, open,
 /// Add Contact to the new row, Remove Contact… to `#contacts`. Every fragment is the form's own
