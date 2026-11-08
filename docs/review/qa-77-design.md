@@ -446,3 +446,79 @@ These come from the findings above. All are device checks, and none needs code:
 - **Data and roles:**
   - the "MMS messages" toggle with mobile data off (M8);
   - the SMS-role hand-back without a process kill (L7).
+
+## Fix round (architect, 2026-11-08, on `sms-design`)
+
+Every finding below is fixed in `docs/design/77-sms-mms-client.md` or explained.
+
+**High:**
+- **H1 - fixed.** D4's emergency-sender rule is deleted, and incoming SMS from emergency numbers are allowed only
+  through the callback window (D4 rule 2, the "No sender is let in" paragraph). A window-time non-contact shows "Ukjent
+  avsender" (D4 rule 2, §6.7). The vector "112 outside the window BLOCKs" is in §10.1. §0 and D13 are reworded to match.
+- **H2 - fixed.** `SmsSenderType` reads the TP-OA type from the raw PDU, and an alphanumeric sender BLOCKs whatever its
+  characters are; `3gpp2` counts as malformed (D4 rule 1, §6.1, §6.3). MMS `From` must be `<digits>/TYPE=PLMN` (D10).
+  The vectors are in §10.1 and the emulator TON 101 check in §10.3; the cheapest-spoof point is in §3 and §2.5.
+- **H3 - fixed.** Content-location is checked against the SIM's MMSC host from a server-held list by MCC/MNC, with
+  scheme, userinfo and port rules, failing closed for an unknown carrier (D10, §7 "The MMSC host list"). The byte cap is
+  in `MmsFileProvider` (D10, L3). Step 0 records the hosts and whether the APN reaches outside (§9). D10's promise is
+  restated, with the residual.
+
+**Medium:**
+- **M1 - fixed.** The isolated process returns raw pixels in `SharedMemory`; the main process checks the size, copies
+  the pixels and encodes its own JPEG and thumbnail; text lengths are checked before reading (D8, §8.2, §6.4, §6.8).
+- **M2 - fixed (named, the user decides GMS).** App-specific tokens are an accepted residual with no Device Owner switch.
+  GMS goes through step 0 tests and §13 Q8. See §8.6, §2.5 and §9 step 0.
+- **M3 - fixed (step 0 decides).** The Bluetooth MAP push test is in step 0, with the rule if it sends: deny `SEND_SMS` to
+  Bluetooth if possible, else a named residual put to the user (§8.6, §2.5).
+- **M4 - fixed.**
+  - (a) `DISALLOW_SMS` is stated as lost in D1 and §6.10, the PWA says "går tapt", and "Bare kontakter" is offered only
+    after `sms_engine_v1` (D2, §7). The step 0 loss check is in §9.
+  - (b) `HELD` replaces dropping while the rules are unknown, with `restrictSms` narrowed (D15, §13 Q6).
+  - (c) The raw push is committed to `pending_push` before `finish()` (D7, §6.4, §6.6).
+  - (d) Receive has its own executor and a 3 s budget; everything else runs after `finish()` (D7, §6.10).
+- **M5 - fixed.** The remote direction is restated: the phone pushes from a server-acknowledged `remote_acked_seq`,
+  commands come as nudges plus a phone fetch, and parts are uploaded on request (§6.2 "The remote direction").
+  `ConversationChanged`, `MessageDeleted`, `Origin` (declared) and `Refused(DUPLICATE_CLIENT_ID)` are added (§6.2).
+- **M6 - fixed.** The RCS path is in §8.5: the PWA line, Google's deregistration form, and a possible one-session
+  Messages. The step 0 timing check is in §9, and the user question is §13 Q7.
+- **M7 - fixed.** The parent types the phone's own numbers, one per SIM. The SIM's number is used only when that field
+  is empty, and a mismatch becomes a finding (D12, §7).
+- **M8 - fixed.** The "MMS-meldinger" toggle step 0 check and runbook line, `mms_data_allowed` with its finding, the
+  `DataEnabledListener` plus sync retry trigger, and "Trykk for å prøve igjen" after five tries (D14, §7, §13 Q7).
+- **M9 - fixed.**
+  - The silent choices are now user questions: whose Element X (§13 Q9, §6.2), replies from text-only contacts (§13 Q3,
+    D3), hold or drop (§13 Q6, D15), the own number, RCS and MMS without data (§13 Q7), and GMS (§13 Q8).
+  - The reversals of design 09 are stated in §11, and §13 Q1-Q3 offer the earlier options.
+  - Q4 now uses the PWA's own words. The nb catalogue says "I telefonboken" (`server/src/i18n/nb.json:1228`), not
+    "telefonboka", so the note uses that and "Kan ringe <navn>".
+
+**Low:**
+- **L1 - fixed.** The `isIsolated()` guard in `Application` and the component factory, `exported="false"`, and a
+  manifest test like `BootCoverManifestTest` (D8, §6.1).
+- **L2 - fixed.** About 7,580 lines; `Uri`, `ContentResolver` and `ContentType` are handled; the composer takes bytes
+  (D9, §0, §2.6, §4).
+- **L3 - fixed.** `MmsFileProvider` with per-request write-only URIs, revoked grants and a capped pipe (§6.1, D10, §8.4).
+- **L4 - fixed.** `UNCERTAIN` only after 10 minutes, with late results applied; `SENT` only when every part is sent,
+  `FAILED` when any part fails (§6.2).
+- **L5 - fixed.** `blocked` is capped at 500 rows plus counts, pushes are deduplicated for blocked rows too, and the
+  counters are cumulative (§6.4, §6.6, §7).
+- **L6 - fixed.** `setAuthenticationRequired(true)` on the reply (§6.8).
+- **L7 - fixed.** The role is kept in `off` and handed back for `open` and unmanaged calls (D1). The step 0 hand-back
+  survival check is in §9 and §8.3, and §6.7 says what the kid sees in `off` and `open`.
+- **L8 - fixed.** `insertOutgoing` (`Inserted`/`Existing`) is the store contract, the fake implements it, and there is
+  an emulator double-send (§6.2, §10.1, §10.3). The `rules` vectors moved to the launcher-only `sms_rules.json` (§7,
+  §10.1).
+- **L9 - fixed.** Step 3 is split into 3a (codec, JVM only) and 3b (§9).
+- **L10 - fixed.** `subId` is on the conversation and replies go out on it, with an own number per SIM (§6.2, §6.5,
+  D12).
+- **L11 - fixed.** A `raw:<text>` conversation key with no `contactId` and `canSend = false` (§6.2, §6.6).
+
+**Info:**
+- **I1, I2 - noted.** No change needed.
+- **I3 - fixed.** The backup line is in D6.
+- **I4 - fixed.** D6's "Why" now includes MAP and `READ_SMS` reading an empty provider.
+- **I5 - fixed.** EXIF and GPS are dropped on send (D11).
+- **I6 - fixed.** The migration number is to be re-checked at build time (§7).
+- **I7 - fixed.** D5 rule 1's note.
+
+**"What the step 0 list should gain":** every item is in §9 step 0.
