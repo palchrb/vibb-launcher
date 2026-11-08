@@ -30,7 +30,7 @@ findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-11-07)
 
-Last tags: server-v0.68.0 + launcher-v0.38.0-rc.7 + music-v0.6.0-rc.2 (2026-11-04); untagged since: see Done since the last release.
+Last tags: server-v0.69.0 + launcher-v0.38.0-rc.8 (2026-11-08, on d80fac83; music unchanged at music-v0.6.0-rc.2); every entry in "Done since the last release" up to the MET floor ships in them.
 
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
