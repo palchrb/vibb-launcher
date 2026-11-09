@@ -597,6 +597,13 @@ class LockGlanceTest {
         for (banned in listOf("noticeCame", "NotificationManager", ".notify(", "Notification.Builder", "NotificationCompat", "Vibrator", "WakeLock")) {
             assertFalse(banned, calm.contains(banned))
         }
+        // 2026-11-09: the row's tap reads today afresh (the kept days forgotten), and the target stays the day.
+        val tap = src("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().substringAfter("private fun tap(row: GlanceRow)")
+            .substringBefore("fun takeTarget(")
+        assertTrue(tap.contains("is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)"))
+        assertTrue(tap.contains("if (row is GlanceCalendarRow) calendar.refresh()"))
+        assertTrue(src("java/com/kidslauncher/mdm/lock/GlanceCalendar.kt").readText()
+            .contains("if (fresh) CalendarStore.forgetDays(day, day.plusDays(1))"))
     }
 
     private fun src(path: String) = listOf("src/main/$path", "app/src/main/$path").map { java.io.File(it) }.first { it.exists() }
