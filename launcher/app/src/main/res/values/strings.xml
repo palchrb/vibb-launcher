@@ -526,14 +526,18 @@
     <string name="event_gone">This event is no longer in the calendar.</string>
     <string name="event_change">Change</string>
     <string name="event_delete">Delete</string>
-    <string name="glance_next">Next: %1$s %2$s</string>
+    <string name="glance_next">Next %2$s: %1$s</string>
     <!-- The "Neste" line in the evening, once today's last timed event has started: tomorrow's first (the calmer
          glance, 2026-11-04). %1$s the title, %2$s its start. -->
-    <string name="glance_tomorrow">Tomorrow: %1$s %2$s</string>
+    <string name="glance_tomorrow">Tomorrow %2$s: %1$s</string>
     <string name="glance_reminder_in">%1$s in %2$d min</string>
     <string name="glance_reminder_now">%1$s now</string>
     <string name="glance_reminder_now_spoken">now</string>
     <string name="glance_reminder_spoken">Reminder: %1$s, %2$s, %3$s</string>
+    <!-- The same with the calendar's name: %1$s the title, %2$s "in 15 minutes", %3$s the start, %4$s the calendar. -->
+    <string name="glance_reminder_spoken_calendar">Reminder: %1$s, %2$s, %3$s, calendar %4$s</string>
+    <!-- The reminder row's second line: %1$s the start, %2$s the calendar's name (cut first when it is long). -->
+    <string name="glance_reminder_when">%1$s · %2$s</string>
     <string name="glance_reminder_action">Unlock and open Calendar</string>
     <plurals name="glance_reminder_minutes">
         <item quantity="one">in %d minute</item>

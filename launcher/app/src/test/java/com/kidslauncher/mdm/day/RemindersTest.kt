@@ -53,7 +53,8 @@ class RemindersTest {
         val p = remind("c04e7b19a2f6d853", "before", 15)
         assertNull(reminderNow(today(p), p, at(17, 14)))
         // The calendar's colour rides along to the lock row's dot (QA L4).
-        assertEquals(GlanceReminder(10, "Fotball: Trening", at(17, 30), 15, CalendarColor.SKY), reminderNow(today(p), p, at(17, 15)))
+        // Its name rides along to the row's second line ("17:30 · Fotball"), the lock having no legend for the dot.
+        assertEquals(GlanceReminder(10, "Fotball: Trening", at(17, 30), 15, CalendarColor.SKY, "Fotball"), reminderNow(today(p), p, at(17, 15)))
         assertEquals(1, reminderNow(today(p), p, at(17, 29, ))!!.minutesLeft)
         assertEquals(2, reminderNow(today(p), p, at(17, 28) + 30_000)!!.minutesLeft)
         assertNull(reminderNow(today(p), p, at(17, 30)))
@@ -69,6 +70,17 @@ class RemindersTest {
         assertNull(reminderNow(today(own, mapOf(10L to listOf(30))), own, at(16, 59)))
         assertEquals(listOf(10L), ownReminderEvents(today(own).view, own))
         assertEquals(emptyList<Long>(), ownReminderEvents(today(off).view, off))
+    }
+
+    @Test
+    fun `the row's calendar name is trimmed, a blank one is none`() {
+        val p = remind("c04e7b19a2f6d853", "before", 15)
+        fun up(name: String) = reminderNow(
+            TodayCalendar(dayView(listOf(training), mapOf(1L to CalendarInfo(1, "c04e7b19a2f6d853", "at.bitfire.icsdroid", name)), p, day, oslo, 0, "me.vibb.launcher", "1b2c3d4e"), emptyMap()),
+            p, at(17, 15),
+        )!!.calendarName
+        assertEquals("Vibb IL", up("  Vibb IL "))
+        assertEquals("", up("   "))
     }
 
     @Test
@@ -115,7 +127,7 @@ class RemindersTest {
     )) = today(p).copy(tomorrow = dayView(rows, mapOf(1L to football, 2L to school), p, day.plusDays(1), oslo, 0, "me.vibb.launcher", "1b2c3d4e"))
 
     /** The calmer glance (2026-11-04, board D): from 18:00, once today's last timed event has started, tomorrow's
-     * first timed event - "I morgen: Gym 09:00"; nothing when tomorrow has none; "Neste" again after midnight. */
+     * first timed event - "I morgen 09:00: Gym"; nothing when tomorrow has none; "Neste" again after midnight. */
     @Test
     fun `I morgen - tomorrow's first timed event from 18_00 once today's last has started`() {
         val p = remind("c04e7b19a2f6d853", "off", next = true, master = "off")
@@ -142,7 +154,7 @@ class RemindersTest {
         // The switch off: no line, evening or not.
         val off = remind("c04e7b19a2f6d853", "off", next = false)
         assertNull(glanceNext(withTomorrow(off), off, at(20), oslo))
-        // Midnight: tomorrow is today (the glance reads the day again at the boundary) - "Neste: Gym 09:00".
+        // Midnight: tomorrow is today (the glance reads the day again at the boundary) - "Neste 09:00: Gym".
         val next = TodayCalendar(t.tomorrow!!, emptyMap())
         assertEquals(GlanceNext(next.view.timed.first { it.eventId == 22L }, tomorrow = false), glanceNext(next, p, tomorrowAt(0), oslo))
         // The zone: 18:00 in Oslo is 17:00 UTC - the same instant is not evening in UTC.

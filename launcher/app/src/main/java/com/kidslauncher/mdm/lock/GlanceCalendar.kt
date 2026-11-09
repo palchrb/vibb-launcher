@@ -77,7 +77,7 @@ internal class GlanceCalendar(private val activity: Activity, private val change
     fun reminderRow(now: Long = System.currentTimeMillis()): GlanceCalendarRow? {
         val t = today ?: return null
         val up = reminderNow(t, CalendarStore.policy(), now) ?: return null
-        return GlanceCalendarRow(up.eventId, up.title, up.beginMs, up.minutesLeft, loadedFor?.toEpochDay() ?: LocalDate.now().toEpochDay(), up.color)
+        return GlanceCalendarRow(up.eventId, up.title, up.beginMs, up.minutesLeft, loadedFor?.toEpochDay() ?: LocalDate.now().toEpochDay(), up.color, up.calendarName)
     }
 
     /** The "Neste" line's event now - today's next, or in the evening tomorrow's first -, if the parent wants it and

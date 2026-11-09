@@ -1143,9 +1143,9 @@ class GlancePanel(
     private fun bindAlarm() = clockFace.bindAlarm()
 
     /** Dagen's "Neste" line (design 69 §5.1): the parent's switch, the next timed event today with its shown title - in
-     * the evening, once today's last has started, tomorrow's first as "I morgen: …" (the calmer glance, 2026-11-04,
+     * the evening, once today's last has started, tomorrow's first as "I morgen 09:00: …" (the calmer glance, 2026-11-04,
      * `day.glanceNext`); it yields while a reminder row is up (C names the event already) and when it doesn't fit
-     * ([fitNext]). */
+     * ([fitNext]). The time comes first ("Neste 17:30: Trening ..."), so the one-line ellipsis only ever cuts the title. */
     private var nextWanted: String? = null
 
     private fun bindNext() {
@@ -1187,7 +1187,9 @@ class GlancePanel(
 
     /** Dagen's reminder row (design 69 §5.2): the calendar glyph in a peach disc - since 2026-10-27 the calendar's
      * 16 dp dot in the disc instead, when it has a colour (the mockup's lock row) -, "Fotball om 15 min" ("… nå" in
-     * the last minute), the start time; TalkBack "Påminnelse: Fotball, om 15 minutter, 17:30". Never dismissable. */
+     * the last minute), the start time and, when the calendar has a name, "17:30 · Fotball" (the dot has no legend on
+     * the lock; the time first, so a long name is the part that is cut); TalkBack "Påminnelse: Fotball, om 15 minutter,
+     * 17:30, kalenderen Fotball". Never dismissable. */
     private fun bindCalendar(view: ViewLockGlanceRowBinding, row: GlanceCalendarRow) {
         val res = activity.resources
         val time = ClockFormat.formatClock(activity, row.beginMs)
@@ -1198,7 +1200,8 @@ class GlancePanel(
             activity.getString(R.string.glance_reminder_in, row.title, row.minutesLeft)
         }
         view.glanceRowSuffix.visibility = View.GONE
-        view.glanceRowSubtitle.text = time
+        val name = row.calendarName.takeIf { it.isNotBlank() }
+        view.glanceRowSubtitle.text = if (name != null) activity.getString(R.string.glance_reminder_when, time, name) else time
         view.glanceRowSubtitle.visibility = View.VISIBLE
         view.glanceRowTime.text = ""
         view.glanceRowInitial.visibility = View.GONE
@@ -1215,7 +1218,8 @@ class GlancePanel(
         }
         val left = if (row.minutesLeft <= 1) activity.getString(R.string.glance_reminder_now_spoken)
         else res.getQuantityString(R.plurals.glance_reminder_minutes, row.minutesLeft, row.minutesLeft)
-        view.root.contentDescription = activity.getString(R.string.glance_reminder_spoken, row.title, left, time)
+        view.root.contentDescription = if (name != null) activity.getString(R.string.glance_reminder_spoken_calendar, row.title, left, time, name)
+        else activity.getString(R.string.glance_reminder_spoken, row.title, left, time)
         openAction(view.root, activity.getString(R.string.glance_reminder_action))
     }
 
