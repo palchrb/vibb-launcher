@@ -1179,7 +1179,7 @@ pub async fn waiting_count(
         // QA H1: the live requests, the ones the card shows.
         Kind::ContactRequest => sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ? AND state = 'open' \
-             AND received_at > ?",
+             AND asked_at > ?",
         )
         .bind(device_id)
         .bind(crate::handlers::contact_requests::live_since(now))

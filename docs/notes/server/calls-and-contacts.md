@@ -256,15 +256,21 @@ parent decides on the Calls page. It follows design r13's time request.
   `device_contact_requests.photo_hash` column, and "Legg til…" offering it as the contact's photo behind its own
   switch, as the Matrix ID. An older server takes the request without it; the 1 KiB body limit is untouched.
 - **The code QA's fix round** (`docs/review/qa-contact-request.md`):
-  - **A live request** (H1) is `state = 'open' AND received_at > live_since(now)` (7 days), the window the card, the
-    policy and the phone keep. Only a live request counts for `known` and the five open, is prefilled, answered by
-    Add Contact (`from_request`, `mark_added`) and counted by the digest (`parent_events::waiting_count`). An older
-    open row has lapsed and blocks nothing; retention removes it at 30 days.
+  - **A live request** (H1) is `state = 'open' AND asked_at > live_since(now)` (7 days from the kid's ask: `asked_at`
+    is clamped to the server's now and refused past 7 days at intake, so this is exactly when the phone drops its
+    record), the window the card and the policy use too. Only a live request counts for `known` and the five open, is
+    prefilled, answered by Add Contact (`from_request`, `mark_added`), declined and counted by the digest
+    (`parent_events::waiting_count`). An older open row has lapsed and blocks nothing; its "Avslå" lands on
+    `?notice=request_gone#requests` (never an anchor that isn't there); retention removes it 30 days after
+    `received_at`. The day's cap counts by `received_at`, the server's clock.
   - **A family contact keeps its name** (M1): when the requested number is already in the family's address book,
-    "Legg til…" prefills that contact's name, read-only, with "Finnes allerede som «Mamma» - navnet beholdes. Anna
-    kalte det «…»"; and a save that carries a live `request` never renames an existing contact (`ON CONFLICT … SET
-    name = contacts.name`) - the kid's words never reach the other phones. **A later photo follows the same rule:**
-    from a request it never replaces an existing contact's photo.
+    "Legg til…" prefills that contact's name with "Finnes allerede som «Mamma» - navnet beholdes. Anna kalte det «…»".
+    The hint and the short-number warning follow the number in the field (`add_kept`, `add_short`), as the save judges
+    it: a save carrying a live `request` with another typed name for an existing number is refused in place (400) with
+    the kept name in the field and "fra en forespørsel beholdes navnet" - never silently ignored - and saving again
+    adds it under the kept name; the transaction also never renames (`ON CONFLICT … SET name = contacts.name`). The
+    kid's words never reach the other phones. **A later photo follows the same rule:** from a request it never replaces
+    an existing contact's photo.
   - **One prefill source** (L1): a held number's link wins over `?request=`; a refused form carries its own `request`
     or none.
   - **A retry first** (L2): a stored id answers `accepted` before any check, so a changed country code or a retry past

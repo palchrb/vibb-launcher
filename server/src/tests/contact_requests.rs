@@ -710,9 +710,69 @@ async fn a_lapsed_request_blocks_nothing() {
     );
 }
 
-/// QA M1: "Legg til…" for a number the family already has keeps that contact's name - prefilled, read-only, said -
-/// and the save never renames it on the other phone, even when the form sends the kid's name. Ticked, the Matrix ID
-/// sets the Message button to Element X (design 80 M6).
+/// The live window counts from when the kid asked (`asked_at`), as the phone drops its record: a request asked 8 days
+/// ago and received 3 days ago has lapsed everywhere - the policy, the card, the prefill, `known` - and its "Avslå"
+/// lands on the card's notice, never on an anchor that isn't there; one asked 6 days ago and received yesterday is live.
+#[tokio::test]
+async fn the_window_counts_from_the_ask() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    for (n, number, asked, received) in [(1, "+4791234561", 8, 3), (2, "+4791234562", 6, 1)] {
+        sqlx::query(
+            "INSERT INTO device_contact_requests (device_id, id, name, number, asked_at, received_at) \
+             VALUES (?, ?, 'Venn', ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .bind(number)
+        .bind((Utc::now() - Duration::days(asked)).timestamp_millis())
+        .bind((Utc::now() - Duration::days(received)).timestamp_millis())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let policy = app.policy(&token).await["call_policy"]["contact_requests"].clone();
+    assert_eq!(
+        policy,
+        json!([{"id": format!("{:032x}", 2), "state": "open"}])
+    );
+    let page = app
+        .get_page(&format!("/devices/{id}/calls?request={:032x}", 1), &cookie)
+        .await
+        .text();
+    assert!(!page.contains(&format!("request-{:032x}", 1)) && !page.contains("name=\"request\""));
+    assert!(page.contains(&format!("request-{:032x}", 2)));
+    assert_eq!(
+        post(&app, &token, body(3, "Venn", "+4791234561")).await.1,
+        json!({"accepted": true})
+    );
+    assert_eq!(
+        post(&app, &token, body(4, "Venn", "+4791234562")).await.1,
+        json!({"accepted": false, "reason": "known"})
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/requests/{:032x}/decline", 1),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/calls?notice=request_gone#requests").as_str())
+    );
+    assert_eq!(
+        rows(&app, id).await[0].4,
+        "open",
+        "a lapsed row isn't declined"
+    );
+}
+
+/// QA M1: "Legg til…" for a number the family already has keeps that contact's name - prefilled and said - and the
+/// save never renames it on the other phone: another typed name is refused in place with the kept one, judged by the
+/// number in the field. Ticked, the Matrix ID sets the Message button to Element X (design 80 M6).
 #[tokio::test]
 async fn a_request_never_renames_a_family_contact() {
     let app = TestApp::new().await;
@@ -737,25 +797,52 @@ async fn a_request_never_renames_a_family_contact() {
         .await
         .text();
     assert!(
-        add.contains(r#"value="Mamma" maxlength="60" required readonly"#),
+        add.contains(
+            r#"value="Mamma" maxlength="60" required aria-describedby="contact_name-kept">"#
+        ),
         "{add}"
     );
     assert!(add.contains("Already a contact as «Mamma» - the name is kept. Anna called it «Dum»."));
     let request = format!("{:032x}", 1);
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{anna}/contacts"),
-        Some(&cookie),
-        &[
-            ("name", "Dum"),
-            ("number", "+4790000001"),
-            ("switches", "on"),
-            ("outbound", "on"),
-            ("request", &request),
-            ("use_matrix", "on"),
-        ],
-    )
-    .await;
+    let save = |name: &'static str, number: &'static str| {
+        let (app, cookie, request) = (&app, &cookie, &request);
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{anna}/contacts"),
+                Some(cookie),
+                &[
+                    ("name", name),
+                    ("number", number),
+                    ("switches", "on"),
+                    ("outbound", "on"),
+                    ("request", request),
+                    ("use_matrix", "on"),
+                ],
+            )
+            .await
+        }
+    };
+    // The kid's name typed back in: refused in place, the kept name in the field and why - never silently ignored.
+    let refused = save("Dum", "+4790000001").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text();
+    assert!(
+        html.contains(r#"value="Mamma" maxlength="60" required aria-invalid="true""#),
+        "{html}"
+    );
+    assert!(html.contains("from a request its name is kept"));
+    assert!(
+        !html.contains("data-request-kept"),
+        "one line for the field, not two"
+    );
+    // The hint follows the number in the field: another family number names its own contact.
+    contact(&app, per, "Pappa", "+4790000002").await;
+    let other = save("Dum", "+4790000002").await;
+    assert!(other.text().contains(r#"value="Pappa""#));
+    // Saved under the kept name.
+    let res = save("Mamma", "+4790000001").await;
+    assert!(res.status.is_redirection(), "{}", res.text());
     let name: String =
         sqlx::query_scalar("SELECT name FROM contacts WHERE phone_number = '+4790000001'")
             .fetch_one(&app.db)

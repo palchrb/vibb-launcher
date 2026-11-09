@@ -292,7 +292,7 @@ doesn't set `encodeDefaults`. Conditions for when it is built:
 
 ## Fix round (branch `sms-contact-request`)
 
-- **H1 - fixed.** One rule for a live request, `contact_requests::live_since`: `state = 'open' AND received_at >
+- **H1 - fixed.** One rule for a live request, `contact_requests::live_since`: `state = 'open' AND asked_at >
   now - 7 days`, in the intake's `known` and open count, `parent_events::waiting_count`, `prefill`, `from_request` and
   `mark_added`. Test `a_lapsed_request_blocks_nothing`: five open rows 8 days old, then a new request and the same
   number are accepted, the digest counts 0, the lapsed one isn't prefilled or marked.
@@ -318,3 +318,16 @@ doesn't set `encodeDefaults`. Conditions for when it is built:
 - **N2 - fixed.** The event happens at the server's receive time; the card keeps `asked_at`.
 - **N3, N4 - kept as they are**, as the review says.
 - **N5, N6 - comments added.**
+
+**Follow-ups after the verification of 4fec6751:**
+- The live window counts from `asked_at` (clamped to now, refused past 7 days at intake), so it matches the phone's
+  `askedAtMs` drop exactly: every `live_since` use, the card's `load`, `policy_rows` and the digest. The day's cap and
+  retention keep `received_at`. Test `the_window_counts_from_the_ask` (asked 8 days ago and received 3 days ago:
+  lapsed; asked 6 and received 1: live).
+- "Avslå" on a lapsed row no longer declines it and lands on `?notice=request_gone#requests`, which always renders,
+  never on a missing `#request-<id>` (no jump to the top).
+- The kept name's hint and the short number's warning follow the number in the field (`add_kept`, `add_short` from
+  the field's number on every render). The name field is no longer read-only: a save carrying a live request with
+  another typed name for an existing number is refused in place (400), with the kept name in the field and why, so it
+  is never silently ignored. Saving again adds it. The transaction still never renames.
+- One `aria-describedby` on the name field: the error line when refused, else the kept-name hint.

@@ -207,6 +207,10 @@ struct DeviceCallsTemplate {
     /// kid suggested, shown with its own "Bruk Matrix-ID-en" ([Self::use_matrix], unticked until the parent ticks it);
     /// a family contact's kept name (QA M1) and a short number's cost warning (QA L3).
     add_request: Option<crate::handlers::contact_requests::Prefill>,
+    /// From a request: the family contact's name the number in the field already has (kept on save), and whether that
+    /// number is a short one (QA M1/L3, judged by the field's number, as the save judges it).
+    add_kept: Option<String>,
+    add_short: bool,
     use_matrix: bool,
     /// Design 77 §14: the "Forespørsler" card's rows.
     requests: Vec<crate::handlers::contact_requests::RequestView>,
@@ -248,6 +252,13 @@ struct DeviceCallsTemplate {
 crate::i18n::words!(DeviceCallsTemplate);
 
 impl DeviceCallsTemplate {
+    /// Add Contact's name field was refused (its error line describes the field, not the kept-name hint).
+    fn name_refused(&self) -> bool {
+        self.add_error
+            .as_ref()
+            .is_some_and(|(field, _)| *field == "name")
+    }
+
     /// Add Contact's switches (design 77 R2-M1), in [ADD_SWITCHES]' order: the form name, the label, on.
     fn add_switch_rows(&self) -> Vec<(&'static str, String, bool)> {
         let kid = [("name", self.device.name.as_str())];
@@ -769,6 +780,21 @@ async fn load_page(
         (None, None, true) => REQUEST_ADD_SWITCHES,
         (None, None, false) => [true; 6],
     };
+    // QA M1/L3 follow-up: the kept name's hint and the short number's warning follow the number in the field (the
+    // request's at first, what was sent after a refusal) - the save judges that number too.
+    let (add_kept, add_short) = match &add_request {
+        Some(_) => match phone::normalize(&add_number, &default_country_code) {
+            Ok(number) => (
+                sqlx::query_scalar::<_, String>("SELECT name FROM contacts WHERE phone_number = ?")
+                    .bind(&number)
+                    .fetch_optional(&state.db)
+                    .await?,
+                !number.starts_with('+'),
+            ),
+            Err(_) => (None, false),
+        },
+        None => (None, false),
+    };
     // "Bruk Matrix-ID-en" starts unticked (R2-M1); a refusal shows what was sent.
     let use_matrix = shown
         .add_sent
@@ -845,6 +871,8 @@ async fn load_page(
         add_error,
         add_switches,
         add_request,
+        add_kept,
+        add_short,
         use_matrix,
         requests,
         requests_notice: shown.requests_notice,
@@ -1884,6 +1912,37 @@ pub async fn add_contact(
             .await;
         }
     };
+    // Design 77 §14 (QA M1): from a kid's live request, a number the family already has keeps its contact's name -
+    // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
+    // with the kept name in the field and why, never silently ignored; saving again adds the contact under it.
+    if let Some(request) = form.get("request").map(|r| r.trim()) {
+        let kept = async {
+            if crate::handlers::contact_requests::prefill(&state.db, id, request)
+                .await?
+                .is_none()
+            {
+                return Ok::<_, sqlx::Error>(None);
+            }
+            sqlx::query_scalar::<_, String>("SELECT name FROM contacts WHERE phone_number = ?")
+                .bind(&number)
+                .fetch_optional(&state.db)
+                .await
+        }
+        .await;
+        match kept {
+            Ok(Some(kept)) if kept != name => {
+                let why = t_params(lang, "device.requests.kept_refused", &[("contact", &kept)]);
+                let shown = Shown {
+                    add: Some((kept.as_str(), raw_number, "name", why)),
+                    add_sent: with_switches.then_some(form),
+                    ..Default::default()
+                };
+                return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
+            }
+            Ok(_) => {}
+            Err(err) => return db_error(lang, id, err),
+        }
+    }
 
     let result = async {
         let mut tx = state.db.begin().await?;

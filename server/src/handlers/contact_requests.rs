@@ -41,9 +41,11 @@ pub const SHOWN_DAYS: i64 = 7;
 pub const KEEP_DAYS: i64 = 30;
 const DAY_MS: i64 = 86_400_000;
 
-/// QA H1: a request is live - counted, known, prefilled, answered, in the digest - only while it is open and within
-/// [SHOWN_DAYS] of the server getting it (`state = 'open' AND received_at > live_since(now)`), the same window the card,
-/// the policy and the phone keep. An older open row has lapsed, as it has on the phone.
+/// QA H1: a request is live - counted, known, prefilled, answered, declined, in the digest - only while it is open and
+/// within [SHOWN_DAYS] of the kid asking (`state = 'open' AND asked_at > live_since(now)`). `asked_at` is the phone's,
+/// clamped to the server's now and refused past [SHOWN_DAYS] at intake, so this is exactly when the phone drops its
+/// record (`CONTACT_REQUEST_KEEP_MS` from `askedAtMs`); the card and the policy use the same window. An older open row
+/// has lapsed, as it has on the phone. (The day's cap and retention count by `received_at`, the server's own clock.)
 pub fn live_since(now: DateTime<Utc>) -> i64 {
     now.timestamp_millis() - SHOWN_DAYS * DAY_MS
 }
@@ -224,10 +226,10 @@ pub async fn intake(
                EXISTS(SELECT 1 FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
                       WHERE dc.device_id = ?1 AND c.phone_number = ?3) \
                OR EXISTS(SELECT 1 FROM device_contact_requests WHERE device_id = ?1 AND state = 'open' \
-                         AND received_at > ?5 AND number = ?3), \
+                         AND asked_at > ?5 AND number = ?3), \
                (SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ?1 AND received_at >= ?4), \
                (SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ?1 AND state = 'open' \
-                AND received_at > ?5)",
+                AND asked_at > ?5)",
         )
         .bind(device.id)
         .bind(&request.id)
@@ -306,8 +308,8 @@ pub async fn policy_rows(
     device_id: i64,
 ) -> Result<Vec<PolicyRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, state FROM device_contact_requests WHERE device_id = ? AND received_at > ? \
-         ORDER BY received_at DESC, id LIMIT 50",
+        "SELECT id, state FROM device_contact_requests WHERE device_id = ? AND asked_at > ? \
+         ORDER BY asked_at DESC, id LIMIT 50",
     )
     .bind(device_id)
     .bind(Utc::now().timestamp_millis() - SHOWN_DAYS * DAY_MS)
@@ -369,7 +371,7 @@ pub async fn load(
     let lang = zone.lang();
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
-         WHERE device_id = ? AND received_at > ? ORDER BY state = 'open' DESC, received_at DESC, id LIMIT 50",
+         WHERE device_id = ? AND asked_at > ? ORDER BY state = 'open' DESC, asked_at DESC, id LIMIT 50",
     )
     .bind(device_id)
     .bind(now.timestamp_millis() - SHOWN_DAYS * DAY_MS)
@@ -404,15 +406,13 @@ pub async fn load(
 /// What "Legg til…" puts into Add Contact: a live request of this phone.
 pub struct Prefill {
     pub id: String,
-    /// The name the form starts with: the family contact's own when the number is one ([Self::existing]), else the
-    /// kid's.
+    /// The name the form starts with: the family contact's own when the number is already in the family's address
+    /// book (QA M1: it is kept - the kid's never renames a family contact on the other phones), else the kid's. The
+    /// form's hint follows the number in the field (`calls::load_page`'s `add_kept`).
     pub name: String,
     pub number: String,
     pub matrix_id: Option<String>,
-    /// QA M1: the number is already a contact in the family's address book under this name. The name is kept - the
-    /// kid's never renames a family contact on the other phones -, and the form says so.
-    pub existing: Option<String>,
-    /// The kid's own name for the person, shown beside [Self::existing].
+    /// The kid's own name for the person, shown beside a kept family name.
     pub asked_name: String,
     /// A short number (no `+`): QA L3's defaults and the cost warning.
     pub short: bool,
@@ -430,7 +430,7 @@ pub async fn prefill(
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
-         WHERE device_id = ? AND id = ? AND state = 'open' AND received_at > ?",
+         WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
     )
     .bind(device_id)
     .bind(id)
@@ -446,13 +446,12 @@ pub async fn prefill(
             .fetch_optional(db)
             .await?;
     Ok(Some(Prefill {
-        name: existing.clone().unwrap_or_else(|| row.name.clone()),
+        name: existing.unwrap_or_else(|| row.name.clone()),
         short: !row.number.starts_with('+'),
         id: row.id,
         asked_name: row.name,
         number: row.number,
         matrix_id: row.matrix_id,
-        existing,
     }))
 }
 
@@ -490,7 +489,7 @@ pub async fn from_request(
 ) -> Result<Option<FromRequest>, sqlx::Error> {
     let matrix_id: Option<Option<String>> = sqlx::query_scalar(
         "SELECT matrix_id FROM device_contact_requests WHERE device_id = ? AND id = ? AND state = 'open' \
-         AND received_at > ?",
+         AND asked_at > ?",
     )
     .bind(device_id)
     .bind(request)
@@ -511,7 +510,7 @@ pub async fn mark_added(
 ) -> Result<(), sqlx::Error> {
     let ids: Vec<String> = sqlx::query_scalar(
         "UPDATE device_contact_requests SET state = 'added', decided_at = datetime('now') \
-         WHERE device_id = ? AND state = 'open' AND received_at > ? AND (number = ? OR id = ?) RETURNING id",
+         WHERE device_id = ? AND state = 'open' AND asked_at > ? AND (number = ? OR id = ?) RETURNING id",
     )
     .bind(device_id)
     .bind(live_since(Utc::now()))
@@ -543,12 +542,15 @@ pub async fn decline(
         if !device {
             return Ok::<_, sqlx::Error>(None);
         }
+        // Only a live request: a lapsed one isn't on the card, so its anchor wouldn't render and the page would land at
+        // its top - it lands on the card's notice instead (the save never jumps to the top).
         let declined = sqlx::query(
             "UPDATE device_contact_requests SET state = 'declined', decided_at = datetime('now') \
-             WHERE device_id = ? AND id = ? AND state = 'open'",
+             WHERE device_id = ? AND id = ? AND state = 'open' AND asked_at > ?",
         )
         .bind(id)
         .bind(&request)
+        .bind(live_since(Utc::now()))
         .execute(&mut *tx)
         .await?
         .rows_affected();

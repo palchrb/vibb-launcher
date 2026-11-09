@@ -411,15 +411,15 @@
                 <summary class="row row-button">{{ self.t("device.calls.add") }}</summary>
                 <form method="post" action="/devices/{{ device.id }}/contacts#add-contact" class="edit-body">
                     <label class="field-label" for="contact_name">{{ self.t("devices.add.name") }}</label>
-                    <input type="text" id="contact_name" name="name" value="{{ add_name }}" maxlength="60" required{% if let Some(request) = add_request %}{% if request.existing.is_some() %} readonly aria-describedby="contact_name-kept"{% endif %}{% endif %}{% if let Some((field, _)) = add_error %}{% if *field == "name" %} aria-invalid="true" aria-describedby="contact_name-error" autofocus{% endif %}{% endif %}>
+                    <input type="text" id="contact_name" name="name" value="{{ add_name }}" maxlength="60" required{% if self.name_refused() %} aria-invalid="true" aria-describedby="contact_name-error" autofocus{% else if add_kept.is_some() %} aria-describedby="contact_name-kept"{% endif %}>
                     {% if let Some((field, why)) = add_error %}{% if *field == "name" %}<p class="field-error" id="contact_name-error">{{ why }}</p>{% endif %}{% endif %}
                     {#- Design 77 §14, QA M1: a request for a number the family already has keeps that contact's name. -#}
-                    {% if let Some(request) = add_request %}{% if let Some(existing) = request.existing %}<p class="field-hint" id="contact_name-kept" data-request-kept>{{ self.tp("device.requests.existing", [("contact", existing.as_str()), ("name", device.name.as_str()), ("asked", request.asked_name.as_str())]) }}</p>{% endif %}{% endif %}
+                    {% if !self.name_refused() %}{% if let Some(request) = add_request %}{% if let Some(kept) = add_kept %}<p class="field-hint" id="contact_name-kept" data-request-kept>{{ self.tp("device.requests.existing", [("contact", kept.as_str()), ("name", device.name.as_str()), ("asked", request.asked_name.as_str())]) }}</p>{% endif %}{% endif %}{% endif %}
                     <label class="field-label" for="contact_number">{{ self.t("device.calls.number") }}</label>
                     <input type="tel" id="contact_number" name="number" value="{{ add_number }}" required{% if let Some((field, _)) = add_error %}{% if *field == "number" %} aria-invalid="true" aria-describedby="contact_number-error" autofocus{% endif %}{% endif %}>
                     {% if let Some((field, why)) = add_error %}{% if *field == "number" %}<p class="field-error" id="contact_number-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.tp("device.calls.number_hint", [("code", default_country_code.as_str())]) }}</p>{% endif %}
                     {#- QA L3: a kid's request for a short number repeats the card's cost warning here. -#}
-                    {% if let Some(request) = add_request %}{% if request.short %}<p class="field-hint tone-orange" data-request-short>{{ self.t("device.requests.short") }}</p>{% endif %}{% endif %}
+                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.t("device.requests.short") }}</p>{% endif %}
                     {#- Design 77 R2-M1: every switch shows - all on for a new contact; "Opprett kontakt…" from a
                         held message has "Kan sende melding til" alone on. `switches` says the form has them. -#}
                     <input type="hidden" name="switches" value="on">
