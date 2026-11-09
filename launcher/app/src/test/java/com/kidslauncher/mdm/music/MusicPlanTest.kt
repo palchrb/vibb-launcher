@@ -212,13 +212,13 @@ class MusicPlanTest {
         assertEquals(listOf(1L, 2L), head.files.map { it.id })
         assertTrue(head.files[1].missing)
         // A Storytel entry's listing rides the courier like any other (design 26b §2.7), and so do
-        // Spotify's - a list-mode playlist and a context-mode artist (design 26c §6.4): no launcher change.
+        // Spotify's - a list-mode playlist, a context-mode artist (design 26c §6.4) and an audiobook (2026-11-09): no launcher change.
         assertEquals(
             "own entries have no listing",
-            mapOf(1L to null, 2L to "0123456789abcdef", 5L to "00ff00ff00ff00ff", 6L to "11ee11ee11ee11ee", 7L to "22dd22dd22dd22dd"),
+            mapOf(1L to null, 2L to "0123456789abcdef", 5L to "00ff00ff00ff00ff", 6L to "11ee11ee11ee11ee", 7L to "22dd22dd22dd22dd", 8L to "33cc33cc33cc33cc"),
             head.listings,
         )
-        assertEquals(listOf(5L, 6L, 7L), listingsToFetch(head, mapOf(2L to "0123456789abcdef")))
+        assertEquals(listOf(5L, 6L, 7L, 8L), listingsToFetch(head, mapOf(2L to "0123456789abcdef")))
         assertNull(libraryHead("{\"v\": 2}"))
     }
 
