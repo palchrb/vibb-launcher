@@ -274,8 +274,11 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   parse (a refusal there is `FAILED`).
 - **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
   `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
-  one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory (`MmsDebug`; the release twin has none).
-  `docs/testing/emulator.md` §6v, step 3b.
+  one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory, `--es stand_in <url>` plays the
+  platform's MMS service (the AVD's carrier config has MMS off) through our own provider URI and result PendingIntents
+  (`MmsDebug`; the release twin has none and stands in for nothing). `scripts/fake-mmsc.py` is the fake MMSC;
+  `docs/testing/emulator.md` §6v, step 3b. The run found one screen bug, fixed: a tall picture bubble wasn't scrolled
+  to its bottom after a send (`scrollToPosition` counts it shown once its top is).
 - **Left for step 0 (the real phone):** the MMSC host table (`server/src/mmsc_hosts.rs`, empty: every MMS fails closed
   until then; `tests::the_table_is_well_formed` checks a new row's shape), each carrier's `From` and `X-Mms-Expiry`,
   the MMS maximum, whether the acknowledgement needs the content location as its URL (`MMS_CONFIG_NOTIFY_WAP_MMSC_ENABLED`),

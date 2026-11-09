@@ -250,19 +250,26 @@ class PlatformMmsRadio(private val app: Context) : MmsRadio {
 
     override fun download(messageId: String, location: String, subId: Int?, maxBytes: Int) {
         val uri = MmsFileProvider.expect(app, messageId, maxBytes)
-        manager(subId).downloadMultimediaMessage(app, location, uri, null, MmsResultReceiver.downloadedIntent(app, messageId))
+        val result = MmsResultReceiver.downloadedIntent(app, messageId)
+        // The debug build's emulator stand-in (its SIM has MMS off); the release build's answers false.
+        if (com.kidslauncher.mdm.sms.MmsDebug.download(app, location, uri, result)) return
+        manager(subId).downloadMultimediaMessage(app, location, uri, null, result)
     }
 
     override fun send(messageId: String, pdu: ByteArray, subId: Int?) {
         val token = token()
         val uri = MmsFileProvider.outgoing(app, token, pdu)
-        manager(subId).sendMultimediaMessage(app, uri, null, null, MmsResultReceiver.sentIntent(app, messageId, token))
+        val result = MmsResultReceiver.sentIntent(app, messageId, token)
+        if (com.kidslauncher.mdm.sms.MmsDebug.send(app, uri, result)) return
+        manager(subId).sendMultimediaMessage(app, uri, null, null, result)
     }
 
     override fun answer(pdu: ByteArray, subId: Int?) {
         val token = token()
         val uri = MmsFileProvider.outgoing(app, token, pdu)
-        manager(subId).sendMultimediaMessage(app, uri, null, null, MmsResultReceiver.answeredIntent(app, token))
+        val result = MmsResultReceiver.answeredIntent(app, token)
+        if (com.kidslauncher.mdm.sms.MmsDebug.send(app, uri, result)) return
+        manager(subId).sendMultimediaMessage(app, uri, null, null, result)
     }
 
     private fun token(): String = ByteArray(16).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 0xff) }

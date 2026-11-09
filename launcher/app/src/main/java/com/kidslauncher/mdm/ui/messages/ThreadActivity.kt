@@ -304,7 +304,11 @@ class ThreadActivity : UIObjectActivity() {
         val scroll = newest > newestSeq
         newestSeq = newest
         adapter.submitList(threadItems(messages, System.currentTimeMillis(), ZoneId.systemDefault())) {
-            if (scroll && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
+            if (scroll && adapter.itemCount > 0) {
+                binding.threadList.scrollToPosition(adapter.itemCount - 1)
+                // A tall bubble (a picture) counts as shown once its top is: on to its bottom (step 3b's emulator run).
+                binding.threadList.post { if (!isDestroyed) binding.threadList.scrollBy(0, binding.threadList.computeVerticalScrollRange()) }
+            }
         }
     }
 

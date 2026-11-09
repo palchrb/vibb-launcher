@@ -2468,6 +2468,56 @@ process as its own uid (`adb shell run-as me.vibb.launcher.debug kill <pid>`) an
   the list and the thread say "Meldingene her kan bare leses." / "These messages can only be read.", no "Ny melding",
   no compose bar. (Google Messages' own tile is on Home next to it then - in English both read "Messages".)
 
+### 6v, step 3b: MMS pictures (design 77 D8, D10-D12, D14, D16)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-09, branch `sms-mms`, with step 2's seeded server plus:
+Pappa's "Bilder i meldinger" off, Bestemor texts out only, and the phone's own number `+4790000010` in
+`device_own_numbers` (slot 1). **What the AVD can't do, and the debug build's way round it** (src/debug's
+`MmsDebugReceiver`, `adb shell am broadcast -n me.vibb.launcher.debug/com.kidslauncher.mdm.sms.MmsDebugReceiver ...`;
+none of it is in a release build - `checkReleaseHasNoDebugHook`, `DebugHookAbsentTest`):
+- the console's `sms pdu` delivers nothing (step 1's run), so no WAP push arrives: `--es push_hex <hex>` commits an
+  m-notification-ind exactly as `MmsPushReceiver` does; `python3 -I scripts/fake-mmsc.py push N FROM LOCATION` prints
+  one;
+- the AVD's SIM (310260) has MMS off in its carrier config (`enabledMMS=false`: the platform's MMS service answers every
+  download and send with error 7, and `cmd phone cc` is refused on this image): `--es stand_in
+  http://10.0.2.2:8080/mmsc` plays the platform's part - the download fetched over HTTP and written through our own
+  `MmsFileProvider` URI (its capped pipe), the send-req POSTed, the result sent to the same PendingIntent;
+- the server's MMSC table is empty until step 0: `--es mmsc_host 10.0.2.2 --es mccmnc 310260` puts the fake server on
+  the list (memory only - a process death forgets all three, so nudge syncs without killing the process: an SMS from a
+  stranger asks for one, `adb emu sms send 4790000077 Hei`).
+
+The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080: D10 takes 80, 443 or 8080 only).
+
+- **Fail closed without the table** (no `mmsc_host` yet): a push from Mamma starts the isolated process
+  (`ActivityManager: Start proc ...:mmsparse ... /u0i1` - an isolated uid - and "isolated not needed" once unbound) and
+  shows at once as "Bildet kunne ikke hentes" / "The picture couldn't be fetched", nothing fetched. Without the stand-in
+  the platform's error 7 waits: "Bilde venter - trenger mobildata" / "Picture waiting - needs mobile data".
+- **An allowed picture**: with the host and the stand-in, a push from Mamma -> `GET /mms/11` at the fake MMSC -> the
+  bubble shows the picture (our own JPEG, 1200x900, re-encoded from the isolated process's pixels) and the text, the
+  notification names Mamma with the text, and the MMSC gets an m-acknowledge-ind (`POST`, type 0x85). A tap opens it;
+  "Lagre" puts `Pictures/Vibb One/Vibb-<random>.jpg` (no EXIF) into the gallery.
+- **The other cases** (`push` N FROM LOCATION, then the store with `run-as ... cat databases/messages.db`):
+  - Pappa (pictures off), `.../mms/12?from=%2B4790000002`: fetched, the text shown, "Et bilde ble ikke vist", no "+";
+  - a stranger `+4790000041`: a `held` row with the push (84 bytes), **no GET**;
+  - `http://attacker.invalid:8080/mms/14`: blocked `bad_location`, **no GET**;
+  - `.../mms/15-group` (To: the kid and Bestemor): a conversation "Mamma, Bestemor" with "Mamma" over the bubble; a
+    text reply from it is one send-req to both (`To: +4790000001, +4790000005`);
+  - `.../mms/16-stranger-group`: fetched, then blocked `group`, nothing shown;
+  - `.../mms/17-gone` (404): "Bildet er ikke lenger tilgjengelig".
+- **D16, the allow**: the stranger's contact added with only "Kan sende melding til" (by hand in the database until
+  step 4's pages) -> at the next sync the push is judged again and only then fetched (`GET /mms/19...`), shown with its
+  first receipt time. A released push whose fetched `From` isn't the push's (the fake MMSC's default `From`) is dropped
+  after the fetch and counted `malformed` - D10's second From check.
+- **Sending (D11)**: in Mamma's thread "+" -> "Ta bilde" / "Velg bilde" in the screen. "Velg bilde" opens the system
+  photo picker (in kiosk too); a 3000x2000 JPEG with a GPS position in its EXIF became our 1280x853 JPEG of 176 KB with
+  no EXIF, previewed above the field with a cross; Send -> one send-req (type 0x80) at the fake MMSC with that JPEG and
+  the text, "Sendt" under the bubble. "Ta bilde" opens the AVD's camera (`com.android.camera2`, the allowed camera
+  app) in capture mode; Done brings the picture back as a preview, its file in `cache/capture/` deleted once read.
+- Screenshots of the run (en and nb) are in the session's `scratchpad/sms-mms/shots/`.
+- **Not on the AVD**: a real carrier's MMS service and MMSC, a real push, the platform's own byte stream into the
+  provider (the stand-in writes it), HEIF/AVIF, the parse service dying on a crafted message (JVM tests:
+  `MmsEngineTest`'s three deaths) - step 0 on the Jelly Star.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

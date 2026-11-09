@@ -61,14 +61,16 @@ class DebugHookAbsentTest {
     }
 
     @Test
-    fun `release MmsDebug adds no MMS server, and the judge is its only caller`() {
-        // Design 77 step 3b: the emulator's fake MMSC exists only in the debug build.
+    fun `release MmsDebug adds no MMS server and stands in for nothing`() {
+        // Design 77 step 3b: the emulator's fake MMSC and its stand-in for the platform exist only in the debug build.
         val release = code(dir("release/java/com/kidslauncher/mdm/sms/MmsDebug.kt"))
-        assertEquals(1, Regex("\\bfun ").findAll(release).count())
+        assertEquals(3, Regex("\\bfun ").findAll(release).count())
         assertTrue(release, release.contains("fun mmscRules(): List<MmscRule> = emptyList()\n"))
+        assertTrue(release, release.contains("fun download(context: Context, location: String, uri: Uri, result: PendingIntent): Boolean = false\n"))
+        assertTrue(release, release.contains("fun send(context: Context, uri: Uri, result: PendingIntent): Boolean = false\n"))
         assertFalse(release.contains("var "))
-        val callers = sources("main").filter { code(it).contains("MmsDebug.") }.map { it.name }
-        assertEquals(listOf("SmsRuntime.kt"), callers)
+        val callers = sources("main").filter { code(it).contains("MmsDebug.") }.map { it.name }.sorted()
+        assertEquals(listOf("MmsRuntime.kt", "SmsRuntime.kt"), callers)
     }
 
     @Test
