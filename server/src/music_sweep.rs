@@ -3080,13 +3080,17 @@ async fn spotify_check(
                 );
             }
             // Every episode unplayable (none listed, none left out for anything else) with an audiobook-shaped
-            // restriction: an audiobook Spotify shares as a show - its own sentence instead of `no_items`
-            // (2026-11-01). A really empty show, or a podcast whose episodes are all `market`/`explicit`-restricted,
-            // stays `no_items`.
+            // restriction, or every item an audiobook's chapter (2026-11-09: what Spotify really sends): an audiobook
+            // Spotify shares as a show - its own sentence instead of `no_items` (2026-11-01). A really empty show, or
+            // a podcast whose episodes are all `market`/`explicit`-restricted, stays `no_items`.
+            let chapters = tally.shape.other > 0
+                && tally.shape.other == skipped
+                && tally.shape.other_type.as_deref() == Some("chapter");
             if listed.is_empty()
-                && unplayable > 0
-                && unplayable == skipped
-                && spotify::audiobook_shaped(restriction)
+                && ((unplayable > 0
+                    && unplayable == skipped
+                    && spotify::audiobook_shaped(restriction))
+                    || chapters)
             {
                 return Ok(Err(CheckError::Spotify(
                     spotify::AUDIOBOOK_CODE.to_string(),

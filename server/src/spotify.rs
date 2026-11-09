@@ -2471,6 +2471,11 @@ fn is_episode(value: &Value) -> bool {
         .is_none_or(|kind| kind == "episode")
 }
 
+/// An audiobook's chapter in an episode's place (`type: "chapter"`, 2026-11-09).
+fn is_chapter(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("chapter")
+}
+
 fn unplayable(value: &Value) -> bool {
     value.get("is_playable").and_then(Value::as_bool) == Some(false)
 }
@@ -2662,6 +2667,11 @@ fn show_episodes(body: &[u8], spike: bool) -> Option<Page> {
                             && kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
                     })
                     .map(str::to_string);
+            }
+            // Under the spike, an audiobook's chapters (2026-11-09: Spotify sends a show's chapters as `type:
+            // "chapter"` objects, neither null nor marked unplayable) are listed too, so the phone can try one.
+            if spike && is_chapter(item) {
+                return episode_fields(item);
             }
         } else if unplayable(item) {
             let reason = restriction_reason(item);
@@ -4464,6 +4474,24 @@ pub(crate) mod tests {
 
     /// 2026-11-09: what a show's items were, for the log of a show that lists nothing - null entries, objects of
     /// another `type`, unplayable and playable episodes counted apart, summed over the pages.
+    #[test]
+    fn the_spike_lists_an_audiobooks_chapters() {
+        let body = serde_json::json!({"items": [
+            {"id": "6FakeChapter0000000001", "type": "chapter", "name": "K1"},
+            {"id": "6FakeChapter0000000002", "type": "chapter", "name": "K2"}
+        ], "total": 2, "next": null})
+        .to_string();
+        let plain = parse_show_episodes(body.as_bytes()).unwrap();
+        assert_eq!(
+            (plain.listed.len(), plain.skipped, plain.shape.other),
+            (0, 2, 2)
+        );
+        let spike = parse_show_episodes_spike(body.as_bytes()).unwrap();
+        let ids: Vec<&str> = spike.listed.iter().map(|l| l.id.as_str()).collect();
+        assert_eq!(ids, ["6FakeChapter0000000001", "6FakeChapter0000000002"]);
+        assert_eq!(spike.shape.other, 2);
+    }
+
     #[test]
     fn a_shows_items_are_counted_by_what_they_were() {
         let body = |items: serde_json::Value, next: serde_json::Value| {
