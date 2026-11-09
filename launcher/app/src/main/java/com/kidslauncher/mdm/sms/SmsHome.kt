@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.kidslauncher.mdm.badges.GlanceSmsRow
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.smsMode
 import com.kidslauncher.mdm.ui.messages.messagesTileShown
@@ -21,7 +22,15 @@ private const val LOG_TAG = "SmsHome"
 object SmsHome {
     /** [unreadByNumber]: each one-to-one conversation's unread, by its number - the contact avatars' badge (§6.7,
      * [com.kidslauncher.mdm.ui.messages.unreadByNumber]). */
-    data class Summary(val hasHistory: Boolean, val unread: Int, val roleHeld: Boolean, val unreadByNumber: Map<String, Int> = emptyMap())
+    data class Summary(
+        val hasHistory: Boolean,
+        val unread: Int,
+        val roleHeld: Boolean,
+        val unreadByNumber: Map<String, Int> = emptyMap(),
+        /** The lock glance's "Meldinger" rows (design 77 §6.8, [smsGlanceRow]): one per conversation with unread
+         * messages, newest first; the text only while the parent's switch is on. */
+        val glance: List<GlanceSmsRow> = emptyList(),
+    )
 
     @Volatile
     var summary = Summary(hasHistory = false, unread = 0, roleHeld = false)
@@ -52,7 +61,11 @@ object SmsHome {
             // Cleared as the read begins: a change after this point queues the next read (code QA N5: only here).
             pending.set(false)
             val conversations = engine.conversations()
-            Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations))
+            val showText = smsLockText(CallPolicyStore.state)
+            val glance = conversations.filter { it.unread > 0 }
+                .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText) }
+                .sortedByDescending { it.timeMs }
+            Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations), glance)
         }) { next ->
             // No engine (the work never ran): nothing cleared the flag.
             if (next == null) pending.set(false)

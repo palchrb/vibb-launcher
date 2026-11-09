@@ -16,6 +16,11 @@
         android:id="@+id/messages_header"
         layout="@layout/include_kid_header" />
 
+    <!-- Design 79 §4.3: the search pill from 8 rows, names only. -->
+    <include
+        android:id="@+id/messages_search"
+        layout="@layout/view_kid_search" />
+
     <TextView
         android:id="@+id/messages_info"
         android:layout_width="match_parent"
@@ -37,6 +42,10 @@
         android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingBottom="8dp" />
+
+    <include
+        android:id="@+id/messages_empty"
+        layout="@layout/view_kid_search_empty" />
 
     <include layout="@layout/view_messages_confirm" />
 </LinearLayout>

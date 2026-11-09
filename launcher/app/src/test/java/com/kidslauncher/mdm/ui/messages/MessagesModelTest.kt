@@ -185,6 +185,27 @@ class MessagesModelTest {
         assertNull(conversationOf("+4790000002", listOf(old, newer)))
     }
 
+    /** Design 79 §4.1: Meldinger searches the rows' shown titles only - never a message's text ("bare kontakt navn"); a
+     * bare number's title is its digits, so digits find it (QA N5). Ranked as the phone book. */
+    @Test
+    fun `the search matches the shown title only`() {
+        val words = message("m", 1, 0, body = "Mamma kommer kl 4")
+        val pappa = conversation("a", "+4790000002", name = "Pappa", lastSeq = 3)
+        val mor = conversation("b", "+4790000001", contactId = 1, name = "Mamma", lastSeq = 2)
+        val stranger = conversation("c", "+4790000041", lastSeq = 4)
+        val dnb = conversation("d", "name:DNB", name = "DNB", lastSeq = 5)
+        val rows = listRows(listOf(pappa to words, mor to words, stranger to words, dnb to words), rules())
+        val nb = com.kidslauncher.mdm.ui.search.listCollator(java.util.Locale.forLanguageTag("nb"))
+        fun hits(query: String) = searchConversations(rows, query, nb) { whoTitle(it, "Ukjent") }.map { it.first.conversation.id.value }
+        // "mamma" is in every message's text but only one title.
+        assertEquals(listOf("b"), hits("mamma"))
+        assertEquals(listOf("c"), hits("0041"))
+        assertEquals(listOf("d"), hits("dnb"))
+        assertEquals(emptyList<String>(), hits("kommer"))
+        assertEquals("Mamma, +4790000009", whoTitle(Who.Group(listOf(Who.Name("Mamma"), Who.Number("+4790000009"))), "Ukjent"))
+        assertEquals("Ukjent", whoTitle(Who.Unknown, "Ukjent"))
+    }
+
     @Test
     fun `the last line is the text on one line, a picture is Bilde`() {
         assertEquals(LastLine.Text("hei du", mine = false), lastLine(message("m", 1, 0, body = "hei\n du ")))

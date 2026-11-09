@@ -14,6 +14,7 @@ import com.kidslauncher.mdm.server.dto.ContactRequestBody
 import com.kidslauncher.mdm.server.dto.PolicyContactRequest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import java.io.File
 import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArraySet
 
@@ -66,6 +67,9 @@ data class ContactRequestRecord(
     val askedAtMs: Long,
     val phase: ContactRequestPhase = ContactRequestPhase.PENDING,
     val shown: Boolean = false,
+    /** Design 79 §5.5: the kid gave the request a picture (`filesDir/contact_request_photos/<id>.jpg`, on the phone
+     * only - never in [body]). */
+    val photo: Boolean = false,
 ) {
     /** Still waiting: the kid sees "Venter på svar". */
     val open: Boolean get() = phase == ContactRequestPhase.PENDING || phase == ContactRequestPhase.ASKED
@@ -178,30 +182,51 @@ fun afterContactRequestAnswer(record: ContactRequestRecord, verdict: ContactRequ
     ContactRequestVerdict.RETRY -> record
 }
 
+/** A contact on the phone, as the reconcile needs it: its id, number and whether it is in the phone book. */
+data class ArrivedContact(val id: Long, val number: String, val inPhoneBook: Boolean)
+
+/** [reconcileContactRequests]' answer: the requests to keep, and the pictures to hand over (request id -> contact id,
+ * design 79 §5.5) - done before the list is written without those requests. */
+data class Reconciled(val records: List<ContactRequestRecord>, val handOvers: Map<String, Long> = emptyMap())
+
 /**
  * The requests after an accepted policy at [nowMs]: one older than [CONTACT_REQUEST_KEEP_MS] goes; an open one whose
- * number is a contact now ([contactNumbers], the policy's contacts - `null` when calls aren't managed, which says
- * nothing) goes - the contact arrived; an open one the policy calls `added` goes (added under another number), one it
- * calls `declined` becomes [ContactRequestPhase.DECLINED], shown once. The rest stay.
+ * number is a contact now ([contacts], the policy's - `null` when calls aren't managed, which says nothing) goes - the
+ * contact arrived, and if it arrived **in the phone book** and the request has a picture, the picture is handed to it
+ * ([Reconciled.handOvers]); an open one the policy calls `added` goes (added under another number: no hand-over), one
+ * it calls `declined` becomes [ContactRequestPhase.DECLINED], shown once. The rest stay. Every other request's picture
+ * is deleted by the sweep (only an open request keeps one).
  */
 fun reconcileContactRequests(
     records: List<ContactRequestRecord>,
     policyRows: List<PolicyContactRequest>,
-    contactNumbers: Set<String>?,
+    contacts: List<ArrivedContact>?,
     nowMs: Long,
-): List<ContactRequestRecord> {
+): Reconciled {
     val states = policyRows.associate { it.id to it.state }
-    return records.mapNotNull { record ->
+    val byNumber = contacts?.associateBy { it.number }
+    val handOvers = mutableMapOf<String, Long>()
+    val kept = records.mapNotNull { record ->
+        val arrived = byNumber?.get(record.number)
         when {
             nowMs - record.askedAtMs > CONTACT_REQUEST_KEEP_MS -> null
             !record.open -> record
-            contactNumbers != null && record.number in contactNumbers -> null
+            arrived != null -> {
+                if (record.photo && arrived.inPhoneBook) handOvers[record.id] = arrived.id
+                null
+            }
             states[record.id] == "added" -> null
             states[record.id] == "declined" -> record.copy(phase = ContactRequestPhase.DECLINED, shown = false)
             else -> record
         }
     }
+    return Reconciled(kept, handOvers)
 }
+
+/** The request pictures to keep (design 79 §5.5): only an open request's - "Pictures of people don't outlive the
+ * request". Any other file in the directory goes. */
+fun requestPhotosToKeep(records: List<ContactRequestRecord>): Set<String> =
+    records.filter { it.open && it.photo }.mapTo(mutableSetOf()) { "${it.id}.jpg" }
 
 /**
  * The upload's per-record step (QA L4): [records] as they are now, after the server answered [verdict] for the request
@@ -223,8 +248,8 @@ fun uploadGoesOn(verdict: ContactRequestVerdict): Boolean = verdict != ContactRe
 /** What a request's row in the phone book says. */
 enum class RequestLine { WAITING, NOT_ADDED, CAPPED, KNOWN, NOT_SENT }
 
-/** One row under the phone book's contacts. */
-data class RequestRow(val id: String, val name: String, val number: String, val line: RequestLine)
+/** One row under the phone book's contacts; [photo]: the request has the kid's picture (shown on its waiting row). */
+data class RequestRow(val id: String, val name: String, val number: String, val line: RequestLine, val photo: Boolean = false)
 
 /** The phone book's rows: every kept request, the newest first. */
 fun contactRequestRows(records: List<ContactRequestRecord>): List<RequestRow> =
@@ -236,7 +261,7 @@ fun contactRequestRows(records: List<ContactRequestRecord>): List<RequestRow> =
             ContactRequestPhase.KNOWN -> RequestLine.KNOWN
             ContactRequestPhase.NOT_SENT -> RequestLine.NOT_SENT
         }
-        RequestRow(record.id, record.name, record.number, line)
+        RequestRow(record.id, record.name, record.number, line, record.photo && record.open)
     }
 
 /** The phone book showed the rows: every answer is [ContactRequestRecord.shown]. */
@@ -256,6 +281,8 @@ fun newContactRequestId(random: SecureRandom = SecureRandom()): String {
 private const val LOG_TAG = "ContactRequests"
 private const val PREFS = "contact_requests"
 private const val RECORDS_KEY = "records_v1"
+private const val PHOTO_DIR = "contact_request_photos"
+private const val DRAFT_DIR = "request_photo_draft"
 private val RECORDS = ListSerializer(ContactRequestRecord.serializer())
 
 /** The Android side: the requests in prefs (credential-encrypted: names and numbers), the upload with the sync, the
@@ -297,13 +324,52 @@ object ContactRequests {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't save the contact requests: ${e.javaClass.simpleName}")
         }
+        sweepPhotos(context, after)
         changed()
     }
 
-    /** The form's "Send": a new PENDING request; the caller asks for a sync, which sends it. */
-    fun add(context: Context, ok: RequestCheck.Ok, nowMs: Long = System.currentTimeMillis()) {
-        val record = ContactRequestRecord(newContactRequestId(), ok.name, ok.number, ok.matrixId, nowMs)
+    /**
+     * The form's "Send": a new PENDING request; the caller asks for a sync, which sends it. [draft]: the form's picture
+     * (design 79 §5.5) - renamed to `contact_request_photos/<id>.jpg` and named in the record in the same step; a draft
+     * that can't be moved is deleted and the request goes without it.
+     */
+    fun add(context: Context, ok: RequestCheck.Ok, draft: File? = null, nowMs: Long = System.currentTimeMillis()) {
+        val id = newContactRequestId()
+        val photo = draft?.let { moveDraft(context, it, id) } == true
+        val record = ContactRequestRecord(id, ok.name, ok.number, ok.matrixId, nowMs, photo = photo)
         update(context) { it + record }
+    }
+
+    /** Where a sent request's picture lives (CE). */
+    fun photoDir(context: Context): File = File(context.applicationContext.filesDir, PHOTO_DIR)
+
+    /** The form's drafts (before "Send" gives the request an id; the camera can cost the launcher its activity). */
+    fun draftDir(context: Context): File = File(context.applicationContext.cacheDir, DRAFT_DIR)
+
+    private fun moveDraft(context: Context, draft: File, id: String): Boolean {
+        if (!draft.isFile || draft.parentFile?.canonicalPath != draftDir(context).canonicalPath) return false
+        val dir = photoDir(context).apply { mkdirs() }
+        val ok = draft.renameTo(File(dir, "$id.jpg"))
+        if (!ok) draft.delete()
+        return ok
+    }
+
+    /** At the phone book's first resume (code QA L3, second pass): the drafts [draftsToSweep] lets go. */
+    fun sweepDrafts(context: Context, keep: String?, nowMs: Long = System.currentTimeMillis()) {
+        val dir = draftDir(context)
+        val files = dir.listFiles().orEmpty().associate { it.name to it.lastModified() }
+        for (name in draftsToSweep(files, keep, nowMs)) File(dir, name).delete()
+    }
+
+    /** A draft no form took (the form closed while the picture was framed). */
+    fun deleteDraft(context: Context, name: String) {
+        File(draftDir(context), name).takeIf { it.parentFile?.canonicalPath == draftDir(context).canonicalPath }?.delete()
+    }
+
+    /** The request pictures no open request names go (an answer, the expiry, a hand-over's leftovers). */
+    private fun sweepPhotos(context: Context, records: List<ContactRequestRecord>) {
+        val keep = requestPhotosToKeep(records)
+        photoDir(context).listFiles()?.forEach { if (it.name !in keep) it.delete() }
     }
 
     fun markShown(context: Context) = update(context, ::markContactRequestsShown)
@@ -312,9 +378,18 @@ object ContactRequests {
 
     /** At every accepted policy (`performMdmSync`): [reconcileContactRequests] with its rows and contacts. */
     fun policyAccepted(context: Context, callPolicy: CallPolicy?) {
-        val numbers = callPolicy?.takeIf { it.managed }?.contacts?.map { it.number }?.toSet()
+        val contacts = callPolicy?.takeIf { it.managed }?.contacts?.map { ArrivedContact(it.id, it.number, it.outbound) }
         val rows = callPolicy?.contactRequests.orEmpty()
-        update(context) { reconcileContactRequests(it, rows, numbers, System.currentTimeMillis()) }
+        val numbers = contacts?.associate { it.id to it.number }.orEmpty()
+        update(context) { records ->
+            val reconciled = reconcileContactRequests(records, rows, contacts, System.currentTimeMillis())
+            // Design 79 §5.5: each picture moves into the kid's pictures first; only then is the list written without
+            // the request (a crash between leaves the record, and the next reconcile does it again).
+            for ((requestId, contactId) in reconciled.handOvers) {
+                KidContactPhotos.adopt(context, contactId, numbers[contactId].orEmpty(), File(photoDir(context), "$requestId.jpg"))
+            }
+            reconciled.records
+        }
     }
 
     /**

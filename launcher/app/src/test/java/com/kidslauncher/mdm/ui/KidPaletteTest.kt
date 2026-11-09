@@ -67,6 +67,32 @@ class KidPaletteTest {
         }
     }
 
+    /** Design 79 §3.4: the phone book's row - a solid night tile on any wallpaper - and every ink on it, the buttons'
+     * glyphs on their tonal discs over the tile included. */
+    @Test
+    fun `the phone book row reads - its texts on the tile, the glyphs on their discs`() {
+        assertTrue(resolve("kid_call_glyph").equals("#7FC28F", ignoreCase = true))
+        val tile = "kid_music_tile"
+        for (ink in listOf("kid_ink", "kid_core_dim", "kid_missed_text", "kid_accent")) {
+            assertTrue("$ink on the row", contrast(ink, tile) >= 4.5)
+        }
+        val disc = over("kid_sheet_button", tile)
+        assertTrue("Ring's glyph", contrast("kid_call_glyph", disc) >= 6.0)
+        assertTrue("Melding's glyph", contrast("kid_accent", disc) >= 6.0)
+        assertTrue("an emergency number's Ring", contrast("kid_emergency_text", "kid_emergency_tonal") >= 4.5)
+        // The "+" in the night ink on its peach disc; the waiting row's initial in peach on its disc.
+        assertTrue(contrast("kid_ground", "kid_accent") >= 4.5)
+        assertTrue(contrast("kid_accent", "kid_music_control") >= 4.5)
+        assertTrue(contrast("kid_core_dim", "kid_music_control") >= 4.5)
+        // The row's layout uses exactly these.
+        val row = resFile("layout/item_phone_book_row.xml").readText()
+        for (needed in listOf("@drawable/bg_day_event", "@color/kid_call_glyph", "@color/kid_accent", "@color/kid_ink", "@color/kid_core_dim")) {
+            assertTrue(needed, row.contains(needed))
+        }
+        assertTrue(resFile("drawable/bg_phone_book_button.xml").readText().contains("@color/kid_sheet_button"))
+        assertTrue(resFile("drawable/bg_phone_book_button_emergency.xml").readText().contains("@color/kid_emergency_tonal"))
+    }
+
     /** Design 75 §5.5 (launcher QA L7): the weather card's two tokens - the mockup's rain blue and the current period's
      * raised tone (white at 6 % over the tile) - and every text on them stays readable. */
     @Test

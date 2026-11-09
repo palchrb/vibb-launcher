@@ -604,6 +604,12 @@
             android:configChanges="orientation|screenSize"
             android:exported="false"
             android:taskAffinity="${applicationId}.messages" />
+        <!-- Design 79 §5.2: the kid's own picture of a contact (or of a contact request's draft) - the picker or the
+             allowed camera, then the framing. Not exported; not a free screen for screen time. -->
+        <activity
+            android:name=".calls.KidPhotoActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
         <!-- "Del" on a received picture (§6.7): a one-shot read grant on a copy in cacheDir/share/ (deleted after an
              hour) - not exported, only what share_paths.xml names. -->
         <provider

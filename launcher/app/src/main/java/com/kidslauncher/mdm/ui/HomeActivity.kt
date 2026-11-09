@@ -197,6 +197,7 @@ class HomeActivity : UIObjectActivity() {
     private var showPhoneBook = false
     private var appsJob: Job? = null
     private var missed: Map<String, ContactMissed> = emptyMap()
+    private val missedLoads = com.kidslauncher.mdm.calls.LatestOnly()
     /** Round L5: a missed Element X call came or went. */
     private val elementMissedListener: () -> Unit = { loadMissedCalls() }
     private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -458,6 +459,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         ElementMissedCallStore.addListener(elementMissedListener)
+        MissedCallsRepo.addSeenListener(elementMissedListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -675,6 +677,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
+        MissedCallsRepo.removeSeenListener(elementMissedListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -711,9 +714,12 @@ class HomeActivity : UIObjectActivity() {
     private fun loadMissedCalls() {
         if (!contentShown) return
         val state = CallPolicyStore.callsState
+        // Design 79 code QA L2: only the latest load counts - an older one finishing last can't bring back a badge the
+        // phone book's visit just cleared.
+        val generation = missedLoads.begin()
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@HomeActivity, state) }
-            if (result != missed && !isDestroyed && contentShown) {
+            if (missedLoads.isLatest(generation) && result != missed && !isDestroyed && contentShown) {
                 missed = result
                 renderCallParts()
             }
@@ -873,7 +879,7 @@ class HomeActivity : UIObjectActivity() {
         binding.homeCallCard.contentDescription = "${binding.homeCallTitle.text}. ${getString(R.string.home_call_back)}"
         val avatar = com.kidslauncher.mdm.calls.callAvatar(contact != null, emergency, unlocked = true)
         val key = if (avatar == com.kidslauncher.mdm.calls.CallAvatar.CONTACT && contact != null) {
-            "c|${contact.id}|${contact.name}|${contact.photo}|${ContactPhotos.cached(this, contact.photo) != null}"
+            "c|${contact.id}|${contact.name}|${contact.photo}|${com.kidslauncher.mdm.ui.home.KidAvatars.shownPhotoOf(this, contact, false)}|${com.kidslauncher.mdm.ui.home.KidAvatars.photoReady(this, contact)}"
         } else {
             "silhouette"
         }
@@ -917,7 +923,7 @@ class HomeActivity : UIObjectActivity() {
             KidAvatars.bindContact(
                 item.findViewById<ImageView>(R.id.contact_photo),
                 item.findViewById<TextView>(R.id.contact_initial),
-                contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
+                contact, emergency, initialSp = 30f * layout.avatarDp / 76f, thumb = true,
             )
             KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
             KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)

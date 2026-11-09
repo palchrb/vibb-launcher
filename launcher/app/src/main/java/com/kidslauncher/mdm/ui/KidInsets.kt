@@ -14,14 +14,17 @@ import android.view.WindowInsets
 object KidInsets {
     const val MAX_TOP_EXTRA_DP = 8
 
-    fun apply(root: View) {
+    /** [ime]: the bottom takes the keyboard when it is taller than the navigation bar (a page with a text field: the
+     * window is edge to edge, so `adjustResize` alone does nothing on API 35+, design 79 QA L3). */
+    fun apply(root: View, ime: Boolean = false) {
         val left = root.paddingLeft
         val top = root.paddingTop
         val right = root.paddingRight
         val bottom = root.paddingBottom
         root.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            view.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + bars.bottom)
+            val keyboard = if (ime) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
+            view.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + maxOf(bars.bottom, keyboard))
             WindowInsets.CONSUMED
         }
         root.requestApplyInsets()

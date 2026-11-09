@@ -1,4 +1,4 @@
-package com.kidslauncher.mdm.ui.messages
+package com.kidslauncher.mdm.ui.pictures
 
 import android.app.Activity
 import android.content.ClipData
@@ -16,13 +16,16 @@ import com.kidslauncher.mdm.sms.engine.PictureRef
 import com.kidslauncher.mdm.sms.parse.MmsParseProtocol
 import com.kidslauncher.mdm.sms.parse.MmsParser
 import com.kidslauncher.mdm.sms.parse.PictureEncoder
+import com.kidslauncher.mdm.ui.messages.PictureShare
+import com.kidslauncher.mdm.ui.messages.pickedUriAcceptable
 import java.io.File
 import java.security.SecureRandom
 
 private const val LOG_TAG = "PicturePick"
 
 /**
- * The compose bar's "+" (design 77 D11): where a picture to send comes from, and how it becomes one the engine holds.
+ * The compose bar's "+" (design 77 D11) and the kid's own contact pictures (design 79 §5, `KidPhotoActivity`): where a
+ * picture comes from, and how it becomes one of ours ([decode], then the SMS path's [prepare] or the contact's framing).
  * This is the one kid-screen file that may open the system's photo picker or a camera (`KidScreensEscapeTest`).
  *
  * - **Velg bilde**: the system photo picker (`ACTION_PICK_IMAGES`): no storage permission, one picture, and a kiosk
@@ -120,7 +123,19 @@ object PicturePick {
         null to Problem.UNREADABLE
     }
 
-    private fun prepareOrThrow(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> {
+    /**
+     * Design 79 §5.2 (QA L5): the shared part of every pick - the file's bytes (at most 30 MB, never decoded here) to the
+     * isolated process, its pixels back (EXIF orientation applied, at most 1280 px). Not on the main thread. The SMS
+     * path ([prepare]) and the kid's contact picture (`KidPhotoActivity`) build on it.
+     */
+    fun decode(context: Context, source: Source): Pair<Bitmap?, Problem?> = try {
+        decodeOrThrow(context, source)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "The picked picture couldn't be decoded: ${e.javaClass.simpleName}")
+        null to Problem.UNREADABLE
+    }
+
+    private fun decodeOrThrow(context: Context, source: Source): Pair<Bitmap?, Problem?> {
         val app = context.applicationContext
         val bytes = try {
             when (source) {
@@ -132,11 +147,17 @@ object PicturePick {
             null
         } ?: return null to Problem.UNREADABLE
         if (bytes.size > MmsParseProtocol.PICK_MAX_BYTES) return null to Problem.TOO_LARGE
-        val pixels = when (val answer = MmsParser.decodeImage(app, bytes, MmsParseProtocol.PICK_MAX_PX)) {
-            is MmsParser.Answer.Ok -> answer.value
-            MmsParser.Answer.Unavailable -> return null to Problem.UNAVAILABLE
-            else -> return null to Problem.UNREADABLE
+        return when (val answer = MmsParser.decodeImage(app, bytes, MmsParseProtocol.PICK_MAX_PX)) {
+            is MmsParser.Answer.Ok -> answer.value to null
+            MmsParser.Answer.Unavailable -> null to Problem.UNAVAILABLE
+            else -> null to Problem.UNREADABLE
         }
+    }
+
+    private fun prepareOrThrow(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> {
+        val app = context.applicationContext
+        val (decoded, problem) = decodeOrThrow(app, source)
+        val pixels = decoded ?: return null to (problem ?: Problem.UNREADABLE)
         try {
             // The conversation's own SIM, the one the send goes out on (code QA N3).
             val limit = PictureEncoder.sendLimit(SmsRuntime.judge(app).carrier(subId).maxMessageBytes)

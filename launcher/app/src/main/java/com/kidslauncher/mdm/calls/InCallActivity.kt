@@ -180,7 +180,7 @@ class InCallActivity : AppCompatActivity() {
         binding.inCallAvatar.contentDescription = getString(R.string.calls_photo_of, name)
         val kind = callAvatar(contact != null, emergency, CallPolicyStore.userUnlocked(this))
         val key = if (kind == CallAvatar.CONTACT && contact != null) {
-            "c|${contact.id}|${contact.name}|${contact.photo}|${ContactPhotos.cached(this, contact.photo) != null}"
+            "c|${contact.id}|${contact.name}|${contact.photo}|${com.kidslauncher.mdm.ui.home.KidAvatars.shownPhotoOf(this, contact, false)}|${com.kidslauncher.mdm.ui.home.KidAvatars.photoReady(this, contact)}"
         } else {
             "silhouette"
         }

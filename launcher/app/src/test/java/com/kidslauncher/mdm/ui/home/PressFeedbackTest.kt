@@ -285,9 +285,11 @@ class PressFeedbackTest {
         assertTrue(grid.contains("PressFeedback.cellBackground(itemView, iconPx,"))
         assertTrue(grid.contains("PressFeedback.reset(holder.itemView)"))
         assertTrue(source("java/com/kidslauncher/mdm/ui/HomeActivity.kt").contains("PressFeedback.contact(item,"))
+        // Design 79: the phone book's rows press their Ring and Melding discs (the row itself only ripples).
         val book = source("java/com/kidslauncher/mdm/calls/PhoneBookAdapter.kt")
-        assertTrue(book.contains("PressFeedback.contact(view,"))
-        assertTrue(book.contains("PressFeedback.reset(holder.itemView)"))
+        assertTrue(book.contains("PressFeedback.cellBackground(cell, disc, inset)"))
+        assertTrue(book.contains("PressFeedback.attach(cell, target, scrolling = true)"))
+        assertTrue(book.contains("PressFeedback.reset(holder.call)") && book.contains("PressFeedback.reset(holder.message)"))
         // The contact helper does all four, the focus ring included.
         val helper = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt").substringAfter("fun contact(").substringBefore("\n    }")
         for (call in listOf("depth(avatar, elevationDp)", "cellBackground(item, avatarPx,", "attach(item, avatar, scrolling = true)")) {

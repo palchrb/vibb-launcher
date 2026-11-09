@@ -19,7 +19,9 @@
         android:layout_height="5dp"
         android:background="@drawable/bg_kid_sheet_handle" />
 
+    <!-- Design 79 §5.1: a long-press on the photo opens "Bilde av …" (ContactSheet; TalkBack: "Endre bilde av …"). -->
     <FrameLayout
+        android:id="@+id/sheet_photo_frame"
         android:layout_width="132dp"
         android:layout_height="132dp"
         android:layout_marginTop="12dp">

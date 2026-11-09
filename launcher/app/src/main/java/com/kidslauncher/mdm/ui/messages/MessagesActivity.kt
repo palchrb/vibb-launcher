@@ -24,6 +24,16 @@ import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.day.LockWatch
+import com.kidslauncher.mdm.calls.SEARCH_MIN_ROWS
+import com.kidslauncher.mdm.ui.search.KidSearchField
+import com.kidslauncher.mdm.ui.search.MessagesBack
+import com.kidslauncher.mdm.ui.search.SearchMatch
+import com.kidslauncher.mdm.ui.search.highlightMatch
+import com.kidslauncher.mdm.ui.search.listCollator
+import com.kidslauncher.mdm.ui.search.messagesBack
+import com.kidslauncher.mdm.ui.search.searchHits
+import com.kidslauncher.mdm.ui.search.searchShown
+import com.kidslauncher.mdm.ui.search.searching
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.ZoneId
@@ -54,16 +64,41 @@ class MessagesActivity : UIObjectActivity() {
      * else "Ny melding" follows the gate. */
     private val lockWatch = LockWatch(this) { if (!MessagesScreens.redirectIfLocked(it)) render() }
 
+    /** Design 79 §4: the search pill from 8 rows, the shown names only. */
+    private lateinit var search: KidSearchField
+
+    /** Back: the keyboard first (stock Android, code QA L10), then the delete confirm, then the search's text, then
+     * "Ny melding" back to the list ([messagesBack]). */
     private val back = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
-            when {
-                deleting != null -> cancelDelete()
-                picking -> {
+            val ime = binding.root.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+            when (messagesBack(ime, deleting != null, search.query, picking)) {
+                MessagesBack.HIDE_KEYBOARD -> search.hideKeyboard()
+                MessagesBack.CANCEL_DELETE -> cancelDelete()
+                MessagesBack.CLEAR_SEARCH -> {
+                    search.clear()
+                    filter()
+                }
+                MessagesBack.STOP_PICKING -> {
                     picking = false
                     render()
                 }
+                MessagesBack.LEAVE -> {}
             }
         }
+    }
+
+    private fun updateBack() {
+        back.isEnabled = messagesBack(false, deleting != null, search.query, picking) != MessagesBack.LEAVE
+    }
+
+    /** "Ny melding"'s contacts as the last [render] read them (a keystroke only filters, code QA M2). */
+    private var pickContacts: List<RuleContact> = emptyList()
+
+    /** Whether each shown number is an emergency number, asked once per render, not per bound row (code QA M2). */
+    private val emergencyMemo = HashMap<String, Boolean>()
+    private val isEmergency: (String) -> Boolean = { number ->
+        emergencyMemo.getOrPut(number) { com.kidslauncher.mdm.calls.CallSystem.isEmergencyOutgoing(this, number) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +115,7 @@ class MessagesActivity : UIObjectActivity() {
         binding.messagesList.layoutManager = LinearLayoutManager(this)
         binding.messagesList.adapter = adapter
         onBackPressedDispatcher.addCallback(this, back)
+        search = KidSearchField(binding.messagesSearch.root, R.string.messages_search) { filter() }
         picking = savedInstanceState?.getBoolean(STATE_PICKING) == true
         render()
     }
@@ -110,6 +146,8 @@ class MessagesActivity : UIObjectActivity() {
     override fun onStop() {
         SmsHome.removeListener(homeListener)
         events?.cancel()
+        // Design 79 §4.1 (code QA N3): the query is kept across a rotation only.
+        if (!isChangingConfigurations) search.clear()
         super.onStop()
     }
 
@@ -138,18 +176,17 @@ class MessagesActivity : UIObjectActivity() {
     private fun render() {
         val readOnly = historyReadOnlyNow()
         val canStart = !readOnly && mayStart()
-        if (picking && !canStart) picking = false
-        back.isEnabled = picking || deleting != null
+        if (picking && !canStart) setPicking(false)
+        emergencyMemo.clear()
         if (picking) {
             KidHeader.bind(this, binding.messagesHeader, R.string.messages_new, back = R.string.kid_back)
-            val contacts = newMessageContacts(MessagesScreens.rules())
-            info(if (contacts.isEmpty()) getString(R.string.messages_new_empty) else null)
-            adapter.submit(contacts.map { Row.Contact(it) })
+            pickContacts = newMessageContacts(MessagesScreens.rules())
+            info(if (pickContacts.isEmpty()) getString(R.string.messages_new_empty) else null)
+            filter()
             return
         }
         KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
-            picking = true
-            render()
+            setPicking(true)
         }
         info(
             when {
@@ -158,7 +195,45 @@ class MessagesActivity : UIObjectActivity() {
                 else -> null
             },
         )
-        adapter.submit(rows.map { Row.Conversation(it) })
+        filter()
+    }
+
+    /** The rows for the search's text, from what the last [render] read: the search's keystroke runs only this. */
+    private fun filter() {
+        val collator = listCollator(resources.configuration.locales[0])
+        if (picking) {
+            val contacts = pickContacts
+            val shown = searchShown(contacts.size, search.query, allowed = true, minRows = SEARCH_MIN_ROWS)
+            val hits = if (shown && searching(search.query)) searchHits(contacts, { it.name }, search.query, collator) else null
+            showList(shown, hits?.map { (c, m) -> Row.Contact(c, m) } ?: contacts.map { Row.Contact(it) }, hits != null)
+            return
+        }
+        val shown = searchShown(rows.size, search.query, allowed = true, minRows = SEARCH_MIN_ROWS)
+        val hits = if (shown && searching(search.query)) {
+            searchConversations(rows, search.query, collator) { MessagesScreens.name(this, it) }
+        } else {
+            null
+        }
+        showList(shown, hits?.map { (r, m) -> Row.Conversation(r, m) } ?: rows.map { Row.Conversation(it) }, hits != null)
+    }
+
+    /** The list, the pill, the live count and "Fant ingenting" (design 79 §4.1; no request button here). */
+    private fun showList(searchShown: Boolean, items: List<Row>, searchingNow: Boolean) {
+        search.setShown(searchShown)
+        val nothing = searchingNow && items.isEmpty()
+        search.announce(if (searchingNow && !nothing) items.size else null)
+        binding.messagesEmpty.root.visibility = if (nothing) View.VISIBLE else View.GONE
+        binding.messagesList.visibility = if (nothing) View.GONE else View.VISIBLE
+        adapter.submit(items)
+        updateBack()
+    }
+
+    /** "Ny melding" and the list each start without a search. */
+    private fun setPicking(on: Boolean) {
+        if (picking == on) return
+        picking = on
+        search.clear()
+        render()
     }
 
     /** SMS isn't "Styrt av Vibb" now: the history is only for reading ([ComposeState.READ_ONLY]). */
@@ -175,8 +250,7 @@ class MessagesActivity : UIObjectActivity() {
 
     /** "Ny melding" for [contact]: their conversation if there is one, else a new thread for the number. */
     private fun startWith(contact: RuleContact) {
-        picking = false
-        render()
+        setPicking(false)
         val existing = rows.firstOrNull { it.conversation.participants.singleOrNull()?.address == contact.number }
         startActivity(MessagesScreens.threadIntent(this, existing?.conversation?.id?.value, contact.number))
     }
@@ -185,7 +259,7 @@ class MessagesActivity : UIObjectActivity() {
 
     private fun askDelete(row: ListRow) {
         deleting = row
-        back.isEnabled = true
+        updateBack()
         val panel = binding.root.findViewById<View>(R.id.messages_confirm)
         MessagesScreens.showConfirm(
             panel,
@@ -204,15 +278,15 @@ class MessagesActivity : UIObjectActivity() {
     private fun cancelDelete() {
         deleting = null
         MessagesScreens.hideConfirm(binding.root.findViewById(R.id.messages_confirm))
-        back.isEnabled = picking
+        updateBack()
     }
 
     // ---- the list ----
 
     private sealed interface Row {
-        data class Conversation(val row: ListRow) : Row
+        data class Conversation(val row: ListRow, val match: SearchMatch? = null) : Row
 
-        data class Contact(val contact: RuleContact) : Row
+        data class Contact(val contact: RuleContact, val match: SearchMatch? = null) : Row
     }
 
     private inner class RowsAdapter : RecyclerView.Adapter<RowsAdapter.Holder>() {
@@ -243,14 +317,14 @@ class MessagesActivity : UIObjectActivity() {
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             when (val item = items[position]) {
-                is Row.Conversation -> bindConversation(holder, item.row)
-                is Row.Contact -> bindContact(holder, item.contact)
+                is Row.Conversation -> bindConversation(holder, item.row, item.match)
+                is Row.Contact -> bindContact(holder, item.contact, item.match)
             }
         }
 
-        private fun bindContact(holder: Holder, contact: RuleContact) {
-            MessagesScreens.bindAvatar(holder.photo, holder.initial, contact, contact.name, contact.number)
-            holder.name.text = contact.name
+        private fun bindContact(holder: Holder, contact: RuleContact, match: SearchMatch?) {
+            MessagesScreens.bindAvatar(holder.photo, holder.initial, contact, contact.name, contact.number, isEmergency)
+            holder.name.text = highlightMatch(holder.itemView.context, contact.name, match)
             holder.last.visibility = View.GONE
             holder.time.text = null
             holder.unread.visibility = View.GONE
@@ -261,12 +335,12 @@ class MessagesActivity : UIObjectActivity() {
             removeDeleteAction(holder)
         }
 
-        private fun bindConversation(holder: Holder, row: ListRow) {
+        private fun bindConversation(holder: Holder, row: ListRow, match: SearchMatch?) {
             val context = holder.itemView.context
             val name = MessagesScreens.name(context, row.who)
             val address = row.conversation.participants.singleOrNull()?.address.orEmpty()
-            MessagesScreens.bindAvatar(holder.photo, holder.initial, row.contact, name, address)
-            holder.name.text = name
+            MessagesScreens.bindAvatar(holder.photo, holder.initial, row.contact, name, address, isEmergency)
+            holder.name.text = highlightMatch(context, name, match)
             val last = lastText(row.last)
             holder.last.visibility = if (last == null) View.GONE else View.VISIBLE
             holder.last.text = last

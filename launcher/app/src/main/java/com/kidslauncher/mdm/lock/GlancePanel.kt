@@ -43,6 +43,10 @@ import com.kidslauncher.mdm.badges.GlanceSpokenPart
 import com.kidslauncher.mdm.badges.GlanceReader
 import com.kidslauncher.mdm.badges.GlanceRow
 import com.kidslauncher.mdm.badges.GlanceStore
+import com.kidslauncher.mdm.badges.GlanceSmsRow
+import com.kidslauncher.mdm.badges.glanceWithSms
+import com.kidslauncher.mdm.sms.SmsGlance
+import com.kidslauncher.mdm.sms.SmsHome
 import com.kidslauncher.mdm.badges.GlanceSubtitle
 import com.kidslauncher.mdm.badges.glanceNameSuffix
 import com.kidslauncher.mdm.badges.glanceRowContact
@@ -235,6 +239,14 @@ class GlancePanel(
     private val changed: () -> Unit = { render() }
     /** Dagen on the page (design 69 §5): the reminder row and the "Neste" line. */
     private val calendar = GlanceCalendar(activity) { render() }
+
+    /** Design 77 §6.8: the engine's Meldinger rows as last rendered - a summary refresh that leaves every row as it was
+     * renders nothing (a row carries its whole conversation, so an outgoing message or a `canSend` change in a
+     * conversation with unread messages renders once - harmless; code QA N2). */
+    private var smsRows: List<GlanceSmsRow>? = null
+    private val smsChanged: () -> Unit = {
+        guarded("sms") { if (started && SmsHome.summary.glance != smsRows) renderNow() }
+    }
     private val torchChanged: () -> Unit = { activity.runOnUiThread { guarded("torch") { bindTorch() } } }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
@@ -278,6 +290,8 @@ class GlancePanel(
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
             calendar.start()
+            SmsHome.addListener(smsChanged)
+            SmsHome.refresh(activity)
             TimeRulesRuntime.addLockListener(lockListener)
             torch?.addListener(torchChanged)
             music.start()
@@ -404,6 +418,8 @@ class GlancePanel(
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
         calendar.stop()
+        SmsHome.removeListener(smsChanged)
+        smsRows = null
         TimeRulesRuntime.removeLockListener(lockListener)
         torch?.removeListener(torchChanged)
         ClockFormat.unwatch(activity, clockWatch)
@@ -847,6 +863,12 @@ class GlancePanel(
                 }
                 // Dagen's reminder row is never dismissed (design 69 §5.2); it goes at the event's start.
                 is GlanceCalendarRow -> false
+                // Design 77 §6.8: ours - hidden until the conversation's next message, our notification of it gone.
+                is GlanceSmsRow -> {
+                    SmsGlance.dismiss(activity, row, current = SmsHome.summary.glance.firstOrNull { it.conversationId == row.conversationId })
+                    Log.i(LOG_TAG, "Glance: a row dismissed (sms)")
+                    true
+                }
             }
         }
         // The reader's own change (GlanceStore.hide) may have rendered already; else render now (or at the lift).
@@ -1067,6 +1089,7 @@ class GlancePanel(
             is GlanceMessageRow -> GlanceTarget.Conversation(row.conversation, row.notificationKey, row.postTimeMs)
             is GlanceMissedRow -> GlanceTarget.MissedCalls(row.number)
             is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)
+            is GlanceSmsRow -> GlanceTarget.Thread(row.conversationId)
         }
         val timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE
         val taken = glanceTargetTaken(timeRule, timeRule && GlanceOpener.usableUnderTimeRule(activity, target))
@@ -1074,6 +1097,7 @@ class GlancePanel(
         captured = message?.takeIf { taken }?.let { GlanceStore.contentIntent(it.notificationKey) }
         promptLabel = message?.takeIf { taken }?.let { glancePromptLabel(label(it.packageName)) }
             ?: activity.getString(R.string.day_title).takeIf { taken && row is GlanceCalendarRow }
+            ?: activity.getString(R.string.messages_title).takeIf { taken && row is GlanceSmsRow }
         step(GlanceStageEvent.Row(target.takeIf { taken }))
         // 2026-11-09: the row read afresh while the keypad is up - an event removed since leaves it; the day still opens.
         if (row is GlanceCalendarRow) calendar.refresh()
@@ -1286,7 +1310,9 @@ class GlancePanel(
     private fun shownRows(): List<GlanceRow> {
         val all = GlanceStore.rows(MissedCallNotifier.current)
         val kept = if (hiddenNumbers.isEmpty() && hiddenPlain == 0) all else withoutDismissed(all, hiddenNumbers.keys, hiddenPlain > 0)
-        return listOfNotNull(calendar.reminderRow()) + kept
+        // Design 77 §6.8: our Meldinger rows among them by time, read from the engine (GlanceReader skips ours).
+        val sms = SmsGlance.shown(SmsHome.summary.glance.also { smsRows = it })
+        return listOfNotNull(calendar.reminderRow()) + glanceWithSms(kept, sms)
     }
 
     // ---- rows -----------------------------------------------------------------------------------
@@ -1311,6 +1337,9 @@ class GlancePanel(
                     is GlanceMessageRow -> bindMessage(view, row)
                     is GlanceMissedRow -> bindMissed(view, row)
                     is GlanceCalendarRow -> bindCalendar(view, row)
+                    is GlanceSmsRow -> describe(
+                        view, GlanceSmsRowView.bind(activity, view, row, timeText(row.timeMs)), activity.getString(R.string.glance_sms_action), row,
+                    )
                 }
                 view.root.setOnClickListener { tap(row) }
             }
@@ -1385,7 +1414,7 @@ class GlancePanel(
         // icon's place - our own photo, never the notification's picture - with the app's icon as the corner mark.
         val contact = glanceRowContact(row, CallPolicyStore.state)
         when {
-            contact != null -> KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
+            contact != null -> KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
             icon != null -> view.glanceRowIcon.setImageBitmap(icon)
             else -> {
                 // A placeholder circle until the background job has drawn Home's icon (QA Low 6).
@@ -1440,7 +1469,7 @@ class GlancePanel(
         if (contact != null) {
             // The contact's Home avatar: its photo, else the initial on its colour.
             plainIcon(view)
-            KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
+            KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
         } else {
             view.glanceRowInitial.visibility = View.GONE
             phoneGlyph(view)

@@ -1396,7 +1396,7 @@
   "device.lock.same_as_home": "Samme som Hjem",
   "device.lock.save_background": "Lagre bakgrunn",
   "device.lock.wake": "Vekk skjermen ved varsler",
-  "device.lock.wake_sub": "For appene på låsen nedenfor og tapte anrop",
+  "device.lock.wake_sub": "For appene på låsen nedenfor, tapte anrop og meldinger",
   "device.weather.lock": "Vær på låseskjermen",
   "device.weather.lock_sub": "Yr-symbol og temperatur ved datoen; trykk for dagen. Fra MET Norge, for der telefonen er (omtrent 2 km).",
   "device.weather.zone": "Når posisjonen ikke er fersk, bruk",

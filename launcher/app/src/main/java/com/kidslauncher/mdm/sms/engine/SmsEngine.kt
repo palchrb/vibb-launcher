@@ -663,6 +663,9 @@ class SmsEngine(
      * has no message left. */
     fun conversation(id: ConversationId): Conversation? = store.conversation(id.value)?.let { conversationOf(it, judge()) }
 
+    /** The stored conversation itself (its participants and name as the notification names them), `null` when gone. */
+    fun conversationRow(id: ConversationId): ConversationRow? = store.conversation(id.value)
+
     /** The one-to-one conversation keyed by [address] (a normalised number, `name:<text>`), as [conversation]. */
     fun conversationWith(address: String): Conversation? = store.conversationByKey(address)?.let { conversationOf(it, judge()) }
 

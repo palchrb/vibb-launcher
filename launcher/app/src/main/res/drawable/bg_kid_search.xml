@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search pill (design 79 §4.1, the music app's): the row's night tile, 22 dp corners; a 1.5 dp peach outline at
+     50 % while its field has focus (the pill adds its child's states). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_music_tile" />
+            <stroke android:width="1.5dp" android:color="#80F0A884" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_music_tile" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+</selector>

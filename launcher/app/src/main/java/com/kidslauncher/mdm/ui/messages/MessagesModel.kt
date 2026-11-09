@@ -207,6 +207,23 @@ sealed interface Who {
     data class Group(val members: List<Who>) : Who
 }
 
+/** The title a row shows for [who] ([unknown]: the words for no usable sender); a group lists its members. */
+fun whoTitle(who: Who, unknown: String): String = when (who) {
+    is Who.Name -> who.name
+    is Who.Sender -> who.name
+    is Who.Number -> who.number
+    Who.Unknown -> unknown
+    is Who.Group -> who.members.joinToString(", ") { whoTitle(it, unknown) }
+}
+
+/**
+ * Meldinger's search (design 79 §4.1): the rows whose **shown title** matches - never a message's text (the user: "bare
+ * kontakt navn"); a conversation with a bare number shows digits, so digits match there (QA N5). The phone book's rank
+ * and fold ([searchHits]); [titleOf] is [whoTitle] with the screen's words.
+ */
+fun searchConversations(rows: List<ListRow>, query: String, collator: java.text.Collator, titleOf: (Who) -> String): List<Pair<ListRow, com.kidslauncher.mdm.ui.search.SearchMatch>> =
+    com.kidslauncher.mdm.ui.search.searchHits(rows, { titleOf(it.who) }, query, collator)
+
 /** One address as the kid reads it: the contact's name now, else the number (a group's member, a bubble's sender). */
 fun whoOfAddress(address: String, rules: CallRules?): Who =
     rules?.contacts?.firstOrNull { it.number == address }?.name?.takeIf { it.isNotBlank() }?.let { Who.Name(it) } ?: Who.Number(address)

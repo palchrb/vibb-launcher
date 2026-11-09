@@ -44,6 +44,75 @@
     <string name="notification_channel_calls">Calls</string>
     <string name="notification_channel_calls_silent">Calls (call screen open)</string>
     <string name="calls_phone_book">Phone book</string>
+    <!-- Design 79: the phone book as one list - the row's short line, its buttons and TalkBack's sentence. -->
+    <string name="phone_book_emergency_line">Emergency number</string>
+    <string name="phone_book_emergency_description">%1$s, emergency number</string>
+    <plurals name="missed_short">
+        <item quantity="one">Missed call %1$s</item>
+        <item quantity="other">%2$d missed calls %1$s</item>
+    </plurals>
+    <string name="missed_short_yesterday">yesterday</string>
+    <plurals name="contact_unread_short">
+        <item quantity="one">%d unread</item>
+        <item quantity="other">%d unread</item>
+    </plurals>
+    <string name="phone_book_action_call">Call %1$s</string>
+    <string name="phone_book_action_message">Message %1$s</string>
+    <string name="phone_book_action_message_in">Message %1$s in %2$s</string>
+    <string name="phone_book_waiting">Waiting for an answer</string>
+    <!-- Design 79 §4: the search in the phone book and Meldinger. -->
+    <string name="phone_book_search">Search</string>
+    <string name="messages_search">Search names</string>
+    <string name="search_clear">Clear search</string>
+    <string name="search_nothing_found">Nothing found</string>
+    <plurals name="search_hits">
+        <item quantity="one">%d result</item>
+        <item quantity="other">%d results</item>
+    </plurals>
+    <string name="phone_book_ask_named">Ask to add “%1$s”</string>
+    <!-- Design 79 §5: the kid's own picture of a contact, on the phone only. -->
+    <string name="kid_photo_title">Picture of %1$s</string>
+    <string name="kid_photo_pick">Choose a picture</string>
+    <string name="kid_photo_take">Take a picture</string>
+    <string name="kid_photo_remove">Remove your picture</string>
+    <string name="kid_photo_remove_draft">Remove the picture</string>
+    <string name="kid_photo_change_action">Change picture of %1$s</string>
+    <string name="kid_photo_local_note">The picture stays on this phone only.</string>
+    <string name="kid_photo_frame_hint">Drag and pinch to frame it</string>
+    <string name="kid_photo_reading">Getting the picture …</string>
+    <string name="kid_photo_use">Use this picture</string>
+    <string name="kid_photo_failed">Couldn\'t use that picture</string>
+    <string name="kid_photo_too_many">You have pictures on as many contacts as there is room for. Remove one first.</string>
+    <string name="contact_request_photo">Add a picture (optional)</string>
+    <string name="contact_request_photo_add">Add a picture</string>
+    <string name="contact_request_photo_change">Change the picture</string>
+    <string name="contact_request_photo_hold">Hold to change the picture</string>
+    <!-- Design 77 §14 / design 79 §7: the kid's request for a new contact. -->
+    <string name="contact_request_open">Ask for a new contact</string>
+    <string name="contact_request_title">Ask for a contact</string>
+    <string name="contact_request_note">Mum and Dad get the question. If they say yes, the contact shows up here.</string>
+    <string name="contact_request_name">Name</string>
+    <string name="contact_request_number">Phone number</string>
+    <string name="contact_request_chat">Chat ID (optional)</string>
+    <string name="contact_request_chat_hint">\@name:server</string>
+    <string name="contact_request_send">Send to Mum and Dad</string>
+    <string name="contact_request_cancel">Cancel</string>
+    <string name="contact_request_name_empty">Write a name</string>
+    <string name="contact_request_name_long">The name can have at most 40 letters</string>
+    <string name="contact_request_number_invalid">That isn\'t a phone number</string>
+    <string name="contact_request_number_emergency">Emergency numbers always work - you don\'t need to ask</string>
+    <string name="contact_request_number_known">This number is already in the phone book or asked for</string>
+    <string name="contact_request_chat_invalid">A chat ID looks like \@name:server</string>
+    <string name="contact_request_too_many">You have 5 questions waiting. Wait for an answer first.</string>
+    <string name="contact_request_waiting">Waiting for an answer</string>
+    <string name="contact_request_not_added">Not added</string>
+    <string name="contact_request_capped">You\'ve asked enough today. Try again tomorrow.</string>
+    <string name="contact_request_known">Already added or asked for</string>
+    <string name="contact_request_not_sent">Couldn\'t be sent</string>
+    <string name="contact_request_sent">Sent</string>
+    <string name="contact_request_sent_body">Mum and Dad will be told. You\'ll see it in the phone book when %1$s has been added.</string>
+    <string name="contact_request_done">Done</string>
+    <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>
     <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
     <string name="torch_title">Flashlight</string>
@@ -563,6 +632,19 @@
         <item quantity="other">%1$d new</item>
     </plurals>
     <string name="glance_group_spoken">Group %1$s, latest from %2$s</string>
+    <!-- Design 77 §6.8: the glance's Meldinger row - the count under the name (the text in its place only with the
+         parent's switch on), what TalkBack reads, and the row's click label. -->
+    <string name="glance_sms_new">New message</string>
+    <plurals name="glance_sms_new_many">
+        <item quantity="one">%1$d new message</item>
+        <item quantity="other">%1$d new messages</item>
+    </plurals>
+    <string name="glance_sms_from">New message from %1$s</string>
+    <plurals name="glance_sms_from_many">
+        <item quantity="one">%1$d new message from %2$s</item>
+        <item quantity="other">%1$d new messages from %2$s</item>
+    </plurals>
+    <string name="glance_sms_action">Unlock and open Messages</string>
     <!-- The glance page's time-rule card for TalkBack (design r13 §1.2): the label, then the certain end. -->
     <string name="glance_rule_card_description">%1$s, until %2$s</string>
     <!-- The time-rule screen's card read aloud (launcher round L6): "School, until 14:30", then what still works. -->

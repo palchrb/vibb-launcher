@@ -2531,6 +2531,71 @@ The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080
   provider (the stand-in writes it), HEIF/AVIF, the parse service dying on a crafted message (JVM tests:
   `MmsEngineTest`'s three deaths) - step 0 on the Jelly Star.
 
+### 6v, step 5: the lock glance's Meldinger rows (design 77 §6.8)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-09, branch `sms-glance`, against a throwaway server
+seeded as step 2's (calls and SMS "Styrt av Vibb", Mamma, Pappa, Bestemor) plus a Child PIN (`kid_pin_hash`/`_salt`,
+PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credential). The emulator was started under
+`flock ~/build.lock` and held it while it ran: a Gradle build that started under a first try OOM-killed it.
+
+- `adb emu sms send +4790000001 ...`, two from Pappa and one from a stranger `+4790000041`, then power off and on:
+  the glance shows "Pappa / 2 nye meldinger" and "Mamma / Ny melding", newest first, each with the contact's avatar
+  and the teal message badge; no row for the stranger (held, D16). TalkBack's text (UI dump): "2 nye meldinger fra
+  Pappa, 19:11".
+- `device_policy.sms_lock_text = 1`, a sync: "Pappa · 2 nye / Og matpakka", "Mamma / Middag kl 17, kommer du hj…" (one
+  line under 720 dp).
+- A tap on Mamma's row: "Skriv koden for å åpne Meldinger" / "Enter your code to open Messages"; the PIN opens her
+  thread (`GlanceOpener: Glance: opened the messages`), Back gives the list. At the next lock-up her row is gone (read).
+- Pappa's row swiped sideways: gone (`Glance: a row dismissed (sms)`); his next SMS brings it back as "· 3 nye".
+- **The notice wake** (after the code QA's H1/M1, a6ba594d), with `device_policy.lock_wake_on_notification = 1` and the
+  screen off, 35 s between steps (the gate's 30 s gap):
+  - the first message after a row was swiped away lights the lock (`PinLock: Notice wake`);
+  - the next message in that row doesn't;
+  - a new row's message under `cmd notification set_dnd priority` doesn't;
+  - with Do Not Disturb off again, it does.
+
+  The AVD's "Stay awake" (`stay_on_while_plugged_in` 1) keeps a woken screen on past round 7's 15 s, so turn it off by
+  hand between the steps (`docs/review/qa-sms-glance.md`, "L4's emulator run").
+- The glance's window is `FLAG_SECURE`: screenshots with `adb emu screenrecord screenshot <host path>`; the language
+  with `cmd locale set-app-locales me.vibb.launcher.debug --locales nb` right before the lock-up (Home undoes it).
+
+### 6v, design 79: the phone book as one list, search, the kid's pictures
+
+Run on `handy36` (`-wipe-data`, `wm density 240`, three runs) on 2026-11-09, branch `phone-book-list`, against a
+throwaway server (calls and SMS "Styrt av Vibb", twelve phone-book contacts with Æ Ø Å names, `113` "Ambulanse", one
+text-only contact; later 40 more, 54 in all). Missed calls: `adb emu gsm call <+number>`, 6 s, `adb emu gsm cancel`.
+A sync on demand: `adb install -r` of the same debug APK (the process start syncs) - bouncing the network reopened the
+SSE stream but didn't always sync. Typing into the setup dialogs: one character per `input text` (the IME dropped
+some of a long string).
+
+- Two missed calls from Pappa, one from Ola: the list leads with Pappa ("2 tapte anrop 9:51", red, the count badge) and
+  Ola, then A-Å with Æ Ø Å last, "Venter på svar", "Ambulanse / Nødnummer" last with the red Ring. Leaving: Home's badge
+  for Pappa is gone at once; the next visit has both in their A-Å place.
+- A missed call while the phone book is in front: the call's screen comes over it (the visit ends), and the return
+  starts a new visit at the list's top with the caller first.
+- The emergency Ring asks "Ringe Ambulanse?" (Avbryt / Ring). During a live call every other Ring is dimmed.
+- Font scale 1.3 and 2.0: the buttons on their own line under the name; the header keeps room for the "+".
+- Search "o": Ola, Ørjan (prefix), Sofie Østby (a word), Bestemor, Kristoffer Bergersen (inside), the matched part in
+  peach, "5 treff". "Lina": "Fant ingenting" and "Be om å legge til «Lina»" -> the form with the name filled in.
+  Meldinger's "Ny melding" with "e": six hits by name.
+- The request with a picture: the circle -> "Bilde av Lina" -> Ta bilde (the emulator camera) -> the framing (drag) ->
+  Bruk bildet -> the circle shows it; Send -> "Sendt"; the row under "Venter på svar" shows the picture. Adding Lina in
+  the server's tables and a sync: the request's row goes and Lina's contact has the picture (the hand-over);
+  `files/contact_request_photos/` and `cache/request_photo_draft/` are empty.
+- The card's long-press on the photo: "Bilde av …" with Velg bilde / Ta bilde / Fjern bildet ditt. A rotated JPEG (EXIF
+  orientation 6) from the picker frames upright; a 60 MB JPEG is refused (no framing, straight back to the card). Fjern deletes the
+  file. Home's long-press on Mamma opens only the card. Mamma removed on the server at a sync: her picture's file goes.
+- Not checked here: TalkBack's custom actions (the row's sentence was read from the UI dump), the Jelly Star's fling
+  through 50 rows (§9's pocket-call check), an incoming call before the first unlock (the AVD has no Android lock).
+- **After the code QA's fix round** (a fourth run, with a Child PIN `1234` in `device_policy`): Home's card -> "Bilde
+  av Mamma" open -> power off and on: the lock's glance alone, and after the PIN Home has neither the card nor the sheet
+  (M1). A missed call from Pappa, the phone book, Home, then the phone book started and tapped at once: the tap lands
+  on an empty list, no card opens, the list fills A-Å (L1). "o" typed with the keyboard up: Back closes the keyboard
+  ("o" kept), Back clears it, Back leaves (L10). "o" 5 hits, "ø" (Gboard: hold o) 2 - Ørjan, Sofie Østby -, "å" (hold
+  a) 1 - Åse, not Anna (M3). A request with a picture from the picker: "Sendt / Mamma og pappa får beskjed …" (L5), the
+  waiting row, Lina added on the server, a sync (`adb install -r`): Lina's contact has the picture,
+  `contact_request_photos/` and `request_photo_draft/` are empty.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

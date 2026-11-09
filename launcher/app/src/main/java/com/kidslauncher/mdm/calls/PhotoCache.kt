@@ -61,6 +61,20 @@ const val MAX_PHOTO_SIDE = 1024
 fun photoBoundsOk(width: Int, height: Int): Boolean =
     width in 1..MAX_PHOTO_SIDE && height in 1..MAX_PHOTO_SIDE
 
+/** Design 79 §3.7 (QA N8): the rows' photos are decoded as a copy at most this many px a side (ARGB_8888, under
+ * 0.1 MB); the card and the call screen keep the full square. */
+const val PHOTO_THUMB_PX = 160
+
+/** The memory cache's key: the photo's own key, or its row-sized copy's (`<key>@160`). */
+fun photoMemoryKey(key: String, thumb: Boolean): String = if (thumb) "$key@$PHOTO_THUMB_PX" else key
+
+/** The largest power-of-two sample size that keeps the shorter side at least [target] px (1 for a small picture). */
+fun photoSampleSize(width: Int, height: Int, target: Int = PHOTO_THUMB_PX): Int {
+    var sample = 1
+    while (minOf(width, height) / (sample * 2) >= target) sample *= 2
+    return sample
+}
+
 /** A downloaded photo is kept only if its SHA-256 matches the name it was asked for. */
 fun photoMatches(expectedHash: String, actualSha256Hex: String): Boolean =
     isValidPhotoHash(expectedHash) && expectedHash == actualSha256Hex.lowercase()

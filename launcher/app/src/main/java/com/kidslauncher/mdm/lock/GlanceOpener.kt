@@ -47,7 +47,7 @@ class PendingOpen(val target: GlanceTarget, val captured: PendingIntent?, val lo
  * returns there). What it does is what the kid's own tap in the shade would do right after the
  * unlock: the notification's own content intent (only one its app created, QA Low 10), sent with
  * the visible sender's opt-in ([VisibleSender]); else the app's launch intent; for missed calls the
- * contact's sheet or the phone book. Never a notification action, a reply, a mark-as-read or a
+ * contact's sheet or the phone book; for an SMS row (design 77 §6.8) its thread. Never a notification action, a reply, a mark-as-read or a
  * dismiss. It never throws (QA Medium 2): it runs inside the unlock's dispatch, where a crash would
  * count for the lock's crash guard. The log names the package and the reason only.
  *
@@ -122,7 +122,11 @@ object GlanceOpener {
     private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         val target = pending.target
         val conversation = target as? GlanceTarget.Conversation
-        val what = target.appPackage ?: if (target is GlanceTarget.Day) "Dagen" else "the missed calls"
+        val what = target.appPackage ?: when (target) {
+            is GlanceTarget.Day -> "Dagen"
+            is GlanceTarget.Thread -> "the messages"
+            else -> "the missed calls"
+        }
         val intent = intentOf(pending)
         val facts = facts(activity, pending, from, intent)
         var step = glanceOpenStep(facts)
@@ -146,6 +150,13 @@ object GlanceOpener {
                 val day = (target as? GlanceTarget.Day)?.epochDay?.let(java.time.LocalDate::ofEpochDay)
                 activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))
                 Log.i(LOG_TAG, "Glance: opened Dagen")
+            }
+            GlanceOpen.THREAD -> {
+                // Design 77 §6.8: the thread over the list in the messages task, as the notification's tap opens it.
+                // The thread checks the time rule itself; reading it marks the messages read, so the row goes.
+                val conversationId = (target as? GlanceTarget.Thread)?.conversationId
+                com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, conversationId, null)
+                Log.i(LOG_TAG, "Glance: opened $what")
             }
             GlanceOpen.LAUNCH -> launch(activity, what, conversation)
         }
@@ -264,6 +275,7 @@ object GlanceOpener {
             from = from,
             missedCalls = target is GlanceTarget.MissedCalls,
             day = target is GlanceTarget.Day,
+            thread = target is GlanceTarget.Thread,
             timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE,
             usableUnderRule = from == GlanceOpenFrom.TIME_RULE_SCREEN && usableUnderTimeRule(context, target),
             lockWasRoot = pending.lockWasRoot,

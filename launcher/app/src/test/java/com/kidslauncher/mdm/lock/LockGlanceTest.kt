@@ -573,6 +573,24 @@ class LockGlanceTest {
         }
     }
 
+    /** Design 77 §6.8: an SMS row's target - the thread through the keypad ("Skriv koden for å åpne Meldinger"), under a
+     * time rule only where the rule allows calls (the message screens' own rule), handed to the time-rule screen then. */
+    @Test
+    fun `an SMS row's target - the keypad's prompt, under a time rule only with calls, the open (design 77 §6_8)`() {
+        val thread = GlanceTarget.Thread("01HZXTHREAD")
+        assertEquals(null, thread.appPackage)
+        assertFalse(thread.toString().contains("01HZ"))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, thread, androidFace = false))
+        val school = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = false)
+        assertFalse(glanceUsableUnderLock(school, thread, callsManaged = true))
+        assertTrue("calls not managed: the screens still follow the rule's calls", glanceUsableUnderLock(school.copy(callsAllowed = true), thread, callsManaged = false))
+        assertTrue(glanceUsableUnderLock(com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.NONE), thread, callsManaged = true))
+        assertEquals(GlanceOpen.THREAD, glanceOpenStep(app.copy(thread = true, installed = false, hasIntent = false)).open)
+        assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(thread = true, timeRule = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(thread = true, timeRule = true, from = GlanceOpenFrom.TIME_RULE_SCREEN, usableUnderRule = false)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(thread = true, kioskWithoutLockTask = true)).open)
+    }
+
     /** Design 69 §2.2: the reminder row's target - Dagen through the keypad, under a time rule only when every rule in
      * force allows Kalender (PLAN 2026-11-02); the open starts Dagen. */
     @Test

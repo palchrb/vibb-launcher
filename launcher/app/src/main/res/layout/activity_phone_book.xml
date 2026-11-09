@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Phone book (mockup PhoneBook.dc.html): the shared header (include_kid_header), then the contacts as a grid of
-     round avatars. Tapping one opens ContactSheet. -->
+<!-- The phone book as one list (design 79): the shared header (include_kid_header) with the contact request's "+" over
+     its end, an info line, then the list of solid night rows on the kid's wallpaper (PhoneBookAdapter). The contact
+     request form takes the list's place while it is open (view_contact_request_form). The page is edge to edge: the
+     bottom padding takes the navigation bar or the keyboard, whichever is taller (PhoneBookActivity). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -11,9 +13,33 @@
     android:paddingEnd="16dp"
     android:paddingBottom="16dp">
 
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <include
+            android:id="@+id/phone_book_header"
+            layout="@layout/include_kid_header" />
+
+        <!-- Design 79 §7: "Be om ny kontakt", a 40 dp peach disc in its 48 dp target, while the kid can ask (canAsk). -->
+        <ImageButton
+            android:id="@+id/phone_book_plus"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="-4dp"
+            android:background="@drawable/bg_phone_book_plus"
+            android:contentDescription="@string/contact_request_open"
+            android:padding="14dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_day_add"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- Design 79 §4: the search pill from 8 contacts, under the header, not scrolling. -->
     <include
-        android:id="@+id/phone_book_header"
-        layout="@layout/include_kid_header" />
+        android:id="@+id/phone_book_search"
+        layout="@layout/view_kid_search" />
 
     <TextView
         android:id="@+id/phone_book_info"
@@ -26,9 +52,19 @@
         android:visibility="gone" />
 
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/phone_book_grid"
+        android:id="@+id/phone_book_list"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="4dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:clipToPadding="false" />
+
+    <!-- "Fant ingenting", and "Be om å legge til «…»" while the kid can ask. -->
+    <include
+        android:id="@+id/phone_book_empty"
+        layout="@layout/view_kid_search_empty" />
+
+    <include
+        android:id="@+id/phone_book_request_form"
+        layout="@layout/view_contact_request_form" />
 </LinearLayout>

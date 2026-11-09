@@ -29,6 +29,47 @@ class MissedCallsTest {
         )
     }
 
+    /** Design 79 §3.2 rule 1: the phone book's visit marks a contact seen up to the newest call its row showed - that
+     * call and the ones before it go, a call that came after it still counts. */
+    @Test
+    fun `a mark up to a time - the shown calls go, a newer one stays`() {
+        val log = arrayOf(CallLogEntry("+4790000002", MISSED, 100), CallLogEntry("+4790000002", MISSED, 300))
+        assertEquals(emptyMap<String, MissedSummary>(), summaries(*log, seen = mapOf("+4790000002" to 300L)))
+        assertEquals(mapOf("+4790000002" to MissedSummary(1, 300)), summaries(*log, seen = mapOf("+4790000002" to 100L)))
+        // A card opened during the visit marked "now" (later): the visit's mark can't move it back.
+        assertEquals(500L, seenMarkAfter(500L, 300L))
+    }
+
+    /** Design 79 code QA L2: a missed-call load that began before a later one is never applied. */
+    @Test
+    fun `only the latest load counts`() {
+        val loads = LatestOnly()
+        val first = loads.begin()
+        val second = loads.begin()
+        assertEquals(false, loads.isLatest(first))
+        assertEquals(true, loads.isLatest(second))
+    }
+
+    /** Design 79 §3.2 rule 3: Melding deals with the contact - on the card and on the row - as Ring and the card do. */
+    @Test
+    fun `seen by Melding, on the card and on the row`() {
+        fun source(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        val sheet = source("calls/ContactSheet.kt")
+        val ownThread = sheet.substringAfter("MessageAction.OwnThread ->").substringBefore("MessageAction.None ->")
+        assertEquals(true, ownThread.contains("MissedCallsRepo.markSeen(activity, contact.number)"))
+        val app = sheet.substringAfter("is MessageAction.App ->").substringBefore("view.findViewById<View>(R.id.sheet_close)")
+        assertEquals(true, app.contains("MissedCallsRepo.markSeen(activity, contact.number)"))
+        val book = source("calls/PhoneBookActivity.kt")
+        val message = book.substringAfter("private fun message(").substringBefore("private fun handleNumber(")
+        assertEquals(2, Regex("""MissedCallsRepo\.markSeen\(this, row\.contact\.number\)""").findAll(message).count())
+        val call = book.substringAfter("private fun call(").substringBefore("private fun message(")
+        assertEquals(2, Regex("""MissedCallsRepo\.markSeen\(this, contact\.number\)""").findAll(call).count())
+        // The visit's marks, at onStop and not for a rotation.
+        val stop = book.substringAfter("override fun onStop()").substringBefore("override fun onSaveInstanceState")
+        assertEquals(true, stop.contains("if (!isChangingConfigurations") && stop.contains("MissedCallsRepo.markSeen(this, sightings.seen(SystemClock.elapsedRealtime()))"))
+    }
+
     @Test
     fun `calling back or talking later clears them`() {
         assertEquals(
