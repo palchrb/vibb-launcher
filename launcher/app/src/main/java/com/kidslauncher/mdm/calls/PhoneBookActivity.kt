@@ -84,7 +84,16 @@ class PhoneBookActivity : UIObjectActivity() {
 
     /** The contact whose sheet the missed-call notification asked for, opened once the missed calls are loaded. */
     private var pendingSheet: String? = null
-    private val photoListener: () -> Unit = { if (::adapter.isInitialized) adapter.photosChanged() }
+    private val photoListener: () -> Unit = {
+        if (::adapter.isInitialized) adapter.photosChanged()
+        if (::requestForm.isInitialized) requestForm.bindPicture()
+    }
+
+    /** Design 79 §5.5: the request form's picture comes back from [KidPhotoActivity] as a draft file. */
+    private val draftLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        val name = result.data?.getStringExtra(KidPhotoActivity.RESULT_DRAFT_FILE)
+        if (result.resultCode == RESULT_OK && name != null && ::requestForm.isInitialized && requestForm.isOpen) requestForm.setDraft(name)
+    }
     /** Design 77 §6.7: the rows' unread messages follow the engine. */
     private val messagesListener: () -> Unit = { render() }
     private val wallpaperListener: () -> Unit = { render() }
@@ -120,7 +129,9 @@ class PhoneBookActivity : UIObjectActivity() {
         KidInsets.apply(binding.root, ime = true)
         binding.phoneBookPlus.setOnClickListener { requestForm.open() }
         search = KidSearchField(binding.phoneBookSearch.root, R.string.phone_book_search) { render() }
-        requestForm = ContactRequestForm(this, binding, onModeChanged = { render() }, onSent = { search.clear() })
+        requestForm = ContactRequestForm(this, binding, onModeChanged = { render() }, onSent = { search.clear() }, onPicture = ::requestPicture)
+        // Design 79 §5.5: a draft older than a day goes.
+        ContactRequests.sweepDrafts(this)
         onBackPressedDispatcher.addCallback(this, back)
         restoreVisit(savedInstanceState)
         requestForm.restore(savedInstanceState)
@@ -327,6 +338,19 @@ class PhoneBookActivity : UIObjectActivity() {
         adapter.submitList(itemsOf(list.rows, rules, emergency)) { noteSightings() }
         // Design 77 §14: an answer shows once - this visit has shown it.
         if (list.rows.any { it is PhoneBookRow.Answer }) requestForm.answersShown()
+    }
+
+    /** The request form's circle (design 79 §5.5): "Bilde av Lina" - the picker or the camera into a draft, or "Fjern
+     * bildet" for the form's own draft. */
+    private fun requestPicture() {
+        val name = binding.phoneBookRequestForm.contactRequestName.text?.toString()?.trim().orEmpty()
+        val title = if (name.isEmpty()) getString(R.string.contact_request_photo_add) else getString(R.string.kid_photo_title, name)
+        KidPhotoSheet.show(
+            this, title,
+            onChoose = { camera -> draftLauncher.launch(KidPhotoActivity.forDraft(this, name, camera)) },
+            onRemove = if (requestForm.draft != null) ({ requestForm.setDraft(null) }) else null,
+            removeWords = R.string.kid_photo_remove_draft,
+        )
     }
 
     /** "Fant ingenting" (design 79 §4.1), and "Be om å legge til «Lina»" while the kid can ask: the form with the

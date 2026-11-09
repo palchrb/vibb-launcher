@@ -59,13 +59,16 @@ class KidScreensEscapeTest {
         "actions", "ui/messages",
         // Design 79 (QA L4): the card, the list's model, the contact request, the search.
         "calls/ContactSheet.kt", "calls/PhoneBookList.kt", "calls/ContactRequestForm.kt", "calls/ContactRequests.kt", "ui/search",
+        // Design 79 step 4: the kid's pictures - the screen, the framing, the sheet, the store and the picker's new home.
+        "calls/KidPhotoActivity.kt", "calls/PhotoCropView.kt", "calls/KidPhotoSheet.kt", "calls/KidContactPhotos.kt", "ui/pictures",
     )
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
      * helper; only allowed apps resolve), from this file alone. */
     private val shareSheet = mapOf(
         "PictureShare.kt" to setOf("Intent.createChooser"),
-        // D11: the compose bar's "+" - the system photo picker (a kiosk helper) and the camera app the parent allows.
+        // D11: the compose bar's "+" and design 79's contact pictures - the system photo picker (a kiosk helper) and the
+        // camera app the parent allows, from ui/pictures/PicturePick.kt alone.
         "PicturePick.kt" to setOf("ACTION_PICK_IMAGES", "ACTION_IMAGE_CAPTURE"),
     )
 
@@ -109,7 +112,7 @@ class KidScreensEscapeTest {
         assertTrue(share.contains("FLAG_GRANT_READ_URI_PERMISSION") && !share.contains("FLAG_GRANT_WRITE_URI_PERMISSION"))
         // D11's "+": the camera is only ever the one app the parent allows, writing one file of ours; the picker is
         // the system's photo picker, one image.
-        val pick = src("ui/messages/PicturePick.kt").readText()
+        val pick = src("ui/pictures/PicturePick.kt").readText()
         assertTrue(pick.contains("Intent(MediaStore.ACTION_IMAGE_CAPTURE)\n            .setPackage(pkg)"))
         assertTrue(pick.contains("usable(it.packageName)"))
         assertTrue(pick.contains("FileProvider.getUriForFile(context, PictureShare.authority(context), file)"))
@@ -153,8 +156,10 @@ class KidScreensEscapeTest {
     @Test
     fun `the card and the list go only where the card always went`() {
         val sheet = code("calls/ContactSheet.kt")
-        assertEquals(1, Regex("""startActivity\(""").findAll(sheet).count())
+        // The message app (openMessage) and, since step 4, the kid's picture screen - nothing else.
+        assertEquals(2, Regex("""startActivity\(""").findAll(sheet).count())
         assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))"))
+        assertTrue(sheet.contains("activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera))"))
         assertEquals(1, Regex("""CallSystem\.placeCall\(""").findAll(sheet).count())
         assertEquals(1, Regex("""MessagesScreens\.startThread\(""").findAll(sheet).count())
         for (path in listOf("calls/PhoneBookList.kt", "calls/PhoneBookAdapter.kt", "ui/search/SearchFold.kt")) {
@@ -189,6 +194,27 @@ class KidScreensEscapeTest {
             val text = src(screen).readText()
             assertTrue(screen, text.contains("KidSearchField(") && !text.contains("kidSearchField.requestFocus"))
         }
+    }
+
+    /** Design 79 §5.2 (QA L12, §8): the kid's picture screen reads the picker's answer only through
+     * `PicturePick.picked`, never a file URI; its picker and camera are PicturePick's; the "Bilde av …" sheet starts
+     * nothing itself; the request form stays free of intents (its circle calls back into the phone book, QA M3); the
+     * picture screen is no free screen for screen time. */
+    @Test
+    fun `the kid's picture screen takes only the picker's answer and the allowed camera`() {
+        val screen = code("calls/KidPhotoActivity.kt")
+        assertTrue(screen.contains("PicturePick.picked(this, result.data?.data)") && !screen.contains("Uri.fromFile"))
+        assertTrue(screen.contains("PicturePick.pickIntent(this)") && screen.contains("PicturePick.captureIntent(this, camera)"))
+        for (token in listOf("startActivity(", "MediaStore", "Intent.ACTION_")) assertTrue(token, !screen.contains(token))
+        val sheet = code("calls/KidPhotoSheet.kt")
+        for (token in listOf("startActivity", "registerForActivityResult")) assertTrue(token, !sheet.contains(token))
+        assertTrue(!Regex("""(^|[^A-Za-z])Intent\(""").containsMatchIn(sheet))
+        val form = code("calls/ContactRequestForm.kt")
+        assertTrue(form.contains("onPicture()") && !form.contains("KidPhotoActivity") && !form.contains("Intent("))
+        val book = code("calls/PhoneBookActivity.kt")
+        assertTrue(book.contains("draftLauncher.launch(KidPhotoActivity.forDraft(this, name, camera))"))
+        val free = src("timerules/ScreenTime.kt").readText().substringAfter("val FREE_SCREENS = setOf(").substringBefore(")")
+        assertTrue(free.isNotBlank() && !free.contains("KidPhotoActivity"))
     }
 
     @Test

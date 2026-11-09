@@ -875,7 +875,7 @@ class HomeActivity : UIObjectActivity() {
         binding.homeCallCard.contentDescription = "${binding.homeCallTitle.text}. ${getString(R.string.home_call_back)}"
         val avatar = com.kidslauncher.mdm.calls.callAvatar(contact != null, emergency, unlocked = true)
         val key = if (avatar == com.kidslauncher.mdm.calls.CallAvatar.CONTACT && contact != null) {
-            "c|${contact.id}|${contact.name}|${contact.photo}|${ContactPhotos.cached(this, contact.photo) != null}"
+            "c|${contact.id}|${contact.name}|${contact.photo}|${com.kidslauncher.mdm.ui.home.KidAvatars.shownPhotoOf(this, contact, false)}|${com.kidslauncher.mdm.ui.home.KidAvatars.photoReady(this, contact)}"
         } else {
             "silhouette"
         }

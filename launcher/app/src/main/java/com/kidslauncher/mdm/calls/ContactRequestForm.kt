@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.doAfterTextChanged
+import java.io.File
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityPhoneBookBinding
 import com.kidslauncher.mdm.push.SyncRunner
@@ -29,6 +30,9 @@ class ContactRequestForm(
     private val onModeChanged: () -> Unit,
     /** A request was kept: the phone book clears its search (design 79 §4.1, QA N4). */
     private val onSent: () -> Unit = {},
+    /** The picture circle was tapped or held: the phone book shows "Bilde av …" (design 79 §5.1, QA M3 - the form
+     * itself starts nothing). */
+    private val onPicture: () -> Unit = {},
 ) {
     private val form = binding.phoneBookRequestForm
     var isOpen = false
@@ -37,6 +41,11 @@ class ContactRequestForm(
     /** "Sendt" is showing in the form's place. */
     private var sent = false
 
+    /** Design 79 §5.5: the picture's draft (a file name in [ContactRequests.draftDir]) until "Send" gives the request
+     * an id; `null` = none. */
+    var draft: String? = null
+        private set
+
     init {
         for (field in listOf(form.contactRequestName, form.contactRequestNumber, form.contactRequestChat)) {
             NoTextActions.apply(field)
@@ -44,6 +53,19 @@ class ContactRequestForm(
             field.doAfterTextChanged { if (isOpen) showErrors(null, focus = false) }
         }
         form.contactRequestCancel.setOnClickListener { close() }
+        // The circle is a field: a tap opens "Bilde av …", and so does a long-press (as on the card).
+        form.contactRequestPhoto.setOnClickListener { onPicture() }
+        form.contactRequestPhoto.setOnLongClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            onPicture()
+            true
+        }
+        androidx.core.view.ViewCompat.setAccessibilityDelegate(form.contactRequestPhoto, object : androidx.core.view.AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: androidx.core.view.accessibility.AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+            }
+        })
         form.contactRequestSend.setOnClickListener { send() }
         form.contactRequestDone.setOnClickListener { close() }
         form.contactRequestChat.setOnEditorActionListener { _, _, _ ->
@@ -61,6 +83,7 @@ class ContactRequestForm(
         if (isOpen || !canAsk()) return
         isOpen = true
         sent = false
+        setDraft(null)
         for (field in listOf(form.contactRequestName, form.contactRequestNumber, form.contactRequestChat)) field.text = null
         if (name != null) form.contactRequestName.setText(name)
         showErrors(null)
@@ -72,6 +95,8 @@ class ContactRequestForm(
         if (!isOpen) return
         isOpen = false
         sent = false
+        // Avbryt or Back out of the form: its picture goes (a sent request took it already).
+        setDraft(null)
         activity.currentFocus?.let { focused ->
             activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                 ?.hideSoftInputFromWindow(focused.windowToken, 0)
@@ -83,6 +108,7 @@ class ContactRequestForm(
         out.putBoolean(STATE_OPEN, isOpen)
         out.putBoolean(STATE_SENT, sent)
         out.putString(STATE_SENT_NAME, form.contactRequestSentBody.tag as? String)
+        out.putString(STATE_DRAFT, draft)
     }
 
     /** After a rotation: the form or "Sendt" as it was (the fields keep their own text). */
@@ -91,6 +117,8 @@ class ContactRequestForm(
         isOpen = true
         sent = state.getBoolean(STATE_SENT)
         state.getString(STATE_SENT_NAME)?.let(::bindSent)
+        draft = state.getString(STATE_DRAFT)?.takeIf { File(ContactRequests.draftDir(activity), it).isFile }
+        bindPicture()
         apply()
     }
 
@@ -117,7 +145,10 @@ class ContactRequestForm(
         when (check) {
             is RequestCheck.Refused -> showErrors(check)
             is RequestCheck.Ok -> {
-                ContactRequests.add(activity, check)
+                // The draft becomes the request's picture in the same step (design 79 §5.5).
+                ContactRequests.add(activity, check, draft?.let { File(ContactRequests.draftDir(activity), it) })
+                draft = null
+                bindPicture()
                 SyncRunner.request(activity.applicationContext, "contact_request")
                 activity.currentFocus?.let { focused ->
                     activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
@@ -129,6 +160,28 @@ class ContactRequestForm(
                 apply()
             }
         }
+    }
+
+    /** The kid's picture for the request ([KidPhotoActivity]'s draft), or `null` to drop it (its file goes). */
+    fun setDraft(name: String?) {
+        val old = draft
+        if (old != null && old != name) File(ContactRequests.draftDir(activity), old).delete()
+        draft = name
+        bindPicture()
+    }
+
+    /** The circle: the draft (decoded on [ContactPhotos]' thread - this rebinds when it is ready), or the empty field. */
+    fun bindPicture() {
+        val name = draft
+        val bitmap = name?.let { ContactPhotos.cachedFile(activity, "draft:$it", thumb = false) { ctx -> File(ContactRequests.draftDir(ctx), it) } }
+        form.contactRequestPhotoImage.visibility = if (bitmap != null) View.VISIBLE else View.GONE
+        form.contactRequestPhotoImage.setImageDrawable(
+            bitmap?.let { androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, it).apply { isCircular = true } },
+        )
+        form.contactRequestPhotoPlus.visibility = if (name == null) View.VISIBLE else View.GONE
+        form.contactRequestPhotoCaption.setText(if (name == null) R.string.contact_request_photo else R.string.contact_request_photo_hold)
+        form.contactRequestPhoto.contentDescription =
+            activity.getString(if (name == null) R.string.contact_request_photo_add else R.string.contact_request_photo_change)
     }
 
     private fun bindSent(name: String) {
@@ -178,5 +231,6 @@ class ContactRequestForm(
         const val STATE_OPEN = "contact_request_open"
         const val STATE_SENT = "contact_request_sent"
         const val STATE_SENT_NAME = "contact_request_sent_name"
+        const val STATE_DRAFT = "contact_request_draft"
     }
 }

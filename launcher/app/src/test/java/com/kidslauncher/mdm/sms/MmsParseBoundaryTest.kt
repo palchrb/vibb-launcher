@@ -91,11 +91,11 @@ class MmsParseBoundaryTest {
         val rawParser = file("java/com/kidslauncher/mdm/sms/parse/MmsParser.kt").readText()
         assertTrue(rawParser.contains("} catch (e: Exception) {\n            // Checked ones included"))
         assertTrue(rawParser.contains("} catch (e: java.util.concurrent.ExecutionException) {"))
-        val rawPick = file("java/com/kidslauncher/mdm/ui/messages/PicturePick.kt").readText()
+        val rawPick = file("java/com/kidslauncher/mdm/ui/pictures/PicturePick.kt").readText()
         assertTrue(rawPick.contains("prepareOrThrow(context, source, subId)\n    } catch (e: Exception) {"))
         assertFalse(parser.contains("mapReadOnly") || parser.contains("SharedMemory"))
         // The picked picture goes to the isolated process before anything reads it as an image.
-        val pick = code(file("java/com/kidslauncher/mdm/ui/messages/PicturePick.kt"))
+        val pick = code(file("java/com/kidslauncher/mdm/ui/pictures/PicturePick.kt"))
         assertFalse(pick.contains("BitmapFactory") || pick.contains("ImageDecoder"))
         assertTrue(pick.contains("MmsParser.decodeImage(app, bytes, MmsParseProtocol.PICK_MAX_PX)"))
     }

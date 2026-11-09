@@ -82,6 +82,47 @@
         android:orientation="vertical"
         android:padding="16dp">
 
+        <!-- Design 79 §5.5: the request's picture, optional - a tap or a long-press opens "Bilde av …" (the phone book's
+             onPicture; the form itself starts nothing). An empty circle until the kid gives one. -->
+        <FrameLayout
+            android:id="@+id/contact_request_photo"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:layout_gravity="center_horizontal"
+            android:background="@drawable/bg_contact_request_photo"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackgroundBorderless">
+
+            <ImageView
+                android:id="@+id/contact_request_photo_image"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/contact_request_photo_plus"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_message_add" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/contact_request_photo_caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="10dp"
+            android:fontFamily="@font/nunito_semibold"
+            android:gravity="center_horizontal"
+            android:importantForAccessibility="no"
+            android:text="@string/contact_request_photo"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="14sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

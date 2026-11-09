@@ -70,6 +70,22 @@
         <item quantity="other">%d results</item>
     </plurals>
     <string name="phone_book_ask_named">Ask to add “%1$s”</string>
+    <!-- Design 79 §5: the kid's own picture of a contact, on the phone only. -->
+    <string name="kid_photo_title">Picture of %1$s</string>
+    <string name="kid_photo_pick">Choose a picture</string>
+    <string name="kid_photo_take">Take a picture</string>
+    <string name="kid_photo_remove">Remove your picture</string>
+    <string name="kid_photo_remove_draft">Remove the picture</string>
+    <string name="kid_photo_change_action">Change picture of %1$s</string>
+    <string name="kid_photo_local_note">The picture stays on this phone only.</string>
+    <string name="kid_photo_frame_hint">Drag and pinch to frame it</string>
+    <string name="kid_photo_reading">Getting the picture …</string>
+    <string name="kid_photo_use">Use this picture</string>
+    <string name="kid_photo_failed">Couldn\'t use that picture</string>
+    <string name="contact_request_photo">Add a picture (optional)</string>
+    <string name="contact_request_photo_add">Add a picture</string>
+    <string name="contact_request_photo_change">Change the picture</string>
+    <string name="contact_request_photo_hold">Hold to change the picture</string>
     <!-- Design 77 §14 / design 79 §7: the kid's request for a new contact. -->
     <string name="contact_request_open">Ask for a new contact</string>
     <string name="contact_request_title">Ask for a contact</string>

@@ -55,6 +55,22 @@
         <item quantity="other">%d treff</item>
     </plurals>
     <string name="phone_book_ask_named">Be om å legge til «%1$s»</string>
+    <!-- Design 79 §5: barnets eget bilde av en kontakt, bare på telefonen. -->
+    <string name="kid_photo_title">Bilde av %1$s</string>
+    <string name="kid_photo_pick">Velg bilde</string>
+    <string name="kid_photo_take">Ta bilde</string>
+    <string name="kid_photo_remove">Fjern bildet ditt</string>
+    <string name="kid_photo_remove_draft">Fjern bildet</string>
+    <string name="kid_photo_change_action">Endre bilde av %1$s</string>
+    <string name="kid_photo_local_note">Bildet blir bare på denne telefonen.</string>
+    <string name="kid_photo_frame_hint">Dra og knip for å velge utsnittet</string>
+    <string name="kid_photo_reading">Henter bildet …</string>
+    <string name="kid_photo_use">Bruk bildet</string>
+    <string name="kid_photo_failed">Kunne ikke bruke bildet</string>
+    <string name="contact_request_photo">Legg til bilde (valgfritt)</string>
+    <string name="contact_request_photo_add">Legg til bilde</string>
+    <string name="contact_request_photo_change">Endre bilde</string>
+    <string name="contact_request_photo_hold">Hold inne for å bytte bilde</string>
     <!-- Design 77 §14 / design 79 §7: barnets forespørsel om en ny kontakt. -->
     <string name="contact_request_open">Be om ny kontakt</string>
     <string name="contact_request_title">Be om ny kontakt</string>

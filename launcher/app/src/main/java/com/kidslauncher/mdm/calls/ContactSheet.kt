@@ -52,6 +52,7 @@ object ContactSheet {
             onDone()
         }
         view.findViewById<ImageView>(R.id.sheet_ring).setImageDrawable(KidAvatars.ring(activity, contact, emergency))
+        bindKidPhoto(activity, view.findViewById(R.id.sheet_photo_frame), contact, emergency)
         // Design 77 §6.7: missed calls plus unread messages.
         KidAvatars.bindContactBadge(
             view.findViewById(R.id.sheet_badge),
@@ -112,6 +113,44 @@ object ContactSheet {
         view.findViewById<View>(R.id.sheet_close).setOnClickListener { dialog.dismiss() }
         dialog.show()
         return dialog
+    }
+
+    /**
+     * Design 79 §5.1: a long-press on the card's photo opens "Bilde av …" ([KidPhotoSheet]) - haptic, the photo dimmed
+     * 10 % while held; a plain tap does nothing, as before. TalkBack: the photo is a node "Bilde av Mamma" with the action
+     * "Endre bilde av Mamma". Offered only for a phone-book contact, not an emergency number, after the first unlock,
+     * with the picker or an allowed camera ([kidPhotoOffered]); else the photo has no listener at all.
+     */
+    private fun bindKidPhoto(activity: Activity, frame: View, contact: RuleContact, emergency: Boolean) {
+        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+        if (!kidPhotoOffered(contact, rules, emergency, CallPolicyStore.userUnlocked(activity), KidPhotoSheet.canPick(activity))) return
+        val open = {
+            KidPhotoSheet.show(
+                activity, activity.getString(R.string.kid_photo_title, contact.name),
+                onChoose = { camera -> activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera)) },
+                onRemove = if (KidContactPhotos.recordFor(activity, contact) != null) ({ KidContactPhotos.remove(activity, contact.id) }) else null,
+            )
+        }
+        frame.foreground = android.graphics.drawable.StateListDrawable().apply {
+            addState(
+                intArrayOf(android.R.attr.state_pressed),
+                android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(0x1A000000)
+                },
+            )
+        }
+        frame.setOnLongClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            open()
+            true
+        }
+        frame.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        frame.contentDescription = activity.getString(R.string.kid_photo_title, contact.name)
+        androidx.core.view.ViewCompat.addAccessibilityAction(frame, activity.getString(R.string.kid_photo_change_action, contact.name)) { _, _ ->
+            open()
+            true
+        }
     }
 
     /** "Message opens in Chat": the parent's name, else the kid's, else the app's own (design 14). */

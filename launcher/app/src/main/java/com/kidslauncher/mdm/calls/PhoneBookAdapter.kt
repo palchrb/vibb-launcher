@@ -246,7 +246,14 @@ class PhoneBookAdapter(
                 is PhoneBookRow.Waiting -> row.request
                 else -> return
             }
-            photo.setImageDrawable(null)
+            // Design 79 §5.5: an open request's picture (the kid's, on the phone only), decoded off the main thread.
+            val picture = if (row is PhoneBookRow.Waiting && request.photo) {
+                ContactPhotos.cachedFile(itemView.context, "req:${request.id}", thumb = true) { java.io.File(ContactRequests.photoDir(it), "${request.id}.jpg") }
+            } else {
+                null
+            }
+            photo.setImageDrawable(picture?.let { KidAvatars.circular(itemView.context, it) })
+            initial.visibility = if (picture == null) View.VISIBLE else View.GONE
             initial.text = request.name.trim().take(1).uppercase()
             initial.setTextColor(itemView.context.getColor(if (row is PhoneBookRow.Waiting) R.color.kid_accent else R.color.kid_core_dim))
         }

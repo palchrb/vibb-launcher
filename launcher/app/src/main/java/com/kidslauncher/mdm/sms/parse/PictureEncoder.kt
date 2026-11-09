@@ -32,6 +32,24 @@ object PictureEncoder {
         return null
     }
 
+    /**
+     * Design 79 §5.3: the kid's own contact picture - the framed square, at most [CONTACT_PX] a side, JPEG with the
+     * quality stepped down from 85 until it is at most [CONTACT_MAX_BYTES]; `null` if even the last step doesn't fit.
+     * No EXIF (`Bitmap.compress` writes none).
+     */
+    fun forContact(square: Bitmap): Encoded? {
+        for (quality in CONTACT_QUALITIES) {
+            val encoded = encode(square, CONTACT_PX, quality)
+            if (encoded.bytes.size <= CONTACT_MAX_BYTES) return encoded
+        }
+        return null
+    }
+
+    /** A kid's contact picture: 512 px, 150 KB at most (design 79 §5.3, §5.4). */
+    const val CONTACT_PX = 512
+    const val CONTACT_MAX_BYTES = 150 * 1024
+    private val CONTACT_QUALITIES = listOf(85, 75, 65, 55, 45)
+
     /** The limit a sent picture is re-encoded under: the carrier's maximum less room for the rest of the message, never
      * above [SEND_DEFAULT_BYTES]. [carrierMax] 0 or below = none given. */
     fun sendLimit(carrierMax: Int): Int =

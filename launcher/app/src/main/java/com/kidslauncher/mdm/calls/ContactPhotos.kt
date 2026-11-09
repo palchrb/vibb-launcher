@@ -71,6 +71,23 @@ object ContactPhotos {
         return cachedFile(context, hash, thumb) { File(dir(it), "$hash.jpg") }
     }
 
+    /** Design 79 §5.4: the kid's own picture [file] ([KidContactPhotos]), decoded under the key `kid:<file>` - random
+     * names, so never a parent's hash and never a stale bitmap. Memory only here, as [cached]. */
+    fun cachedKid(context: Context, file: String, thumb: Boolean = false): Bitmap? {
+        if (!isKidPhotoFileName(file)) return null
+        return cachedFile(context, "kid:$file", thumb) { File(KidContactPhotos.dir(it), file) }
+    }
+
+    /** The picture an avatar shows ([shownPhoto]) from memory: the kid's, the parent's, or none. */
+    fun cachedShown(context: Context, shown: ShownPhoto, thumb: Boolean = false): Bitmap? = when (shown) {
+        is ShownPhoto.Kid -> cachedKid(context, shown.file, thumb)
+        is ShownPhoto.Parent -> cached(context, shown.hash, thumb)
+        ShownPhoto.None -> null
+    }
+
+    /** A picture of ours changed (the kid's set, removed or loaded): every avatar binds again. */
+    fun changed() = notifyListeners()
+
     /**
      * [key]'s decoded picture (memory key [photoMemoryKey]: the full one, or the row-sized copy, design 79 §3.7) if it
      * is in memory; else `null`, and a decode of [file] starts on the background thread. Never the disk here.
