@@ -159,6 +159,15 @@ interface MessageStore {
     fun messagesHeldForRules(): List<MessageRow>
     fun messagesInDelivery(states: Set<Delivery>): List<MessageRow>
 
+    /** Marks a conversation's shown IN messages up to [upToSeq] read, in one statement (QA L7: no walk over a whole
+     * conversation inside a transaction the receive path may wait for). Returns how many changed. */
+    fun markReadUpTo(conversationId: String, upToSeq: Long): Int
+
+    /** QA L6: an SMS the platform delivered again (its raw row survived our commit) is known by [key] for a day. */
+    fun receivedBefore(key: String): Boolean
+    fun rememberReceived(key: String, at: Long)
+    fun pruneReceived(before: Long)
+
     /** Shown IN messages of a conversation not read yet. */
     fun unread(conversationId: String): Int
 
@@ -182,6 +191,8 @@ interface MessageStore {
     fun deleteBlocked(id: String)
 
     fun insertPendingPush(row: PendingPushRow)
+    fun pendingPushCount(): Int
+    fun prunePendingPush(before: Long)
 
     fun addCounter(key: String, by: Long = 1)
     fun counters(): Map<String, Long>

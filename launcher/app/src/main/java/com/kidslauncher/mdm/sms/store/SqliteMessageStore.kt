@@ -34,6 +34,9 @@ class SqliteMessageStore(context: Context) : MessageStore {
     private val helper = Helper(context.applicationContext)
     private val db: SQLiteDatabase get() = helper.writableDatabase
 
+    /** Opens the database and says whether `secure_delete` is on (QA N4); `SmsRuntime` reports it when it isn't. */
+    fun secureDeleteOn(): Boolean = db.isOpen && helper.secureDeleteOn
+
     override fun <T> transaction(block: () -> T): T {
         val db = db
         db.beginTransaction()
@@ -160,6 +163,24 @@ class SqliteMessageStore(context: Context) : MessageStore {
         ).use { it.moveToFirst(); it.getInt(0) }
 
     override fun lastMessage(conversationId: String): MessageRow? = messages(conversationId, null, 1).firstOrNull()
+
+    override fun markReadUpTo(conversationId: String, upToSeq: Long): Int =
+        db.update(
+            "message", ContentValues().apply { put("is_read", 1) },
+            "conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0 AND seq <= ?",
+            arrayOf(conversationId, upToSeq.toString()),
+        )
+
+    override fun receivedBefore(key: String): Boolean =
+        db.rawQuery("SELECT 1 FROM received_key WHERE key = ?", arrayOf(key)).use { it.moveToFirst() }
+
+    override fun rememberReceived(key: String, at: Long) {
+        db.insertWithOnConflict("received_key", null, ContentValues().apply { put("key", key); put("at", at) }, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    override fun pruneReceived(before: Long) {
+        db.delete("received_key", "at < ?", arrayOf(before.toString()))
+    }
 
     private fun messageList(where: String, args: Array<String>, order: String, limit: String?): List<MessageRow> =
         db.query("message", null, where, args, null, null, order, limit).use { c -> generateSequence { if (c.moveToNext()) messageOf(c) else null }.toList() }
@@ -342,6 +363,13 @@ class SqliteMessageStore(context: Context) : MessageStore {
         )
     }
 
+    override fun pendingPushCount(): Int =
+        db.rawQuery("SELECT COUNT(*) FROM pending_push", null).use { it.moveToFirst(); it.getInt(0) }
+
+    override fun prunePendingPush(before: Long) {
+        db.delete("pending_push", "at < ?", arrayOf(before.toString()))
+    }
+
     override fun addCounter(key: String, by: Long) {
         db.execSQL("INSERT INTO counter (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = value + ?", arrayOf<Any>(key, by, by))
     }
@@ -364,9 +392,14 @@ class SqliteMessageStore(context: Context) : MessageStore {
             setWriteAheadLoggingEnabled(true)
         }
 
+        /** What `PRAGMA secure_delete` read back after it was set (QA N4). */
+        @Volatile
+        var secureDeleteOn = false
+
         override fun onConfigure(db: SQLiteDatabase) {
-            // Deleted means gone (QA R2-L3): freed pages are overwritten.
+            // Deleted means gone (QA R2-L3): freed pages are overwritten - read back, so it's a checked fact.
             db.rawQuery("PRAGMA secure_delete = ON", null).use { it.moveToFirst() }
+            secureDeleteOn = db.rawQuery("PRAGMA secure_delete", null).use { it.moveToFirst() && it.getInt(0) == 1 }
         }
 
         override fun onCreate(db: SQLiteDatabase) {
@@ -409,6 +442,8 @@ class SqliteMessageStore(context: Context) : MessageStore {
                 "origin TEXT NOT NULL, up_to_seq INTEGER, at INTEGER NOT NULL)",
             "CREATE TABLE blocked (id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, sender_class TEXT NOT NULL, " +
                 "sender TEXT NOT NULL, reason TEXT NOT NULL, reported INTEGER NOT NULL)",
+            // QA L6: the incoming SMS of the last day by their identity (a hash, never the text).
+            "CREATE TABLE received_key (key TEXT PRIMARY KEY, at INTEGER NOT NULL)",
         )
     }
 }

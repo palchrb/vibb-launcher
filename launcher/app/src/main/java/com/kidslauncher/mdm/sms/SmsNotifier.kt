@@ -128,18 +128,21 @@ object SmsNotifier {
 
     // Step 2 (the kid's screens) points this at the conversation's thread; until then it opens Home.
     private fun openIntent(context: Context, conversationId: String): PendingIntent {
-        // A typed HOME start, never an explicit one (HomeFrontTest).
-        val intent = com.kidslauncher.mdm.lock.HomeFront.intent(context).putExtra(EXTRA_CONVERSATION, conversationId)
-        return PendingIntent.getActivity(context, conversationId.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        // A typed HOME start, never an explicit one (HomeFrontTest). Told apart by its identifier (part of the intent's
+        // identity, not of its resolution), never by a hashCode (QA L1).
+        val intent = com.kidslauncher.mdm.lock.HomeFront.intent(context).setIdentifier(conversationId)
+        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    /** The reply carries its own `clientId`, made when the notification is posted: a double tap sends once (§6.8). */
+    /**
+     * The reply carries its own `clientId`, made when the notification is posted: a double tap sends once (§6.8). Both
+     * ids are in the data URI (QA L1): `FLAG_MUTABLE` is what `RemoteInput` needs to fill the text in, and a fill-in can
+     * add extras but never change a set data URI - so whoever holds the PendingIntent can't point the reply elsewhere,
+     * and two conversations never share one PendingIntent. Explicit, so only [SmsReplyReceiver] gets it.
+     */
     private fun replyAction(context: Context, conversationId: String): NotificationCompat.Action {
-        val intent = Intent(context, SmsReplyReceiver::class.java)
-            .putExtra(EXTRA_CONVERSATION, conversationId)
-            .putExtra(EXTRA_CLIENT_ID, UUID.randomUUID().toString())
-        // Mutable: RemoteInput fills the reply in; explicit, so nothing else can receive it.
-        val pending = PendingIntent.getBroadcast(context, conversationId.hashCode(), intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val intent = Intent(ACTION_REPLY, replyUri(conversationId, UUID.randomUUID().toString()), context, SmsReplyReceiver::class.java)
+        val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val input = RemoteInput.Builder(KEY_REPLY).setLabel(context.getString(R.string.sms_notification_reply)).build()
         return NotificationCompat.Action.Builder(0, context.getString(R.string.sms_notification_reply), pending)
             .addRemoteInput(input)
@@ -150,7 +153,8 @@ object SmsNotifier {
             .build()
     }
 
-    const val EXTRA_CONVERSATION = "me.vibb.launcher.sms.CONVERSATION"
-    const val EXTRA_CLIENT_ID = "me.vibb.launcher.sms.CLIENT_ID"
+    private fun replyUri(conversationId: String, clientId: String): android.net.Uri = android.net.Uri.parse(replyData(conversationId, clientId))
+
     const val KEY_REPLY = "me.vibb.launcher.sms.REPLY"
+    const val ACTION_REPLY = "me.vibb.launcher.sms.REPLY_ACTION"
 }

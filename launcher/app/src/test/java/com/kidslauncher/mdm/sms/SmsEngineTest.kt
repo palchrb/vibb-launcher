@@ -58,8 +58,11 @@ class SmsEngineTest {
         platformEmergency = { false },
     )
 
+    /** Each its own message: the SMSC's time stamp moves on (a re-delivery would repeat it, QA L6). */
+    private var smsc = 0L
+
     private fun sms(from: String, body: String = "hei", kind: SenderKind = SenderKind.NUMBER) =
-        IncomingSms(kind, from, body, sentAt = now - 1000, subId = 1, receivedAt = now)
+        IncomingSms(kind, from, body, sentAt = now - 1000 + ++smsc, subId = 1, receivedAt = now)
 
     private fun held() = store.heldRows()
 
@@ -77,6 +80,43 @@ class SmsEngineTest {
         assertTrue(engine.conversations().single().canSend)
         // A cursor past it replays nothing.
         assertTrue(engine.events(events.last().seq).isEmpty())
+    }
+
+    @Test
+    fun `a re-delivered SMS is stored once, and a day later its key is gone (QA L6)`() {
+        val first = sms("+4791234567", "to ganger")
+        assertTrue(engine.receiveSms(first) is Received.Shown)
+        assertEquals(Received.Duplicate, engine.receiveSms(first.copy(receivedAt = now + 5_000)))
+        val stranger = sms("+4790000041")
+        assertTrue(engine.receiveSms(stranger) is Received.HeldForParent)
+        assertEquals(Received.Duplicate, engine.receiveSms(stranger))
+        assertEquals(1, engine.messages(engine.conversations().single().id, null, 10).size)
+        assertEquals("the stranger is held once", 1, held().size)
+        assertEquals(2L, store.counters()["received"])
+        now += SmsEngine.RECEIVED_KEEP_MS + 1
+        engine.prune()
+        assertTrue(engine.receiveSms(first) is Received.Shown)
+    }
+
+    @Test
+    fun `SMS not managed while the role is still ours - shown unfiltered, never lost (QA L3)`() {
+        rules = rules!!.copy(smsMode = ChannelMode.UNMANAGED)
+        val shown = engine.receiveSms(sms("+4790000041", "fra en fremmed")) as Received.Shown
+        assertFalse(shown.message.unknownSender)
+        assertTrue(engine.receiveSms(sms("+4791234567")) is Received.Shown)
+        assertTrue(held().isEmpty())
+    }
+
+    @Test
+    fun `MMS pushes are kept within their bounds and pruned after a week (QA L4)`() {
+        val push = { at: Long -> com.kidslauncher.mdm.sms.engine.PendingPushRow(ids.hex(), ByteArray(100), null, at) }
+        assertFalse("oversize", engine.keepPush(com.kidslauncher.mdm.sms.engine.PendingPushRow(ids.hex(), ByteArray(SmsEngine.PUSH_MAX + 1), null, now)))
+        repeat(SmsEngine.PUSH_ROWS) { assertTrue(engine.keepPush(push(now))) }
+        assertFalse("past the cap", engine.keepPush(push(now)))
+        assertEquals(2L, store.counters()["blocked.malformed"])
+        now += SmsEngine.PUSH_KEEP_MS + 1
+        engine.prune()
+        assertEquals(0, store.pendingPushCount())
     }
 
     @Test
@@ -189,7 +229,7 @@ class SmsEngineTest {
         rules = null
         val arrived = now
         assertEquals(Received.HeldForRules, engine.receiveSms(sms("+4791234567")))
-        assertEquals(Received.HeldForRules, engine.receiveSms(sms("+4741414141")))
+        assertEquals(Received.HeldForRules, engine.receiveSms(sms("+4790000041")))
         assertTrue(engine.conversations().isEmpty())
         assertTrue("never posted", engine.unreported(50).isEmpty())
         now += 60_000
@@ -212,12 +252,12 @@ class SmsEngineTest {
 
     @Test
     fun `a held message is released only for its exact sender`() {
-        val held = (engine.receiveSms(sms("+4741414141", "fra en fremmed")) as Received.HeldForParent).row
+        val held = (engine.receiveSms(sms("+4790000041", "fra en fremmed")) as Received.HeldForParent).row
         engine.receiveSms(sms("DNB", "kode", SenderKind.ALPHANUMERIC))
         // A contact for another number releases nothing; a listed name releases no number.
-        rules = rules(listOf(mamma, RuleContact(9, "Annen", "+4741414142", smsIn = true)), names = listOf("+4741414141"))
+        rules = rules(listOf(mamma, RuleContact(9, "Annen", "+4790000042", smsIn = true)), names = listOf("+4790000041"))
         assertTrue(engine.releasePass(emptyList()).isEmpty())
-        rules = rules(listOf(mamma, RuleContact(9, "Ny", "+4741414141", smsIn = true)))
+        rules = rules(listOf(mamma, RuleContact(9, "Ny", "+4790000041", smsIn = true)))
         val released = engine.releasePass(emptyList()).single()
         assertEquals("fra en fremmed", released.message.body)
         assertEquals(held.at, released.message.at)
@@ -230,10 +270,10 @@ class SmsEngineTest {
 
     @Test
     fun `expiry at 24 hours deletes the body and runs before a release`() {
-        val row = (engine.receiveSms(sms("+4741414141")) as Received.HeldForParent).row
+        val row = (engine.receiveSms(sms("+4790000041")) as Received.HeldForParent).row
         now += HoldPolicy.WINDOW_MS
         // The offline phone's first policy has the allow: expiry first, so nothing is released.
-        rules = rules(listOf(RuleContact(9, "Ny", "+4741414141", smsIn = true)))
+        rules = rules(listOf(RuleContact(9, "Ny", "+4790000041", smsIn = true)))
         assertTrue(engine.releasePass(emptyList()).isEmpty())
         val expired = store.held(row.id)!!
         assertEquals(HeldState.EXPIRED, expired.state)
@@ -244,9 +284,9 @@ class SmsEngineTest {
 
     @Test
     fun `drops come first - a row deleted and then made a contact is deleted`() {
-        val a = (engine.receiveSms(sms("+4741414141")) as Received.HeldForParent).row
-        val b = (engine.receiveSms(sms("+4741414141")) as Received.HeldForParent).row
-        rules = rules(listOf(RuleContact(9, "Ny", "+4741414141", smsIn = true)))
+        val a = (engine.receiveSms(sms("+4790000041")) as Received.HeldForParent).row
+        val b = (engine.receiveSms(sms("+4790000041")) as Received.HeldForParent).row
+        rules = rules(listOf(RuleContact(9, "Ny", "+4790000041", smsIn = true)))
         val released = engine.releasePass(listOf(a.id))
         assertEquals(1, released.size)
         assertEquals(HeldState.DROPPED, store.held(a.id)!!.state)
@@ -268,10 +308,10 @@ class SmsEngineTest {
         assertTrue("the names pool is full", engine.receiveSms(sms("Annet", kind = SenderKind.ALPHANUMERIC)) is Received.Blocked)
         assertEquals(false to true, engine.counts().let { it.numbersFull to it.namesFull })
         // The numbers keep their own pool.
-        repeat(HoldPolicy.PER_NUMBER) { engine.receiveSms(sms("+4741414141")) }
-        assertTrue("an eleventh from one number", engine.receiveSms(sms("+4741414141")) is Received.Blocked)
-        repeat(HoldPolicy.NUMBERS_POOL - HoldPolicy.PER_NUMBER) { engine.receiveSms(sms("+47414100%02d".format(it))) }
-        assertTrue(engine.receiveSms(sms("+4741419999")) is Received.Blocked)
+        repeat(HoldPolicy.PER_NUMBER) { engine.receiveSms(sms("+4790000041")) }
+        assertTrue("an eleventh from one number", engine.receiveSms(sms("+4790000041")) is Received.Blocked)
+        repeat(HoldPolicy.NUMBERS_POOL - HoldPolicy.PER_NUMBER) { engine.receiveSms(sms("+47900001%02d".format(it))) }
+        assertTrue(engine.receiveSms(sms("+4790000199")) is Received.Blocked)
         assertEquals(true to true, engine.counts().let { it.numbersFull to it.namesFull })
         assertEquals(HoldPolicy.NUMBERS_POOL + HoldPolicy.NAMES_POOL, held().size)
         assertEquals(4L, store.counters()["blocked.over_cap"])
@@ -279,17 +319,17 @@ class SmsEngineTest {
 
     @Test
     fun `a long body is cut and marked`() {
-        val row = (engine.receiveSms(sms("+4741414141", "a".repeat(2000))) as Received.HeldForParent).row
+        val row = (engine.receiveSms(sms("+4790000041", "a".repeat(2000))) as Received.HeldForParent).row
         assertEquals(HoldPolicy.BODY_MAX, row.body!!.length)
         assertTrue(row.body!!.endsWith("…"))
     }
 
     @Test
     fun `the posted rows are who and when, marked once, final rows go`() {
-        val row = (engine.receiveSms(sms("+4741414141", "hemmelig")) as Received.HeldForParent).row
+        val row = (engine.receiveSms(sms("+4790000041", "hemmelig")) as Received.HeldForParent).row
         engine.receiveSms(sms("12"))
         val posted = engine.unreported(50)
-        assertEquals(listOf("held" to "+4741414141", "blocked" to ""), posted.map { it.state to it.sender })
+        assertEquals(listOf("held" to "+4790000041", "blocked" to ""), posted.map { it.state to it.sender })
         assertEquals(row.at + HoldPolicy.WINDOW_MS, posted.first().expiresAt)
         assertFalse(posted.toString().contains("hemmelig"))
         engine.markReported(posted)
@@ -305,7 +345,7 @@ class SmsEngineTest {
 
     @Test
     fun `a row that moved after it was posted is posted again`() {
-        val row = (engine.receiveSms(sms("+4741414141")) as Received.HeldForParent).row
+        val row = (engine.receiveSms(sms("+4790000041")) as Received.HeldForParent).row
         val posted = engine.unreported(50)
         engine.releasePass(listOf(row.id))
         engine.markReported(posted)

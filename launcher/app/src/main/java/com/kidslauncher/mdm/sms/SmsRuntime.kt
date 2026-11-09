@@ -71,11 +71,9 @@ object SmsRuntime {
     @Volatile
     private var listening = false
 
-    /** D7: an MMS push committed as it came (step 3b parses it). On the receive executor. */
-    fun keepPush(context: Context, row: com.kidslauncher.mdm.sms.engine.PendingPushRow) {
-        engine(context) ?: throw IllegalStateException("no store")
-        store?.insertPendingPush(row)
-    }
+    /** D7: an MMS push committed as it came (step 3b parses it), within QA L4's bounds. On the receive executor. */
+    fun keepPush(context: Context, row: com.kidslauncher.mdm.sms.engine.PendingPushRow): Boolean =
+        (engine(context) ?: throw IllegalStateException("no store")).keepPush(row)
 
     /** The last hold's sync request (elapsed realtime), and whether a delayed one is queued ([heldSyncDelay]). */
     private var lastHeldSyncAt: Long? = null
@@ -93,6 +91,8 @@ object SmsRuntime {
                 store = opened
                 engine = it
                 listen(app)
+                // QA N4: deleted means gone only with secure_delete on - read back, reported when it isn't.
+                if (!opened.secureDeleteOn()) recordError(app, "store: secure_delete is off")
             }
         } catch (e: Exception) {
             recordError(app, "store: ${e.javaClass.simpleName}")
@@ -143,8 +143,9 @@ object SmsRuntime {
     // ---- Receive (D7) ----
 
     /** On the receive executor: judge and commit, then [done] (the receiver's `finish()`), then the rest on the
-     * engine thread. A throw is recorded and counted; the receiver still finishes. */
-    fun receive(context: Context, sms: IncomingSms, done: () -> Unit) {
+     * engine thread. A throw is recorded and counted; the receiver still finishes. [startedAt] is the broadcast's
+     * arrival (elapsed realtime): QA L7 measures D7's budget from it. */
+    fun receive(context: Context, sms: IncomingSms, startedAt: Long, done: () -> Unit) {
         val app = context.applicationContext
         receiveExecutor.execute {
             var received: Received? = null
@@ -158,8 +159,16 @@ object SmsRuntime {
             } finally {
                 done()
             }
+            val tookMs = SystemClock.elapsedRealtime() - startedAt
             val result = received ?: return@execute
-            onEngine(app) { engine -> afterReceive(app, engine, result) }
+            onEngine(app) { engine ->
+                if (overReceiveBudget(tookMs)) {
+                    // Only the time - never a sender or a text.
+                    recordError(app, "receive took $tookMs ms (budget $RECEIVE_BUDGET_MS)")
+                    engine.countSlowReceive()
+                }
+                afterReceive(app, engine, result)
+            }
         }
     }
 
@@ -167,7 +176,7 @@ object SmsRuntime {
         when (received) {
             is Received.Shown -> notifyShown(app, engine, received)
             is Received.HeldForParent, is Received.Blocked -> requestHeldSync(app)
-            Received.HeldForRules -> Unit
+            Received.HeldForRules, Received.Duplicate -> Unit
         }
     }
 
@@ -374,8 +383,20 @@ object SmsPrefs {
     private const val PREVIOUS_HOLDER = "mdm.sms.role_previous"
     private const val LAST_ERROR = "mdm.sms.last_error"
     private const val ROLE_SIGNALLED = "mdm.sms.role_signalled"
+    private const val DENIED_PERMISSIONS = "mdm.sms.denied_permissions"
+
+    /** What a preferences reset keeps (`resetPreferences`): without them the role is never handed back (QA L3) and a
+     * grant we took away never given back (L8). */
+    val KEPT_ON_RESET = listOf(TAKEN_BY_US, PREVIOUS_HOLDER, DENIED_PERMISSIONS)
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
+
+    /** QA L8: the other apps' SMS permissions we denied that were granted before ("package|permission"). */
+    fun deniedPermissions(context: Context): Set<String> = prefs(context).getStringSet(DENIED_PERMISSIONS, null).orEmpty().toSet()
+
+    fun deniedPermissions(context: Context, value: Set<String>) {
+        if (value != deniedPermissions(context)) prefs(context).edit().putStringSet(DENIED_PERMISSIONS, value).commit()
+    }
 
     fun takenByUs(context: Context) = prefs(context).getBoolean(TAKEN_BY_US, false)
 

@@ -13,7 +13,7 @@
     {"case": "the same contact typed nationally", "kind": "number", "raw": "91234567", "verdict": "allow"},
     {"case": "sms_in without inbound (D3: independent)", "kind": "number", "raw": "+4798765432", "verdict": "allow"},
     {"case": "inbound without sms_in is held", "kind": "number", "raw": "+4790000003", "verdict": "hold_parent"},
-    {"case": "an unknown number is held", "kind": "number", "raw": "+4741414141", "verdict": "hold_parent"},
+    {"case": "an unknown number is held", "kind": "number", "raw": "+4790000041", "verdict": "hold_parent"},
     {"case": "a short code contact with sms_in", "kind": "number", "raw": "2222", "verdict": "allow"},
     {"case": "an unknown short code is held", "kind": "number", "raw": "1881", "verdict": "hold_parent"},
     {"case": "112 outside the window is held, never allowed (QA H1)", "kind": "number", "raw": "112", "verdict": "hold_parent"},
@@ -28,7 +28,7 @@
     {"case": "a malformed sender is blocked", "kind": "malformed", "raw": "+4791234567", "verdict": "block"},
     {"case": "an empty sender is blocked", "kind": "number", "raw": "", "verdict": "block"},
     {"case": "a number that doesn't normalise is blocked", "kind": "number", "raw": "*100#", "verdict": "block"},
-    {"case": "the callback window lets a stranger in, marked unknown", "kind": "number", "raw": "+4741414141", "window": true, "verdict": "allow_unknown"},
+    {"case": "the callback window lets a stranger in, marked unknown", "kind": "number", "raw": "+4790000041", "window": true, "verdict": "allow_unknown"},
     {"case": "the callback window lets 112 in, marked unknown", "kind": "number", "raw": "112", "window": true, "verdict": "allow_unknown"},
     {"case": "the callback window lets a name in, marked unknown", "kind": "alphanumeric", "raw": "Politiet", "window": true, "verdict": "allow_unknown"},
     {"case": "the callback window: a contact stays known", "kind": "number", "raw": "+4791234567", "window": true, "verdict": "allow"},
@@ -36,16 +36,18 @@
     {"case": "the rules unknown with the role ours: held for the rules (D15)", "kind": "number", "raw": "+4791234567", "rules": "unknown", "verdict": "hold_rules"},
     {"case": "the rules unknown without the role: blocked", "kind": "number", "raw": "+4791234567", "rules": "unknown", "role": false, "verdict": "block"},
     {"case": "the engine not ready: held for the rules", "kind": "number", "raw": "+4791234567", "rules": "not_ready", "verdict": "hold_rules"},
-    {"case": "the window beats unknown rules", "kind": "number", "raw": "+4741414141", "rules": "unknown", "window": true, "verdict": "allow_unknown"},
+    {"case": "the window beats unknown rules", "kind": "number", "raw": "+4790000041", "rules": "unknown", "window": true, "verdict": "allow_unknown"},
     {"case": "SMS off: blocked (a guard)", "kind": "number", "raw": "+4791234567", "mode": "off", "verdict": "block"},
-    {"case": "SMS not managed: blocked (a guard)", "kind": "number", "raw": "+4791234567", "mode": "unmanaged", "verdict": "block"}
+    {"case": "SMS not managed with the role still ours: shown unfiltered (QA L3)", "kind": "number", "raw": "+4790000041", "mode": "unmanaged", "verdict": "allow"},
+    {"case": "SMS not managed with the role still ours: a malformed sender is kept too (QA L3)", "kind": "malformed", "raw": "+4790000041", "mode": "unmanaged", "verdict": "allow"},
+    {"case": "SMS not managed without the role: blocked (a guard)", "kind": "number", "raw": "+4791234567", "mode": "unmanaged", "role": false, "verdict": "block"}
   ],
   "send": [
     {"case": "a contact with sms_out", "to": "+4791234567", "verdict": "allow"},
     {"case": "sms_out without outbound (D3)", "to": "90000005", "verdict": "allow"},
     {"case": "outbound without sms_out", "to": "+4790000003", "verdict": "not_allowed"},
     {"case": "sms_in alone doesn't let the kid text", "to": "+4798765432", "verdict": "not_allowed"},
-    {"case": "a stranger", "to": "+4741414141", "verdict": "not_allowed"},
+    {"case": "a stranger", "to": "+4790000041", "verdict": "not_allowed"},
     {"case": "an emergency number always (QA I7)", "to": "112", "verdict": "allow"},
     {"case": "an emergency number with SMS off", "to": "113", "mode": "off", "verdict": "allow"},
     {"case": "an emergency number with the rules unknown", "to": "112", "rules": "unknown", "verdict": "allow"},
@@ -53,6 +55,6 @@
     {"case": "SMS not managed", "to": "+4791234567", "mode": "unmanaged", "verdict": "sms_off"},
     {"case": "the rules unknown", "to": "+4791234567", "rules": "unknown", "verdict": "rules_unknown"},
     {"case": "a time rule without calls", "to": "+4791234567", "time_blocked": true, "verdict": "time_rule"},
-    {"case": "an MMI code", "to": "*21*+4741414141#", "verdict": "not_allowed"}
+    {"case": "an MMI code", "to": "*21*+4790000041#", "verdict": "not_allowed"}
   ]
 }

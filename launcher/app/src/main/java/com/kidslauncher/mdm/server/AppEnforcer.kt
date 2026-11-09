@@ -37,7 +37,9 @@ import com.kidslauncher.mdm.sms.PLAY_SERVICES
 import com.kidslauncher.mdm.sms.SmsPrefs
 import com.kidslauncher.mdm.sms.SmsRuntime
 import com.kidslauncher.mdm.sms.lockDefaultAppsFor
+import com.kidslauncher.mdm.sms.smsPermissionPass
 import com.kidslauncher.mdm.sms.smsPermissionTargets
+import com.kidslauncher.mdm.sms.smsPermissionsDenied
 import com.kidslauncher.mdm.sms.smsRoleAction
 import com.kidslauncher.mdm.sms.smsRoleReturnTo
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -452,9 +454,10 @@ object AppEnforcer {
         // loop (`MATCH_UNINSTALLED_PACKAGES`: hiding doesn't change what an app requests); `null` if it failed.
         val requested = thirdPartyRequested(context)
         applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist, requested)
-        // Design 77 §2.5, §8.6: in "Styrt av Vibb" no other app receives, reads or sends SMS. Never lifted by an
+        // Design 77 §2.5, §8.6: in "Styrt av Vibb", and with the rules unknown (QA M1), no other app receives, reads or
+        // sends SMS. Never lifted by an
         // override or the pause (the call rules' exception).
-        applySmsPermissions(context, dpm, admin, smsMode == ChannelMode.MANAGED, requested)
+        applySmsPermissions(context, dpm, admin, smsPermissionsDenied(smsMode), requested)
 
         lastPlanSuspend = plan.suspend
         // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
@@ -1050,10 +1053,11 @@ object AppEnforcer {
     }
 
     /**
-     * Design 77 §2.5, §8.6: while SMS is "Styrt av Vibb" ([managed]) every other app's SMS permissions are DENIED by
-     * policy ([smsPermissionTargets]: the third-party requesters in [requested], and Play services per
-     * [DENY_PLAY_SERVICES_SMS]); otherwise back to DEFAULT (no revoke). Hard-restricted permissions: whether a device
-     * owner may set them is step 0's check - a refusal is logged by [setGrantState] and changes nothing else.
+     * Design 77 §2.5, §8.6: while [managed] ([smsPermissionsDenied]: "Styrt av Vibb", or the rules unknown) every other
+     * app's SMS permissions are DENIED by policy ([smsPermissionTargets]: the third-party requesters in [requested], and
+     * Play services per [DENY_PLAY_SERVICES_SMS]); otherwise back to DEFAULT, a grant we took away given back first
+     * ([smsPermissionPass], QA L8). Hard-restricted permissions: whether a device owner may set them is step 0's check -
+     * a refusal is logged by [setGrantState] and changes nothing else.
      */
     private fun applySmsPermissions(
         context: Context,
@@ -1070,12 +1074,20 @@ object AppEnforcer {
         } catch (e: PackageManager.NameNotFoundException) {
             null
         }
-        // Every requester is listed (Play services too), so switching the GMS rule off puts it back to DEFAULT.
-        for ((packageName, permissions) in smsPermissionTargets(requested, playServices, context.packageName, denyPlayServices = true)) {
-            val deny = managed && (packageName != PLAY_SERVICES || DENY_PLAY_SERVICES_SMS)
-            val wanted = if (deny) DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
-            for (permission in permissions) setGrantState(dpm, admin, packageName, permission, wanted)
-        }
+        // Every requester is listed (Play services too), so switching the GMS rule off puts it back to DEFAULT. QA L8:
+        // what we denied is recorded, so leaving the denial gives a grant back instead of leaving it revoked.
+        val pm = context.packageManager
+        val pass = smsPermissionPass(
+            smsPermissionTargets(requested, playServices, context.packageName, denyPlayServices = true),
+            deny = { managed && (it != PLAY_SERVICES || DENY_PLAY_SERVICES_SMS) },
+            granted = { pkg, permission ->
+                dpm.getPermissionGrantState(admin, pkg, permission) != DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED &&
+                    pm.checkPermission(permission, pkg) == PackageManager.PERMISSION_GRANTED
+            },
+            recorded = SmsPrefs.deniedPermissions(context),
+        )
+        for (write in pass.writes) setGrantState(dpm, admin, write.packageName, write.permission, write.state)
+        SmsPrefs.deniedPermissions(context, pass.record)
     }
 
     /** Any call at all; unknown counts as "in a call" (then Home stays where it is). */

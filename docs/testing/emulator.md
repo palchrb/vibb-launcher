@@ -2411,8 +2411,11 @@ fresh fix, or a weather zone. Set the emulator's clock inside the answer's hours
 
 ## 6v. The SMS engine (design 77 step 1, no screens yet)
 
-Run on `handy36` (Android 16, `-wipe-data`) on 2026-11-09, branch `sms-engine`. A phone created by the server is SMS
-"Styrt av Vibb", calls "Ikke styrt". Until step 4's PWA pages, the parent's answers are written to the server's
+Run on `handy36` (Android 16, `-wipe-data`) on 2026-11-09, branch `sms-engine`, and again after the code QA's fix
+round (an allowed SMS shown, a stranger held and posted, the reply delivered; a re-delivery key per message in
+`received_key`). A phone created by the server starts with both channels "Ikke styrt" (the fix round's M2): set SMS
+"Styrt av Vibb" in the PWA once the phone has reported `sms_engine_v1`, or in `device_policy.sms_mode` for a test
+database. Until step 4's PWA pages, the parent's answers are written to the server's
 database by hand (`device_sms_names`, `device_sms_held.dropped_at`). There are no screens: check the engine's store
 with `adb exec-out run-as me.vibb.launcher.debug cat databases/messages.db > m.db` (and `-wal`), the notifications
 with `adb shell dumpsys notification --noredact`, the server's `device_sms_held` and `device_status.sms_state_json`.
@@ -2423,7 +2426,7 @@ with `adb shell dumpsys notification --noredact`, the server's `device_sms_held`
   `unmanaged` (calls not managed), `sms_state.mode_applied` `managed`, `role_held` true.
 - **A contact with `sms_in`**: `adb emu sms send +4791234567 Hei` -> a `message` row (`SHOWN`) and a `MessagingStyle`
   notification on `launcher:messages` with "Reply".
-- **A stranger**: `adb emu sms send +4741414141 ...` -> a `held` row, no notification; the row reaches the server's
+- **A stranger**: `adb emu sms send +4790000041 ...` -> a `held` row, no notification; the row reaches the server's
   `device_sms_held` within seconds (state `held`, `expires_at - at` = 24 h, no text).
 - **A sender name**: `adb emu sms send DNB Kode 1234` - the console sends letters as an alphanumeric TP-OA (TON 101):
   held as `ALPHANUMERIC`/`alphanumeric`. `adb emu sms pdu <hex>` answers OK but delivers nothing on this image (no

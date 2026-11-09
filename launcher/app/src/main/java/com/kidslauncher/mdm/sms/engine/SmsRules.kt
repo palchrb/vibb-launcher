@@ -61,8 +61,9 @@ object SmsRules {
      * D4, the first rule that applies wins:
      * 1. the sender's [kind] comes from the raw PDU ([SmsSenderType]);
      * 2. the callback window is open: ALLOW any sender with an address (alphanumeric included);
-     * 3. the rules can't be judged and the role is ours: HOLD for the rules (D15);
-     * 4. SMS isn't "Styrt av Vibb": BLOCK (a guard - the role is only ours then);
+     * 3. the rules can't be judged and the role is ours: HOLD for the rules (D15) - but SMS "Ikke styrt" with the role
+     *    still ours (a hand-back pending or failed, QA L3) is ALLOW, unfiltered;
+     * 4. SMS isn't "Styrt av Vibb" ("Av"): BLOCK (a guard - `DISALLOW_SMS` stops it first);
      * 5. a number that normalises, is a contact with `sms_in` and isn't an emergency number: ALLOW;
      * 6. a sender name with a letter on the parent's list: ALLOW;
      * 7. any other number that normalises, or a sender name: HOLD for the parent (D16);
@@ -73,6 +74,11 @@ object SmsRules {
         val hasSender = sender.senderClass in setOf(SenderClass.NUMBER, SenderClass.SHORT, SenderClass.ALPHANUMERIC)
         val byRules = if (hasSender && judge.ready) allowedBy(kind, sender.sender, judge) else null
         if (hasSender && judge.callbackWindowOpen()) return IncomingVerdict.Allow(unknownSender = byRules == null, contact = byRules?.contact)
+        // QA L3: SMS "Ikke styrt" while the role is still ours (the hand-back pending or failed) - unfiltered, as the
+        // parent chose: kept and shown, never blocked and lost. Not a filter decision, so no "unknown sender" line.
+        if (judge.roleHeld && judge.state.smsMode == ChannelMode.UNMANAGED) {
+            return IncomingVerdict.Allow(unknownSender = false, contact = judge.rules?.contacts?.firstOrNull { it.number == sender.sender })
+        }
         val rules = judge.rules
         if (!judge.ready || rules == null) {
             return if (judge.roleHeld && judge.state !is CallPolicyState.Unmanaged) IncomingVerdict.HoldRules else IncomingVerdict.Block

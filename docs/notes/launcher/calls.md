@@ -90,8 +90,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   call-path reader asks - the services (`effectiveState()`), the dialer role, Home's contacts and phone book, the lock's
   phone-book row, the call log, the missed-call notifier, `call_state.state`. Once a phone has accepted a policy with
   the modes (`channel_modes_seen`, committed with the cache, kept across a preferences reset), a `call_policy` without
-  them - or with a value that isn't one of the three - is rejected whole (`judgeFresh`). The DE boot copy is version 2
-  (`calls_mode`; a v1 copy reads as unknown, fail closed until the first unlock rewrites it).
+  them - or with a value that isn't one of the three - is rejected whole (`judgeFresh`). The DE boot copy is version 3
+  (`calls_mode` and `sms_mode`, QA L2; a v1 or v2 copy reads as unknown, fail closed until the first unlock rewrites it).
 - **The engine (`sms/engine/`, pure, JVM-tested):** `Model.kt` is §6.2's seam (ids, `Message`, `EngineEvent`,
   `SendCommand`, `MessageEngine`); `SmsSenderType` reads the TP-OA's type of number from every raw PDU (TON 101 =
   a sender name, H2); `SmsRules` is D4/D5 (no sender is let in for being an emergency number; the callback window lets
@@ -122,3 +122,17 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   Our own SMS permissions are fixed by policy around every role change, and not released while SMS is managed.
 - **Step 0 marks in the code:** the delivery reports (`REQUEST_DELIVERY_REPORTS`), `3gpp2` read as malformed,
   `DENY_PLAY_SERVICES_SMS`; whether a device owner may set the hard-restricted SMS permissions is logged when refused.
+- **Fix round after the code QA (`docs/review/qa-sms-engine.md`):**
+  - the other apps' SMS permissions are denied in "Styrt av Vibb" and with the rules unknown (`smsPermissionsDenied`,
+    M1), and leaving the denial gives back a grant it took away: `GRANTED` then `DEFAULT`, from a record of what was
+    granted before (`smsPermissionPass`, `mdm.sms.denied_permissions`, L8);
+  - SMS "Ikke styrt" while the role is still ours (a hand-back pending or failed) keeps and shows every message,
+    unfiltered (L3); the hand-back is retried at every apply, and `role_taken_by_us`, the previous holder and the
+    denial record survive a preferences reset (`SmsPrefs.KEPT_ON_RESET`);
+  - the notification's Reply carries both ids in its data URI (`replyData`/`replyIds`), mutable only for RemoteInput,
+    and the open intent is told apart by its identifier - never a `hashCode` (L1);
+  - a re-delivered SMS is stored once (`received_key`: a hash of sender, SMSC time and body, kept a day, L6);
+  - every receive is timed from the broadcast's arrival; one over D7's 3 s is recorded (its time only) and counted
+    (`slow_receives`), and `markRead` is one statement (L7);
+  - MMS pushes: at most 100, 2 KB each, 7 days; more is counted as blocked `malformed` (L4);
+  - `secure_delete` is read back after it is set, and `last_error` says so when it isn't (N4).

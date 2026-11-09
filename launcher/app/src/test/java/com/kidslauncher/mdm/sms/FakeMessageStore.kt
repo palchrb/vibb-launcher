@@ -101,6 +101,21 @@ class FakeMessageStore : MessageStore {
     override fun unread(conversationId: String) = shown().count { it.conversationId == conversationId && it.direction == Direction.IN && !it.read }
     override fun lastMessage(conversationId: String) = messages(conversationId, null, 1).firstOrNull()
 
+    override fun markReadUpTo(conversationId: String, upToSeq: Long): Int {
+        val unread = shown().filter { it.conversationId == conversationId && it.direction == Direction.IN && !it.read && it.seq <= upToSeq }
+        unread.forEach { messages[it.id] = it.copy(read = true) }
+        return unread.size
+    }
+
+    private val received = linkedMapOf<String, Long>()
+    override fun receivedBefore(key: String) = key in received
+    override fun rememberReceived(key: String, at: Long) {
+        received.putIfAbsent(key, at)
+    }
+    override fun pruneReceived(before: Long) {
+        received.entries.removeAll { it.value < before }
+    }
+
     override fun insertEvent(row: EventRow) {
         events += row
     }
@@ -135,6 +150,10 @@ class FakeMessageStore : MessageStore {
 
     override fun insertPendingPush(row: PendingPushRow) {
         pushes += row
+    }
+    override fun pendingPushCount() = pushes.size
+    override fun prunePendingPush(before: Long) {
+        pushes.removeAll { it.at < before }
     }
 
     override fun addCounter(key: String, by: Long) {

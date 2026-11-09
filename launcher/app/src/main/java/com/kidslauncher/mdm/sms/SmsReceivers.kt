@@ -31,9 +31,6 @@ import java.util.UUID
 
 private const val LOG_TAG = "SmsReceivers"
 
-/** D7: the raw m-notification-ind kept at most this big; a larger push is malformed. */
-private const val PUSH_MAX = 2048
-
 /**
  * `SMS_DELIVER` (design 77 §6.1, `permission=BROADCAST_SMS`): only the default SMS app gets it, and the platform deletes
  * its raw rows once the broadcast is done, whatever we did - so this commits first, within D7's budget: classify (the
@@ -43,10 +40,11 @@ private const val PUSH_MAX = 2048
 class SmsDeliverReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION) return
+        val startedAt = android.os.SystemClock.elapsedRealtime()
         val pending = goAsync()
         try {
             val sms = parse(intent, System.currentTimeMillis())
-            SmsRuntime.receive(context, sms) { pending.finish() }
+            SmsRuntime.receive(context, sms, startedAt) { pending.finish() }
         } catch (t: Throwable) {
             SmsRuntime.recordError(context, "deliver: ${t.javaClass.simpleName}")
             pending.finish()
@@ -88,12 +86,11 @@ class MmsPushReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         SmsRuntime.receiveExecutor.execute {
             try {
-                val pdu = intent.getByteArrayExtra("data")
-                if (pdu == null || pdu.size > PUSH_MAX || !CallPolicyStore.userUnlocked(app)) {
-                    Log.w(LOG_TAG, "An MMS push that can't be kept (${pdu?.size} bytes)")
-                } else {
-                    val subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, -1).takeIf { it >= 0 }
-                    SmsRuntime.keepPush(app, PendingPushRow(RandomIds.hex(), pdu, subId, System.currentTimeMillis()))
+                // An oversize push, or one past the cap, is counted as blocked `malformed` (QA L4).
+                val pdu = intent.getByteArrayExtra("data") ?: ByteArray(0)
+                val subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, -1).takeIf { it >= 0 }
+                if (!SmsRuntime.keepPush(app, PendingPushRow(RandomIds.hex(), pdu, subId, System.currentTimeMillis()))) {
+                    Log.w(LOG_TAG, "An MMS push that can't be kept (${pdu.size} bytes)")
                 }
             } catch (t: Throwable) {
                 SmsRuntime.recordError(app, "push: ${t.javaClass.simpleName}")
@@ -159,8 +156,9 @@ class SmsSentReceiver : BroadcastReceiver() {
  * so a double tap sends once. A refusal turns the notification into "Not sent". */
 class SmsReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val conversation = intent.getStringExtra(SmsNotifier.EXTRA_CONVERSATION) ?: return
-        val clientId = intent.getStringExtra(SmsNotifier.EXTRA_CLIENT_ID) ?: return
+        // QA L1: the ids come from the data URI the notification set, never from extras a fill-in could add.
+        if (intent.action != SmsNotifier.ACTION_REPLY) return
+        val (conversation, clientId) = replyIds(intent.dataString) ?: return
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(SmsNotifier.KEY_REPLY)?.toString()?.trim().orEmpty()
         val pending = goAsync()
         val app = context.applicationContext

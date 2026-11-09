@@ -3,12 +3,14 @@
 -- D2: calls and SMS each get their own state, 'off' | 'managed' | 'unmanaged'. Every existing phone keeps exactly
 -- what it does today (D2's migration table): calls_managed = 0 leaves both channels alone; managed, calls_enabled
 -- picks off/managed for calls and sms_enabled off/unmanaged for SMS. No phone is migrated to SMS 'managed' (that
--- needs the engine and the parent's choice). A phone created from now on gets calls 'unmanaged' and SMS 'managed'.
+-- needs the engine and the parent's choice). A phone created from now on starts as before 0130, both channels
+-- 'unmanaged' (code QA M2): the setup QR installs the newest stable launcher, which may not have the engine yet, and
+-- the parent chooses "Styrt av Vibb" once the phone reports `sms_engine_v1` (the Calls page's gate).
 -- calls_managed/calls_enabled/sms_enabled stay, unused but for a rollback (the server writes their derived values,
 -- the fail-closed old-launcher view), and go in a later migration.
 ALTER TABLE device_policy ADD COLUMN calls_mode TEXT NOT NULL DEFAULT 'unmanaged'
     CHECK (calls_mode IN ('off', 'managed', 'unmanaged'));
-ALTER TABLE device_policy ADD COLUMN sms_mode TEXT NOT NULL DEFAULT 'managed'
+ALTER TABLE device_policy ADD COLUMN sms_mode TEXT NOT NULL DEFAULT 'unmanaged'
     CHECK (sms_mode IN ('off', 'managed', 'unmanaged'));
 UPDATE device_policy SET
     calls_mode = CASE

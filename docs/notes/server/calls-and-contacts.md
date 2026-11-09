@@ -98,8 +98,10 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **Two channels, three states each (D2, migration 0130).** `device_policy.calls_mode`/`sms_mode` (`off` / `managed` /
   `unmanaged`, `models::CHANNEL_MODES`) replace `calls_managed`/`calls_enabled`/`sms_enabled`, which stay only for a
   rollback (the Calls page writes their derived values). The migration maps every phone to what it did (D2's table, the
-  contract's `migration` rows; no phone goes to SMS `managed`); a phone created since gets calls `unmanaged`, SMS
-  `managed`. `DevicePolicy::managed()`/`calls_enabled()`/`sms_enabled()` are D2's derived old keys
+  contract's `migration` rows; no phone goes to SMS `managed`); a phone created since starts as before 0130, both
+  channels `unmanaged` (code QA M2: the setup QR installs the newest stable launcher, which may not have the engine, and
+  an older launcher reads SMS `managed` as SMS off and calls `unmanaged` beside it as contacts-only). The parent picks
+  "Styrt av Vibb" once the phone reports `sms_engine_v1` (the gate below). `DevicePolicy::managed()`/`calls_enabled()`/`sms_enabled()` are D2's derived old keys
   (`models::derived_old_keys`: `managed` while either channel isn't `unmanaged`, calls on unless `off`, SMS on only while
   `unmanaged` - fail closed for a launcher without `sms_engine_v1`); `calls_managed()` is the calls channel alone. The
   readers that mean the calls channel use `calls_managed()`: the call report's role/screening/call-log findings and the
@@ -108,7 +110,10 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   managed" (Attention, the summary, Device › Time). The ones that mean "the phone is managed" use `managed()`: the red
   "managed without a Parent PIN" card and the summary's contact count. "Messages hidden" now reads `sms_mode ==
   unmanaged` (restricted, the launcher suspends every SMS app but itself). `roles_changed_at` is stamped when either
-  mode changes.
+  mode changes. **A phone with either channel not "Ikke styrt" is "managed" from its first sync** (code QA N6): the
+  hardening switches, the update fence's night window, the backup lock and the red "managed without a Parent PIN" card
+  all read `managed()` on the server and `CallPolicyStore.state.managed` on the phone - so picking SMS "Styrt av Vibb"
+  on an otherwise unmanaged phone turns those on too.
 - **The policy** (`device_api::build_call_policy`): always `calls_mode`, `sms_mode`, the derived three, `sms_lock_text`,
   `sms_names` (`device_sms_names`, by fold), `own_numbers` (`device_own_numbers`, `[{slot, number}]`), `mmsc_hosts`
   (`mmsc_hosts.rs`, compiled in, empty until step 0) and `sms_held_drop` (`device_sms_held` ids with a `dropped_at` in
@@ -122,16 +127,24 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   by class - `sms::sender_ok`, the contract's `intake` rows; `at` at most 5 min ahead, `expires_at - at` 0..24 h + 1
   min; state); one refused row answers 400 `{refused, reason}` and stores nothing. Forward-only (`held` ->
   `released`/`expired`/`dropped`, the rest final; a re-post never changes sender or time; any other change counted in
-  `devices.sms_ignored_transitions`). At most 500 rows a phone (`HELD_ROWS_A_PHONE`): a new id past it isn't stored,
-  `"capped": true`, one `sms_held_capped` line (`PhoneLine::SmsHeldCapped`, in the hourly budget). Retention drops a
-  row 30 days after its `at`.
+  `devices.sms_ignored_transitions`). At most 500 held rows a phone (`HELD_ROWS_A_PHONE`, every state but `blocked`)
+  and, apart, 500 `blocked` rows (`BLOCKED_ROWS_A_PHONE`, code QA L5: a flood of blocked senders never hides a later
+  held message): a new id past its bound isn't stored, `"capped": true`, one `sms_held_capped` line
+  (`PhoneLine::SmsHeldCapped`, in the hourly budget). Retention drops a row 30 days after its `at`.
 - **The names (D17)**: `sms::valid_name` (1-11 characters after `calendar::clean`, not cut, and a letter -
   `char::is_alphabetic`) and `sms::fold` (NFC, `to_lowercase`); `device_sms_names.fold` is unique per phone. Tests run
   the contract's `names` and `name_matches` rows.
 - **The Calls page, the minimum until step 4**: the three switches became two rows, "Samtaler"/"SMS" ("Calls"/"SMS"),
   each a picker Off / Managed by Vibb / Not managed with D2's sub-line; the form posts `calls_mode` and `sms_mode` (an
-  unknown or missing one is a 400). Left for step 4: the segmented control, the capability gate ("Oppdater Vibb One
-  først"), the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
+  unknown or missing one is a 400). **The capability gate** (step 4's, brought forward by code QA M2): until the
+  phone's last report claims `sms_engine_v1` (`sms::has_engine`), a pair an older launcher can't do
+  (`sms::older_launcher_expresses`: anything but calls managed/off with SMS off/not managed, or both not managed) shows
+  disabled, "<choice> - Oppdater Vibb One først", and a save of one is refused in place (the page again, 400, "Oppdater
+  Vibb One først: telefonens versjon kan ikke dette ennå." under the rows; the stored pair is always taken back). With
+  the capability SMS's choice reads "Styrt av Vibb (anbefalt)"; no phone is switched by itself. A stored pair the
+  phone can't do (set up again with an older build) keeps the fail-closed derived keys and the calls report's finding
+  "Telefonen må oppdateres" with what it costs (`Finding::NeedsUpdate`: "SMS går tapt og samtaler er bare til kontakter
+  til da.", or the half that applies). Left for step 4: the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
   the blocked list, the sender-name card, the `sms_held` event with its push and `PushBudget`, the findings.
 - Contract: `testdata/sms_contract.json`, byte-identical in the launcher's test resources (`sms::tests`). Tests:
   `sms::tests`, `tests::sms`.

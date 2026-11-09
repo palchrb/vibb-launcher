@@ -201,3 +201,61 @@ Branch `sms-engine` (5391b54c, 9d83d996, a818551c on main 92cb9a34), read in ful
   - `policy_json_keys_snapshot` and `PolicyResponseCompatTest` gained the keys.
 - **Quality.** Lean JVM tests over a fake with the store's dedup contract. en + nb on both sides. Fixtures use
   `.invalid` hosts. The style matches.
+
+## Fix round
+
+On `sms-engine` after merging this review (the coordinator's decisions: M2 by a gate, not an integration branch;
+PLAN.md stays main's). Launcher `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` 2159/0;
+server `cargo fmt --check` clean, `cargo clippy --all-targets` no warnings, `cargo test` 1788/0. The contract
+`sms_contract.json` is unchanged. Emulator check re-run (the receive path changed: L3, L6, L7): an allowed SMS shown, a
+stranger held and posted, the notification's reply sent and delivered (`docs/testing/emulator.md` §6v).
+
+- **M1** - `smsPermissionsDenied(mode)` (`sms/SmsRole.kt`): denied in "Styrt av Vibb" and with the rules unknown
+  (`null`), as D15 says; `AppEnforcer` passes it. `SmsRoleTest` has the `null` row; `BootCallPolicyTest` shows a v2
+  boot copy reads as unknown and keeps the denials.
+- **M2** - a gate, with the old behaviour for new phones (server):
+  - `0130_sms.sql` (not pushed before this round) now defaults `sms_mode` to `unmanaged`: a new phone starts with
+    both channels "Ikke styrt", exactly as before 0130, so a launcher from `releases/latest` works unchanged
+    (`a_new_phone_reads_as_before_0130`: `managed: false`, `calls_enabled`/`sms_enabled` true, no contacts, calls
+    unmanaged).
+  - Without `sms_engine_v1` in the phone's report only the pairs an older launcher can express are offered
+    (`sms::older_launcher_expresses`): the others show disabled with "Oppdater Vibb One først" / "Update Vibb One
+    first", and the save refuses them in place (400, no jump; the stored pair itself still saves, so another field's
+    save never fails and nothing loosens).
+  - A stored pair the phone can't express keeps the fail-closed derived keys, and the calls page says "Telefonen må
+    oppdateres: SMS går tapt og samtaler er bare til kontakter til da" (or the half that applies).
+  - With the capability, SMS's managed choice reads "Styrt av Vibb (anbefalt)" / "Managed by Vibb (recommended)". No
+    phone is switched automatically.
+  - Notes (N6 too): `docs/notes/server/calls-and-contacts.md` says a phone with either channel not "Ikke styrt" is
+    "managed" from its first sync (hardening, the update fence's night window, the backup lock, the red PIN card), and
+    why new phones start with both "Ikke styrt".
+- **L1** - the Reply's PendingIntent is explicit, action `REPLY_ACTION`, both ids in its data URI
+  (`vibb-sms://reply/<conversation>/<clientId>`, `replyData`/`replyIds`), `FLAG_MUTABLE` only there (RemoteInput);
+  the receiver reads only the data URI. The open intent is told apart by `setIdentifier(conversation)`. No request
+  code comes from a `hashCode`. `SmsRoleTest` checks the parse.
+- **L2** - the DE boot copy is version 3 with `sms_mode` (validated, compared by `bootCopyFaithful`); a v1 or v2 copy
+  reads as unknown, so SMS fails closed through M1's rule.
+- **L3** - `SmsRules`: SMS "Ikke styrt" while the role is still ours keeps and shows every message, unfiltered (a
+  sender without a usable address gets its own `unknown:` conversation). The hand-back is retried at every apply, and
+  `role_taken_by_us`, the previous holder and L8's record survive a preferences reset (`SmsPrefs.KEPT_ON_RESET`).
+  Vectors in `sms_rules.json`, a test in `SmsEngineTest`.
+- **L4** - `SmsEngine.keepPush`: at most 100 pushes of 2 KB, pruned after 7 days at every sync; an oversize push or
+  one past the cap is counted as blocked `malformed`. Tested.
+- **L5** - the server bounds held rows and blocked rows separately, 500 each a phone in 30 days; a blocked flood can't
+  hide a later held message (`blocked_rows_have_their_own_bound`).
+- **L6** - `received_key`: a SHA-256 of the sender as received, the SMSC time and the body, checked and stored in the
+  receive transaction, kept a day; a re-delivery is `Received.Duplicate` (not counted, not notified). Tested.
+- **L7** - every receive is timed from the broadcast's arrival; one over `RECEIVE_BUDGET_MS` (3 s) goes to
+  `last_error` with its time only and is counted (`slow_receives`). `markRead` is one `UPDATE` (no walk inside a
+  transaction the receive path may wait for); every other engine-thread transaction is one statement or one row.
+- **L8** - `smsPermissionPass`: a denial records the permissions that were granted before; leaving it writes `GRANTED`
+  then `DEFAULT` for those (the grant back, the policy fix gone), `DEFAULT` for the rest
+  (`mdm.sms.denied_permissions`). Step 0 still checks what `DEFAULT` leaves on the Jelly Star. Tested.
+- **N1** - the template comment says a missing or unknown channel mode is a 400.
+- **N2** - deferred to step 2: the scripted double-send with one `clientId` comes with the compose bar.
+- **N3** - `+4741414141` and its neighbours became the fake series `+47900000xx`/`+47900001xx` in `sms_rules.json`,
+  `SmsEngineTest` and emulator.md.
+- **N4** - `SqliteMessageStore` reads `secure_delete` back after setting it; `SmsRuntime` puts "store: secure_delete
+  is off" in `last_error` when it isn't.
+- **N5** - deferred to step 3b (D14's MMS APN), as the comment on `mmsDataAllowed` says.
+- **N6** - with M2, above.

@@ -28,6 +28,19 @@ sealed interface Received {
     data object HeldForRules : Received
     data class HeldForParent(val row: HeldRow) : Received
     data class Blocked(val row: BlockedRow?) : Received
+
+    /** QA L6: the platform delivered this message again; it is already stored (or held, or blocked). */
+    data object Duplicate : Received
+}
+
+/**
+ * A received SMS's identity for [SmsEngine]'s de-duplication (QA L6): its sender as received, the SMSC's time stamp and
+ * the body, hashed - the text itself is never kept for it. Two messages differ in one of them, a re-delivery doesn't.
+ */
+fun receiveKey(sms: IncomingSms): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    digest.update("${sms.address}\u0000${sms.sentAt}\u0000${sms.body}".toByteArray(Charsets.UTF_8))
+    return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 
 /** The platform's SMS sending, behind an interface for the JVM tests. */
@@ -72,7 +85,11 @@ class SmsEngine(
         val judge = judge()
         val verdict = SmsRules.decideIncoming(sms.kind, sms.address, judge)
         val clean = SenderClean.of(sms.kind, sms.address, judge.defaultCc)
+        val key = receiveKey(sms)
         val received = store.transaction {
+            // QA L6: the platform delivers a message again when its raw row outlived our commit (a telephony restart).
+            if (store.receivedBefore(key)) return@transaction Received.Duplicate
+            store.rememberReceived(key, sms.receivedAt)
             store.addCounter(COUNT_RECEIVED)
             when (verdict) {
                 is IncomingVerdict.Allow -> show(sms, clean, verdict, sms.receivedAt)
@@ -87,7 +104,8 @@ class SmsEngine(
 
     /** Inside a transaction: the conversation found or made, the message and its `MessageAdded`. */
     private fun show(sms: IncomingSms, clean: CleanSender, verdict: IncomingVerdict.Allow, at: Long, origin: Origin = Origin.ENGINE): Received.Shown {
-        val address = addressOf(clean)
+        // A sender without a usable address reaches here only unfiltered (QA L3): its own conversation, never a number's.
+        val address = addressOf(clean).ifEmpty { UNKNOWN_PREFIX + com.kidslauncher.mdm.day.TitleRules.clean(sms.address, 20) }
         val conversation = conversationFor(address, verdict.contact?.id, verdict.contact?.name ?: nameOf(clean), sms.subId)
         val seq = store.nextSeq()
         val row = MessageRow(
@@ -300,7 +318,29 @@ class SmsEngine(
         store.transaction {
             store.blockedRows().filter { now - it.at > HoldPolicy.BLOCKED_KEEP_MS }.forEach { store.deleteBlocked(it.id) }
             store.pruneEvents(now - EVENT_KEEP_MS)
+            store.pruneReceived(now - RECEIVED_KEEP_MS)
+            // QA L4: nothing parses the pushes before step 3b; they don't wait for it longer than a week.
+            store.prunePendingPush(now - PUSH_KEEP_MS)
         }
+    }
+
+    /**
+     * D7 for an MMS push (step 1 only keeps it; step 3b parses it): committed as it came, unless it is larger than
+     * [PUSH_MAX] or [PUSH_ROWS] wait already (QA L4) - then only counted, as blocked `malformed`. Returns whether kept.
+     */
+    fun keepPush(row: PendingPushRow): Boolean = store.transaction {
+        if (row.pdu.size > PUSH_MAX || store.pendingPushCount() >= PUSH_ROWS) {
+            store.addCounter("$COUNT_BLOCKED.${SenderClass.MALFORMED.wire}")
+            false
+        } else {
+            store.insertPendingPush(row)
+            true
+        }
+    }
+
+    /** QA L7: a receive slower than D7's budget, counted (its time is logged by the caller, never the content). */
+    fun countSlowReceive() {
+        store.addCounter(COUNT_SLOW_RECEIVES)
     }
 
     fun counts(): EngineCounts {
@@ -500,14 +540,8 @@ class SmsEngine(
 
     override fun markRead(id: ConversationId, upToSeq: Long, origin: Origin) {
         val seq = store.transaction {
-            var any = false
-            for (row in store.messages(id.value, null, Int.MAX_VALUE)) {
-                if (row.direction == Direction.IN && !row.read && row.seq <= upToSeq) {
-                    store.updateMessage(row.copy(read = true))
-                    any = true
-                }
-            }
-            if (!any) return@transaction null
+            // One statement (QA L7): the receive path may wait for this transaction.
+            if (store.markReadUpTo(id.value, upToSeq) == 0) return@transaction null
             store.nextSeq().also { store.insertEvent(EventRow(it, EventType.READ, null, id.value, origin, upToSeq, clock())) }
         } ?: return
         emit(EngineEvent.Read(seq, id, upToSeq, origin))
@@ -540,6 +574,9 @@ class SmsEngine(
         /** A sender name's conversation key and participant address (§6.2). */
         const val NAME_PREFIX = "name:"
 
+        /** The conversation key of a sender without a usable address, let in unfiltered (QA L3). */
+        const val UNKNOWN_PREFIX = "unknown:"
+
         const val COUNT_RECEIVED = "received"
         const val COUNT_SENT = "sent"
         const val COUNT_HELD = "held"
@@ -550,6 +587,15 @@ class SmsEngine(
         const val REASON_RULE = "rule"
         const val REASON_OVER_CAP = "over_cap"
         const val STATE_BLOCKED = "blocked"
+        const val COUNT_SLOW_RECEIVES = "slow_receives"
+
+        /** QA L6: a received message's identity is kept a day. */
+        const val RECEIVED_KEEP_MS = 24 * 60 * 60 * 1000L
+
+        /** D7, QA L4: an MMS push kept is at most 2 KB, at most 100 of them, for at most 7 days. */
+        const val PUSH_MAX = 2048
+        const val PUSH_ROWS = 100
+        const val PUSH_KEEP_MS = 7 * 24 * 60 * 60 * 1000L
 
         /** §6.2 step 4: `SENDING` without a sent result this long is `UNCERTAIN`. */
         const val UNCERTAIN_AFTER_MS = 10 * 60 * 1000L

@@ -15,6 +15,42 @@ use crate::AppState;
 use crate::handlers::device_api::{Field, known_fields};
 use crate::security::{self, AuthedDevice, Detail, PhoneLine};
 
+/// The launcher's capability: it has the engine and reads `calls_mode`/`sms_mode` (design 77 §7).
+pub const SMS_ENGINE_CAPABILITY: &str = "sms_engine_v1";
+
+/// D2, R2-L7: whether a launcher without the engine does a channel pair exactly as asked from the derived old keys -
+/// calls managed or off with SMS off or not managed, or both not managed. Anything else it does stricter (SMS lost,
+/// calls contacts-only), so the Calls page offers it only once the phone reports [SMS_ENGINE_CAPABILITY] (code QA M2).
+pub fn older_launcher_expresses(calls_mode: &str, sms_mode: &str) -> bool {
+    matches!(
+        (calls_mode, sms_mode),
+        ("unmanaged", "unmanaged") | ("managed" | "off", "off" | "unmanaged")
+    )
+}
+
+/// What a launcher without the engine makes of a stored pair it can't express (`None`: none): whether SMS the parent
+/// wanted is lost (SMS "Styrt av Vibb" reads as SMS off) and whether calls the parent left alone are contacts-only
+/// (calls "Ikke styrt" with SMS restricted reads as managed calls).
+pub fn older_launcher_loses(calls_mode: &str, sms_mode: &str) -> Option<(bool, bool)> {
+    (!older_launcher_expresses(calls_mode, sms_mode))
+        .then(|| (sms_mode == "managed", calls_mode == "unmanaged"))
+}
+
+/// Whether the phone's newest status report claims the engine (no report: no).
+pub async fn has_engine(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    let latest: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT capabilities_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(latest
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .is_some_and(|caps| caps.iter().any(|c| c == SMS_ENGINE_CAPABILITY)))
+}
+
 /// D17: a sender name is at most 11 characters (an alphanumeric TP-OA holds 11 GSM-7 characters).
 pub const NAME_MAX: usize = 11;
 
@@ -198,8 +234,12 @@ pub fn sanitize_state(value: &serde_json::Value) -> Option<String> {
 pub const HELD_BODY_LIMIT: usize = 16 * 1024;
 /// At most this many rows a post.
 pub const HELD_ROWS_MAX: usize = 50;
-/// QA R2-M3: at most this many `device_sms_held` rows a phone (retention keeps 30 days of them).
+/// QA R2-M3: at most this many held rows (`held`/`released`/`expired`/`dropped`) a phone (retention keeps 30 days of
+/// them). Blocked rows have their own bound ([BLOCKED_ROWS_A_PHONE], code QA L5): a flood of blocked senders never
+/// takes the places of later held messages the parent must hear of.
 pub const HELD_ROWS_A_PHONE: i64 = 500;
+/// Code QA L5: at most this many `blocked` rows a phone; their counts are in `sms_state.blocked` anyway.
+pub const BLOCKED_ROWS_A_PHONE: i64 = 500;
 /// How long the held rows are kept after their `at` (retention).
 pub const HELD_KEEP_DAYS: i64 = 30;
 /// A row's `at` may be this far past the server's clock (the phone's clock is locked while managed).
@@ -324,11 +364,14 @@ async fn store(
     rows: &[HeldRow],
 ) -> Result<HeldAnswer, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let mut stored: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_sms_held WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&mut *tx)
-            .await?;
+    // Code QA L5: held and blocked rows are counted, and bounded, apart.
+    let (mut held_stored, mut blocked_stored): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(state != 'blocked'), 0), COALESCE(SUM(state = 'blocked'), 0) \
+         FROM device_sms_held WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_one(&mut *tx)
+    .await?;
     let mut answer = HeldAnswer {
         accepted: 0,
         capped: false,
@@ -343,7 +386,12 @@ async fn store(
         .fetch_optional(&mut *tx)
         .await?;
         match known {
-            None if stored >= HELD_ROWS_A_PHONE => answer.capped = true,
+            None if row.state == "blocked" && blocked_stored >= BLOCKED_ROWS_A_PHONE => {
+                answer.capped = true
+            }
+            None if row.state != "blocked" && held_stored >= HELD_ROWS_A_PHONE => {
+                answer.capped = true
+            }
             None => {
                 sqlx::query(
                     "INSERT INTO device_sms_held \
@@ -360,7 +408,11 @@ async fn store(
                 .bind(&row.state)
                 .execute(&mut *tx)
                 .await?;
-                stored += 1;
+                if row.state == "blocked" {
+                    blocked_stored += 1;
+                } else {
+                    held_stored += 1;
+                }
                 answer.accepted += 1;
             }
             Some(from) => {
@@ -423,6 +475,46 @@ mod tests {
             std::fs::read("testdata/sms_contract.json").unwrap(),
             std::fs::read("../launcher/app/src/test/resources/sms_contract.json").unwrap(),
             "server/testdata/sms_contract.json and the launcher's copy differ"
+        );
+    }
+
+    /// Code QA M2: a launcher without the engine does a pair exactly when the derived old keys say it - every
+    /// `modes` row of the contract: what the old keys read back as (D2's table) equals the pair asked.
+    #[test]
+    fn the_older_launcher_expresses_what_the_old_keys_say() {
+        assert_eq!(contract()["capability"], SMS_ENGINE_CAPABILITY);
+        for row in contract()["modes"].as_array().unwrap() {
+            let (calls, sms) = (
+                row["calls_mode"].as_str().unwrap(),
+                row["sms_mode"].as_str().unwrap(),
+            );
+            let (managed, calls_on, sms_on) = crate::models::derived_old_keys(calls, sms);
+            let read_back = match (managed, calls_on, sms_on) {
+                (false, _, _) => ("unmanaged", "unmanaged"),
+                (true, c, s) => (
+                    if c { "managed" } else { "off" },
+                    if s { "unmanaged" } else { "off" },
+                ),
+            };
+            assert_eq!(
+                older_launcher_expresses(calls, sms),
+                read_back == (calls, sms),
+                "{calls} {sms}"
+            );
+        }
+        assert_eq!(older_launcher_loses("managed", "off"), None);
+        assert_eq!(
+            older_launcher_loses("unmanaged", "managed"),
+            Some((true, true))
+        );
+        assert_eq!(
+            older_launcher_loses("managed", "managed"),
+            Some((true, false))
+        );
+        assert_eq!(older_launcher_loses("off", "managed"), Some((true, false)));
+        assert_eq!(
+            older_launcher_loses("unmanaged", "off"),
+            Some((false, true))
         );
     }
 

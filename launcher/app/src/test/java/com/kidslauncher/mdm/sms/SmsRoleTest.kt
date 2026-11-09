@@ -60,6 +60,46 @@ class SmsRoleTest {
     }
 
     @Test
+    fun `the other apps' SMS permissions are denied in managed and with the rules unknown (QA M1)`() {
+        assertTrue(smsPermissionsDenied(ChannelMode.MANAGED))
+        assertTrue("fail closed: D15 keeps the role and DISALLOW_SMS off", smsPermissionsDenied(null))
+        assertFalse(smsPermissionsDenied(ChannelMode.OFF))
+        assertFalse(smsPermissionsDenied(ChannelMode.UNMANAGED))
+    }
+
+    @Test
+    fun `leaving the denial gives a grant back that it took away (QA L8)`() {
+        val targets = mapOf("org.example.chat" to listOf("android.permission.RECEIVE_SMS", "android.permission.READ_SMS"))
+        val granted = setOf("org.example.chat|android.permission.RECEIVE_SMS")
+        val deny = smsPermissionPass(targets, { true }, { pkg, perm -> "$pkg|$perm" in granted }, emptySet())
+        assertEquals(listOf(2, 2), deny.writes.map { it.state })
+        assertEquals(granted, deny.record)
+        // A later pass while denied: the permission reads denied now, the record keeps it.
+        assertEquals(granted, smsPermissionPass(targets, { true }, { _, _ -> false }, deny.record).record)
+        val leave = smsPermissionPass(targets, { false }, { _, _ -> false }, deny.record)
+        assertEquals(
+            listOf("RECEIVE_SMS" to 1, "RECEIVE_SMS" to 0, "READ_SMS" to 0),
+            leave.writes.map { it.permission.removePrefix("android.permission.") to it.state },
+        )
+        assertTrue(leave.record.isEmpty())
+    }
+
+    @Test
+    fun `the reply's ids are in its data URI - nothing else is taken (QA L1)`() {
+        val data = replyData("01M6ZYVXG69C4WQMFSQGYB6AKN", "8c5d7b0e-2f4a-4b8e-9d1c-3a6f5e7d9b2c")
+        assertEquals("01M6ZYVXG69C4WQMFSQGYB6AKN" to "8c5d7b0e-2f4a-4b8e-9d1c-3a6f5e7d9b2c", replyIds(data))
+        for (bad in listOf(null, "", "vibb-sms://sent/a/b", "vibb-sms://reply/a", "vibb-sms://reply/a/b/c", "vibb-sms://reply/a/b?x=1", "vibb-sms://reply//b")) {
+            assertNull(bad, replyIds(bad))
+        }
+    }
+
+    @Test
+    fun `a receive over D7's budget is flagged (QA L7)`() {
+        assertFalse(overReceiveBudget(RECEIVE_BUDGET_MS))
+        assertTrue(overReceiveBudget(RECEIVE_BUDGET_MS + 1))
+    }
+
+    @Test
     fun `fifty holds ask for one sync a minute (QA R2-M4)`() {
         assertEquals(0L, heldSyncDelay(null, 1_000))
         var last: Long? = null

@@ -45,7 +45,8 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
             .await
         }
     };
-    save("managed", "managed").await;
+    // Pairs an older launcher can do (this phone hasn't reported the engine - code QA M2's gate).
+    save("managed", "unmanaged").await;
     assert!(roles_changed_at(&app, id).await.is_some());
 
     sql(
@@ -54,7 +55,7 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
         id,
     )
     .await;
-    save("managed", "managed").await;
+    save("managed", "unmanaged").await;
     assert_eq!(roles_changed_at(&app, id).await.as_deref(), Some("x"));
     save("managed", "off").await;
     assert_ne!(roles_changed_at(&app, id).await.as_deref(), Some("x"));
