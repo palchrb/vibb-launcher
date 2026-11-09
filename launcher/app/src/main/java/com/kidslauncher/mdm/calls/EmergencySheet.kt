@@ -24,10 +24,7 @@ object EmergencySheet {
         val view = inflater.inflate(R.layout.sheet_emergency, null)
         val dialog = Dialog(activity, R.style.KidSheetDialog)
         dialog.setContentView(view)
-        dialog.window?.apply {
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-        }
+        dialog.setUpKidSheet(view)
         val list = view.findViewById<LinearLayout>(R.id.emergency_rows)
         val defaultName = activity.getString(R.string.emergency_menu_default_name)
         for (row in rows) {

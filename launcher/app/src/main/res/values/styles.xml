@@ -399,10 +399,12 @@
         <item name="android:background">@color/kid_divider</item>
     </style>
 
-    <!-- The contact sheet: a dialog at the bottom, dimmed behind, slides up. -->
+    <!-- The contact sheet and the emergency sheet: a dialog at the bottom, dimmed behind, slides up. Not floating,
+         so its window runs behind the navigation bar (KidSheet.kt); a floating one left a black strip there. -->
     <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowIsTranslucent">true</item>
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:backgroundDimAmount">0.5</item>
         <item name="android:windowAnimationStyle">@style/KidSheetAnimation</item>

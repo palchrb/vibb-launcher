@@ -63,6 +63,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `KidPaletteTest` parses `sheet_contact.xml` and checks every text colour and glyph tint against its composited
   ground (`contrast` composites a translucent ink and refuses a translucent ground). Buttons, order, behaviour and
   `ContactSheet` unchanged.
+  **Edge to edge (2026-11-09):** `KidSheetDialog` is not floating (a floating dialog window stops above the navigation
+  bar, so the dim showed as a black strip under the sheet, gesture and 3-button alike); `calls/KidSheet.kt`
+  (`setUpKidSheet`, used by `ContactSheet` and `EmergencySheet`) lays the window out full width at the bottom and adds
+  the bar's inset to the sheet's XML bottom padding. Tap outside still closes it.
 
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
