@@ -1174,6 +1174,31 @@ pub fn build_admin_router(
             "/devices/{id}/calls/emergency",
             post(handlers::calls::add_emergency),
         )
+        // Design 77 step 4: the SMS settings, the sender names and the waiting messages' actions.
+        .route(
+            "/devices/{id}/calls/sms",
+            post(handlers::calls_sms::save_sms),
+        )
+        .route(
+            "/devices/{id}/calls/names",
+            post(handlers::calls_sms::add_name),
+        )
+        .route(
+            "/devices/{id}/calls/names/remove",
+            post(handlers::calls_sms::remove_name),
+        )
+        .route(
+            "/devices/{id}/calls/held/drop-all",
+            post(handlers::calls_sms::drop_all_held),
+        )
+        .route(
+            "/devices/{id}/calls/held/{held_id}/allow",
+            post(handlers::calls_sms::allow_held),
+        )
+        .route(
+            "/devices/{id}/calls/held/{held_id}/drop",
+            post(handlers::calls_sms::drop_held),
+        )
         .route(
             "/devices/{id}/calls/emergency/{entry}/move",
             post(handlers::calls::move_emergency),

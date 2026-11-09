@@ -704,6 +704,30 @@ pub async fn queue(
     kind: Kind,
     not_before: Option<DateTime<Utc>>,
 ) -> Result<(), sqlx::Error> {
+    queue_as(conn, "event", event_id, kind, not_before).await
+}
+
+/// A kind's push-budget digest (design 77 §7, `parent_events::budget_digest`): queued like an event's push, under
+/// the same switch, to every such subscription, held until `at`, as a `digest` delivery anchored on `event_id` - no
+/// inbox row of its own. [send_due] words it from the live count ([crate::parent_events::waiting_count]) and drops it
+/// when nothing waits any more.
+pub async fn queue_digest(
+    conn: &mut sqlx::SqliteConnection,
+    event_id: i64,
+    kind: Kind,
+    at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    queue_as(conn, "digest", event_id, kind, Some(at)).await
+}
+
+/// [queue] and [queue_digest]: the delivery's kind (compiled in, never input).
+async fn queue_as(
+    conn: &mut sqlx::SqliteConnection,
+    delivery: &'static str,
+    event_id: i64,
+    kind: Kind,
+    not_before: Option<DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
     // The column name is compiled in (`Kind::switch`), never input.
     // No row is the switch's default: on, but "App updates" off (migration 0099).
     let on = match kind.switch() {
@@ -715,12 +739,13 @@ pub async fn queue(
     };
     sqlx::query(&format!(
         "INSERT INTO push_deliveries (subscription_id, event_id, kind, token_hash, next_try_at) \
-         SELECT s.id, ?, 'event', X'', ? FROM push_subscriptions s \
+         SELECT s.id, ?, ?, X'', ? FROM push_subscriptions s \
          JOIN admin_users a ON a.id = s.admin_id \
          LEFT JOIN notification_prefs p ON p.admin_id = s.admin_id \
          WHERE s.state = 'active' AND a.removed_at IS NULL AND {CURRENT_EPOCH} AND {on}"
     ))
     .bind(event_id)
+    .bind(delivery)
     .bind(not_before.map(db_time))
     .execute(conn)
     .await?;
@@ -746,13 +771,15 @@ enum What {
     Event(Kind),
     Summary,
     Test,
+    /// A kind's push-budget digest (design 77 §7): no inbox row, worded from the live count when sent.
+    Digest(Kind),
 }
 
 impl What {
     /// Seconds the push service keeps it (§4.3).
     fn ttl(self) -> i64 {
         match self {
-            What::Event(kind) => kind.ttl(),
+            What::Event(kind) | What::Digest(kind) => kind.ttl(),
             What::Summary => 43_200,
             What::Test => 600,
         }
@@ -761,7 +788,7 @@ impl What {
     fn urgency(self) -> &'static str {
         match self {
             What::Event(kind) => kind.urgency(),
-            What::Summary => "normal",
+            What::Summary | What::Digest(_) => "normal",
             What::Test => "high",
         }
     }
@@ -814,6 +841,9 @@ struct DueRow {
     avatar_hash: Option<String>,
     /// The subscriber's `admin_users.lang` (migration 0104); NULL or unknown pushes in English.
     lang: Option<String>,
+    /// The event's phone and its name (a digest's words and count).
+    device_id: Option<i64>,
+    phone: Option<String>,
 }
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
@@ -841,7 +871,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
                 s.auth, s.origin, s.label, s.state, d.event_id, e.kind AS event_kind, e.title, \
                 e.summary, e.target, e.params, e.push_title, e.push_body, v.avatar_hash, \
-                a.lang \
+                a.lang, e.device_id, v.name AS phone \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          LEFT JOIN admin_users a ON a.id = s.admin_id \
          LEFT JOIN parent_events e ON e.id = d.event_id \
@@ -879,6 +909,8 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             push_body,
             avatar_hash,
             lang,
+            device_id,
+            phone,
         } = row;
         let lang = lang
             .as_deref()
@@ -887,6 +919,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
         let zone = setup_zone.in_lang(lang);
         let what = match (kind.as_str(), event_kind.as_deref().and_then(Kind::of)) {
             ("event", Some(kind)) => What::Event(kind),
+            ("digest", Some(kind)) => What::Digest(kind),
             ("summary", _) => What::Summary,
             ("test", _) => What::Test,
             // The event went with its phone or its age, or a row we don't know.
@@ -917,6 +950,25 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             What::Summary => {
                 let (title, body) = summary_words(lang);
                 (title, body, "/notifications".to_string())
+            }
+            What::Digest(kind) => {
+                // Code QA M2/L3: what still waits now, not what was counted; nothing waiting, no push.
+                let device_id = device_id.unwrap_or_default();
+                let waiting = crate::parent_events::waiting_count(&state.db, kind, device_id, now)
+                    .await?
+                    .unwrap_or(0);
+                if waiting == 0 {
+                    finish(state, id, "dropped", None, Some("nothing_waiting")).await?;
+                    continue;
+                }
+                let (title, body) = crate::parent_events::digest_words(
+                    kind,
+                    phone.as_deref().unwrap_or_default(),
+                    waiting,
+                    &zone,
+                    now,
+                );
+                (title, body, kind.digest_target(device_id))
             }
             What::Test => (
                 t(lang, "push.test.title").to_string(),
@@ -1130,6 +1182,7 @@ async fn send_one(
         What::Event(_) => format!("e{}", delivery.event_id.unwrap_or(0)),
         What::Summary => format!("s{}", delivery.id),
         What::Test => format!("t{}", delivery.id),
+        What::Digest(_) => format!("d{}", delivery.id),
     };
     let payload = payload_json(
         state.push.declarative,

@@ -114,6 +114,7 @@ fn switch_key(column: &str) -> &'static str {
         "push_phone_on" => "settings.notifications.switch.phone_on",
         "push_zones" => "settings.notifications.switch.zones",
         "push_extra_time" => "settings.notifications.switch.extra_time",
+        "push_sms_held" => "settings.notifications.switch.sms_held",
         crate::parent_events::APP_UPDATES_SWITCH => "settings.notifications.switch.app_updates",
         _ => "settings.notifications.switch.unknown",
     }
@@ -817,7 +818,8 @@ async fn delivery_lines(
                 ELSE d.status END, \
                 d.reason, d.receipt_at IS NOT NULL, s.label, d.clicked_at IS NOT NULL \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
-         WHERE d.event_id IN (SELECT value FROM json_each(?)) AND s.admin_id = ? ORDER BY d.id",
+         WHERE d.event_id IN (SELECT value FROM json_each(?)) AND s.admin_id = ? AND d.kind != 'digest' \
+         ORDER BY d.id",
     )
     .bind(serde_json::to_string(event_ids).unwrap_or_default())
     .bind(admin_id)

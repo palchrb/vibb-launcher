@@ -348,6 +348,17 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             },
             ago(118),
         ),
+        // Design 77: a stranger's message held for the parent.
+        parent_events::sms_held(
+            anna,
+            &phone.name,
+            "00112233445566778899aabbccddeeff",
+            ago(120),
+            ago(120) + Duration::hours(24),
+            "number",
+            "+4790000099",
+            parent_events::Push::Now,
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

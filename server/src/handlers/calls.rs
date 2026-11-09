@@ -40,6 +40,12 @@ const ROLES_PENDING_SECS: i64 = 5 * 60;
 /// The calls page reloads itself (`static/auto-reload.js`) for this long while it waits.
 const ROLES_REFRESH_SECS: i64 = 2 * 60;
 
+/// Design 77 §8.5's path 2 (code QA M1): Google's web form that deregisters a number from RCS chat features, for a
+/// phone whose Messages app is already hidden. It texts the number a code - that message is held, so the parent lets
+/// its sender in under "Meldinger som venter".
+const RCS_FORM_URL: &str = "https://messages.google.com/disable-chat";
+const RCS_FORM_LABEL: &str = "messages.google.com/disable-chat";
+
 /// The launcher's package as an adb command names it (behind an ⓘ only, never visible text).
 const LAUNCHER_FOR_ADB: &str = "me.vibb.launcher (a debug build: me.vibb.launcher.debug; a launcher from before 2026-10-06: \
      com.kidslauncher.mdm)";
@@ -48,8 +54,6 @@ struct SelectOption {
     value: String,
     label: String,
     selected: bool,
-    /// Shown but not choosable (design 77: a channel state this phone's launcher can't do yet).
-    disabled: bool,
 }
 
 fn message_app_options(
@@ -76,7 +80,6 @@ fn message_app_options(
             value: String::new(),
             label: t_params(lang, "device.calls.phone_default", &[("app", label)]),
             selected: current.is_none(),
-            disabled: false,
         });
     }
     for (value, label) in MESSAGE_APPS.iter().zip(MESSAGE_APP_LABELS) {
@@ -84,7 +87,6 @@ fn message_app_options(
             value: value.to_string(),
             label: label_of(label).to_string(),
             selected: current == Some(*value),
-            disabled: false,
         });
     }
     options
@@ -97,6 +99,12 @@ struct ContactView {
     inbound: bool,
     outbound: bool,
     show_on_home: bool,
+    /// Design 77 D3: the "Meldinger" group's switches, independent of the call ones.
+    sms_in: bool,
+    sms_out: bool,
+    mms: bool,
+    /// An emergency number: "Kan sende melding til" shows disabled, with why (QA R2-H1).
+    texts_in_refused: bool,
     message_options: Vec<SelectOption>,
     message_address: String,
     /// SHA-256 of the contact's photo (shown via `/contact-photos/{hash}`).
@@ -107,6 +115,8 @@ struct ContactView {
     initial: String,
     /// The row's value: "Both ways · Home".
     summary: String,
+    /// Under it, which way texts go: "Texts both ways" (design 77 D3).
+    texts: Option<&'static str>,
     /// The row's form is open (`?open=`, or a refusal in it).
     open: bool,
     /// A refusal under a field: `message_address` or `photo`, and why.
@@ -124,8 +134,15 @@ fn initial_of(name: &str) -> String {
 
 /// A contact row's value: which way calls go, and the home-screen button - only for a contact in
 /// the phone book, as the launcher shows it (`CallRules.kt`: `outbound && showOnHome`;
-/// qa-31-s8-code L2). The switch keeps its value for when the contact goes back in the book.
-fn contact_summary(lang: Lang, inbound: bool, outbound: bool, home: bool) -> String {
+/// qa-31-s8-code L2). The switch keeps its value for when the contact goes back in the book. Design 77 D3: then
+/// which way texts go (`texts`: in as the phone gets it - never for an emergency number -, out), when either does.
+fn contact_summary(
+    lang: Lang,
+    inbound: bool,
+    outbound: bool,
+    home: bool,
+    texts: (bool, bool),
+) -> String {
     let calls = t(
         lang,
         match (inbound, outbound) {
@@ -135,11 +152,28 @@ fn contact_summary(lang: Lang, inbound: bool, outbound: bool, home: bool) -> Str
             (false, false) => "device.calls.no_calls",
         },
     );
-    if home && outbound {
+    let mut summary = if home && outbound {
         format!("{calls} · {}", t(lang, "device.calls.home"))
     } else {
         calls.to_string()
+    };
+    if let Some(texts) = texts_line(lang, texts) {
+        summary.push_str(" · ");
+        summary.push_str(texts);
     }
+    summary
+}
+
+/// Design 77 D3: which way a contact's texts go (`texts`: in, out), `None` when neither. The row shows it on a line
+/// of its own under the call summary, so a long summary never squeezes the name.
+fn texts_line(lang: Lang, texts: (bool, bool)) -> Option<&'static str> {
+    let key = match texts {
+        (true, true) => "device.calls.texts_both_ways",
+        (true, false) => "device.calls.texts_in",
+        (false, true) => "device.calls.texts_out",
+        (false, false) => return None,
+    };
+    Some(t(lang, key))
 }
 
 #[derive(Template)]
@@ -166,6 +200,21 @@ struct DeviceCallsTemplate {
     add_name: String,
     add_number: String,
     add_error: Option<(&'static str, String)>,
+    /// Add Contact's switches (design 77 R2-M1): `inbound`, `outbound`, `show_on_home`, `sms_in`, `sms_out`, `mms` -
+    /// all on for a new contact, only `sms_in` for "Opprett kontakt…" from a held message.
+    add_switches: [bool; 6],
+    /// Design 77 step 4: "Meldinger som venter", the blocked list, the names, the SMS settings.
+    sms: crate::handlers::calls_sms::SmsPage,
+    /// The waiting card's line (`?notice=`).
+    held_notice: Option<&'static str>,
+    /// The names list is full (D17: 50): Add Name is not offered.
+    names_full: bool,
+    /// Add Name is open (a refusal), with what was typed and why.
+    name_add_open: bool,
+    name_add_value: String,
+    name_add_error: Option<&'static str>,
+    /// A refused SMS settings save: the field and why (the form shows what was sent).
+    sms_error: Option<(&'static str, String)>,
     /// The family's contacts not on this phone (`id`, "name · number"), for "Add from the family".
     family: Vec<(i64, String)>,
     /// Design 73: the emergency menu's rows, in order.
@@ -183,23 +232,89 @@ struct DeviceCallsTemplate {
     emergency_add_error: Option<(&'static str, String)>,
     /// A refused channel choice (code QA M2), shown under the two rows.
     settings_error: Option<&'static str>,
+    /// Design 77 §8.5's path 2: Google's form that turns a number's chat features off, the RCS line's ⓘ link.
+    rcs_form_url: &'static str,
+    rcs_form_label: &'static str,
 }
 crate::i18n::words!(DeviceCallsTemplate);
 
-/// One channel's row (design 77 D2): its form name (`calls_mode`/`sms_mode`), label, choices and the chosen state's
-/// sub-line.
+impl DeviceCallsTemplate {
+    /// Add Contact's switches (design 77 R2-M1), in [ADD_SWITCHES]' order: the form name, the label, on.
+    fn add_switch_rows(&self) -> Vec<(&'static str, String, bool)> {
+        let kid = [("name", self.device.name.as_str())];
+        let labels = [
+            t_params(self.lang, "device.calls.can_call", &kid),
+            t(self.lang, "device.calls.phone_book").to_string(),
+            t(self.lang, "device.calls.on_home").to_string(),
+            t_params(self.lang, "device.sms.texts_in", &kid),
+            t_params(self.lang, "device.sms.texts_out", &kid),
+            t(self.lang, "device.sms.pictures").to_string(),
+        ];
+        ADD_SWITCHES
+            .into_iter()
+            .zip(labels)
+            .zip(self.add_switches)
+            .map(|((name, label), on)| (name, label, on))
+            .collect()
+    }
+
+    /// Design 77 D12: the own-number fields, SIM 1 and 2 - the form name, the label, the value and a refusal's why.
+    fn own_fields(&self) -> Vec<(&'static str, String, String, Option<String>)> {
+        ["own_number_1", "own_number_2"]
+            .into_iter()
+            .zip(self.sms.own.iter())
+            .enumerate()
+            .map(|(i, (field, value))| {
+                (
+                    field,
+                    t_params(
+                        self.lang,
+                        "device.sms.settings.own_number",
+                        &[("slot", &(i + 1).to_string())],
+                    ),
+                    value.clone(),
+                    self.sms_error
+                        .as_ref()
+                        .filter(|(bad, _)| *bad == field)
+                        .map(|(_, why)| why.clone()),
+                )
+            })
+            .collect()
+    }
+}
+
+/// One channel's row (design 77 D2): its form name (`calls_mode`/`sms_mode`), label, the segmented control's three
+/// choices and the chosen state's sub-line.
 struct ChannelRow {
     name: &'static str,
     label: &'static str,
-    options: Vec<SelectOption>,
+    options: Vec<Segment>,
     sub: &'static str,
+    /// SMS's RCS step (§8.5): "Før du velger Styrt av Vibb: slå av chatfunksjoner i Meldinger" before it is chosen,
+    /// "Slå av chatfunksjoner i Meldinger først" under it; with an ⓘ that links Google's form.
+    extra: Option<&'static str>,
+    /// "<choice> - Oppdater Vibb One først", one line per choice the phone can't do yet (code QA M2).
+    update_first: Vec<String>,
+}
+
+/// One choice of a segmented control (design 77 D2, the look of the phone switcher's segments): a radio, its short
+/// label and a quiet note under it ("anbefalt").
+struct Segment {
+    value: &'static str,
+    label: &'static str,
+    note: Option<&'static str>,
+    selected: bool,
+    /// Shown but not choosable: a channel state this phone's launcher can't do yet.
+    disabled: bool,
 }
 
 /// D2's three choices and the sub-line of `mode` for the calls channel (`sms` false) or SMS; `other` is the other
-/// channel's state. `engine`: the phone reports `sms_engine_v1` - SMS's "Styrt av Vibb" then reads "(anbefalt)".
-/// Without it (code QA M2, step 4's gate brought forward) a choice that would make the pair one an older launcher
-/// can't do ([sms::older_launcher_expresses]) shows disabled with "Oppdater Vibb One først" - never the stored one.
+/// channel's state. `engine`: the phone reports `sms_engine_v1` - SMS's "Styrt av Vibb" then says "anbefalt".
+/// Without it (code QA M2, the capability gate) a choice that would make the pair one an older launcher can't do
+/// ([sms::older_launcher_expresses]) shows disabled, with "<choice> - Oppdater Vibb One først" under the row - never
+/// the stored one.
 fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> ChannelRow {
+    let mut update_first = Vec::new();
     let options = CHANNEL_MODES
         .iter()
         .map(|value| {
@@ -212,22 +327,21 @@ fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> 
                 *value != mode && !engine && !sms::older_launcher_expresses(calls_mode, sms_mode);
             let key = match *value {
                 "off" => "device.calls.mode.off",
-                "managed" if sms && engine => "device.calls.mode.managed_recommended",
                 "managed" => "device.calls.mode.managed",
                 _ => "device.calls.mode.unmanaged",
             };
-            let label = if disabled {
-                t_params(
+            if disabled {
+                update_first.push(t_params(
                     lang,
                     "device.calls.mode.update_first",
                     &[("mode", t(lang, key))],
-                )
-            } else {
-                t(lang, key).to_string()
-            };
-            SelectOption {
-                value: value.to_string(),
-                label,
+                ));
+            }
+            Segment {
+                value,
+                label: t(lang, key),
+                note: (sms && engine && *value == "managed")
+                    .then(|| t(lang, "device.calls.mode.recommended")),
                 selected: *value == mode,
                 disabled,
             }
@@ -270,6 +384,15 @@ fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> 
         label: t(lang, label),
         options,
         sub: t(lang, sub),
+        // §8.5 (code QA M1): "først" - the step is shown before the switch, while Messages is still visible (SMS
+        // "Ikke styrt" or "Av" on a phone that can take "Styrt av Vibb"), and stays under it.
+        extra: match (sms, mode) {
+            (false, _) => None,
+            (true, "managed") => Some(t(lang, "device.calls.channel.sms_rcs")),
+            (true, _) if engine => Some(t(lang, "device.calls.channel.sms_rcs_before")),
+            (true, _) => None,
+        },
+        update_first,
     }
 }
 
@@ -343,21 +466,32 @@ fn emergency_rows(
 
 /// What a request shows besides the stored state: an open contact, a notice, a refusal.
 #[derive(Default)]
-struct Shown<'a> {
+pub(super) struct Shown<'a> {
     /// `?open=<contact id>`: that contact's form is open.
-    open: Option<i64>,
+    pub(super) open: Option<i64>,
     /// `?notice=` for the Contacts group.
-    notice: Option<&'static str>,
+    pub(super) notice: Option<&'static str>,
     /// A refused Add Contact: the name and number typed, the field and why.
-    add: Option<(&'a str, &'a str, &'static str, String)>,
+    pub(super) add: Option<(&'a str, &'a str, &'static str, String)>,
+    /// What a refused Add Contact sent (its switches are shown again), when it had them.
+    pub(super) add_sent: Option<&'a HashMap<String, String>>,
+    /// Design 77 "Opprett kontakt…" (`?add_number=`): Add Contact open with the held number, only "Kan sende
+    /// melding til" on (R2-M1).
+    pub(super) add_held: Option<&'a str>,
+    /// `?notice=` for "Meldinger som venter".
+    pub(super) held_notice: Option<&'static str>,
+    /// A refused SMS settings save.
+    pub(super) sms: Option<crate::handlers::calls_sms::SmsRefusal<'a>>,
+    /// A refused Add Name: what was typed and why.
+    pub(super) name_add: Option<(&'a str, &'static str)>,
     /// A refused contact save or photo.
-    contact: Option<ContactRefusal<'a>>,
+    pub(super) contact: Option<ContactRefusal<'a>>,
     /// `?notice=` for the emergency menu.
-    emergency_notice: Option<&'static str>,
+    pub(super) emergency_notice: Option<&'static str>,
     /// A refused Add Number: the number and name typed, the field and why.
-    emergency_add: Option<(&'a str, &'a str, &'static str, String)>,
+    pub(super) emergency_add: Option<(&'a str, &'a str, &'static str, String)>,
     /// A refused channel choice (design 77, code QA M2): why, under the two rows.
-    settings_error: Option<&'static str>,
+    pub(super) settings_error: Option<&'static str>,
 }
 
 /// `?notice=` codes for the emergency menu.
@@ -371,7 +505,7 @@ fn emergency_notice(lang: Lang, code: &str) -> Option<&'static str> {
 
 /// A refused contact save or photo: the contact, the field and why, and the form it sent (`None`
 /// for a photo), whose values the row shows again.
-struct ContactRefusal<'a> {
+pub(super) struct ContactRefusal<'a> {
     id: i64,
     field: &'static str,
     why: String,
@@ -400,13 +534,22 @@ pub async fn show_calls(
         emergency_notice: query
             .get("notice")
             .and_then(|code| emergency_notice(lang, code)),
+        held_notice: query
+            .get("notice")
+            .and_then(|code| crate::handlers::calls_sms::notice(lang, code)),
+        // Design 77 "Opprett kontakt…": a held number, prefilled (the form's escaping and the link's encoding
+        // carry it; the save normalises and checks it as any typed number).
+        add_held: query
+            .get("add_number")
+            .map(|n| n.trim())
+            .filter(|n| !n.is_empty() && n.chars().count() <= 32),
         ..Default::default()
     };
     render(&state, id, StatusCode::OK, shown, lang).await
 }
 
 /// The page; a read that fails is a 500, never an empty list (its saves would read as "off").
-async fn render(
+pub(super) async fn render(
     state: &AppState,
     id: i64,
     status: StatusCode,
@@ -480,15 +623,30 @@ async fn load_page(
         .await?
         .into_iter()
         .map(|c| {
+            let texts_in_refused = crate::handlers::calls_sms::texts_in_refused(
+                &c.phone_number,
+                &default_country_code,
+            );
             let mut view = ContactView {
                 initial: initial_of(&c.name),
                 id: c.contact_id,
-                summary: contact_summary(lang, c.allow_inbound, c.allow_outbound, c.show_on_home),
+                summary: contact_summary(
+                    lang,
+                    c.allow_inbound,
+                    c.allow_outbound,
+                    c.show_on_home,
+                    (false, false),
+                ),
+                texts: texts_line(lang, (c.sms_in && !texts_in_refused, c.sms_out)),
                 name: c.name,
                 number: c.phone_number,
                 inbound: c.allow_inbound,
                 outbound: c.allow_outbound,
                 show_on_home: c.show_on_home,
+                sms_in: c.sms_in && !texts_in_refused,
+                sms_out: c.sms_out,
+                mms: c.mms,
+                texts_in_refused,
                 message_options: message_app_options(
                     lang,
                     c.message_app.as_deref(),
@@ -510,6 +668,9 @@ async fn load_page(
                     view.inbound = sent.contains_key("inbound");
                     view.outbound = sent.contains_key("outbound");
                     view.show_on_home = sent.contains_key("show_on_home");
+                    view.sms_in = sent.contains_key("sms_in") && !view.texts_in_refused;
+                    view.sms_out = sent.contains_key("sms_out");
+                    view.mms = sent.contains_key("mms");
                     let app = sent.get("message_app").map(String::as_str);
                     view.message_options = message_app_options(
                         lang,
@@ -547,22 +708,56 @@ async fn load_page(
     if report.screening_hint {
         notes.push(screening_note(lang));
     }
-    let (add_open, add_name, add_number, add_error) = match shown.add {
-        Some((name, number, field, why)) => (
+    let (add_open, add_name, add_number, add_error) = match (shown.add, shown.add_held) {
+        (Some((name, number, field, why)), _) => (
             true,
             name.to_string(),
             number.to_string(),
             Some((field, why)),
         ),
-        None => (false, String::new(), String::new(), None),
+        (None, Some(number)) => (true, String::new(), number.to_string(), None),
+        (None, None) => (false, String::new(), String::new(), None),
     };
+    // R2-M1: a new contact gets every switch on, an allow from a held message "Kan sende melding til" alone; a
+    // refusal shows what was sent.
+    let add_switches = match (shown.add_sent, shown.add_held) {
+        (Some(sent), _) => ADD_SWITCHES.map(|name| sent.contains_key(name)),
+        (None, Some(_)) => HELD_ADD_SWITCHES,
+        (None, None) => [true; 6],
+    };
+    let sms_page =
+        crate::handlers::calls_sms::load(&state.db, id, &zone, now, &default_country_code).await?;
+    let mut sms_page = sms_page;
+    if let Some(refusal) = &shown.sms {
+        // What the refused form sent, so nothing typed is lost.
+        sms_page.lock_text = refusal.sent.contains_key("sms_lock_text");
+        for (slot, field) in ["own_number_1", "own_number_2"].iter().enumerate() {
+            sms_page.own[slot] = refusal
+                .sent
+                .get(*field)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+        }
+    }
+    let names_full = sms_page.names.len() as i64 >= crate::handlers::calls_sms::NAMES_MAX;
+    let (name_add_open, name_add_value, name_add_error) = match shown.name_add {
+        Some((typed, why)) => (true, typed.to_string(), Some(why)),
+        None => (false, String::new(), None),
+    };
+    let sms_error = shown
+        .sms
+        .as_ref()
+        .map(|refusal| (refusal.field, refusal.why.clone()));
     // Never on a refusal's page (the answer to a POST): a reload would send it again, or lose
     // what was typed (qa-09-code #9).
     let auto_refresh = report.auto_refresh
         && add_error.is_none()
         && refused.is_none()
         && emergency_add_error.is_none()
-        && shown.settings_error.is_none();
+        && shown.settings_error.is_none()
+        && sms_error.is_none()
+        && name_add_error.is_none()
+        && shown.add_held.is_none();
 
     let phone_book: Vec<String> = contacts
         .iter()
@@ -583,6 +778,8 @@ async fn load_page(
             channel_row(lang, true, &policy.sms_mode, &policy.calls_mode, engine),
         ],
         settings_error: shown.settings_error,
+        rcs_form_url: RCS_FORM_URL,
+        rcs_form_label: RCS_FORM_LABEL,
         default_message_options: message_app_options(lang, Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
@@ -594,6 +791,14 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
+        add_switches,
+        sms: sms_page,
+        held_notice: shown.held_notice,
+        names_full,
+        name_add_open,
+        name_add_value,
+        name_add_error,
+        sms_error,
         family,
         emergency: emergency_view,
         emergency_can_add: menu.len() < emergency::MAX_ENTRIES,
@@ -707,6 +912,29 @@ pub(crate) enum Finding {
         sms_lost: bool,
         calls_contacts_only: bool,
     },
+    /// Design 77 §7: SMS is "Styrt av Vibb" but Vibb One isn't the SMS app - messages are lost.
+    SmsNotOurs,
+    /// A hold pool is full (R2-M4): new unknown senders aren't held until `until` (`None`: the server has no held row
+    /// of the pool, so it can't say).
+    SmsHoldFull {
+        until: Option<DateTime<Utc>>,
+    },
+    /// Messages the phone couldn't show (a parse failure), counted since its install.
+    SmsParseFailures {
+        count: i64,
+    },
+    /// This SIM's MMS server isn't on the list (D10): pictures aren't fetched.
+    MmsUnchecked,
+    /// Pictures in messages need mobile data (D14).
+    MmsNoData,
+    /// The SIM in `slot` knows another own number (`sim`) than the parent typed (D12).
+    OwnNumberMismatch {
+        slot: i64,
+        sim: String,
+    },
+    /// SMS "Ikke styrt" and Vibb One still holds the role (code QA L3): it shows every message unfiltered until it
+    /// hands it back.
+    SmsRoleKept,
 }
 
 /// "10:58 · 3 min ago": a report's time with its age (one of them when they read the same).
@@ -739,6 +967,13 @@ impl Finding {
             Finding::Reported { .. } => CallProblem::Reported,
             Finding::SmsAppAllowed { .. } => CallProblem::SmsAppAllowed,
             Finding::NeedsUpdate { .. } => CallProblem::NeedsUpdate,
+            Finding::SmsNotOurs => CallProblem::SmsNotOurs,
+            Finding::SmsHoldFull { .. } => CallProblem::SmsHoldFull,
+            Finding::SmsParseFailures { .. } => CallProblem::SmsParseFailures,
+            Finding::MmsUnchecked => CallProblem::MmsUnchecked,
+            Finding::MmsNoData => CallProblem::MmsNoData,
+            Finding::OwnNumberMismatch { .. } => CallProblem::OwnNumberMismatch,
+            Finding::SmsRoleKept => CallProblem::SmsRoleKept,
         }
     }
 
@@ -865,6 +1100,33 @@ impl Finding {
                 }),
                 None,
             ),
+            Finding::SmsNotOurs => (say("device.calls.finding.sms_not_ours"), None),
+            Finding::SmsHoldFull { until: Some(until) } => (
+                t_params(
+                    lang,
+                    "device.calls.finding.hold_full_until",
+                    &[("until", &zone.until(*until, now))],
+                ),
+                None,
+            ),
+            Finding::SmsHoldFull { until: None } => {
+                (say("device.calls.finding.hold_full_day"), None)
+            }
+            Finding::SmsParseFailures { count } => (
+                crate::i18n::t_count(lang, "device.calls.finding.parse_failures", *count, &[]),
+                None,
+            ),
+            Finding::MmsUnchecked => (say("device.calls.finding.mms_unchecked"), None),
+            Finding::MmsNoData => (say("device.calls.finding.mms_no_data"), None),
+            Finding::OwnNumberMismatch { slot, sim } => (
+                t_params(
+                    lang,
+                    "device.calls.finding.own_number",
+                    &[("slot", &slot.to_string()), ("number", sim)],
+                ),
+                None,
+            ),
+            Finding::SmsRoleKept => (say("device.calls.finding.sms_role_kept"), None),
         };
         Note {
             warning: self.problem().needs_attention(),
@@ -926,14 +1188,16 @@ pub(crate) async fn call_report(
         auto_refresh: false,
         emergency_left_attention: false,
     };
-    let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT capabilities_json, call_state_json, reported_at FROM device_status \
+    // The capabilities, `call_state`, the report's time and `sms_state` (design 77).
+    type Latest = (Option<String>, Option<String>, String, Option<String>);
+    let latest: Option<Latest> = sqlx::query_as(
+        "SELECT capabilities_json, call_state_json, reported_at, sms_state_json FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(policy.device_id)
     .fetch_optional(&state.db)
     .await?;
-    let Some((capabilities_json, call_state_json, reported_at)) = latest else {
+    let Some((capabilities_json, call_state_json, reported_at, sms_state_json)) = latest else {
         return Ok(report);
     };
     let capabilities: Vec<String> = capabilities_json
@@ -1030,6 +1294,21 @@ pub(crate) async fn call_report(
             calls_contacts_only,
         });
     }
+    // Design 77 §7: what the engine's `sms_state` says, from a launcher with the engine.
+    if capabilities.iter().any(|c| c == sms::SMS_ENGINE_CAPABILITY)
+        && let Some(sms_state) = sms_state_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+    {
+        sms_findings(
+            state,
+            policy,
+            &sms_state,
+            roles == RoleReport::Pending,
+            findings,
+        )
+        .await?;
+    }
     // Design 77 D2: the role, screening and call-log findings are the calls channel's (a launcher with the engine
     // reports `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
     if !policy.calls_managed() {
@@ -1097,6 +1376,96 @@ pub(crate) async fn call_report(
     Ok(report)
 }
 
+/// Design 77 §7's findings from the phone's `sms_state` (`sms::sanitize_state`'s known keys): while SMS is "Styrt av
+/// Vibb" - the SMS role isn't ours (messages are lost; not while a change is pending, design 09 B1), a hold pool is
+/// full (until the earliest held row of it ends, R2-M4), messages that couldn't be shown, MMS that can't be checked
+/// on this SIM or fetched without mobile data, a SIM's own number that differs from the parent's (D12); while SMS is
+/// "Ikke styrt" - Vibb One still holds the role (code QA L3: it hands it back at its next apply).
+async fn sms_findings(
+    state: &AppState,
+    policy: &DevicePolicy,
+    sms_state: &serde_json::Value,
+    pending: bool,
+    findings: &mut Vec<Finding>,
+) -> Result<(), sqlx::Error> {
+    let flag = |key: &str| sms_state.get(key).and_then(serde_json::Value::as_bool);
+    let role_held = flag("role_held");
+    match policy.sms_mode.as_str() {
+        "managed" => {}
+        "unmanaged" => {
+            if !pending && role_held == Some(true) {
+                findings.push(Finding::SmsRoleKept);
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    }
+    if !pending && role_held == Some(false) {
+        findings.push(Finding::SmsNotOurs);
+    }
+    let full = |pool: &str| {
+        sms_state
+            .get("hold_full")
+            .and_then(|full| full.get(pool))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    };
+    let (numbers, names) = (full("numbers"), full("names"));
+    if numbers || names {
+        let until = crate::handlers::calls_sms::hold_full_until(
+            &state.db,
+            policy.device_id,
+            numbers,
+            names,
+            Utc::now(),
+        )
+        .await?;
+        findings.push(Finding::SmsHoldFull { until });
+    }
+    if let Some(count) = sms_state
+        .get("parse_failures")
+        .and_then(serde_json::Value::as_i64)
+        .filter(|n| *n > 0)
+    {
+        findings.push(Finding::SmsParseFailures { count });
+    }
+    if flag("mmsc_known") == Some(false) {
+        findings.push(Finding::MmsUnchecked);
+    }
+    if flag("mms_data_allowed") == Some(false) {
+        findings.push(Finding::MmsNoData);
+    }
+    let stored: Vec<sms::OwnNumber> = sqlx::query_as(
+        "SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot",
+    )
+    .bind(policy.device_id)
+    .fetch_all(&state.db)
+    .await?;
+    for reported in sms_state
+        .get("own_numbers")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(slot), Some(number)) = (
+            reported.get("slot").and_then(serde_json::Value::as_i64),
+            reported.get("number").and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        if stored
+            .iter()
+            .any(|own| own.slot == slot && own.number != number)
+        {
+            findings.push(Finding::OwnNumberMismatch {
+                slot,
+                sim: number.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// What a [Finding] is about (design 31 M5): the Attention row's short title comes from
 /// this, never from the warning's first sentence (package names, 40 words).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1135,6 +1504,20 @@ pub enum CallProblem {
     SmsAppAllowed,
     /// Design 77: the channels as set need a launcher update (SMS lost, calls contacts-only until then).
     NeedsUpdate,
+    /// Design 77 §7: SMS managed but Vibb One isn't the SMS app - messages are lost.
+    SmsNotOurs,
+    /// The waiting list is full (R2-M4).
+    SmsHoldFull,
+    /// Messages couldn't be shown (not an Attention row: a count since the install).
+    SmsParseFailures,
+    /// MMS can't be checked on this SIM (not an Attention row: a server release fixes it, D10).
+    MmsUnchecked,
+    /// Pictures need mobile data (not an Attention row: the phone's own data setting, D14).
+    MmsNoData,
+    /// A SIM's number differs from the one typed (D12).
+    OwnNumberMismatch,
+    /// SMS not managed but Vibb One still the SMS app (not an Attention row: it hands the role back itself).
+    SmsRoleKept,
 }
 
 impl CallProblem {
@@ -1160,18 +1543,33 @@ impl CallProblem {
                 CallProblem::Reported => "device.calls.problem.reported",
                 CallProblem::SmsAppAllowed => "device.calls.problem.sms_app_allowed",
                 CallProblem::NeedsUpdate => "device.calls.problem.needs_update",
+                CallProblem::SmsNotOurs => "device.calls.problem.sms_not_ours",
+                CallProblem::SmsHoldFull => "device.calls.problem.hold_full",
+                CallProblem::SmsParseFailures => "device.calls.problem.parse_failures",
+                CallProblem::MmsUnchecked => "device.calls.problem.mms_unchecked",
+                CallProblem::MmsNoData => "device.calls.problem.mms_no_data",
+                CallProblem::OwnNumberMismatch => "device.calls.problem.own_number",
+                CallProblem::SmsRoleKept => "device.calls.problem.sms_role_kept",
             },
         )
     }
 
-    /// Something to look at (everything but `Waiting`).
+    /// Something to look at (everything but `Waiting`, and design 77's states a row on the page tells enough of:
+    /// the parse failures' count, the MMS server list, mobile data, the role a phone hands back itself).
     pub fn needs_attention(self) -> bool {
-        self != CallProblem::Waiting
+        !matches!(
+            self,
+            CallProblem::Waiting
+                | CallProblem::SmsParseFailures
+                | CallProblem::MmsUnchecked
+                | CallProblem::MmsNoData
+                | CallProblem::SmsRoleKept
+        )
     }
 
     /// Every kind, for the tests.
     #[cfg(test)]
-    pub(crate) const ALL: [CallProblem; 17] = [
+    pub(crate) const ALL: [CallProblem; 24] = [
         CallProblem::EmergencyCall,
         CallProblem::CallbackWindow,
         CallProblem::CallScreenFailed,
@@ -1189,6 +1587,13 @@ impl CallProblem {
         CallProblem::Reported,
         CallProblem::SmsAppAllowed,
         CallProblem::NeedsUpdate,
+        CallProblem::SmsNotOurs,
+        CallProblem::SmsHoldFull,
+        CallProblem::SmsParseFailures,
+        CallProblem::MmsUnchecked,
+        CallProblem::MmsNoData,
+        CallProblem::OwnNumberMismatch,
+        CallProblem::SmsRoleKept,
     ];
 }
 
@@ -1201,7 +1606,7 @@ pub(crate) fn parse_time(value: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-fn db_error(lang: Lang, device_id: i64, err: sqlx::Error) -> Response {
+pub(super) fn db_error(lang: Lang, device_id: i64, err: sqlx::Error) -> Response {
     tracing::error!(device_id, %err, "calls page database error");
     crate::i18n::error(
         lang,
@@ -1210,12 +1615,12 @@ fn db_error(lang: Lang, device_id: i64, err: sqlx::Error) -> Response {
     )
 }
 
-fn not_found(lang: Lang) -> Response {
+pub(super) fn not_found(lang: Lang) -> Response {
     crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
 }
 
 /// Nudges the phone and returns to `to` (a path on its calls page).
-fn saved(state: &AppState, id: i64, to: String) -> Response {
+pub(super) fn saved(state: &AppState, id: i64, to: String) -> Response {
     // No receivers just means no phone is connected right now; it syncs on its next poll.
     let _ = state.command_notify.send(id);
     Redirect::to(&to).into_response()
@@ -1345,10 +1750,24 @@ pub async fn save_settings(
     }
 }
 
+/// Add Contact's switches, in the form's order (design 77 R2-M1).
+const ADD_SWITCHES: [&str; 6] = [
+    "inbound",
+    "outbound",
+    "show_on_home",
+    "sms_in",
+    "sms_out",
+    "mms",
+];
+/// "Opprett kontakt…" from a held message (D16, R2-M1): an allow grants exactly one thing, this sender's texts.
+const HELD_ADD_SWITCHES: [bool; 6] = [false, false, false, true, false, false];
+
 /// Adds a contact to this device: normalises the number with the default country code, reuses
 /// the global contact with that number (renaming it - the name is shared by every device that
-/// has it) and attaches it at the end of the list with every flag on. Back to its row; a refusal
-/// renders the page (400) with Add Contact open, what was typed and the reason under its field.
+/// has it) and attaches it at the end of the list. Its switches are the form's (design 77 R2-M1: the form says
+/// `switches`, and a missing one is off - "Opprett kontakt…" sends "Kan sende melding til" alone); a post without
+/// them gets every flag on, as before. "Kan sende melding til" is never stored for an emergency number (R2-H1). Back
+/// to its row; a refusal renders the page (400) with Add Contact open, what was typed and the reason under its field.
 pub async fn add_contact(
     State(state): State<AppState>,
     lang: Lang,
@@ -1360,10 +1779,18 @@ pub async fn add_contact(
     }
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
+    let with_switches = form.contains_key("switches");
+    let switches = if with_switches {
+        ADD_SWITCHES.map(|switch| form.contains_key(switch))
+    } else {
+        [true; 6]
+    };
     let state = &state;
+    let form = &form;
     let refuse = |field: &'static str, why: String| async move {
         let shown = Shown {
             add: Some((name, raw_number, field, why)),
+            add_sent: with_switches.then_some(form),
             ..Default::default()
         };
         render(state, id, StatusCode::BAD_REQUEST, shown, lang).await
@@ -1414,14 +1841,22 @@ pub async fn add_contact(
         .bind(&number)
         .fetch_one(&mut *tx)
         .await?;
+        let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
         sqlx::query(
-            "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order) \
+            "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
+             allow_outbound, show_on_home, sms_in, sms_out, mms) \
              VALUES (?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
-                            WHERE device_id = ?))",
+                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(contact_id)
         .bind(id)
+        .bind(inbound)
+        .bind(outbound)
+        .bind(home)
+        .bind(sms_in && !emergency::is_emergency(&number, &cc))
+        .bind(sms_out)
+        .bind(mms)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -1579,13 +2014,28 @@ pub async fn update_contact(
 
     let result = async {
         let mut tx = state.db.begin().await?;
+        // Design 77 D3: the "Meldinger" group's three switches with the call ones; "Kan sende melding til" is never
+        // stored for an emergency number (R2-H1: its switch is disabled, and the policy never sends it).
+        let number: Option<(String, String)> = sqlx::query_as(
+            "SELECT c.phone_number, s.default_country_code FROM contacts c, call_settings s \
+             WHERE c.id = ? AND s.id = 1",
+        )
+        .bind(contact_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let emergency_number =
+            number.is_some_and(|(number, cc)| emergency::is_emergency(&number, &cc));
         let updated = sqlx::query(
             "UPDATE device_contacts SET allow_inbound = ?, allow_outbound = ?, show_on_home = ?, \
+             sms_in = ?, sms_out = ?, mms = ?, \
              message_app = ?, message_address = ? WHERE device_id = ? AND contact_id = ?",
         )
         .bind(form.contains_key("inbound"))
         .bind(form.contains_key("outbound"))
         .bind(form.contains_key("show_on_home"))
+        .bind(form.contains_key("sms_in") && !emergency_number)
+        .bind(form.contains_key("sms_out"))
+        .bind(form.contains_key("mms"))
         .bind(message_app)
         .bind(message_address)
         .bind(id)
@@ -2276,29 +2726,42 @@ mod tests {
     #[test]
     fn a_contact_row_says_which_way_calls_go() {
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, true, true),
+            contact_summary(crate::i18n::Lang::En, true, true, true, (false, false)),
             "Both ways · Home"
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, false, false),
+            contact_summary(crate::i18n::Lang::En, true, false, false, (false, false)),
             "Calls in only"
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, true, true),
+            contact_summary(crate::i18n::Lang::En, false, true, true, (false, false)),
             "Calls out only · Home"
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, false, false),
+            contact_summary(crate::i18n::Lang::En, false, false, false, (false, false)),
             "No calls"
         );
         // Home only for a contact in the phone book, as the launcher shows it (qa-31-s8-code L2).
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, false, true),
+            contact_summary(crate::i18n::Lang::En, true, false, true, (false, false)),
             "Calls in only"
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, false, true),
+            contact_summary(crate::i18n::Lang::En, false, false, true, (false, false)),
             "No calls"
+        );
+        // Design 77 D3: then which way texts go, when either does.
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, true, true, true, (true, true)),
+            "Both ways · Home · Texts both ways"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::En, false, false, false, (true, false)),
+            "No calls · Texts in"
+        );
+        assert_eq!(
+            contact_summary(crate::i18n::Lang::Nb, false, false, false, (false, true)),
+            "Ingen anrop · Melding ut"
         );
     }
 
@@ -2357,6 +2820,17 @@ mod tests {
                 sms_lost: false,
                 calls_contacts_only: true,
             },
+            Finding::SmsNotOurs,
+            Finding::SmsHoldFull { until: Some(later) },
+            Finding::SmsHoldFull { until: None },
+            Finding::SmsParseFailures { count: 2 },
+            Finding::MmsUnchecked,
+            Finding::MmsNoData,
+            Finding::OwnNumberMismatch {
+                slot: 1,
+                sim: "+4790000002".to_string(),
+            },
+            Finding::SmsRoleKept,
         ];
         let mut kinds: Vec<_> = all.iter().map(Finding::problem).collect();
         kinds.dedup();
@@ -2364,12 +2838,17 @@ mod tests {
         for finding in &all {
             let note = finding.note(&zone, now);
             assert_eq!(note.title, finding.problem().title(crate::i18n::Lang::En));
+            // Waiting, and design 77's rows a parent can't act on, aren't warnings.
             assert_eq!(
                 note.warning,
-                *finding
-                    != (Finding::Waiting {
-                        report: Some(earlier)
-                    })
+                !matches!(
+                    finding,
+                    Finding::Waiting { .. }
+                        | Finding::SmsParseFailures { .. }
+                        | Finding::MmsUnchecked
+                        | Finding::MmsNoData
+                        | Finding::SmsRoleKept
+                )
             );
             let detail = note.detail.unwrap();
             assert!(detail.split_whitespace().count() <= 40, "{detail}");

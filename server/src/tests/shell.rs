@@ -177,7 +177,7 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         // The manifest URL stays: older Chrome keys a WebAPK to it.
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
         // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
-        "<script src=\"/static/autosave.js?v=2\"></script>",
+        "<script src=\"/static/autosave.js?v=3\"></script>",
         // Edge to edge on an iPhone, so the safe-area insets are real (style.css takes them).
         "content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\"",
         "<link rel=\"apple-touch-icon\" href=\"/static/icons/icon-180.png\">",
@@ -680,6 +680,37 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     sqlx::query(
         "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
          VALUES (?, 'Home', 59.9139, 10.7522, 150)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // Design 77 step 4: messages waiting (a stranger, a sender name, an emergency number), a blocked one and a listed
+    // name, so the Calls page's held rows, Delete Everything Waiting and the names card render every form.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for (n, class, sender, state) in [
+        (1, "number", "+4790000099", "held"),
+        (2, "alphanumeric", "DNB", "held"),
+        (3, "short", "113", "held"),
+        (4, "malformed", "", "blocked"),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_sms_held (device_id, held_id, at, kind, sender_class, sender, expires_at, state) \
+             VALUES (?, ?, ?, 'sms', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .bind(now_ms - 60_000)
+        .bind(class)
+        .bind(sender)
+        .bind(now_ms + 3_600_000)
+        .bind(state)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO device_sms_names (device_id, name, fold) VALUES (?, 'Posten', 'posten')",
     )
     .bind(id)
     .execute(&app.db)

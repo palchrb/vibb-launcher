@@ -2,7 +2,9 @@
 //! parts (`call_policy.sms_names`, `own_numbers`, `sms_held_drop`), the status report's `sms_state` through its known
 //! keys, the parent's sender names (D17: [valid_name], [fold]) and the held and blocked senders the phone posts
 //! (`POST /api/devices/sms-held`, D16) - who and when, never what. The shapes are `testdata/sms_contract.json`,
-//! byte-identical in the launcher's test resources. The parent's event, its push and the PWA's cards are step 4.
+//! byte-identical in the launcher's test resources. Step 4: the intake raises the parent's `sms_held` event at a held
+//! row's first sight (`parent_events::sms_held`, its push within `Kind::push_budget`) and marks it read when the row
+//! moves on; the PWA's cards are `handlers::calls_sms`.
 
 use axum::Extension;
 use axum::extract::State;
@@ -145,10 +147,12 @@ pub async fn policy_parts(
     let drop = sqlx::query_scalar(
         "SELECT held_id FROM device_sms_held WHERE device_id = ? AND dropped_at IS NOT NULL \
          AND state IN ('held', 'dropped') AND datetime(dropped_at) >= datetime('now', ?) \
-         ORDER BY datetime(dropped_at) DESC, held_id LIMIT ?",
+         AND expires_at > ? ORDER BY datetime(dropped_at) DESC, held_id LIMIT ?",
     )
     .bind(device_id)
     .bind(format!("-{DROP_HOURS} hours"))
+    // Code QA L5: a row past its window is gone on the phone (it expires first); the 100 ids are for the rest.
+    .bind(chrono::Utc::now().timestamp_millis())
     .bind(DROP_MAX)
     .fetch_all(db)
     .await?;
@@ -305,6 +309,15 @@ fn refusal(row: &HeldRow, now_ms: i64) -> Option<&'static str> {
     if !STATES.contains(&row.state.as_str()) {
         return Some("state");
     }
+    // Code QA L2 (D4 rule 8): a sender the phone couldn't read, a group with a stranger or a picture from an unknown
+    // server has no allow path, so it is only ever `blocked` - never held, pushed or shown with an empty sender.
+    if matches!(
+        row.sender_class.as_str(),
+        "malformed" | "empty" | "group" | "bad_location"
+    ) && row.state != "blocked"
+    {
+        return Some("state");
+    }
     None
 }
 
@@ -350,7 +363,12 @@ pub async fn held(
         rows.push(row);
     }
     match store(&state.db, device.id, &rows).await {
-        Ok(answer) => axum::Json(answer).into_response(),
+        Ok((answer, raised)) => {
+            if raised {
+                state.push.wake();
+            }
+            axum::Json(answer).into_response()
+        }
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "can't store the held senders");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -358,12 +376,23 @@ pub async fn held(
     }
 }
 
+/// Stores the rows (see [held]); `true` when a parent event was raised (the caller wakes the push sender after the
+/// commit). Design 77 step 4: the first sight of a `held` row raises `sms_held` (pushed while its window is open,
+/// within the kind's budget); a row that moves on (`released`, `expired`, `dropped`) marks its event read for every
+/// parent.
 async fn store(
     db: &sqlx::SqlitePool,
     device_id: i64,
     rows: &[HeldRow],
-) -> Result<HeldAnswer, sqlx::Error> {
+) -> Result<(HeldAnswer, bool), sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let phone: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or_default();
+    let now = chrono::Utc::now();
+    let mut raised = false;
     // Code QA L5: held and blocked rows are counted, and bounded, apart.
     let (mut held_stored, mut blocked_stored): (i64, i64) = sqlx::query_as(
         "SELECT COALESCE(SUM(state != 'blocked'), 0), COALESCE(SUM(state = 'blocked'), 0) \
@@ -413,6 +442,9 @@ async fn store(
                 } else {
                     held_stored += 1;
                 }
+                if row.state == "held" {
+                    raised |= raise_held(&mut tx, device_id, &phone, row, now).await?;
+                }
                 answer.accepted += 1;
             }
             Some(from) => {
@@ -421,6 +453,16 @@ async fn store(
                         "UPDATE device_sms_held SET state = ? WHERE device_id = ? AND held_id = ?",
                     )
                     .bind(&row.state)
+                    .bind(device_id)
+                    .bind(&row.id)
+                    .execute(&mut *tx)
+                    .await?;
+                    // §7: a released, expired or dropped row's event is read - nothing is left to decide.
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) \
+                         SELECT a.id, e.id FROM admin_users a JOIN parent_events e \
+                         ON e.device_id = ? AND e.kind = 'sms_held' AND e.dedup_key = ?",
+                    )
                     .bind(device_id)
                     .bind(&row.id)
                     .execute(&mut *tx)
@@ -457,7 +499,41 @@ async fn store(
         .await?;
     }
     tx.commit().await?;
-    Ok(answer)
+    Ok((answer, raised))
+}
+
+/// D16's push at once (§7): a held row seen for the first time raises `sms_held` - pushed while its window is still
+/// open by the server's clock (a late post of an expired one goes to the inbox only), within `Kind::push_budget`.
+/// `true` when an event was stored.
+async fn raise_held(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    phone: &str,
+    row: &HeldRow,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<bool, sqlx::Error> {
+    let (Some(at), Some(expires_at)) = (
+        chrono::DateTime::from_timestamp_millis(row.at),
+        chrono::DateTime::from_timestamp_millis(row.expires_at),
+    ) else {
+        return Ok(false);
+    };
+    let push = if expires_at > now {
+        crate::parent_events::Push::Now
+    } else {
+        crate::parent_events::Push::No
+    };
+    let event = crate::parent_events::sms_held(
+        device_id,
+        phone,
+        &row.id,
+        at.min(now),
+        expires_at,
+        &row.sender_class,
+        &row.sender,
+        push,
+    );
+    Ok(crate::parent_events::raise(conn, &event).await?.is_some())
 }
 
 #[cfg(test)]

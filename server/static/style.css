@@ -2994,3 +2994,41 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
     .lock-out { animation: none; }
 }
 .lock-field-error { margin: 4px 16px 10px; }
+
+/* Design 77 D2: a channel's three-way choice as a segmented control - the phone switcher's look (grey track, the
+   chosen segment raised). Each segment is a label around a visually hidden radio and its face; the radios save on
+   change (autosave.js). Sibling selectors only (no :has, Chrome 80 / iOS 14). The row stacks: label, the control at
+   full width, the chosen state's sub-line. */
+.row-stacked > .segmented,
+.row-stacked > .segmented-sub {
+    flex-basis: 100%;
+    margin-left: 0;
+}
+.segmented { display: flex; margin: 8px 0 2px; padding: 2px; border-radius: 9px; background: var(--grey-bg); }
+.segment { position: relative; display: flex; flex: 1 1 0; min-width: 0; margin: 0; cursor: pointer; }
+.segment input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.segment-face { display: flex; flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 40px; padding: 4px 6px; border-radius: 7px; color: var(--label); font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
+.segment-note { display: block; margin-top: 1px; color: var(--label-2); font-size: 0.75rem; font-weight: 400; }
+.segment input:checked + .segment-face { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.segment input:disabled + .segment-face { opacity: 0.4; cursor: default; }
+.segment input:focus + .segment-face { outline: 2px solid var(--tint); outline-offset: -2px; }
+.segment input:focus:not(:focus-visible) + .segment-face { outline: none; }
+.segmented-sub { margin-top: 4px; }
+/* §8.5's RCS step under the SMS row, its ⓘ after the sentence (code QA M1). */
+.rcs-line details.info { display: inline; }
+.rcs-line .info-icon { vertical-align: -3px; }
+
+/* Design 77 D16: a waiting message's actions under its row, each a full-width row with a hairline above. Add
+   Contact's switches (R2-M1) sit in its form between the fields and the button. */
+.held-body .row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+.add-switches { margin: 0 -16px 16px; }
+/* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
+details.confirm > summary.row.held-allow { color: var(--tint); font-weight: 400; }
