@@ -92,3 +92,46 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   A row gone (another tab) lands on `?notice=emergency_gone#emergency`. Tests: `tests::emergency_menu`, `emergency::tests`,
   and the page's form table in `tests::calls::every_form_on_the_calls_page_returns_to_its_place`.
 
+
+## SMS in Vibb One, step 1: the server's side (design 77, `docs/design/77-sms-mms-client.md` §7)
+
+- **Two channels, three states each (D2, migration 0130).** `device_policy.calls_mode`/`sms_mode` (`off` / `managed` /
+  `unmanaged`, `models::CHANNEL_MODES`) replace `calls_managed`/`calls_enabled`/`sms_enabled`, which stay only for a
+  rollback (the Calls page writes their derived values). The migration maps every phone to what it did (D2's table, the
+  contract's `migration` rows; no phone goes to SMS `managed`); a phone created since gets calls `unmanaged`, SMS
+  `managed`. `DevicePolicy::managed()`/`calls_enabled()`/`sms_enabled()` are D2's derived old keys
+  (`models::derived_old_keys`: `managed` while either channel isn't `unmanaged`, calls on unless `off`, SMS on only while
+  `unmanaged` - fail closed for a launcher without `sms_engine_v1`); `calls_managed()` is the calls channel alone. The
+  readers that mean the calls channel use `calls_managed()`: the call report's role/screening/call-log findings and the
+  B1 "waiting" rule's early return (a launcher with the engine reports `call_state.state` for calls alone), "Dialer not
+  allowed", the emergency menu's phone-book check, Attention's `calls_enforced` and "calls-off rule while calls aren't
+  managed" (Attention, the summary, Device › Time). The ones that mean "the phone is managed" use `managed()`: the red
+  "managed without a Parent PIN" card and the summary's contact count. "Messages hidden" now reads `sms_mode ==
+  unmanaged` (restricted, the launcher suspends every SMS app but itself). `roles_changed_at` is stamped when either
+  mode changes.
+- **The policy** (`device_api::build_call_policy`): always `calls_mode`, `sms_mode`, the derived three, `sms_lock_text`,
+  `sms_names` (`device_sms_names`, by fold), `own_numbers` (`device_own_numbers`, `[{slot, number}]`), `mmsc_hosts`
+  (`mmsc_hosts.rs`, compiled in, empty until step 0) and `sms_held_drop` (`device_sms_held` ids with a `dropped_at` in
+  the last 24 h, still `held`/`dropped`, newest first, at most 100) - also with both channels unmanaged (then no
+  contacts, as before). Per contact `sms_in` (never for an emergency number, `emergency::is_emergency` - R2-H1),
+  `sms_out`, `mms` (`device_contacts`, backfilled from the call flags, on for a new contact).
+- **`sms_state`** in the status report (`device_status.sms_state_json`), through `sms::sanitize_state`: the flat keys by
+  `SMS_STATE_FIELDS`, `blocked` counts by class, at most two `own_numbers`, `hold_full`. No content.
+- **`POST /api/devices/sms-held`** (`sms::held`, 16 KiB, at most 50 rows): `{rows: [{id, at, kind, sender_class,
+  sender, expires_at, state}]}`, instants epoch ms. Each row checked first (id 16-64 lowercase hex; kind; class; sender
+  by class - `sms::sender_ok`, the contract's `intake` rows; `at` at most 5 min ahead, `expires_at - at` 0..24 h + 1
+  min; state); one refused row answers 400 `{refused, reason}` and stores nothing. Forward-only (`held` ->
+  `released`/`expired`/`dropped`, the rest final; a re-post never changes sender or time; any other change counted in
+  `devices.sms_ignored_transitions`). At most 500 rows a phone (`HELD_ROWS_A_PHONE`): a new id past it isn't stored,
+  `"capped": true`, one `sms_held_capped` line (`PhoneLine::SmsHeldCapped`, in the hourly budget). Retention drops a
+  row 30 days after its `at`.
+- **The names (D17)**: `sms::valid_name` (1-11 characters after `calendar::clean`, not cut, and a letter -
+  `char::is_alphabetic`) and `sms::fold` (NFC, `to_lowercase`); `device_sms_names.fold` is unique per phone. Tests run
+  the contract's `names` and `name_matches` rows.
+- **The Calls page, the minimum until step 4**: the three switches became two rows, "Samtaler"/"SMS" ("Calls"/"SMS"),
+  each a picker Off / Managed by Vibb / Not managed with D2's sub-line; the form posts `calls_mode` and `sms_mode` (an
+  unknown or missing one is a 400). Left for step 4: the segmented control, the capability gate ("Oppdater Vibb One
+  først"), the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
+  the blocked list, the sender-name card, the `sms_held` event with its push and `PushBudget`, the findings.
+- Contract: `testdata/sms_contract.json`, byte-identical in the launcher's test resources (`sms::tests`). Tests:
+  `sms::tests`, `tests::sms`.
