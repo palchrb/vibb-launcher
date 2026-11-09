@@ -1183,7 +1183,7 @@ async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
     assert!(page.contains(WARNING), "{page}");
     assert!(app.get_page(&summary, &cookie).await.text().contains(ROW));
 
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
@@ -1192,7 +1192,7 @@ async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
     assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
 
     // Calls unmanaged but every rule allows calls: no warning.
-    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await

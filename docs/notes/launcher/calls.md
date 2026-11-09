@@ -79,3 +79,60 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   policy's list, else the one in `last_call_rules` - `CallRules.emergencyMenu`); the DE boot copy is unchanged (no
   entry point runs before the first unlock).
 
+
+## The message engine, step 1 (design 77, `docs/design/77-sms-mms-client.md`; branch `sms-engine`)
+
+- **Per channel (D2):** `call_policy.calls_mode`/`sms_mode` (`off`/`managed`/`unmanaged`, `ChannelMode`) are read by
+  `channelModes` - an older server's `managed`/`calls_enabled`/`sms_enabled` by D2's migration table (the contract's
+  `migration` rows). `CallRules` carries both modes (rules stored by an older build read them from the old switches).
+  `CallPolicyStore.state` is the whole policy (managed while either channel is: hardening, the update fence, the clock
+  lock read it); **`CallPolicyStore.callsState`** (`forCalls()`: calls "Ikke styrt" reads as `Unmanaged`) is what every
+  call-path reader asks - the services (`effectiveState()`), the dialer role, Home's contacts and phone book, the lock's
+  phone-book row, the call log, the missed-call notifier, `call_state.state`. Once a phone has accepted a policy with
+  the modes (`channel_modes_seen`, committed with the cache, kept across a preferences reset), a `call_policy` without
+  them - or with a value that isn't one of the three - is rejected whole (`judgeFresh`). The DE boot copy is version 3
+  (`calls_mode` and `sms_mode`, QA L2; a v1 or v2 copy reads as unknown, fail closed until the first unlock rewrites it).
+- **The engine (`sms/engine/`, pure, JVM-tested):** `Model.kt` is §6.2's seam (ids, `Message`, `EngineEvent`,
+  `SendCommand`, `MessageEngine`); `SmsSenderType` reads the TP-OA's type of number from every raw PDU (TON 101 =
+  a sender name, H2); `SmsRules` is D4/D5 (no sender is let in for being an emergency number; the callback window lets
+  anyone in, marked `unknownSender`; unknown rules with the role ours hold, D15); `SmsSenders` is D17's names (a letter,
+  1-11 code points, NFC + `lowercase(Locale.ROOT)`) and the sender cleaned by its class before it leaves; `HoldPolicy`
+  is D16's caps (30 numbers / 20 names, 10 per number / 3 per name, 1,600 characters, 24 h; 200 for the rules, 500
+  blocked rows); `SmsEngine` runs it over `MessageStore`: receive, hold, release (drops first, then expiry, then the
+  exact sender only), the outbox (gate again, `SENDING` committed before the platform has it, `UNCERTAIN` after 10
+  minutes, never re-sent; a late result still applies), the idempotent send (`clientId`, the store's `insertOutgoing`),
+  the event log with one `seq` counter, `ConversationChanged` on a rule change.
+- **The store (`sms/store/SqliteMessageStore`):** our own SQLite (`messages.db`, CE, `secure_delete`, WAL checkpointed
+  after every expiry, drop or delete pass); nothing is written to the Telephony provider. §6.6's tables (the `part`
+  and `pending_push` tables and the MMS columns wait for step 3b).
+- **The glue (`sms/`):** `SmsRuntime` - the engine opened at its first use after the first unlock, the receive executor
+  (receivers only, D7) and the engine thread (everything else), the rules from memory, `sms_state`, the `sms-held` post
+  (50 rows a post; a 2xx marks them, `capped` too; a 400 gives up the named row); `SmsDeliverReceiver` (classify, judge,
+  commit, `finish()`, then the notification), `MmsPushReceiver` (step 1 only commits the raw push to `pending_push`),
+  `SmsSentReceiver` (sent and delivery results, manifest-registered), `SmsReplyReceiver` (the notification's reply,
+  `setAuthenticationRequired`, the notification's own `clientId`), `RespondViaMessageService`, `ComposeActivity` (a
+  stub until step 2: a number the kid may not text says so), `SmsNotifier` (`MessagingStyle`, public version "Ny
+  melding", silent under a time rule without calls; the tap opens Home until step 2's thread).
+- **The role and the permissions (`SmsRole.kt`, `AppEnforcer.applySmsRole`/`applySmsPermissions`):** taken in
+  "Styrt av Vibb" before the plan (so `DISALLOW_SMS` stays off), handed back in "Ikke styrt" after the package loop
+  to the holder before us; kept in "Av" and with unknown rules. `DISALLOW_SMS` is `smsRestricted`: "Av", or no role of
+  ours in "Styrt av Vibb" or with unknown rules. The other SMS apps are suspended whenever SMS isn't "Ikke styrt".
+  `DISALLOW_CONFIG_DEFAULT_APPS` covers either role (`lockDefaultAppsFor`). In "Styrt av Vibb" every other app's SMS
+  permissions are denied, Play services' by the switch `DENY_PLAY_SERVICES_SMS` (on; step 0 checks what breaks).
+  Our own SMS permissions are fixed by policy around every role change, and not released while SMS is managed.
+- **Step 0 marks in the code:** the delivery reports (`REQUEST_DELIVERY_REPORTS`), `3gpp2` read as malformed,
+  `DENY_PLAY_SERVICES_SMS`; whether a device owner may set the hard-restricted SMS permissions is logged when refused.
+- **Fix round after the code QA (`docs/review/qa-sms-engine.md`):**
+  - the other apps' SMS permissions are denied in "Styrt av Vibb" and with the rules unknown (`smsPermissionsDenied`,
+    M1), and leaving the denial gives back a grant it took away: `GRANTED` then `DEFAULT`, from a record of what was
+    granted before (`smsPermissionPass`, `mdm.sms.denied_permissions`, L8);
+  - SMS "Ikke styrt" while the role is still ours (a hand-back pending or failed) keeps and shows every message,
+    unfiltered (L3); the hand-back is retried at every apply, and `role_taken_by_us`, the previous holder and the
+    denial record survive a preferences reset (`SmsPrefs.KEPT_ON_RESET`);
+  - the notification's Reply carries both ids in its data URI (`replyData`/`replyIds`), mutable only for RemoteInput,
+    and the open intent is told apart by its identifier - never a `hashCode` (L1);
+  - a re-delivered SMS is stored once (`received_key`: a hash of sender, SMSC time and body, kept a day, L6);
+  - every receive is timed from the broadcast's arrival; one over D7's 3 s is recorded (its time only) and counted
+    (`slow_receives`), and `markRead` is one statement (L7);
+  - MMS pushes: at most 100, 2 KB each, 7 days; more is counted as blocked `malformed` (L4);
+  - `secure_delete` is read back after it is set, and `last_error` says so when it isn't (N4).

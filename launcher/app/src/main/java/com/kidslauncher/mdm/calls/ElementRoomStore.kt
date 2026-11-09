@@ -37,7 +37,7 @@ object ElementRoomStore {
     fun learn(context: Context, learned: LearnedElementRoom) {
         try {
             val stored = read(context)
-            write(context, stored, withLearnedRoom(stored, learned, CallPolicyStore.state))
+            write(context, stored, withLearnedRoom(stored, learned, CallPolicyStore.callsState))
         } catch (e: Exception) {
             // CE not readable, or the write failed: nothing learned this time.
         }

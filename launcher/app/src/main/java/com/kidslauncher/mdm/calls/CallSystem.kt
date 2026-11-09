@@ -179,7 +179,7 @@ object CallSystem {
      * the first unlock it isn't queried at all ([canReadCallLog]); the emergency report then uses
      * only our own device-protected record. */
     private fun readOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? =
-        if (!canReadCallLog(callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)) null else queryOutgoingCalls(context, sinceMs)
+        if (!canReadCallLog(callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.callsState.managed)) null else queryOutgoingCalls(context, sinceMs)
 
     private fun queryOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? = try {
         context.contentResolver.query(

@@ -287,6 +287,25 @@ class PolicyGateTest {
         assertFalse(suspendNew("org.example.game", PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK), overrideActive = true))
     }
 
+    // Design 77 D2: once a phone has seen calls_mode/sms_mode, a policy without them is rejected whole.
+
+    private val withModes = managed.copy(
+        callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "managed"),
+    )
+    private val oldShape = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(managed = true, callsEnabled = true))
+
+    @Test
+    fun `channel modes - missing after they were seen, or unknown, is rejected`() {
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(oldShape, CachedPolicy.Ok(managed), true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(withModes, CachedPolicy.Ok(oldShape), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Ok(withModes), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Corrupt("x"), true, channelModesSeen = true))
+        val half = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed"))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(half, CachedPolicy.Ok(managed), true))
+        val unknown = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "filtered"))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(unknown, CachedPolicy.Ok(managed), true))
+    }
+
     private companion object {
         const val OWN = "me.vibb.launcher"
         const val DIALER = "com.android.dialer"

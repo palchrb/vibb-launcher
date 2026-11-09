@@ -841,7 +841,7 @@ class LockGlanceGuardTest {
         assertTrue(body(notifier, "relearn").contains("recompute(context, mayPost = false, mayClear = false)"))
         assertTrue(body(notifier, "refreshAtStart").contains("relearn(context)"))
         // r11 §3.3: a contact dismissed on the lock counts against the rules too.
-        assertTrue(notifier.contains("noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)"))
+        assertTrue(notifier.contains("noticeState(CallPolicyStore.callsState, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)"))
         val listener = code("BadgeListenerService.kt")
         assertTrue(listener.contains("MissedCallNotifier.removedFromShade(this)"))
         assertTrue(listener.contains("MissedCallNotifier.postedToShade(this)"))

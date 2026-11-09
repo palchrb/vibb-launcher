@@ -27,18 +27,18 @@ class BootCallPolicyTest {
     // --- serialization / versioning ---
 
     @Test
-    fun `encoding is the documented v1 shape with sorted numbers and nothing else`() {
+    fun `encoding is the documented v3 shape with sorted numbers and nothing else`() {
         assertEquals(
-            """{"v":1,"mode":"managed","calls_enabled":true,"default_cc":"47",""" +
+            """{"v":3,"mode":"managed","calls_mode":"managed","sms_mode":"unmanaged","calls_enabled":true,"default_cc":"47",""" +
                 """"inbound":["+4791234567","+4798765432"],"outbound":["+4722222222","+4791234567"]}""",
             encodeBootPolicy(bootPolicyFor(managed)),
         )
     }
 
     @Test
-    fun `no names, message addresses or SMS flag reach device-protected storage`() {
+    fun `no names, message addresses or message apps reach device-protected storage`() {
         val json = encodeBootPolicy(bootPolicyFor(managed))
-        for (secret in listOf("Mamma", "Pappa", "mamma:example.org", "element", "sms", "home")) {
+        for (secret in listOf("Mamma", "Pappa", "mamma:example.org", "element", "home", "sms_enabled", "message")) {
             assertFalse(secret, json.contains(secret, ignoreCase = true))
         }
     }
@@ -69,12 +69,12 @@ class BootCallPolicyTest {
 
     @Test
     fun `another format version is not trusted`() {
-        val v2 = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":1", "\"v\":2")
-        assertEquals(BootPolicyRead.UnsupportedVersion(2), decodeBootPolicy(v2))
+        val v2 = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":3", "\"v\":4")
+        assertEquals(BootPolicyRead.UnsupportedVersion(4), decodeBootPolicy(v2))
         assertEquals(CallPolicyState.UnknownFailClosed, bootPolicyState(decodeBootPolicy(v2)))
-        val noVersion = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":1,", "")
+        val noVersion = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":3,", "")
         assertEquals(BootPolicyRead.UnsupportedVersion(null), decodeBootPolicy(noVersion))
-        val stringVersion = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":1", "\"v\":\"1\"")
+        val stringVersion = encodeBootPolicy(bootPolicyFor(managed)).replace("\"v\":3", "\"v\":\"3\"")
         assertEquals(BootPolicyRead.UnsupportedVersion(null), decodeBootPolicy(stringVersion))
     }
 
@@ -163,5 +163,48 @@ class BootCallPolicyTest {
         assertEquals(ce.rules.inbound, (roundTrip(fallback) as CallPolicyState.Managed).rules.inbound)
         // A corrupt CE cache without last rules is fail closed - and so is DE.
         assertEquals(CallPolicyState.UnknownFailClosed, roundTrip(callPolicyState(CachedPolicy.Corrupt("x"), true, null)))
+    }
+
+    // --- design 77 D2: version 2 carries the calls channel ---
+
+    @Test
+    fun `a version-1 copy reads as unknown - fail closed until the first unlock rewrites it`() {
+        val v1 = """{"v":1,"mode":"managed","calls_enabled":true,"default_cc":"47","inbound":["+4791234567"],"outbound":[]}"""
+        assertEquals(BootPolicyRead.UnsupportedVersion(1), decodeBootPolicy(v1))
+        assertEquals(CallPolicyState.UnknownFailClosed, bootPolicyState(decodeBootPolicy(v1)))
+    }
+
+    @Test
+    fun `version 3 carries the SMS channel, and a version-2 copy is unknown - SMS fails closed (QA L2, M1)`() {
+        val smsManaged = CallPolicyState.Managed(rules.copy(smsMode = ChannelMode.MANAGED))
+        assertEquals(ChannelMode.MANAGED, roundTrip(smsManaged).smsMode)
+        assertTrue(bootCopyFaithful(smsManaged, encodeBootPolicy(bootPolicyFor(smsManaged))))
+        assertFalse(bootCopyFaithful(managed, encodeBootPolicy(bootPolicyFor(smsManaged))))
+        val v2 = """{"v":2,"mode":"managed","calls_mode":"managed","calls_enabled":true,"default_cc":"47","inbound":[],"outbound":[]}"""
+        val state = bootPolicyState(decodeBootPolicy(v2))
+        assertEquals(CallPolicyState.UnknownFailClosed, state)
+        assertEquals(null, state.smsMode)
+        assertTrue(com.kidslauncher.mdm.sms.smsPermissionsDenied(state.smsMode))
+        val bad = encodeBootPolicy(bootPolicyFor(smsManaged)).replace("\"sms_mode\":\"managed\"", "\"sms_mode\":\"filtered\"")
+        assertEquals(CallPolicyState.UnknownFailClosed, bootPolicyState(decodeBootPolicy(bad)))
+    }
+
+    @Test
+    fun `only SMS managed - the copy is a managed phone whose calls are left alone before unlock`() {
+        val smsOnly = CallPolicyState.Managed(rules.copy(callsMode = ChannelMode.UNMANAGED, smsMode = ChannelMode.MANAGED))
+        val boot = roundTrip(smsOnly)
+        assertTrue(bootWitnessesManaged(encodeBootPolicy(bootPolicyFor(smsOnly))))
+        assertEquals(CallPolicyState.Unmanaged, boot.forCalls())
+        assertEquals(Verdict.ALLOW, incoming(boot.forCalls(), "+4733333333"))
+        assertTrue(bootCopyFaithful(smsOnly, encodeBootPolicy(bootPolicyFor(smsOnly))))
+        assertFalse(bootCopyFaithful(managed, encodeBootPolicy(bootPolicyFor(smsOnly))))
+    }
+
+    @Test
+    fun `a calls mode that disagrees with the calls switch is corrupt`() {
+        val good = encodeBootPolicy(bootPolicyFor(managed))
+        for (json in listOf(good.replace("\"calls_mode\":\"managed\"", "\"calls_mode\":\"off\""), good.replace("\"calls_mode\":\"managed\"", "\"calls_mode\":\"x\""))) {
+            assertEquals(json, CallPolicyState.UnknownFailClosed, bootPolicyState(decodeBootPolicy(json)))
+        }
     }
 }

@@ -383,6 +383,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             bans: 0,
             install_progress: 0,
             weather: 0,
+            sms_held: 0,
             failed: vec![],
         }
     );
@@ -661,7 +662,7 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
     let app = super::TestApp::new().await;
     let db = &app.db;
     let (id, _) = app.create_device("kid").await;
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(db)
         .await

@@ -78,21 +78,23 @@
         {% endif %}
     </section>
 
-    {#- One form (§5.6, H1): the handler writes every switch, a missing one is off. -#}
+    {#- One form (§5.6, H1): the handler writes every field; a missing or unknown channel mode is refused (400), never
+        read as off. A choice the phone's launcher can't do yet is disabled, and refused in place if sent anyway. -#}
     <section id="settings" aria-label="{{ self.t("device.calls.settings_label") }}">
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
-            <label class="row">
-                <span class="row-label">{{ self.t("device.calls.managed") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="managed" value="on"{% if managed %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            {#- Design 77 D2: one three-way choice per channel (off / managed by Vibb / not managed), the chosen
+                state's sub-line under it. -#}
+            {% for channel in channels %}
+            <label class="row" data-channel="{{ channel.name }}">
+                <span class="row-label">{{ channel.label }}<span class="row-sub">{{ channel.sub }}</span></span>
+                <select class="pick" name="{{ channel.name }}" data-autosave>
+                    {% for option in channel.options %}
+                    <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}{% if option.disabled %} disabled{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
-            <label class="row">
-                <span class="row-label">{{ self.t("device.bedtime.calls_label") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="calls_enabled" value="on"{% if calls_enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            <label class="row">
-                <span class="row-label">{{ self.t("device.calls.sms") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="sms_enabled" value="on"{% if sms_enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
+            {% endfor %}
+            {% if let Some(why) = settings_error %}<p class="field-error" id="channels-error" role="alert">{{ why }}</p>{% endif %}
             <label class="row">
                 <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
                 <select class="pick" name="default_message_app" data-autosave>

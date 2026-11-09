@@ -170,6 +170,8 @@ pub struct Pruned {
     pub install_progress: u64,
     /// The weather's cells nobody asked for (design 75 §3.1).
     pub weather: u64,
+    /// The held and blocked senders a phone posted (design 77 D16), `sms::HELD_KEEP_DAYS` after their `at`.
+    pub sms_held: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -222,7 +224,8 @@ fn rows(
 ///   progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
 ///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
-///   `update_location_policy`'s).
+///   `update_location_policy`'s);
+/// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
 /// rest of the pass goes on (security review L9).
@@ -494,6 +497,17 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
+    let sms_held = rows(
+        failed,
+        "device_sms_held",
+        sqlx::query("DELETE FROM device_sms_held WHERE at < ?")
+            .bind(
+                chrono::Utc::now().timestamp_millis()
+                    - crate::sms::HELD_KEEP_DAYS * 24 * 60 * 60 * 1000,
+            )
+            .execute(db)
+            .await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -510,6 +524,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         bans,
         install_progress,
         weather,
+        sms_held,
         failed: std::mem::take(failed),
     }
 }

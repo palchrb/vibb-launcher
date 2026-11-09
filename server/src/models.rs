@@ -125,14 +125,17 @@ pub struct DevicePolicy {
     /// schedule, converted into rules once (`time_rules::migrate_legacy`) and still sent to older
     /// launchers. See `handlers::schedules`.
     pub custom_schedule_enabled: bool,
-    /// Calls & SMS (migrations/0022_calls.sql). `calls_managed = false` sends
-    /// `call_policy.managed = false`; the other three only matter when it's true.
-    pub calls_managed: bool,
-    pub calls_enabled: bool,
-    pub sms_enabled: bool,
+    /// Design 77 D2 (migrations/0130_sms.sql): each channel's own state, "off", "managed" or "unmanaged"
+    /// ([CHANNEL_MODES]). The old `calls_managed`/`calls_enabled`/`sms_enabled` columns are derived from these
+    /// ([DevicePolicy::managed], [DevicePolicy::calls_enabled], [DevicePolicy::sms_enabled]) and only written for a
+    /// rollback; nothing reads them.
+    pub calls_mode: String,
+    pub sms_mode: String,
+    /// §6.8: the message text on the lock glance's row (default off), sent as `call_policy.sms_lock_text`.
+    pub sms_lock_text: bool,
     /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
     pub default_message_app: String,
-    /// When `calls_managed` last changed (UTC, SQLite `datetime('now')`) - status reports older
+    /// When `calls_mode` or `sms_mode` last changed (UTC, SQLite `datetime('now')`) - status reports older
     /// than this may still show the previous role state (migrations/0029).
     pub roles_changed_at: Option<String>,
     /// `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in kiosk (handy step 9, default on).
@@ -380,6 +383,44 @@ impl Default for Hardening {
 /// The values `device_policy.default_message_app` and `device_contacts.message_app` may take.
 pub const MESSAGE_APPS: [&str; 4] = ["none", "sms", "element", "signal"];
 
+/// Design 77 D2: the values `device_policy.calls_mode` and `.sms_mode` may take.
+pub const CHANNEL_MODES: [&str; 3] = ["off", "managed", "unmanaged"];
+
+/// D2's wire for launchers from before design 77, derived from the two modes so they fail closed: `managed` while
+/// either channel isn't `unmanaged` (an older launcher with `managed = false` leaves SMS fully open), calls on unless
+/// calls are `off` (calls `unmanaged` with SMS restricted reads as contacts-only calls: stricter, never looser), SMS on
+/// only while SMS is `unmanaged` (an older launcher turns `managed` into `DISALLOW_SMS`).
+pub fn derived_old_keys(calls_mode: &str, sms_mode: &str) -> (bool, bool, bool) {
+    (
+        calls_mode != "unmanaged" || sms_mode != "unmanaged",
+        calls_mode != "off",
+        sms_mode == "unmanaged",
+    )
+}
+
+impl DevicePolicy {
+    /// `call_policy.managed` ([derived_old_keys]): either channel is restricted.
+    pub fn managed(&self) -> bool {
+        derived_old_keys(&self.calls_mode, &self.sms_mode).0
+    }
+
+    /// `call_policy.calls_enabled` ([derived_old_keys]).
+    pub fn calls_enabled(&self) -> bool {
+        derived_old_keys(&self.calls_mode, &self.sms_mode).1
+    }
+
+    /// `call_policy.sms_enabled` ([derived_old_keys]).
+    pub fn sms_enabled(&self) -> bool {
+        derived_old_keys(&self.calls_mode, &self.sms_mode).2
+    }
+
+    /// The calls channel is filtered or off: the dialer role, the screening and the call log are the launcher's then.
+    /// With only SMS managed, calls behave as unmanaged on a launcher with the engine.
+    pub fn calls_managed(&self) -> bool {
+        self.calls_mode != "unmanaged"
+    }
+}
+
 /// One contact attached to one device - `contacts` joined with `device_contacts`.
 #[derive(sqlx::FromRow, Clone)]
 pub struct DeviceContactRow {
@@ -393,6 +434,10 @@ pub struct DeviceContactRow {
     pub message_app: Option<String>,
     pub message_address: Option<String>,
     pub photo_hash: Option<String>,
+    /// Design 77 D3: the contact may text the kid, the kid may text the contact, pictures both ways.
+    pub sms_in: bool,
+    pub sms_out: bool,
+    pub mms: bool,
 }
 
 /// Singleton (always `id = 1`) - the daily limit (and frozen pre-step-6 schedule) every device
@@ -1266,6 +1311,7 @@ pub struct KidLock {
 /// hands the dialer role back); the other fields are then defaults and `contacts` is empty.
 #[derive(Serialize)]
 pub struct CallPolicy {
+    /// The three keys of launchers from before design 77, derived from the modes ([derived_old_keys]).
     pub managed: bool,
     pub calls_enabled: bool,
     pub sms_enabled: bool,
@@ -1274,6 +1320,20 @@ pub struct CallPolicy {
     /// Design 73: the emergency menu in the parent's order, always at least one number (default 112 alone), also
     /// while calls are unmanaged. Normalised numbers; an empty name reads "Emergency number" on the phone.
     pub emergency_menu: Vec<crate::emergency::PolicyEntry>,
+    /// Design 77 D2: each channel's state, always sent. A launcher with the engine reads these and, once it has seen
+    /// them, rejects a policy without them.
+    pub calls_mode: String,
+    pub sms_mode: String,
+    /// §6.8: the message text on the lock glance's row.
+    pub sms_lock_text: bool,
+    /// D17: the sender names let through, sorted by their fold.
+    pub sms_names: Vec<String>,
+    /// D12: the phone's own numbers the parent typed, by SIM slot.
+    pub own_numbers: Vec<crate::sms::OwnNumber>,
+    /// D10: the SIM's MMS servers by MCC/MNC (`mmsc_hosts::policy`).
+    pub mmsc_hosts: Vec<crate::mmsc_hosts::MmscHosts>,
+    /// D16: the held ids the parent deleted in the last 24 hours, newest first, at most 100.
+    pub sms_held_drop: Vec<String>,
 }
 
 /// One contact as the launcher sees it. `number` is normalised (src/phone.rs) - the launcher
@@ -1292,6 +1352,11 @@ pub struct PolicyContact {
     pub message_address: Option<String>,
     /// SHA-256 of the contact's photo (`GET /api/devices/contact-photos/{hash}`), or none.
     pub photo: Option<String>,
+    /// Design 77 D3: may text the kid (never for an emergency number - anyone can send as one, R2-H1), the kid may
+    /// text them, pictures both ways. Always sent.
+    pub sms_in: bool,
+    pub sms_out: bool,
+    pub mms: bool,
 }
 
 /// The oldest undelivered [DeviceCommand] for this device (or, for a phone that confirms
@@ -1351,6 +1416,10 @@ pub struct StatusReportRequest {
     /// JSON text. Kept as an opaque value so a newer launcher's extra fields aren't lost.
     #[serde(default)]
     pub call_state: Option<serde_json::Value>,
+    /// Design 77: the SMS engine's state (role, mode, counts, hold pools; never a message), through its known keys
+    /// (`sms::sanitize_state`). Absent from launchers without `sms_engine_v1`.
+    #[serde(default)]
+    pub sms_state: Option<serde_json::Value>,
     /// The launcher's notification listener (app badges) has access. Absent from older launchers.
     #[serde(default)]
     pub notification_listener_enabled: Option<bool>,

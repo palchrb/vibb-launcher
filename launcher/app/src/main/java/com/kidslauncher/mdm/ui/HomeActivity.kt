@@ -557,7 +557,7 @@ class HomeActivity : UIObjectActivity() {
      * granted with adb at provisioning).
      */
     private fun promptForCallRoleIfNeeded() {
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.callsState
         val now = System.currentTimeMillis()
         val roles = CallSystem.roles(this)
         val role = rolePromptFor(
@@ -703,7 +703,7 @@ class HomeActivity : UIObjectActivity() {
     /** Missed calls per contact, from the call log on a background thread, and the missed Element X calls (round L5). */
     private fun loadMissedCalls() {
         if (!contentShown) return
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.callsState
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@HomeActivity, state) }
             if (result != missed && !isDestroyed && contentShown) {
@@ -740,7 +740,7 @@ class HomeActivity : UIObjectActivity() {
     /** Contacts row and phone-book tile from the call rules, missed calls and photos (cheap). */
     private fun renderCallParts() {
         if (!contentShown) return
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.callsState
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         renderContacts(view.home)
         // Managed (even with calls off) or unknown: the tile is there and the phone book explains.
@@ -839,7 +839,7 @@ class HomeActivity : UIObjectActivity() {
         }
         val call = com.kidslauncher.mdm.calls.OngoingCalls.current
         val number = com.kidslauncher.mdm.calls.PhoneNumbers.numberFromHandle(call?.details?.handle?.toString())
-        val contact = (CallPolicyStore.state as? com.kidslauncher.mdm.calls.CallPolicyState.Managed)?.rules?.contactFor(number)
+        val contact = (CallPolicyStore.callsState as? com.kidslauncher.mdm.calls.CallPolicyState.Managed)?.rules?.contactFor(number)
         val emergency = emergencyVerdict.isEmergency(number) { CallSystem.isEmergencyOutgoing(this, it) }
         val card = com.kidslauncher.mdm.calls.ongoingCallCard(
             liveCall = com.kidslauncher.mdm.calls.OngoingCalls.hasLiveCall,

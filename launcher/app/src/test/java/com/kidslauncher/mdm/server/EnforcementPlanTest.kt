@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
+import com.kidslauncher.mdm.calls.ChannelMode
 import com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -212,6 +213,30 @@ class EnforcementPlanTest {
         assertFalse(plan(listOf(SMS), calls = callsOn).restrictSms)
         assertFalse(SMS in plan(listOf(SMS), calls = callsOn).suspend)
         assertFalse(plan(listOf(SMS)).restrictSms)
+    }
+
+    @Test
+    fun `SMS managed by Vibb - the role ours filters, without it messages stop, other SMS apps always suspended (77 D1, D15)`() {
+        fun sms(mode: ChannelMode?, role: Boolean, calls: CallPolicyState = CallPolicyState.Unmanaged) = computeEnforcementPlan(
+            // Apps unmanaged: nothing else hides the SMS app or locks the clock.
+            null, true, 0, false, controllable, OWN, DIALER,
+            callState = calls, smsPackages = setOf(SMS), smsMode = mode, ourSmsRoleActive = role,
+        )
+        val ours = sms(ChannelMode.MANAGED, role = true)
+        assertFalse(ours.restrictSms)
+        assertTrue("allowlisted or not, only our engine texts", SMS in ours.hide)
+        assertTrue("the hold window runs on the clock", ours.lockDateTime)
+        assertTrue(sms(ChannelMode.MANAGED, role = false).restrictSms)
+        // D15: the rules unknown while the role is ours holds rather than loses.
+        assertFalse(sms(null, role = true).restrictSms)
+        assertTrue(sms(null, role = false).restrictSms)
+        assertTrue(sms(ChannelMode.OFF, role = true).restrictSms)
+        assertFalse(sms(ChannelMode.UNMANAGED, role = true).restrictSms)
+        assertFalse(SMS in sms(ChannelMode.UNMANAGED, role = false).hide)
+        // Only SMS managed: the calls channel stays unmanaged - no call-permission denial, the allowlisted dialer works.
+        val smsOnly = sms(ChannelMode.MANAGED, role = true)
+        assertFalse(smsOnly.denyCallPermissions)
+        assertFalse(smsOnly.restrictOutgoingCalls)
     }
 
     @Test

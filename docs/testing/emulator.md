@@ -2409,6 +2409,35 @@ fresh fix, or a weather zone. Set the emulator's clock inside the answer's hours
 6. **The look**: the symbols on a bright photo wallpaper and on Sky/Sunset; the clock twin on `jelly36` unchanged with
    the weather off and on (design 59d's profile: the date row's baseline is the date's).
 
+## 6v. The SMS engine (design 77 step 1, no screens yet)
+
+Run on `handy36` (Android 16, `-wipe-data`) on 2026-11-09, branch `sms-engine`, and again after the code QA's fix
+round (an allowed SMS shown, a stranger held and posted, the reply delivered; a re-delivery key per message in
+`received_key`). A phone created by the server starts with both channels "Ikke styrt" (the fix round's M2): set SMS
+"Styrt av Vibb" in the PWA once the phone has reported `sms_engine_v1`, or in `device_policy.sms_mode` for a test
+database. Until step 4's PWA pages, the parent's answers are written to the server's
+database by hand (`device_sms_names`, `device_sms_held.dropped_at`). There are no screens: check the engine's store
+with `adb exec-out run-as me.vibb.launcher.debug cat databases/messages.db > m.db` (and `-wal`), the notifications
+with `adb shell dumpsys notification --noredact`, the server's `device_sms_held` and `device_status.sms_state_json`.
+
+- `dpm set-device-owner` right after a fresh boot may answer "already some accounts on the device" while GMS's
+  account check is still busy (0 accounts listed): retry for a minute.
+- After the first sync: `cmd role get-role-holders android.app.role.SMS` names the launcher; `call_state.state` is
+  `unmanaged` (calls not managed), `sms_state.mode_applied` `managed`, `role_held` true.
+- **A contact with `sms_in`**: `adb emu sms send +4791234567 Hei` -> a `message` row (`SHOWN`) and a `MessagingStyle`
+  notification on `launcher:messages` with "Reply".
+- **A stranger**: `adb emu sms send +4790000041 ...` -> a `held` row, no notification; the row reaches the server's
+  `device_sms_held` within seconds (state `held`, `expires_at - at` = 24 h, no text).
+- **A sender name**: `adb emu sms send DNB Kode 1234` - the console sends letters as an alphanumeric TP-OA (TON 101):
+  held as `ALPHANUMERIC`/`alphanumeric`. `adb emu sms pdu <hex>` answers OK but delivers nothing on this image (no
+  `NEW_SMS` in `logcat -b radio`, also for a numeric PDU), so an alphanumeric sender reading like a number can't be
+  injected here - `SmsSenderTypeTest` and `SmsRulesTest` cover it.
+- **The parent's answers**: `device_sms_names` gets `DNB`, the stranger's row a `dropped_at`; the next sync (another
+  hold asks for one within a minute) drops the stranger's row (`dropped` on the server, gone on the phone) and
+  releases DNB's message into `message` with its first receive time (`released` on the server).
+- **The reply**: the shade's "Reply" on Mamma's notification -> an `OUT` row, origin `NOTIFICATION`, `SENT`, then
+  `DELIVERED` by the emulator's delivery report. A sender name's notification has no "Reply".
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

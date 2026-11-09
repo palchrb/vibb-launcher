@@ -12,7 +12,8 @@ const val CALL_POLICY_CAPABILITY = "call_policy_v1"
 /** What the status report says about calls (`StatusReportRequest.callState`). */
 object CallStateReport {
     fun build(context: Context): CallState {
-        val state = CallPolicyStore.state
+        // Design 77 D2: the calls channel only; SMS is sms_state.mode_applied.
+        val state = CallPolicyStore.callsState
         val userManager = context.getSystemService(UserManager::class.java)
         fun restricted(restriction: String) = try {
             userManager?.hasUserRestriction(restriction) == true

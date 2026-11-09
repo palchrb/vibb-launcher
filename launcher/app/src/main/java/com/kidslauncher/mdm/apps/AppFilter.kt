@@ -83,7 +83,7 @@ class AppFilter(
         } catch (e: Exception) {
             false
         }
-        val hide = restricted || CallPolicyStore.state.managed
+        val hide = restricted || CallPolicyStore.callsState.managed
         return if (hide) systemDialerPackage(context) else null
     }
 

@@ -192,7 +192,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     .unwrap();
     let (anna, token) = app.enrolled_device("Anna").await;
     // Calls managed and screened, so the school rule really blocks them.
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(anna)
         .execute(&app.db)
         .await
@@ -256,7 +256,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     );
 
     // Calls not managed: the rule's flag alone isn't "calls off" (M3).
-    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(anna)
         .execute(&app.db)
         .await

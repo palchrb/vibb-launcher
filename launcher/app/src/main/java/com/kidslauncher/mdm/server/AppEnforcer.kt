@@ -28,8 +28,20 @@ import com.kidslauncher.mdm.calls.RoleAction
 import com.kidslauncher.mdm.calls.dialerRoleAction
 import com.kidslauncher.mdm.calls.roleReportNeeded
 import com.kidslauncher.mdm.push.SyncRunner
-import com.kidslauncher.mdm.calls.lockDefaultApps
+import com.kidslauncher.mdm.calls.ChannelMode
+import com.kidslauncher.mdm.calls.forCalls
 import com.kidslauncher.mdm.calls.managed
+import com.kidslauncher.mdm.calls.smsMode
+import com.kidslauncher.mdm.sms.DENY_PLAY_SERVICES_SMS
+import com.kidslauncher.mdm.sms.PLAY_SERVICES
+import com.kidslauncher.mdm.sms.SmsPrefs
+import com.kidslauncher.mdm.sms.SmsRuntime
+import com.kidslauncher.mdm.sms.lockDefaultAppsFor
+import com.kidslauncher.mdm.sms.smsPermissionPass
+import com.kidslauncher.mdm.sms.smsPermissionTargets
+import com.kidslauncher.mdm.sms.smsPermissionsDenied
+import com.kidslauncher.mdm.sms.smsRoleAction
+import com.kidslauncher.mdm.sms.smsRoleReturnTo
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.withTimeRule
@@ -360,8 +372,15 @@ object AppEnforcer {
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.
         CallPolicyStore.ensureLoaded(context)
+        // Design 77 D2: [callState] is the whole policy (managed while either channel is); the calls channel alone
+        // decides the dialer role and the call restrictions, the SMS channel the SMS role and DISALLOW_SMS.
         val callState = CallPolicyStore.state
-        applyDialerRole(context, dpm, admin, callState)
+        val callsState = callState.forCalls()
+        val smsMode = callState.smsMode
+        applyDialerRole(context, dpm, admin, callsState, smsMode)
+        // D1: the SMS role is taken before the plan (with it ours, DISALLOW_SMS stays off); handed back after the
+        // package loop, once the previous holder is unhidden (design 09 A6).
+        applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = false)
         // Inside a sync the status report right after this tells the server anyway (qa-09-code #10).
         if (!fromSync) signalRoleChange(context)
 
@@ -403,7 +422,9 @@ object AppEnforcer {
             controllable = installedPackages,
             ownPackage = ownPackage,
             systemDialer = systemDialerPackage(context),
-            callState = withTimeRule(callState, lock.callsBlocked),
+            callState = withTimeRule(callsState, lock.callsBlocked),
+            smsMode = smsMode,
+            ourSmsRoleActive = SmsRuntime.roleHeld(context),
             ourDialerActive = CallSystem.dialerRoleHeld(context),
             smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
             scheduleLocked = scheduleLocked,
@@ -426,13 +447,17 @@ object AppEnforcer {
         // (redirection + in-call services) screens outgoing calls - see
         // EnforcementPlan.restrictOutgoingCalls. Emergency calls are exempt from this restriction.
         setRestriction(dpm, admin, UserManager.DISALLOW_OUTGOING_CALLS, plan.restrictOutgoingCalls)
-        // SMS off (or rules unknown): no SMS in or out. The SMS apps are suspended by the plan too,
-        // for RCS. Not lifted by an override.
+        // SMS off, or no filter of ours in place (design 77 D1/D15): no SMS in or out. The SMS apps are suspended by
+        // the plan too, for RCS. Not lifted by an override.
         setRestriction(dpm, admin, UserManager.DISALLOW_SMS, plan.restrictSms)
         // One read of every third-party app's requested permissions for the call pass here and the camera pass after the
         // loop (`MATCH_UNINSTALLED_PACKAGES`: hiding doesn't change what an app requests); `null` if it failed.
         val requested = thirdPartyRequested(context)
         applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist, requested)
+        // Design 77 §2.5, §8.6: in "Styrt av Vibb", and with the rules unknown (QA M1), no other app receives, reads or
+        // sends SMS. Never lifted by an
+        // override or the pause (the call rules' exception).
+        applySmsPermissions(context, dpm, admin, smsPermissionsDenied(smsMode), requested)
 
         lastPlanSuspend = plan.suspend
         // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
@@ -502,6 +527,8 @@ object AppEnforcer {
         // Design 68 §3.2: after the loop - a hidden app probably can't be denied (the admin path reads the package
         // without MATCH_UNINSTALLED_PACKAGES), and the pass that unhides it comes first.
         if (requested != null) applyCameraPermissions(context, dpm, admin, requested, policy, overrideActive)
+        // Design 09 A6: the SMS role goes back only now, with the previous holder unhidden by the loop.
+        applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = true)
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
         lastEnforcedOverride = overrideActive
@@ -872,7 +899,13 @@ object AppEnforcer {
      * a role we took is handed back to the system dialer, so the phone is never left with our
      * dialer and no rules.
      */
-    private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
+    private fun applyDialerRole(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        state: CallPolicyState,
+        smsMode: ChannelMode?,
+    ) {
         // For the phone book's call-log pass-on, which runs on the main thread (qa-12-code #4).
         systemDialerPackage(context)?.let { CallPrefs.systemDialer(context, it) }
         val held = CallSystem.dialerRoleHeld(context)
@@ -910,10 +943,16 @@ object AppEnforcer {
             RoleAction.NONE -> if (held || !state.managed) CallPrefs.lastError(context, null)
         }
         // Re-set in the same pass (QA 09 #11).
-        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, CallSystem.dialerRoleHeld(context)))
+        // Design 77: the SMS role's lock counts too (lockDefaultAppsFor).
+        setRestriction(
+            dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
+            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)),
+        )
         val heldAfter = CallSystem.dialerRoleHeld(context)
-        // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4.
-        if (shouldResetOwnPermissions(state.managed, heldAfter, CallPrefs.ownPermissionsFixed(context))) {
+        // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4. Not while the SMS
+        // role is ours or SMS is managed (design 77 §8.3): its hand-back would kill us otherwise.
+        val smsHolds = smsMode == ChannelMode.MANAGED || SmsRuntime.roleHeld(context)
+        if (shouldResetOwnPermissions(state.managed || smsHolds, heldAfter, CallPrefs.ownPermissionsFixed(context))) {
             fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT)
             CallPrefs.ownPermissionsFixed(context, false)
         }
@@ -923,6 +962,132 @@ object AppEnforcer {
         if (bringHomeAfterRoleChange(held, heldAfter, LauncherPreferences.mdm().kioskEnabled(), inCall(context))) {
             bringHomeToFront(context)
         }
+    }
+
+    /**
+     * Design 77 D1: we are the default SMS app while SMS is "Styrt av Vibb" ([smsRoleAction]): taken with
+     * `setDefaultSmsApplication` (device owner, no prompt) and checked with RoleManager afterwards - the call returns
+     * silently when it fails (design 09 A1). "Ikke styrt" hands back a role we took, to the holder before us
+     * ([smsRoleReturnTo]) - only with [allowRelease], after the package loop unhid it (design 09 A6). Our own SMS
+     * permissions are fixed by policy before the role changes hands (§8.3) and again once it is ours.
+     */
+    private fun applySmsRole(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        callsState: CallPolicyState,
+        smsMode: ChannelMode?,
+        allowRelease: Boolean,
+    ) {
+        val held = SmsRuntime.roleHeld(context)
+        val action = smsRoleAction(smsMode, held, SmsPrefs.takenByUs(context))
+        if (action == RoleAction.NONE || (action == RoleAction.RELEASE && !allowRelease)) {
+            if (held && smsMode == ChannelMode.MANAGED) fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+            signalSmsRoleChange(context, held)
+            return
+        }
+        fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+        CallPrefs.ownPermissionsFixed(context, true)
+        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, false)
+        try {
+            if (action == RoleAction.TAKE) {
+                SmsPrefs.previousHolder(context, CallSystem.defaultSmsPackage(context)?.takeIf { it != context.packageName })
+                dpm.setDefaultSmsApplication(admin, context.packageName)
+                if (SmsRuntime.roleHeld(context)) {
+                    SmsPrefs.takenByUs(context, true)
+                    SmsPrefs.lastError(context, null)
+                    // The role granted our SMS permissions: fixed by policy now, so a hand-back never revokes them.
+                    fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+                } else {
+                    SmsPrefs.lastError(context, "setDefaultSmsApplication: role not held afterwards")
+                }
+            } else {
+                val installed = smsCandidates(context)
+                val target = smsRoleReturnTo(SmsPrefs.previousHolder(context), context.packageName, installed)
+                if (target == null) {
+                    SmsPrefs.lastError(context, "release sms role: no SMS app to hand it to")
+                } else {
+                    dpm.setDefaultSmsApplication(admin, target)
+                    if (!SmsRuntime.roleHeld(context)) {
+                        SmsPrefs.takenByUs(context, false)
+                        SmsPrefs.lastError(context, null)
+                    } else {
+                        SmsPrefs.lastError(context, "release sms role: still held after handing it to $target")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The SMS role change ($action) failed", e)
+            SmsPrefs.lastError(context, "sms role $action: ${e.javaClass.simpleName}: ${e.message}".take(300))
+        }
+        val heldAfter = SmsRuntime.roleHeld(context)
+        setRestriction(
+            dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
+            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter),
+        )
+        signalSmsRoleChange(context, heldAfter)
+    }
+
+    /** The installed packages that may take the SMS role back (the known SMS apps and the one before us). */
+    private fun smsCandidates(context: Context): Set<String> {
+        val pm = context.packageManager
+        return (KNOWN_SMS_PACKAGES + listOfNotNull(SmsPrefs.previousHolder(context))).filterTo(mutableSetOf()) {
+            try {
+                pm.getPackageInfo(it, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()))
+                true
+            } catch (e: PackageManager.NameNotFoundException) {
+                false
+            }
+        }
+    }
+
+    /** B1 for the SMS role: a change since the server last heard asks for a sync (coalesced). */
+    private fun signalSmsRoleChange(context: Context, held: Boolean) {
+        if (SmsPrefs.roleSignalled(context) == held) return
+        SmsPrefs.roleSignalled(context, held)
+        try {
+            SyncRunner.request(context, "role-changed")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't request a sync after the SMS role changed", e)
+        }
+    }
+
+    /**
+     * Design 77 §2.5, §8.6: while [managed] ([smsPermissionsDenied]: "Styrt av Vibb", or the rules unknown) every other
+     * app's SMS permissions are DENIED by policy ([smsPermissionTargets]: the third-party requesters in [requested], and
+     * Play services per [DENY_PLAY_SERVICES_SMS]); otherwise back to DEFAULT, a grant we took away given back first
+     * ([smsPermissionPass], QA L8). Hard-restricted permissions: whether a device owner may set them is step 0's check -
+     * a refusal is logged by [setGrantState] and changes nothing else.
+     */
+    private fun applySmsPermissions(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        managed: Boolean,
+        requested: Map<String, List<String>>?,
+    ) {
+        requested ?: return
+        val playServices = try {
+            context.packageManager.getPackageInfo(
+                PLAY_SERVICES, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
+            ).requestedPermissions.orEmpty().toList()
+        } catch (e: PackageManager.NameNotFoundException) {
+            null
+        }
+        // Every requester is listed (Play services too), so switching the GMS rule off puts it back to DEFAULT. QA L8:
+        // what we denied is recorded, so leaving the denial gives a grant back instead of leaving it revoked.
+        val pm = context.packageManager
+        val pass = smsPermissionPass(
+            smsPermissionTargets(requested, playServices, context.packageName, denyPlayServices = true),
+            deny = { managed && (it != PLAY_SERVICES || DENY_PLAY_SERVICES_SMS) },
+            granted = { pkg, permission ->
+                dpm.getPermissionGrantState(admin, pkg, permission) != DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED &&
+                    pm.checkPermission(permission, pkg) == PackageManager.PERMISSION_GRANTED
+            },
+            recorded = SmsPrefs.deniedPermissions(context),
+        )
+        for (write in pass.writes) setGrantState(dpm, admin, write.packageName, write.permission, write.state)
+        SmsPrefs.deniedPermissions(context, pass.record)
     }
 
     /** Any call at all; unknown counts as "in a call" (then Home stays where it is). */
@@ -1371,7 +1536,7 @@ object AppEnforcer {
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
         CallPolicyStore.ensureLoaded(context)
-        if (CallPolicyStore.state.managed) {
+        if (CallPolicyStore.callsState.managed) {
             try {
                 val info = context.packageManager.getPackageInfo(
                     packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())

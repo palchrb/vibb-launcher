@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.calls
 
 import com.kidslauncher.mdm.server.WindowStart
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -33,7 +34,31 @@ data class RuleContact(
     val messageAddress: String? = null,
     /** SHA-256 of the contact's photo ([ContactPhotos]); never written to the DE boot copy. */
     val photo: String? = null,
+    /** Design 77 D3: may text the kid, the kid may text them, pictures both ways - independent of the call switches. */
+    val smsIn: Boolean = false,
+    val smsOut: Boolean = false,
+    val mms: Boolean = false,
 )
+
+/**
+ * Design 77 D2: one channel's state - calls and SMS each have their own. [OFF]: calls only to emergency numbers, SMS
+ * `DISALLOW_SMS` (messages lost); [MANAGED]: Vibb's rules (contacts-only calls; Vibb One the SMS app, filtering);
+ * [UNMANAGED]: anyone, any app.
+ */
+@Serializable
+enum class ChannelMode {
+    @SerialName("off") OFF,
+    @SerialName("managed") MANAGED,
+    @SerialName("unmanaged") UNMANAGED,
+    ;
+
+    val wire: String get() = name.lowercase()
+
+    companion object {
+        /** `null` for anything but the three wire names. */
+        fun of(wire: String?): ChannelMode? = entries.firstOrNull { it.wire == wire }
+    }
+}
 
 /**
  * The managed rules. Its own small serializable type (not the policy DTO), stored as
@@ -49,6 +74,14 @@ data class CallRules(
     /** Design 73: the policy's emergency menu, kept with the rules so a cache that can't be read still has it;
      * `null` = none sent (112 alone). Never decides a call: [Emergency] and the sets below do. */
     val emergencyMenu: List<EmergencyEntry>? = null,
+    /** Design 77 D2. Rules a build before it stored have none: read by D2's migration table from the switches above
+     * (a stored rule set is always a managed one). */
+    val callsMode: ChannelMode = if (callsEnabled) ChannelMode.MANAGED else ChannelMode.OFF,
+    val smsMode: ChannelMode = if (smsEnabled) ChannelMode.UNMANAGED else ChannelMode.OFF,
+    /** Design 77 D17: the parent's sender names, as typed ([com.kidslauncher.mdm.sms.engine.SmsNames] folds them). */
+    val smsNames: List<String> = emptyList(),
+    /** Design 77 §6.8: the lock glance's message row may show the text (step 5). */
+    val smsLockText: Boolean = false,
 ) {
     @Transient
     val inbound: Set<String> = contacts.filter { it.inbound }.mapTo(mutableSetOf()) { it.number }
@@ -83,6 +116,22 @@ sealed interface CallPolicyState {
 
 /** Whether calls are under our control at all in [this] state. */
 val CallPolicyState.managed: Boolean get() = this !is CallPolicyState.Unmanaged
+
+/**
+ * Design 77 D2: the state the call path enforces - [this] (the whole policy: managed while either channel is) with a
+ * calls channel "Ikke styrt" read as [CallPolicyState.Unmanaged], so with only SMS managed the call services, the
+ * dialer role and the phone book behave as on an unmanaged phone. Fail closed stays fail closed.
+ */
+fun CallPolicyState.forCalls(): CallPolicyState =
+    if (this is CallPolicyState.Managed && rules.callsMode == ChannelMode.UNMANAGED) CallPolicyState.Unmanaged else this
+
+/** Design 77 D2: the SMS channel's state; `null` = the rules are unknown (fail closed). */
+val CallPolicyState.smsMode: ChannelMode?
+    get() = when (this) {
+        CallPolicyState.Unmanaged -> ChannelMode.UNMANAGED
+        CallPolicyState.UnknownFailClosed -> null
+        is CallPolicyState.Managed -> rules.smsMode
+    }
 
 enum class Verdict { ALLOW, BLOCK }
 

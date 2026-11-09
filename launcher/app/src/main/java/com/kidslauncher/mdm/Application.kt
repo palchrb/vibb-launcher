@@ -282,6 +282,13 @@ class Application : android.app.Application() {
             android.util.Log.e("Application", "Setup failed, continuing", e)
             com.kidslauncher.mdm.crash.CrashReports.record(this, e)
         }
+        // Design 77: the message engine's start on its own thread (what it held for the rules, expiry, the outbox).
+        // Guarded on its own: the SMS code never takes the call path down (§6.10).
+        try {
+            com.kidslauncher.mdm.sms.SmsRuntime.start(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "The message engine didn't start", e)
+        }
         // Design 59 F3: the main thread's share of the gap between the unlock and our Home (the boot's Home start
         // is posted behind this) - the timing recipe in the design reads this line.
         android.util.Log.i("Application", "Unlocked setup took ${android.os.SystemClock.elapsedRealtime() - setupStart} ms")

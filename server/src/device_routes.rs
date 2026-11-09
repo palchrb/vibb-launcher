@@ -91,6 +91,11 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::device_api::TIME_REQUEST_BODY_LIMIT,
             )),
         )
+        // Design 77 D16: the phone's held and blocked senders - who and when, never what.
+        .route(
+            "/api/devices/sms-held",
+            post(crate::sms::held).layer(DefaultBodyLimit::max(crate::sms::HELD_BODY_LIMIT)),
+        )
         .route(
             "/api/devices/music/library",
             get(handlers::music_api::library),

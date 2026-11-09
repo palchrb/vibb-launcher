@@ -136,11 +136,11 @@ object MissedCallsRepo {
     private fun missedCallDuty(context: Context): Boolean =
         canKeepMissedCalls(
             CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context),
-            CallPolicyStore.state.managed, CallSystem.dialerRoleHeld(context),
+            CallPolicyStore.callsState.managed, CallSystem.dialerRoleHeld(context),
         )
 
     private fun readable(context: Context): Boolean =
-        canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)
+        canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.callsState.managed)
 
     private fun readLog(context: Context, sinceMs: Long): List<CallLogEntry> =
         if (!readable(context)) emptyList() else queryLog(context, sinceMs)

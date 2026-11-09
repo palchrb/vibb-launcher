@@ -15,16 +15,28 @@ import kotlinx.serialization.json.intOrNull
  * CallPolicyStore reads and writes it.
  *
  * DE data is readable before the user has authenticated, so this holds only what the call path
- * needs before unlock: the mode, whether calls are on, the default country code and the allowed
- * numbers. No names, no tokens, no PIN hash.
+ * needs before unlock: the mode, the calls channel's state, whether calls are on, the default country code and the
+ * allowed numbers. No names, no tokens, no PIN hash.
+ *
+ * Version 2 (design 77 D2) adds `calls_mode`: with only SMS managed, [mode] is "managed" (the phone is) while the calls
+ * channel is "unmanaged" - the call path then leaves calls alone before unlock too. A version-1 copy reads as
+ * [BootPolicyRead.UnsupportedVersion]: fail closed until the first unlock rewrites it.
+ *
+ * Version 3 (design 77 QA L2) adds `sms_mode`, so an `AppEnforcer.apply()` before the first unlock enforces the SMS
+ * channel the parent chose, not "Av" - no `DISALLOW_SMS` that drops the messages the platform holds for the unlock, no
+ * lifted denials. A version-2 copy reads as unknown: fail closed, which for SMS keeps the denials (QA M1's rule).
  */
 
-const val BOOT_POLICY_VERSION = 1
+const val BOOT_POLICY_VERSION = 3
 
 @Serializable
 data class BootCallPolicy(
     @SerialName("v") val version: Int,
     @SerialName("mode") val mode: String,
+    /** Design 77 D2: [ChannelMode.wire] of the calls channel; "off" for the unmanaged and fail-closed copies. */
+    @SerialName("calls_mode") val callsMode: String,
+    /** Design 77 QA L2: [ChannelMode.wire] of the SMS channel; "unmanaged" / "off" for the unmanaged / fail-closed copies. */
+    @SerialName("sms_mode") val smsMode: String,
     @SerialName("calls_enabled") val callsEnabled: Boolean,
     @SerialName("default_cc") val defaultCc: String,
     @SerialName("inbound") val inbound: List<String>,
@@ -48,14 +60,19 @@ fun bootPolicyFor(state: CallPolicyState): BootCallPolicy = when (state) {
     is CallPolicyState.Managed -> BootCallPolicy(
         version = BOOT_POLICY_VERSION,
         mode = BootCallPolicy.MANAGED,
+        callsMode = state.rules.callsMode.wire,
+        smsMode = state.rules.smsMode.wire,
         callsEnabled = state.rules.callsEnabled,
         defaultCc = state.rules.defaultCc,
         inbound = matchable(state.rules.inbound, state.rules.defaultCc),
         outbound = matchable(state.rules.outbound, state.rules.defaultCc),
     )
-    CallPolicyState.Unmanaged -> BootCallPolicy(BOOT_POLICY_VERSION, BootCallPolicy.UNMANAGED, false, "", emptyList(), emptyList())
-    CallPolicyState.UnknownFailClosed ->
-        BootCallPolicy(BOOT_POLICY_VERSION, BootCallPolicy.FAIL_CLOSED, false, "", emptyList(), emptyList())
+    CallPolicyState.Unmanaged -> BootCallPolicy(
+        BOOT_POLICY_VERSION, BootCallPolicy.UNMANAGED, ChannelMode.OFF.wire, ChannelMode.UNMANAGED.wire, false, "", emptyList(), emptyList(),
+    )
+    CallPolicyState.UnknownFailClosed -> BootCallPolicy(
+        BOOT_POLICY_VERSION, BootCallPolicy.FAIL_CLOSED, ChannelMode.OFF.wire, ChannelMode.OFF.wire, false, "", emptyList(), emptyList(),
+    )
 }
 
 /**
@@ -104,6 +121,10 @@ private val COUNTRY_CODE = Regex("[1-9][0-9]{0,2}")
 
 private fun validManaged(policy: BootCallPolicy): BootPolicyRead {
     if (!COUNTRY_CODE.matches(policy.defaultCc)) return BootPolicyRead.Corrupt("default_cc")
+    // The calls switch must say what the mode says (CallPolicy.toRules writes them together).
+    val callsMode = ChannelMode.of(policy.callsMode) ?: return BootPolicyRead.Corrupt("calls_mode")
+    if (policy.callsEnabled != (callsMode != ChannelMode.OFF)) return BootPolicyRead.Corrupt("calls_enabled")
+    if (ChannelMode.of(policy.smsMode) == null) return BootPolicyRead.Corrupt("sms_mode")
     // Every number must be in the normalised form the rules compare against.
     val bad = (policy.inbound + policy.outbound).any { PhoneNumbers.normalize(it, policy.defaultCc)?.value != it }
     return if (bad) BootPolicyRead.Corrupt("number") else BootPolicyRead.Ok(policy)
@@ -116,15 +137,19 @@ fun bootPolicyState(read: BootPolicyRead): CallPolicyState {
         BootCallPolicy.UNMANAGED -> CallPolicyState.Unmanaged
         BootCallPolicy.MANAGED -> {
             val numbers = (policy.inbound + policy.outbound).distinct()
+            // Nothing of the SMS engine runs before the first unlock (design 77 §6.1); the SMS channel is here for an
+            // apply() before it (QA L2). A copy without a valid one isn't Ok (validManaged).
+            val smsMode = ChannelMode.of(policy.smsMode) ?: ChannelMode.OFF
             CallPolicyState.Managed(
                 CallRules(
                     callsEnabled = policy.callsEnabled,
-                    // SMS is enforced by the persisted DISALLOW_SMS restriction, not by the call path.
-                    smsEnabled = false,
+                    smsEnabled = smsMode == ChannelMode.UNMANAGED,
                     defaultCc = policy.defaultCc,
                     contacts = numbers.map {
                         RuleContact(number = it, inbound = it in policy.inbound, outbound = it in policy.outbound)
                     },
+                    callsMode = ChannelMode.of(policy.callsMode) ?: ChannelMode.OFF,
+                    smsMode = smsMode,
                 ),
             )
         }
@@ -149,6 +174,8 @@ fun bootCopyFaithful(state: CallPolicyState, json: String?): Boolean {
         CallPolicyState.Unmanaged -> boot == CallPolicyState.Unmanaged
         CallPolicyState.UnknownFailClosed -> boot == CallPolicyState.UnknownFailClosed
         is CallPolicyState.Managed -> boot is CallPolicyState.Managed &&
+            boot.rules.callsMode == state.rules.callsMode &&
+            boot.rules.smsMode == state.rules.smsMode &&
             boot.rules.callsEnabled == state.rules.callsEnabled &&
             boot.rules.defaultCc == state.rules.defaultCc &&
             boot.rules.inbound == matchable(state.rules.inbound, state.rules.defaultCc).toSet() &&

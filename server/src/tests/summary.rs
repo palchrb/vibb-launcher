@@ -474,6 +474,12 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Mia").await;
+    // Both channels not managed (design 77 D2: a new phone starts with SMS managed).
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await

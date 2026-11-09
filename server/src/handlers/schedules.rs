@@ -1997,7 +1997,7 @@ async fn render_device_time(
             fix: None,
         });
     }
-    if !policy.calls_managed && effective.iter().any(|r| !r.calls_allowed) {
+    if !policy.calls_managed() && effective.iter().any(|r| !r.calls_allowed) {
         warnings.push(Note {
             warning: true,
             title: t(lang, "device.time.incoming_not_blocked").to_string(),

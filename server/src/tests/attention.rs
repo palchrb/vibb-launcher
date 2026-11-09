@@ -482,7 +482,7 @@ async fn a_phone_not_set_up_has_no_count() {
     let cookie = app.admin_cookie().await;
     // Managed (calls) and no Parent PIN: an alarm once it's set up, nothing before.
     let (id, _) = app.create_device("Mia").await;
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
@@ -518,7 +518,7 @@ async fn every_call_warning_is_typed() {
     )
     .await;
     sqlx::query(
-        "UPDATE device_policy SET calls_managed = 1, sms_enabled = 0, \
+        "UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'off', \
          allowlist_json = '[\"com.example.sms\"]' WHERE device_id = ?",
     )
     .bind(id)

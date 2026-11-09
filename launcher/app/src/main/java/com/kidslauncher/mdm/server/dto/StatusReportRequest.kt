@@ -126,6 +126,9 @@ data class StatusReportRequest(
      * and the outside sightings ([com.kidslauncher.mdm.server.ServerTlsReport]). Pinned by `server_tls_report.json`
      * (`ServerPinsTest`). */
     val serverTls: com.kidslauncher.mdm.server.ServerTlsReport? = null,
+    /** Design 77 §7 (capability `sms_engine_v1`): what the message engine did - see [SmsState]; `null` = the engine
+     * couldn't be read (left out). No content. Pinned by `sms_contract.json` (`SmsContractTest`). */
+    val smsState: SmsState? = null,
 )
 
 /**
