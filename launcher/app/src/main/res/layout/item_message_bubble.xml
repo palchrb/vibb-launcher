@@ -23,6 +23,18 @@
         android:paddingEnd="14dp"
         android:paddingBottom="8dp">
 
+        <!-- A group's message (D12): who in it wrote this one. -->
+        <TextView
+            android:id="@+id/bubble_from"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_extrabold"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/kid_message_in_dim"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/bubble_unknown"
             android:layout_width="wrap_content"

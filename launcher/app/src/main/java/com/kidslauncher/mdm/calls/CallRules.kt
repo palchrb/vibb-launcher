@@ -40,6 +40,15 @@ data class RuleContact(
     val mms: Boolean = false,
 )
 
+/** Design 77 D12: one SIM slot's own number as the parent typed it (normalised by the server). */
+@Serializable
+data class OwnNumberRule(val slot: Int = 0, val number: String = "")
+
+/** Design 77 D10: one SIM operator's MMS servers - `mccmnc` as `TelephonyManager.getSimOperator()` gives it, the hosts
+ * exact (compared without case). */
+@Serializable
+data class MmscRule(val mccmnc: String = "", val hosts: List<String> = emptyList())
+
 /**
  * Design 77 D2: one channel's state - calls and SMS each have their own. [OFF]: calls only to emergency numbers, SMS
  * `DISALLOW_SMS` (messages lost); [MANAGED]: Vibb's rules (contacts-only calls; Vibb One the SMS app, filtering);
@@ -82,6 +91,11 @@ data class CallRules(
     val smsNames: List<String> = emptyList(),
     /** Design 77 §6.8: the lock glance's message row may show the text (step 5). */
     val smsLockText: Boolean = false,
+    /** Design 77 D12: the phone's own numbers the parent typed, per SIM slot (normalised) - the group rule's. */
+    val ownNumbers: List<OwnNumberRule> = emptyList(),
+    /** Design 77 D10: the carriers' MMS servers by the SIM's MCC/MNC; empty until step 0 fills the server's table, and
+     * then every MMS fails closed ("Bildet kunne ikke hentes"). */
+    val mmscHosts: List<MmscRule> = emptyList(),
 ) {
     @Transient
     val inbound: Set<String> = contacts.filter { it.inbound }.mapTo(mutableSetOf()) { it.number }

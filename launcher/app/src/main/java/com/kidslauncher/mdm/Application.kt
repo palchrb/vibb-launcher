@@ -168,6 +168,10 @@ class Application : android.app.Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Design 77 D8, QA L1: the isolated MMS parse process (`:mmsparse`) - untrusted bytes are read there, so nothing
+        // of ours runs next to them: no rules, preferences, enforcement or crash reports. `instance` stays null, so the
+        // component factory sets nothing up either.
+        if (android.os.Process.isIsolated()) return
         // The boot cover's own process (design 16b, QA #10): nothing else runs there - no call
         // path, no preferences, no enforcement, no crash reports of ours - only its crash counter
         // (device-protected storage), installed first so a crash anywhere in that process counts

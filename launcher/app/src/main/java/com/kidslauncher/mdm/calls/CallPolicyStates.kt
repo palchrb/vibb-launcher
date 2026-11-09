@@ -30,6 +30,8 @@ fun CallPolicy.toRules(): CallRules {
         smsMode = sms,
         smsNames = smsNames,
         smsLockText = smsLockText,
+        ownNumbers = ownNumbers.map { OwnNumberRule(it.slot, it.number) },
+        mmscHosts = mmscHosts.map { MmscRule(it.mccmnc, it.hosts) },
     )
 }
 

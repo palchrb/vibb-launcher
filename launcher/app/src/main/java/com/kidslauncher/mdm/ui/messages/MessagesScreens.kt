@@ -55,6 +55,7 @@ object MessagesScreens {
         is Who.Sender -> who.name
         is Who.Number -> who.number
         Who.Unknown -> context.getString(R.string.messages_unknown)
+        is Who.Group -> who.members.joinToString(", ") { name(context, it) }
     }
 
     /** A row's avatar: the contact's own (photo, colour, the emergency red), else an initial on the palette. */
@@ -93,6 +94,7 @@ object MessagesScreens {
         ComposeState.NOT_NOW -> R.string.messages_compose_not_now
         ComposeState.NOT_ALLOWED -> R.string.messages_compose_not_allowed
         ComposeState.UNAVAILABLE -> R.string.messages_compose_unavailable
+        ComposeState.GROUP_NOT_ALLOWED -> R.string.messages_group_not_allowed
     }
 
     /** The toast after a send the gate refused ([afterRefusal], code QA L5); `null` = nothing to say. */

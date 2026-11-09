@@ -67,10 +67,16 @@ object SmsNotifier {
             val me = Person.Builder().setName(context.getString(R.string.sms_notification_me)).build()
             val sender = senderPerson(context, conversation)
             val style = NotificationCompat.MessagingStyle(me)
+            val group = conversation.participants.size > 1
             for (m in unread) {
-                val text = if (m.unknownSender) context.getString(R.string.sms_unknown_sender_line, m.body.orEmpty()) else m.body.orEmpty()
-                style.addMessage(text, m.at, sender)
+                // Step 3b: a picture without text says "Bilde" - never its pixels (the large icon stays the contact's).
+                val body = m.body?.takeIf { it.isNotBlank() } ?: context.getString(R.string.messages_picture).takeIf { m.parts.isNotEmpty() }.orEmpty()
+                val text = if (m.unknownSender) context.getString(R.string.sms_unknown_sender_line, body) else body
+                // D12: in a group each message names who in it wrote it.
+                val from = if (group) m.sender?.let { groupMember(context, it) } ?: sender else sender
+                style.addMessage(text, m.at, from)
             }
+            if (group) style.setGroupConversation(true).setConversationTitle(groupTitle(context, conversation))
             val canSend = engine.conversations().firstOrNull { it.id.value == conversation.id }?.canSend == true
             val channel = if (silent) NOTIFICATION_CHANNEL_MESSAGES_SILENT else NOTIFICATION_CHANNEL_MESSAGES
             val public = NotificationCompat.Builder(context, channel)
@@ -119,6 +125,18 @@ object SmsNotifier {
     fun cancel(context: Context, conversationId: String) {
         NotificationManagerCompat.from(context).cancel(conversationId, MESSAGES_NOTIFICATION_ID)
     }
+
+    /** A group's member as a person: the contact's name now, else the number. */
+    private fun groupMember(context: Context, address: String): Person {
+        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+        val contact = rules?.contacts?.firstOrNull { it.number == address }
+        val builder = Person.Builder().setName(contact?.name?.takeIf { it.isNotBlank() } ?: address).setKey(address)
+        ContactPhotos.cached(context, contact?.photo)?.let { builder.setIcon(IconCompat.createWithBitmap(it)) }
+        return builder.build()
+    }
+
+    private fun groupTitle(context: Context, conversation: ConversationRow): String =
+        conversation.participants.joinToString(", ") { groupMember(context, it.address).name.toString() }
 
     private fun senderPerson(context: Context, conversation: ConversationRow): Person {
         val participant = conversation.participants.singleOrNull()

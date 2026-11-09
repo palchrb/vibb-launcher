@@ -28,7 +28,10 @@ import com.kidslauncher.mdm.server.dto.SmsHeldRow
 import com.kidslauncher.mdm.server.dto.SmsHoldFull
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
 import com.kidslauncher.mdm.server.dto.SmsState
+import com.kidslauncher.mdm.sms.engine.Carrier
 import com.kidslauncher.mdm.sms.engine.HeldPost
+import com.kidslauncher.mdm.sms.engine.MmsGate
+import com.kidslauncher.mdm.sms.mms.MmsRuntime
 import com.kidslauncher.mdm.sms.engine.IncomingSms
 import com.kidslauncher.mdm.sms.engine.Received
 import com.kidslauncher.mdm.sms.engine.SendCommand
@@ -107,7 +110,11 @@ object SmsRuntime {
         val app = context.applicationContext
         return try {
             val opened = SqliteMessageStore(app)
-            SmsEngine(opened, System::currentTimeMillis, { judge(app) }, PlatformRadio(app)).also {
+            SmsEngine(
+                opened, System::currentTimeMillis, { judge(app) }, PlatformRadio(app),
+                mmsRadio = com.kidslauncher.mdm.sms.mms.PlatformMmsRadio(app),
+                files = com.kidslauncher.mdm.sms.mms.MmsRuntime.files(app),
+            ).also {
                 store = opened
                 engine = it
                 listen(app)
@@ -132,6 +139,10 @@ object SmsRuntime {
             // policy's drops first, as at every accepted policy.
             val drops = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.callPolicy?.smsHeldDrop.orEmpty()
             engine.releasePass(drops).forEach { notifyShown(app, engine, it) }
+            // Step 3b: what MMS work the last process left (pushes, downloads, parses), and D14's data listener.
+            engine.mms.retryWaiting(dataOn = false)
+            MmsRuntime.listenForData(app)
+            MmsRuntime.kick(app)
         }
     }
 
@@ -144,6 +155,10 @@ object SmsRuntime {
             onEngine(app) { engine ->
                 engine.judgeHeldForRules().forEach { notifyShown(app, engine, it) }
                 engine.rulesChanged()
+                // A push the rules couldn't judge (D15) waits in `pending_push`: judged now. An MMS that failed for an
+                // unknown MCC/MNC is fetched once the policy's MMSC list knows the SIM (code QA L10).
+                val retried = engine.mms.retryWaiting(dataOn = false)
+                if (retried || engine.mms.pendingPushes().isNotEmpty()) MmsRuntime.kick(app)
             }
             SmsHome.refresh(app)
         }
@@ -158,13 +173,37 @@ object SmsRuntime {
 
     /** What the engine judges with now: the whole policy from memory, never decoded per message. */
     fun judge(context: Context): SmsJudge = SmsJudge(
-        state = CallPolicyStore.state,
+        state = withDebugMmsc(CallPolicyStore.state),
         roleHeld = roleHeld(context),
         ready = true,
         timeBlocked = { TimeRulesStore.callsBlockedNow() },
         callbackWindowOpen = { CallSystem.callbackWindowUntil(context) != null },
         platformEmergency = CallSystem.platformEmergency(context),
+        carrier = { subId -> carrier(context, subId) },
+        simNumbers = {
+            ownNumbers(context, (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47").map { it.slot to it.number }
+        },
     )
+
+    /** The debug build's fake MMS server for the emulator ([MmsDebug]; the release build's list is always empty). */
+    private fun withDebugMmsc(state: CallPolicyState): CallPolicyState {
+        val extra = MmsDebug.mmscRules()
+        if (extra.isEmpty() || state !is CallPolicyState.Managed) return state
+        return state.copy(rules = state.rules.copy(mmscHosts = state.rules.mmscHosts + extra))
+    }
+
+    /** Step 3b: a subscription's SIM operator (MCC/MNC, D10's table key) and the carrier's MMS maximum (D10 check 3);
+     * unknown on any failure - an unknown operator fails closed. */
+    private fun carrier(context: Context, subId: Int?): Carrier = try {
+        val id = subId?.takeIf { it >= 0 } ?: SubscriptionManager.getDefaultSmsSubscriptionId()
+        val base = context.getSystemService(TelephonyManager::class.java)
+        val telephony = if (id >= 0) base.createForSubscriptionId(id) else base
+        val sms = context.getSystemService(android.telephony.SmsManager::class.java).let { if (id >= 0) it.createForSubscriptionId(id) else it }
+        val max = runCatching { sms.carrierConfigValues.getInt(android.telephony.SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE, 0) }.getOrDefault(0)
+        Carrier(telephony.simOperator?.takeIf { it.isNotEmpty() }, max)
+    } catch (e: Exception) {
+        Carrier(null, 0)
+    }
 
     fun roleHeld(context: Context): Boolean = CallSystem.roleHeld(context, RoleManager.ROLE_SMS)
 
@@ -209,10 +248,29 @@ object SmsRuntime {
     }
 
     private fun notifyShown(app: Context, engine: SmsEngine, shown: Received.Shown) {
+        // An MMS that turned out to be a group left the sender's conversation: its notification goes too (code QA L8).
+        shown.movedFrom?.let { SmsNotifier.cancel(app, it) }
         // The kid is reading this thread: it marks the message read itself, no notification (§6.7).
         if (shown.conversation.id == threadInFront) return
-        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow())
+        // A picture that waited and has now arrived is told again, quietly: the kid heard of it once (code QA L8).
+        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow() || shown.again)
     }
+
+    /** Step 3b: an MMS shown or fetched (from the MMS thread) - notified on the engine thread. */
+    fun notifyShown(context: Context, shown: Received.Shown) {
+        val app = context.applicationContext
+        onEngine(app) { notifyShown(app, it, shown) }
+    }
+
+    /** D16 for an MMS held or blocked on the MMS thread: the same coalesced sync request as an SMS's. */
+    fun requestHeldSyncSoon(context: Context) {
+        val app = context.applicationContext
+        onEngine(app) { requestHeldSync(app) }
+    }
+
+    /** [work] on the engine thread, waited for (never from the main thread or the engine thread itself); `null` without
+     * an engine or after a throw (recorded). The MMS thread's way to the engine. */
+    fun <T> call(context: Context, work: (SmsEngine) -> T): T? = awaitResult(context.applicationContext, work)
 
     /** D16: a hold asks for a sync so the parent hears at once - coalesced to one a minute (QA R2-M4). Engine thread. */
     private fun requestHeldSync(app: Context) {
@@ -255,6 +313,8 @@ object SmsRuntime {
     fun policyAccepted(context: Context, drops: List<String>) {
         val app = context.applicationContext
         await(app) { engine -> engine.releasePass(drops).forEach { notifyShown(app, engine, it) } }
+        // A released MMS push (D16) is judged again and fetched in the next MMS pass.
+        MmsRuntime.kick(app)
     }
 
     /** At every sync, reached or not: expiry, the uncertain sweep, the outbox, housekeeping. Never throws. */
@@ -265,9 +325,13 @@ object SmsRuntime {
             engine.sweepUncertain()
             engine.drainOutbox()
             engine.prune()
+            // D14: each sync retries what waits for MMS data.
+            engine.mms.retryWaiting(dataOn = false)
         }
-        // §6.7: a shared picture's copy lives an hour.
+        // §6.7: a shared picture's copy lives an hour; a download or send a process death left behind, a day.
         runCatching { com.kidslauncher.mdm.ui.messages.PictureShare.prune(app) }
+        runCatching { com.kidslauncher.mdm.sms.mms.MmsFileProvider.prune(app) }
+        MmsRuntime.kick(app)
     }
 
     /**
@@ -337,8 +401,7 @@ object SmsRuntime {
             released = count(SmsEngine.COUNT_RELEASED),
             expired = count(SmsEngine.COUNT_EXPIRED),
             parseFailures = count(SmsEngine.COUNT_PARSE_FAILURES),
-            // Step 3b fetches MMS; nothing waits for data before it.
-            mmsWaiting = 0,
+            mmsWaiting = counts?.mmsWaiting?.toLong() ?: 0,
             mmsDataAllowed = mmsDataAllowed(app),
             mmscKnown = mmscKnown(app, state),
             lastError = SmsPrefs.lastError(app),
@@ -347,23 +410,19 @@ object SmsRuntime {
         )
     }
 
-    /** D14: whether MMS data may flow now; `false` if it can't be read. `isDataEnabledForApn(TYPE_MMS)` is a system
-     * API, so this is mobile data being on. Step 0 check: whether the per-SIM "MMS-meldinger" setting (MMS with data
-     * off) shows anywhere an app can read it - then step 3b counts it too. */
-    private fun mmsDataAllowed(context: Context): Boolean = try {
-        context.getSystemService(TelephonyManager::class.java)?.isDataEnabled == true
-    } catch (e: Exception) {
-        false
-    }
+    /**
+     * D14 (code QA L7): whether MMS can be fetched now. Mobile data on, or - with it off - the last fetch that ran with
+     * data off worked (the per-SIM "MMS-meldinger" setting, or a carrier that allows MMS data always: neither can be read
+     * by an app, `isDataEnabledForApn(TYPE_MMS)` and the mobile-data policies being system APIs, so the phone learns it
+     * from what the platform did). A fetch that failed for want of data with data off says `false`.
+     */
+    private fun mmsDataAllowed(context: Context): Boolean =
+        MmsRuntime.mobileDataOn(context) || SmsPrefs.mmsWithoutData(context) == true
 
-    /** D10: whether this SIM's MCC/MNC is on the policy's MMSC list. */
-    private fun mmscKnown(context: Context, state: CallPolicyState): Boolean = try {
-        val operator = context.getSystemService(TelephonyManager::class.java)?.simOperator.orEmpty()
-        val hosts = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.callPolicy?.mmscHosts.orEmpty()
-        state is CallPolicyState.Managed && operator.isNotEmpty() && hosts.any { it.mccmnc == operator && it.hosts.isNotEmpty() }
-    } catch (e: Exception) {
-        false
-    }
+    /** D10: whether the SMS SIM's MCC/MNC is on the policy's MMSC list (the rules in memory - the same table the
+     * download gate reads). */
+    private fun mmscKnown(context: Context, state: CallPolicyState): Boolean =
+        state is CallPolicyState.Managed && MmsGate.known(carrier(context, null).operator, state.rules.mmscHosts)
 
     /** D12: each active SIM's own number as it knows it (normalised; `null` when it doesn't). */
     private fun ownNumbers(context: Context, defaultCc: String): List<SmsOwnNumber> = try {
@@ -466,6 +525,17 @@ object SmsPrefs {
 
     fun previousHolder(context: Context, value: String?) {
         prefs(context).edit().putString(PREVIOUS_HOLDER, value).commit()
+    }
+
+    private const val MMS_WITHOUT_DATA = "mdm.sms.mms_without_data"
+
+    /** D14, code QA L7: whether an MMS fetch worked with mobile data off (`null`: none has run with data off yet). */
+    fun mmsWithoutData(context: Context): Boolean? =
+        if (prefs(context).contains(MMS_WITHOUT_DATA)) prefs(context).getBoolean(MMS_WITHOUT_DATA, false) else null
+
+    /** A fetch that worked ([withoutData]: with mobile data off), or one that failed for want of data with it off. */
+    fun mmsFetched(context: Context, withoutData: Boolean) {
+        if (withoutData || mmsWithoutData(context) != null) prefs(context).edit().putBoolean(MMS_WITHOUT_DATA, withoutData).apply()
     }
 
     fun lastError(context: Context): String? = prefs(context).getString(LAST_ERROR, null)
