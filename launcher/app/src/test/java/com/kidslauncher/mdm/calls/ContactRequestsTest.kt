@@ -135,16 +135,16 @@ class ContactRequestsTest {
         val arrived = record(3)
         val old = record(4, askedAt = now - CONTACT_REQUEST_KEEP_MS - 1)
         val pending = record(5, ContactRequestPhase.PENDING)
-        val after = reconcileContactRequests(listOf(open, declined, added, arrived, old, pending), rows, setOf(arrived.number), now)
+        val after = reconcileContactRequests(listOf(open, declined, added, arrived, old, pending), rows, listOf(ArrivedContact(9, arrived.number, true)), now).records
         assertEquals(
             listOf(open, declined.copy(phase = ContactRequestPhase.DECLINED), pending),
             after,
         )
         // Calls not managed: the contacts say nothing.
-        assertEquals(listOf(arrived), reconcileContactRequests(listOf(arrived), emptyList(), null, now))
+        assertEquals(listOf(arrived), reconcileContactRequests(listOf(arrived), emptyList(), null, now).records)
         // An answer already shown stays as it is.
         val shown = declined.copy(phase = ContactRequestPhase.DECLINED, shown = true)
-        assertEquals(listOf(shown), reconcileContactRequests(listOf(shown), rows, null, now))
+        assertEquals(listOf(shown), reconcileContactRequests(listOf(shown), rows, null, now).records)
     }
 
     @Test

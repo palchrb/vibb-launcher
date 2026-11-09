@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Fant ingenting" (design 79 §4.1): a 72 dp tile-coloured disc with the peach magnifier, the words (a polite live
+     region), and in the phone book a quiet "Be om å legge til «Lina»" (gone elsewhere). It scrolls: with the keyboard
+     up only a strip of the page is left. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/kid_search_empty"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingTop="24dp"
+        android:paddingBottom="16dp">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/bg_kid_search_empty"
+            android:importantForAccessibility="no"
+            android:padding="22dp"
+            android:src="@drawable/ic_kid_search"
+            android:tint="@color/kid_accent" />
+
+        <TextView
+            android:id="@+id/kid_search_empty_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:accessibilityLiveRegion="polite"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/search_nothing_found"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/kid_search_ask"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_messages_button"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_core"
+            android:textSize="15sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</ScrollView>

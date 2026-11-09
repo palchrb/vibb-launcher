@@ -1,4 +1,6 @@
 <resources>
     <!-- Default screen margins, per the Android Design guidelines. -->
     <dimen name="appbar_padding">16dp</dimen>
+    <!-- The phone book's header leaves this much at its end for the "+" laid over it (design 79 §7). -->
+    <dimen name="phone_book_plus_room">48dp</dimen>
 </resources>

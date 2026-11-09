@@ -172,7 +172,8 @@ object SmsNotifier {
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
         val contact = rules?.contacts?.firstOrNull { it.number == address }
         val builder = Person.Builder().setName(contact?.name?.takeIf { it.isNotBlank() } ?: address).setKey(address)
-        ContactPhotos.cached(context, contact?.photo)?.let { builder.setIcon(IconCompat.createWithBitmap(it)) }
+        contact?.let { ContactPhotos.cachedShown(context, com.kidslauncher.mdm.ui.home.KidAvatars.shownPhotoOf(context, it, false)) }
+            ?.let { builder.setIcon(IconCompat.createWithBitmap(it)) }
         return builder.build()
     }
 
@@ -186,7 +187,8 @@ object SmsNotifier {
             (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.contacts?.firstOrNull { it.id == id }
         }
         val builder = Person.Builder().setName(name).setKey(participant?.address)
-        ContactPhotos.cached(context, contact?.photo)?.let { builder.setIcon(IconCompat.createWithBitmap(it)) }
+        contact?.let { ContactPhotos.cachedShown(context, com.kidslauncher.mdm.ui.home.KidAvatars.shownPhotoOf(context, it, false)) }
+            ?.let { builder.setIcon(IconCompat.createWithBitmap(it)) }
         return builder.build()
     }
 

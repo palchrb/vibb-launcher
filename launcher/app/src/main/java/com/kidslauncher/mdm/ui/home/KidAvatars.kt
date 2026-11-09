@@ -65,10 +65,12 @@ object KidAvatars {
      * A contact's round avatar: the cached photo ([ContactPhotos]) cropped to a circle, or the
      * initial on its palette colour ([avatarStyle]).
      */
-    fun bindContact(photo: ImageView, initial: TextView, contact: RuleContact, isEmergency: Boolean, initialSp: Float) {
+    fun bindContact(photo: ImageView, initial: TextView, contact: RuleContact, isEmergency: Boolean, initialSp: Float, thumb: Boolean = false) {
         val context = photo.context
         val style = avatarStyle(contact, isEmergency)
-        val bitmap = if (isEmergency) null else ContactPhotos.cached(context, contact.photo)
+        // Design 79 §3.7: the rows take the row-sized copy, the card and the call screen the full square; §5.4: the kid's
+        // own picture wins over the parent's - both from memory only (the snapshot and the decoded cache).
+        val bitmap = ContactPhotos.cachedShown(context, shownPhotoOf(context, contact, isEmergency), thumb)
         if (bitmap != null) {
             photo.setBackgroundResource(R.drawable.bg_kid_circle)
             photo.backgroundTintList = null
@@ -99,6 +101,15 @@ object KidAvatars {
             initial.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (style.text.length > 2) initialSp * 0.7f else initialSp)
         }
     }
+
+    /** What [contact]'s avatar shows ([shownPhoto]): the kid's picture from [KidContactPhotos]' snapshot (memory only),
+     * else the parent's; none for an emergency number. */
+    fun shownPhotoOf(context: Context, contact: RuleContact, isEmergency: Boolean): com.kidslauncher.mdm.calls.ShownPhoto =
+        com.kidslauncher.mdm.calls.shownPhoto(contact, com.kidslauncher.mdm.calls.KidContactPhotos.recordFor(context, contact), isEmergency)
+
+    /** Whether [contact]'s picture is decoded already (a screen's "rebind once it is" key; memory only). */
+    fun photoReady(context: Context, contact: RuleContact, thumb: Boolean = false): Boolean =
+        ContactPhotos.cachedShown(context, shownPhotoOf(context, contact, isEmergency = false), thumb) != null
 
     /**
      * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar, a frame 12 dp wider and

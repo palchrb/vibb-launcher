@@ -29,6 +29,75 @@
     <string name="notification_channel_calls">Samtaler</string>
     <string name="notification_channel_calls_silent">Samtaler (samtaleskjermen er åpen)</string>
     <string name="calls_phone_book">Telefonbok</string>
+    <!-- Design 79: telefonboka som én liste - radens korte linje, knappene og TalkBacks setning. -->
+    <string name="phone_book_emergency_line">Nødnummer</string>
+    <string name="phone_book_emergency_description">%1$s, nødnummer</string>
+    <plurals name="missed_short">
+        <item quantity="one">Tapt anrop %1$s</item>
+        <item quantity="other">%2$d tapte anrop %1$s</item>
+    </plurals>
+    <string name="missed_short_yesterday">i går</string>
+    <plurals name="contact_unread_short">
+        <item quantity="one">%d ulest</item>
+        <item quantity="other">%d uleste</item>
+    </plurals>
+    <string name="phone_book_action_call">Ring %1$s</string>
+    <string name="phone_book_action_message">Send melding til %1$s</string>
+    <string name="phone_book_action_message_in">Send melding til %1$s i %2$s</string>
+    <string name="phone_book_waiting">Venter på svar</string>
+    <!-- Design 79 §4: søket i telefonboka og Meldinger. -->
+    <string name="phone_book_search">Søk</string>
+    <string name="messages_search">Søk etter navn</string>
+    <string name="search_clear">Tøm søket</string>
+    <string name="search_nothing_found">Fant ingenting</string>
+    <plurals name="search_hits">
+        <item quantity="one">%d treff</item>
+        <item quantity="other">%d treff</item>
+    </plurals>
+    <string name="phone_book_ask_named">Be om å legge til «%1$s»</string>
+    <!-- Design 79 §5: barnets eget bilde av en kontakt, bare på telefonen. -->
+    <string name="kid_photo_title">Bilde av %1$s</string>
+    <string name="kid_photo_pick">Velg bilde</string>
+    <string name="kid_photo_take">Ta bilde</string>
+    <string name="kid_photo_remove">Fjern bildet ditt</string>
+    <string name="kid_photo_remove_draft">Fjern bildet</string>
+    <string name="kid_photo_change_action">Endre bilde av %1$s</string>
+    <string name="kid_photo_local_note">Bildet blir bare på denne telefonen.</string>
+    <string name="kid_photo_frame_hint">Dra og knip for å velge utsnittet</string>
+    <string name="kid_photo_reading">Henter bildet …</string>
+    <string name="kid_photo_use">Bruk bildet</string>
+    <string name="kid_photo_failed">Kunne ikke bruke bildet</string>
+    <string name="kid_photo_too_many">Du har bilder på så mange kontakter som det er plass til. Fjern et bilde først.</string>
+    <string name="contact_request_photo">Legg til bilde (valgfritt)</string>
+    <string name="contact_request_photo_add">Legg til bilde</string>
+    <string name="contact_request_photo_change">Endre bilde</string>
+    <string name="contact_request_photo_hold">Hold inne for å bytte bilde</string>
+    <!-- Design 77 §14 / design 79 §7: barnets forespørsel om en ny kontakt. -->
+    <string name="contact_request_open">Be om ny kontakt</string>
+    <string name="contact_request_title">Be om ny kontakt</string>
+    <string name="contact_request_note">Mamma og pappa får spørsmålet. Sier de ja, kommer kontakten hit.</string>
+    <string name="contact_request_name">Navn</string>
+    <string name="contact_request_number">Telefonnummer</string>
+    <string name="contact_request_chat">Chat-ID (valgfritt)</string>
+    <string name="contact_request_chat_hint">\@navn:server</string>
+    <string name="contact_request_send">Send til mamma og pappa</string>
+    <string name="contact_request_cancel">Avbryt</string>
+    <string name="contact_request_name_empty">Skriv et navn</string>
+    <string name="contact_request_name_long">Navnet kan ha høyst 40 tegn</string>
+    <string name="contact_request_number_invalid">Det er ikke et telefonnummer</string>
+    <string name="contact_request_number_emergency">Nødnumre virker alltid - du trenger ikke spørre</string>
+    <string name="contact_request_number_known">Dette nummeret er allerede i telefonboka eller spurt om</string>
+    <string name="contact_request_chat_invalid">En chat-ID ser slik ut: \@navn:server</string>
+    <string name="contact_request_too_many">Du har 5 spørsmål som venter. Vent på svar først.</string>
+    <string name="contact_request_waiting">Venter på svar</string>
+    <string name="contact_request_not_added">Ikke lagt til</string>
+    <string name="contact_request_capped">Du har spurt nok i dag. Prøv igjen i morgen.</string>
+    <string name="contact_request_known">Allerede lagt til eller spurt om</string>
+    <string name="contact_request_not_sent">Kunne ikke sendes</string>
+    <string name="contact_request_sent">Sendt</string>
+    <string name="contact_request_sent_body">Mamma og pappa får beskjed. Du ser det i telefonboka når %1$s er lagt til.</string>
+    <string name="contact_request_done">Ferdig</string>
+    <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Innstillinger</string>
     <!-- Lommelykten (design 41): Home-flisen og låsens knapp, og TalkBacks tilstandsord. -->
     <string name="torch_title">Lommelykt</string>

@@ -50,7 +50,7 @@ internal object GlanceSmsRowView {
         icon.backgroundTintList = null
         val contact = contactOf(row.conversation, rules)
         if (contact != null) {
-            KidAvatars.bindContact(icon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
+            KidAvatars.bindContact(icon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
             badge(activity, view)
         } else {
             view.glanceRowInitial.visibility = View.GONE

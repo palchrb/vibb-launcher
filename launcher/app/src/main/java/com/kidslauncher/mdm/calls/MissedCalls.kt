@@ -66,6 +66,21 @@ internal fun unseenMissedCalls(
     return result
 }
 
+/** A contact's seen mark after one more mark at [upToMs] (design 79 §3.2): it only ever moves forward. */
+fun seenMarkAfter(existing: Long?, upToMs: Long): Long = if (existing == null) upToMs else maxOf(existing, upToMs)
+
+/**
+ * Code QA L2: loads that may finish out of order (the phone book's and Home's missed calls) - each launch takes a
+ * generation ([begin]); a result is applied only if no later launch began ([isLatest]). Main thread only.
+ */
+class LatestOnly {
+    private var generation = 0L
+
+    fun begin(): Long = ++generation
+
+    fun isLatest(started: Long): Boolean = started == generation
+}
+
 /** The day a missed-call time falls on, relative to now, for "today 13:05" / "yesterday 13:05". */
 enum class RelativeDay { TODAY, YESTERDAY, EARLIER }
 

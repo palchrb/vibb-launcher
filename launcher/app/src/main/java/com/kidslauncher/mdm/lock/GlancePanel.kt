@@ -1414,7 +1414,7 @@ class GlancePanel(
         // icon's place - our own photo, never the notification's picture - with the app's icon as the corner mark.
         val contact = glanceRowContact(row, CallPolicyStore.state)
         when {
-            contact != null -> KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
+            contact != null -> KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
             icon != null -> view.glanceRowIcon.setImageBitmap(icon)
             else -> {
                 // A placeholder circle until the background job has drawn Home's icon (QA Low 6).
@@ -1469,7 +1469,7 @@ class GlancePanel(
         if (contact != null) {
             // The contact's Home avatar: its photo, else the initial on its colour.
             plainIcon(view)
-            KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
+            KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
         } else {
             view.glanceRowInitial.visibility = View.GONE
             phoneGlyph(view)

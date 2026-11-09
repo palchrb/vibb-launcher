@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Design 77 §6.7, "Del": the picture copies in cacheDir/share/, each deleted after an hour (ui.messages.PictureShare).
      D11, "Ta bilde": the camera's output files in cacheDir/capture/, granted for writing to the one camera app the parent
-     allows, read once and deleted (ui.messages.PicturePick). Nothing else is served. -->
+     allows, read once and deleted (ui.pictures.PicturePick: the compose bar and the kid's contact pictures). Nothing
+     else is served. -->
 <paths>
     <cache-path name="share" path="share/" />
     <cache-path name="capture" path="capture/" />

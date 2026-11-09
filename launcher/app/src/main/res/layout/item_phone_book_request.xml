@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A contact request in the phone book (design 79 §3.4, §7): the answer once at the very top (the plain tile, a
+     kid_music_control disc with the initial), or an open request at the end under "Venter på svar" (a 1.5 dp peach
+     outline, the request's picture or initial). The name and where it stands; nothing to tap. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/bg_phone_book_answer"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="64dp"
+    android:orientation="horizontal"
+    android:paddingStart="10dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
+
+    <FrameLayout
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:importantForAccessibility="noHideDescendants">
+
+        <ImageView
+            android:id="@+id/request_photo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_kid_circle"
+            android:backgroundTint="@color/kid_music_control"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop" />
+
+        <TextView
+            android:id="@+id/request_initial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="18sp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:importantForAccessibility="noHideDescendants"
+        android:orientation="vertical">
+
+        <com.kidslauncher.mdm.ui.WholeWordTextView
+            android:id="@+id/request_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_extrabold"
+            android:maxLines="2"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/request_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_bold"
+            android:maxLines="2"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>

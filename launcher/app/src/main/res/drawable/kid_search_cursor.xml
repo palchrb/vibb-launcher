@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search field's cursor (design 79 §4.1): the one accent, 2 dp wide. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_accent" />
+    <size android:width="2dp" />
+</shape>

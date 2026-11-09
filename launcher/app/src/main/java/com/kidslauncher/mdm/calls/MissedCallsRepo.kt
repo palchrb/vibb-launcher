@@ -103,10 +103,36 @@ object MissedCallsRepo {
         }
     }
 
-    /** The kid opened this contact or called it: its missed calls so far are dealt with. */
-    fun markSeen(context: Context, number: String, nowMs: Long = System.currentTimeMillis()) {
-        prefs(context).edit { putLong(number, nowMs) }
+    /**
+     * The kid opened this contact, called it or wrote to it (now), or the phone book showed its missed calls up to
+     * [upToMs] (design 79 §3.2): its missed calls up to then are dealt with. The mark only ever moves forward
+     * ([seenMarkAfter]), so a visit's mark can't undo a card opened during it.
+     */
+    fun markSeen(context: Context, number: String, upToMs: Long = System.currentTimeMillis()) =
+        markSeen(context, mapOf(number to upToMs))
+
+    /** Several marks at once (the phone book's visit, code QA N6): one write, one word to the listeners. */
+    @Synchronized
+    fun markSeen(context: Context, marks: Map<String, Long>) {
+        val prefs = prefs(context)
+        val changed = marks.mapNotNull { (number, upToMs) ->
+            val existing = if (prefs.contains(number)) prefs.getLong(number, Long.MIN_VALUE) else null
+            val next = seenMarkAfter(existing, upToMs)
+            if (next == existing) null else number to next
+        }
+        if (changed.isEmpty()) return
+        prefs.edit { changed.forEach { (number, next) -> putLong(number, next) } }
+        // Home is resumed before the phone book stops (design 79 §3.3): it hears of the marks the visit wrote.
+        seenListeners.forEach { listener -> main.post(listener) }
     }
+
+    private val seenListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /** A seen mark moved (on the main thread, posted). */
+    fun addSeenListener(listener: () -> Unit) = seenListeners.add(listener)
+
+    fun removeSeenListener(listener: () -> Unit) = seenListeners.remove(listener)
 
     /** Design r11 §3.3: contact number -> the newest missed call its row on the lock was dismissed with. Our
      * notification counts after it ([noticeMarks]); the badges don't. */

@@ -47,11 +47,20 @@ object ContactSheet {
         }
         bindPhoto()
         ContactPhotos.addListener(bindPhoto)
+        // Code QA M1: "Bilde av …" opened from this card closes with it - so Home's closeOverlays() (the lock engaging,
+        // Home pressed) and the card's own close leave nothing of it behind.
+        var photoSheet: Dialog? = null
         dialog.setOnDismissListener {
             ContactPhotos.removeListener(bindPhoto)
+            photoSheet?.dismiss()
+            photoSheet = null
             onDone()
         }
         view.findViewById<ImageView>(R.id.sheet_ring).setImageDrawable(KidAvatars.ring(activity, contact, emergency))
+        bindKidPhoto(activity, view.findViewById(R.id.sheet_photo_frame), contact, emergency) { sheet ->
+            photoSheet?.dismiss()
+            photoSheet = sheet
+        }
         // Design 77 §6.7: missed calls plus unread messages.
         KidAvatars.bindContactBadge(
             view.findViewById(R.id.sheet_badge),
@@ -68,46 +77,89 @@ object ContactSheet {
             this.text = text
         }
 
+        // One rule for the card and the phone book's row (design 79 §3.5, [contactActions]).
+        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+        val actions = contactActions(
+            contact, rules, emergency, OngoingCalls.states, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
+            learnedRoom = ElementRoomStore.lookup(activity),
+        )
         view.findViewById<View>(R.id.sheet_call).apply {
             // One call at a time: Call is off while another call exists (emergency numbers excepted).
-            val allowed = secondCallAllowed(OngoingCalls.states, emergency)
-            isEnabled = allowed
-            alpha = if (allowed) 1f else 0.4f
+            isEnabled = actions.callEnabled
+            alpha = if (actions.callEnabled) 1f else 0.4f
             setOnClickListener {
                 CallSystem.placeCall(activity, contact.number)
                 dialog.dismiss()
             }
         }
-        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        // Design 77 §6.7: our own thread in "Styrt av Vibb" (no "opens in" line - it is Vibb One's own screen).
-        val ownThread = rules != null && opensOwnThread(contact, rules.smsMode)
-        val message = rules?.takeUnless { ownThread }?.let {
-            resolveMessageButton(
-                contact, it.smsEnabled, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
-                learnedRoom = ElementRoomStore.lookup(activity),
-            )
-        }
         val messageButton = view.findViewById<View>(R.id.sheet_message)
         val messageApp = view.findViewById<TextView>(R.id.sheet_message_app)
-        if (ownThread) {
-            messageApp.visibility = View.GONE
-            messageButton.setOnClickListener {
-                com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, null, contact.number)
-                dialog.dismiss()
+        when (val message = actions.message) {
+            // Design 77 §6.7: our own thread in "Styrt av Vibb" (no "opens in" line - it is Vibb One's own screen).
+            MessageAction.OwnThread -> {
+                messageApp.visibility = View.GONE
+                messageButton.setOnClickListener {
+                    // Design 79 §3.2 rule 3: Melding deals with the contact's missed calls too.
+                    MissedCallsRepo.markSeen(activity, contact.number)
+                    com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, null, contact.number)
+                    dialog.dismiss()
+                }
             }
-        } else if (message == null) {
-            messageButton.visibility = View.GONE
-            messageApp.visibility = View.GONE
-        } else {
-            messageApp.text = activity.getString(R.string.calls_message_opens_in, appLabel(activity, message.packageName))
-            messageButton.setOnClickListener {
-                openMessage(activity, message)
-                dialog.dismiss()
+            MessageAction.None -> {
+                messageButton.visibility = View.GONE
+                messageApp.visibility = View.GONE
+            }
+            is MessageAction.App -> {
+                messageApp.text = activity.getString(R.string.calls_message_opens_in, appLabel(activity, message.intent.packageName))
+                messageButton.setOnClickListener {
+                    MissedCallsRepo.markSeen(activity, contact.number)
+                    openMessage(activity, message.intent)
+                    dialog.dismiss()
+                }
             }
         }
         view.findViewById<View>(R.id.sheet_close).setOnClickListener { dialog.dismiss() }
         dialog.show()
         return dialog
+    }
+
+    /**
+     * Design 79 §5.1: a long-press on the card's photo opens "Bilde av …" ([KidPhotoSheet]) - haptic, the photo dimmed
+     * 10 % while held; a plain tap does nothing, as before. TalkBack: the photo is a node "Bilde av Mamma" with the action
+     * "Endre bilde av Mamma". Offered only for a phone-book contact, not an emergency number, after the first unlock,
+     * with the picker or an allowed camera ([kidPhotoOffered]); else the photo has no listener at all.
+     */
+    private fun bindKidPhoto(activity: Activity, frame: View, contact: RuleContact, emergency: Boolean, opened: (Dialog) -> Unit) {
+        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+        if (!kidPhotoOffered(contact, rules, emergency, CallPolicyStore.userUnlocked(activity), KidPhotoSheet.canPick(activity))) return
+        val open = {
+            val sheet = KidPhotoSheet.show(
+                activity, activity.getString(R.string.kid_photo_title, contact.name),
+                onChoose = { camera -> activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera)) },
+                onRemove = if (KidContactPhotos.recordFor(activity, contact) != null) ({ KidContactPhotos.remove(activity, contact.id) }) else null,
+            )
+            opened(sheet)
+        }
+        frame.foreground = android.graphics.drawable.StateListDrawable().apply {
+            addState(
+                intArrayOf(android.R.attr.state_pressed),
+                android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(0x1A000000)
+                },
+            )
+        }
+        frame.setOnLongClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            open()
+            true
+        }
+        frame.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        frame.contentDescription = activity.getString(R.string.kid_photo_title, contact.name)
+        androidx.core.view.ViewCompat.addAccessibilityAction(frame, activity.getString(R.string.kid_photo_change_action, contact.name)) { _, _ ->
+            open()
+            true
+        }
     }
 
     /** "Message opens in Chat": the parent's name, else the kid's, else the app's own (design 14). */

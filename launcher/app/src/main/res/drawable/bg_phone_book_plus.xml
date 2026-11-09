@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone book's "+" (design 79 §7): a 40 dp peach disc inside its 48 dp target, the plus in the night ink (9.9:1). -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="4dp">
+    <ripple android:color="#33000000">
+        <item>
+            <shape android:shape="oval">
+                <solid android:color="@color/kid_accent" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

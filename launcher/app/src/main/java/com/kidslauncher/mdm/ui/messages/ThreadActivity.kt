@@ -43,6 +43,7 @@ import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.NoTextActions
 import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.pictures.PicturePick
 import com.kidslauncher.mdm.ui.day.LockWatch
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import kotlinx.coroutines.Job

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone book's one label (design 79 §3.1): "Venter på svar" over the kid's open requests - text on the
+     wallpaper, in KidInk dim (PhoneBookAdapter). -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/phone_book_label"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="6dp"
+    android:accessibilityHeading="true"
+    android:fontFamily="@font/nunito_extrabold"
+    android:paddingStart="4dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="4dp"
+    android:text="@string/phone_book_waiting"
+    android:textColor="@color/kid_ink_dim"
+    android:textSize="13sp" />
