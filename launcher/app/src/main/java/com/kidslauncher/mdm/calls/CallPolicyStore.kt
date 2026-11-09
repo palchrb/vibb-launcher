@@ -91,6 +91,8 @@ object CallPolicyStore {
         source = plan.source
         // Round L5: a contact added to the phone book or moved to Element X after a missed call still gets its mark.
         if (elementMissedRejudgeDue(before, newState)) ElementMissedCallStore.rejudge()
+        // Design 77 D15: the SMS engine judges what it held while the rules were unknown (it queues the work).
+        notifyListeners(newState)
         if (plan.source != PolicySource.CE) return
         if (plan.repairManagedLast) repairManagedLast(context)
         plan.bootWrite?.let { writeBoot(context, it) }
@@ -104,7 +106,7 @@ object CallPolicyStore {
         // Learned Element X rooms of contacts that left the phone book, stopped using Element or
         // changed MXID go with the rules that dropped them (design 15). After the state is set:
         // never in the way of the call services; never throws.
-        ElementRoomStore.prune(context, newState)
+        ElementRoomStore.prune(context, newState.forCalls())
     }
 
     /**
@@ -112,7 +114,14 @@ object CallPolicyStore {
      * ([withTimeRule]) - during school only emergency calls and the callback window pass. The
      * screening, redirection and in-call services and the phone book decide with this.
      */
-    fun effectiveState(): CallPolicyState = withTimeRule(state, TimeRulesStore.callsBlockedNow())
+    fun effectiveState(): CallPolicyState = withTimeRule(callsState, TimeRulesStore.callsBlockedNow())
+
+    /**
+     * Design 77 D2: what the calls channel enforces - [state] (the whole policy, managed while either channel is) with
+     * calls "Ikke styrt" read as [CallPolicyState.Unmanaged]. Every call-path reader (the services, the dialer role,
+     * the phone book, the call log) asks this; [state] is for "is this phone managed at all" and the SMS engine.
+     */
+    val callsState: CallPolicyState get() = state.forCalls()
 
     /** Loads the rules if nothing has been read yet, or only the boot copy while CE is readable now. */
     fun ensureLoaded(context: Context) {
@@ -178,4 +187,22 @@ object CallPolicyStore {
     /** The default country code for normalising the other side of a call. */
     val defaultCc: String
         get() = (state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47"
+
+    /** Listeners told after every refresh that changed [state] (design 77: the SMS engine re-judges what it holds).
+     * Called on the refreshing thread, after the state is set; they must not block or throw. */
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<(CallPolicyState) -> Unit>()
+
+    fun addListener(listener: (CallPolicyState) -> Unit) {
+        listeners += listener
+    }
+
+    private fun notifyListeners(newState: CallPolicyState) {
+        for (listener in listeners) {
+            try {
+                listener(newState)
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "A call-policy listener failed", e)
+            }
+        }
+    }
 }

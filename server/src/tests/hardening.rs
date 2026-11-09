@@ -255,6 +255,12 @@ async fn managed_device_without_pin_is_warned() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
+    // Both channels not managed (design 77 D2: a new phone starts with SMS managed).
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     // The summary's Attention row (design 31 step 10; the device page's red card before) and the
     // warning on Lock Screen & PINs it links to.
     let row = format!("href=\"/devices/{id}/lock#parent-pin\" data-attention=\"no-parent-pin\"");

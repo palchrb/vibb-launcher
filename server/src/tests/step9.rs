@@ -32,8 +32,20 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
     let uri = format!("/devices/{id}/calls/settings");
     assert_eq!(roles_changed_at(&app, id).await, None);
 
-    app.request_form(Method::POST, &uri, Some(&cookie), &[("managed", "on")])
-        .await;
+    // Design 77 D2: a change to either channel stamps it.
+    let save = |calls: &'static str, sms: &'static str| {
+        let (app, cookie, uri) = (&app, &cookie, &uri);
+        async move {
+            app.request_form(
+                Method::POST,
+                uri,
+                Some(cookie),
+                &[("calls_mode", calls), ("sms_mode", sms)],
+            )
+            .await
+        }
+    };
+    save("managed", "managed").await;
     assert!(roles_changed_at(&app, id).await.is_some());
 
     sql(
@@ -42,16 +54,9 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
         id,
     )
     .await;
-    app.request_form(
-        Method::POST,
-        &uri,
-        Some(&cookie),
-        &[("managed", "on"), ("calls_enabled", "on")],
-    )
-    .await;
+    save("managed", "managed").await;
     assert_eq!(roles_changed_at(&app, id).await.as_deref(), Some("x"));
-    app.request_form(Method::POST, &uri, Some(&cookie), &[])
-        .await;
+    save("managed", "off").await;
     assert_ne!(roles_changed_at(&app, id).await.as_deref(), Some("x"));
 }
 
@@ -62,7 +67,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     let (id, token) = app.enrolled_device("phone").await;
     sql(
         &app,
-        "UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?",
+        "UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?",
         id,
     )
     .await;
@@ -218,7 +223,7 @@ async fn an_error_page_never_reloads_itself() {
     let (id, token) = app.enrolled_device("phone").await;
     sql(
         &app,
-        "UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?",
+        "UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?",
         id,
     )
     .await;

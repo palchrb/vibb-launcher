@@ -41,7 +41,7 @@ object ElementDmReader {
         } catch (e: Exception) {
             return
         }
-        val learned = learnElementRoom(sbn.packageName, facts, CallPolicyStore.state) ?: return
+        val learned = learnElementRoom(sbn.packageName, facts, CallPolicyStore.callsState) ?: return
         // The store checks the contact again against the rules it reads under its lock.
         ElementRoomStore.learn(context, learned)
     }
@@ -54,7 +54,7 @@ object ElementDmReader {
     fun glanceContact(context: Context, sbn: StatusBarNotification): Long? {
         if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
         return try {
-            elementGlanceContact(facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
+            elementGlanceContact(facts(sbn), CallPolicyStore.callsState, ElementRoomStore.rooms(context))
         } catch (e: Exception) {
             null
         }
@@ -71,7 +71,7 @@ object ElementDmReader {
         return try {
             // Most posts are plain messages: no facts parsed, no learned rooms read for them.
             if (!glanceMissedCall(sbn.notification.category)) return null
-            elementMissedCallContact(sbn.notification.category, facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
+            elementMissedCallContact(sbn.notification.category, facts(sbn), CallPolicyStore.callsState, ElementRoomStore.rooms(context))
         } catch (e: Exception) {
             null
         }

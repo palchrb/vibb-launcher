@@ -53,6 +53,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 76: the policy's `server_tls` (the certificate check the server switches on) and `server_tls` in every
     // report.
     SERVER_PIN_CAPABILITY,
+    // Design 77: the per-channel `calls_mode`/`sms_mode`, the SMS keys of `call_policy`, `sms_state` in every report
+    // and `POST /api/devices/sms-held`. The server offers "Styrt av Vibb" for SMS only to a phone that claims it.
+    com.kidslauncher.mdm.sms.SMS_ENGINE_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

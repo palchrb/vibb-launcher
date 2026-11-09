@@ -26,14 +26,14 @@ use crate::emergency;
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
-use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
+use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS, derived_old_keys};
 use crate::phone;
 use crate::photos;
 
 /// Parent-facing names for `MESSAGE_APPS`, same order.
 const MESSAGE_APP_LABELS: [&str; 4] = ["No message button", "SMS", "Element X", "Signal / Molly"];
 
-/// How long after a change to `calls_managed` an older status report counts as "waiting for the
+/// How long after a change to `calls_mode` or `sms_mode` an older status report counts as "waiting for the
 /// phone" rather than as the phone's real state (QA 09 #5).
 const ROLES_PENDING_SECS: i64 = 5 * 60;
 /// The calls page reloads itself (`static/auto-reload.js`) for this long while it waits.
@@ -143,9 +143,8 @@ struct DeviceCallsTemplate {
     lang: Lang,
     title: String,
     device: Device,
-    managed: bool,
-    calls_enabled: bool,
-    sms_enabled: bool,
+    /// Design 77 D2: the two channel rows, calls first.
+    channels: Vec<ChannelRow>,
     default_message_options: Vec<SelectOption>,
     contacts: Vec<ContactView>,
     default_country_code: String,
@@ -179,6 +178,73 @@ struct DeviceCallsTemplate {
     emergency_add_error: Option<(&'static str, String)>,
 }
 crate::i18n::words!(DeviceCallsTemplate);
+
+/// One channel's row (design 77 D2): its form name (`calls_mode`/`sms_mode`), label, choices and the chosen state's
+/// sub-line.
+struct ChannelRow {
+    name: &'static str,
+    label: &'static str,
+    options: Vec<SelectOption>,
+    sub: &'static str,
+}
+
+/// D2's three choices and the sub-line of `mode` for the calls channel (`sms` false) or SMS.
+fn channel_row(lang: Lang, sms: bool, mode: &str) -> ChannelRow {
+    let options = CHANNEL_MODES
+        .iter()
+        .map(|value| SelectOption {
+            value: value.to_string(),
+            label: t(
+                lang,
+                match *value {
+                    "off" => "device.calls.mode.off",
+                    "managed" => "device.calls.mode.managed",
+                    _ => "device.calls.mode.unmanaged",
+                },
+            )
+            .to_string(),
+            selected: *value == mode,
+        })
+        .collect();
+    let (name, label, sub) = match (sms, mode) {
+        (false, "managed") => (
+            "calls_mode",
+            "device.calls.channel.calls",
+            "device.calls.channel.calls_managed",
+        ),
+        (false, "unmanaged") => (
+            "calls_mode",
+            "device.calls.channel.calls",
+            "device.calls.channel.calls_unmanaged",
+        ),
+        (false, _) => (
+            "calls_mode",
+            "device.calls.channel.calls",
+            "device.calls.channel.calls_off",
+        ),
+        (true, "managed") => (
+            "sms_mode",
+            "device.calls.channel.sms",
+            "device.calls.channel.sms_managed",
+        ),
+        (true, "unmanaged") => (
+            "sms_mode",
+            "device.calls.channel.sms",
+            "device.calls.channel.sms_unmanaged",
+        ),
+        (true, _) => (
+            "sms_mode",
+            "device.calls.channel.sms",
+            "device.calls.channel.sms_off",
+        ),
+    };
+    ChannelRow {
+        name,
+        label: t(lang, label),
+        options,
+        sub: t(lang, sub),
+    }
+}
 
 /// One row of the emergency menu (design 73).
 struct EmergencyRow {
@@ -476,14 +542,15 @@ async fn load_page(
         lang,
         &menu,
         &default_country_code,
-        policy.calls_managed.then_some(phone_book.as_slice()),
+        policy.calls_managed().then_some(phone_book.as_slice()),
     );
     Ok(Some(DeviceCallsTemplate {
         lang,
         title: format!("{} - {}", device.name, t(lang, "device.page.calls")),
-        managed: policy.calls_managed,
-        calls_enabled: policy.calls_enabled,
-        sms_enabled: policy.sms_enabled,
+        channels: vec![
+            channel_row(lang, false, &policy.calls_mode),
+            channel_row(lang, true, &policy.sms_mode),
+        ],
         default_message_options: message_app_options(lang, Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
@@ -888,20 +955,23 @@ pub(crate) async fn call_report(
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok());
     if let Some(allowed) = &allowlist {
-        if !policy.calls_managed
+        if !policy.calls_managed()
             && let Some(dialer) = text("system_dialer")
             && !allowed.contains(&dialer)
         {
             findings.push(Finding::DialerNotAllowed { dialer });
         }
-        if (!policy.calls_managed || policy.sms_enabled)
+        // Design 77: only while SMS isn't restricted - restricted, the launcher suspends every SMS app but its own.
+        if policy.sms_mode == "unmanaged"
             && let Some(sms_app) = text("default_sms_package")
             && !allowed.contains(&sms_app)
         {
             findings.push(Finding::MessagesHidden { sms_app });
         }
     }
-    if !policy.calls_managed {
+    // Design 77 D2: the role, screening and call-log findings are the calls channel's (a launcher with the engine
+    // reports `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
+    if !policy.calls_managed() {
         return Ok(report);
     }
     if !capable {
@@ -955,7 +1025,7 @@ pub(crate) async fn call_report(
     if let Some(error) = text("last_error") {
         findings.push(Finding::Reported { error });
     }
-    if !policy.sms_enabled
+    if !policy.sms_enabled()
         && let Some(sms_app) = text("default_sms_package")
         && allowlist
             .as_ref()
@@ -1140,22 +1210,33 @@ pub async fn save_settings(
     if !MESSAGE_APPS.contains(&default_message_app) {
         return bad_request(lang, "error.unknown_message_app");
     }
-    let managed = form.contains_key("managed");
+    // Design 77 D2: each channel's state; a missing or unknown one is refused, never guessed.
+    let mode = |key: &str| {
+        form.get(key)
+            .map(String::as_str)
+            .filter(|mode| CHANNEL_MODES.contains(mode))
+    };
+    let (Some(calls_mode), Some(sms_mode)) = (mode("calls_mode"), mode("sms_mode")) else {
+        return bad_request(lang, "error.unknown_channel_mode");
+    };
+    // The old columns get D2's derived keys, so a rolled-back server sends the fail-closed view.
+    let (managed, calls_enabled, sms_enabled) = derived_old_keys(calls_mode, sms_mode);
     let result = async {
         let mut tx = state.db.begin().await?;
-        // A change to calls_managed stamps roles_changed_at: reports from before it may still
+        // A change to either mode stamps roles_changed_at: reports from before it may still
         // show the old role state (B1).
         let updated = sqlx::query(
             "UPDATE device_policy SET \
-             roles_changed_at = CASE WHEN calls_managed != ? THEN datetime('now') \
+             roles_changed_at = CASE WHEN calls_mode != ?1 OR sms_mode != ?2 THEN datetime('now') \
                                      ELSE roles_changed_at END, \
-             calls_managed = ?, calls_enabled = ?, sms_enabled = ?, \
-             default_message_app = ?, updated_at = datetime('now') WHERE device_id = ?",
+             calls_mode = ?1, sms_mode = ?2, calls_managed = ?3, calls_enabled = ?4, sms_enabled = ?5, \
+             default_message_app = ?6, updated_at = datetime('now') WHERE device_id = ?7",
         )
+        .bind(calls_mode)
+        .bind(sms_mode)
         .bind(managed)
-        .bind(managed)
-        .bind(form.contains_key("calls_enabled"))
-        .bind(form.contains_key("sms_enabled"))
+        .bind(calls_enabled)
+        .bind(sms_enabled)
         .bind(default_message_app)
         .bind(id)
         .execute(&mut *tx)

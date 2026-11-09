@@ -121,9 +121,11 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
             FreshOutcome.DECODE_FAILED
         }
-        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast(), mdm.timePolicySeen())) {
+        is FreshDecode.Ok -> when (
+            judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast(), mdm.timePolicySeen(), mdm.channelModesSeen())
+        ) {
             FreshVerdict.REJECT_SUSPECT -> {
-                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy or time_policy on a managed phone")
+                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy, time_policy or channel modes on a managed phone")
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
@@ -152,6 +154,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         if (ServerPinStore.enforce(context) != pinnedBefore) PowerEvents.prepare(context)
         // The call services read the rules from memory, never per call.
         CallPolicyStore.refresh(context)
+        // Design 77 D16: the parent's deletions first, then expiry, then the held messages the new rules let in.
+        com.kidslauncher.mdm.sms.SmsRuntime.policyAccepted(context, freshPolicy.callPolicy?.smsHeldDrop.orEmpty())
         // The parent's language choice, switched when Home is next in front (LauncherLocales).
         LauncherLocales.remember(context, freshPolicy.launcherUi)
         // The parent's app names and icons (design 14): a change re-renders Home and the drawer.
@@ -293,6 +297,11 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     AppDownloads.wifiOnly = decision.policy?.appUpdatesWifiOnly == true
     checkForTrackedAppUpdates(context, api)
 
+    // Design 77: expiry and the outbox at every sync, then the held and blocked senders (who and when, never what) -
+    // before the report, so its counts are this sync's. Never throws.
+    com.kidslauncher.mdm.sms.SmsRuntime.syncTick(context)
+    com.kidslauncher.mdm.sms.SmsRuntime.postHeld(context, api)
+
     // Best-effort - a failed report must never affect the lock decision above.
     var zoneQueueDone = false
     try {
@@ -366,6 +375,12 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     com.kidslauncher.mdm.calendar.CalendarStore.report(context)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
+                    null
+                },
+                smsState = try {
+                    com.kidslauncher.mdm.sms.SmsRuntime.report(context)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "SMS report failed", e)
                     null
                 },
                 serverTls = ServerTlsReport(
@@ -1231,6 +1246,7 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
+    if (policy.callPolicy?.hasChannelModes == true) editor.putBoolean(keys.channelModesSeen(), true)
     // What KidVpnService forwards to (it never fetches policy itself): the provider, and the
     // parent's own servers or none (design 36 §5.1) - with the policy, so they never disagree.
     editor.putString(keys.dnsUpstreamProvider(), policy.dnsUpstreamProvider)

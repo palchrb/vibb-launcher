@@ -8,17 +8,16 @@ use serde_json::{Value, json};
 use super::settings_pages::part;
 use super::{TestApp, assert_redirect, tags};
 
+/// Calls managed (or off) and SMS not managed (or off): what the old "managed, calls on/off, SMS on/off" switches were
+/// (design 77 D2's migration table).
 async fn set_managed(app: &TestApp, device_id: i64, calls: bool, sms: bool) {
-    sqlx::query(
-        "UPDATE device_policy SET calls_managed = 1, calls_enabled = ?, sms_enabled = ? \
-         WHERE device_id = ?",
-    )
-    .bind(calls)
-    .bind(sms)
-    .bind(device_id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE device_policy SET calls_mode = ?, sms_mode = ? WHERE device_id = ?")
+        .bind(if calls { "managed" } else { "off" })
+        .bind(if sms { "unmanaged" } else { "off" })
+        .bind(device_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
 }
 
 /// Inserts a contact (already normalised) and attaches it to a device.
@@ -60,6 +59,7 @@ async fn attach(
 async fn unmanaged_policy_has_explicit_managed_false() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
+    set_unmanaged(&app, id).await;
     // Contacts attached to an unmanaged device are not sent.
     attach(&app, id, "Mamma", "+4791234567", [true, true, true], 0).await;
 
@@ -96,14 +96,14 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
                 "id": mamma, "name": "Mamma", "number": "+4790000001",
                 "inbound": true, "outbound": true, "show_on_home": true,
                 "message_app": "element", "message_address": "@mamma:example.org",
-                "photo": null
+                "photo": null, "sms_in": true, "sms_out": true, "mms": true
             },
             {
                 "id": pappa, "name": "Pappa", "number": "+4790000002",
                 "inbound": true, "outbound": false, "show_on_home": false,
                 // No per-contact choice: the device default.
                 "message_app": "sms", "message_address": null,
-                "photo": null
+                "photo": null, "sms_in": true, "sms_out": true, "mms": true
             }
         ])
     );
@@ -461,8 +461,9 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert_eq!(address.as_deref(), Some("@mormor:matrix.org"));
 }
 
+/// Design 77 D2: the form posts both channels' states (and the message button); the policy's old keys follow them.
 #[tokio::test]
-async fn settings_form_missing_checkbox_means_false() {
+async fn settings_form_writes_both_channels() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -474,8 +475,8 @@ async fn settings_form_missing_checkbox_means_false() {
             &uri,
             Some(&cookie),
             &[
-                ("managed", "on"),
-                ("calls_enabled", "on"),
+                ("calls_mode", "managed"),
+                ("sms_mode", "off"),
                 ("default_message_app", "signal"),
             ],
         )
@@ -493,9 +494,14 @@ async fn settings_form_missing_checkbox_means_false() {
             .unwrap();
     assert_eq!(default_app, "signal");
 
-    // Everything unchecked: unmanaged, explicitly.
-    app.request_form(Method::POST, &uri, Some(&cookie), &[])
-        .await;
+    // Both not managed: unmanaged, explicitly.
+    app.request_form(
+        Method::POST,
+        &uri,
+        Some(&cookie),
+        &[("calls_mode", "unmanaged"), ("sms_mode", "unmanaged")],
+    )
+    .await;
     let call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(call_policy["managed"], json!(false));
 
@@ -513,7 +519,7 @@ async fn settings_form_missing_checkbox_means_false() {
             Method::POST,
             "/devices/9999/calls/settings",
             Some(&cookie),
-            &[],
+            &[("calls_mode", "off"), ("sms_mode", "off")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -548,7 +554,7 @@ async fn writes_nudge_device() {
     for (uri, fields) in [
         (
             format!("/devices/{id}/calls/settings"),
-            vec![("managed", "on")],
+            vec![("calls_mode", "managed"), ("sms_mode", "unmanaged")],
         ),
         (
             format!("/devices/{id}/contacts/{contact}"),
@@ -655,6 +661,7 @@ async fn device_page_summarises_calls() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
+    set_unmanaged(&app, id).await;
     let row = |page: &str| part(page, "data-row=\"calls\"", "</a>").to_string();
     let page = app
         .get_page(&format!("/devices/{id}"), &cookie)
@@ -791,7 +798,7 @@ async fn calls_page_warns_without_capability() {
 }
 
 async fn set_unmanaged(app: &TestApp, id: i64) {
-    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
@@ -1137,7 +1144,11 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         ),
         (
             format!("/devices/{id}/calls/settings#settings"),
-            vec![("managed", "on"), ("default_message_app", "sms")],
+            vec![
+                ("calls_mode", "managed"),
+                ("sms_mode", "unmanaged"),
+                ("default_message_app", "sms"),
+            ],
             Some((calls.as_str(), Some("settings"))),
         ),
         (
@@ -1234,7 +1245,7 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
     }
     // Each did what it says: managed, Mamma saved, her photo gone, then her too, Pappa added.
     let managed: bool =
-        sqlx::query_scalar("SELECT calls_managed FROM device_policy WHERE device_id = ?")
+        sqlx::query_scalar("SELECT calls_mode = 'managed' FROM device_policy WHERE device_id = ?")
             .bind(id)
             .fetch_one(&app.db)
             .await

@@ -97,6 +97,8 @@ fun resetPreferences(context: Context) {
     val managedLast = prefs.getBoolean(managedLastKey, false)
     val lastRules = prefs.getString(lastRulesKey, null)
     val timeSeen = prefs.getBoolean(timeSeenKey, false)
+    val modesSeenKey = context.getString(R.string.settings_mdm_channel_modes_seen_key)
+    val modesSeen = prefs.getBoolean(modesSeenKey, false)
     LauncherPreferences.clear()
     if (managedLast || lastRules != null) {
         prefs.edit().putBoolean(managedLastKey, managedLast).putString(lastRulesKey, lastRules).commit()
@@ -104,6 +106,8 @@ fun resetPreferences(context: Context) {
     // Likewise "this phone has had time rules" (handy step 6), so a reset phone doesn't accept a
     // response without them.
     if (timeSeen) prefs.edit().putBoolean(timeSeenKey, true).commit()
+    // And "this phone has had channel modes" (design 77 D2).
+    if (modesSeen) prefs.edit().putBoolean(modesSeenKey, true).commit()
     LauncherPreferences.internal().versionCode(PREFERENCE_VERSION)
 
     val hidden: MutableSet<AbstractAppInfo> = mutableSetOf()

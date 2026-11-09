@@ -473,6 +473,12 @@ async fn a_new_phone_keeps_its_phone_and_sms_apps() {
 
     // A maker's own phone and SMS apps, named by role.
     let (first, token) = app.enrolled_device("phone").await;
+    // Both channels not managed (design 77 D2: a new phone starts with SMS managed).
+    sqlx::query("UPDATE device_policy SET calls_mode = 'unmanaged', sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(first)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let res = app
         .request(
             Method::POST,

@@ -20,7 +20,7 @@ object BlockedCallLog {
             val last = prefs.getLong(KEY_LAST_PRUNE_MS, -1L).takeIf { it >= 0 }
             if (!blockedCallPruneDue(last, now)) return
             val allowed = blockedCallPruneAllowed(
-                callsManaged = CallPolicyStore.state !is CallPolicyState.Unmanaged,
+                callsManaged = CallPolicyStore.callsState !is CallPolicyState.Unmanaged,
                 unlocked = CallPolicyStore.userUnlocked(context),
                 canWriteCallLog = context.checkSelfPermission(android.Manifest.permission.WRITE_CALL_LOG) ==
                     PackageManager.PERMISSION_GRANTED,

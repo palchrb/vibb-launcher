@@ -39,6 +39,9 @@ val ROLE_GRANTED_PERMISSIONS = setOf(
     "android.permission.SEND_SMS",
     "android.permission.RECEIVE_SMS",
     "android.permission.READ_SMS",
+    // Design 77 §8.3: the SMS role grants these too (roles.xml ROLE_SMS).
+    "android.permission.RECEIVE_MMS",
+    "android.permission.RECEIVE_WAP_PUSH",
     "android.permission.RECORD_AUDIO",
     "android.permission.CAMERA",
     "android.permission.POST_NOTIFICATIONS",

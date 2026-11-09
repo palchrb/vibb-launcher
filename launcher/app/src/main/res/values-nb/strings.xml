@@ -78,6 +78,14 @@
         <item quantity="other">%1$s, %2$d tapte anrop</item>
     </plurals>
     <string name="notification_channel_missed_calls">Tapte anrop</string>
+    <string name="notification_channel_messages">Meldinger</string>
+    <string name="notification_channel_messages_silent">Meldinger (stille)</string>
+    <string name="sms_notification_public">Ny melding</string>
+    <string name="sms_notification_reply">Svar</string>
+    <string name="sms_notification_me">Meg</string>
+    <string name="sms_reply_not_sent">Ikke sendt</string>
+    <string name="sms_unknown_sender_line">Ukjent avsender: %1$s</string>
+    <string name="sms_compose_refused">Du kan ikke sende melding til dette nummeret</string>
     <string name="missed_call_from">Tapt anrop fra %1$s</string>
     <plurals name="missed_calls_from">
         <item quantity="one">%1$d tapt anrop fra %2$s</item>

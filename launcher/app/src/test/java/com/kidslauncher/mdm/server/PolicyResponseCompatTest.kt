@@ -882,6 +882,28 @@ class PolicyResponseCompatTest {
         assertTrue(decodeCached(withCalls) is CachedPolicy.Ok)
     }
 
+    /** Design 77 §7: the SMS keys of `call_policy` - every one always sent by the server (`policy_json_keys_snapshot`),
+     * the per-contact switches absent from an older server deny. The full shape is `sms_contract.json`'s. */
+    @Test
+    fun `call_policy's SMS keys decode, and an older server's contacts deny texting`() {
+        val contract = kotlinx.serialization.json.Json.parseToJsonElement(
+            javaClass.classLoader!!.getResource("sms_contract.json")!!.readText(),
+        ).jsonObject["policy"]!!.jsonObject["call_policy"].toString()
+        val policy = (decodeCached(serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": $contract, \"packages_to_uninstall\"")) as CachedPolicy.Ok).policy
+        val callPolicy = policy.callPolicy!!
+        assertEquals("managed" to "managed", callPolicy.callsMode to callPolicy.smsMode)
+        assertEquals(listOf("DNB", "Posten"), callPolicy.smsNames)
+        assertEquals(1, callPolicy.ownNumbers.size)
+        assertTrue(callPolicy.mmscHosts.isEmpty())
+        assertEquals(1, callPolicy.smsHeldDrop.size)
+        assertFalse(callPolicy.smsLockText)
+        val old = ServerJson.decodeFromString(PolicyContact.serializer(), """{"id": 1, "name": "A", "number": "+4790000001", "inbound": true, "outbound": true}""")
+        assertEquals(listOf(false, false, false), listOf(old.smsIn, old.smsOut, old.mms))
+        // Unknown keys of a later step (§14's contact_requests) never fail the policy.
+        val later = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"contact_requests\": []}, \"packages_to_uninstall\"")
+        assertTrue(decodeCached(later) is CachedPolicy.Ok)
+    }
+
     @Test
     fun `a blob without call_policy gives null`() {
         assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.callPolicy)

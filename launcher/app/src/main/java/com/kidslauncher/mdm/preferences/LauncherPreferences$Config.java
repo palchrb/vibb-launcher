@@ -72,6 +72,9 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // time_policy was accepted: a later response without it is rejected
                         // (server.PolicyGate.judgeFresh), like call_policy.
                         @Preference(name = "time_policy_seen", type = boolean.class, defaultValue = "false"),
+                        // Design 77 D2: set (in the same commit as kid_mode_policy) once a call_policy
+                        // with calls_mode/sms_mode was accepted: a later one without them is rejected.
+                        @Preference(name = "channel_modes_seen", type = boolean.class, defaultValue = "false"),
                         // Computed handoff flag: true once AppEnforcer has actually configured DPM
                         // lock-task state (server-authoritative via PolicyResponse.kioskDesired -
                         // there is no local toggle). HomeActivity reads this to decide whether to

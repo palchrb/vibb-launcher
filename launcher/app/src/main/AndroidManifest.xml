@@ -99,6 +99,15 @@
          Granted at install, unlike SCHEDULE_EXACT_ALARM; Play limits it to alarm apps, which
          doesn't apply to this sideloaded device-owner app. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Design 77 (sms/): Vibb One is the SMS app while SMS is "Styrt av Vibb". The SMS role grants these; the device
+         owner fixes them by policy before a role changes hands (§8.3), so a hand-back never kills the process.
+         READ_PHONE_NUMBERS: the SIMs' own numbers (D12). -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
 
     <!-- Vibb music (design 21 §2): only an app signed like this launcher may bind the bridge; the
          music app requests both build names' permission. -->
@@ -492,6 +501,69 @@
         <!-- "Lock again" on a parent-PIN window's notification (design 24b) - our own PendingIntent only. -->
         <receiver
             android:name=".server.WindowRelockReceiver"
+            android:exported="false" />
+        <!-- Design 77 §6.1, §8.4: the SMS role's four components, each guarded by its system permission (roles.xml
+             ROLE_SMS) - none direct-boot-aware (the platform holds messages until the first unlock). -->
+        <receiver
+            android:name=".sms.SmsDeliverReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".sms.MmsPushReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_WAP_PUSH">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".sms.RespondViaMessageService"
+            android:exported="true"
+            android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name=".sms.ComposeActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+            </intent-filter>
+        </activity>
+        <!-- The platform's sent and delivery results, and the notification's Reply - our own PendingIntents only. -->
+        <receiver
+            android:name=".sms.SmsSentReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".sms.SmsReplyReceiver"
             android:exported="false" />
         <!-- Answers market:// and play.google.com/store links (handy step 7): the device owner makes
              it their persistent preferred activity, which AOSP honours only when the activity

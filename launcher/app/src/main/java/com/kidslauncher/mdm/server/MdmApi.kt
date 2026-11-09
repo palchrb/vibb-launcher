@@ -117,6 +117,11 @@ interface MdmApi {
     @POST("api/devices/time-request")
     suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
 
+    /** The messages held for the parent and the blocked ones (design 77 §7): who and when, never what - see
+     * `sms/SmsRuntime.postHeld`. The raw answer: 200 `SmsHeldAnswer`, 400 `SmsHeldRefusal`. */
+    @POST("api/devices/sms-held")
+    suspend fun sendSmsHeld(@Body body: com.kidslauncher.mdm.server.dto.SmsHeldBody): Response<ResponseBody>
+
     /** A calendar link's set (design 72 §3): `ETag` = its rev, 304 for [ifNoneMatch], 404 unless this phone has the
      * link - see `calendar/CalendarFeeds`. */
     @GET("api/devices/calendar/feeds/{id}")

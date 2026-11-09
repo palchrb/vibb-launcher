@@ -242,7 +242,7 @@ class LockActivity : UIObjectActivity() {
         // Emergency call is shown in every state (QA step 4 #1, qa-34-s7-code L1): set on every render,
         // and the only line that touches its visibility (TimeLockModelTest).
         binding.lockEmergencyButton.visibility = View.VISIBLE
-        val callsManaged = CallPolicyStore.state.managed
+        val callsManaged = CallPolicyStore.callsState.managed
         // What still works, as one paragraph: the card's line 3.
         val sentences = mutableListOf<String>()
         when (val line = budgetLine(rule != null, snap?.budget, lock?.budgetExhausted == true)) {

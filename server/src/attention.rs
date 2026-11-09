@@ -407,7 +407,7 @@ fn target(kind: Kind, id: i64) -> String {
 /// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
 /// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
 pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
-    policy.calls_managed
+    policy.calls_managed()
         && !problems
             .iter()
             .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
@@ -492,7 +492,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             Vec::new()
         }
     };
-    let incoming_calls_not_blocked = !policy.calls_managed
+    let incoming_calls_not_blocked = !policy.calls_managed()
         && crate::time_rules::effective_rule_rows(&state.db, id)
             .await
             .unwrap_or_default()

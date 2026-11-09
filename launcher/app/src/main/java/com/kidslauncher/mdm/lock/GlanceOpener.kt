@@ -99,7 +99,7 @@ object GlanceOpener {
      * time lock: usable.
      */
     fun usableUnderTimeRule(context: Context, target: GlanceTarget): Boolean =
-        glanceUsableUnderLock(TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock, target, CallPolicyStore.state.managed)
+        glanceUsableUnderLock(TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock, target, CallPolicyStore.callsState.managed)
 
     /**
      * qa-home-round-code Q-3: whether [open] would open something over Home now - the same facts and step, read

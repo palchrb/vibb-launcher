@@ -73,6 +73,11 @@ fun decodeFresh(json: String?): FreshDecode {
 
 enum class FreshVerdict { ACCEPT, REJECT_SUSPECT }
 
+/** Design 77 D2: both channels' states sent, each one of the three wire names. */
+val com.kidslauncher.mdm.server.dto.CallPolicy.hasChannelModes: Boolean
+    get() = com.kidslauncher.mdm.calls.ChannelMode.of(callsMode) != null &&
+        com.kidslauncher.mdm.calls.ChannelMode.of(smsMode) != null
+
 /**
  * Whether a freshly fetched policy may replace what the phone enforces now. Two patterns are
  * rejected, both "a server falling back to defaults" rather than a parent's choice:
@@ -88,6 +93,9 @@ enum class FreshVerdict { ACCEPT, REJECT_SUSPECT }
  * - no `time_policy` on a phone that has had one ([timePolicySeen], written with the cache, or a
  *   cached policy with one): our server always sends it (handy step 6), so the rules, budget and
  *   lifts the phone has stay in force rather than falling back to the frozen legacy windows.
+ * - a `call_policy` without `calls_mode`/`sms_mode` on a phone that has had them ([channelModesSeen], written with the
+ *   cache, or a cached policy with them; design 77 D2): a rolled-back server can't loosen a channel silently. A mode
+ *   that isn't one of the three is rejected always - we can't tell what it would allow.
  * A legitimate `[]`, removing the PIN, or `call_policy.managed = false` is accepted.
  */
 fun judgeFresh(
@@ -96,6 +104,7 @@ fun judgeFresh(
     policyEverApplied: Boolean,
     callsManagedLast: Boolean = false,
     timePolicySeen: Boolean = false,
+    channelModesSeen: Boolean = false,
 ): FreshVerdict {
     if (fresh.timePolicy == null) {
         val seen = timePolicySeen || (cached is CachedPolicy.Ok && cached.policy.timePolicy != null)
@@ -105,6 +114,14 @@ fun judgeFresh(
         val callsWereManaged = callsManagedLast ||
             (cached is CachedPolicy.Ok && cached.policy.callPolicy?.managed == true)
         if (callsWereManaged) return FreshVerdict.REJECT_SUSPECT
+    }
+    fresh.callPolicy?.let { callPolicy ->
+        if (callPolicy.callsMode == null && callPolicy.smsMode == null) {
+            val seen = channelModesSeen || (cached is CachedPolicy.Ok && cached.policy.callPolicy?.hasChannelModes == true)
+            if (seen) return FreshVerdict.REJECT_SUSPECT
+        } else if (!callPolicy.hasChannelModes) {
+            return FreshVerdict.REJECT_SUSPECT
+        }
     }
     if (fresh.allowlist != null) return FreshVerdict.ACCEPT
     val wasManaged = when (cached) {

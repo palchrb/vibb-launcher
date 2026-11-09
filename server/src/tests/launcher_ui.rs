@@ -42,7 +42,7 @@ async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
 
 /// Manages calls on `device` and attaches a contact; returns its id.
 async fn contact(app: &TestApp, device: i64, name: &str, number: &str) -> i64 {
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(device)
         .execute(&app.db)
         .await

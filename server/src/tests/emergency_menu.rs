@@ -49,7 +49,7 @@ async fn the_policy_offers_112_alone_by_default_managed_or_not() {
         menu(&app, &token).await,
         json!([{"number": "112", "name": ""}])
     );
-    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
@@ -307,7 +307,7 @@ async fn a_number_outside_the_phone_book_says_it_is_dimmed() {
         "unmanaged: no line"
     );
     sqlx::query(
-        "UPDATE device_policy SET calls_managed = 1, calls_enabled = 1 WHERE device_id = ?",
+        "UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?",
     )
     .bind(id)
     .execute(&app.db)

@@ -258,7 +258,7 @@ object MissedCallNotifier {
         CallPolicyStore.ensureLoaded(context)
         // A re-learning pass (mayClear false: every request of the run was one) counts against the
         // rules without the time rule's block (code QA Low 3); so does a dismissal's (design r11 §3.3).
-        val state = noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)
+        val state = noticeState(CallPolicyStore.callsState, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)
         val rules = (state as? CallPolicyState.Managed)?.rules
         // The bound first, then the log: every unread row up to it has been looked at.
         val unread = MissedCallsRepo.unreadMissed(context)

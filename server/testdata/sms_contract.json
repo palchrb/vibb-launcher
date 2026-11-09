@@ -1,0 +1,135 @@
+{
+  "capability": "sms_engine_v1",
+  "migration": [
+    {"calls_managed": false, "calls_enabled": false, "sms_enabled": false, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
+    {"calls_managed": false, "calls_enabled": true, "sms_enabled": true, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
+    {"calls_managed": true, "calls_enabled": false, "sms_enabled": false, "calls_mode": "off", "sms_mode": "off"},
+    {"calls_managed": true, "calls_enabled": false, "sms_enabled": true, "calls_mode": "off", "sms_mode": "unmanaged"},
+    {"calls_managed": true, "calls_enabled": true, "sms_enabled": false, "calls_mode": "managed", "sms_mode": "off"},
+    {"calls_managed": true, "calls_enabled": true, "sms_enabled": true, "calls_mode": "managed", "sms_mode": "unmanaged"}
+  ],
+  "modes": [
+    {"calls_mode": "off", "sms_mode": "off", "managed": true, "calls_enabled": false, "sms_enabled": false},
+    {"calls_mode": "off", "sms_mode": "managed", "managed": true, "calls_enabled": false, "sms_enabled": false},
+    {"calls_mode": "off", "sms_mode": "unmanaged", "managed": true, "calls_enabled": false, "sms_enabled": true},
+    {"calls_mode": "managed", "sms_mode": "off", "managed": true, "calls_enabled": true, "sms_enabled": false},
+    {"calls_mode": "managed", "sms_mode": "managed", "managed": true, "calls_enabled": true, "sms_enabled": false},
+    {"calls_mode": "managed", "sms_mode": "unmanaged", "managed": true, "calls_enabled": true, "sms_enabled": true},
+    {"calls_mode": "unmanaged", "sms_mode": "off", "managed": true, "calls_enabled": true, "sms_enabled": false},
+    {"calls_mode": "unmanaged", "sms_mode": "managed", "managed": true, "calls_enabled": true, "sms_enabled": false},
+    {"calls_mode": "unmanaged", "sms_mode": "unmanaged", "managed": false, "calls_enabled": true, "sms_enabled": true}
+  ],
+  "policy": {
+    "call_policy": {
+      "managed": true,
+      "calls_enabled": true,
+      "sms_enabled": false,
+      "default_country_code": "47",
+      "contacts": [
+        {"id": 1, "name": "Mamma", "number": "+4791234567", "inbound": true, "outbound": true, "show_on_home": true, "message_app": "sms", "message_address": null, "photo": null, "sms_in": true, "sms_out": true, "mms": true},
+        {"id": 2, "name": "Bestemor", "number": "+4798765432", "inbound": true, "outbound": false, "show_on_home": false, "message_app": "sms", "message_address": null, "photo": null, "sms_in": false, "sms_out": true, "mms": false},
+        {"id": 3, "name": "Ambulanse", "number": "113", "inbound": true, "outbound": true, "show_on_home": false, "message_app": "none", "message_address": null, "photo": null, "sms_in": false, "sms_out": true, "mms": true}
+      ],
+      "emergency_menu": [{"number": "112", "name": ""}],
+      "calls_mode": "managed",
+      "sms_mode": "managed",
+      "sms_lock_text": false,
+      "sms_names": ["DNB", "Posten"],
+      "own_numbers": [{"slot": 1, "number": "+4790000001"}],
+      "mmsc_hosts": [],
+      "sms_held_drop": ["00112233445566778899aabbccddeeff"]
+    },
+    "mmsc_hosts_row": {"mccmnc": "24201", "hosts": ["mmsc.example.invalid"]}
+  },
+  "report": {
+    "sms_state": {
+      "role_held": true,
+      "mode_applied": "managed",
+      "received": 12,
+      "sent": 4,
+      "blocked": {"number": 0, "short": 1, "alphanumeric": 2, "malformed": 0, "empty": 0, "group": 0, "bad_location": 0, "over_cap": 1},
+      "held": 3,
+      "released": 1,
+      "expired": 1,
+      "parse_failures": 0,
+      "mms_waiting": 0,
+      "mms_data_allowed": true,
+      "mmsc_known": false,
+      "last_error": null,
+      "own_numbers": [{"slot": 1, "number": "+4790000001"}, {"slot": 2, "number": null}],
+      "hold_full": {"numbers": false, "names": true}
+    }
+  },
+  "held": {
+    "request": {
+      "rows": [
+        {"id": "0123456789abcdef0123456789abcdef", "at": 1793800000000, "kind": "sms", "sender_class": "number", "sender": "+4791112222", "expires_at": 1793886400000, "state": "held"},
+        {"id": "1123456789abcdef0123456789abcdef", "at": 1793800060000, "kind": "sms", "sender_class": "alphanumeric", "sender": "Posten", "expires_at": 1793886460000, "state": "released"},
+        {"id": "2123456789abcdef0123456789abcdef", "at": 1793800120000, "kind": "sms", "sender_class": "short", "sender": "2222", "expires_at": 1793886520000, "state": "expired"},
+        {"id": "3123456789abcdef0123456789abcdef", "at": 1793800180000, "kind": "mms", "sender_class": "number", "sender": "+4793334444", "expires_at": 1793886580000, "state": "dropped"},
+        {"id": "4123456789abcdef0123456789abcdef", "at": 1793800240000, "kind": "sms", "sender_class": "malformed", "sender": "", "expires_at": 1793800240000, "state": "blocked"}
+      ]
+    },
+    "answers": [{"accepted": 5}, {"accepted": 0, "capped": true}],
+    "refusal": {"refused": 0, "reason": "sender"}
+  },
+  "clean": [
+    {"type": "number", "raw": "+4791234567", "class": "number", "sender": "+4791234567"},
+    {"type": "number", "raw": "91 23 45 67", "class": "number", "sender": "+4791234567"},
+    {"type": "number", "raw": "2222", "class": "short", "sender": "2222"},
+    {"type": "number", "raw": "112", "class": "short", "sender": "112"},
+    {"type": "number", "raw": "12", "class": "malformed", "sender": ""},
+    {"type": "number", "raw": "*100#", "class": "malformed", "sender": ""},
+    {"type": "alphanumeric", "raw": "DNB", "class": "alphanumeric", "sender": "DNB"},
+    {"type": "alphanumeric", "raw": "+4791234567", "class": "alphanumeric", "sender": "+4791234567"},
+    {"type": "alphanumeric", "raw": "‮BNP‬", "class": "alphanumeric", "sender": "BNP"},
+    {"type": "alphanumeric", "raw": "Posten  Norge AS", "class": "alphanumeric", "sender": "Posten Norg"},
+    {"type": "alphanumeric", "raw": "​⁦", "class": "empty", "sender": ""},
+    {"type": "alphanumeric", "raw": "\"<&x", "class": "alphanumeric", "sender": "\"<&x"},
+    {"type": "malformed", "raw": "+4791234567", "class": "malformed", "sender": ""},
+    {"type": "number", "raw": "", "class": "empty", "sender": ""}
+  ],
+  "intake": [
+    {"class": "number", "sender": "+4791234567", "ok": true},
+    {"class": "short", "sender": "2222", "ok": true},
+    {"class": "number", "sender": "12", "ok": false},
+    {"class": "number", "sender": "+12345678901234567", "ok": false},
+    {"class": "number", "sender": "+47\"<&1234", "ok": false},
+    {"class": "number", "sender": "DNB", "ok": false},
+    {"class": "alphanumeric", "sender": "DNB", "ok": true},
+    {"class": "alphanumeric", "sender": "\"<&x", "ok": true},
+    {"class": "alphanumeric", "sender": "+4791234567", "ok": true},
+    {"class": "alphanumeric", "sender": "DNB‮", "ok": false},
+    {"class": "alphanumeric", "sender": "Posten Norge", "ok": false},
+    {"class": "alphanumeric", "sender": "", "ok": false},
+    {"class": "malformed", "sender": "", "ok": true},
+    {"class": "malformed", "sender": "x", "ok": false},
+    {"class": "empty", "sender": "", "ok": true},
+    {"class": "bad_location", "sender": "", "ok": true},
+    {"class": "letters", "sender": "", "ok": false}
+  ],
+  "names": [
+    {"name": "DNB", "valid": true, "fold": "dnb"},
+    {"name": "Vipps", "valid": true, "fold": "vipps"},
+    {"name": "ÆØÅ", "valid": true, "fold": "æøå"},
+    {"name": "ß", "valid": true, "fold": "ß"},
+    {"name": "ẞ", "valid": true, "fold": "ß"},
+    {"name": "ΣΩ", "valid": true, "fold": "σω"},
+    {"name": "Posten Norg", "valid": true, "fold": "posten norg"},
+    {"name": "+4791234567", "valid": false},
+    {"name": "112", "valid": false},
+    {"name": "91 23 45 67", "valid": false},
+    {"name": "", "valid": false},
+    {"name": "​", "valid": false},
+    {"name": "Posten Norge", "valid": false}
+  ],
+  "name_matches": [
+    {"listed": "dnb", "sender": "DNB", "match": true},
+    {"listed": "DNB", "sender": "DNB Bank", "match": false},
+    {"listed": "ÆØÅ", "sender": "æøå", "match": true},
+    {"listed": "ẞ", "sender": "ß", "match": true},
+    {"listed": "ΣΩ", "sender": "σω", "match": true},
+    {"listed": "Posten", "sender": "P​osten", "match": true},
+    {"listed": "Posten", "sender": "Poste", "match": false}
+  ]
+}

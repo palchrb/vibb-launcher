@@ -1,7 +1,9 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.ChannelMode
 import com.kidslauncher.mdm.calls.managed
+import com.kidslauncher.mdm.calls.smsMode
 import com.kidslauncher.mdm.play.PLAY_CORE
 import com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT
 import com.kidslauncher.mdm.play.PLAY_STORE
@@ -54,10 +56,14 @@ data class EnforcementPlan(
      * Call rules are never lifted by an override or pause (decision after QA review).
      */
     val restrictOutgoingCalls: Boolean,
-    /** `UserManager.DISALLOW_SMS`: calls managed and SMS off, or calls fail closed. Not lifted by
-     * an override. The SMS apps are also suspended then (in [suspend]) because RCS chat bypasses
-     * this restriction (QA #8). */
+    /** `UserManager.DISALLOW_SMS` (design 77 D1, D15): SMS "Av", or "Styrt av Vibb" or the rules unknown while the SMS
+     * role isn't ours - incoming messages are lost then, nobody is there to filter them. Never while we hold the role
+     * in "Styrt av Vibb" (we filter) or with the rules unknown (the engine holds them, D15). Not lifted by an
+     * override. */
     val restrictSms: Boolean,
+    /** Design 77 §8.3: the other SMS apps are suspended and hidden (in [suspend]/[hide]) whenever SMS isn't
+     * "Ikke styrt" - RCS chat bypasses [restrictSms] (QA #8), and in "Styrt av Vibb" only our engine may text. */
+    val suspendSmsApps: Boolean = restrictSms,
     /** Deny CALL_PHONE/ANSWER_PHONE_CALLS to third-party apps: whenever calls are managed. */
     val denyCallPermissions: Boolean,
     /**
@@ -176,6 +182,10 @@ fun computeEnforcementPlan(
     emergencySos: String? = null,
     /** The system WebView's package (design 26c §6.3): never hidden or suspended. */
     webViewProvider: String? = null,
+    /** Design 77 D2: the SMS channel's state (`null` = the rules are unknown); [callState] is the calls channel's. */
+    smsMode: ChannelMode? = callState.smsMode,
+    /** Design 77 D1: we hold the SMS role, so our engine receives every message. */
+    ourSmsRoleActive: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -184,11 +194,8 @@ fun computeEnforcementPlan(
     val allowed = allowlist.orEmpty().toSet()
     val callsBlockedByRule = locked && ruleBlocksCalls
 
-    val restrictSms = when (callState) {
-        CallPolicyState.Unmanaged -> false
-        CallPolicyState.UnknownFailClosed -> true
-        is CallPolicyState.Managed -> !callState.rules.smsEnabled
-    }
+    val restrictSms = smsRestricted(smsMode, ourSmsRoleActive)
+    val suspendSmsApps = smsMode != ChannelMode.UNMANAGED
     val restrictOutgoingCalls = callsBlockedByRule || when (callState) {
         CallPolicyState.Unmanaged -> appsManaged && systemDialer != null && systemDialer !in allowed
         CallPolicyState.UnknownFailClosed -> true
@@ -199,7 +206,7 @@ fun computeEnforcementPlan(
     // The Play Store is never hidden: other apps' FCM (Element X) needs it installed, and hiding
     // broadcasts a removal.
     if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE }
-    if (restrictSms) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
+    if (suspendSmsApps) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()
     // The alarm apps are spared by the lock only, so an alarm set inside bedtime still rings (an alarm app that isn't
     // allowed is hidden above, lock or not); the allowed ones are pinned during the lock too (below).
@@ -256,8 +263,10 @@ fun computeEnforcementPlan(
         restrictOutgoingCalls = restrictOutgoingCalls,
         // Also while calls are managed: the callback window compares call-log times with the wall
         // clock (QA step 2 #4). Not lifted by an override then.
-        lockDateTime = appsManaged || callState.managed || timeRulesSet,
+        // Design 77 D16: the held messages' 24 hours run on the wall clock too.
+        lockDateTime = appsManaged || callState.managed || smsMode != ChannelMode.UNMANAGED || timeRulesSet,
         restrictSms = restrictSms,
+        suspendSmsApps = suspendSmsApps,
         denyCallPermissions = callState.managed,
         restrictCreateWindows = budgetSet && !overrideActive,
         restrictTethering = appsManaged,
@@ -280,6 +289,18 @@ val KNOWN_SMS_PACKAGES = setOf(
 )
 
 fun smsPackages(defaultSmsPackage: String?): Set<String> = KNOWN_SMS_PACKAGES + setOfNotNull(defaultSmsPackage)
+
+/**
+ * `DISALLOW_SMS` for the SMS channel's [mode] (`null` = the rules are unknown) - design 77 D1, D15: "Av" always;
+ * "Styrt av Vibb" and unknown rules only while the role isn't ours ([roleHeld]) - nothing of ours would filter, and a
+ * message that reaches no filter must not reach the kid. With the role ours the engine filters (managed) or holds
+ * (unknown, D15). "Ikke styrt" never.
+ */
+fun smsRestricted(mode: ChannelMode?, roleHeld: Boolean): Boolean = when (mode) {
+    ChannelMode.OFF -> true
+    ChannelMode.MANAGED, null -> !roleHeld
+    ChannelMode.UNMANAGED -> false
+}
 
 /**
  * Third-party apps whose call permissions are denied while calls are managed: every non-system

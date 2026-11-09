@@ -277,7 +277,7 @@ class ElementRoomsTest {
         "map", "filter", "filterIsInstance", "orEmpty",
         // ours
         "ElementDmReader", "learn", "facts", "learned", "context", "sbn", "e", "extras", "messages", "SENDER_PERSON", "SENDER",
-        "Context", "Exception", "MessagePackages", "ELEMENT_X", "CallPolicyStore", "state", "ElementRoomStore",
+        "Context", "Exception", "MessagePackages", "ELEMENT_X", "CallPolicyStore", "callsState", "ElementRoomStore",
         "learnElementRoom", "ElementDmFacts", "tag", "selfKey", "senderKeys", "group",
         // 2026-10-25: the glance's contact from the same facts (design 15's link, a group's newest sender)
         "glanceContact", "elementGlanceContact", "rooms", "Long",

@@ -650,42 +650,52 @@ async fn build_call_policy(
     let emergency_menu = crate::emergency::policy_menu(
         &crate::emergency::device_menu(&state.db, policy.device_id).await?,
     );
-    if !policy.calls_managed {
-        return Ok(CallPolicy {
-            managed: false,
-            calls_enabled: true,
-            sms_enabled: true,
-            default_country_code,
-            contacts: Vec::new(),
-            emergency_menu,
-        });
-    }
-
-    let contacts = device_contacts(state, policy.device_id)
-        .await?
-        .into_iter()
-        .map(|c| PolicyContact {
-            id: c.contact_id,
-            name: c.name,
-            number: c.phone_number,
-            inbound: c.allow_inbound,
-            outbound: c.allow_outbound,
-            show_on_home: c.show_on_home,
-            message_app: c
-                .message_app
-                .unwrap_or_else(|| policy.default_message_app.clone()),
-            message_address: c.message_address,
-            photo: c.photo_hash,
-        })
-        .collect();
+    // Design 77: every SMS key is always sent, also while both channels are unmanaged (QA R2-I1).
+    let (sms_names, own_numbers, sms_held_drop) =
+        crate::sms::policy_parts(&state.db, policy.device_id).await?;
+    // D2: the old keys derived from the modes, failing closed for a launcher from before them.
+    let managed = policy.managed();
+    let contacts = if managed {
+        device_contacts(state, policy.device_id)
+            .await?
+            .into_iter()
+            .map(|c| PolicyContact {
+                id: c.contact_id,
+                // R2-H1: anyone can send as an emergency number, so its texts never come in through a contact.
+                sms_in: c.sms_in
+                    && !crate::emergency::is_emergency(&c.phone_number, &default_country_code),
+                sms_out: c.sms_out,
+                mms: c.mms,
+                name: c.name,
+                number: c.phone_number,
+                inbound: c.allow_inbound,
+                outbound: c.allow_outbound,
+                show_on_home: c.show_on_home,
+                message_app: c
+                    .message_app
+                    .unwrap_or_else(|| policy.default_message_app.clone()),
+                message_address: c.message_address,
+                photo: c.photo_hash,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     Ok(CallPolicy {
-        managed: true,
-        calls_enabled: policy.calls_enabled,
-        sms_enabled: policy.sms_enabled,
+        managed,
+        calls_enabled: policy.calls_enabled(),
+        sms_enabled: policy.sms_enabled(),
         default_country_code,
         contacts,
         emergency_menu,
+        calls_mode: policy.calls_mode.clone(),
+        sms_mode: policy.sms_mode.clone(),
+        sms_lock_text: policy.sms_lock_text,
+        sms_names,
+        own_numbers,
+        mmsc_hosts: crate::mmsc_hosts::policy(),
+        sms_held_drop,
     })
 }
 
@@ -696,7 +706,8 @@ pub(crate) async fn device_contacts(
 ) -> Result<Vec<DeviceContactRow>, sqlx::Error> {
     sqlx::query_as::<_, DeviceContactRow>(
         "SELECT c.id AS contact_id, c.name, c.phone_number, dc.allow_inbound, dc.allow_outbound, \
-         dc.show_on_home, dc.message_app, dc.message_address, c.photo_hash \
+         dc.show_on_home, dc.message_app, dc.message_address, c.photo_hash, \
+         dc.sms_in, dc.sms_out, dc.mms \
          FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? ORDER BY dc.sort_order, c.name",
     )
@@ -1242,6 +1253,11 @@ pub async fn status(
         .call_state
         .as_ref()
         .and_then(|state| known_fields(state, CALL_STATE_FIELDS));
+    // Design 77: the SMS engine's state through its own known keys - counts and flags, never a message.
+    let sms_state_json = report
+        .sms_state
+        .as_ref()
+        .and_then(crate::sms::sanitize_state);
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
@@ -1346,8 +1362,8 @@ pub async fn status(
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
-          write_settings_granted, zone_watch_json, tailnet_joined) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1404,6 +1420,7 @@ pub async fn status(
     .bind(report.write_settings_granted)
     .bind(&zone_watch_json)
     .bind(report.tailnet_joined)
+    .bind(&sms_state_json)
     .execute(&state.db)
     .await
     .ok();
