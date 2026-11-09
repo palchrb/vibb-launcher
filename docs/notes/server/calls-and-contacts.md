@@ -211,3 +211,43 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   (each allow path's defaults, the escaped prefill, Slett nå / Slett alle, the names' rule, the SMS settings, the
   Meldinger group, the push budget, the findings and the device-page row), `tests::sms` (the gate on the radios),
   `tests::shell` (every new form lands on its own group), `calls::tests` (the findings' words, the summary).
+
+## The kid's contact request (design 77 §14, step 6; `handlers::contact_requests`)
+
+A phone book and contacts feature, not an SMS one: the kid asks from the phone book's "+" for a new contact, and a
+parent decides on the Calls page. It follows design r13's time request.
+- **The intake** `POST /api/devices/contact-request` (`intake`, 1 KiB): `{id, name, number, matrix_id?, asked_at_ms}`,
+  the shapes in `testdata/contact_request.json` (shared with the launcher). `check` (QA R2-L5): the name through
+  `calendar::clean`, 1-40 characters; the number through `phone::normalize` again, never an emergency number
+  (`emergency::is_emergency`); an empty Matrix ID none, any other one through `calls::valid_matrix_id`. Refused:
+  `invalid`. Then in one `BEGIN IMMEDIATE` transaction: a stored id answers `accepted` again (a retry: no second row or
+  event); the number already a contact on the phone, or in another open request, `known`; three received in the
+  phone's own day (`device_api::phone_zone`, as r13's cap; counted by the server's `received_at`) or five open,
+  `capped`; else the row and the event. An `asked_at` in the future counts as now; one over 7 days old is `invalid`.
+- **The table** `device_contact_requests` (0133): `state` `open`, `declined` or `added`; purged 30 days after
+  `received_at` (`retention::prune`, `Pruned::contact_requests`).
+- **The policy** `call_policy.contact_requests`: `[{id, state}]` of the last 7 days, newest first, at most 50. An
+  approval needs no row for the phone (the contact arrives), but `added` is sent too, so the phone forgets a request
+  the parent added under another number (an addition to §14, which named `open` and `declined`).
+- **The event** `contact_request` (`Kind::ContactRequest`), key the phone's id, words from its parameters ("Anna asks
+  for a new contact: Ola" / "+4791234567 · 14:02"), target `/devices/{id}/calls#request-{id}`, its own push switch
+  `push_contact_request` (on by default, 0133) and a `PushBudget` of 3 an hour (the day's cap keeps it under it but
+  across midnight; the digest counts the open requests).
+- **The card** "Forespørsler" ("Requests", `#requests`, each row `#request-<id>`) at the top of the Calls page, under
+  "Meldinger som venter": the name and number the server checked, when, the number's mark ("Kortnummer - kan koste
+  penger"; "Nødnummer" only for a row stored before the country code changed - the intake refuses them), the kid's
+  Matrix ID as "Foreslått Matrix-ID", and for an open row "Legg til…" and "Avslå"; a decided row reads "Lagt til" or
+  "Avslått" for the rest of its 7 days.
+  - **"Legg til…"** is `?request=<id>#add-contact`: Add Contact opened from the stored row of this phone (`prefill`;
+    never the link's words), with §14's switches (`REQUEST_ADD_SWITCHES`: "Kan ringe", "I telefonboken", texts both
+    ways on; Home and pictures off) and, when the kid gave one, the Matrix ID behind its own unticked "Bruk
+    Matrix-ID-en" (R2-M1). The form carries `request`; the save (`calls::add_contact`, its transaction) answers every
+    open request for the saved number and that request `added` (`mark_added`), reads their events for every parent, and
+    stores the request's Matrix ID as the contact's `message_address` only with `use_matrix` ticked - taken from the
+    stored row of this phone, never the form. Any Add Contact (and "Add from the family") with the number answers an
+    open request too.
+  - **"Avslå"** (`decline`): `declined`, the event read for every parent, back to the row; a row no longer open lands
+    on `?notice=request_gone#requests`.
+- Tests: `tests::contact_requests` (the contract's answers, the caps and limits, the card, "Legg til…" with and without
+  the tick and a forged one, "Avslå", the push and its switch, retention), `handlers::contact_requests::tests` (the
+  shared vectors), `parent_events::tests` (the words and target).

@@ -99,6 +99,42 @@
         {% endif %}
     </section>
 
+    {#- Design 77 §14: the kid's requests for a new contact, each row #request-<id> (its forms return there; one no
+        longer open lands on #requests' notice): the name and number the server checked, the number's kind, the kid's
+        Matrix ID as a suggestion. "Legg til…" opens Add Contact prefilled from the stored request (§14's switches,
+        "Bruk Matrix-ID-en" unticked); nothing is added by the request itself. Always there (an empty #requests to
+        land on), its words only with rows. -#}
+    <section id="requests"{% if !requests.is_empty() || requests_notice.is_some() %} aria-labelledby="requests-title"{% endif %}>
+        {% if !requests.is_empty() || requests_notice.is_some() %}
+        <h2 class="group-header" id="requests-title">{{ self.t("device.requests.title") }}</h2>
+        {% if let Some(text) = requests_notice %}
+        <div class="group"><p class="flash flash-error" role="status" data-flash="requests">{{ text }}</p></div>
+        {% endif %}
+        {% if !requests.is_empty() %}
+        <div class="group">
+            {% for row in requests %}
+            <div class="cell" id="request-{{ row.id }}" data-request="{{ row.id }}">
+                <div class="row">
+                    <span class="row-label">{{ row.name }}<span class="row-sub">{{ row.number }} · {{ row.when }}</span>{% if let Some(mark) = row.mark %}<span class="row-sub tone-orange">{{ mark }}</span>{% endif %}{% if let Some(matrix) = row.matrix_id %}<span class="row-sub">{{ self.tp("device.requests.matrix", [("id", matrix.as_str())]) }}</span>{% endif %}{% if let Some(status) = row.status %}<span class="row-sub">{{ status }}</span>{% endif %}</span>
+                </div>
+                {% if row.open %}
+                <div class="held-body">
+                    {% if row.can_add %}
+                    <a class="row row-button" href="/devices/{{ device.id }}/calls?request={{ row.id }}#add-contact" data-request-action="add">{{ self.t("device.requests.add") }}&hellip;</a>
+                    {% endif %}
+                    <form method="post" action="/devices/{{ device.id }}/calls/requests/{{ row.id }}/decline#request-{{ row.id }}">
+                        <button type="submit" class="row row-button row-danger" data-request-action="decline">{{ self.t("device.requests.decline") }}</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        <p class="group-footer">{{ self.tp("device.requests.footer", [("name", device.name.as_str())]) }}</p>
+        {% endif %}
+        {% endif %}
+    </section>
+
     {#- Design 73: the emergency menu, at the top. A row's up/down returns to the row (#emergency-<id>), Remove and a
         refusal's line to #emergency, Add Number and a suggestion to the new row; a refused Add Number renders here
         (400) with its form open. The default 112 nothing has stored yet is alone, so it has no buttons. -#}
@@ -390,6 +426,18 @@
                             <input type="checkbox" role="switch" class="sw" name="{{ name }}" value="on"{% if on %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                         </label>
                         {% endfor %}
+                        {#- Design 77 §14: from the kid's request ("Legg til…"): its id goes back with the form (the save
+                            answers it), and the kid's Matrix ID is a suggestion behind its own switch, unticked until the
+                            parent ticks it (R2-M1) - the server takes the ID from the stored request, never the form. -#}
+                        {% if let Some((request, matrix)) = add_request %}
+                        <input type="hidden" name="request" value="{{ request }}">
+                        {% if let Some(matrix) = matrix %}
+                        <label class="row" data-use-matrix>
+                            <span class="row-label">{{ self.t("device.requests.use_matrix") }}<span class="row-sub">{{ self.tp("device.requests.matrix_hint", [("name", device.name.as_str()), ("id", matrix.as_str())]) }}</span></span>
+                            <input type="checkbox" role="switch" class="sw" name="use_matrix" value="on"{% if use_matrix %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        </label>
+                        {% endif %}
+                        {% endif %}
                     </div>
                     <button type="submit" class="button-wide">{{ self.t("device.calls.add") }}</button>
                 </form>

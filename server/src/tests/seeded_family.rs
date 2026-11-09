@@ -359,6 +359,15 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             "+4790000099",
             parent_events::Push::Now,
         ),
+        // Design 77 §14: the kid asks for a new contact.
+        parent_events::contact_request(
+            anna,
+            &phone.name,
+            "10112233445566778899aabbccddeeff",
+            "Bestemor",
+            "+4790000098",
+            ago(121),
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

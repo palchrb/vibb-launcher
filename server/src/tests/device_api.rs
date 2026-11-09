@@ -404,6 +404,7 @@ async fn policy_json_keys_snapshot() {
         [
             "calls_enabled",
             "calls_mode",
+            "contact_requests",
             "contacts",
             "default_country_code",
             "emergency_menu",

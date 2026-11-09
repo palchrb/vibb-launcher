@@ -1334,6 +1334,8 @@ pub struct CallPolicy {
     pub mmsc_hosts: Vec<crate::mmsc_hosts::MmscHosts>,
     /// D16: the held ids the parent deleted in the last 24 hours, newest first, at most 100.
     pub sms_held_drop: Vec<String>,
+    /// §14: the kid's requests for a new contact of the last 7 days, `[{id, state}]` (`open`, `declined`, `added`).
+    pub contact_requests: Vec<crate::handlers::contact_requests::PolicyRow>,
 }
 
 /// One contact as the launcher sees it. `number` is normalised (src/phone.rs) - the launcher

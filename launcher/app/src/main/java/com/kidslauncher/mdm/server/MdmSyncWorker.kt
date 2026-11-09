@@ -156,6 +156,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         CallPolicyStore.refresh(context)
         // Design 77 D16: the parent's deletions first, then expiry, then the held messages the new rules let in.
         com.kidslauncher.mdm.sms.SmsRuntime.policyAccepted(context, freshPolicy.callPolicy?.smsHeldDrop.orEmpty())
+        // Design 77 §14: the kid's contact requests the parent answered (the contact arrived, or "Ikke lagt til").
+        com.kidslauncher.mdm.calls.ContactRequests.policyAccepted(context, freshPolicy.callPolicy)
         // The parent's language choice, switched when Home is next in front (LauncherLocales).
         LauncherLocales.remember(context, freshPolicy.launcherUi)
         // The parent's app names and icons (design 14): a change re-renders Home and the drawer.
@@ -419,6 +421,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     PowerEvents.upload(context, api)
     // The kid's request for more time (design r13 §2.4): a pending one, until its 30 minutes are over.
     com.kidslauncher.mdm.timerules.TimeRequests.upload(context, api)
+    // The kid's contact requests from the phone book (design 77 §14): each pending one, until it is taken or a week old.
+    com.kidslauncher.mdm.calls.ContactRequests.upload(context, api)
     // Command receipts and results that didn't get through when they were made (security review L12).
     CommandAnswers.flush(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.

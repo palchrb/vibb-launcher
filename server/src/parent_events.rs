@@ -78,6 +78,10 @@ pub enum Kind {
     /// Pushed within its [PushBudget]; past it the inbox only, and one digest at the hour's end. Told from its
     /// parameters ([SmsHeldParams]).
     SmsHeld,
+    /// Design 77 §14: the kid asked for a new contact from the phone book's "+" (`POST /api/devices/contact-request`),
+    /// keyed by the phone's request id. Pushed within its [PushBudget] (the day's cap of three keeps it under it but
+    /// across midnight); told from its parameters ([ContactRequestParams]).
+    ContactRequest,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -91,7 +95,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 18] = [
+    pub const ALL: [Kind; 19] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -110,6 +114,7 @@ impl Kind {
         Kind::ServerTlsOff,
         Kind::ServerTlsSeen,
         Kind::SmsHeld,
+        Kind::ContactRequest,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -132,6 +137,7 @@ impl Kind {
             Kind::ServerTlsOff => "server_tls_off",
             Kind::ServerTlsSeen => "server_tls_seen",
             Kind::SmsHeld => "sms_held",
+            Kind::ContactRequest => "contact_request",
         }
     }
 
@@ -195,6 +201,8 @@ impl Kind {
             }
             // Design 77 §7: on by default (migration 0130).
             Kind::SmsHeld => Some(("push_sms_held", "A message is waiting for you to allow it")),
+            // Design 77 §14: on by default (migration 0133).
+            Kind::ContactRequest => Some(("push_contact_request", "Asks for a new contact")),
         }
     }
 
@@ -202,6 +210,7 @@ impl Kind {
     pub fn digest_target(self, device_id: i64) -> String {
         match self {
             Kind::SmsHeld => format!("/devices/{device_id}/calls#held"),
+            Kind::ContactRequest => format!("/devices/{device_id}/calls#requests"),
             _ => format!("/devices/{device_id}"),
         }
     }
@@ -212,6 +221,11 @@ impl Kind {
             Kind::SmsHeld => Some(PushBudget {
                 per_hour: 3,
                 per_key_hour: 1,
+            }),
+            // Design 77 §14: the requests share one key (the phone), three an hour.
+            Kind::ContactRequest => Some(PushBudget {
+                per_hour: 3,
+                per_key_hour: 3,
             }),
             _ => None,
         }
@@ -1162,6 +1176,13 @@ pub async fn waiting_count(
         .fetch_one(db)
         .await
         .map(Some),
+        Kind::ContactRequest => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ? AND state = 'open'",
+        )
+        .bind(device_id)
+        .fetch_one(db)
+        .await
+        .map(Some),
         _ => Ok(None),
     }
 }
@@ -1179,6 +1200,14 @@ pub fn digest_words(
     let title = match kind {
         Kind::SmsHeld => fit_name(phone, TITLE_MAX, |n| {
             t_count(lang, "events.sms_held.digest", waiting, &[("name", n)])
+        }),
+        Kind::ContactRequest => fit_name(phone, TITLE_MAX, |n| {
+            t_count(
+                lang,
+                "events.contact_request.digest",
+                waiting,
+                &[("name", n)],
+            )
         }),
         _ => t(lang, "push.summary.title").to_string(),
     };
@@ -1747,6 +1776,79 @@ fn sms_held_told(p: &SmsHeldParams, zone: &Zone, now: DateTime<Utc>) -> (String,
     )
 }
 
+/// A request for a new contact's parameters (design 77 §14): the phone's name as it was when raised, when the kid
+/// asked (RFC 3339), and the name and number the intake checked (`contact_requests::check`: the name cleaned, at most
+/// 40 characters; the number normalised). The Matrix ID the kid suggested stays on the Calls page.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ContactRequestParams {
+    pub phone: String,
+    pub at: String,
+    pub name: String,
+    pub number: String,
+}
+
+/// The kid's request for a new contact (design 77 §14): key the phone's request id, so a retried POST gives one row;
+/// the words left to [told]. Target: the request's row on the Calls page.
+pub fn contact_request(
+    device_id: i64,
+    phone: &str,
+    id: &str,
+    name: &str,
+    number: &str,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = ContactRequestParams {
+        phone: phone.to_string(),
+        at: instant(at),
+        name: name.to_string(),
+        number: number.to_string(),
+    };
+    NewEvent {
+        device_id: Some(device_id),
+        kind: Kind::ContactRequest,
+        dedup_key: id.to_string(),
+        title: String::new(),
+        summary: String::new(),
+        target: format!("/devices/{device_id}/calls#request-{id}"),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push: Push::Now,
+        budget_key: Some("request".to_string()),
+    }
+}
+
+/// A request's words, the same in the inbox and the push: "Anna asks for a new contact: Ola" / "Anna ber om en ny
+/// kontakt: Ola" and "+4791234567 · 14:02".
+fn contact_request_told(
+    p: &ContactRequestParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let title = fit_name(&p.phone, TITLE_MAX, |n| {
+        t_params(
+            lang,
+            "events.contact_request.title",
+            &[("name", n), ("contact", &p.name)],
+        )
+    });
+    let summary = t_params(
+        lang,
+        "events.contact_request.summary",
+        &[("number", &p.number), ("at", &at)],
+    );
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&summary, SUMMARY_MAX).to_string(),
+    )
+}
+
 /// An app update notice's parameters (2026-10-25, migration 0099): the catalog app's id and name
 /// as they were when it was raised, the version before (none known: `None`) and the new one -
 /// the release's version as the Apps tab shows it -, when (RFC 3339), and for `app_updated` the
@@ -2221,6 +2323,9 @@ pub fn told_as(
         Kind::SmsHeld => params
             .and_then(|p| serde_json::from_str::<SmsHeldParams>(p).ok())
             .map(|p| sms_held_told(&p, zone, now)),
+        Kind::ContactRequest => params
+            .and_then(|p| serde_json::from_str::<ContactRequestParams>(p).ok())
+            .map(|p| contact_request_told(&p, zone, now)),
         Kind::ServerTlsOff | Kind::ServerTlsSeen => params
             .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
             .map(|p| server_tls_told(form, kind, &p, zone, now)),
@@ -3284,6 +3389,13 @@ mod tests {
                 "14:02 · Allow within 23 h",
                 "/devices/3/calls#held-ab12",
             ),
+            // Design 77 §14: the kid's contact request, to its row on the Calls page.
+            (
+                contact_request(3, "Anna", "ab13", "Ola", "+4791234567", two),
+                "Anna asks for a new contact: Ola",
+                "+4791234567 · 14:02",
+                "/devices/3/calls#request-ab13",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -3866,7 +3978,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            11,
+            12,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -4080,6 +4192,7 @@ mod tests {
                 "Østlandsakt",
                 Push::Now,
             ),
+            contact_request(3, &phone.name, "ab17", "Bestemor Østby", "+4791234567", two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

@@ -1,0 +1,34 @@
+{
+  "request": {"id": "0123456789abcdef0123456789abcdef", "name": "Ola Nordmann", "number": "+4791234567", "matrix_id": "@ola:example.org", "asked_at_ms": 1793034120000},
+  "request_without_matrix": {"id": "fedcba9876543210fedcba9876543210", "name": "Bestemor", "number": "+4791234568", "asked_at_ms": 1793034180000},
+  "answers": [
+    {"accepted": true},
+    {"accepted": false, "reason": "capped"},
+    {"accepted": false, "reason": "invalid"},
+    {"accepted": false, "reason": "known"}
+  ],
+  "valid": [
+    {"name": "Ola", "number": "912 34 567", "cleaned": "Ola", "normalized": "+4791234567"},
+    {"name": " Ola‮  Nordmann ", "number": "0047 912 34 567", "cleaned": "Ola Nordmann", "normalized": "+4791234567"},
+    {"name": "Pizza", "number": "1881", "cleaned": "Pizza", "normalized": "1881"},
+    {"name": "Ola", "number": "+4791234567", "matrix_id": "@ola:example.org", "cleaned": "Ola", "normalized": "+4791234567"}
+  ],
+  "invalid": [
+    {"name": "", "number": "+4791234567"},
+    {"name": " ​ ", "number": "+4791234567"},
+    {"name": "Ola Nordmann Ola Nordmann Ola Nordmann Ola", "number": "+4791234567"},
+    {"name": "Ola", "number": "12"},
+    {"name": "Ola", "number": "*#06#"},
+    {"name": "Ola", "number": "91 23 45 67 89 01 23 45"},
+    {"name": "Ola", "number": "112"},
+    {"name": "Ola", "number": "113"},
+    {"name": "Ola", "number": "+4791234567", "matrix_id": "ola"},
+    {"name": "Ola", "number": "+4791234567", "matrix_id": "@Ola:example.org"},
+    {"name": "Ola", "number": "+4791234567", "matrix_id": "@ola:example.org?via=x"}
+  ],
+  "policy": {"contact_requests": [
+    {"id": "0123456789abcdef0123456789abcdef", "state": "open"},
+    {"id": "fedcba9876543210fedcba9876543210", "state": "declined"},
+    {"id": "00112233445566778899aabbccddeeff", "state": "added"}
+  ]}
+}

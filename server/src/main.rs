@@ -1200,6 +1200,10 @@ pub fn build_admin_router(
             post(handlers::calls_sms::drop_held),
         )
         .route(
+            "/devices/{id}/calls/requests/{request}/decline",
+            post(handlers::contact_requests::decline),
+        )
+        .route(
             "/devices/{id}/calls/emergency/{entry}/move",
             post(handlers::calls::move_emergency),
         )

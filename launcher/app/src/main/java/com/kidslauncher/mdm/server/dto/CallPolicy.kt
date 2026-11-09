@@ -37,6 +37,9 @@ data class CallPolicy(
     val mmscHosts: List<PolicyMmscHosts> = emptyList(),
     /** Design 77 D16: the held messages the parent deleted ("Slett nå"), dropped before anything is released. */
     val smsHeldDrop: List<String> = emptyList(),
+    /** Design 77 §14: the kid's contact requests of the last 7 days and what became of them
+     * ([com.kidslauncher.mdm.calls.ContactRequests]); empty from an older server. */
+    val contactRequests: List<PolicyContactRequest> = emptyList(),
 )
 
 /** One of [CallPolicy.ownNumbers]: the SIM slot (1 or 2) and the normalised number. */
