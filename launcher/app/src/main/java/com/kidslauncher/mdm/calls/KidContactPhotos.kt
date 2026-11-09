@@ -52,10 +52,10 @@ object KidContactPhotos {
         val app = context.applicationContext
         io.execute {
             try {
-                if (app.getSystemService(UserManager::class.java)?.isUserUnlocked == true) {
+                if (!loaded && app.getSystemService(UserManager::class.java)?.isUserUnlocked == true) {
                     snapshot = read(app)
                     loaded = true
-                    ContactPhotos.changed()
+                    if (snapshot.isNotEmpty()) ContactPhotos.changed()
                 }
             } finally {
                 loading.set(false)
@@ -86,17 +86,22 @@ object KidContactPhotos {
     private fun edit(context: Context, change: (Map<Long, KidPhotoRecord>) -> Map<Long, KidPhotoRecord>?, done: (Boolean) -> Unit = {}) {
         val app = context.applicationContext
         io.execute {
+            // Code QA L6: the avatars rebind only when the published snapshot changed.
+            val previous = snapshot
             val ok = try {
                 if (app.getSystemService(UserManager::class.java)?.isUserUnlocked != true) {
                     false
                 } else {
                     val before = read(app)
+                    if (!loaded) {
+                        snapshot = before
+                        loaded = true
+                    }
                     val after = change(before)
                     if (after == null || after == before) {
                         after != null
                     } else if (write(app, after)) {
                         snapshot = after
-                        loaded = true
                         sweep(app, after)
                         true
                     } else {
@@ -107,7 +112,7 @@ object KidContactPhotos {
                 Log.w(LOG_TAG, "A kid picture change failed: ${e.javaClass.simpleName}")
                 false
             }
-            ContactPhotos.changed()
+            if (snapshot != previous) ContactPhotos.changed()
             android.os.Handler(android.os.Looper.getMainLooper()).post { done(ok) }
         }
     }
@@ -120,13 +125,13 @@ object KidContactPhotos {
 
     /**
      * Sets [contact]'s picture to [jpeg] (our own JPEG, at most [KID_PHOTO_MAX_BYTES]): a new random file, the record,
-     * the old file swept. Refused past the caps ([kidPhotoMayAdd]). [done] on the main thread.
+     * the old file swept. Refused past the caps ([kidPhotoMayAdd], [contactsOnPhone]). [done] on the main thread.
      */
-    fun set(context: Context, contact: RuleContact, phoneBookSize: Int, jpeg: ByteArray, done: (Boolean) -> Unit) {
+    fun set(context: Context, contact: RuleContact, contactsOnPhone: Int, jpeg: ByteArray, done: (Boolean) -> Unit) {
         if (jpeg.size > KID_PHOTO_MAX_BYTES) return done(false)
         val app = context.applicationContext
         edit(app, { records ->
-            if (!kidPhotoMayAdd(records, contact.id, phoneBookSize)) return@edit null
+            if (!kidPhotoMayAdd(records, contact.id, contactsOnPhone)) return@edit null
             val name = newKidPhotoFileName()
             val dir = dir(app).apply { mkdirs() }
             val tmp = File(dir, ".$name.tmp")
@@ -184,8 +189,9 @@ object KidContactPhotos {
         false
     }
 
-    /** After a refresh of the call rules (from [CallPolicyStore.refresh], CE only): [kidPhotosAfterRefresh] on the IO
-     * thread, the files of the dropped records swept. */
+    /** After a refresh of the call rules (from [CallPolicyStore.refresh], CE only - so also at the unlock, from
+     * `Application`'s refresh: the snapshot is loaded before Home's first binding, code QA N4): [kidPhotosAfterRefresh]
+     * on the IO thread, the files of the dropped records swept. */
     fun afterRefresh(context: Context, state: CallPolicyState) {
         val unlocked = context.getSystemService(UserManager::class.java)?.isUserUnlocked == true
         if (!unlocked) return

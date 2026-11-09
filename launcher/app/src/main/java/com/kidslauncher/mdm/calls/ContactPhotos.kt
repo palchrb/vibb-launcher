@@ -80,7 +80,9 @@ object ContactPhotos {
 
     /** The picture an avatar shows ([shownPhoto]) from memory: the kid's, the parent's, or none. */
     fun cachedShown(context: Context, shown: ShownPhoto, thumb: Boolean = false): Bitmap? = when (shown) {
+        // Code QA L8: a kid's picture that can't be decoded (gone, damaged) gives way to the parent's, then the initial.
         is ShownPhoto.Kid -> cachedKid(context, shown.file, thumb)
+            ?: if (photoMemoryKey("kid:${shown.file}", thumb) in failed) cached(context, shown.fallback, thumb) else null
         is ShownPhoto.Parent -> cached(context, shown.hash, thumb)
         ShownPhoto.None -> null
     }
@@ -105,6 +107,8 @@ object ContactPhotos {
                 notifyListeners()
             } else {
                 failed.add(memoryKey)
+                // A kid's picture that failed: the avatars bind again and take the parent's (code QA L8).
+                if (key.startsWith("kid:")) notifyListeners()
             }
         }
         return null

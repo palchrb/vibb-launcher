@@ -81,7 +81,14 @@ class KidPhotoActivity : UIObjectActivity() {
         binding.kidPhotoCancel.setOnClickListener { finish() }
         binding.kidPhotoUse.setOnClickListener { use() }
         captureFile = savedInstanceState?.getString(STATE_CAPTURE)?.let { File(it) }
-        if (!stillOffered()) {
+        // Code QA L4: the time rule before anything opens - never the picker under a rule without calls.
+        if (MessagesScreens.redirectIfLocked(this) || !stillOffered()) {
+            finish()
+            return
+        }
+        // Code QA L7: past the picture cap the kid hears it now, in its own words - not after the framing.
+        if (savedInstanceState == null && !roomForPicture()) {
+            Toast.makeText(this, R.string.kid_photo_too_many, Toast.LENGTH_LONG).show()
             finish()
             return
         }
@@ -119,14 +126,26 @@ class KidPhotoActivity : UIObjectActivity() {
         super.onDestroy()
     }
 
-    /** A contact's picture is still wanted: the contact in the phone book, not an emergency number (a draft always is). */
+    /** A contact's picture is still wanted: the contact in the phone book, not an emergency number; a request's draft
+     * while the kid can still ask (calls managed and on, code QA L3). */
     private fun stillOffered(): Boolean {
-        if (intent.getBooleanExtra(EXTRA_DRAFT, false)) return true
+        if (intent.getBooleanExtra(EXTRA_DRAFT, false)) {
+            return (CallPolicyStore.effectiveState() as? CallPolicyState.Managed)?.rules?.callsEnabled == true
+        }
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules ?: return false
         val contact = contact() ?: return false
         return rules.phoneBook.any { it.id == contact.id && it.number == contact.number } &&
             !CallSystem.isEmergencyOutgoing(this, contact.number)
     }
+
+    /** Room under the caps for this contact's picture ([kidPhotoMayAdd]; a draft has no cap of its own). */
+    private fun roomForPicture(): Boolean {
+        if (intent.getBooleanExtra(EXTRA_DRAFT, false)) return true
+        val contact = contact() ?: return false
+        return kidPhotoMayAdd(KidContactPhotos.snapshot, contact.id, contactsOnPhone())
+    }
+
+    private fun contactsOnPhone(): Int = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.contacts?.size ?: 0
 
     private fun contact(): RuleContact? {
         val id = intent.getLongExtra(EXTRA_CONTACT_ID, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE } ?: return null
@@ -206,8 +225,7 @@ class KidPhotoActivity : UIObjectActivity() {
                     setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_DRAFT_FILE, file.name))
                     finish()
                 } else if (contact != null) {
-                    val phoneBook = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.phoneBook?.size ?: 0
-                    KidContactPhotos.set(app, contact, phoneBook, encoded.bytes) { ok -> if (ok) finish() else failed() }
+                    KidContactPhotos.set(app, contact, contactsOnPhone(), encoded.bytes) { ok -> if (ok) finish() else failed() }
                 }
             }
         }

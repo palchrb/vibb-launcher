@@ -328,7 +328,6 @@ object ContactRequests {
         changed()
     }
 
-    /** The form's "Send": a new PENDING request; the caller asks for a sync, which sends it. */
     /**
      * The form's "Send": a new PENDING request; the caller asks for a sync, which sends it. [draft]: the form's picture
      * (design 79 §5.5) - renamed to `contact_request_photos/<id>.jpg` and named in the record in the same step; a draft
@@ -355,9 +354,15 @@ object ContactRequests {
         return ok
     }
 
-    /** Drafts older than a day go (swept when the phone book opens). */
-    fun sweepDrafts(context: Context, nowMs: Long = System.currentTimeMillis()) {
-        draftDir(context).listFiles()?.forEach { if (nowMs - it.lastModified() > REQUEST_PHOTO_DRAFT_KEEP_MS) it.delete() }
+    /** When the phone book is made (code QA L3): every draft but the one its restored form owns ([keep]) goes - no
+     * other form can own one then. */
+    fun sweepDrafts(context: Context, keep: String?) {
+        draftDir(context).listFiles()?.forEach { if (it.name != keep) it.delete() }
+    }
+
+    /** A draft no form took (the form closed while the picture was framed). */
+    fun deleteDraft(context: Context, name: String) {
+        File(draftDir(context), name).takeIf { it.parentFile?.canonicalPath == draftDir(context).canonicalPath }?.delete()
     }
 
     /** The request pictures no open request names go (an answer, the expiry, a hand-over's leftovers). */

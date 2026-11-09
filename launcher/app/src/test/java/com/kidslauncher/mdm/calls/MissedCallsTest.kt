@@ -40,6 +40,16 @@ class MissedCallsTest {
         assertEquals(500L, seenMarkAfter(500L, 300L))
     }
 
+    /** Design 79 code QA L2: a missed-call load that began before a later one is never applied. */
+    @Test
+    fun `only the latest load counts`() {
+        val loads = LatestOnly()
+        val first = loads.begin()
+        val second = loads.begin()
+        assertEquals(false, loads.isLatest(first))
+        assertEquals(true, loads.isLatest(second))
+    }
+
     /** Design 79 §3.2 rule 3: Melding deals with the contact - on the card and on the row - as Ring and the card do. */
     @Test
     fun `seen by Melding, on the card and on the row`() {
@@ -57,7 +67,7 @@ class MissedCallsTest {
         assertEquals(2, Regex("""MissedCallsRepo\.markSeen\(this, contact\.number\)""").findAll(call).count())
         // The visit's marks, at onStop and not for a rotation.
         val stop = book.substringAfter("override fun onStop()").substringBefore("override fun onSaveInstanceState")
-        assertEquals(true, stop.contains("if (!isChangingConfigurations") && stop.contains("MissedCallsRepo.markSeen(this, number, upToMs)"))
+        assertEquals(true, stop.contains("if (!isChangingConfigurations") && stop.contains("MissedCallsRepo.markSeen(this, sightings.seen(SystemClock.elapsedRealtime()))"))
     }
 
     @Test

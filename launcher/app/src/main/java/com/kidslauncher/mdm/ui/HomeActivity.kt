@@ -197,6 +197,7 @@ class HomeActivity : UIObjectActivity() {
     private var showPhoneBook = false
     private var appsJob: Job? = null
     private var missed: Map<String, ContactMissed> = emptyMap()
+    private val missedLoads = com.kidslauncher.mdm.calls.LatestOnly()
     /** Round L5: a missed Element X call came or went. */
     private val elementMissedListener: () -> Unit = { loadMissedCalls() }
     private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -713,9 +714,12 @@ class HomeActivity : UIObjectActivity() {
     private fun loadMissedCalls() {
         if (!contentShown) return
         val state = CallPolicyStore.callsState
+        // Design 79 code QA L2: only the latest load counts - an older one finishing last can't bring back a badge the
+        // phone book's visit just cleared.
+        val generation = missedLoads.begin()
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@HomeActivity, state) }
-            if (result != missed && !isDestroyed && contentShown) {
+            if (missedLoads.isLatest(generation) && result != missed && !isDestroyed && contentShown) {
                 missed = result
                 renderCallParts()
             }

@@ -53,9 +53,16 @@ object MessagesScreens {
     fun name(context: Context, who: Who): String = whoTitle(who, context.getString(R.string.messages_unknown))
 
     /** A row's avatar: the contact's own (photo, colour, the emergency red), else an initial on the palette. */
-    fun bindAvatar(photo: ImageView, initial: TextView, contact: RuleContact?, name: String, address: String) {
+    fun bindAvatar(
+        photo: ImageView,
+        initial: TextView,
+        contact: RuleContact?,
+        name: String,
+        address: String,
+        isEmergency: (String) -> Boolean = { CallSystem.isEmergencyOutgoing(photo.context, it) },
+    ) {
         val shown = contact ?: RuleContact(id = 0, name = name, number = address)
-        val emergency = contact != null && CallSystem.isEmergencyOutgoing(photo.context, contact.number)
+        val emergency = contact != null && isEmergency(contact.number)
         KidAvatars.bindContact(photo, initial, shown, emergency, initialSp = 20f, thumb = true)
     }
 

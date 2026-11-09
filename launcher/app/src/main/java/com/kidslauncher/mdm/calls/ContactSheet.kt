@@ -47,12 +47,20 @@ object ContactSheet {
         }
         bindPhoto()
         ContactPhotos.addListener(bindPhoto)
+        // Code QA M1: "Bilde av …" opened from this card closes with it - so Home's closeOverlays() (the lock engaging,
+        // Home pressed) and the card's own close leave nothing of it behind.
+        var photoSheet: Dialog? = null
         dialog.setOnDismissListener {
             ContactPhotos.removeListener(bindPhoto)
+            photoSheet?.dismiss()
+            photoSheet = null
             onDone()
         }
         view.findViewById<ImageView>(R.id.sheet_ring).setImageDrawable(KidAvatars.ring(activity, contact, emergency))
-        bindKidPhoto(activity, view.findViewById(R.id.sheet_photo_frame), contact, emergency)
+        bindKidPhoto(activity, view.findViewById(R.id.sheet_photo_frame), contact, emergency) { sheet ->
+            photoSheet?.dismiss()
+            photoSheet = sheet
+        }
         // Design 77 §6.7: missed calls plus unread messages.
         KidAvatars.bindContactBadge(
             view.findViewById(R.id.sheet_badge),
@@ -121,15 +129,16 @@ object ContactSheet {
      * "Endre bilde av Mamma". Offered only for a phone-book contact, not an emergency number, after the first unlock,
      * with the picker or an allowed camera ([kidPhotoOffered]); else the photo has no listener at all.
      */
-    private fun bindKidPhoto(activity: Activity, frame: View, contact: RuleContact, emergency: Boolean) {
+    private fun bindKidPhoto(activity: Activity, frame: View, contact: RuleContact, emergency: Boolean, opened: (Dialog) -> Unit) {
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
         if (!kidPhotoOffered(contact, rules, emergency, CallPolicyStore.userUnlocked(activity), KidPhotoSheet.canPick(activity))) return
         val open = {
-            KidPhotoSheet.show(
+            val sheet = KidPhotoSheet.show(
                 activity, activity.getString(R.string.kid_photo_title, contact.name),
                 onChoose = { camera -> activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera)) },
                 onRemove = if (KidContactPhotos.recordFor(activity, contact) != null) ({ KidContactPhotos.remove(activity, contact.id) }) else null,
             )
+            opened(sheet)
         }
         frame.foreground = android.graphics.drawable.StateListDrawable().apply {
             addState(

@@ -67,6 +67,7 @@
     <string name="kid_photo_reading">Henter bildet …</string>
     <string name="kid_photo_use">Bruk bildet</string>
     <string name="kid_photo_failed">Kunne ikke bruke bildet</string>
+    <string name="kid_photo_too_many">Du har bilder på så mange kontakter som det er plass til. Fjern et bilde først.</string>
     <string name="contact_request_photo">Legg til bilde (valgfritt)</string>
     <string name="contact_request_photo_add">Legg til bilde</string>
     <string name="contact_request_photo_change">Endre bilde</string>
@@ -94,7 +95,7 @@
     <string name="contact_request_known">Allerede lagt til eller spurt om</string>
     <string name="contact_request_not_sent">Kunne ikke sendes</string>
     <string name="contact_request_sent">Sendt</string>
-    <string name="contact_request_sent_body">Mamma og pappa har fått beskjed. Du ser det i telefonboka når %1$s er lagt til.</string>
+    <string name="contact_request_sent_body">Mamma og pappa får beskjed. Du ser det i telefonboka når %1$s er lagt til.</string>
     <string name="contact_request_done">Ferdig</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Innstillinger</string>

@@ -82,6 +82,7 @@
     <string name="kid_photo_reading">Getting the picture …</string>
     <string name="kid_photo_use">Use this picture</string>
     <string name="kid_photo_failed">Couldn\'t use that picture</string>
+    <string name="kid_photo_too_many">You have pictures on as many contacts as there is room for. Remove one first.</string>
     <string name="contact_request_photo">Add a picture (optional)</string>
     <string name="contact_request_photo_add">Add a picture</string>
     <string name="contact_request_photo_change">Change the picture</string>
@@ -109,7 +110,7 @@
     <string name="contact_request_known">Already added or asked for</string>
     <string name="contact_request_not_sent">Couldn\'t be sent</string>
     <string name="contact_request_sent">Sent</string>
-    <string name="contact_request_sent_body">Mum and Dad have been told. You\'ll see it in the phone book when %1$s has been added.</string>
+    <string name="contact_request_sent_body">Mum and Dad will be told. You\'ll see it in the phone book when %1$s has been added.</string>
     <string name="contact_request_done">Done</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>

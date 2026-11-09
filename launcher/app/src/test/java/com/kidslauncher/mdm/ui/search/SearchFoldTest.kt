@@ -25,8 +25,23 @@ class SearchFoldTest {
         assertEquals(SearchMatch(MatchRank.PREFIX, 0, 1), searchMatch("Ørjan", "o"))
         assertEquals(SearchMatch(MatchRank.PREFIX, 0, 1), searchMatch("Åse", "a"))
         assertEquals(SearchMatch(MatchRank.INSIDE, 1, 2), searchMatch("Hélène", "e"))
-        // And the other way: "ø" typed finds an "o".
-        assertEquals(SearchMatch(MatchRank.PREFIX, 0, 2), searchMatch("Ola", "øl"))
+    }
+
+    /** Code QA M3 (the coordinator's decision): one way - the name folds, the query keeps Æ, Ø, Å and marked letters. */
+    @Test
+    fun `one way - o finds Ø names, but ø finds only Ø and å never finds Anna`() {
+        val names = listOf("Ola", "Ørjan", "Sofie Østby", "Anna", "Åse", "Ærlig", "Hélène", "Helene")
+        fun hits(query: String) = names.filter { searchMatch(it, query) != null }
+        assertEquals(listOf("Ola", "Ørjan", "Sofie Østby"), hits("o"))
+        assertEquals(listOf("Ørjan", "Sofie Østby"), hits("ø"))
+        assertEquals(listOf("Ørjan", "Sofie Østby"), hits("Ø"))
+        assertNull(searchMatch("Ola", "øl"))
+        assertEquals(listOf("Åse"), hits("å"))
+        assertEquals(listOf("Ola", "Ørjan", "Anna", "Åse", "Ærlig"), hits("a"))
+        assertEquals(listOf("Ærlig"), hits("æ"))
+        assertEquals(listOf("Ærlig"), hits("aer"))
+        assertEquals(listOf("Hélène"), hits("hé"))
+        assertEquals(listOf("Hélène", "Helene"), hits("he"))
     }
 
     @Test

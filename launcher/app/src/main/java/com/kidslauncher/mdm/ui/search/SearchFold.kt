@@ -8,6 +8,9 @@ import java.util.Locale
  * Search in the kid's lists (design 79 §4.2, `SearchFoldTest`): the phone book and Meldinger match a typed query against
  * the names the kid sees. Pure.
  *
+ * **One way** (code QA M3, the coordinator's decision): the name is folded, the query is only lowercased and normalised
+ * - "o" finds "Ola", "Ørjan" and "Østby", but "ø" finds only Ø names and "å" never finds "Anna" ([searchMatch]).
+ *
  * The fold is for finding only - it never decides anything. D17's sender names (`SmsSenders.fold`) stay exact on
  * purpose: a looser fold would let a "Vípps" through on the parent's "Vipps". `SearchFoldTest` pins that nothing under
  * `sms/` or in `CallRules.kt` calls it.
@@ -104,33 +107,82 @@ fun searchQuery(raw: String): String {
 /** Whether [query] (as the kid typed it) searches anything: it holds more than spaces. */
 fun searching(query: String): Boolean = searchFold(searchQuery(query)).text.isNotEmpty()
 
-/** [name] against [query]; `null` = no match (an empty query matches nothing). A word starts after a space, "-" or "'". */
-fun searchMatch(name: String, query: String): SearchMatch? {
-    val q = searchFold(searchQuery(query)).text
-    if (q.isEmpty()) return null
-    val folded = searchFold(name)
-    val text = folded.text
-    val at: Int
-    val rank: MatchRank
-    if (text.startsWith(q)) {
-        at = 0
-        rank = MatchRank.PREFIX
-    } else {
-        val word = (1 until text.length).firstOrNull { i -> text[i - 1] in WORD_BREAKS && text.startsWith(q, i) }
-        if (word != null) {
-            at = word
-            rank = MatchRank.WORD
-        } else {
-            at = text.indexOf(q)
-            if (at < 0) return null
-            rank = MatchRank.INSIDE
-        }
-    }
-    val (start, end) = folded.sourceSpan(at, at + q.length, name.length)
-    return SearchMatch(rank, start, end)
+/**
+ * One letter of a name or a query: a code point with the combining marks after it, [lower] (lowercase ROOT, NFC) and
+ * [folded] ([searchFold]'s form); [start]/[end] its range in the shown string.
+ */
+private class Letter(val lower: String, val folded: String, val start: Int, val end: Int) {
+    /** Typed as a plain letter: folding changes nothing (no mark, not Æ Ø Å and the like). */
+    val plain: Boolean get() = lower == folded
 }
 
-private val WORD_BREAKS = setOf(' ', '-', '\'')
+private fun letters(source: String): List<Letter> {
+    val out = ArrayList<Letter>(source.length)
+    var i = 0
+    while (i < source.length) {
+        var end = i + Character.charCount(source.codePointAt(i))
+        while (end < source.length && isMark(source.codePointAt(end))) end += Character.charCount(source.codePointAt(end))
+        val unit = source.substring(i, end)
+        out += Letter(Normalizer.normalize(unit.lowercase(Locale.ROOT), Normalizer.Form.NFC), searchFold(unit).text, i, end)
+        i = end
+    }
+    return out
+}
+
+private fun isMark(cp: Int): Boolean = when (Character.getType(cp)) {
+    Character.NON_SPACING_MARK.toInt(), Character.COMBINING_SPACING_MARK.toInt(), Character.ENCLOSING_MARK.toInt() -> true
+    else -> false
+}
+
+/**
+ * The query's letters from the name's letter [at] on (code QA M3, the coordinator's decision: one way). A query letter
+ * matches a name letter that is the same after lowercase - so "ø" finds only Ø, "å" never finds "Anna" - and a plain
+ * query letter also matches what the name's letter folds to - so "o" still finds "Ola", "Ørjan" and "Østby", "a" finds
+ * "Åse", "ae" finds "Æ". The query may end inside a letter that folds to two ("a" finds "Ærlig"). Returns the name's
+ * letter index after the match, or -1.
+ */
+private fun matchAt(name: List<Letter>, query: List<Letter>, at: Int): Int {
+    var k = at
+    var j = 0
+    while (j < query.size) {
+        val n = name.getOrNull(k) ?: return -1
+        val q = query[j]
+        if (q.lower == n.lower) {
+            j++
+            k++
+            continue
+        }
+        if (!q.plain || n.folded.isEmpty()) return -1
+        // Plain query letters against the name letter's folded form ("ae" for Æ, "o" for Ø).
+        var pos = 0
+        while (pos < n.folded.length && j < query.size && query[j].plain && n.folded.startsWith(query[j].lower, pos)) {
+            pos += query[j].lower.length
+            j++
+        }
+        val whole = pos == n.folded.length
+        if (pos == 0 || (!whole && j < query.size)) return -1
+        k++
+    }
+    return k
+}
+
+/** [name] against [query]; `null` = no match (an empty query matches nothing). A word starts after a space, "-" or "'". */
+fun searchMatch(name: String, query: String): SearchMatch? {
+    val q = letters(searchQuery(query))
+    if (q.isEmpty()) return null
+    val n = letters(name)
+    fun hit(at: Int, rank: MatchRank): SearchMatch? {
+        val end = matchAt(n, q, at)
+        if (end < 0) return null
+        return SearchMatch(rank, n[at].start, n[end - 1].end)
+    }
+    hit(0, MatchRank.PREFIX)?.let { return it }
+    for (i in 1 until n.size) if (n[i - 1].lower in WORD_BREAKS) hit(i, MatchRank.WORD)?.let { return it }
+    for (i in 1 until n.size) hit(i, MatchRank.INSIDE)?.let { return it }
+    return null
+}
+
+private val WORD_BREAKS = setOf(" ", "-", "'")
 
 /**
  * The hits of [items] for [query] (QA N2): the name starts with the query, then a word in it does, then it holds it -

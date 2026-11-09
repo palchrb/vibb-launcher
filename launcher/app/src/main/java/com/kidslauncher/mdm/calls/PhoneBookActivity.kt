@@ -60,17 +60,29 @@ class PhoneBookActivity : UIObjectActivity() {
     /** Design 79 §4: the search pill (from 8 contacts). */
     private lateinit var search: KidSearchField
 
-    /** Back (QA N4): the request form first, then the search's text, then the phone book leaves ([phoneBookBack]). */
+    /** Back (QA N4, code QA L10): the keyboard first (stock Android), then the request form, then the search's text,
+     * then the phone book leaves ([phoneBookBack]). Enabled only while there is a form or a query - with neither, the
+     * system closes the keyboard and leaves as everywhere. */
     private val back = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
-            when (phoneBookBack(requestForm.isOpen, search.query)) {
-                PhoneBookBack.CLOSE_FORM -> requestForm.close()
+            val ime = binding.root.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+            when (phoneBookBack(ime, requestForm.isOpen, search.query)) {
+                PhoneBookBack.HIDE_KEYBOARD -> search.hideKeyboard()
+                PhoneBookBack.CLOSE_FORM -> {
+                    requestForm.close()
+                    render()
+                }
                 PhoneBookBack.CLEAR_SEARCH -> search.clear()
                 PhoneBookBack.LEAVE -> {}
             }
-            render()
         }
     }
+
+    /** Code QA L2: only the latest missed-call load is applied. */
+    private val loads = LatestOnly()
+
+    /** The request form's "Bilde av …" sheet, closed when the phone book stops (code QA M1). */
+    private var requestPictureSheet: android.app.Dialog? = null
     private var missed: Map<String, ContactMissed> = emptyMap()
 
     /** This visit's top ([visitTopAfter]); `null` until the visit's first missed calls are loaded - the list waits for
@@ -95,7 +107,12 @@ class PhoneBookActivity : UIObjectActivity() {
     /** Design 79 §5.5: the request form's picture comes back from [KidPhotoActivity] as a draft file. */
     private val draftLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
         val name = result.data?.getStringExtra(KidPhotoActivity.RESULT_DRAFT_FILE)
-        if (result.resultCode == RESULT_OK && name != null && ::requestForm.isInitialized && requestForm.isOpen) requestForm.setDraft(name)
+        if (result.resultCode == RESULT_OK && name != null && ::requestForm.isInitialized && requestForm.isOpen) {
+            requestForm.setDraft(name)
+        } else if (name != null) {
+            // Not taken (the form closed meanwhile, code QA L3): the picture of a person goes at once.
+            ContactRequests.deleteDraft(this, name)
+        }
     }
     /** Design 77 §6.7: the rows' unread messages follow the engine. */
     private val messagesListener: () -> Unit = { render() }
@@ -138,16 +155,16 @@ class PhoneBookActivity : UIObjectActivity() {
         KidInsets.apply(binding.root, ime = true)
         binding.phoneBookPlus.setOnClickListener { requestForm.open() }
         search = KidSearchField(binding.phoneBookSearch.root, R.string.phone_book_search) {
-            // A new query shows its best hits from the top, once the list has them.
+            // A new query shows its best hits from the top, once the list has them; a keystroke only filters (M2).
             toTop = true
-            render()
+            filter()
         }
         requestForm = ContactRequestForm(this, binding, onModeChanged = { render() }, onSent = { search.clear() }, onPicture = ::requestPicture)
-        // Design 79 §5.5: a draft older than a day goes.
-        ContactRequests.sweepDrafts(this)
         onBackPressedDispatcher.addCallback(this, back)
         restoreVisit(savedInstanceState)
         requestForm.restore(savedInstanceState)
+        // Design 79 §5.5, code QA L3: no form can own a draft but the one it just restored - every other goes.
+        ContactRequests.sweepDrafts(this, keep = requestForm.draft)
         // Once: not again after a recreation.
         if (savedInstanceState == null) takeMissedContact(intent)
         handleNumber(intent)
@@ -208,14 +225,27 @@ class PhoneBookActivity : UIObjectActivity() {
         ContactRequests.removeListener(requestsListener)
         contentResolver.unregisterContentObserver(callLogObserver)
         if (!isChangingConfigurations && ::requestForm.isInitialized) {
-            // The visit ends: the top rows it showed are seen (design 79 §3.2 rule 1) - Home's badge goes now too.
-            for ((number, upToMs) in sightings.seen(SystemClock.elapsedRealtime())) MissedCallsRepo.markSeen(this, number, upToMs)
+            // The visit ends: the top rows it showed are seen (design 79 §3.2 rule 1) - Home's badge goes now too, with
+            // one reload for the whole visit (code QA N6).
+            MissedCallsRepo.markSeen(this, sightings.seen(SystemClock.elapsedRealtime()))
             sightings = TopSightings()
             visitTop = null
+            // Code QA L1: the next visit starts empty and fills once - no row of this visit can take a tap meanwhile.
+            adapter.submitList(null)
+            // Code QA N3: the query is kept across a rotation only.
+            search.clear()
+            requestPictureSheet?.dismiss()
             // Design 77 §14: an answer shows once - the ones shown go when the phone book is left.
             requestForm.left()
         }
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        requestPictureSheet?.dismiss()
+        // Code QA L3: the phone book is closed for good with the form open - its picture goes.
+        if (isFinishing && ::requestForm.isInitialized) requestForm.setDraft(null)
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -291,15 +321,16 @@ class PhoneBookActivity : UIObjectActivity() {
 
     private fun loadMissedCalls() {
         val state = CallPolicyStore.effectiveState()
+        val generation = loads.begin()
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@PhoneBookActivity, state) }
-            if (!isDestroyed) {
+            if (!isDestroyed && loads.isLatest(generation)) {
                 missed = result
                 // The visit's top: fixed by its first load, joined by later ones (design 79 §3.2). A new visit starts at
                 // the list's top - never wherever the last visit's rows took the scroll (emulator run: a call in between).
                 if (visitTop == null) toTop = true
                 visitTop = visitTopAfter(visitTop, result)
-                render()
+                filter()
                 openPendingSheet()
             }
         }
@@ -314,6 +345,26 @@ class PhoneBookActivity : UIObjectActivity() {
         ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
     }
 
+    /**
+     * What a list works from, gathered once per [refresh] (design 79 §3.7, QA N7, code QA M2): the view, the emergency
+     * numbers, the unread counts, the requests and every contact's buttons and Melding app label. A keystroke only runs
+     * [filter] over it - no binder call, prefs decode or label lookup per character.
+     */
+    private class Inputs(
+        val ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice,
+        val view: PhoneBookView,
+        val emergency: Set<String>,
+        val unread: Map<String, Int>,
+        val requests: List<RequestRow>,
+        val canAsk: Boolean,
+        val actions: Map<String, ContactActions>,
+        val messageApps: Map<String, String>,
+    )
+
+    private var inputs: Inputs? = null
+
+    /** The page and the list's inputs again: at resume, from every listener (policy, messages, requests, wallpaper) and
+     * when the form opens or closes - then [filter]. */
     private fun render() {
         if (!::requestForm.isInitialized) return
         // The same copy of the wallpaper as Home draws (qa-launcher-small-a-code Q-1): no scale step between the two.
@@ -336,33 +387,65 @@ class PhoneBookActivity : UIObjectActivity() {
         binding.phoneBookInfo.visibility = if (info == null) View.GONE else View.VISIBLE
         binding.phoneBookInfo.text = info
         adapter.layout = rowLayout(contentWidthDp(), resources.configuration.fontScale)
-        // The list waits for the visit's first missed calls (its top), so it never reorders under the kid's finger.
-        val top = visitTop ?: return
-        // Computed once per render (design 79 §3.7, QA N7); a keystroke only filters.
         val emergency = view.contacts.mapNotNullTo(mutableSetOf()) { c -> c.number.takeIf { CallSystem.isEmergencyOutgoing(this, it) } }
-        val unread = view.contacts.associate { it.number to SmsHome.unreadFrom(it.number) }
-        val requests = if (canAsk) contactRequestRows(ContactRequests.records(this)) else emptyList()
+        // The apps' usability asked once per package, each app's label read once (code QA M2).
+        val defaultSms = CallSystem.defaultSmsPackage(this)
+        val base = ContactSheet.usablePackages(this)
+        val asked = HashMap<String, Boolean>()
+        val usable: (String) -> Boolean = { pkg -> asked.getOrPut(pkg) { base(pkg) } }
+        val rooms = ElementRoomStore.lookup(this)
+        val calls = OngoingCalls.states
+        val labels = HashMap<String, String>()
+        val actions = HashMap<String, ContactActions>()
+        val messageApps = HashMap<String, String>()
+        for (contact in view.contacts) {
+            val key = rowKey(contact)
+            val a = contactActions(contact, rules, contact.number in emergency, calls, defaultSms, usable, rooms)
+            actions[key] = a
+            (a.message as? MessageAction.App)?.intent?.packageName?.let { pkg ->
+                messageApps[key] = labels.getOrPut(pkg) { AppDisplay.shownLabel(this, pkg).toString() }
+            }
+        }
+        inputs = Inputs(
+            ink, view, emergency, view.contacts.associate { it.number to SmsHome.unreadFrom(it.number) },
+            if (canAsk) contactRequestRows(ContactRequests.records(this)) else emptyList(), canAsk, actions, messageApps,
+        )
         // The search: only while the kid can ask (calls managed and on); calls going off clears it.
         if (!canAsk && search.query.isNotEmpty()) search.clear()
+        filter()
+    }
+
+    private fun rowKey(contact: RuleContact) = "${contact.id}:${contact.number}"
+
+    /** The rows from the cached [inputs], the missed calls, the visit's top and the query - the search's keystroke,
+     * a missed-call load. */
+    private fun filter() {
+        val inputs = inputs ?: return
+        // The list waits for the visit's first missed calls (its top), so it never reorders under the kid's finger.
+        val top = visitTop ?: return
         val query = search.query
         val list = phoneBookRows(
-            view, emergency, missed, unread, top, requests, query, listCollator(resources.configuration.locales[0]), canAsk,
+            inputs.view, inputs.emergency, missed, inputs.unread, top, inputs.requests, query,
+            listCollator(resources.configuration.locales[0]), inputs.canAsk,
         )
         // The pill hides while the form is up (QA N4).
         search.setShown(list.search && !requestForm.isOpen)
-        KidInk.label(search.countLine, ink, dim = true)
+        KidInk.label(search.countLine, inputs.ink, dim = true)
         val hits = list.rows.count { it is PhoneBookRow.Contact || it is PhoneBookRow.Waiting }
         search.announce(if (searching(query) && list.search) hits else null)
-        bindEmpty(list, ink)
+        bindEmpty(list, inputs.ink)
         binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
-        back.isEnabled = phoneBookBack(requestForm.isOpen, query) != PhoneBookBack.LEAVE
-        adapter.submitList(itemsOf(list.rows, rules, emergency)) {
+        back.isEnabled = requestForm.isOpen || query.isNotEmpty()
+        val items = list.rows.map { row ->
+            if (row !is PhoneBookRow.Contact) return@map PhoneBookItem(row)
+            val key = rowKey(row.contact)
+            PhoneBookItem(row, inputs.actions[key], inputs.messageApps[key])
+        }
+        adapter.submitList(items) {
             if (toTop) binding.phoneBookList.scrollToPosition(0)
             toTop = false
             noteSightings()
         }
-        // Design 77 §14: an answer shows once - this visit has shown it.
-        if (list.rows.any { it is PhoneBookRow.Answer }) requestForm.answersShown()
     }
 
     /** The request form's circle (design 79 §5.5): "Bilde av Lina" - the picker or the camera into a draft, or "Fjern
@@ -370,7 +453,7 @@ class PhoneBookActivity : UIObjectActivity() {
     private fun requestPicture() {
         val name = binding.phoneBookRequestForm.contactRequestName.text?.toString()?.trim().orEmpty()
         val title = if (name.isEmpty()) getString(R.string.contact_request_photo_add) else getString(R.string.kid_photo_title, name)
-        KidPhotoSheet.show(
+        requestPictureSheet = KidPhotoSheet.show(
             this, title,
             onChoose = { camera -> draftLauncher.launch(KidPhotoActivity.forDraft(this, name, camera)) },
             onRemove = if (requestForm.draft != null) ({ requestForm.setDraft(null) }) else null,
@@ -388,22 +471,6 @@ class PhoneBookActivity : UIObjectActivity() {
         empty.kidSearchAsk.visibility = if (ask == null) View.GONE else View.VISIBLE
         empty.kidSearchAsk.text = ask?.let { getString(R.string.phone_book_ask_named, it) }
         empty.kidSearchAsk.setOnClickListener { if (ask != null) requestForm.open(ask) }
-    }
-
-    /** The rows with their buttons ([contactActions]: the card's rule), the apps' usability asked once per render. */
-    private fun itemsOf(rows: List<PhoneBookRow>, rules: CallRules?, emergency: Set<String>): List<PhoneBookItem> {
-        val defaultSms = CallSystem.defaultSmsPackage(this)
-        val base = ContactSheet.usablePackages(this)
-        val asked = HashMap<String, Boolean>()
-        val usable: (String) -> Boolean = { pkg -> asked.getOrPut(pkg) { base(pkg) } }
-        val rooms = ElementRoomStore.lookup(this)
-        val calls = OngoingCalls.states
-        return rows.map { row ->
-            if (row !is PhoneBookRow.Contact) return@map PhoneBookItem(row)
-            val actions = contactActions(row.contact, rules, row.contact.number in emergency, calls, defaultSms, usable, rooms)
-            val app = (actions.message as? MessageAction.App)?.intent?.packageName?.let { AppDisplay.shownLabel(this, it).toString() }
-            PhoneBookItem(row, actions, app)
-        }
     }
 
     /** The page's content width: the window less the page's 16 dp sides (288 dp on the Jelly Star). */
@@ -442,6 +509,9 @@ class PhoneBookActivity : UIObjectActivity() {
                 val shown = minOf(child.bottom, list.height) - maxOf(child.top, 0)
                 if (child.height > 0 && shown * 2 >= child.height) visible[row.contact.number] = at
             }
+            // Design 77 §14, code QA L9: an answer counts as shown only once its row was laid out on the visible list.
+            val answer = (0 until list.childCount).any { rows.getOrNull(list.getChildAdapterPosition(list.getChildAt(it)))?.row is PhoneBookRow.Answer }
+            if (answer) requestForm.answersShown()
         }
         sightings.update(visible, active, SystemClock.elapsedRealtime())
     }

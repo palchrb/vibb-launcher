@@ -108,13 +108,20 @@ object MissedCallsRepo {
      * [upToMs] (design 79 §3.2): its missed calls up to then are dealt with. The mark only ever moves forward
      * ([seenMarkAfter]), so a visit's mark can't undo a card opened during it.
      */
+    fun markSeen(context: Context, number: String, upToMs: Long = System.currentTimeMillis()) =
+        markSeen(context, mapOf(number to upToMs))
+
+    /** Several marks at once (the phone book's visit, code QA N6): one write, one word to the listeners. */
     @Synchronized
-    fun markSeen(context: Context, number: String, upToMs: Long = System.currentTimeMillis()) {
+    fun markSeen(context: Context, marks: Map<String, Long>) {
         val prefs = prefs(context)
-        val existing = if (prefs.contains(number)) prefs.getLong(number, Long.MIN_VALUE) else null
-        val next = seenMarkAfter(existing, upToMs)
-        if (next == existing) return
-        prefs.edit { putLong(number, next) }
+        val changed = marks.mapNotNull { (number, upToMs) ->
+            val existing = if (prefs.contains(number)) prefs.getLong(number, Long.MIN_VALUE) else null
+            val next = seenMarkAfter(existing, upToMs)
+            if (next == existing) null else number to next
+        }
+        if (changed.isEmpty()) return
+        prefs.edit { changed.forEach { (number, next) -> putLong(number, next) } }
         // Home is resumed before the phone book stops (design 79 §3.3): it hears of the marks the visit wrote.
         seenListeners.forEach { listener -> main.post(listener) }
     }

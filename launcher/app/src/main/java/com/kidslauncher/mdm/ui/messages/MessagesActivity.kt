@@ -67,14 +67,17 @@ class MessagesActivity : UIObjectActivity() {
     /** Design 79 §4: the search pill from 8 rows, the shown names only. */
     private lateinit var search: KidSearchField
 
-    /** Back: the delete confirm first, then the search's text, then "Ny melding" back to the list ([messagesBack]). */
+    /** Back: the keyboard first (stock Android, code QA L10), then the delete confirm, then the search's text, then
+     * "Ny melding" back to the list ([messagesBack]). */
     private val back = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
-            when (messagesBack(deleting != null, search.query, picking)) {
+            val ime = binding.root.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+            when (messagesBack(ime, deleting != null, search.query, picking)) {
+                MessagesBack.HIDE_KEYBOARD -> search.hideKeyboard()
                 MessagesBack.CANCEL_DELETE -> cancelDelete()
                 MessagesBack.CLEAR_SEARCH -> {
                     search.clear()
-                    render()
+                    filter()
                 }
                 MessagesBack.STOP_PICKING -> {
                     picking = false
@@ -86,7 +89,16 @@ class MessagesActivity : UIObjectActivity() {
     }
 
     private fun updateBack() {
-        back.isEnabled = messagesBack(deleting != null, search.query, picking) != MessagesBack.LEAVE
+        back.isEnabled = messagesBack(false, deleting != null, search.query, picking) != MessagesBack.LEAVE
+    }
+
+    /** "Ny melding"'s contacts as the last [render] read them (a keystroke only filters, code QA M2). */
+    private var pickContacts: List<RuleContact> = emptyList()
+
+    /** Whether each shown number is an emergency number, asked once per render, not per bound row (code QA M2). */
+    private val emergencyMemo = HashMap<String, Boolean>()
+    private val isEmergency: (String) -> Boolean = { number ->
+        emergencyMemo.getOrPut(number) { com.kidslauncher.mdm.calls.CallSystem.isEmergencyOutgoing(this, number) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,7 +115,7 @@ class MessagesActivity : UIObjectActivity() {
         binding.messagesList.layoutManager = LinearLayoutManager(this)
         binding.messagesList.adapter = adapter
         onBackPressedDispatcher.addCallback(this, back)
-        search = KidSearchField(binding.messagesSearch.root, R.string.messages_search) { render() }
+        search = KidSearchField(binding.messagesSearch.root, R.string.messages_search) { filter() }
         picking = savedInstanceState?.getBoolean(STATE_PICKING) == true
         render()
     }
@@ -134,6 +146,8 @@ class MessagesActivity : UIObjectActivity() {
     override fun onStop() {
         SmsHome.removeListener(homeListener)
         events?.cancel()
+        // Design 79 §4.1 (code QA N3): the query is kept across a rotation only.
+        if (!isChangingConfigurations) search.clear()
         super.onStop()
     }
 
@@ -163,14 +177,12 @@ class MessagesActivity : UIObjectActivity() {
         val readOnly = historyReadOnlyNow()
         val canStart = !readOnly && mayStart()
         if (picking && !canStart) setPicking(false)
-        val collator = listCollator(resources.configuration.locales[0])
+        emergencyMemo.clear()
         if (picking) {
             KidHeader.bind(this, binding.messagesHeader, R.string.messages_new, back = R.string.kid_back)
-            val contacts = newMessageContacts(MessagesScreens.rules())
-            info(if (contacts.isEmpty()) getString(R.string.messages_new_empty) else null)
-            val shown = searchShown(contacts.size, search.query, allowed = true, minRows = SEARCH_MIN_ROWS)
-            val hits = if (shown && searching(search.query)) searchHits(contacts, { it.name }, search.query, collator) else null
-            showList(shown, hits?.map { (c, m) -> Row.Contact(c, m) } ?: contacts.map { Row.Contact(it) }, hits != null)
+            pickContacts = newMessageContacts(MessagesScreens.rules())
+            info(if (pickContacts.isEmpty()) getString(R.string.messages_new_empty) else null)
+            filter()
             return
         }
         KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
@@ -183,6 +195,19 @@ class MessagesActivity : UIObjectActivity() {
                 else -> null
             },
         )
+        filter()
+    }
+
+    /** The rows for the search's text, from what the last [render] read: the search's keystroke runs only this. */
+    private fun filter() {
+        val collator = listCollator(resources.configuration.locales[0])
+        if (picking) {
+            val contacts = pickContacts
+            val shown = searchShown(contacts.size, search.query, allowed = true, minRows = SEARCH_MIN_ROWS)
+            val hits = if (shown && searching(search.query)) searchHits(contacts, { it.name }, search.query, collator) else null
+            showList(shown, hits?.map { (c, m) -> Row.Contact(c, m) } ?: contacts.map { Row.Contact(it) }, hits != null)
+            return
+        }
         val shown = searchShown(rows.size, search.query, allowed = true, minRows = SEARCH_MIN_ROWS)
         val hits = if (shown && searching(search.query)) {
             searchConversations(rows, search.query, collator) { MessagesScreens.name(this, it) }
@@ -298,7 +323,7 @@ class MessagesActivity : UIObjectActivity() {
         }
 
         private fun bindContact(holder: Holder, contact: RuleContact, match: SearchMatch?) {
-            MessagesScreens.bindAvatar(holder.photo, holder.initial, contact, contact.name, contact.number)
+            MessagesScreens.bindAvatar(holder.photo, holder.initial, contact, contact.name, contact.number, isEmergency)
             holder.name.text = highlightMatch(holder.itemView.context, contact.name, match)
             holder.last.visibility = View.GONE
             holder.time.text = null
@@ -314,7 +339,7 @@ class MessagesActivity : UIObjectActivity() {
             val context = holder.itemView.context
             val name = MessagesScreens.name(context, row.who)
             val address = row.conversation.participants.singleOrNull()?.address.orEmpty()
-            MessagesScreens.bindAvatar(holder.photo, holder.initial, row.contact, name, address)
+            MessagesScreens.bindAvatar(holder.photo, holder.initial, row.contact, name, address, isEmergency)
             holder.name.text = highlightMatch(context, name, match)
             val last = lastText(row.last)
             holder.last.visibility = if (last == null) View.GONE else View.VISIBLE

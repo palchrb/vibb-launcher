@@ -21,7 +21,7 @@ class KidPhotosTest {
     @Test
     fun `what shows - the kid's picture, else the parent's, else the initial, an emergency number never one`() {
         val kid = KidPhotoRecord(file1, mamma.number, 0)
-        assertEquals(ShownPhoto.Kid(file1), shownPhoto(mamma, kid, emergency = false))
+        assertEquals(ShownPhoto.Kid(file1, mamma.photo), shownPhoto(mamma, kid, emergency = false))
         assertEquals(ShownPhoto.Parent(mamma.photo!!), shownPhoto(mamma, null, emergency = false))
         assertEquals(ShownPhoto.None, shownPhoto(pappa, null, emergency = false))
         assertEquals(ShownPhoto.None, shownPhoto(mamma, kid, emergency = true))
@@ -55,11 +55,16 @@ class KidPhotosTest {
     @Test
     fun `the caps - one per contact, at most the phone book, never past 100`() {
         val one = mapOf(1L to KidPhotoRecord(file1, mamma.number, 0))
-        assertTrue(kidPhotoMayAdd(one, 1L, phoneBookSize = 1)) // a new one replaces it
-        assertFalse(kidPhotoMayAdd(one, 2L, phoneBookSize = 1))
-        assertTrue(kidPhotoMayAdd(one, 2L, phoneBookSize = 2))
+        assertTrue(kidPhotoMayAdd(one, 1L, contactsOnPhone = 1)) // a new one replaces it
+        assertFalse(kidPhotoMayAdd(one, 2L, contactsOnPhone = 1))
+        assertTrue(kidPhotoMayAdd(one, 2L, contactsOnPhone = 2))
         val full = (1L..100L).associateWith { KidPhotoRecord(newKidPhotoFileName(), "+47$it", 0) }
-        assertFalse(kidPhotoMayAdd(full, 101L, phoneBookSize = 500))
+        assertFalse(kidPhotoMayAdd(full, 101L, contactsOnPhone = 500))
+        // Code QA L7: the cap counts every contact on the phone - Mamma moved to text-only keeps her picture and her
+        // place, so Bestemor, new in the phone book, still gets one (3 pictures, 4 contacts on the phone).
+        val three = (1L..3L).associateWith { KidPhotoRecord(newKidPhotoFileName(), "+47$it", 0) }
+        assertTrue(kidPhotoMayAdd(three, 4L, contactsOnPhone = 4))
+        assertFalse(kidPhotoMayAdd(three, 4L, contactsOnPhone = 3))
         assertEquals(100, KID_PHOTOS_MAX)
         assertEquals(150 * 1024, KID_PHOTO_MAX_BYTES)
         assertEquals(com.kidslauncher.mdm.sms.parse.PictureEncoder.CONTACT_MAX_BYTES, KID_PHOTO_MAX_BYTES)

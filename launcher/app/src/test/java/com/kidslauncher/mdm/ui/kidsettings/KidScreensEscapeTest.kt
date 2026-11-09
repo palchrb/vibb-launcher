@@ -160,6 +160,8 @@ class KidScreensEscapeTest {
         assertEquals(2, Regex("""startActivity\(""").findAll(sheet).count())
         assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))"))
         assertTrue(sheet.contains("activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera))"))
+        // Code QA M1: "Bilde av …" is kept and closes with the card (so Home's closeOverlays() closes both).
+        assertTrue(sheet.contains("opened(sheet)") && sheet.contains("photoSheet?.dismiss()"))
         assertEquals(1, Regex("""CallSystem\.placeCall\(""").findAll(sheet).count())
         assertEquals(1, Regex("""MessagesScreens\.startThread\(""").findAll(sheet).count())
         for (path in listOf("calls/PhoneBookList.kt", "calls/PhoneBookAdapter.kt", "ui/search/SearchFold.kt")) {
