@@ -92,7 +92,7 @@ fun coverGreyMatrix(): FloatArray {
     return row + row + row + floatArrayOf(0f, 0f, 0f, 1f, 0f)
 }
 
-/** A colour greyed as the cover's picture ([coverGreyLevel]): the fallback gradient and the category glyph. */
+/** A colour greyed as the cover's picture ([coverGreyLevel]): the fallback gradient (its glyph is left out). */
 fun coverGrey(color: Color): Color = coverGreyLevel(color.red, color.green, color.blue).let { Color(it, it, it, color.alpha) }
 
 /** The greyed cover's picture filter. */

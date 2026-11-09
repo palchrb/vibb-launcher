@@ -247,7 +247,7 @@ fun Cover(
     fallback: String? = null,
     /** A list row's picture (design 39 §2.3): decoded for this size, in its own slot; null = the player's size. */
     decodeDp: Dp? = null,
-    /** Greyed and darkened (the player's "Kan ikke spilles nå", [coverGreyLevel]); [content] stays in colour. */
+    /** Greyed and darkened (the player's "Kan ikke spilles nå", [coverGreyLevel]), no glyph; [content] stays in colour. */
     greyed: Boolean = false,
     content: @Composable () -> Unit = {},
 ) {
@@ -267,8 +267,9 @@ fun Cover(
                 bitmap, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
                 colorFilter = if (greyed) coverGreyFilter else null,
             )
-        } else if (glyph > 0.dp) {
-            Image(painterResource(categoryGlyph(category)), contentDescription = null, modifier = Modifier.size(glyph), colorFilter = ColorFilter.tint(shade(Palette.fg)))
+        } else if (glyph > 0.dp && !greyed) {
+            // greyed, the notice takes the glyph's place: the two would cross at the centre (emulator check, 2026-11-09)
+            Image(painterResource(categoryGlyph(category)), contentDescription = null, modifier = Modifier.size(glyph), colorFilter = ColorFilter.tint(Palette.fg))
         }
         content()
     }

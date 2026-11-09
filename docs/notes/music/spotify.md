@@ -96,8 +96,8 @@ Moved from music/CLAUDE.md on 2026-11-01.
 - **"Kan ikke spilles nå" on the player's cover** (2026-11-09, the user's mockup D, `ui/CantPlay.kt`): the quiet line
   under the entry name was too easy to miss ("Spør en voksen" small and grey while play looked normal). Now, when the
   loaded item can't play here, its cover is greyed and darkened (the mockup's CSS `grayscale(1) brightness(.28)
-  contrast(.8)`: `coverGreyLevel`, the picture through `coverGreyMatrix`, the fallback gradient and glyph through
-  `coverGrey`; in the carousel the loaded item's pages only, the neighbours keep their colours) and a calm notice sits
+  contrast(.8)`: `coverGreyLevel`, the picture through `coverGreyMatrix`, the fallback gradient through `coverGrey`
+  and its category glyph left out - it would cross the notice at the centre; in the carousel the loaded item's pages only, the neighbours keep their colours) and a calm notice sits
   on it - a 34 dp "!" disc in peach at 22 %, a bold line, a smaller line - and the line under the entry name goes (said
   once). `cantPlayNotice(state)` is the rule, one exhaustive `when` (`CantPlayTest`):
   - **The notice** (the web player refused the item on this phone): `SPOTIFY_ASK_ADULT` "Kan ikke spilles nå" / "Spør
