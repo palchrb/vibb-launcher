@@ -21,6 +21,36 @@ data class CallPolicy(
     /** Design 73: the emergency menu in the parent's order (normalised numbers, at least one); `null` from a server
      * before it - the phone then offers 112 alone ([com.kidslauncher.mdm.calls.emergencyMenu]). Sent managed or not. */
     val emergencyMenu: List<PolicyEmergencyEntry>? = null,
+    /** Design 77 D2: each channel's own state, `"off" | "managed" | "unmanaged"` - always sent by a server with the
+     * SMS engine; `null` from an older one, which the phone then reads from [managed]/[callsEnabled]/[smsEnabled] by
+     * D2's migration table ([com.kidslauncher.mdm.calls.channelModes]). Once seen, a policy without them is rejected
+     * whole ([com.kidslauncher.mdm.server.judgeFresh]); an unknown value is too. */
+    val callsMode: String? = null,
+    val smsMode: String? = null,
+    /** Design 77 §6.8: the lock glance's message row shows the text (step 5). */
+    val smsLockText: Boolean = false,
+    /** Design 77 D17: the parent's sender names let through (exact, by the shared fold). */
+    val smsNames: List<String> = emptyList(),
+    /** Design 77 D12: the phone's own numbers the parent typed, per SIM slot (used by the group rule, step 3b). */
+    val ownNumbers: List<PolicyOwnNumber> = emptyList(),
+    /** Design 77 D10: the carriers' MMS servers per MCC/MNC (used by the MMS download gate, step 3b). */
+    val mmscHosts: List<PolicyMmscHosts> = emptyList(),
+    /** Design 77 D16: the held messages the parent deleted ("Slett nå"), dropped before anything is released. */
+    val smsHeldDrop: List<String> = emptyList(),
+)
+
+/** One of [CallPolicy.ownNumbers]: the SIM slot (1 or 2) and the normalised number. */
+@Serializable
+data class PolicyOwnNumber(
+    val slot: Int = 0,
+    val number: String = "",
+)
+
+/** One of [CallPolicy.mmscHosts]. */
+@Serializable
+data class PolicyMmscHosts(
+    val mccmnc: String = "",
+    val hosts: List<String> = emptyList(),
 )
 
 /** One number of [CallPolicy.emergencyMenu]: the server's `emergency::PolicyEntry`; [name] may be empty. */
@@ -45,4 +75,9 @@ data class PolicyContact(
     val messageApp: String = "none",
     val messageAddress: String? = null,
     val photo: String? = null,
+    /** Design 77 D3: the contact may text the kid / the kid may text the contact / pictures both ways. Independent of
+     * [inbound]/[outbound]; absent (an older server) denies. The server never sends [smsIn] for an emergency number. */
+    val smsIn: Boolean = false,
+    val smsOut: Boolean = false,
+    val mms: Boolean = false,
 )
