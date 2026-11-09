@@ -35,10 +35,7 @@ object ContactSheet {
         val view = LayoutInflater.from(activity).inflate(R.layout.sheet_contact, null)
         val dialog = Dialog(activity, R.style.KidSheetDialog)
         dialog.setContentView(view)
-        dialog.window?.apply {
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-        }
+        dialog.setUpKidSheet(view)
         // The photo may still be decoding in the background: show it as soon as it's ready.
         val bindPhoto: () -> Unit = {
             KidAvatars.bindContact(
