@@ -535,7 +535,7 @@
     <string name="glance_reminder_now_spoken">now</string>
     <string name="glance_reminder_spoken">Reminder: %1$s, %2$s, %3$s</string>
     <!-- The same with the calendar's name: %1$s the title, %2$s "in 15 minutes", %3$s the start, %4$s the calendar. -->
-    <string name="glance_reminder_spoken_calendar">Reminder: %1$s, %2$s, %3$s, %4$s calendar</string>
+    <string name="glance_reminder_spoken_calendar">Reminder: %1$s, %2$s, %3$s, calendar %4$s</string>
     <!-- The reminder row's second line: %1$s the start, %2$s the calendar's name (cut first when it is long). -->
     <string name="glance_reminder_when">%1$s · %2$s</string>
     <string name="glance_reminder_action">Unlock and open Calendar</string>

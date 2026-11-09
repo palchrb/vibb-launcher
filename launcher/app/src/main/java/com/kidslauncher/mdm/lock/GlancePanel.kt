@@ -1189,7 +1189,7 @@ class GlancePanel(
      * 16 dp dot in the disc instead, when it has a colour (the mockup's lock row) -, "Fotball om 15 min" ("… nå" in
      * the last minute), the start time and, when the calendar has a name, "17:30 · Fotball" (the dot has no legend on
      * the lock; the time first, so a long name is the part that is cut); TalkBack "Påminnelse: Fotball, om 15 minutter,
-     * 17:30, Fotball-kalenderen". Never dismissable. */
+     * 17:30, kalenderen Fotball". Never dismissable. */
     private fun bindCalendar(view: ViewLockGlanceRowBinding, row: GlanceCalendarRow) {
         val res = activity.resources
         val time = ClockFormat.formatClock(activity, row.beginMs)

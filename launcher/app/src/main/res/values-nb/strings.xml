@@ -460,7 +460,7 @@
     <string name="glance_reminder_now_spoken">nå</string>
     <string name="glance_reminder_spoken">Påminnelse: %1$s, %2$s, %3$s</string>
     <!-- Det samme med kalenderens navn: %1$s tittelen, %2$s "om 15 minutter", %3$s starten, %4$s kalenderen. -->
-    <string name="glance_reminder_spoken_calendar">Påminnelse: %1$s, %2$s, %3$s, %4$s-kalenderen</string>
+    <string name="glance_reminder_spoken_calendar">Påminnelse: %1$s, %2$s, %3$s, kalenderen %4$s</string>
     <!-- Påminnelsesradens andre linje: %1$s starten, %2$s kalenderens navn (kuttes først når det er langt). -->
     <string name="glance_reminder_when">%1$s · %2$s</string>
     <string name="glance_reminder_action">Lås opp og åpne Kalender</string>

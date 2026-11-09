@@ -58,7 +58,7 @@ class DayTextTest {
             assertTrue(dir, res(dir).contains("<string name=\"glance_tomorrow\">$tomorrow %2\$s: %1\$s</string>"))
             assertTrue(dir, res(dir).contains("<string name=\"glance_reminder_when\">%1\$s · %2\$s</string>"))
         }
-        assertTrue(res("values-nb").contains("<string name=\"glance_reminder_spoken_calendar\">Påminnelse: %1\$s, %2\$s, %3\$s, %4\$s-kalenderen</string>"))
+        assertTrue(res("values-nb").contains("<string name=\"glance_reminder_spoken_calendar\">Påminnelse: %1\$s, %2\$s, %3\$s, kalenderen %4\$s</string>"))
         assertTrue(glance.contains("activity.getString(R.string.glance_reminder_when, time, name)"))
         assertTrue(glance.contains("R.string.glance_reminder_spoken_calendar, row.title, left, time, name"))
         // The form's day is the one-line day, not weekday + date glued with a space.
