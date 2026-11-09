@@ -1396,7 +1396,7 @@
   "device.lock.same_as_home": "Same as Home",
   "device.lock.save_background": "Save Background",
   "device.lock.wake": "Wake the screen for a notification",
-  "device.lock.wake_sub": "For the apps on the lock below and missed calls",
+  "device.lock.wake_sub": "For the apps on the lock below, missed calls and messages",
   "device.weather.lock": "Weather on the lock screen",
   "device.weather.lock_sub": "Yr's symbol and the temperature by the date; tap for the day. From MET Norway, for where the phone is (about 2 km).",
   "device.weather.zone": "When the position isn't fresh, use",

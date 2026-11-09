@@ -248,8 +248,9 @@ object SmsRuntime {
     }
 
     private fun notifyShown(app: Context, engine: SmsEngine, shown: Received.Shown) {
-        // An MMS that turned out to be a group left the sender's conversation: its notification goes too (code QA L8).
-        shown.movedFrom?.let { SmsNotifier.cancel(app, it) }
+        // An MMS that turned out to be a group left the sender's conversation: its notification shows what is still unread
+        // there, quietly, or goes (code QA L8; the code QA of step 5: never the whole notification of a thread with unread).
+        shown.movedFrom?.let { SmsNotifier.afterMove(app, engine, it) }
         // The kid is reading this thread: it marks the message read itself, no notification (§6.7).
         if (shown.conversation.id == threadInFront) return
         // A picture that waited and has now arrived is told again, quietly: the kid heard of it once (code QA L8).

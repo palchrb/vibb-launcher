@@ -449,6 +449,35 @@ data class GlanceMissedRow(
 }
 
 /**
+ * Design 77 §6.8 (step 5): one of our own SMS conversations with unread messages - read from the message engine, never
+ * from a notification (GlanceReader skips ours). Only what the engine accepted: held and blocked messages have no
+ * conversation, so they never make a row. [count] is the conversation's unread; [timeMs] and [upToSeq] are its newest
+ * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only while the parent's
+ * `call_policy.sms_lock_text` is on (cleaned, [GLANCE_TEXT_MAX]); [picture] the newest is a picture without text (shown
+ * as "Bilde" only with the text on); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
+ * the callback window (D4 rule 2).
+ */
+data class GlanceSmsRow(
+    val conversation: com.kidslauncher.mdm.sms.engine.Conversation,
+    val count: Int,
+    override val timeMs: Long,
+    val upToSeq: Long,
+    val text: String? = null,
+    val picture: Boolean = false,
+    val sender: String? = null,
+    val unknownSender: Boolean = false,
+) : GlanceRow {
+    val conversationId: String get() = conversation.id.value
+
+    override fun toString() = "GlanceSmsRow(count=$count)"
+}
+
+/** The rows with our SMS rows (design 77 §6.8) among them, newest first - a message ranks by its time with the
+ * missed calls and the apps' conversations; Dagen's reminder row is put first by the panel, before these. */
+fun glanceWithSms(rows: List<GlanceRow>, sms: List<GlanceSmsRow>): List<GlanceRow> =
+    if (sms.isEmpty()) rows else (rows + sms).sortedByDescending { it.timeMs }
+
+/**
  * The rows (§2.3), newest first: one per conversation of a ticked, unsuspended app - several
  * notifications of one conversation add their counts, the newest (by post time) gives title, text,
  * time and key - hidden while it was opened through the glance and nothing newer was posted since

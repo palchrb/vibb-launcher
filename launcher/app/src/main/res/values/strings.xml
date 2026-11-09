@@ -562,6 +562,19 @@
         <item quantity="other">%1$d new</item>
     </plurals>
     <string name="glance_group_spoken">Group %1$s, latest from %2$s</string>
+    <!-- Design 77 §6.8: the glance's Meldinger row - the count under the name (the text in its place only with the
+         parent's switch on), what TalkBack reads, and the row's click label. -->
+    <string name="glance_sms_new">New message</string>
+    <plurals name="glance_sms_new_many">
+        <item quantity="one">%1$d new message</item>
+        <item quantity="other">%1$d new messages</item>
+    </plurals>
+    <string name="glance_sms_from">New message from %1$s</string>
+    <plurals name="glance_sms_from_many">
+        <item quantity="one">%1$d new message from %2$s</item>
+        <item quantity="other">%1$d new messages from %2$s</item>
+    </plurals>
+    <string name="glance_sms_action">Unlock and open Messages</string>
     <!-- The glance page's time-rule card for TalkBack (design r13 §1.2): the label, then the certain end. -->
     <string name="glance_rule_card_description">%1$s, until %2$s</string>
     <!-- The time-rule screen's card read aloud (launcher round L6): "School, until 14:30", then what still works. -->

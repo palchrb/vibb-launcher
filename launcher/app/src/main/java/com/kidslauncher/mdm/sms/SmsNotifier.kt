@@ -16,7 +16,6 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.sms.engine.ConversationRow
-import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.SmsEngine
 import com.kidslauncher.mdm.ui.messages.MessagesScreens
@@ -43,6 +42,8 @@ private const val SHOWN_MESSAGES = 5
  * notified.
  */
 object SmsNotifier {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(
@@ -55,15 +56,13 @@ object SmsNotifier {
         )
     }
 
-    /** Posts (or updates) [conversation]'s notification after [message] arrived; [silent] under a time rule. */
-    fun notify(context: Context, engine: SmsEngine, conversation: ConversationRow, message: Message, silent: Boolean) {
+    /** Posts (or updates) [conversation]'s notification after [message] arrived; [silent] under a time rule. [wake]:
+     * this post may be a notice on the lock (a message's own post; not a group move's re-post, [afterMove]). */
+    fun notify(context: Context, engine: SmsEngine, conversation: ConversationRow, message: Message, silent: Boolean, wake: Boolean = true) {
         try {
             createChannels(context)
-            val unread = engine.messages(com.kidslauncher.mdm.sms.engine.ConversationId(conversation.id), null, SHOWN_MESSAGES * 2)
-                .filter { it.direction == Direction.IN && !it.read }
-                .take(SHOWN_MESSAGES)
-                .reversed()
-                .ifEmpty { listOf(message) }
+            val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversation.id)
+            val unread = smsNotifiedMessages(engine.messages(id, null, SHOWN_MESSAGES * 2), SHOWN_MESSAGES).ifEmpty { listOf(message) }
             val me = Person.Builder().setName(context.getString(R.string.sms_notification_me)).build()
             val sender = senderPerson(context, conversation)
             val style = NotificationCompat.MessagingStyle(me)
@@ -77,7 +76,8 @@ object SmsNotifier {
                 style.addMessage(text, m.at, from)
             }
             if (group) style.setGroupConversation(true).setConversationTitle(groupTitle(context, conversation))
-            val canSend = engine.conversations().firstOrNull { it.id.value == conversation.id }?.canSend == true
+            val now = engine.conversation(id)
+            val canSend = now?.canSend == true
             val channel = if (silent) NOTIFICATION_CHANNEL_MESSAGES_SILENT else NOTIFICATION_CHANNEL_MESSAGES
             val public = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -97,12 +97,53 @@ object SmsNotifier {
                 .setSilent(silent)
                 .setContentIntent(openIntent(context, conversation.id))
             if (canSend) builder.addAction(replyAction(context, conversation.id))
-            NotificationManagerCompat.from(context).notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
+            val manager = NotificationManagerCompat.from(context)
+            manager.notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
+            if (wake) wakeIfAlerts(context, manager, channel, silent, conversation.id, message.seq, unreadAfter = now?.unread ?: 0)
         } catch (e: SecurityException) {
             Log.w(LOG_TAG, "No permission to notify")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't post the message notification", e)
         }
+    }
+
+    /**
+     * Launcher round 7 §3: an accepted message's alerting post that brings its row onto the lock is a notice that came -
+     * the parent's switch and the lock's gate decide the rest (as the missed-call notice's). Only that it came, nothing
+     * of it. The swipe mark is read and spent on the main thread, where the glance keeps it ([SmsGlance.comeBack]).
+     */
+    private fun wakeIfAlerts(
+        context: Context,
+        manager: NotificationManagerCompat,
+        channel: String,
+        silent: Boolean,
+        conversationId: String,
+        seq: Long,
+        unreadAfter: Int,
+    ) {
+        val importance = manager.getNotificationChannel(channel)?.importance
+        val enabled = manager.areNotificationsEnabled()
+        // Code QA H1: under any Do Not Disturb no wake - fail closed (an unknown filter counts as one).
+        val passesFilter = context.getSystemService(NotificationManager::class.java)?.currentInterruptionFilter ==
+            NotificationManager.INTERRUPTION_FILTER_ALL
+        main.post {
+            val mark = SmsGlance.comeBack(conversationId, seq)
+            val gainsRow = smsGainsRow(unreadAfter, mark, seq)
+            if (smsPostAlerts(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, gainsRow = gainsRow)) {
+                com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
+            }
+        }
+    }
+
+    /**
+     * A group MMS left [conversationId] (D12; step 3b's code QA L8): that conversation's notification is rebuilt from
+     * what is still unread there, quietly and without a wake - or goes when nothing is. Engine thread.
+     */
+    fun afterMove(context: Context, engine: SmsEngine, conversationId: String) {
+        val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversationId)
+        val row = engine.conversationRow(id)
+        val newest = smsNotifiedMessages(engine.messages(id, null, SHOWN_MESSAGES * 2), SHOWN_MESSAGES).lastOrNull()
+        if (row == null || newest == null) cancel(context, conversationId) else notify(context, engine, row, newest, silent = true, wake = false)
     }
 
     /** After a reply the engine refused: the conversation's notification says it wasn't sent (no reply then). */

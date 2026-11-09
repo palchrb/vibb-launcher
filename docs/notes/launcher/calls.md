@@ -350,3 +350,48 @@ design 79 (the phone book as a list, with a photo the kid picks or takes); a fir
   number would pass the phone's check (the server's list is static too).
 - **The upload's step is pure (code QA L4):** `recordsAfterUpload` (only the sent request moves, only while PENDING)
   and `uploadGoesOn` (a RETRY ends the upload), tested in `ContactRequestsTest`.
+
+## The lock glance's Meldinger row, step 5 (design 77 §6.8; branch `sms-glance`)
+
+The glance's side (where the rows sit, the look, the tap, the swipe): `docs/notes/launcher/lock-and-glance.md`, "The
+Meldinger rows". What was decided (the design left it open):
+
+- **One row per conversation** with unread messages, like the missed-call rows (one per contact) and every app's
+  conversation rows - no folding into "Mamma og 2 til": each row opens its own thread and can be swiped away on its
+  own, and the glance's own limits (8 rows, "+ N til") hold many. A group (D12) is one row named by its members, its
+  text "Pappa: ..." with the switch on. A missed call and a message from one contact are two rows.
+- **Where:** Dagen's reminder row stays first (the one row with a deadline); then the rows newest first by time - the
+  missed calls, the apps' conversations and ours together. A row's time is its newest unread message's.
+- **Only accepted messages:** the rows are built from `engine.conversations()`, which holds only shown messages - a
+  message held for the parent (D16) or for the rules (D15), and a blocked one, has no conversation, so a stranger never
+  makes a row, not even its sender. A message the callback window let in (D4 rule 2) is accepted: it shows, its number
+  as the name, "Ukjent avsender: ..." before the text with the switch on.
+- **Modes and time rules - the engine's summary decides:** the row shows whenever the conversation has unread
+  messages, the same count as Home's badge (`SmsHome`), in every mode: in "Av"/"Ikke styrt" no new message arrives,
+  and what was left unread before still shows and opens the read-only thread. Under a time rule the row shows (the
+  message was notified, silently, §6.7), and its tap takes the thread only where the rule allows calls - the message
+  screens' own rule (`messagesUsableUnder`), else the plain keypad; from the lock with a rule in force it is handed to
+  the time-rule screen, as every other row.
+- **The text:** only with `call_policy.sms_lock_text` (managed rules that say so; unknown or unmanaged rules: none),
+  read on the engine thread only then (`SmsHome.refresh`, `smsLockText`), cleaned as the glance's other texts
+  (`cleanGlanceText`, 200 characters). With the switch off the row never says more than the name and the count - not
+  "Bilde" either.
+- **When it goes:** the thread read (opening it marks the messages read: `Read` -> the summary's refresh), the
+  message or the conversation deleted (`MessageDeleted`), and a swipe or "Fjern" on the lock (`SmsGlance.dismiss`:
+  hidden in memory until the conversation's next message, our notification of it cancelled unless a newer message came during the drag, nothing marked read - Home's
+  badge stays, as for a dismissed missed call).
+- **The notice wake** (launcher round 7, the parent's `lock_wake_on_notification`; the PWA's line says "tapte anrop og
+  meldinger" since this step): our SMS notification's post is a notice that came (`SmsNotifier.notify` ->
+  `PinLockRuntime.noticeCame()` on the main thread, as the missed-call notice's), so the switch and `noticeWakeAllowed`
+  decide the rest - switch off, nothing changes. Pure `smsPostAlerts`, round 7's conditions for an app's notice:
+  - the post went through and is a message's own (a held or blocked message is never posted; the reply's "not sent"
+    update, a group move's quiet re-post and a message read in the thread in front never wake);
+  - not silent (a time rule without calls, a picture told again);
+  - no Do Not Disturb at all, fail closed (code QA H1): a silent bedtime that allows calls has our own zen rule on,
+    which lets no message through - the screen stays dark too;
+  - notifications on, the channel at DEFAULT or above;
+  - the rows gain a row (code QA M1, `smsGainsRow`): the conversation's only unread message, or the first one after its
+    row was swiped away. Twelve messages from a cousin wake once, as twelve in one Element X room do.
+- **A group MMS leaving a one-to-one conversation** (D12; step 3b's code QA L8): `SmsNotifier.afterMove` rebuilds that
+  conversation's notification quietly from what is still unread there (`smsNotifiedMessages`), and cancels it only when
+  nothing is - before, a group's message took away the sender's own unread messages from the shade.

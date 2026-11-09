@@ -483,6 +483,18 @@
         <item quantity="other">%1$d nye</item>
     </plurals>
     <string name="glance_group_spoken">Gruppe %1$s, siste fra %2$s</string>
+    <!-- Design 77 §6.8: Meldinger-raden på låseskjermen. -->
+    <string name="glance_sms_new">Ny melding</string>
+    <plurals name="glance_sms_new_many">
+        <item quantity="one">%1$d ny melding</item>
+        <item quantity="other">%1$d nye meldinger</item>
+    </plurals>
+    <string name="glance_sms_from">Ny melding fra %1$s</string>
+    <plurals name="glance_sms_from_many">
+        <item quantity="one">%1$d ny melding fra %2$s</item>
+        <item quantity="other">%1$d nye meldinger fra %2$s</item>
+    </plurals>
+    <string name="glance_sms_action">Lås opp og åpne Meldinger</string>
     <string name="glance_rule_card_description">%1$s, til %2$s</string>
     <!-- The time-rule screen's card read aloud (launcher round L6): "School, until 14:30", then what still works. -->
     <string name="lock_rule_card_spoken_note">%1$s. %2$s</string>

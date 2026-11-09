@@ -2531,6 +2531,34 @@ The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080
   provider (the stand-in writes it), HEIF/AVIF, the parse service dying on a crafted message (JVM tests:
   `MmsEngineTest`'s three deaths) - step 0 on the Jelly Star.
 
+### 6v, step 5: the lock glance's Meldinger rows (design 77 §6.8)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-09, branch `sms-glance`, against a throwaway server
+seeded as step 2's (calls and SMS "Styrt av Vibb", Mamma, Pappa, Bestemor) plus a Child PIN (`kid_pin_hash`/`_salt`,
+PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credential). The emulator was started under
+`flock ~/build.lock` and held it while it ran: a Gradle build that started under a first try OOM-killed it.
+
+- `adb emu sms send +4790000001 ...`, two from Pappa and one from a stranger `+4790000041`, then power off and on:
+  the glance shows "Pappa / 2 nye meldinger" and "Mamma / Ny melding", newest first, each with the contact's avatar
+  and the teal message badge; no row for the stranger (held, D16). TalkBack's text (UI dump): "2 nye meldinger fra
+  Pappa, 19:11".
+- `device_policy.sms_lock_text = 1`, a sync: "Pappa · 2 nye / Og matpakka", "Mamma / Middag kl 17, kommer du hj…" (one
+  line under 720 dp).
+- A tap on Mamma's row: "Skriv koden for å åpne Meldinger" / "Enter your code to open Messages"; the PIN opens her
+  thread (`GlanceOpener: Glance: opened the messages`), Back gives the list. At the next lock-up her row is gone (read).
+- Pappa's row swiped sideways: gone (`Glance: a row dismissed (sms)`); his next SMS brings it back as "· 3 nye".
+- **The notice wake** (after the code QA's H1/M1, a6ba594d), with `device_policy.lock_wake_on_notification = 1` and the
+  screen off, 35 s between steps (the gate's 30 s gap):
+  - the first message after a row was swiped away lights the lock (`PinLock: Notice wake`);
+  - the next message in that row doesn't;
+  - a new row's message under `cmd notification set_dnd priority` doesn't;
+  - with Do Not Disturb off again, it does.
+
+  The AVD's "Stay awake" (`stay_on_while_plugged_in` 1) keeps a woken screen on past round 7's 15 s, so turn it off by
+  hand between the steps (`docs/review/qa-sms-glance.md`, "L4's emulator run").
+- The glance's window is `FLAG_SECURE`: screenshots with `adb emu screenrecord screenshot <host path>`; the language
+  with `cmd locale set-app-locales me.vibb.launcher.debug --locales nb` right before the lock-up (Home undoes it).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
