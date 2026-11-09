@@ -60,6 +60,16 @@
     <string name="phone_book_action_message">Message %1$s</string>
     <string name="phone_book_action_message_in">Message %1$s in %2$s</string>
     <string name="phone_book_waiting">Waiting for an answer</string>
+    <!-- Design 79 §4: the search in the phone book and Meldinger. -->
+    <string name="phone_book_search">Search</string>
+    <string name="messages_search">Search names</string>
+    <string name="search_clear">Clear search</string>
+    <string name="search_nothing_found">Nothing found</string>
+    <plurals name="search_hits">
+        <item quantity="one">%d result</item>
+        <item quantity="other">%d results</item>
+    </plurals>
+    <string name="phone_book_ask_named">Ask to add “%1$s”</string>
     <!-- Design 77 §14 / design 79 §7: the kid's request for a new contact. -->
     <string name="contact_request_open">Ask for a new contact</string>
     <string name="contact_request_title">Ask for a contact</string>

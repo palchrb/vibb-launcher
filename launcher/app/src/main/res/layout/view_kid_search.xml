@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's search (design 79 §4, the music app's pill in Views): a 44 dp pill under the header, not scrolling - the
+     magnifier, the field, an "×" while it holds text - and a small count line under it ("3 treff", a polite live region,
+     KidSearchField). The field never takes focus by itself: this container takes the window's first focus. No menus
+     or text actions (NoTextActions), no autofill, no suggestions (KidScreensEscapeTest). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/kid_search"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:orientation="vertical"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:id="@+id/kid_search_pill"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:addStatesFromChildren="true"
+        android:background="@drawable/bg_kid_search"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_kid_search"
+            android:tint="@color/kid_core_dim" />
+
+        <EditText
+            android:id="@+id/kid_search_field"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:background="@null"
+            android:fontFamily="@font/nunito_bold"
+            android:imeOptions="actionSearch|flagNoExtractUi"
+            android:importantForAutofill="no"
+            android:inputType="text|textNoSuggestions"
+            android:maxLength="40"
+            android:maxLines="1"
+            android:textColor="@color/kid_ink"
+            android:textColorHint="@color/kid_core_dim"
+            android:textCursorDrawable="@drawable/kid_search_cursor"
+            android:textSize="16sp" />
+
+        <ImageButton
+            android:id="@+id/kid_search_clear"
+            android:layout_width="48dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/search_clear"
+            android:padding="13dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_kid_search_clear"
+            android:tint="@color/kid_core_dim"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/kid_search_count"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:accessibilityLiveRegion="polite"
+        android:fontFamily="@font/nunito_bold"
+        android:paddingStart="14dp"
+        android:textColor="@color/kid_ink_dim"
+        android:textSize="12sp"
+        android:visibility="gone" />
+</LinearLayout>

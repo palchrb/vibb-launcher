@@ -36,6 +36,11 @@
             android:visibility="gone" />
     </FrameLayout>
 
+    <!-- Design 79 §4: the search pill from 8 contacts, under the header, not scrolling. -->
+    <include
+        android:id="@+id/phone_book_search"
+        layout="@layout/view_kid_search" />
+
     <TextView
         android:id="@+id/phone_book_info"
         android:layout_width="match_parent"
@@ -53,6 +58,11 @@
         android:layout_marginTop="4dp"
         android:layout_weight="1"
         android:clipToPadding="false" />
+
+    <!-- "Fant ingenting", and "Be om å legge til «…»" while the kid can ask. -->
+    <include
+        android:id="@+id/phone_book_empty"
+        layout="@layout/view_kid_search_empty" />
 
     <include
         android:id="@+id/phone_book_request_form"

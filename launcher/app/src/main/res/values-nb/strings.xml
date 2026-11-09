@@ -45,6 +45,16 @@
     <string name="phone_book_action_message">Send melding til %1$s</string>
     <string name="phone_book_action_message_in">Send melding til %1$s i %2$s</string>
     <string name="phone_book_waiting">Venter på svar</string>
+    <!-- Design 79 §4: søket i telefonboka og Meldinger. -->
+    <string name="phone_book_search">Søk</string>
+    <string name="messages_search">Søk etter navn</string>
+    <string name="search_clear">Tøm søket</string>
+    <string name="search_nothing_found">Fant ingenting</string>
+    <plurals name="search_hits">
+        <item quantity="one">%d treff</item>
+        <item quantity="other">%d treff</item>
+    </plurals>
+    <string name="phone_book_ask_named">Be om å legge til «%1$s»</string>
     <!-- Design 77 §14 / design 79 §7: barnets forespørsel om en ny kontakt. -->
     <string name="contact_request_open">Be om ny kontakt</string>
     <string name="contact_request_title">Be om ny kontakt</string>

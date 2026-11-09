@@ -167,6 +167,30 @@ class KidScreensEscapeTest {
         assertTrue(ways.contains("CallSystem.placeCall(this, contact.number)") && ways.contains("ContactSheet.openMessage(this, action.intent)"))
     }
 
+    /** Design 79 §4.1 (QA L3): the search pill - no menu or text action, no autofill or name hint, no suggestions, and it
+     * never takes focus by itself (its container takes the window's first focus; nothing asks for the field's). */
+    @Test
+    fun `the search pill opens nothing and never takes focus by itself`() {
+        val field = src("ui/search/KidSearchField.kt").readText()
+        assertTrue(field.contains("NoTextActions.apply(input)"))
+        assertTrue(!field.contains("requestFocus") && !field.contains("showSoftInput"))
+        val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(listOf(File("src/main/res/layout/view_kid_search.xml"), File("app/src/main/res/layout/view_kid_search.xml")).first { it.exists() })
+        val ns = "http://schemas.android.com/apk/res/android"
+        val all = doc.getElementsByTagName("*")
+        val nodes = (0 until all.length).map { all.item(it) as org.w3c.dom.Element }
+        val input = nodes.single { it.tagName == "EditText" }
+        assertEquals("no", input.getAttributeNS(ns, "importantForAutofill"))
+        assertEquals("text|textNoSuggestions", input.getAttributeNS(ns, "inputType"))
+        assertTrue(nodes.none { it.tagName == "requestFocus" })
+        val container = doc.documentElement
+        assertEquals("true", container.getAttributeNS(ns, "focusableInTouchMode"))
+        for (screen in listOf("calls/PhoneBookActivity.kt", "ui/messages/MessagesActivity.kt")) {
+            val text = src(screen).readText()
+            assertTrue(screen, text.contains("KidSearchField(") && !text.contains("kidSearchField.requestFocus"))
+        }
+    }
+
     @Test
     fun `only app tiles have a long-press menu`() {
         val adapter = src("ui/home/HomeGridAdapter.kt").readText()

@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -16,7 +17,11 @@ import com.kidslauncher.mdm.sms.SmsHome
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.search.KidSearchField
+import com.kidslauncher.mdm.ui.search.PhoneBookBack
 import com.kidslauncher.mdm.ui.search.listCollator
+import com.kidslauncher.mdm.ui.search.phoneBookBack
+import com.kidslauncher.mdm.ui.search.searching
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
@@ -52,6 +57,20 @@ class PhoneBookActivity : UIObjectActivity() {
     private lateinit var adapter: PhoneBookAdapter
     /** Design 77 §14: the kid's contact request - the header's "+" and the form. */
     private lateinit var requestForm: ContactRequestForm
+    /** Design 79 §4: the search pill (from 8 contacts). */
+    private lateinit var search: KidSearchField
+
+    /** Back (QA N4): the request form first, then the search's text, then the phone book leaves ([phoneBookBack]). */
+    private val back = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            when (phoneBookBack(requestForm.isOpen, search.query)) {
+                PhoneBookBack.CLOSE_FORM -> requestForm.close()
+                PhoneBookBack.CLEAR_SEARCH -> search.clear()
+                PhoneBookBack.LEAVE -> {}
+            }
+            render()
+        }
+    }
     private var missed: Map<String, ContactMissed> = emptyMap()
 
     /** This visit's top ([visitTopAfter]); `null` until the visit's first missed calls are loaded - the list waits for
@@ -100,7 +119,9 @@ class PhoneBookActivity : UIObjectActivity() {
         // The keyboard (the request form): the page's bottom takes it (design 79 §3.5, QA L3).
         KidInsets.apply(binding.root, ime = true)
         binding.phoneBookPlus.setOnClickListener { requestForm.open() }
-        requestForm = ContactRequestForm(this, binding) { render() }
+        search = KidSearchField(binding.phoneBookSearch.root, R.string.phone_book_search) { render() }
+        requestForm = ContactRequestForm(this, binding, onModeChanged = { render() }, onSent = { search.clear() })
+        onBackPressedDispatcher.addCallback(this, back)
         restoreVisit(savedInstanceState)
         requestForm.restore(savedInstanceState)
         // Once: not again after a recreation.
@@ -289,12 +310,35 @@ class PhoneBookActivity : UIObjectActivity() {
         val emergency = view.contacts.mapNotNullTo(mutableSetOf()) { c -> c.number.takeIf { CallSystem.isEmergencyOutgoing(this, it) } }
         val unread = view.contacts.associate { it.number to SmsHome.unreadFrom(it.number) }
         val requests = if (canAsk) contactRequestRows(ContactRequests.records(this)) else emptyList()
+        // The search: only while the kid can ask (calls managed and on); calls going off clears it.
+        if (!canAsk && search.query.isNotEmpty()) search.clear()
+        val query = search.query
         val list = phoneBookRows(
-            view, emergency, missed, unread, top, requests, query = "", listCollator(resources.configuration.locales[0]), canAsk,
+            view, emergency, missed, unread, top, requests, query, listCollator(resources.configuration.locales[0]), canAsk,
         )
+        // The pill hides while the form is up (QA N4).
+        search.setShown(list.search && !requestForm.isOpen)
+        KidInk.label(search.countLine, ink, dim = true)
+        val hits = list.rows.count { it is PhoneBookRow.Contact || it is PhoneBookRow.Waiting }
+        search.announce(if (searching(query) && list.search) hits else null)
+        bindEmpty(list, ink)
+        binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
+        back.isEnabled = phoneBookBack(requestForm.isOpen, query) != PhoneBookBack.LEAVE
         adapter.submitList(itemsOf(list.rows, rules, emergency)) { noteSightings() }
         // Design 77 §14: an answer shows once - this visit has shown it.
         if (list.rows.any { it is PhoneBookRow.Answer }) requestForm.answersShown()
+    }
+
+    /** "Fant ingenting" (design 79 §4.1), and "Be om å legge til «Lina»" while the kid can ask: the form with the
+     * query as the name. */
+    private fun bindEmpty(list: PhoneBookList, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
+        val empty = binding.phoneBookEmpty
+        empty.root.visibility = if (list.nothingFound && !requestForm.isOpen) View.VISIBLE else View.GONE
+        KidInk.label(empty.kidSearchEmptyText, ink)
+        val ask = list.askName
+        empty.kidSearchAsk.visibility = if (ask == null) View.GONE else View.VISIBLE
+        empty.kidSearchAsk.text = ask?.let { getString(R.string.phone_book_ask_named, it) }
+        empty.kidSearchAsk.setOnClickListener { if (ask != null) requestForm.open(ask) }
     }
 
     /** The rows with their buttons ([contactActions]: the card's rule), the apps' usability asked once per render. */

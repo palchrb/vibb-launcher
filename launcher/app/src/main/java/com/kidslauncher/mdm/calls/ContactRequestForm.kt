@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.calls
 
 import android.os.Bundle
 import android.view.View
-import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.doAfterTextChanged
 import com.kidslauncher.mdm.R
@@ -19,14 +18,17 @@ import com.kidslauncher.mdm.ui.NoTextActions
  * are managed and on ([canAsk], QA L2). The number field is the kid's only free number entry on the phone, and it only
  * asks: nothing here calls, texts or opens anything, and no field has a menu or a text action ([NoTextActions]).
  *
- * Kept apart from [PhoneBookActivity] (its layout `view_contact_request_form.xml`) so the look can change without
- * touching the phone book.
+ * Back is the phone book's ([com.kidslauncher.mdm.ui.search.phoneBookBack]: the form first). Kept apart from
+ * [PhoneBookActivity] (its layout `view_contact_request_form.xml`) so the look can change without touching the phone
+ * book.
  */
 class ContactRequestForm(
     private val activity: AppCompatActivity,
     private val binding: ActivityPhoneBookBinding,
-    /** The form opened or closed: the phone book binds its header and list again. */
+    /** The form opened or closed: the phone book binds its header, its list and its Back again. */
     private val onModeChanged: () -> Unit,
+    /** A request was kept: the phone book clears its search (design 79 §4.1, QA N4). */
+    private val onSent: () -> Unit = {},
 ) {
     private val form = binding.phoneBookRequestForm
     var isOpen = false
@@ -35,12 +37,7 @@ class ContactRequestForm(
     /** "Sendt" is showing in the form's place. */
     private var sent = false
 
-    private val back = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() = close()
-    }
-
     init {
-        activity.onBackPressedDispatcher.addCallback(activity, back)
         for (field in listOf(form.contactRequestName, form.contactRequestNumber, form.contactRequestChat)) {
             NoTextActions.apply(field)
             // A line for why not goes once the kid changes what was typed.
@@ -98,11 +95,9 @@ class ContactRequestForm(
     }
 
     private fun apply() {
-        back.isEnabled = isOpen
         form.root.visibility = if (isOpen) View.VISIBLE else View.GONE
         form.contactRequestFields.visibility = if (sent) View.GONE else View.VISIBLE
         form.contactRequestSent.visibility = if (sent) View.VISIBLE else View.GONE
-        binding.phoneBookList.visibility = if (isOpen) View.GONE else View.VISIBLE
         // The phone book renders again: its info line, the header and the rows follow [isOpen].
         onModeChanged()
     }
@@ -130,6 +125,7 @@ class ContactRequestForm(
                 }
                 sent = true
                 bindSent(check.name)
+                onSent()
                 apply()
             }
         }

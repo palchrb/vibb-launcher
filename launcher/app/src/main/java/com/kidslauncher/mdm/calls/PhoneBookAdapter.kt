@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.calls
 
 import android.content.Context
-import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -22,7 +21,6 @@ import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.MissedCallText
 import com.kidslauncher.mdm.ui.home.PressFeedback
-import com.kidslauncher.mdm.ui.search.SearchMatch
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 
@@ -198,7 +196,7 @@ class PhoneBookAdapter(
             val contact = row.contact
             val badgeCounts = ContactBadge(row.missed?.count ?: 0, row.unread)
             KidAvatars.bindContactBadge(badge, badgeCounts)
-            name.text = highlighted(context, contact.name, row.match)
+            name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
             val text = rowLine(context, row)
             line.visibility = if (text == null) View.GONE else View.VISIBLE
             line.text = text
@@ -262,7 +260,7 @@ class PhoneBookAdapter(
                 else -> return
             }
             itemView.setBackgroundResource(if (row is PhoneBookRow.Waiting) R.drawable.bg_phone_book_waiting else R.drawable.bg_phone_book_answer)
-            name.text = highlighted(context, request.name, match)
+            name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, request.name, match)
             val words = context.getString(requestLineWords(request.line))
             line.text = words
             itemView.contentDescription = context.getString(R.string.contact_request_row_description, request.name, words)
@@ -297,14 +295,6 @@ class PhoneBookAdapter(
             RequestLine.CAPPED -> R.string.contact_request_capped
             RequestLine.KNOWN -> R.string.contact_request_known
             RequestLine.NOT_SENT -> R.string.contact_request_not_sent
-        }
-
-        /** The name with the search's matched part in peach (design 79 §4.1). */
-        fun highlighted(context: Context, text: String, match: SearchMatch?): CharSequence {
-            if (match == null || match.start >= match.end || match.end > text.length) return text
-            return SpannableString(text).apply {
-                setSpan(ForegroundColorSpan(context.getColor(R.color.kid_accent)), match.start, match.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
         }
 
         /**
