@@ -45,6 +45,20 @@ fun smsGlanceRow(conversation: Conversation, newestFirst: List<Message>, showTex
     )
 }
 
+/** `NotificationManager.IMPORTANCE_DEFAULT`: the lowest importance that makes a sound (pure here). */
+private const val SMS_ALERT_IMPORTANCE = 3
+
+/**
+ * Whether our message notification's post alerts - and so may wake the screen on the lock (launcher round 7 §3, as the
+ * missed-call notice's alerting post; `PinLockRuntime.noticeCame`, whose gate and the parent's
+ * `lock_wake_on_notification` decide the rest): only an accepted message's post that went through ([posted]), not
+ * [silent] (a time rule without calls stores and notifies silently, a picture that arrived late is told again quietly),
+ * with notifications on ([enabled]) and the channel at an alerting importance ([channelImportance]; `null` = unknown,
+ * no). Held and blocked messages are never posted; the reply's "not sent" update isn't this post.
+ */
+fun smsPostAlerts(posted: Boolean, silent: Boolean, enabled: Boolean, channelImportance: Int?): Boolean =
+    posted && !silent && enabled && channelImportance != null && channelImportance >= SMS_ALERT_IMPORTANCE
+
 /** The rows the kid hasn't swiped away: [hidden] holds, per conversation id, the newest unread message's `seq` at the
  * swipe - a newer message brings the row back. */
 fun smsGlanceShown(rows: List<GlanceSmsRow>, hidden: Map<String, Long>): List<GlanceSmsRow> =

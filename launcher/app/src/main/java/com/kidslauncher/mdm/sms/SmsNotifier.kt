@@ -43,6 +43,8 @@ private const val SHOWN_MESSAGES = 5
  * notified.
  */
 object SmsNotifier {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(
@@ -97,7 +99,14 @@ object SmsNotifier {
                 .setSilent(silent)
                 .setContentIntent(openIntent(context, conversation.id))
             if (canSend) builder.addAction(replyAction(context, conversation.id))
-            NotificationManagerCompat.from(context).notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
+            val manager = NotificationManagerCompat.from(context)
+            manager.notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
+            // Launcher round 7 §3: an accepted message's alerting post may wake the screen on the lock - the parent's
+            // switch and the lock's gate decide (as the missed-call notice's). Only that it came, nothing of it.
+            val importance = manager.getNotificationChannel(channel)?.importance
+            if (smsPostAlerts(posted = true, silent = silent, enabled = manager.areNotificationsEnabled(), channelImportance = importance)) {
+                main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
+            }
         } catch (e: SecurityException) {
             Log.w(LOG_TAG, "No permission to notify")
         } catch (e: Exception) {

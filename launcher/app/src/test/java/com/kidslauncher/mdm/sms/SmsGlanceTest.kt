@@ -115,6 +115,32 @@ class SmsGlanceTest {
         assertEquals(listOf(newer, sms, older), glanceWithSms(listOf(newer, older), listOf(sms)))
     }
 
+    /** Launcher round 7 §3 for SMS: only an accepted message's alerting post is a notice that came - the parent's switch
+     * and the lock's gate (noticeWakeAllowed) decide the rest. */
+    @Test
+    fun `the notice wake - only an alerting post of an accepted message`() {
+        assertTrue(smsPostAlerts(posted = true, silent = false, enabled = true, channelImportance = 3))
+        assertTrue(smsPostAlerts(posted = true, silent = false, enabled = true, channelImportance = 4))
+        assertFalse("stored and notified silently (a time rule, a picture told again)", smsPostAlerts(true, silent = true, enabled = true, channelImportance = 3))
+        assertFalse("the silent channel", smsPostAlerts(true, false, true, channelImportance = 2))
+        assertFalse("the channel unknown", smsPostAlerts(true, false, true, channelImportance = null))
+        assertFalse("notifications off", smsPostAlerts(true, false, enabled = false, channelImportance = 3))
+        assertFalse("not posted", smsPostAlerts(posted = false, silent = false, enabled = true, channelImportance = 3))
+        val root = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val notifier = root.walkTopDown().first { it.name == "SmsNotifier.kt" }.readText()
+        // The one trigger: in notify, after the post, behind the pure rule, on the main thread - never in notSent.
+        assertEquals(1, Regex("""noticeCame\(""").findAll(notifier).count())
+        val notify = notifier.substringAfter("fun notify(").substringBefore("fun notSent(")
+        val post = notify.indexOf("manager.notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())")
+        val rule = notify.indexOf("if (smsPostAlerts(posted = true, silent = silent,")
+        val wake = notify.indexOf("main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }")
+        assertTrue(notify, post in 0 until rule && rule < wake)
+        // Its only callers post accepted messages (SmsRuntime.notifyShown, after the thread-in-front check).
+        val runtime = root.walkTopDown().first { it.name == "SmsRuntime.kt" }.readText()
+        assertEquals(1, Regex("""SmsNotifier\.notify\(""").findAll(runtime).count())
+        assertTrue(runtime.contains("SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow() || shown.again)"))
+    }
+
     /** SmsHome reads the text only through the parent's switch; the panel's SMS rows come only from the engine's
      * summary (GlanceReader skips our notifications). */
     @Test

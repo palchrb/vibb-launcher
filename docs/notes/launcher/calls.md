@@ -347,5 +347,9 @@ Meldinger rows". What was decided (the design left it open):
   message or the conversation deleted (`MessageDeleted`), and a swipe or "Fjern" on the lock (`SmsGlance.dismiss`:
   hidden in memory until the conversation's next message, our notification of it cancelled, nothing marked read - Home's
   badge stays, as for a dismissed missed call).
-- **Not done:** the notice wake (launcher round 7) still wakes only for the apps' notifications and missed calls, not
-  for an SMS - ours never pass `GlanceReader`. Open for the user.
+- **The notice wake** (launcher round 7, the parent's `lock_wake_on_notification`): our SMS notification's alerting post
+  is a notice that came (`SmsNotifier.notify` -> `PinLockRuntime.noticeCame()` on the main thread, as the missed-call
+  notice's), so the switch and `noticeWakeAllowed` decide the rest - switch off, nothing changes. Pure `smsPostAlerts`:
+  the post went through, not silent (a time rule without calls, a picture told again), notifications on, the channel at
+  DEFAULT or above. A held or blocked message is never posted, the reply's "not sent" update and a message read in the
+  thread in front never wake.

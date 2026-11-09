@@ -1275,7 +1275,8 @@ Design 34's look: night ground, Nunito, `kid_tile`s, the one peach accent, `KidH
   - a tap opens through `GlanceOpener` as the missed-call row does.
   - Our own notifications stay out of `GlanceReader` (it skips ours). The row reads the engine.
   - As built (step 5, 2026-11-09): one row per conversation with unread messages, among the other rows by time, in
-    every mode and under a time rule (the tap only where the rule allows calls); never a held message. The decisions:
+    every mode and under a time rule (the tap only where the rule allows calls); never a held message; an alerting
+    post wakes the lock under the parent's existing notice-wake switch (round 7). The decisions:
     `docs/notes/launcher/calls.md`, "The lock glance's Meldinger row, step 5".
 
 ### 6.9 i18n

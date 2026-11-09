@@ -1496,7 +1496,7 @@ object PinLockRuntime {
 
     /**
      * A row came on the lock's glance page (`GlanceReader.posted`) or our missed-call notice alerted
-     * (`MissedCallNotifier`, posted here): wake the screen on the lock when [noticeWakeAllowed] says so.
+     * (`MissedCallNotifier`, posted here), or our SMS notification's post alerted (`SmsNotifier`, design 77 §6.8): wake the screen on the lock when [noticeWakeAllowed] says so.
      * Carries nothing about the notice - only that one came. The proximity read comes first (300 ms,
      * near = no wake). Main thread.
      */
