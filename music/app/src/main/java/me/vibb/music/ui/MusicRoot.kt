@@ -61,6 +61,12 @@ import me.vibb.music.sync.NewNotifier
 fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) {
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val hub by PlayerHub.state.collectAsStateWithLifecycle()
+    // qa-music-cant-play M3: a refusal stays on the player's cover over its retry (the web player clears its line at
+    // every start) until the attempt plays or ends otherwise - no flash back to colour per tap. Read at every new hub
+    // state; the time row still says "Kobler til…" from the live state meanwhile.
+    val heldRefusal = remember { arrayOfNulls<HeldRefusal>(1) }
+    heldRefusal[0] = holdRefusal(heldRefusal[0], hub.rendererState, hub.connecting, hub.entryId)
+    val playerState = shownState(heldRefusal[0], hub.rendererState)
     // the stored row and whether it has been read, as one value (the launch splash's contentReady)
     val rowRead by vm.nowRowRead.collectAsStateWithLifecycle()
     val row = rowRead?.row
@@ -159,7 +165,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                 // PLAN "Connecting…": from the tap until the renderer reports playing, a quiet line in the times' place
                 val timeRow = timeRow(onRoom, hub.connecting, held != null && hub.waiting, isSpotify(n.entry), hub.rendererState)
                 PlayerScreen(
-                    n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, hub.rendererState,
+                    n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, playerState,
                     timeRow = timeRow,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,

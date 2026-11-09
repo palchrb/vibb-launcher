@@ -1,17 +1,19 @@
 package me.vibb.music.ui
 
-import me.vibb.music.Fixtures.moduleFile
 import me.vibb.music.R
 import me.vibb.music.playback.RendererState
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * "Kan ikke spilles nå" on the player's cover (2026-11-09, mockup D): which states get the notice and its words, which
- * keep the quiet line, when play is greyed, and the greyed cover's colours.
+ * "Kan ikke spilles nå" on the player's cover (2026-11-09, mockup D; qa-music-cant-play): which states get the notice
+ * and its words, which keep the quiet line, when play is greyed, the refusal held over a retry, what fits a box, when
+ * the line under the entry name comes back, the carousel's page, and the greyed cover's colours. The cover's fit with
+ * the real words is FitTest's.
  */
 class CantPlayTest {
     @Test
@@ -30,11 +32,96 @@ class CantPlayTest {
             RendererState.SPOTIFY_ELSEWHERE, RendererState.SPOTIFY_STOPPED,
         )
         assertEquals(RendererState.entries.toSet(), expected.keys + line)
-        for ((state, notice) in expected) assertEquals(state.name, notice, cantPlayNotice(state))
+        for ((state, notice) in expected) {
+            assertEquals(state.name, notice, cantPlayNotice(state))
+            assertEquals(state.name, notice.playGreyed, playOff(cantPlayNotice(state)))
+        }
         for (state in line) assertNull(state.name, cantPlayNotice(state))
         assertNull(cantPlayNotice(null))
+        assertFalse(playOff(null))
         // never a room's state: design 50 §1.4 dims nothing on a room
         for (state in expected.keys) assertEquals(state.name, false, state.remote)
+    }
+
+    /** M3: a tap on a refused item keeps the notice over its attempt, until the attempt plays or ends otherwise. */
+    @Test
+    fun `a refusal is held over its retry and ends with a play, another line or another run`() {
+        val ask = RendererState.SPOTIFY_ASK_ADULT
+        var held = holdRefusal(null, ask, connecting = false, run = 6)
+        assertEquals(HeldRefusal(ask, 6), held)
+        // the tap: the web player clears its line and starts - the cover stays greyed
+        held = holdRefusal(held, null, connecting = true, run = 6)
+        assertEquals(ask, shownState(held, null))
+        // refused again: still the same notice, no flash in between
+        held = holdRefusal(held, ask, connecting = false, run = 6)
+        assertEquals(ask, shownState(held, ask))
+        // it plays after all (the adult fixed the account): connecting is over, the line gone
+        held = holdRefusal(held, null, connecting = true, run = 6)
+        held = holdRefusal(held, null, connecting = false, run = 6)
+        assertNull(held)
+        assertNull(shownState(held, null))
+        // another line in the attempt's place wins, and one without a notice ends the hold
+        assertEquals(HeldRefusal(RendererState.SPOTIFY_NEEDS_WIFI, 6), holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_NEEDS_WIFI, false, 6))
+        assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_ELSEWHERE, false, 6))
+        assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.UNREACHABLE, true, 6))
+        // another run (a new entry or the favourites) never inherits it
+        assertNull(holdRefusal(HeldRefusal(ask, 6), null, connecting = true, run = 7))
+        // nothing held without a refusal first
+        assertNull(holdRefusal(null, null, connecting = true, run = 6))
+    }
+
+    @Test
+    fun `what fits the box - the disc goes first, then the help line, then the title`() {
+        val title = 20.5f
+        val help = 16.4f
+        // all: 34 + 4 + 20.5 + 4 + 16.4 = 78.9
+        assertEquals(NoticeFit(disc = true, title = true, help = true), noticeFit(79f, title, help))
+        assertEquals(NoticeFit(disc = false, title = true, help = true), noticeFit(78f, title, help))
+        assertEquals(NoticeFit(disc = false, title = true, help = false), noticeFit(40f, title, help))
+        // no help line: the disc stays with the title while both fit
+        assertEquals(NoticeFit(disc = true, title = true, help = false), noticeFit(60f, title, null))
+        assertEquals(NoticeFit(disc = false, title = true, help = false), noticeFit(50f, title, null))
+        // a title that needs more than its lines, or more than the box: the "!" alone
+        assertEquals(NoticeFit(disc = true, title = false, help = false), noticeFit(200f, Float.POSITIVE_INFINITY, help))
+        assertEquals(NoticeFit(disc = false, title = false, help = false), noticeFit(20f, title, null))
+        // a help line that needs more than two lines goes; the disc stays with the title
+        assertEquals(NoticeFit(disc = true, title = true, help = false), noticeFit(200f, title, Float.POSITIVE_INFINITY))
+        assertFalse(noticeFit(200f, title, Float.POSITIVE_INFINITY).complete(hasHelp = true))
+    }
+
+    @Test
+    fun `the line under the entry name comes back only while the notice can't say it all`() {
+        val ask = RendererState.SPOTIFY_ASK_ADULT
+        val book = RendererState.SPOTIFY_NO_LISTENING_TIME
+        val all = NoticeFit(disc = true, title = true, help = true)
+        val titleOnly = NoticeFit(disc = false, title = true, help = false)
+        val mark = NoticeFit(disc = true, title = false, help = false)
+        assertFalse(headerLine(null, null, null))
+        // no notice: today's line
+        assertTrue(headerLine(RendererState.TAKEN_OVER, null, null))
+        // the notice says it all, or hasn't been measured yet: once only
+        assertFalse(headerLine(ask, cantPlayNotice(ask), all))
+        assertFalse(headerLine(ask, cantPlayNotice(ask), null))
+        // the help line gone: "Spør en voksen" comes back under "Kan ikke spilles nå"
+        assertTrue(headerLine(ask, cantPlayNotice(ask), titleOnly))
+        // ... but not when the line is the title itself
+        assertFalse(headerLine(book, cantPlayNotice(book), titleOnly))
+        // the title gone: always
+        assertTrue(headerLine(book, cantPlayNotice(book), mark))
+        assertTrue(headerLine(RendererState.SPOTIFY_NEEDS_WIFI, cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI), mark))
+        assertFalse(headerLine(RendererState.SPOTIFY_NEEDS_WIFI, cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI), titleOnly))
+    }
+
+    /** L2: the page the pager rests on, while it shows the loaded item - one page, also with two items. */
+    @Test
+    fun `the carousel greys the resting page of the loaded item only`() {
+        // two items: pages 10 and 12 are both item 0, the pager rests on 10
+        assertTrue(noticePage(10, settledPage = 10, n = 2, index = 0))
+        assertFalse(noticePage(12, settledPage = 10, n = 2, index = 0))
+        assertFalse(noticePage(11, settledPage = 10, n = 2, index = 0))
+        // a swipe settled on the next page before the player got there: no notice on it
+        assertFalse(noticePage(11, settledPage = 11, n = 2, index = 0))
+        assertTrue(noticePage(11, settledPage = 11, n = 2, index = 1))
     }
 
     @Test
@@ -52,19 +139,5 @@ class CantPlayTest {
         val grey = coverGrey(Palette.peach.copy(alpha = 0.5f))
         assertEquals(grey.red, grey.blue, 1e-5f)
         assertEquals(0.5f, grey.alpha, 1e-2f)
-    }
-
-    /** The player wires it: the line only without a notice, the cover and play read it (a source check, no Compose test here). */
-    @Test
-    fun `the player shows the notice in the line's place and keeps every button`() {
-        val screen = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue("the line gives way to the notice", screen.contains("rendererState?.takeIf { notice == null }"))
-        assertTrue("the cover gets the notice", screen.contains("PlayerArt(now, notice,"))
-        assertTrue("play greyed by the notice's rule", screen.contains("notice?.takeIf { it.playGreyed }"))
-        // play is still a button with the same action: a visual change only
-        assertTrue("play keeps its tap", screen.contains("onTogglePlay, row.play.dp, 32.dp,"))
-        // the carousel greys the loaded item's pages only
-        val carousel = moduleFile("src/main/java/me/vibb/music/ui/EpisodeCarousel.kt").readText()
-        assertTrue(carousel.contains("notice?.takeIf { carouselIndex(page, n) == now.index }"))
     }
 }

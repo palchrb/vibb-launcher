@@ -256,10 +256,10 @@ fun Cover(
     val other = coverBitmap(fallback.takeIf { it != hash }, decodePx)
     val bitmap = own ?: other
     val color = categoryColor(category)
-    val shade = { c: Color -> if (greyed) coverGrey(c) else c }
+    val end = lerp(color, Palette.bg, 0.8f)
     Box(
         modifier.clip(RoundedCornerShape(radius))
-            .background(Brush.linearGradient(listOf(shade(color), shade(lerp(color, Palette.bg, 0.8f))))),
+            .background(Brush.linearGradient(if (greyed) listOf(coverGrey(color), coverGrey(end)) else listOf(color, end))),
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap != null) {

@@ -97,8 +97,9 @@ Moved from music/CLAUDE.md on 2026-11-01.
   under the entry name was too easy to miss ("Spør en voksen" small and grey while play looked normal). Now, when the
   loaded item can't play here, its cover is greyed and darkened (the mockup's CSS `grayscale(1) brightness(.28)
   contrast(.8)`: `coverGreyLevel`, the picture through `coverGreyMatrix`, the fallback gradient through `coverGrey`
-  and its category glyph left out - it would cross the notice at the centre; in the carousel the loaded item's pages only, the neighbours keep their colours) and a calm notice sits
-  on it - a 34 dp "!" disc in peach at 22 %, a bold line, a smaller line - and the line under the entry name goes (said
+  and its category glyph left out - it would cross the notice at the centre; in the carousel only the page the pager
+  rests on while it shows the loaded item, `noticePage` - the neighbours keep their colours) and a calm notice sits on
+  it - a 34 dp "!" disc in peach at 22 %, a bold line, a smaller line - and the line under the entry name goes (said
   once). `cantPlayNotice(state)` is the rule, one exhaustive `when` (`CantPlayTest`):
   - **The notice** (the web player refused the item on this phone): `SPOTIFY_ASK_ADULT` "Kan ikke spilles nå" / "Spør
     en voksen om hjelp"; `SPOTIFY_NO_LISTENING_TIME` "Lydboka trenger lyttetid" / "Spør en voksen om hjelp";
@@ -109,14 +110,32 @@ Moved from music/CLAUDE.md on 2026-11-01.
     `LOST_SESSION`, `UNREACHABLE` - the speaker's state, not the item's; a tap or the next poll may bring it back, and
     design 50 §1.4 dims nothing on a room), `SPOTIFY_ELSEWHERE` (the account plays elsewhere: a tap takes it back) and
     `SPOTIFY_STOPPED` ("Stoppet - trykk spill": the tap is the fix).
-  - **Play is greyed** (`Palette.track`, its glyph white at 45 %, TalkBack's state the notice's title) only when a tap
-    can't help: `SPOTIFY_ASK_ADULT` and `SPOTIFY_NO_LISTENING_TIME`, both waiting on an adult. It stays lit for Wi-Fi,
-    internet, the quota and Widevine (a tap may work: the network back, the quota over, a new web player). Greyed is
-    a look only: play is still a button and does what it did (behaviour stays vibb's and the renderer's).
+  - **Play is greyed** (`playOff`: `Palette.track`, its glyph white at 45 %, the play button's TalkBack state the
+    notice's title) only when a tap can't help: `SPOTIFY_ASK_ADULT` and `SPOTIFY_NO_LISTENING_TIME`, both waiting on an
+    adult. It stays lit for Wi-Fi, internet, the quota and Widevine (a tap may work: the network back, the quota over,
+    a new web player; `SPOTIFY_NOT_ON_PHONE`'s help line against lit play is with the user, qa-music-cant-play L3).
+    Greyed is a look only: play is still a button and does what it did (behaviour stays vibb's and the renderer's) -
+    nothing pushes an adult's fix in the PWA to the phone, so the kid's tap is the retry.
+  - **A retry keeps the notice** (qa-music-cant-play M3): the web player clears its line at every start (`begin`) and
+    sets it again only when the start fails, so the cover would flash back to colour and play to peach for each tap.
+    `MusicRoot` holds the last refusal (`holdRefusal`, `HeldRefusal`: the state and its run, `PlayerHub.State.entryId`)
+    while an attempt in the same run is on its way (`connecting`, until the renderer reports playing) and shows it
+    (`shownState`); a real playing state, another line or another run ends the hold. Next and previous in the run keep
+    it too (an account's or a book's refusal is the run's; the next item's start says otherwise by playing). The time
+    row reads the live state, so it says "Kobler til…" under the still greyed cover meanwhile.
+  - **The notice fits its cover** (qa-music-cant-play M1, M2): the cover is 224 dp at most and shrinks (a shuffle row
+    on the Jelly Star: 150 dp; a large font or display size; the carousel's pages down to 96 dp). The text is dp, not
+    the font scale's sp (`NOTICE_TITLE_DP` 15, `NOTICE_HELP_DP` 12, as `SKIP_NUMBER_DP`: a fixed box), 6 dp at the
+    sides, the title up to three lines, the help up to two. The overlay measures its words in its own box and
+    `noticeFit` drops what doesn't fit - the disc, then the help line, then the title (the "!" alone); the player then
+    brings the line under the entry name back (`headerLine`: the title gone, or the help line gone where the line says
+    more than the title - "Spør en voksen" under "Kan ikke spilles nå"). FitTest measures every notice in both languages
+    at 224, 150, 120 and 96 dp: all of it from 150, title and help from 120. English says "Can't play now" (one line).
   - Every button stays where it was and keeps working - previous, next and ±15 skip past one broken track (a
     favourites queue's, say). No red, nothing blinking (the launcher-look rule).
-  - TalkBack: the notice's two lines are the cover's description (on the carousel's page they merge into its play
-    label) and a polite live region, so they are said when they appear.
+  - TalkBack: on the single cover the overlay is its own node - the notice's two lines as its description and a polite
+    live region, said when they appear. On a carousel page (a button, which merges its children) the overlay is silent
+    and the page carries the notice as its state description and live region; its label stays its own ("Spill X").
 - **No source on the kid's screens** (26c step 8, the user's decision of 2026-10-14): a Spotify entry is a tile like any
   other. No string value says "Spotify" (`SourceScanTest` pins both languages, the `ui/` sources' literals, and those of
   `playback/`, `bridge/` and `sync/` - the notification, the lock screen and Home's card - with two allowlisted non-kid

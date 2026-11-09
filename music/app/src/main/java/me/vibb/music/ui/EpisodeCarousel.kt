@@ -31,6 +31,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.delay
@@ -59,6 +63,8 @@ import kotlin.math.sign
 fun PlayerArt(
     now: NowView,
     notice: CantPlayNotice?,
+    /** What of the notice fits its cover ([CantPlayOverlay]): the player brings its line back when not all of it. */
+    onNoticeFit: (NoticeFit) -> Unit,
     modifier: Modifier,
     onSkip: (index: Int, forward: Boolean) -> Unit,
     onTogglePlay: () -> Unit,
@@ -69,7 +75,7 @@ fun PlayerArt(
             // A new queue (a cover tap, a pick, the shuffle toggle, an item dropped by a listing) starts
             // the pager over on the current item (QA M7 b).
             key(now.pagerKey) {
-                EpisodeCarousel(now, notice, maxWidth.value, playerArt(maxWidth.value, maxHeight.value, true), onSkip, onTogglePlay, onLanding)
+                EpisodeCarousel(now, notice, onNoticeFit, maxWidth.value, playerArt(maxWidth.value, maxHeight.value, true), onSkip, onTogglePlay, onLanding)
             }
         } else {
             LaunchedEffect(Unit) { onLanding(null) }
@@ -80,7 +86,7 @@ fun PlayerArt(
                 Modifier.sizeIn(maxWidth = PLAYER_ART_MAX_DP.dp, maxHeight = PLAYER_ART_MAX_DP.dp).aspectRatio(1f).shadow(12.dp, RoundedCornerShape(26.dp)),
                 fallback = now.fallback,
                 greyed = notice != null,
-            ) { notice?.let { CantPlayOverlay(it) } }
+            ) { notice?.let { CantPlayOverlay(it, speak = true, onFit = onNoticeFit) } }
         }
     }
 }
@@ -98,6 +104,7 @@ fun PlayerArt(
 private fun EpisodeCarousel(
     now: NowView,
     notice: CantPlayNotice?,
+    onNoticeFit: (NoticeFit) -> Unit,
     widthDp: Float,
     artDp: Float,
     onSkip: (index: Int, forward: Boolean) -> Unit,
@@ -180,8 +187,11 @@ private fun EpisodeCarousel(
         }
         // a favourites queue's page shows its own entry's cover (design r12 §3.2)
         val own = now.entryOf(item)
-        // the loaded item's pages only: the renderer's refusal is of that item, the neighbours may play
-        val refused = notice?.takeIf { carouselIndex(page, n) == now.index }
+        // the loaded item's resting page only: the renderer's refusal is of that item, the neighbours may play
+        val refused = notice?.takeIf { noticePage(page, pager.settledPage, n, now.index) }
+        // TalkBack (qa-music-cant-play L1): the page is a button, so the page says the notice - its state, a polite live
+        // region - and the overlay stays silent; the label is the page's own ("Spill X")
+        val refusedWords = refused?.let { noticeSpoken(it) }
         Cover(
             item.artHash ?: own.cover, now.categoryOf(item), 26.dp, 104.dp,
             Modifier.size(artDp.dp)
@@ -196,6 +206,12 @@ private fun EpisodeCarousel(
                     translationX = sign(offset) * pull * f
                 }
                 .shadow(if (page == pager.currentPage) 12.dp else 0.dp, RoundedCornerShape(26.dp))
+                .semantics {
+                    if (refusedWords != null) {
+                        stateDescription = refusedWords
+                        liveRegion = LiveRegionMode.Polite
+                    }
+                }
                 .button(label) {
                     when (val tap = carouselTap(page, pager.targetPage, pager.currentPage, n, pager.pageCount)) {
                         is CarouselTap.Play -> onTogglePlay()
@@ -206,6 +222,6 @@ private fun EpisodeCarousel(
                 },
             fallback = own.cover,
             greyed = refused != null,
-        ) { refused?.let { CantPlayOverlay(it) } }
+        ) { refused?.let { CantPlayOverlay(it, speak = false, onFit = onNoticeFit) } }
     }
 }
