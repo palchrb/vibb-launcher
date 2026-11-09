@@ -255,6 +255,28 @@ parent decides on the Calls page. It follows design r13's time request.
   `POST /api/devices/contact-request/photo`, re-encoded and size-checked like a contact photo), a nullable
   `device_contact_requests.photo_hash` column, and "Legg til…" offering it as the contact's photo behind its own
   switch, as the Matrix ID. An older server takes the request without it; the 1 KiB body limit is untouched.
+- **The code QA's fix round** (`docs/review/qa-contact-request.md`):
+  - **A live request** (H1) is `state = 'open' AND received_at > live_since(now)` (7 days), the window the card, the
+    policy and the phone keep. Only a live request counts for `known` and the five open, is prefilled, answered by
+    Add Contact (`from_request`, `mark_added`) and counted by the digest (`parent_events::waiting_count`). An older
+    open row has lapsed and blocks nothing; retention removes it at 30 days.
+  - **A family contact keeps its name** (M1): when the requested number is already in the family's address book,
+    "Legg til…" prefills that contact's name, read-only, with "Finnes allerede som «Mamma» - navnet beholdes. Anna
+    kalte det «…»"; and a save that carries a live `request` never renames an existing contact (`ON CONFLICT … SET
+    name = contacts.name`) - the kid's words never reach the other phones. **A later photo follows the same rule:**
+    from a request it never replaces an existing contact's photo.
+  - **One prefill source** (L1): a held number's link wins over `?request=`; a refused form carries its own `request`
+    or none.
+  - **A retry first** (L2): a stored id answers `accepted` before any check, so a changed country code or a retry past
+    day 7 never answers `invalid` for a request the parent has.
+  - **A short number** (L3) starts with "{kid} kan sende melding til kontakten" off and repeats "Kortnummer - kan
+    koste penger" under the number field; §14's other defaults stay. Raised with the user against §14's defaults.
+  - **"Bruk Matrix-ID-en" sets the Message button to Element X** (design 80 M6): ticked, the stored ID becomes the
+    contact's `message_address` and `message_app = 'element'`; the switch's sub-line says so.
+  - **The event's time** (N2) is when the server got the request (the inbox sorts and words it by that); the card
+    keeps `asked_at`.
 - Tests: `tests::contact_requests` (the contract's answers, the caps and limits, the card, "Legg til…" with and without
-  the tick and a forged one, "Avslå", the push and its switch, retention), `handlers::contact_requests::tests` (the
-  shared vectors), `parent_events::tests` (the words and target).
+  the tick and a forged one, "Avslå", the push and its switch, retention; the fix round's lapsed requests, a family
+  contact's kept name across two phones and Element X, the prefill and retry rules, decisions on their own phone and
+  "Add from the family", escaping and the push budget's digest), `handlers::contact_requests::tests` (the shared
+  vectors), `parent_events::tests` (the words and target), `i18n_pages` (the card and "Legg til…" in Norwegian).

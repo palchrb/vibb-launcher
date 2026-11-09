@@ -627,6 +627,362 @@ async fn the_push_and_its_switch() {
     );
 }
 
+/// An open row received `days` ago, as the intake would have stored it.
+async fn stored(app: &TestApp, device: i64, n: u32, number: &str, days: i64) {
+    let at = (Utc::now() - Duration::days(days)).timestamp_millis();
+    sqlx::query(
+        "INSERT INTO device_contact_requests (device_id, id, name, number, matrix_id, asked_at, received_at) \
+         VALUES (?, ?, 'Venn', ?, '@venn:example.org', ?, ?)",
+    )
+    .bind(device)
+    .bind(format!("{n:032x}"))
+    .bind(number)
+    .bind(at)
+    .bind(at)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// QA H1: an open request older than 7 days has lapsed everywhere - it blocks nothing (`known`, the five open), isn't
+/// prefilled or counted in the digest, and isn't marked by a later Add Contact.
+#[tokio::test]
+async fn a_lapsed_request_blocks_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    for n in 1..=5 {
+        stored(&app, id, n, &format!("+479123456{n}"), 8).await;
+    }
+    let digest = crate::parent_events::waiting_count(
+        &app.db,
+        crate::parent_events::Kind::ContactRequest,
+        id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(digest, Some(0));
+    let page = app
+        .get_page(&format!("/devices/{id}/calls?request={:032x}", 1), &cookie)
+        .await
+        .text();
+    assert!(
+        !page.contains("name=\"request\""),
+        "a lapsed request isn't prefilled"
+    );
+    assert!(
+        !page.contains(&format!("request-{:032x}", 1)),
+        "nor on the card"
+    );
+    // A new request, and one for a lapsed request's number: both taken.
+    assert_eq!(
+        post(&app, &token, body(9, "Ny", "+4791234500")).await.1,
+        json!({"accepted": true})
+    );
+    assert_eq!(
+        post(&app, &token, body(10, "Venn igjen", "+4791234561"))
+            .await
+            .1,
+        json!({"accepted": true})
+    );
+    // Add Contact with a lapsed number answers the live request, not the lapsed one.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/contacts"),
+        Some(&cookie),
+        &[("name", "Venn"), ("number", "+4791234561")],
+    )
+    .await;
+    let states: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, state FROM device_contact_requests WHERE device_id = ? AND number = '+4791234561' ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        states,
+        [
+            (format!("{:032x}", 1), "open".to_string()),
+            (format!("{:032x}", 10), "added".to_string())
+        ]
+    );
+}
+
+/// QA M1: "Legg til…" for a number the family already has keeps that contact's name - prefilled, read-only, said -
+/// and the save never renames it on the other phone, even when the form sends the kid's name. Ticked, the Matrix ID
+/// sets the Message button to Element X (design 80 M6).
+#[tokio::test]
+async fn a_request_never_renames_a_family_contact() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (anna, anna_token) = app.enrolled_device("Anna").await;
+    let (per, per_token) = app.enrolled_device("Per").await;
+    sqlx::query("UPDATE device_policy SET calls_mode = 'managed' WHERE device_id = ?")
+        .bind(per)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    contact(&app, per, "Mamma", "+4790000001").await;
+    let mut dum = body(1, "Dum", "900 00 001");
+    dum["matrix_id"] = json!("@mamma:example.org");
+    assert_eq!(post(&app, &anna_token, dum).await.1["accepted"], true);
+    let add = app
+        .get_page(
+            &format!("/devices/{anna}/calls?request={:032x}", 1),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        add.contains(r#"value="Mamma" maxlength="60" required readonly"#),
+        "{add}"
+    );
+    assert!(add.contains("Already a contact as «Mamma» - the name is kept. Anna called it «Dum»."));
+    let request = format!("{:032x}", 1);
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{anna}/contacts"),
+        Some(&cookie),
+        &[
+            ("name", "Dum"),
+            ("number", "+4790000001"),
+            ("switches", "on"),
+            ("outbound", "on"),
+            ("request", &request),
+            ("use_matrix", "on"),
+        ],
+    )
+    .await;
+    let name: String =
+        sqlx::query_scalar("SELECT name FROM contacts WHERE phone_number = '+4790000001'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(name, "Mamma");
+    let per_policy = app.policy(&per_token).await["call_policy"]["contacts"].clone();
+    assert_eq!(per_policy[0]["name"], "Mamma");
+    let (app_col, address): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT dc.message_app, dc.message_address FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ? AND c.phone_number = '+4790000001'",
+    )
+    .bind(anna)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        (app_col.as_deref(), address.as_deref()),
+        (Some("element"), Some("@mamma:example.org"))
+    );
+}
+
+/// QA L1-L3 and the L4 gaps on the form: one prefill source wins; a retry is `accepted` before any check; a short
+/// number starts with texting off and repeats the cost warning; a decided request doesn't open Add Contact; a refused
+/// Add Contact from a request keeps the request and the tick.
+#[tokio::test]
+async fn the_prefill_and_retry_rules() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let mut ola = body(1, "Ola", "+4791234567");
+    ola["matrix_id"] = json!("@ola:example.org");
+    assert_eq!(post(&app, &token, ola.clone()).await.1["accepted"], true);
+    // L2: the same id, now past a week by its own clock: still the request the server holds.
+    ola["asked_at_ms"] = json!((Utc::now() - Duration::days(8)).timestamp_millis());
+    assert_eq!(post(&app, &token, ola).await.1, json!({"accepted": true}));
+    // L1: a held number's link wins over a request's id.
+    let mixed = app
+        .get_page(
+            &format!(
+                "/devices/{id}/calls?request={:032x}&add_number=%2B4799999999",
+                1
+            ),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(mixed.contains(r#"value="+4799999999""#));
+    assert!(!mixed.contains("name=\"request\"") && !mixed.contains("name=\"use_matrix\""));
+    // L3: a short number.
+    assert_eq!(
+        post(&app, &token, body(2, "Konkurranse", "2160")).await.1["accepted"],
+        true
+    );
+    let short = app
+        .get_page(&format!("/devices/{id}/calls?request={:032x}", 2), &cookie)
+        .await
+        .text();
+    assert_eq!(input_checked(&short, "sms_out", "on"), Some(false));
+    assert_eq!(input_checked(&short, "outbound", "on"), Some(true));
+    assert!(short.contains("data-request-short"));
+    // A refused save from the request keeps it and the tick.
+    let request = format!("{:032x}", 1);
+    let refused = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[
+                ("name", "Ola"),
+                ("number", "12"),
+                ("switches", "on"),
+                ("request", &request),
+                ("use_matrix", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text();
+    assert!(html.contains(&format!(r#"name="request" value="{request}""#)));
+    assert_eq!(input_checked(&html, "use_matrix", "on"), Some(true));
+    // A declined request doesn't open Add Contact.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/calls/requests/{request}/decline"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    let declined = app
+        .get_page(&format!("/devices/{id}/calls?request={request}"), &cookie)
+        .await
+        .text();
+    assert!(!declined.contains(r#"id="add-contact" open"#));
+}
+
+/// QA L4: decisions stay on their own phone - another phone's id lands on the notice and stays open, an unknown phone
+/// is a 404, Anna's Add Contact with Per's number leaves Per's request open; "Add from the family" answers the request.
+#[tokio::test]
+async fn decisions_stay_on_their_phone() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let (per, per_token) = app.enrolled_device("Per").await;
+    assert_eq!(
+        post(&app, &per_token, body(1, "Ola", "+4791234567"))
+            .await
+            .1["accepted"],
+        true
+    );
+    let pers = format!("{:032x}", 1);
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{anna}/calls/requests/{pers}/decline"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{anna}/calls?notice=request_gone#requests").as_str())
+    );
+    let unknown = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/9999/calls/requests/{pers}/decline"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{anna}/contacts"),
+        Some(&cookie),
+        &[("name", "Ola"), ("number", "+4791234567")],
+    )
+    .await;
+    assert_eq!(rows(&app, per).await[0].4, "open");
+    // "Add from the family": Per gets the contact Anna has.
+    let contact_id: i64 =
+        sqlx::query_scalar("SELECT id FROM contacts WHERE phone_number = '+4791234567'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{per}/contacts"),
+        Some(&cookie),
+        &[("contact_id", &contact_id.to_string())],
+    )
+    .await;
+    assert_eq!(rows(&app, per).await[0].4, "added");
+}
+
+/// QA L4: a name with markup is escaped in the inbox and plain text in the push; past the push budget (three an
+/// hour, two days' caps across midnight) a request has no push of its own and the hour's digest counts what is live.
+#[tokio::test]
+async fn the_words_escape_and_the_budget_digests() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let mamma = app.admin_cookie().await;
+    subscribe(&app, &mamma, ENDPOINT).await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    for n in 1..=3 {
+        sqlx::query(
+            "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, happened_at, \
+             push_budget_key) VALUES (?, 'contact_request', ?, '', '', '/devices/1/calls', ?, 'request')",
+        )
+        .bind(id)
+        .bind(format!("earlier{n}"))
+        .bind(Utc::now().to_rfc3339())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        post(&app, &token, body(1, "\"<&x", "+4791234567")).await.1["accepted"],
+        true
+    );
+    let titles = |at| {
+        let app = &app;
+        async move {
+            crate::push::send_due(&app.state, at).await.unwrap();
+            app.pushes
+                .take()
+                .iter()
+                .map(|r| {
+                    super::web_push::payload(r)["notification"]["title"]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect::<Vec<String>>()
+        }
+    };
+    assert!(
+        titles(Utc::now()).await.is_empty(),
+        "past the budget: no push of its own"
+    );
+    assert_eq!(
+        titles(Utc::now() + Duration::minutes(61)).await,
+        ["Anna: 1 contact request is waiting"]
+    );
+    let inbox = app.get_page("/notifications", &mamma).await.text();
+    assert!(
+        inbox.contains("Anna asks for a new contact: &#34;&#60;&#38;x"),
+        "{inbox}"
+    );
+    // Within the budget the title carries the name as plain text.
+    sqlx::query("DELETE FROM parent_events WHERE dedup_key LIKE 'earlier%'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        post(&app, &token, body(2, "\"<&y", "+4791234568")).await.1["accepted"],
+        true
+    );
+    assert_eq!(
+        titles(Utc::now()).await,
+        ["Anna asks for a new contact: \"<&y"]
+    );
+}
+
 /// Retention: a request 30 days after the server got it is gone, a newer one stays.
 #[tokio::test]
 async fn retention_keeps_thirty_days() {

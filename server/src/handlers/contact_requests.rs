@@ -41,6 +41,13 @@ pub const SHOWN_DAYS: i64 = 7;
 pub const KEEP_DAYS: i64 = 30;
 const DAY_MS: i64 = 86_400_000;
 
+/// QA H1: a request is live - counted, known, prefilled, answered, in the digest - only while it is open and within
+/// [SHOWN_DAYS] of the server getting it (`state = 'open' AND received_at > live_since(now)`), the same window the card,
+/// the policy and the phone keep. An older open row has lapsed, as it has on the phone.
+pub fn live_since(now: DateTime<Utc>) -> i64 {
+    now.timestamp_millis() - SHOWN_DAYS * DAY_MS
+}
+
 /// The phone's request (`contact_request.json`'s `request`). Unknown keys are ignored (no `deny_unknown_fields`), so a
 /// later optional photo can be added as one more key - a reference such as `photo: "<sha256>"` to a picture the phone
 /// uploads on its own route first - and an older server simply takes the request without it.
@@ -137,10 +144,11 @@ async fn start_of_phone_day(
 
 /// `POST /api/devices/contact-request` (design 77 §14): the kid's "Send til mamma og pappa". 200 with [Answer], 400
 /// for a body that doesn't parse or an id that isn't 16-64 lowercase hex, 413 above [BODY_LIMIT], 500 on a database
-/// error (the phone keeps its request and retries). A future `asked_at` counts as now; one older than
-/// [SHOWN_DAYS] is `invalid` (the phone has dropped it). In one `BEGIN IMMEDIATE` transaction: a stored id answers
-/// `accepted` again (a retry: no second row or event); a number already on the phone or in another open request is
-/// `known`; past [REQUESTS_A_DAY] received in the phone's own day, or [OPEN_MAX] open, `capped` (one log line); else
+/// error (the phone keeps its request and retries). A stored id answers `accepted` again before any check (a retry:
+/// no second row or event; QA L2). A future `asked_at` counts as now; one older than [SHOWN_DAYS] is `invalid` (the
+/// phone has dropped it). In one `BEGIN IMMEDIATE` transaction: a stored id again (a race); a number already on the
+/// phone or in another live request ([live_since]) is `known`; past [REQUESTS_A_DAY] received in the phone's own day,
+/// or [OPEN_MAX] live, `capped` (one log line); else
 /// the row and the event `contact_request` keyed by the id, pushed within its budget to every parent with "Asks for a
 /// new contact" on.
 pub async fn intake(
@@ -173,6 +181,23 @@ pub async fn intake(
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
         };
+    // QA L2: a stored id is a retry - `accepted` again before any check, so a changed country code or a retry past
+    // day 7 never answers `invalid` for a request the parent already has.
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM device_contact_requests WHERE device_id = ? AND id = ?)",
+    )
+    .bind(device.id)
+    .bind(&request.id)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(true) => return Json(Answer::ACCEPTED).into_response(),
+        Ok(false) => {}
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't read the contact requests");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     let Some(checked) = check(
         &request.name,
         &request.number,
@@ -199,14 +224,16 @@ pub async fn intake(
                EXISTS(SELECT 1 FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
                       WHERE dc.device_id = ?1 AND c.phone_number = ?3) \
                OR EXISTS(SELECT 1 FROM device_contact_requests WHERE device_id = ?1 AND state = 'open' \
-                         AND number = ?3), \
+                         AND received_at > ?5 AND number = ?3), \
                (SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ?1 AND received_at >= ?4), \
-               (SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ?1 AND state = 'open')",
+               (SELECT COUNT(*) FROM device_contact_requests WHERE device_id = ?1 AND state = 'open' \
+                AND received_at > ?5)",
         )
         .bind(device.id)
         .bind(&request.id)
         .bind(&checked.number)
         .bind(start_of_day.timestamp_millis())
+        .bind(live_since(now))
         .fetch_one(&mut *tx)
         .await?;
         let answer = if stored {
@@ -235,7 +262,8 @@ pub async fn intake(
                 &request.id,
                 &checked.name,
                 &checked.number,
-                asked,
+                // QA N2: the inbox sorts and words it by when it arrived; the card keeps `asked_at`.
+                now,
             );
             let raised = crate::parent_events::raise(&mut tx, &event)
                 .await?
@@ -293,7 +321,8 @@ pub struct RequestView {
     pub id: String,
     pub name: String,
     pub number: String,
-    /// "Kortnummer - kan koste penger" / "Nødnummer" (QA R2-L5).
+    /// "Kortnummer - kan koste penger" / "Nødnummer" (QA R2-L5). The intake refuses emergency numbers, so "Nødnummer"
+    /// shows only for a row stored before the default country code changed (QA N6).
     pub mark: Option<&'static str>,
     /// When the kid asked.
     pub when: String,
@@ -372,16 +401,25 @@ pub async fn load(
         .collect())
 }
 
-/// What "Legg til…" puts into Add Contact: an open request of this phone.
+/// What "Legg til…" puts into Add Contact: a live request of this phone.
 pub struct Prefill {
     pub id: String,
+    /// The name the form starts with: the family contact's own when the number is one ([Self::existing]), else the
+    /// kid's.
     pub name: String,
     pub number: String,
     pub matrix_id: Option<String>,
+    /// QA M1: the number is already a contact in the family's address book under this name. The name is kept - the
+    /// kid's never renames a family contact on the other phones -, and the form says so.
+    pub existing: Option<String>,
+    /// The kid's own name for the person, shown beside [Self::existing].
+    pub asked_name: String,
+    /// A short number (no `+`): QA L3's defaults and the cost warning.
+    pub short: bool,
 }
 
-/// The open request `id` of the phone, for Add Contact's prefill; `None` when it isn't one (decided, gone, another
-/// phone's, or not an id at all).
+/// The live request `id` of the phone, for Add Contact's prefill; `None` when it isn't one (decided, lapsed, gone,
+/// another phone's, or not an id at all).
 pub async fn prefill(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -392,17 +430,29 @@ pub async fn prefill(
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT id, name, number, matrix_id, asked_at, state FROM device_contact_requests \
-         WHERE device_id = ? AND id = ? AND state = 'open'",
+         WHERE device_id = ? AND id = ? AND state = 'open' AND received_at > ?",
     )
     .bind(device_id)
     .bind(id)
+    .bind(live_since(Utc::now()))
     .fetch_optional(db)
     .await?;
-    Ok(row.map(|row| Prefill {
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT name FROM contacts WHERE phone_number = ?")
+            .bind(&row.number)
+            .fetch_optional(db)
+            .await?;
+    Ok(Some(Prefill {
+        name: existing.clone().unwrap_or_else(|| row.name.clone()),
+        short: !row.number.starts_with('+'),
         id: row.id,
-        name: row.name,
+        asked_name: row.name,
         number: row.number,
         matrix_id: row.matrix_id,
+        existing,
     }))
 }
 
@@ -424,32 +474,47 @@ async fn mark_read(
     Ok(())
 }
 
-/// Add Contact saved `number` on the phone (any path, in its transaction): every open request for it is `added`, and
-/// so is the request "Legg til…" came from (`request`), whatever number the parent saved. Returns the stored Matrix ID
-/// of `request` when it was still open - the caller saves it only when the parent ticked "Bruk Matrix-ID-en".
+/// The request "Legg til…" came from, as Add Contact's save found it: still live on this phone, with the Matrix ID the
+/// kid suggested.
+pub struct FromRequest {
+    pub matrix_id: Option<String>,
+}
+
+/// The live request `request` of the phone, read in Add Contact's transaction before it saves anything: `Some` only
+/// while it is this phone's and live. The caller then never renames an existing family contact (QA M1) and saves the
+/// Matrix ID only when the parent ticked "Bruk Matrix-ID-en".
+pub async fn from_request(
+    tx: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    request: &str,
+) -> Result<Option<FromRequest>, sqlx::Error> {
+    let matrix_id: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT matrix_id FROM device_contact_requests WHERE device_id = ? AND id = ? AND state = 'open' \
+         AND received_at > ?",
+    )
+    .bind(device_id)
+    .bind(request)
+    .bind(live_since(Utc::now()))
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(matrix_id.map(|matrix_id| FromRequest { matrix_id }))
+}
+
+/// Add Contact saved `number` on the phone (any path, in its transaction): every live request for it is `added`, and
+/// so is the request "Legg til…" came from (`request`), whatever number the parent saved, and their events are read
+/// for every parent.
 pub async fn mark_added(
     tx: &mut sqlx::SqliteConnection,
     device_id: i64,
     number: &str,
     request: Option<&str>,
-) -> Result<Option<String>, sqlx::Error> {
-    let matrix_id: Option<Option<String>> = match request {
-        Some(id) => {
-            sqlx::query_scalar(
-                "SELECT matrix_id FROM device_contact_requests WHERE device_id = ? AND id = ? AND state = 'open'",
-            )
-            .bind(device_id)
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-        }
-        None => None,
-    };
+) -> Result<(), sqlx::Error> {
     let ids: Vec<String> = sqlx::query_scalar(
         "UPDATE device_contact_requests SET state = 'added', decided_at = datetime('now') \
-         WHERE device_id = ? AND state = 'open' AND (number = ? OR id = ?) RETURNING id",
+         WHERE device_id = ? AND state = 'open' AND received_at > ? AND (number = ? OR id = ?) RETURNING id",
     )
     .bind(device_id)
+    .bind(live_since(Utc::now()))
     .bind(number)
     .bind(request.unwrap_or(""))
     .fetch_all(&mut *tx)
@@ -457,7 +522,7 @@ pub async fn mark_added(
     if !ids.is_empty() {
         mark_read(tx, device_id, &ids).await?;
     }
-    Ok(matrix_id.flatten())
+    Ok(())
 }
 
 /// "Avslå" ("Decline", §14): an open request becomes `declined` - the phone shows "Ikke lagt til" once - and its

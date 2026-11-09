@@ -265,6 +265,10 @@ async fn nb_pages_have_no_english() {
             pages.push(format!("/devices/{id}{sub}"));
         }
     }
+    // Design 77 §14 (QA L4): "Legg til…" from Anna's seeded contact request, with "Bruk Matrix-ID-en".
+    pages.push(format!(
+        "/devices/{anna}/calls?request=10112233445566778899aabbccddeeff"
+    ));
     // Every one-shot flash, on the page that shows it (qa-s-i18n-4-code M2), each checked to be there.
     let mut flashes: Vec<(String, &str)> = Vec::new();
     for code in ["extra", "pause", "gone", "ended", "over"] {

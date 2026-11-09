@@ -218,4 +218,12 @@ design 79 (the phone book as a list, with a photo the kid picks or takes); a fir
   `ContactRequestBody`).
 - **A photo later** (design 79): the body gains an optional `photo` (a hash of a picture uploaded first on its own
   route); `ContactRequestBody` gets one more nullable field left out when null (`encodeDefaults` off), and an older
-  server ignores the key.
+  server ignores the key. The QA's conditions for it (`docs/review/qa-contact-request.md`, "The photo extension
+  plan"): the hash scoped to this phone's own upload, re-encoded without EXIF on the server, orphans purged, served
+  to the PWA alone, offered behind its own unticked switch, and never replacing an existing family contact's photo.
+- **For design 79's screen (code QA L5):** pass the platform's answer as `checkContactRequest`'s `isEmergency`
+  (`CallSystem.isEmergencyOutgoing`, which asks Android's `TelephonyManager.isEmergencyNumber` and keeps the static
+  list) - without it the phone knows only `Emergency.staticSet`, and a SIM's or a roaming country's own emergency
+  number would pass the phone's check (the server's list is static too).
+- **The upload's step is pure (code QA L4):** `recordsAfterUpload` (only the sent request moves, only while PENDING)
+  and `uploadGoesOn` (a RETRY ends the upload), tested in `ContactRequestsTest`.

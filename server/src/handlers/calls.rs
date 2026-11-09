@@ -204,8 +204,9 @@ struct DeviceCallsTemplate {
     /// all on for a new contact, only `sms_in` for "Opprett kontakt…" from a held message.
     add_switches: [bool; 6],
     /// Design 77 §14: Add Contact came from the kid's request - its id (sent back as `request`) and the Matrix ID the
-    /// kid suggested, shown with its own "Bruk Matrix-ID-en" ([Self::use_matrix], unticked until the parent ticks it).
-    add_request: Option<(String, Option<String>)>,
+    /// kid suggested, shown with its own "Bruk Matrix-ID-en" ([Self::use_matrix], unticked until the parent ticks it);
+    /// a family contact's kept name (QA M1) and a short number's cost warning (QA L3).
+    add_request: Option<crate::handlers::contact_requests::Prefill>,
     use_matrix: bool,
     /// Design 77 §14: the "Forespørsler" card's rows.
     requests: Vec<crate::handlers::contact_requests::RequestView>,
@@ -726,13 +727,14 @@ async fn load_page(
     if report.screening_hint {
         notes.push(screening_note(lang));
     }
-    // Design 77 §14: "Legg til…"'s request (the link's, or the refused form's), only while it is this phone's and open.
-    let request_id = shown.add_request.or_else(|| {
-        shown
-            .add_sent
-            .and_then(|sent| sent.get("request"))
-            .map(String::as_str)
-    });
+    // Design 77 §14: "Legg til…"'s request, only while it is this phone's and live. One prefill source wins (QA L1): a
+    // held number's link ignores a request; a refused form carries its own `request` or none; else the link's.
+    let request_id = match (shown.add_held, shown.add_sent, shown.add.is_some()) {
+        (Some(_), _, _) => None,
+        (None, Some(sent), _) => sent.get("request").map(String::as_str),
+        (None, None, false) => shown.add_request,
+        (None, None, true) => None,
+    };
     let add_request = match request_id {
         Some(request) => {
             crate::handlers::contact_requests::prefill(&state.db, id, request.trim()).await?
@@ -758,6 +760,12 @@ async fn load_page(
     let add_switches = match (shown.add_sent, shown.add_held, add_request.is_some()) {
         (Some(sent), _, _) => ADD_SWITCHES.map(|name| sent.contains_key(name)),
         (None, Some(_), _) => HELD_ADD_SWITCHES,
+        // QA L3: a short number may cost money - the kid can't text it until the parent says so.
+        (None, None, true) if add_request.as_ref().is_some_and(|r| r.short) => {
+            let mut switches = REQUEST_ADD_SWITCHES;
+            switches[4] = false;
+            switches
+        }
         (None, None, true) => REQUEST_ADD_SWITCHES,
         (None, None, false) => [true; 6],
     };
@@ -836,7 +844,7 @@ async fn load_page(
         add_number,
         add_error,
         add_switches,
-        add_request: add_request.map(|r| (r.id, r.matrix_id)),
+        add_request,
         use_matrix,
         requests,
         requests_notice: shown.requests_notice,
@@ -1887,30 +1895,43 @@ pub async fn add_contact(
         if !device_exists {
             return Ok(None);
         }
-        let contact_id: i64 = sqlx::query_scalar(
+        // Design 77 §14: "Legg til…"'s request, read from this phone's stored rows (never the form's words).
+        let request = form.get("request").map(|r| r.trim());
+        let from_request = match request {
+            Some(request) => {
+                crate::handlers::contact_requests::from_request(&mut tx, id, request).await?
+            }
+            None => None,
+        };
+        // QA M1: from a kid's request an existing family contact keeps its name - the kid's words never rename it on
+        // the other phones (a photo later follows the same rule). Otherwise the name is the parent's, as before.
+        let rename = if from_request.is_some() {
+            "name = contacts.name"
+        } else {
+            "name = excluded.name"
+        };
+        let contact_id: i64 = sqlx::query_scalar(&format!(
             "INSERT INTO contacts (name, phone_number) VALUES (?, ?) \
-             ON CONFLICT(phone_number) DO UPDATE SET name = excluded.name RETURNING id",
-        )
+             ON CONFLICT(phone_number) DO UPDATE SET {rename} RETURNING id"
+        ))
         .bind(name)
         .bind(&number)
         .fetch_one(&mut *tx)
         .await?;
         let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
-        // Design 77 §14: the number's open requests (and "Legg til…"'s own) are added; the kid's Matrix ID is
-        // saved only when the parent ticked "Bruk Matrix-ID-en" (R2-M1), and only as the stored request has it.
-        let suggested = crate::handlers::contact_requests::mark_added(
-            &mut tx,
-            id,
-            &number,
-            form.get("request").map(|r| r.trim()),
-        )
-        .await?;
-        let message_address = suggested.filter(|_| form.contains_key("use_matrix"));
+        // The number's live requests (and "Legg til…"'s own) are added; the kid's Matrix ID is saved only when the
+        // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
+        // M6).
+        crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
+        let message_address = from_request
+            .and_then(|r| r.matrix_id)
+            .filter(|_| form.contains_key("use_matrix"));
+        let message_app = message_address.as_ref().map(|_| "element");
         sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
-             allow_outbound, show_on_home, sms_in, sms_out, mms, message_address) \
+             allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \
              VALUES (?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
-                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?, ?)",
+                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(contact_id)
@@ -1922,6 +1943,7 @@ pub async fn add_contact(
         .bind(sms_out)
         .bind(mms)
         .bind(message_address)
+        .bind(message_app)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;

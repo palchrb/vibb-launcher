@@ -203,6 +203,23 @@ fun reconcileContactRequests(
     }
 }
 
+/**
+ * The upload's per-record step (QA L4): [records] as they are now, after the server answered [verdict] for the request
+ * [sentId]. Only that request changes, and only while it is still PENDING (a policy may have moved it meanwhile); a
+ * request added while the upload ran stays as it is. RETRY changes nothing - and ends the upload ([uploadGoesOn]).
+ */
+fun recordsAfterUpload(
+    records: List<ContactRequestRecord>,
+    sentId: String,
+    verdict: ContactRequestVerdict,
+): List<ContactRequestRecord> = records.map {
+    if (it.id == sentId && it.phase == ContactRequestPhase.PENDING) afterContactRequestAnswer(it, verdict) else it
+}
+
+/** Whether the upload sends the next PENDING request after [verdict]: not after a RETRY (the server or the network is
+ * having trouble; the next sync tries again). */
+fun uploadGoesOn(verdict: ContactRequestVerdict): Boolean = verdict != ContactRequestVerdict.RETRY
+
 /** What a request's row in the phone book says. */
 enum class RequestLine { WAITING, NOT_ADDED, CAPPED, KNOWN, NOT_SENT }
 
@@ -257,7 +274,9 @@ object ContactRequests {
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** The kept requests; none when they can't be read (before the first unlock, or unreadable - logged). */
+    /** The kept requests; none when they can't be read (before the first unlock, or unreadable - logged). An
+     * unreadable list is then overwritten by the next write (QA N5): acceptable for a cache of at most a week, whose
+     * requests the server keeps anyway. */
     @Synchronized
     fun records(context: Context): List<ContactRequestRecord> = try {
         prefs(context).getString(RECORDS_KEY, null)?.let { ServerJson.decodeFromString(RECORDS, it) }.orEmpty()
@@ -321,10 +340,8 @@ object ContactRequests {
             }
             val verdict = contactRequestAnswer(code, body)
             Log.i(LOG_TAG, "Contact request: $verdict${code?.let { " (HTTP $it)" } ?: ""}")
-            if (verdict == ContactRequestVerdict.RETRY) return
-            update(context) { records ->
-                records.map { if (it.id == record.id && it.phase == ContactRequestPhase.PENDING) afterContactRequestAnswer(it, verdict) else it }
-            }
+            if (!uploadGoesOn(verdict)) return
+            update(context) { records -> recordsAfterUpload(records, record.id, verdict) }
         }
     }
 }

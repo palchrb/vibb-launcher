@@ -163,6 +163,25 @@ class ContactRequestsTest {
         assertEquals(records, dropShownContactRequests(records))
     }
 
+    /** QA L4: the upload's per-record step - only the sent request moves, only while PENDING; one added meanwhile stays;
+     * a RETRY changes nothing and ends the upload. */
+    @Test
+    fun `the upload changes only the request it sent`() {
+        val sent = record(1, ContactRequestPhase.PENDING)
+        val other = record(2, ContactRequestPhase.PENDING)
+        val reconciled = record(3, ContactRequestPhase.DECLINED)
+        val records = listOf(sent, other, reconciled)
+        assertEquals(
+            listOf(sent.copy(phase = ContactRequestPhase.ASKED), other, reconciled),
+            recordsAfterUpload(records, sent.id, ContactRequestVerdict.ACCEPTED),
+        )
+        assertEquals(records, recordsAfterUpload(records, sent.id, ContactRequestVerdict.RETRY))
+        assertEquals(records, recordsAfterUpload(records, reconciled.id, ContactRequestVerdict.CAPPED))
+        assertEquals(records, recordsAfterUpload(records, "gone", ContactRequestVerdict.ACCEPTED))
+        assertTrue(uploadGoesOn(ContactRequestVerdict.NOT_SENT))
+        assertTrue(!uploadGoesOn(ContactRequestVerdict.RETRY))
+    }
+
     @Test
     fun `the upload's answers move the request`() {
         val pending = record(1, ContactRequestPhase.PENDING)
