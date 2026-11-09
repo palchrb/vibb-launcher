@@ -69,7 +69,8 @@ The user's words (2026-11-09):
   app **is** HOME, so Dagen and Meldinger (new tasks started from Home) open behind a `kid_ground` starting window
   today, invisible only because the page has the same ground. (Found by the QA in passing: `values-v29/styles.xml`
   redefines `launcherHomeTheme` without the `windowSplashScreen*` items, so on minSdk 34 Home's breathing splash is
-  never used. Pre-existing, outside this design; for the main session.)
+  never used. Pre-existing, outside this design; for the main session. Fixed 2026-11-09: the copy was folded into
+  `values/`, `SplashThemeTest` guards it.)
 - **Theme references on pages**: `item_wifi_network.xml` and `item_bluetooth_device.xml` colour text and icons with
   `?android:attr/textColorSecondary` and their rows with `?attr/selectableItemBackground(Borderless)`.
 - **No activity but `PinLockActivity` declares `uiMode`** in `configChanges`: Battery Saver's dark theme relaunches
