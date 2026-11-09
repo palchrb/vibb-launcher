@@ -1765,7 +1765,7 @@
   "device.requests.decline": "Avslå",
   "device.requests.added": "Lagt til",
   "device.requests.declined": "Avslått",
-  "device.requests.footer": "{name} spør fra + i telefonboken. Ingenting legges til før du lagrer kontakten selv. Avslå gir beskjeden «Ikke lagt til» på telefonen.",
+  "device.requests.footer": "{name} har bedt om disse fra telefonboken. Ingenting legges til før du lagrer kontakten selv. Avslå gir beskjeden «Ikke lagt til» på telefonen.",
   "device.requests.gone": "Den forespørselen venter ikke lenger, så ingenting ble endret.",
   "device.requests.use_matrix": "Bruk Matrix-ID-en",
   "device.requests.matrix_hint": "{name} foreslo {id}. Hvem som helst kan stå bak en Matrix-ID: sjekk at det er riktig person før du bruker den.",

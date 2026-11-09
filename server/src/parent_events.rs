@@ -78,7 +78,7 @@ pub enum Kind {
     /// Pushed within its [PushBudget]; past it the inbox only, and one digest at the hour's end. Told from its
     /// parameters ([SmsHeldParams]).
     SmsHeld,
-    /// Design 77 §14: the kid asked for a new contact from the phone book's "+" (`POST /api/devices/contact-request`),
+    /// Design 77 §14: the kid asked for a new contact from the phone book (`POST /api/devices/contact-request`),
     /// keyed by the phone's request id. Pushed within its [PushBudget] (the day's cap of three keeps it under it but
     /// across midnight); told from its parameters ([ContactRequestParams]).
     ContactRequest,

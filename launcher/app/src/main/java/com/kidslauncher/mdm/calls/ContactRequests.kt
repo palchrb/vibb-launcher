@@ -18,7 +18,7 @@ import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArraySet
 
 /*
- * The kid's contact request (design 77 §14, `ContactRequestsTest`): from the phone book's "+", the kid asks the
+ * The kid's contact request (design 77 §14, `ContactRequestsTest`): from the phone book, the kid asks the
  * parents to add someone - a name, a number and maybe a Matrix ID. The phone only asks: nothing here calls, texts or
  * opens anything, and nothing is added on the phone; a parent adds the contact in the PWA, and it arrives with the
  * policy like any other. The pure rules - the form's check, the server's answer, what the policy says, what the phone

@@ -214,7 +214,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## The kid's contact request (design 77 §14, step 6; `handlers::contact_requests`)
 
-A phone book and contacts feature, not an SMS one: the kid asks from the phone book's "+" for a new contact, and a
+A phone book and contacts feature, not an SMS one: the kid asks from the phone book for a new contact, and a
 parent decides on the Calls page. It follows design r13's time request.
 - **The intake** `POST /api/devices/contact-request` (`intake`, 1 KiB): `{id, name, number, matrix_id?, asked_at_ms}`,
   the shapes in `testdata/contact_request.json` (shared with the launcher). `check` (QA R2-L5): the name through
@@ -248,6 +248,13 @@ parent decides on the Calls page. It follows design r13's time request.
     open request too.
   - **"Avslå"** (`decline`): `declined`, the event read for every parent, back to the row; a row no longer open lands
     on `?notice=request_gone#requests`.
+- **Not built yet** (the user, 2026-11-09): the kid's side follows design 79 (the phone book as a list, with a photo
+  the kid picks or takes), and the PWA's contact form design 80 (fewer switches, "Avansert"), which will restyle the
+  card and the prefilled Add Contact. **A photo fits without breaking the API:** the intake ignores unknown keys, so
+  the body can gain an optional `photo` (the SHA-256 of a picture the phone first uploads on a route of its own, e.g.
+  `POST /api/devices/contact-request/photo`, re-encoded and size-checked like a contact photo), a nullable
+  `device_contact_requests.photo_hash` column, and "Legg til…" offering it as the contact's photo behind its own
+  switch, as the Matrix ID. An older server takes the request without it; the 1 KiB body limit is untouched.
 - Tests: `tests::contact_requests` (the contract's answers, the caps and limits, the card, "Legg til…" with and without
   the tick and a forged one, "Avslå", the push and its switch, retention), `handlers::contact_requests::tests` (the
   shared vectors), `parent_events::tests` (the words and target).

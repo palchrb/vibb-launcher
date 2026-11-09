@@ -194,3 +194,28 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
   parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
   history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").
+
+## The kid's contact request: the model and the API client (design 77 §14; branch `sms-contact-request`)
+
+A phone book and contacts feature, not an SMS one (the user, 2026-11-09): the kid asks the parents to add someone, and
+a parent adds the contact in the PWA. **Only the model and the API client are built.** The kid's screen waits for
+design 79 (the phone book as a list, with a photo the kid picks or takes); a first form was parked on the local branch
+`sms-contact-request-kid-form-wip` (not for merge). Whatever screen design 79 gives calls `checkContactRequest`, then
+`ContactRequests.add` and `SyncRunner.request(.., "contact_request")`, and shows `contactRequestRows`.
+- **Pure model (`calls/ContactRequests.kt`, `ContactRequestsTest`):** `checkContactRequest` - the server's checks on
+  the shared vectors of `contact_request.json` (the name through `TitleRules.clean`, 1-40 characters; the number
+  through `PhoneNumbers.normalize`, never an emergency number - `Emergency.staticSet` or the platform's answer passed
+  in; an optional Matrix ID through `isMatrixId`) and the phone's own (a number already a contact or in an open
+  request; five open at most). `contactRequestAnswer` reads the server's answer (`accepted`, `capped`, `known`;
+  `invalid`, another 4xx and an old server's 404 are "not sent"; 401/408/429/5xx/no answer retry).
+  `reconcileContactRequests` at every accepted policy: a week-old request goes; an open one goes when its number is a
+  contact (the contact arrived) or the policy's `call_policy.contact_requests` says `added`, and becomes "declined"
+  (shown once) when it says `declined`. `contactRequestRows` / `markContactRequestsShown` /
+  `dropShownContactRequests`: an answer shows once.
+- **Store and sync:** `ContactRequests` keeps the records in credential-encrypted prefs (`contact_requests`: names and
+  numbers), with listeners for a screen; `performMdmSync` reconciles after `SmsRuntime.policyAccepted` and uploads each
+  PENDING request after the time request (`POST /api/devices/contact-request`, `MdmApi.sendContactRequest`,
+  `ContactRequestBody`).
+- **A photo later** (design 79): the body gains an optional `photo` (a hash of a picture uploaded first on its own
+  route); `ContactRequestBody` gets one more nullable field left out when null (`encodeDefaults` off), and an older
+  server ignores the key.

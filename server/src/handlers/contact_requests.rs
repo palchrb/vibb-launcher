@@ -41,7 +41,9 @@ pub const SHOWN_DAYS: i64 = 7;
 pub const KEEP_DAYS: i64 = 30;
 const DAY_MS: i64 = 86_400_000;
 
-/// The phone's request (`contact_request.json`'s `request`).
+/// The phone's request (`contact_request.json`'s `request`). Unknown keys are ignored (no `deny_unknown_fields`), so a
+/// later optional photo can be added as one more key - a reference such as `photo: "<sha256>"` to a picture the phone
+/// uploads on its own route first - and an older server simply takes the request without it.
 #[derive(Debug, serde::Deserialize)]
 pub struct Body {
     pub id: String,

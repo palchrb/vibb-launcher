@@ -1,4 +1,4 @@
--- Design 77 §14 (step 6): the kid asks for a new contact from the phone book's "+" (`POST /api/devices/contact-request`).
+-- Design 77 §14 (step 6): the kid asks for a new contact from the phone book (`POST /api/devices/contact-request`).
 -- `id` is the phone's (16-64 lowercase hex); `name` the kid's, cleaned (`calendar::clean`, at most 40 characters);
 -- `number` normalised by the server (`phone::normalize`); `matrix_id` the kid's suggestion (`valid_matrix_id`), saved
 -- on a contact only when the parent ticks "Bruk Matrix-ID-en"; `asked_at` the phone's epoch milliseconds (never after

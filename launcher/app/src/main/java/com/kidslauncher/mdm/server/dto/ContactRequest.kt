@@ -3,12 +3,13 @@ package com.kidslauncher.mdm.server.dto
 import kotlinx.serialization.Serializable
 
 /**
- * Body of `POST /api/devices/contact-request` (design 77 §14): the kid's contact request from the phone book's "+".
+ * Body of `POST /api/devices/contact-request` (design 77 §14): the kid's contact request from the phone book.
  * [id] is the request's own 32 lowercase hex characters (the server's key, so a retried POST is one request), [name]
  * the name the kid typed (cleaned, at most 40 characters), [number] normalised on the phone, [matrixId] the kid's
  * optional Matrix ID (left out when there is none), [askedAtMs] when the kid asked. Pinned by
  * `contact_request.json`'s `request` and `request_without_matrix` (byte-identical with `server/testdata/`,
- * `ContactRequestsTest`).
+ * `ContactRequestsTest`). A later optional photo (design 79) is one more nullable field - a hash of a picture uploaded
+ * first on its own route - left out when null; the server ignores keys it doesn't know.
  */
 @Serializable
 data class ContactRequestBody(
