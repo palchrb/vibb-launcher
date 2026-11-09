@@ -39,7 +39,7 @@
     --dim: rgba(251, 228, 220, .78); --accent: #F0A884; --fill: #F0A884; --on-accent: #0C0C14;
     --button: rgba(255, 255, 255, .08); --back: rgba(255, 255, 255, .12); --handle: rgba(255, 255, 255, .22);
     --divider: rgba(255, 255, 255, .10); --in: #34324A; --in-ink: #FFFFFF; --in-dim: #A6A0B4; --mine: #9FD3A8;
-    --alert: #FF8A8A; --danger: #3A1E24; --danger-text: #FF8A8A; --bars: #FFFFFF;
+    --alert: #FF8A8A; --danger: #3A1E24; --danger-text: #FF8A8A; --bars: #FFFFFF; --edge: transparent;
     --sky: #6FA8DC; --forest: #7FC28F; --sun: #E8B86D; --own: #F0A884;
   }
   .day {
@@ -47,7 +47,7 @@
     --dim: #5E5752; --accent: #A64B25; --fill: #E8895E; --on-accent: #0C0C14;
     --button: rgba(0, 0, 0, .07); --back: rgba(0, 0, 0, .06); --handle: rgba(0, 0, 0, .20);
     --divider: rgba(0, 0, 0, .10); --in: #E8E4EE; --in-ink: #1B1B1F; --in-dim: #5E5870; --mine: #2E7D46;
-    --alert: #B3261E; --danger: #FBE3E1; --danger-text: #A1241C; --bars: #1B1B1F;
+    --alert: #B3261E; --danger: #FBE3E1; --danger-text: #A1241C; --bars: #1B1B1F; --edge: rgba(0, 0, 0, .14);
     --sky: #3A76B0; --forest: #3C8650; --sun: #A87414; --own: #C2622C;
   }
   /* the own bubble: the same in both looks */
@@ -103,7 +103,7 @@
   .dl { align-self: flex-end; font-size: 12px; font-weight: 700; color: var(--dim); padding: 0 4px; }
   .dl.warn { color: var(--alert); }
   .compose { position: absolute; left: 16px; right: 16px; bottom: 28px; display: flex; align-items: flex-end; gap: 8px; }
-  .compose .fld { flex: 1; background: var(--tile); border-radius: 24px; min-height: 52px; padding: 14px 16px;
+  .compose .fld { flex: 1; background: var(--tile); box-shadow: inset 0 0 0 1px var(--edge); border-radius: 24px; min-height: 52px; padding: 14px 16px;
                   font-size: 16px; font-weight: 600; color: var(--dim); }
   .compose .send { width: 48px; height: 48px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; flex: none; }
   .compose .send svg { width: 22px; height: 22px; }
@@ -204,7 +204,7 @@
 <header class="top">
   <span class="kicker">Design 78 · mockup</span>
   <h1>Mørk, Lys og Automatisk</h1>
-  <p class="lead">Barnet velger utseende i Innstillinger. Det gjelder skjermene som har sin egen bakgrunn: Meldinger, Kalender, kontaktkortet og listene i Innstillinger. Hjem, telefonboka og Innstillinger beholder bakgrunnsbildet, og låseskjermen og samtaleskjermen er alltid mørke. Venstre telefon er slik det er i dag (Mørk), høyre er Lys.</p>
+  <p class="lead">Barnet velger utseende i Innstillinger. Det gjelder sidene som har sin egen bakgrunn: Meldinger, Kalender og listene i Innstillinger. Hjem, telefonboka og Innstillinger beholder bakgrunnsbildet, og kontaktkortet, låseskjermen og samtaleskjermen er alltid mørke. Venstre telefon er slik det er i dag (Mørk), høyre er Lys.</p>
 </header>
 
 <section>
@@ -228,7 +228,7 @@
 </section>
 
 <section>
-  <header><h2>Kontaktkortet</h2><p class="note">Kortet er en egen flate over Hjem, så det følger valget. Hjem under er som før.</p></header>
+  <header><h2>Kontaktkortet</h2><p class="note">Alltid mørkt, også i Lys (ditt svar 4): kortet ligger over Hjem, som ikke skifter, og et hvitt kort ville blinke hvitt hver gang det åpnes. Designet fra 34 («aldri en hvit flate») står.</p></header>
   <div class="row" id="sheet"></div>
 </section>
 
@@ -243,7 +243,7 @@
 </section>
 
 <div class="callout">
-  <p><strong>Spørsmål til deg:</strong> varm papirbakgrunn (#F6F2EF, her) eller PWA-ens kjøligere grå (#F2F2F7)? Samme fersken på egne bobler i lys modus? Kontaktkortet lyst over et mørkt Hjem, eller alltid mørkt?</p>
+  <p><strong>Dine svar er tatt inn:</strong> varm papirbakgrunn (#F6F2EF), samme fersken på egne bobler i begge, kontaktkortet alltid mørkt.</p><p><strong>Spørsmål til deg:</strong> «Automatisk» uten en fersk posisjon (under 14 dager) bruker sola i tidssonens hovedby (Oslo for Norge), og 07-19 bare for en ukjent sone. OK?</p>
 </div>
 </main>
 
@@ -292,7 +292,7 @@
     <div class="acts"><span class="pill">Endre</span><span class="pill del">Slett</span></div>
   </div>`);
 
-  const sheet = look => phone(look + ' onhome', `<div class="home"><div class="grid">${'<i></i>'.repeat(12)}</div></div>${bar}<div class="dim"></div>
+  const sheet = look => phone('night onhome', `<div class="home"><div class="grid">${'<i></i>'.repeat(12)}</div></div>${bar}<div class="dim"></div>
     <div class="sheet"><span class="hdl"></span><span class="av" style="background:${AV.peach}">M</span><span class="nm">Mamma</span><span class="hn">Mobil</span>
     <div class="btns"><span class="ring">Ring</span><span class="msg"><em>✉</em>Melding</span></div><span class="cls">Lukk</span></div>`);
 
@@ -305,17 +305,17 @@
       <div class="seg">${['Mørk', 'Lys', 'Automatisk'].map((l, i) => `<span class="${i === on ? 'on' : ''}">${l}</span>`).join('')}</div>
       <div class="pv ${look}"><div class="bb in"><p>Hei! Kommer du?</p></div><div class="bb out"><p>Ja, nå!</p></div></div>
       ${when ? `<div class="when">${when}</div>` : ''}</div>
-      <div class="cap">Gjelder Meldinger, Kalender, kontaktkortet og listene her i Innstillinger. Hjem beholder bakgrunnen din.</div></div>
+      <div class="cap">Gjelder Meldinger, Kalender og listene her i Innstillinger. Hjem og kontaktkortet er alltid som før.</div></div>
     <div><h4>Tilkobling, skjerm og lyd</h4><div class="kcard"><div class="krow">Wi-Fi<span class="sw-on"></span></div><div class="krow">Bluetooth<span class="sw-off"></span></div></div></div></div></div>`;
 
   const pair = (id, make, capN, capD) => {
     document.getElementById(id).innerHTML = fig(make('night'), `<b>Mørk</b> · ${capN}`) + fig(make('day'), `<b>Lys</b> · ${capD}`);
   };
   pair('list', list, 'som i dag.', 'papirbakgrunn, hvite rader, aksenten i mørk fersken (#A64B25).');
-  pair('thread', thread, 'D og D2, som i fiksrunden.', 'egne bobler like, mottatte #E8E4EE. Send-knappen i den lysere ferskenen med mørk pil.');
+  pair('thread', thread, 'D og D2, som i fiksrunden.', 'egne bobler like, mottatte #E8E4EE, skrivefeltet med en tynn kant. Send-knappen i den lysere ferskenen med mørk pil.');
   pair('day', day, 'som i dag.', 'prikkene dypere, «Mine» i mørk grønn (#2E7D46).');
   pair('event', event, 'som i dag.', '«Slett» i mørk rød (#B3261E).');
-  pair('sheet', sheet, 'som i dag.', 'hvitt kort, «Ring» like grønn.');
+  pair('sheet', sheet, 'som i dag.', 'det samme: kortet er alltid mørkt.');
   document.getElementById('settings').innerHTML =
     fig(settings(0, 'night'), '<b>Mørk</b> valgt (standard). Forhåndsvisningen viser Meldinger slik det blir.') +
     fig(settings(1, 'day'), '<b>Lys</b> valgt. Innstillinger selv er uendret; forhåndsvisningen skifter.') +
@@ -324,12 +324,12 @@
   const T = [
     ['kid_page_ground', 'siden', '#0C0C14', '#F6F2EF', '-'],
     ['kid_page_tile', 'rader, kort, skrivefelt', '#1B1B28', '#FFFFFF', '-'],
-    ['kid_page_lift', 'kontaktkort, dialoger', '#1C1A2A', '#FFFFFF', '-'],
+    ['kid_page_lift', 'bekreftelser, dialoger', '#1C1A2A', '#FFFFFF', '-'],
     ['kid_page_ink', 'tekst', '#FFFFFF', '#1B1B1F', '15,4 / 17,2'],
     ['kid_page_dim', 'andre linjer, tider', '#C7FBE4DC', '#5E5752', '6,4 / 7,1'],
     ['kid_page_accent', 'starttid, lenker, prikk, ring', '#F0A884', '#A64B25', '5,2 / 5,8'],
     ['kid_page_accent_fill', '+, send, valgt', '#F0A884', '#E8895E', '7,6 (mørk tegning)'],
-    ['kid_page_message_in', 'mottatt boble', '#34324A', '#E8E4EE', 'tekst 13,9'],
+    ['kid_page_message_in', 'mottatt boble', '#34324A', '#E8E4EE', 'tekst 13,7'],
     ['kid_page_message_in_dim', 'mottatt tid', '#A6A0B4', '#5E5870', '5,4'],
     ['kid_message_out', 'egen boble (lik i begge)', '#F0A884', '#F0A884', 'tekst 8,7, tid 4,7'],
     ['kid_page_day_mine', 'egne avtaler', '#9FD3A8', '#2E7D46', '5,1'],
