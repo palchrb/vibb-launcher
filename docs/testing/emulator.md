@@ -2207,7 +2207,7 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    switch off removes it whatever the calendar says; the "Neste" line yields while the row is up. "own": a `VALARM` of
    15 min gives the row at 15, a day-before alarm none. Dagen open while a reminder is up shows it under the header.
 7. **The kid's own events**: the "+" is there from day one (the local "Min kalender"); "Ny avtale" with what, day (the
-   shown day), from, length, place → Lagre → the row with a green start and "Min kalender" as its second line; its page
+   shown day), from, length, place → Lagre → the row with a peach start (since 2026-11-09; green before) and "Min kalender" as its second line; its page
    has Endre and Slett; a feed's event has neither. In the PWA pick a DAVx5 calendar the kid may write to (a CalDAV test
    server, e.g. Radicale): the new event uploads with its `vibb-` UID, comes back on the next sync and can still be
    changed; "Nowhere (no +)" removes the "+". **The pickers** (the user's jellystar2, 2026-10-27): "Ny avtale"'s day and

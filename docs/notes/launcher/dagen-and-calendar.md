@@ -63,7 +63,9 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   invisible, never gone, without one, so every row's start and end time share one left edge (the user's one change to
   mockup §6 B); two lines of title and second line - the kid's own event's second
   line is its place, else the calendar's name -; the time column 56 dp, widened per page to its widest one-line time
-  by `timeColumnPx`, an all-day row "Hele" over "dagen"; times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
+  by `timeColumnPx`, an all-day row "Hele" over "dagen"; every timed start peach (`kid_accent`), the kid's own too, an
+  all-day row's `kid_core_dim` (2026-11-09, the user: the dot and the key already say the calendar - "Fjern grønn
+  start-tid takk"; the kid's own start was green `kid_day_mine` #9FD3A8 since §1b, now gone); times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
   L4 -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
   "Åpne hendelsen" - the calendar's name last on a day with a key; the key under the list, `item_day_legend`

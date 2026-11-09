@@ -48,10 +48,8 @@
     <color name="kid_torch_tile">#6065A9</color>
     <!-- The time-rule screen's alarm row (E7's M1): the same indigo under the alarm glyph. -->
     <color name="kid_lock_alarm_row">@color/kid_torch_tile</color>
-    <!-- Home's Dagen tile (design 69 §2.2): the blue tone (IconTones TONE_BLUE; white 5.6:1). The kid's own events'
-         start time in Dagen (§1b): a soft green, 9.6:1 on the tile. -->
+    <!-- Home's Dagen tile (design 69 §2.2): the blue tone (IconTones TONE_BLUE; white 5.6:1). -->
     <color name="kid_day_tile">#496C9C</color>
-    <color name="kid_day_mine">#9FD3A8</color>
     <!-- Home's Meldinger tile (design 77 §6.7): the teal tone (IconTones TONE_TEAL; white 5.4:1). The bubbles (the user's choice,
          2026-11-09): the kid's own in the accent peach with the dark sheet ink (8.7:1) and its time in a dark brown
          (4.7:1); a received one in a lighter lilac-grey (D2) with white (12.3:1) and its time in a pale lilac (4.9:1).
