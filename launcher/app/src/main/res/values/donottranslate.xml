@@ -94,6 +94,13 @@
         <p><a href=\"https://github.com/google/material-design-icons\">github.com/google/material-design-icons</a></p>
         <p>Apache License, Version 2.0</p>
     ]]></string>
+    <!-- Also followed by assets/licenses/Apache-2.0.txt. Design 77 D9: the vendored MMS codec (sms/vendor/pdu). -->
+    <string name="legal_info_aosp_messaging"><![CDATA[
+        <h2>AOSP Messaging</h2>
+        The MMS message format (reading and writing MMS): the mmslib/pdu code of AOSP Messaging, © 2007-2008 Esmertec AG and The Android Open Source Project, modified (made plain Java and hardened; see sms/vendor/pdu/README.md).
+        <p><a href=\"https://android.googlesource.com/platform/packages/apps/Messaging\">android.googlesource.com/platform/packages/apps/Messaging</a></p>
+        <p>Apache License, Version 2.0</p>
+    ]]></string>
     <!-- Followed by assets/licenses/CC-BY-4.0.txt (LegalInfoActivity). Design 75 §4.3: the lock's weather. -->
     <string name="legal_info_weather"><![CDATA[
         <h2>Weather</h2>

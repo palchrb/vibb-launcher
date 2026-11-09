@@ -12,6 +12,8 @@ Kotlin, single Gradle module (`app/`). `minSdk = 34`, `compileSdk`/`targetSdk = 
 
 **One Java file**: `preferences/LauncherPreferences$Config.java` - not a choice made in this fork, Josia Pietsch wrote it in Java originally (Sept 2024). It's the annotation config kapt reads to generate the real `LauncherPreferences` class every `mdm.xxx()` call in the codebase goes through - keep editing it in Java when adding new preference entries rather than converting it, since deeply-nested annotation arrays through kapt's Kotlin→Java stub bridge is a real source of subtle bugs that writing it directly in Java sidesteps.
 
+**The second exception, the vendored MMS codec** (design 77 D9): `sms/vendor/pdu/` is AOSP Messaging's PDU parser and composer (Apache-2.0, commit `de315b76`), kept in Java so upstream fixes stay diffable, made pure JVM and hardened; its `README.md` lists every change (H1-H17 and the QA fix round), and "For step 3b". Only `sms/mms/MmsCodec.kt` calls it, and parsing is for the isolated parse process only (D8). `PduHardeningTest`, `PduQaTest` and `PduFuzzTest` (5,000 seeded mutations per golden PDU) guard it; check each Android bulletin's telephony entries against it when touching it.
+
 ## Architecture
 
 - **Device Owner is the whole point.** `MdmDeviceAdminReceiver` + `dpm.isDeviceOwnerApp()` gate every enforcement call in `server/AppEnforcer.kt` - it's a no-op if not device owner, so it's safe to ship before a phone is actually provisioned.
