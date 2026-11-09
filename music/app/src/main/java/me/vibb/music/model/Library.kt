@@ -13,6 +13,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.vibb.music.logic.storytelTarget
 import me.vibb.music.spotify.SPOTIFY_MODES
+import me.vibb.music.spotify.SPOTIFY_MODE_LIST
 import me.vibb.music.spotify.spotifyTarget
 
 /*
@@ -64,6 +65,12 @@ data class Entry(
      * URI) or `context` (Spotify's own order, no items); null for every other source.
      */
     val spotifyMode: String? = null,
+    /**
+     * A Spotify show the server listed as an audiobook's chapters (2026-11-09, the library's `audiobook`): when Spotify
+     * plays something else in place of its chapters - its free sample, to an account without audiobook listening time -
+     * the web player says "Lydboka trenger lyttetid". False for everything else.
+     */
+    val audiobook: Boolean = false,
 ) {
     /** An NRK serie (`radio.nrk.no/serie/...`): a story read from its start (vibb `_natural_order`). */
     val nrkSerie: Boolean get() = source == Source.NRK && target.orEmpty().contains("radio.nrk.no/serie/", ignoreCase = true)
@@ -136,6 +143,7 @@ private data class EntryDto(
     val sort: Int = 0,
     val lan: Boolean = false,
     val spotify: String? = null,
+    val audiobook: Boolean = false,
 )
 
 @Serializable
@@ -231,6 +239,7 @@ object LibraryParser {
             d.cover?.takeIf { HASH.matches(it) },
             if (source == Source.OWN) null else d.items?.takeIf { VERSION.matches(it) },
             d.sort, source == Source.RSS && d.lan, spotifyMode,
+            audiobook = spotifyMode == SPOTIFY_MODE_LIST && d.audiobook,
         )
     }
 

@@ -117,6 +117,7 @@
     <string name="renderer_spotify_not_on_phone">Doesn\'t work on this phone</string>
     <string name="renderer_spotify_elsewhere">Playing somewhere else</string>
     <string name="renderer_spotify_stopped">Stopped - press play</string>
+    <string name="renderer_spotify_no_listening_time">The book needs listening time</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

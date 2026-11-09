@@ -25,11 +25,22 @@ import kotlin.math.abs
  *   transferring playback to "Vibb", a leftover session): [Event.NotOurs] - paused at once, never
  *   measured, never mapped to an index - and from then on every playing state is paused until our next
  *   play. After [Event.Ended], three unplayable in a row, or a confirmed `null`, the same.
- * - **A start passes over what played before it** (H1, L1; qa-26c-step5a-code M3): the track of the last
- *   state seen before the play call, the old play's expected next track (Spotify's own advance can only
- *   go there while the call is on its way) and our adds still in Spotify's queue are stale in a start,
- *   unless it is the sent track near the sent position (a restart of the same track from 0 isn't its old
- *   tick).
+ * - **A start passes over what played before it** (H1, L1; qa-26c-step5a-code M3): the old play's expected next
+ *   track (Spotify's own advance can only go there while the call is on its way) and our adds still in Spotify's
+ *   queue are stale in a start, and so is the last state seen before the play call carried on - its track, paused or
+ *   playing as it was, at its place (moved on by the time since while it played) - until a fresh state shows
+ *   (2026-11-09: Spotify playing that track in place of ours, from where it once stopped, is fresh); unless it is the
+ *   sent track near the sent position (a restart of the same track from 0 isn't its old tick).
+ * - **A later item of ours playing at a start is ours** when there is evidence it answers the play call: its `prev`
+ *   proving the skip - the items between are unplayable (H1) - or (2026-11-09) it is the track of the last state
+ *   before the call, played afresh (not that state carried on): the queue simply moves to it and plays on (an
+ *   audiobook's sample listed after its chapter, played to an account without audiobook listening time from where an
+ *   earlier try stopped: the emulator's "no state of ours after the play call" before this). Never our own add; a later
+ *   uri with neither (a cold start's state of the account's earlier session of this list) is passed over.
+ * - **An audiobook's start answered by a track not ours** ([load]'s `audiobook`, the library's; 2026-11-09): a fresh
+ *   playing state of no item of ours is Spotify playing something else in place of the book - its free sample, to an
+ *   account without audiobook listening time: [Event.NotOurs] and [Event.NoListeningTime], not the 10 s wait's
+ *   "trenger internett". Any other entry's start still passes over a foreign state.
  * - **Shuffle or repeat not as wanted** (M1; design 49 §1.5: "differs from wanted", not "on"): a state whose
  *   shuffle or repeat isn't the entry's [wanted] is read for nothing - no start, skip, end or foreign track; one
  *   [Event.ShuffleOrRepeat] asks the renderer to set both and play again.
@@ -132,6 +143,13 @@ class SpotifyTracker {
          * else pause it.
          */
         data class LeftoverAdd(val uri: String, val playing: Boolean) : Event
+
+        /**
+         * An audiobook's start (2026-11-09): Spotify plays something else in place of the book's chapters - its free
+         * sample, to an account without audiobook listening time. Follows [NotOurs]; the renderer stops with "Lydboka
+         * trenger lyttetid".
+         */
+        data object NoListeningTime : Event
     }
 
     /**
@@ -153,6 +171,7 @@ class SpotifyTracker {
         Event.Elsewhere -> "elsewhere"
         is Event.TrackChanged -> "the context moved on"
         is Event.LeftoverAdd -> "our leftover add"
+        Event.NoListeningTime -> "another track in place of the book: no listening time"
     }
 
     /** The latest state of ours for item [index]: [positionMs] as the SDK measured it at [atMs] (the elapsed clock). */
@@ -219,6 +238,21 @@ class SpotifyTracker {
     private var lastSeenUri: String? = null
     private var prePlayUris: Set<String> = emptySet()
 
+    /** The last state seen (with a track) and when: a start passes over it carried on (2026-11-09, [stale]). */
+    private var lastSeen: SdkState? = null
+    private var lastSeenAt = 0L
+
+    /** The last state seen before the play call and when; the old play's next and our adds (stale by uri alone). */
+    private var prePlay: SdkState? = null
+    private var prePlayAt = 0L
+    private var prePlayOthers: Set<String> = emptySet()
+
+    /** A state since the play call that isn't the pre-call state carried on: from then on that track is no stale tick. */
+    private var freshSeen = false
+
+    /** The queue is an audiobook's chapters (the library's `audiobook`, 2026-11-09): [Event.NoListeningTime] may come. */
+    private var audiobook = false
+
     /** The old play's expected next track, kept across a [load] (a new queue's first play). */
     private var oldNextUri: String? = null
     private var sentPositionMs = 0L
@@ -250,8 +284,12 @@ class SpotifyTracker {
     private var unplayableRun = 0
     private val reported = mutableSetOf<Int>()
 
-    /** The queue ([load]: the service's items in play order, never filtered) and where it stands; nothing is sent. */
-    fun load(queue: List<SpotifyTrack>, index: Int) {
+    /**
+     * The queue ([load]: the service's items in play order, never filtered) and where it stands; nothing is sent.
+     * [audiobook]: the entry is an audiobook's chapters (the library's `audiobook`).
+     */
+    fun load(queue: List<SpotifyTrack>, index: Int, audiobook: Boolean = false) {
+        this.audiobook = audiobook
         oldNextUri = expectedNext()
         context = null
         liveUri = null
@@ -317,6 +355,7 @@ class SpotifyTracker {
     fun newDevice() {
         adds.clear()
         lastSeenUri = null
+        lastSeen = null
         oldNextUri = null
     }
 
@@ -331,6 +370,10 @@ class SpotifyTracker {
         val oldNext = expectedNext() ?: oldNextUri
         oldNextUri = null
         prePlayUris = setOfNotNull(lastSeenUri, oldNext) + adds
+        prePlayOthers = setOfNotNull(oldNext) + adds
+        prePlay = lastSeen?.takeIf { it.uri != null && it.uri == lastSeenUri }
+        prePlayAt = lastSeenAt
+        freshSeen = false
         this.index = index
         this.known = known.coerceIn(index, queue.size - 1)
         mode = Mode.STARTING
@@ -449,11 +492,16 @@ class SpotifyTracker {
         val s = when (snapshot) {
             Inactive -> {
                 lastSeenUri = null
+                lastSeen = null
                 return onInactive(nowMs)
             }
             is SdkState -> snapshot
         }
-        if (s.uri != null) lastSeenUri = s.uri
+        if (s.uri != null) {
+            lastSeenUri = s.uri
+            lastSeen = s
+            lastSeenAt = nowMs
+        }
         if (mode == Mode.STARTING || mode == Mode.OURS) {
             if (mode == Mode.OURS) nullAt = null
             if (s.trackless) return emptyList() // L2: evidence of nothing
@@ -583,7 +631,8 @@ class SpotifyTracker {
     }
 
     private fun onStarting(s: SdkState, nowMs: Long): List<Event> {
-        if (stale(s)) return emptyList() // what played before our play took effect
+        if (stale(s, nowMs)) return emptyList() // what played before our play took effect
+        freshSeen = true
         if (matches(s, index)) {
             if (s.paused) return emptyList() // loaded, not playing yet
             mode = Mode.OURS
@@ -591,14 +640,30 @@ class SpotifyTracker {
             observe(s, nowMs)
             return listOf(Event.Started(index)) + aheadAdd()
         }
-        // Spotify skipped our first track(s) at once: a later uri of the window, playing, past every one
-        // of them on the evidence of its `prev`, none of them an add of ours (H1).
         val uri = s.uri ?: return emptyList()
-        val j = (index + 1..minOf(known, queue.size - 1)).firstOrNull { queue[it].uri == uri } ?: return emptyList()
-        if (s.paused || !skipProven(s, index until j)) return emptyList()
+        val j = (index + 1..minOf(known, queue.size - 1)).firstOrNull { queue[it].uri == uri }
+        if (j == null) {
+            // an audiobook's start answered by a track that is no item of ours: Spotify plays something else in place of
+            // the book (its free sample, to an account without audiobook listening time; 2026-11-09)
+            if (audiobook && !s.paused && !isAdd(s) && queue.indices.none { matches(s, it) }) {
+                mode = Mode.LOST
+                return listOf(Event.NotOurs(playing = true), Event.NoListeningTime)
+            }
+            return emptyList()
+        }
+        // a later uri of the window, playing, never our own add: Spotify played it in place of the sent one - on the
+        // evidence of its `prev` naming every item before it (Spotify skipped them, H1: those are unplayable), or
+        // (2026-11-09) as the track of the last state before the call played afresh - not that state carried on
+        // ([stale]): the play call's answer, and the queue just moves to it. A later uri with neither may be the
+        // account's earlier session of this list (a cold start's first state): passed over, as before.
+        if (s.paused || isAdd(s)) return emptyList()
+        val proven = skipProven(s, index until j)
+        if (!proven && uri != prePlay?.uri) return emptyList()
         val events = mutableListOf<Event>()
-        for (k in index until j) events += unplayable(k)
-        if (mode == Mode.LOST) return events
+        if (proven) {
+            for (k in index until j) events += unplayable(k)
+            if (mode == Mode.LOST) return events
+        }
         moveTo(j)
         mode = Mode.OURS
         forget(s)
@@ -609,14 +674,23 @@ class SpotifyTracker {
     }
 
     /**
-     * A state of what the old play was or would be playing (H1, L1, qa-26c-step5a-code M3): its last
-     * track, its expected next (Spotify's own advance while the call was on its way), an add of ours -
-     * unless it is the sent track near the sent position.
+     * A state of what the old play was or would be playing (H1, L1, qa-26c-step5a-code M3): its expected next
+     * (Spotify's own advance while the call was on its way) or an add of ours, by uri; or the last state seen before
+     * the play call carried on - its track, paused or playing as it was, at its place moved on by the time since while
+     * it played ([START_NEAR_MS]) - until a fresh state has come (2026-11-09: the same track played afresh, from where it
+     * once stopped, is the play's answer, not the old play's tick). Never the sent track near the sent position.
      */
-    private fun stale(s: SdkState): Boolean {
+    private fun stale(s: SdkState, nowMs: Long): Boolean {
         val uri = s.uri ?: return false
         if (uri !in prePlayUris) return false
-        return !(uri == queue[index].uri && abs(s.positionMs - sentPositionMs) <= START_NEAR_MS)
+        // the sent track: stale unless near the sent position (L1: a restart of the same track from 0 isn't its old tick)
+        if (uri == queue[index].uri) return abs(s.positionMs - sentPositionMs) > START_NEAR_MS
+        if (uri in prePlayOthers) return true
+        if (freshSeen) return false
+        val pre = prePlay ?: return true
+        if (s.paused != pre.paused) return false
+        val carried = pre.positionMs + if (pre.paused) 0 else (nowMs - prePlayAt).coerceAtLeast(0)
+        return abs(s.positionMs - carried) <= START_NEAR_MS
     }
 
     /** The next item of a play of ours that is on the player, or null. */

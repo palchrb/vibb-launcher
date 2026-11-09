@@ -4035,6 +4035,11 @@ impl SweepView {
                     .to_string(),
                 );
             } else {
+                // A show listed as an audiobook's chapters (2026-11-09): Spotify plays it only with listening time on
+                // the child's own account - said here, the one place the parent reads about the entry.
+                if listing.spotify_audiobook {
+                    notes.push(t(lang, "music.card.audiobook").to_string());
+                }
                 if listing.spotify_skipped > 0 {
                     notes.push(t_params(
                         lang,

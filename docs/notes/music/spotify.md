@@ -42,6 +42,22 @@ Moved from music/CLAUDE.md on 2026-11-01.
   "Spør en voksen"), never an item error. A `null` state counts only when a second look 2 s later confirms it:
   "Spilles et annet sted", the bookmark kept. `saveNow` writes only a measured position (the last state's
   of the current item, as received).
+- **Audiobooks** (2026-11-09; the server lists a show of `type: "chapter"` items as the book's chapters, played as
+  `spotify:episode:<id>`, its free "sample" chapter left out, and marks the library entry `audiobook`): at a start a
+  playing state of a **later item of our window** is ours on evidence - `prev` proving the skip (the items between
+  unplayable, H1), or it is the track of the last state before the call **played afresh** (the emulator's book:
+  Spotify played the listed sample, from where an earlier try stopped, in place of the chapter; before, it waited
+  10 s and stopped "trenger internett") - and the queue moves there (`Started(j)`). A later uri with neither (a cold
+  start's state of the account's earlier session of the list, `start.json`) is passed over as before. What a start
+  passes over: the old play's next and our adds by uri, the sent track away from the sent place (L1), and the last
+  state before the call **carried on** (its track, paused or playing as it was, at its place moved on by the time
+  since) until a fresh state comes. On an
+  `audiobook` entry a fresh playing state of no item of ours at a start is Spotify playing something else in the
+  book's place (its sample: no audiobook listening time on the account - Premium Family members need the plan
+  manager's "Audiobooks+ for Plan Members"): `NotOurs` + `NoListeningTime`, paused, `SpotifyProblem.NO_LISTENING_TIME`
+  - "Lydboka trenger lyttetid" / "The book needs listening time" on its tile only, no stored word. Any other entry's
+  start still passes over a foreign state. `scripts/fake-spotify.py --audiobook --no-book-time` plays the book's
+  sample in place of its chapters.
 - **Nothing starts by itself on Spotify either**: the page - and with it the Connect device "Vibb" - exists only from
   the first Spotify play, never at a restore (a stored Spotify queue loads paused: no page, no network); a play the
   renderer would start on its own (`NewWindow`, `ShuffleOrRepeat`, the move-on after an unplayable, a step Spotify plays

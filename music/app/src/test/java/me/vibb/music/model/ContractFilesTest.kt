@@ -32,14 +32,15 @@ class ContractFilesTest {
     @Test
     fun `the library snapshot parses`() {
         val lib = LibraryParser.parse(Fixtures.resource("music_library.json"))!!
-        assertEquals("ceca94f70db5e7a0", lib.version)
+        assertEquals("558a21edf98d2259", lib.version)
         assertEquals("the parent's room scope (design 26a §5.5)", listOf("RINCON_000E58A0B1C201400"), lib.sonosRooms)
         assertTrue("the snapshot's feeds are public", lib.entries.none { it.lan })
         assertEquals(listOf(1L, 3L, 4L), lib.categories.map { it.id })
         assertEquals(listOf("music_note", "menu_book", "mic"), lib.categories.map { it.icon })
-        assertEquals(listOf(Source.NRK, Source.RSS, Source.OWN, Source.STORYTEL, Source.SPOTIFY, Source.SPOTIFY), lib.entries.map { it.source })
-        assertEquals(setOf(1L, 2L, 3L, 5L, 6L, 7L), lib.entryIds)
-        assertEquals("only Spotify entries have a mode", listOf(null, null, null, null, "list", "context"), lib.entries.map { it.spotifyMode })
+        assertEquals(listOf(Source.NRK, Source.RSS, Source.OWN, Source.STORYTEL, Source.SPOTIFY, Source.SPOTIFY, Source.SPOTIFY), lib.entries.map { it.source })
+        assertEquals(setOf(1L, 2L, 3L, 5L, 6L, 7L, 8L), lib.entryIds)
+        assertEquals("only Spotify entries have a mode", listOf(null, null, null, null, "list", "context", "list"), lib.entries.map { it.spotifyMode })
+        assertEquals("the audiobook alone (2026-11-09)", listOf(8L), lib.entries.filter { it.audiobook }.map { it.id })
         val nrk = lib.entry(1)!!
         assertEquals("abels_taarn", nrk.key)
         assertNull("never listed", nrk.items)
@@ -146,8 +147,8 @@ class ContractFilesTest {
             .replace("\"cache\": -1", "\"cache\": -2") // out of range (the own files and the Storytel series)
             .replace("\"spotify\": \"context\"", "\"spotify\": \"shuffle\"") // a mode this app doesn't know
         val lib = LibraryParser.parse(text)!!
-        assertEquals(listOf(1L, 6L), lib.entries.map { it.id })
-        assertEquals("named, so nothing of them is deleted", setOf(1L, 2L, 3L, 5L, 6L, 7L), lib.entryIds)
+        assertEquals(listOf(1L, 6L, 8L), lib.entries.map { it.id })
+        assertEquals("named, so nothing of them is deleted", setOf(1L, 2L, 3L, 5L, 6L, 7L, 8L), lib.entryIds)
         assertTrue("the hidden entry's files are hidden", lib.files.isEmpty())
         assertEquals(setOf(1L, 2L), lib.fileIds)
     }
@@ -171,7 +172,7 @@ class ContractFilesTest {
             .replace("\"sort\": 10\n    }", "\"sort\": 10, \"mood\": [1]\n    }")
             .replace("\"missing\": false", "\"missing\": false, \"bpm\": 120")
         val parsed = LibraryParser.parse(lib)!!
-        assertEquals(6, parsed.entries.size)
+        assertEquals(7, parsed.entries.size)
         assertEquals(2, parsed.files.size)
         val listing = Fixtures.resource("music_listing.json")
             .replace("\"hls\": true,", "\"hls\": true, \"chapters\": [],")
@@ -229,7 +230,7 @@ class ContractFilesTest {
     fun `lan is read for RSS only, and absent means public`() {
         val base = Fixtures.resource("music_library.json")
         val lan = LibraryParser.parse(base.replace("\"lan\": false", "\"lan\": true"))!!
-        assertEquals("RSS only", listOf(false, true, false, false, false, false), lan.entries.map { it.lan })
+        assertEquals("RSS only", listOf(false, true, false, false, false, false, false), lan.entries.map { it.lan })
         val old = LibraryParser.parse(base.replace(",\n      \"lan\": false", ""))!!
         assertTrue(old.entries.none { it.lan })
     }
@@ -248,7 +249,7 @@ class ContractFilesTest {
         for (odd in listOf("\"RINCON_A\"", "{}", "true", "7")) {
             assertEquals("fail closed: $odd", emptyList<String>(), LibraryParser.parse(base.replace(list, "\"sonos_rooms\": $odd"))!!.sonosRooms)
         }
-        assertEquals("the rest of the library unchanged", 6, absent.entries.size)
+        assertEquals("the rest of the library unchanged", 7, absent.entries.size)
     }
 
     @Test

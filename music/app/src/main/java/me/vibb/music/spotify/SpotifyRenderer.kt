@@ -209,6 +209,7 @@ fun rendererStateOf(line: SpotifyLine): RendererState = when (line) {
     SpotifyLine.NOT_ON_PHONE -> RendererState.SPOTIFY_NOT_ON_PHONE
     SpotifyLine.ELSEWHERE -> RendererState.SPOTIFY_ELSEWHERE
     SpotifyLine.STOPPED -> RendererState.SPOTIFY_STOPPED
+    SpotifyLine.NO_LISTENING_TIME -> RendererState.SPOTIFY_NO_LISTENING_TIME
 }
 
 @OptIn(UnstableApi::class)
@@ -473,7 +474,7 @@ internal class SpotifyRenderer(
         windowStale = false
         index = startIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
         lastIndex = -1 // a new queue: the service hears its current item (as ExoPlayer's playlist change)
-        if (ctx != null) tracker.loadContext(ctx, stored?.uri) else tracker.load(tracks, index)
+        if (ctx != null) tracker.loadContext(ctx, stored?.uri) else tracker.load(tracks, index, audiobook = a?.entry?.audiobook == true)
         applyModes(replay = false) // a context's or a list's wanted ones (design 49 §1.5)
         // an artist context has no resume (§12: no offset for an artist): it starts where Spotify starts it
         place = Place(index, if (ctx != null && !contextOffsets) 0 else startMs.coerceAtLeast(0), ports.now(), moving = false)
@@ -1570,6 +1571,12 @@ internal class SpotifyRenderer(
                     fail(SpotifyProblem.ELSEWHERE)
                 }
                 is Event.TrackChanged -> contextTrackChanged(e.uri, e.title)
+                Event.NoListeningTime -> {
+                    // an audiobook's start answered by another track (its sample: no audiobook listening time on the
+                    // account, 2026-11-09) - paused by the NotOurs before it; the book's own line, not "trenger internett"
+                    ports.log("spotify: another track in place of the book - no listening time")
+                    fail(SpotifyProblem.NO_LISTENING_TIME)
+                }
                 is Event.LeftoverAdd -> when {
                     // qa-26c-step6-code M1: our list's add left in Spotify's queue is never ours and never the end. While
                     // the kid wants it playing the context goes on past it (one `vibb.next()` - a continuation of the

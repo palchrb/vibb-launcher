@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "ceca94f70db5e7a0",
+  "version": "558a21edf98d2259",
   "categories": [
     {
       "id": 1,
@@ -116,6 +116,23 @@
       "lan": false,
       "spotify": "context",
       "sort": 70
+    },
+    {
+      "id": 8,
+      "key": "79e9e8bcc7a4",
+      "name": "Lydbok",
+      "category": 1,
+      "source": "spotify",
+      "target": "spotify:show:FAKEshowbook0000000001",
+      "order": "auto",
+      "cache": 0,
+      "resume": true,
+      "cover": null,
+      "items": "33cc33cc33cc33cc",
+      "lan": false,
+      "spotify": "list",
+      "audiobook": true,
+      "sort": 80
     }
   ],
   "files": [

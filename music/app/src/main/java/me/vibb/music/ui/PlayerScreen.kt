@@ -338,6 +338,7 @@ fun rendererStateText(state: RendererState): Int = when (state) {
     RendererState.SPOTIFY_NOT_ON_PHONE -> R.string.renderer_spotify_not_on_phone
     RendererState.SPOTIFY_ELSEWHERE -> R.string.renderer_spotify_elsewhere
     RendererState.SPOTIFY_STOPPED -> R.string.renderer_spotify_stopped
+    RendererState.SPOTIFY_NO_LISTENING_TIME -> R.string.renderer_spotify_no_listening_time
 }
 
 @Composable

@@ -45,7 +45,7 @@ class OutputKeyTest {
                 // Spotify's web player (design 26c §5.8): the phone's, not a room's - `callStep` counts them as paused
                 RendererState.SPOTIFY_NEEDS_WIFI, RendererState.SPOTIFY_NEEDS_INTERNET, RendererState.SPOTIFY_UNAVAILABLE,
                 RendererState.SPOTIFY_ASK_ADULT, RendererState.SPOTIFY_NOT_ON_PHONE, RendererState.SPOTIFY_ELSEWHERE,
-                RendererState.SPOTIFY_STOPPED,
+                RendererState.SPOTIFY_STOPPED, RendererState.SPOTIFY_NO_LISTENING_TIME,
             ),
             RendererState.entries.toList(),
         )

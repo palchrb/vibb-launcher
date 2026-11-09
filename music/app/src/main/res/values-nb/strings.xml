@@ -115,6 +115,7 @@
     <string name="renderer_spotify_not_on_phone">Virker ikke på telefonen</string>
     <string name="renderer_spotify_elsewhere">Spilles et annet sted</string>
     <string name="renderer_spotify_stopped">Stoppet - trykk spill</string>
+    <string name="renderer_spotify_no_listening_time">Lydboka trenger lyttetid</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>

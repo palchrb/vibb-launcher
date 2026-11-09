@@ -25,8 +25,8 @@
   "device.filter.off": "Av",
   "device.filter.lists_footer": "Som for alle følger bryteren under Innstillinger › Nettfilter.",
 
-  "music.spotify.audiobook": "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker.",
-  "music.spotify.audiobook_short": "det er en lydbok fra Spotify, og Spotify lar bare sine egne apper spille lydbøker",
+  "music.spotify.audiobook": "Dette er en lydbok fra Spotify som Spotify sier ikke kan spilles på denne kontoen - en lydbok trenger lyttetid på barnets Spotify-konto.",
+  "music.spotify.audiobook_short": "det er en lydbok fra Spotify som Spotify sier ikke kan spilles på denne kontoen",
 
   "advanced.spotify_diag.title": "Spotify",
   "advanced.spotify_diag.start": "Slå på feilsøkingslogg i 15 minutter",
@@ -3222,6 +3222,7 @@
   "music.card.spotify_picks": "Spotify velger rekkefølgen",
   "music.card.artist_refused": "Spotify avviste artistens album - spilles slik Spotify velger.",
   "music.card.artist_context": "En artist spilles slik Spotify velger: ingen sporliste, og den starter fra Spotifys egen begynnelse hver gang.",
+  "music.card.audiobook": "Dette er en lydbok. En lydbok fra Spotify spilles bare med lyttetid for lydbøker på barnets egen Spotify-konto - med Premium Family kjøper den som styrer familieplanen «Audiobooks+ for Plan Members» til barnet. Uten den sier telefonen at boka trenger lyttetid.",
   "music.card.left_out": "{count} utelatt: kan ikke spilles her, lokale filer eller podkastepisoder",
   "music.card.capped_show": "de nyeste {cap} episodene (podkasten har flere)",
   "music.card.capped_artist": "de nyeste {albums} albumene og singlene, maks {tracks} spor (artisten har flere)",

@@ -274,6 +274,7 @@ class SourceScanTest {
         assertEquals("Virker ikke på telefonen", nb["renderer_spotify_not_on_phone"])
         assertEquals("Spilles et annet sted", nb["renderer_spotify_elsewhere"])
         assertEquals("Stoppet - trykk spill", nb["renderer_spotify_stopped"])
+        assertEquals("Lydboka trenger lyttetid", nb["renderer_spotify_no_listening_time"])
         val screen = code(moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt"))
         for (state in me.vibb.music.playback.RendererState.entries) {
             assertTrue("$state has its line", screen.contains("RendererState.${state.name} -> R.string.renderer_"))

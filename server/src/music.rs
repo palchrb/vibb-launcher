@@ -914,6 +914,11 @@ pub struct LibEntry {
     /// phone without Spotify entries keeps its bytes and its version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spotify: Option<String>,
+    /// A Spotify show listed as an audiobook's chapters (2026-11-09, `music_listings.spotify_audiobook`): `true`, so
+    /// the web player can tell the kid the book needs listening time when Spotify plays something else in its place.
+    /// Absent otherwise (the bytes and versions of every other library stay as they were).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub audiobook: bool,
     pub sort: i64,
 }
 
@@ -1051,7 +1056,7 @@ const LIBRARY_ENTRIES: &str = concat!(
     "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
      e.play_order, e.cache, e.resume, e.cover_hash, e.sort, l.version AS listing_version, \
      l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end, l.lan AS listing_lan, \
-     l.spotify_mode AS listing_spotify_mode \
+     l.spotify_mode AS listing_spotify_mode, l.spotify_audiobook AS listing_audiobook \
      FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
      WHERE e.source IN ('nrk', 'rss', 'own', 'storytel', 'spotify') AND (e.id IN \
        (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) AND ",
@@ -1071,6 +1076,7 @@ struct LibraryRow {
     listing_keep_end: Option<String>,
     listing_lan: Option<bool>,
     listing_spotify_mode: Option<String>,
+    listing_audiobook: Option<bool>,
 }
 
 /// The order the phone plays an entry in: as set, except that an `auto` NRK series whose list keeps
@@ -1198,6 +1204,8 @@ pub async fn library_for(
                     row.listing_version
                 },
                 lan: e.source == "rss" && row.listing_lan == Some(true),
+                audiobook: spotify.as_deref() == Some("list")
+                    && row.listing_audiobook == Some(true),
                 spotify,
                 sort: e.sort,
                 source: e.source,
@@ -2304,6 +2312,7 @@ mod tests {
             items: None,
             lan: false,
             spotify: None,
+            audiobook: false,
             sort: 10,
         };
         let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![], None);

@@ -47,6 +47,7 @@ class SpotifyTrackerTest {
         Event.Elsewhere -> "Elsewhere"
         is Event.TrackChanged -> "TrackChanged ${e.uri}"
         is Event.LeftoverAdd -> "LeftoverAdd ${e.uri} ${if (e.playing) "playing" else "paused"}"
+        Event.NoListeningTime -> "NoListeningTime"
     }
 
     private fun queueOf(doc: JsonObject) = doc["queue"]!!.jsonArray.map {
@@ -190,9 +191,10 @@ class SpotifyTrackerTest {
     @Test
     fun `nothing of ours is ever measured from a start, a stale or a foreign state`() {
         val t = SpotifyTracker().apply { load(listOf(track(1, 200_000), track(2, 200_000)), 0) }
+        t.onState(state(2, 50_000, duration = 200_000), 0) // what plays before the play call
         t.played(0, 1)
         assertNull("the start position is the bookmark, not a measurement", t.measured)
-        t.onState(state(2, 50_000, duration = 200_000), 100) // stale: what played before
+        t.onState(state(2, 50_100, duration = 200_000), 100) // stale: what played before, carried on
         t.onState(state(1, 0, paused = true, duration = 200_000), 200) // loaded, not playing yet
         assertNull(t.measured)
         t.onState(state(1, 0, duration = 200_000), 300)
@@ -474,6 +476,66 @@ class SpotifyTrackerTest {
         t.played(0, 9, positionMs = 5_000)
         t.onState(state(0, 5_100), 6_500)
         assertEquals(listOf("Unplayable 1", "Unplayable 2", "ItemChanged 3 auto"), t.onState(state(3, 0, prev = listOf(0, 1, 2)), 26_000).map(::word))
+    }
+
+    // --- Spotify audiobooks (2026-11-09: the emulator's "no state of ours after the play call") -------------------
+
+    @Test
+    fun `a later item of ours playing at a start is ours only on evidence - never our add, never a cold start's state`() {
+        // no evidence (a cold start's state of the account's earlier session of this list): passed over, as before
+        val t = SpotifyTracker().apply { load(listOf(track(0, 600_000), track(1, 300_000)), 0, audiobook = true) }
+        t.played(0, 1)
+        assertEquals(emptyList<String>(), t.onState(state(1, 18_000, duration = 300_000), 1_000).map(::word))
+        assertEquals(Mode.STARTING, t.mode)
+        // its `prev` naming the sent item: Spotify skipped it
+        assertEquals(listOf("Unplayable 0", "Started 1"), t.onState(state(1, 19_000, duration = 300_000, prev = listOf(0)), 2_000).map(::word))
+        assertEquals(SpotifyTracker.Measured(1, 19_000, 2_000, true), t.measured)
+        // never our own add left in Spotify's queue
+        val q = SpotifyTracker().apply { load((0..2).map { track(it) }, 0) }
+        q.played(0, 0); q.onState(state(0, 0), 0)
+        q.queued(1)
+        q.played(0, 2)
+        assertEquals(emptyList<String>(), q.onState(state(1, 0), 500).map(::word))
+    }
+
+    @Test
+    fun `the pre-call track carried on is still stale at a start - played afresh from where it stopped it is ours`() {
+        // the old play's tick: the track of the last state before the call, playing on at its place
+        val t = SpotifyTracker().apply { load((0..2).map { track(it, 300_000) }, 0) }
+        t.played(1, 2); t.onState(state(1, 18_000, duration = 300_000), 10_000)
+        t.played(0, 2)
+        assertEquals(emptyList<String>(), t.onState(state(1, 23_000, duration = 300_000), 15_000).map(::word))
+        assertNull(t.measured)
+        assertEquals(listOf("Started 0"), t.onState(state(0, 0, duration = 300_000), 15_500).map(::word))
+        // the emulator's case: the item stopped paused at 18 s; the same paused state after the call is the old one,
+        // Spotify playing it from 18 s is the play's answer (it played that item in place of the sent one)
+        val e = SpotifyTracker().apply { load(listOf(track(0, 600_000), track(1, 300_000)), 0) }
+        e.played(0, 1); e.onState(state(1, 18_000, paused = true, duration = 300_000), 10_000); e.lost()
+        e.played(0, 1)
+        assertEquals(emptyList<String>(), e.onState(state(1, 18_000, paused = true, duration = 300_000), 10_500).map(::word))
+        assertEquals(listOf("Started 1"), e.onState(state(1, 18_000, duration = 300_000), 11_000).map(::word))
+        assertEquals(1, e.index)
+    }
+
+    @Test
+    fun `an audiobook's start answered by a track not ours says no listening time - any other entry's still waits`() {
+        val book = SpotifyTracker().apply { load(listOf(track(0), track(1)), 0, audiobook = true) }
+        book.played(0, 1)
+        assertEquals("loaded, not playing", emptyList<String>(), book.onState(foreign().copy(paused = true), 500).map(::word))
+        assertEquals(listOf("NotOurs playing", "NoListeningTime"), book.onState(foreign(), 1_000).map(::word))
+        assertEquals(Mode.LOST, book.mode)
+        assertNull(book.measured)
+        assertEquals("another track in place of the book: no listening time", book.eventWord(Event.NoListeningTime))
+        val list = SpotifyTracker().apply { load(listOf(track(0), track(1)), 0) }
+        list.played(0, 1)
+        assertEquals(emptyList<String>(), list.onState(foreign(), 1_000).map(::word))
+        assertEquals(Mode.STARTING, list.mode)
+        // the book's own start: what played before the call, carried on, is no answer
+        val stale = SpotifyTracker().apply { load(listOf(track(0), track(1)), 0, audiobook = true) }
+        stale.onState(foreign(), 0)
+        stale.played(0, 1)
+        assertEquals(emptyList<String>(), stale.onState(foreign().copy(positionMs = 1_000), 1_000).map(::word))
+        assertEquals(Mode.STARTING, stale.mode)
     }
 
     @Test

@@ -251,7 +251,7 @@ fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS
  * [UNAVAILABLE] is `SPOTIFY_NEEDS_INTERNET`'s carrier with the quota's text ("Ikke tilgjengelig
  * nå"). No line names the source (step 8).
  */
-enum class SpotifyLine { NEEDS_WIFI, NEEDS_INTERNET, UNAVAILABLE, ASK_ADULT, NOT_ON_PHONE, ELSEWHERE, STOPPED }
+enum class SpotifyLine { NEEDS_WIFI, NEEDS_INTERNET, UNAVAILABLE, ASK_ADULT, NOT_ON_PHONE, ELSEWHERE, STOPPED, NO_LISTENING_TIME }
 
 /** The words of `music_state.spotify` (design 26c §4.4; the server keeps exactly these). */
 object SpotifyWords {
@@ -308,6 +308,13 @@ enum class SpotifyProblem(val line: SpotifyLine?, val outcome: String?) {
      * (one playlist, not the account; the other tiles stay as they are).
      */
     CONTEXT_REFUSED(SpotifyLine.ASK_ADULT, null),
+
+    /**
+     * An audiobook (the library's `audiobook`, 2026-11-09) whose start Spotify answered with something else playing - its
+     * free sample, to an account without audiobook listening time (Premium Family: the plan manager's add-on): "Lydboka
+     * trenger lyttetid" on its tile only, no stored word (one book, not the account).
+     */
+    NO_LISTENING_TIME(SpotifyLine.NO_LISTENING_TIME, null),
 }
 
 /**
