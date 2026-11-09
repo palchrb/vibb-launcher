@@ -522,3 +522,278 @@ Every finding below is fixed in `docs/design/77-sms-mms-client.md` or explained.
 - **I7 - fixed.** D5 rule 1's note.
 
 **"What the step 0 list should gain":** every item is in §9 step 0.
+
+## Revision 2 (delta QA, 2026-11-09)
+
+Opus reviewed the diff `7f5eb1c2..8fc14ecf` of `docs/design/77-sms-mms-client.md` (revision 2, merged on `main`)
+and what it newly touches:
+- **The server:**
+  - `parent_events::raise` and `EVENTS_AN_HOUR`/`URGENT_PUSHES_AN_HOUR` (`parent_events.rs:930-1010`);
+  - `security::record_phone_event` (`security.rs:554-600`);
+  - the time-request intake as the model for §14 (`handlers/device_api.rs:2590-2720`);
+  - the calls page's contact and Add Contact forms (`templates/device_calls.html:141-220`);
+  - the contact defaults (`migrations/0022_calls.sql:30-32`: `allow_inbound`, `allow_outbound` and `show_on_home` all
+    default 1);
+  - the existing text cleaners (`calendar::clean`, `calendar.rs:192-201`; `security::is_format_char`, `security.rs:53-70`).
+- **The launcher:** `CallRules.kt`'s `Emergency`.
+
+**Scope** (the coordinator, 2026-11-09). Revision 3, written in parallel, changes three things:
+- D3's text and picture switches become independent of the call switches;
+- the device switches become per channel (Calls and SMS each Off / managed by Vibb / not managed);
+- the kid may save and share a received picture.
+
+For those three this section judges the security of the idea only, not the wording. Where a finding below names a
+switch, read it as the switch's meaning ("texts from this contact may reach the kid"), whatever revision 3 calls it.
+
+**Verdict:** the hold-for-the-parent design is sound where it matters most:
+- nothing of a held body leaves the phone;
+- a held MMS is never fetched before an allow, and D10 runs again on release;
+- a release is keyed on the exact sender, and a name never releases a number.
+
+The new problems sit at the edges. The allow actions can re-open the first round's H1/H2. An allow grants much more
+than "let these texts through". A stranger's chosen text reaches the parent's push. And neither the server nor the
+phone bounds a cheap flood well enough.
+
+**Counts: 0 Critical, 1 High, 4 Medium, 7 Low, 5 Info.**
+
+### High
+
+**R2-H1 - The allow paths re-open H1 and H2: an emergency number, or a name that reads as a number, can be let in by
+default or with one tap.**
+- **Emergency numbers, by default.**
+  - D4 rule 5 allows any contact whose "may text the kid" is in effect (design `:427-455`, `:479-490`). The migration
+    turns it on for every existing contact (`:448-451`; revision 3 keeps a per-contact text-in switch, whatever it
+    depends on).
+  - The calls notes keep contacts whose number is an emergency number in the phone book (`calls.md`, "UI").
+  - So a phone with a "113" or "112" contact lets in every SMS whose numeric sender reads "113", the moment SMS
+    becomes managed by Vibb. That is exactly the hole H1 closed: anyone can send as "113" (§3).
+- **Emergency numbers, by one tap.** Revision 2 says of a held "112": "The parent sees '112' and can decide"
+  (`:490`). "Opprett kontakt…" then makes it a contact whose texts come in, permanently.
+- **Names that read as numbers.** "Tillat avsendernavnet" on a held alphanumeric row adds the row's text to D17's list.
+  Its only limit is 1-11 characters (`:749-760`).
+  - H2's spoof, an alphanumeric "+4791234567", is held as a name. The PWA shows the parent a row whose sender is their
+    own number, with an allow button.
+  - One tap whitelists exactly the spoof H2 closed. The kid then gets a `name:+4791234567` conversation that reads as
+    Mum's number.
+  - The same goes for an alphanumeric "112".
+- **Fix:**
+  - **On the phone (the gate):** D4 rule 5 never lets an incoming text through for a contact whose number is an
+    emergency number (`Emergency.staticSet(defaultCc)` or the platform's answer). Such a contact keeps its calls; its
+    texts go to rule 7 (held), and the release rule follows. Add a `sms_rules.json` vector: a "113" contact with
+    text-in on, sender "113", holds.
+  - **On the server:**
+    - the text-in switch is shown disabled for an emergency-number contact ("Nødnumre kan ikke sende meldinger hit -
+      alle kan utgi seg for dem", "Emergency numbers can't text here - anyone can pretend to be one", using
+      `emergency::is_emergency`);
+    - the held card offers no "Opprett kontakt…" for an emergency number.
+  - **D17 names:** a name must hold at least one letter (any Unicode letter after cleaning). That refuses `+4791234567`,
+    `112`, `91 23 45 67` and anything else `PhoneNumbers.normalize` accepts. The server refuses the name, and the
+    phone ignores a listed name without a letter (both sides; contract vectors).
+  - **The held card shows the sender's type:**
+    - an alphanumeric row reads "Avsendernavn «{text}»" ("Sender name «{text}»");
+    - a name with no letter reads "Utgir seg for å være et nummer - kan ikke tillates" ("Pretends to be a number -
+      can't be allowed"), with only "Slett nå".
+
+### Medium
+
+**R2-M1 - An allow grants far more than "let these texts through", and a kid's request can carry an unchecked Matrix
+ID.**
+- **What D16 says.** "Opprett kontakt…" opens Add Contact with the texts-in switch on, and "the other switches follow
+  D3's defaults" (`:719-722`).
+- **What Add Contact actually does.** Today's form has only name and number (`device_calls.html:210-220`). A new
+  contact gets every flag at its column default: `allow_inbound`, `allow_outbound` and `show_on_home` all 1
+  (`0022_calls.sql:30-32`), and texts out and pictures on (D3).
+- So letting a held stranger's texts through also:
+  - puts them on the kid's Home screen and in his phone book;
+  - lets him call and text them, and lets them call him;
+  - allows pictures both ways.
+- Revision 3's independent switches make the narrow allow possible, but the defaults decide what one tap grants.
+- **§14's "Legg til…" has the same problem** (`:1535`). It also prefills the kid's own Matrix ID. The parent can check
+  a number, but an `@x:server` the kid typed can point to anyone. Saved, it makes Element X the Message button for a
+  person the parent never verified.
+- **Fix (the principle; revision 3 owns the words):**
+  - **An allow from a held message grants exactly one thing: this sender's texts reach the kid.** The prefilled Add
+    Contact shows every switch with that alone on. Calls both ways, the phone book, Home, texts out and pictures stay
+    off until the parent turns them on.
+  - **The defaults are named per path.** A kid's request starts with "the kid may call and text them"; the rest is
+    the parent's choice.
+  - The Matrix ID is shown as the kid's suggestion with its own unticked "Bruk Matrix-ID-en" ("Use the Matrix ID")
+    switch.
+  - Any action that grants more than texts in says so in its confirm.
+  - Add a `tests::calls` row for each path's defaults.
+
+**R2-M2 - A stranger's chosen text reaches the parent's push, inbox and card; the design has no cleaning for it.**
+- **What carries it.** `sender` (at most 20 characters) is posted by the phone (`:1155-1161`) and shown in:
+  - the push title "{phone}: en melding fra {sender} venter" (`:1167-1171`);
+  - the inbox event;
+  - the "Meldinger som venter" card;
+  - the prefill of "Opprett kontakt…"/"Tillat avsendernavnet".
+- **What it can hold.** For an alphanumeric sender it is the stranger's GSM-7 text. That alphabet includes LF, CR and
+  ESC, plus `<`, `>`, `&` and quotes.
+- **What else can write it.** A leaked token or a rooted phone posts any 20 characters, including bidi overrides
+  (U+202E).
+- **What is already safe and what isn't.** Askama escapes HTML on the page (the only `|safe` in the templates is the
+  QR svg). The rest isn't covered:
+  - a push title is plain text that the OS shows as is;
+  - a line break or override can forge the title's shape ("…fra DNB\nRing 22 22 22 22 …");
+  - the stranger chooses words in a push the parent trusts.
+- **Fix:**
+  - **The intake validates `sender` by its class and refuses the row (400) otherwise:**
+    - `number`/`short`: `+` and digits only, 3-16 characters;
+    - `alphanumeric`: cleaned with the existing `calendar::clean` grammar (controls, bidi and invisible characters out,
+      NFC), 1-11 characters after cleaning;
+    - `malformed`/`empty`: `sender` must be empty.
+  - The phone sends the same cleaned form (one shared rule, vectors in `sms_contract.json`).
+  - **The push words quote and label the sender:**
+    - "{phone}: en melding fra avsendernavnet «DNB» venter" ("{phone}: a message from the sender name «DNB» is
+      waiting");
+    - "{phone}: en melding fra et ukjent nummer, +47 915 55 555, venter" ("{phone}: a message from an unknown number,
+      +47 915 55 555, is waiting").
+  - Prefill values go through the form's normal escaping and the query string's encoding (a `tests::calls` row with a
+    `"<&` name).
+
+**R2-M3 - The `sms-held` intake has no per-phone bound, and the push rate is new logic with no home.**
+- **What §7 gives the intake** (`:1155-1161`): `require_device_token`, 16 KiB, at most 50 rows a post, an id format and
+  a state vocabulary.
+- **What it lacks:**
+  - a bound on how many rows a phone may store. A leaked token or a rooted phone posting new ids in a loop grows
+    `device_sms_held` without limit for 30 days;
+  - a check on `at`/`expires_at`;
+  - a rule on which state may follow which. A `released` row re-posted as `held` must not show again or raise again.
+- **The rate rule has no home.** "One push per phone and sender per hour, at most 10 per phone per hour" (`:1167`) is
+  new logic. `parent_events::raise` knows only `EVENTS_AN_HOUR` (20 events of a kind) and `URGENT_PUSHES_AN_HOUR`
+  (urgent kinds only), and `sms_held` is "Urgency normal".
+- **The flood arithmetic.** A stranger can make the parent's phone buzz 10 times an hour by rotating sender names,
+  which is free with alphanumeric senders, until the phone's held cap of 50 is full: five hours.
+- **Fix:**
+  - **Bounds:** at most 500 `device_sms_held` rows per phone in 30 days. Past that, new ids answer `{"accepted": 0,
+    "capped": true}`, with one `record_phone_event` line (a new `PhoneLine::SmsHeldCapped`, inside the existing
+    `PHONE_LINES_AN_HOUR` budget).
+  - **Time checks:** `at` no later than the server's now plus 5 minutes; `expires_at - at` between 0 and 24 hours
+    (plus a minute).
+  - **States:** `held` → `released` | `expired` | `dropped`; `blocked` is final. Other changes are ignored and counted.
+  - **The rate** is implemented in `raise` as a per-kind option, `PushBudget { per_hour: 3, per_key_hour: 1 }`, keyed
+    by sender:
+    - the first three of an hour push;
+    - the rest go to the inbox;
+    - one digest push at the hour's end: "{phone}: 7 meldinger venter" ("{phone}: 7 messages are waiting").
+    3 an hour matches `URGENT_PUSHES_AN_HOUR`.
+  - Pin the rate in `sms::tests`.
+
+**R2-M4 - A cheap flood fills the hold for a day, and every later unknown sender is lost without a trace for the
+parent.**
+- **What the caps do.** The caps never evict (`:699-703`). Past 50 held messages a phone, each new stranger's message
+  becomes a body-less `blocked` row (`over_cap`).
+- **The cost of filling it.** Fifty messages from five spoofed numbers, or fifty free name senders, fill the hold. For
+  24 hours the new teacher's or coach's first text can't be allowed any more.
+- **What the parent sees.** Only a blocked row, folded away.
+- **More flood effects.** Each hold also requests a sync (`:712-714`). Fifty holds must not mean fifty syncs.
+- **Fix:**
+  - Split the per-phone cap by class: 30 for numbers, 20 for names. A name flood (the free one) can then never take
+    the numbers' places.
+  - Lower the per-sender cap for names to 3.
+  - When a class is full, post the phone's state with `hold_full: true`. The PWA shows "Ventelisten er full - nye
+    ukjente avsendere blir ikke holdt før {time}" ("The waiting list is full - new unknown senders aren't held until
+    {time}"), with "Slett alle som venter" ("Delete everything waiting"). That is a bulk `sms_held_drop`; raise its cap
+    to 100 ids.
+  - D16 says plainly that a flood can make the phone stop holding for up to 24 hours. Allowed contacts are unaffected.
+  - The sync request is coalesced by `SyncRunner`, at most one queued per minute for the reason `sms_held`. Pin it in
+    `SmsEngineTest`.
+
+### Low
+
+**R2-L1 - D17's case folding must be one function on both sides.**
+- The server says "unique after case folding". The phone says "NFC normalisation and case folding".
+- Rust's `to_lowercase` and Kotlin's `lowercase()` agree only with `Locale.ROOT` and no full folding. GSM-7 has `ß`,
+  `Æ/Ø/Å`, `É` and Greek capitals.
+- **Fix:** name the rule ("NFC, then lowercase per Unicode's default mapping, Locale.ROOT, no full folding"). Add
+  vectors (`DNB`/`dnb`, `ÆØÅ`, `ß`, `ΣΩ`) to `sms_contract.json`, run on both sides.
+
+**R2-L2 - Expiry needs a clock rule and a re-check at release.**
+- **The phone:**
+  - Run expiry at every sync, the backstop alarm and at boot.
+  - Re-check `now < expires_at` immediately before any release. A phone offline for two days that comes online with
+    an allow in its first policy must expire first, then release nothing.
+- **The server:** the card renders a `held` row past its `expires_at` by the server's clock as "Utløpt" ("Expired"),
+  with no allow actions, even before the phone posts `expired`.
+- Both clocks are reasonably trustworthy: the phone's time is locked while managed (`DISALLOW_CONFIG_DATE_TIME`).
+
+**R2-L3 - A "deleted" held body stays in SQLite's free pages.**
+- D16 promises that the body is deleted at expiry or "Slett nå". In SQLite it stays in free pages and the WAL until
+  they are overwritten.
+- **Fix:** open the store with `PRAGMA secure_delete = ON` (cheap at this size) and checkpoint after an expiry pass.
+  D18's deletes then mean the same thing.
+
+**R2-L4 - The order inside one policy.**
+- A policy can carry both a held row's id in `sms_held_drop` and a new contact for its sender: the parent deleted it,
+  then created the contact.
+- **Fix:** drops are applied before releases, always. Add a `SmsEngineTest` row.
+
+**R2-L5 - The §14 intake needs the time request's checks, plus three of its own.**
+- **The time request's checks:** "3 a day" counted in the phone's own day (`phone_zone`, as r13's
+  `EXTRA_TIME_REQUESTS_A_DAY` does) in one `BEGIN IMMEDIATE` transaction; a retried id is one row.
+- **Its own:**
+  - the server re-normalises the number (`phone::normalize`) and answers `invalid` if it doesn't;
+  - it runs `valid_matrix_id`;
+  - it cleans the name (`calendar::clean`, 40 characters).
+- **The card** marks an emergency or short number ("Kortnummer - kan koste penger" ("Short number - may cost money")
+  / "Nødnummer" ("Emergency number")).
+- **Is it a channel?** The kid's own text reaching the parent (40 characters, 3 a day, behind `EVENTS_AN_HOUR`) is not
+  a smuggling concern. It is the kid talking to the parent, and approval stays a prefill the parent saves (R2-M1).
+
+**R2-L6 - §6.2's bridge: rule out shared-secret login now.**
+- Double puppeting by shared-secret login creates a full session for the kid on his homeserver. The Vibb server could
+  then read his unencrypted rooms and act as him everywhere.
+- **Fix:** write into §6.2 that the later design uses an appservice registration scoped to exactly the kid's user ID
+  (exclusive: false) for double puppeting. It must never use a login or access token of the kid's stored on the Vibb
+  server. Portal rooms are encrypted (bridgev2 supports it), so the homeserver doesn't keep SMS bodies in the clear.
+- Nothing in v1 commits otherwise. The seam holds (R2-I3).
+
+**R2-L7 - Revision 3's per-channel switches: an older launcher must never see "SMS managed".**
+- **Why the gate matters more now.** Today's backward-compatibility trick is `sms_enabled = (mode == "open")`. It
+  fails closed on an older launcher only while `call_policy.managed` is true. An older launcher with `managed = false`
+  is `Unmanaged` and leaves SMS fully open (`EnforcementPlan.kt:187-191`).
+- So once Calls can be "not managed" while SMS is "managed by Vibb", the only guard is that the PWA refuses "managed"
+  SMS for a phone that hasn't reported `sms_engine_v1` (§7). It also holds for a phone whose launcher is rolled back.
+- **The principle to keep in revision 3:**
+  - the capability gate covers every combination;
+  - `call_policy.managed` stays true whenever either channel is managed, so an older launcher still fails closed;
+  - the new per-channel keys say which channel is which.
+- Pin it with a contract row: an old-launcher view of "Calls not managed, SMS managed".
+
+### Info
+
+**R2-I1 - D3's deny default is right.**
+- Absent per-contact text and picture keys decode as `false`, which `ServerJson`'s no-`coerceInputValues` rule allows
+  for an absent key. A `null` would still fail the whole decode, as intended.
+- The server must always send them for every contact, pinned by `policy_json_keys_snapshot`. The same holds for
+  `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop` and `contact_requests` in `call_policy` (also when
+  unmanaged).
+- This holds equally for revision 3's independent switches.
+
+**R2-I2 - Nothing of a held body leaves the phone.**
+- **Paths checked:**
+  - the `sms-held` row has no body;
+  - the push and inbox carry the sender only;
+  - held rows are not on the seam, so not on the bridge;
+  - no notification;
+  - GMS is denied while SMS is managed (§8.6);
+  - backup is excluded (I3).
+- **Residual, unchanged:** the app-specific SMS token (§8.6). The release delivers only to the kid.
+
+**R2-I3 - The release keeps the seam's order.**
+- A released message is a `MessageAdded` with its old `at` and a new `seq`. Any front end, the bridge included, orders
+  by `seq` (§6.2), so nothing re-sorts history.
+- D18's deletes are `MessageDeleted` events. The seam holds.
+
+**R2-I4 - The read-only history needs no new permission.** It is our own store, read without any SMS permission and
+outside the role. With SMS Off the role is kept (D1) and `DISALLOW_SMS` stops sending, so read-only is enforced twice.
+With SMS not managed, the role is another app's.
+
+**R2-I5 - Revision 3's "save and share a received picture" is safe in principle, on one condition.** Only our own
+re-encoded JPEG (EXIF-free, made by the main process from the isolated process's pixels, D8) may leave:
+- saved through a MediaStore insert (no storage permission);
+- shared through `ACTION_SEND` with a one-off `FileProvider` grant.
+
+The original MMS part never leaves; its bytes aren't kept anyway. The share sheet lists only unsuspended apps. Where a
+picture can go is then the allowlist's business, as for any photo.
