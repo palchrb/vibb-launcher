@@ -34,6 +34,14 @@ under the Apache License 2.0 - see
 and `server/static/app-icons/LICENSE.txt` (the same text in `server/static/music-icons/LICENSE.txt` and
 `music/app/src/main/assets/licenses/Apache-2.0.txt`). Each converted file says what it was converted from.
 
+The launcher's MMS PDU codec (`launcher/app/src/main/java/com/kidslauncher/mdm/sms/vendor/pdu/`, design 77 D9) is
+vendored from [AOSP Messaging](https://android.googlesource.com/platform/packages/apps/Messaging)'s
+`src/com/android/messaging/mmslib/` at commit `de315b762312dd1a5d2bbd16e62ef2bd123f61e5`, Copyright (C) 2007-2008
+Esmertec AG and The Android Open Source Project, licensed under the Apache License 2.0 - see
+[`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt). It was
+modified here (made pure JVM and hardened); each file keeps its header and says it was modified, and the package's
+`README.md` lists every change. The few files written here in that package are under the GPL-3.0 (or later) and say so.
+
 The launcher's weather symbols (`launcher/app/src/main/res/drawable/weather_*.xml`, their names in
 `res/values*/weather_symbols.xml` and the table `weather/WeatherSymbols.kt`, made by `scripts/yr-symbols.py`, design 75;
 and `scripts/yr-symbols-11.svg`, upstream's `symbols/darkmode/11.svg` unchanged, the script's self-test input)
