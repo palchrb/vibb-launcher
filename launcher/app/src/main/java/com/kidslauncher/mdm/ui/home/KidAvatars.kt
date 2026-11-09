@@ -203,6 +203,13 @@ object KidAvatars {
         }
     }
 
+    /** The contact sheet's lines under the name (verification N8): the missed calls ([missedText]), then "1 ulest
+     * melding" - both parts in words, never the badge's bare sum. `null` = none. */
+    fun sheetLines(context: Context, missed: ContactMissed?, unread: Int): String? = listOfNotNull(
+        missedText(context, missed),
+        context.resources.getQuantityString(R.plurals.contact_unread, unread, unread).takeIf { unread > 0 },
+    ).takeIf { it.isNotEmpty() }?.joinToString("\n")
+
     /** The sheet's missed-call line: the phone's own, then (round L5) the missed Element X calls, one line each. */
     fun missedText(context: Context, missed: ContactMissed?): String? {
         if (missed == null) return null

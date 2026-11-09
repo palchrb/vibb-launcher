@@ -73,6 +73,17 @@ class MessagesWiringTest {
         for (banned in listOf("SmsRuntime.send", "SendCommand(")) assertTrue(banned, !compose.contains(banned))
     }
 
+    /** Verification L8 and N9: the thread writes the conversation id it learned back into its intent (a rebuild finds
+     * it and its draft), and drops a read started for another thread. */
+    @Test
+    fun `the thread keeps its id across a rebuild and drops a stale read`() {
+        val thread = code("ui/messages/ThreadActivity.kt")
+        assertTrue(body(thread, "private fun show(").contains("intent.putExtra(EXTRA_CONVERSATION, found.id.value)"))
+        assertTrue(body(thread, "private fun take(").contains("generation++"))
+        assertTrue(body(thread, "private fun take(").contains("keptDraft(drafts, conversationId, number)"))
+        assertTrue(body(thread, "private fun loadNow(").contains("forThread != generation"))
+    }
+
     @Test
     fun `a retry goes through the gate under the failed message's own id`() {
         val thread = code("ui/messages/ThreadActivity.kt")

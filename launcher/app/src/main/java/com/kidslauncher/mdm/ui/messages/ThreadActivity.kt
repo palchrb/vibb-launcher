@@ -90,6 +90,9 @@ class ThreadActivity : UIObjectActivity() {
 
     /** One read at a time, one more for whatever came meanwhile (code QA L2). */
     private val reload = Coalescer { done -> loadNow(done) }
+
+    /** Which thread the reads are for: a read started before [take] switched threads is dropped (verification N9). */
+    private var generation = 0
     private var events: Job? = null
     private val homeListener: () -> Unit = { renderCompose() }
     private val lockWatch = LockWatch(this) { if (!MessagesScreens.redirectIfLocked(it)) renderCompose() }
@@ -146,7 +149,9 @@ class ThreadActivity : UIObjectActivity() {
         newestSeq = 0L
         limit = PAGE
         cancelDelete()
-        val kept = drafts[draftKey()]
+        generation++
+        // The conversation's draft, else the number's (verification L8: a thread opened by number may have moved it).
+        val kept = keptDraft(drafts, conversationId, number)
         val draft = intent.getStringExtra(EXTRA_DRAFT)?.take(SmsEngine.SEND_MAX)
         clientId = kept?.second ?: UUID.randomUUID().toString()
         binding.threadField.setText(draft ?: kept?.first.orEmpty())
@@ -217,6 +222,7 @@ class ThreadActivity : UIObjectActivity() {
         val wanted = number?.let { normalised(it) }
         val count = limit
         val markRead = resumed
+        val forThread = generation
         SmsRuntime.ask(this, { engine ->
             val found = id?.let { engine.conversation(ConversationId(it)) } ?: wanted?.let { engine.conversationWith(it) }
             val list = found?.let { engine.messages(it.id, null, count) }.orEmpty()
@@ -224,7 +230,7 @@ class ThreadActivity : UIObjectActivity() {
             Loaded(found, list)
         }) { loaded ->
             done()
-            if (isDestroyed || loaded == null) return@ask
+            if (isDestroyed || loaded == null || forThread != generation) return@ask
             show(loaded, markRead)
         }
     }
@@ -240,6 +246,8 @@ class ThreadActivity : UIObjectActivity() {
             if (conversationId != found.id.value) {
                 drafts.remove(draftKey())?.let { drafts[found.id.value] = it }
                 conversationId = found.id.value
+                // A rebuild of this screen finds the thread, and its draft, by the id now (verification L8).
+                intent.putExtra(EXTRA_CONVERSATION, found.id.value)
                 if (resumed) SmsRuntime.threadInFront = conversationId
             }
             found.participants.singleOrNull()?.address
@@ -249,6 +257,7 @@ class ThreadActivity : UIObjectActivity() {
         } else {
             // Its last message deleted: the thread stays as a new one with the number.
             conversationId = null
+            intent.removeExtra(EXTRA_CONVERSATION)
         }
         conversation = found
         messages = loaded.messages
@@ -365,7 +374,7 @@ class ThreadActivity : UIObjectActivity() {
         }
     }
 
-    private fun draftKey(): String = conversationId ?: "number:${number.orEmpty()}"
+    private fun draftKey(): String = draftKeyOf(conversationId, number)
 
     /** The unsent text and its id stay in this process's memory while the kid looks elsewhere - never in the saved
      * instance state, which the system may write to disk (the field has `saveEnabled="false"`, code QA N4). */

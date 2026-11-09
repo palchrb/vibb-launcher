@@ -403,6 +403,18 @@ class MessagesModelTest {
         assertEquals(listOf("org.signal/.Share"), shareExclusions(resolved, null, usable = { it != "org.signal" }))
     }
 
+    /** Verification L8: a thread opened by number finds its draft after a rebuild - under the conversation's id once
+     * the draft moved there, else under the number's key. */
+    @Test
+    fun `a draft is found by the conversation, else by the number`() {
+        val drafts = mapOf("C1" to ("hei" to "id-1"), draftKeyOf(null, "+4790000005") to ("hallo" to "id-2"))
+        assertEquals("hei" to "id-1", keptDraft(drafts, "C1", "+4790000001"))
+        assertEquals("hallo" to "id-2", keptDraft(drafts, "C9", "+4790000005"))
+        assertEquals("hallo" to "id-2", keptDraft(drafts, null, "+4790000005"))
+        assertNull(keptDraft(drafts, null, null))
+        assertEquals("C1", draftKeyOf("C1", "+4790000001"))
+    }
+
     /** Code QA N1: the extra first, then EXTRA_TEXT, then the link's own body from the encoded part ("&" survives). */
     @Test
     fun `the smsto draft`() {

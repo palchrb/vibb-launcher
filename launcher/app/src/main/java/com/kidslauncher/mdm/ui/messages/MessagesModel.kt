@@ -347,6 +347,14 @@ fun partViews(parts: List<Part>): List<PartView> = parts.sortedBy { it.index }.m
     }
 }
 
+/** An unsent draft's key: the conversation's id, else the number a new thread is for. */
+fun draftKeyOf(conversationId: String?, number: String?): String = conversationId ?: "number:${number.orEmpty()}"
+
+/** The draft a thread shows when it opens (verification L8): under the conversation's key, else under the number's - a
+ * thread opened by number moves its draft to the conversation once it learns the id. Text and `clientId`. */
+fun keptDraft(drafts: Map<String, Pair<String, String>>, conversationId: String?, number: String?): Pair<String, String>? =
+    conversationId?.let { drafts[it] } ?: number?.let { drafts[draftKeyOf(null, it)] }
+
 /** What the kid asked to delete, waiting for the in-screen confirm (D18: one confirm, no trash, no undo). */
 sealed interface DeleteTarget {
     data class OneMessage(val id: MessageId) : DeleteTarget

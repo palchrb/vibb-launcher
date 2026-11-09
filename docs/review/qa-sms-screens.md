@@ -271,3 +271,75 @@ Checks: launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` 2230/
 unread messages without the missed-call glyph ("Mamma, 1 ulest melding"), and the thread shows the peach and lilac-grey
 bubbles with their times and the light delete ring (screenshots `20-avatar-badge-nb.png`, `21-thread-colours-nb.png`,
 `22-delete-ring-nb.png` in the session's `scratchpad/sms-screens/shots/`).
+
+## Fix round verification
+
+Reviewer, on c36366a1 (`sms-screens`), branch `qa-sms-screens-2`. I read the whole fix diff and the code it touches
+(`SmsEngine.conversation`/`conversationWith` against `conversationFor`'s key, `ContactSheet.usablePackages`, the
+manifest's `QUERY_ALL_PACKAGES`, the badge layouts' `drawableStartCompat`, `renderCallParts`). Targeted tests under the
+lock (`-PwarningsAsErrors=true`): **BUILD SUCCESSFUL in 2m 19s**, `MessagesModelTest` 22, `MessagesWiringTest` 4,
+`KidPaletteTest` 14, `HomeModelTest` 16, `TimeLockModelTest` 17, `KidScreensEscapeTest` 3, `MessageButtonsTest` 9 -
+0 failures. The bubble pairs recomputed by hand: ink/peach 8.70, time/peach 4.71, white/#34324A 12.34, time/#34324A
+4.88, "Ukjent avsender" (accent)/#34324A 6.25. N6 is out of scope (reverted to "Meldinger" on the user's decision).
+
+**Fixed and correct:** M1 (`retry:<id>`: a stale second tap is the engine's repeat; refused retries leave the id unused;
+a retry of a retry gets its own id), M2 (`unreadByNumber` skips names, `unknown:` and groups; the glyph only with a
+missed call; TalkBack "Mamma, 1 tapt anrop, 2 uleste meldinger"; Home, the phone book and LockActivity listen and
+unregister in `onStop`), M3, L1 (`DROP_OLDEST`, so the newest always arrives; the Default-thread collector only calls
+the thread-safe `SmsHome.refresh`, process-lifetime, no ordering dependence - every consumer is a reload signal), L2
+(`Coalescer` releases in the callback, which `ask` always posts), L3, L4, L5 (`SEND_AGAIN` can't loop: `again` sends
+once, and a repeat with the same text is the engine's dedup), L6 (resolution sees every package with
+`QUERY_ALL_PACKAGES`; hidden apps resolve nowhere; unmanaged/override = nothing excluded), L7, N1-N5.
+
+**Open:**
+
+- **L8 (new, from N4)** `ThreadActivity.kt:149` with `:241`. With the field's own saved state gone, a recreation
+  restores the draft only from `drafts[draftKey()]`, and `take()` computes the key from the intent's extras. A thread
+  opened by number (contact sheet, "Ny melding", `smsto:`) whose conversation exists moves its draft to the
+  conversation id in `show()`, but the intent still carries only the number - so a recreation (a font-scale, dark-mode
+  or the policy's language change; rotation is handled) drops the typed text. No double send (the text is gone too).
+  Fix: when `show()` learns the id, `intent.putExtra(EXTRA_CONVERSATION, id)`; or look up both keys in `take()`.
+- **L9 (device check, L6)** `PictureShare.kt:125`. Whether the chooser's Nearby/Quick Share *action button* honours
+  `EXTRA_EXCLUDE_COMPONENTS` is not certain from the AOSP chooser code (the list targets do). Add it to the step 3b
+  device check with "Edit" and "Copy"; dormant until a picture can open.
+- **N7** `KidPaletteTest.kt:260` checks the light ring against `kid_ground`, not against the peach bubble it sits on
+  (`kid_core` on `kid_accent` is 1.62:1), so the selected state of the kid's own bubble changes little. The confirm
+  panel also shows the state, so a nit; a darker ring (e.g. `kid_sheet_ink`) or the test on the right pair.
+- **N8** `ContactSheet.kt:57`: the sheet badge is not hidden from TalkBack and reads the bare sum ("3") next to the
+  missed line ("2 tapte anrop"); nothing says "1 ulest melding" on the sheet. Hide the badge and add the unread words
+  (`contactDescription`'s plural) to the missed line.
+- **N9** The `Coalescer`'s reads carry no request identity: a read in flight across `onNewIntent` would `show()` the
+  old conversation and the queued read would follow it. Practically unreachable (every way in clears the thread with
+  the list's `CLEAR_TOP`), so a nit: drop a result whose request id isn't the latest.
+
+### Outcome of the verification items
+
+On `sms-screens` after 376854a6.
+
+- **L8** - fixed both ways: when `show()` learns the conversation's id it writes it into the intent
+  (`EXTRA_CONVERSATION`, removed again when the last message is deleted), so a rebuild opens the same thread; and
+  `take()` looks the draft up by the conversation's key, else by the number's (pure `keptDraft` / `draftKeyOf`). Tests:
+  `a draft is found by the conversation, else by the number`, and `MessagesWiringTest`'s
+  `the thread keeps its id across a rebuild and drops a stale read`.
+- **N7** - the ring on the kid's own bubble is a 3 dp dark ring inside it, `kid_message_out_ink` (= `kid_sheet_ink`,
+  8.7:1 on the peach); the received bubble keeps the peach ring (6.25:1 on #34324A). `KidPaletteTest` now reads each
+  ring's stroke and its bubble's fill from the drawables and wants 3:1 or more.
+- **N8** - the sheet's badge is hidden from TalkBack (it is only the sum), and the line under the name says both parts:
+  the missed calls as before, then "1 ulest melding" (`KidAvatars.sheetLines`, the `contact_unread` plural).
+- **N9** - cheap, so done: `ThreadActivity` counts a generation in `take()`, each read carries the generation it started
+  in, and a result for an older one is dropped (the `Coalescer` is still released).
+- **L9** - nothing to change now; on the step 3b device checklist below.
+
+Targeted tests (`-PwarningsAsErrors=true`): `ui.messages`, `ui.home`, `TimeLockModelTest`, `TranslationsTest`,
+`KidPaletteTest`, `KidScreensEscapeTest` - 179 tests, 0 failed. No emulator run.
+
+### Step 3b: on-phone checks for "Del" (dormant until a picture can open)
+
+On the Jelly Star, kiosk on and off, with a parent-allowed app that takes images and one that isn't allowed:
+1. The share sheet lists only the allowed app; Bluetooth and a not-allowed app are gone.
+2. The chooser's Nearby/Quick Share **action button** is gone (L9): `EXTRA_EXCLUDE_COMPONENTS` with
+   `nearby_sharing_component` hides the list target; whether the button honours it isn't certain from AOSP's chooser.
+   If it shows, find another way to drop it (or accept it with the user).
+3. "Edit": with kiosk on, lock task's activity-start block must stop the system image editor; with kiosk off, note what
+   it opens and whether it can share on from there.
+4. "Copy": puts our own JPEG on the clipboard only - check that nothing else offers to open it.

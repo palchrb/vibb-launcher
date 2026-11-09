@@ -58,8 +58,12 @@ object ContactSheet {
             com.kidslauncher.mdm.ui.home.ContactBadge(missed?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number)),
         )
         view.findViewById<TextView>(R.id.sheet_name).text = contact.name
+        // Verification N8: the missed calls and the unread messages each in words; the badge is only their sum, so
+        // TalkBack skips it.
+        val unread = com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number)
+        view.findViewById<View>(R.id.sheet_badge).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         view.findViewById<TextView>(R.id.sheet_missed).apply {
-            val text = KidAvatars.missedText(activity, missed)
+            val text = KidAvatars.sheetLines(activity, missed, unread)
             visibility = if (text == null) View.GONE else View.VISIBLE
             this.text = text
         }
