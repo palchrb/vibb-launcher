@@ -2789,9 +2789,8 @@ impl SpotifyReads<'_, '_, '_> {
         Ok((kept, skipped, capped))
     }
 
-    /// [Self::pages], with the pages' unplayable count and first restriction (a show's, 2026-11-01:
-    /// `(unplayable, restriction)`).
-    #[allow(clippy::type_complexity)]
+    /// [Self::pages], with the pages' [spotify::Tally] (a show's unplayable count and first restriction since
+    /// 2026-11-01, what the items were since 2026-11-09).
     async fn pages_tallied(
         &mut self,
         account: i64,
@@ -2799,12 +2798,11 @@ impl SpotifyReads<'_, '_, '_> {
         max: usize,
         next_url: impl Fn(usize) -> String,
         parse: fn(&[u8]) -> Option<spotify::Page>,
-    ) -> Result<(Vec<spotify::Listed>, usize, bool, (usize, Option<String>)), SpotifyError> {
+    ) -> Result<(Vec<spotify::Listed>, usize, bool, spotify::Tally), SpotifyError> {
         let mut kept: Vec<spotify::Listed> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut skipped = 0;
-        let mut unplayable = 0;
-        let mut restriction: Option<String> = None;
+        let mut tally = spotify::Tally::default();
         let mut offset = 0;
         // A list of nothing but left-out entries still ends: at most twice the pages `max` needs.
         let most_pages = max.div_ceil(spotify::PAGE_LIMIT) * 2;
@@ -2812,26 +2810,22 @@ impl SpotifyReads<'_, '_, '_> {
         loop {
             read += 1;
             skipped += page.skipped;
-            unplayable += page.unplayable;
-            if restriction.is_none() {
-                restriction = page.restriction.take();
-            }
-            let tally = |restriction: &Option<String>| (unplayable, restriction.clone());
+            tally.add(&mut page, read == 1);
             let mut listed = std::mem::take(&mut page.listed).into_iter();
             for item in listed.by_ref() {
                 if !seen.insert(item.id.clone()) {
                     continue;
                 }
                 if kept.len() == max {
-                    return Ok((kept, skipped, true, tally(&restriction)));
+                    return Ok((kept, skipped, true, tally));
                 }
                 kept.push(item);
             }
             if !page.next {
-                return Ok((kept, skipped, false, tally(&restriction)));
+                return Ok((kept, skipped, false, tally));
             }
             if kept.len() == max || read >= most_pages {
-                return Ok((kept, skipped, true, tally(&restriction)));
+                return Ok((kept, skipped, true, tally));
             }
             offset += spotify::PAGE_LIMIT;
             let body = self.get(account, &next_url(offset)).await?;
@@ -3046,7 +3040,7 @@ async fn spotify_check(
                 Err(err) => return fail(err),
             };
             let next = |offset| accounts.read_url(Read::ShowEpisodes(id, offset));
-            let (unplayable, restriction) = match reads
+            let tally = match reads
                 .pages_tallied(meta_reader, page, spotify::MAX_SHOW_EPISODES, next, parse)
                 .await
             {
@@ -3056,14 +3050,33 @@ async fn spotify_check(
                 }
                 Err(err) => return fail(err),
             };
+            let (unplayable, restriction) = (tally.unplayable, tally.restriction.as_deref());
             if unplayable > 0 {
                 tracing::info!(
                     entry = old.entry_id,
                     unplayable,
                     listed = listed.len(),
-                    reason = restriction.as_deref().unwrap_or("none"),
+                    reason = restriction.unwrap_or("none"),
                     spike,
                     "a Spotify show with unplayable episodes"
+                );
+            }
+            // A show that lists nothing (`no_items`, or the audiobook sentence): what Spotify sent in its place,
+            // counts and Spotify's own words only (2026-11-09).
+            if listed.is_empty() {
+                tracing::info!(
+                    entry = old.entry_id,
+                    total = tally.total,
+                    items = tally.shape.items,
+                    nulls = tally.shape.nulls,
+                    other = tally.shape.other,
+                    other_type = tally.shape.other_type.as_deref().unwrap_or("none"),
+                    unplayable,
+                    reason = restriction.unwrap_or("none"),
+                    playable = tally.shape.playable,
+                    next = tally.next,
+                    market = spotify::MARKET,
+                    "a Spotify show listed nothing"
                 );
             }
             // Every episode unplayable (none listed, none left out for anything else) with an audiobook-shaped
@@ -3073,7 +3086,7 @@ async fn spotify_check(
             if listed.is_empty()
                 && unplayable > 0
                 && unplayable == skipped
-                && spotify::audiobook_shaped(restriction.as_deref())
+                && spotify::audiobook_shaped(restriction)
             {
                 return Ok(Err(CheckError::Spotify(
                     spotify::AUDIOBOOK_CODE.to_string(),
