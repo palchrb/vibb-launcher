@@ -68,41 +68,45 @@ object ContactSheet {
             this.text = text
         }
 
+        // One rule for the card and the phone book's row (design 79 §3.5, [contactActions]).
+        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+        val actions = contactActions(
+            contact, rules, emergency, OngoingCalls.states, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
+            learnedRoom = ElementRoomStore.lookup(activity),
+        )
         view.findViewById<View>(R.id.sheet_call).apply {
             // One call at a time: Call is off while another call exists (emergency numbers excepted).
-            val allowed = secondCallAllowed(OngoingCalls.states, emergency)
-            isEnabled = allowed
-            alpha = if (allowed) 1f else 0.4f
+            isEnabled = actions.callEnabled
+            alpha = if (actions.callEnabled) 1f else 0.4f
             setOnClickListener {
                 CallSystem.placeCall(activity, contact.number)
                 dialog.dismiss()
             }
         }
-        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        // Design 77 §6.7: our own thread in "Styrt av Vibb" (no "opens in" line - it is Vibb One's own screen).
-        val ownThread = rules != null && opensOwnThread(contact, rules.smsMode)
-        val message = rules?.takeUnless { ownThread }?.let {
-            resolveMessageButton(
-                contact, it.smsEnabled, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
-                learnedRoom = ElementRoomStore.lookup(activity),
-            )
-        }
         val messageButton = view.findViewById<View>(R.id.sheet_message)
         val messageApp = view.findViewById<TextView>(R.id.sheet_message_app)
-        if (ownThread) {
-            messageApp.visibility = View.GONE
-            messageButton.setOnClickListener {
-                com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, null, contact.number)
-                dialog.dismiss()
+        when (val message = actions.message) {
+            // Design 77 §6.7: our own thread in "Styrt av Vibb" (no "opens in" line - it is Vibb One's own screen).
+            MessageAction.OwnThread -> {
+                messageApp.visibility = View.GONE
+                messageButton.setOnClickListener {
+                    // Design 79 §3.2 rule 3: Melding deals with the contact's missed calls too.
+                    MissedCallsRepo.markSeen(activity, contact.number)
+                    com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, null, contact.number)
+                    dialog.dismiss()
+                }
             }
-        } else if (message == null) {
-            messageButton.visibility = View.GONE
-            messageApp.visibility = View.GONE
-        } else {
-            messageApp.text = activity.getString(R.string.calls_message_opens_in, appLabel(activity, message.packageName))
-            messageButton.setOnClickListener {
-                openMessage(activity, message)
-                dialog.dismiss()
+            MessageAction.None -> {
+                messageButton.visibility = View.GONE
+                messageApp.visibility = View.GONE
+            }
+            is MessageAction.App -> {
+                messageApp.text = activity.getString(R.string.calls_message_opens_in, appLabel(activity, message.intent.packageName))
+                messageButton.setOnClickListener {
+                    MissedCallsRepo.markSeen(activity, contact.number)
+                    openMessage(activity, message.intent)
+                    dialog.dismiss()
+                }
             }
         }
         view.findViewById<View>(R.id.sheet_close).setOnClickListener { dialog.dismiss() }

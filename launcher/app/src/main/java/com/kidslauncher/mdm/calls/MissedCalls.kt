@@ -66,6 +66,9 @@ internal fun unseenMissedCalls(
     return result
 }
 
+/** A contact's seen mark after one more mark at [upToMs] (design 79 §3.2): it only ever moves forward. */
+fun seenMarkAfter(existing: Long?, upToMs: Long): Long = if (existing == null) upToMs else maxOf(existing, upToMs)
+
 /** The day a missed-call time falls on, relative to now, for "today 13:05" / "yesterday 13:05". */
 enum class RelativeDay { TODAY, YESTERDAY, EARLIER }
 

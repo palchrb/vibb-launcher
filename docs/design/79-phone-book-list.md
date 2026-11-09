@@ -5,6 +5,10 @@ built.** Mockups: `docs/design/79-mockups.html` (the list with missed calls firs
 ingenting", Meldinger with search, the contact card's long-press, the "Bilde av …" sheet and the framing, the contact
 request with a picture).
 
+**Approved 2026-11-09 ("Bygg 79") with one change: the emergency numbers go to the bottom of the list, not A-Å among
+the contacts** (§3.1; the user: "ikke legg nødnr på toppen, man skal jo i 99.99% av tilfellene ha tak i noen andre..
+Legg den på bunnen"). The sketch, the rules and the mockups follow it.
+
 **Revision 3, 2026-11-09: the user's decisions. Nothing is open.**
 - **One list, no filtering but search** (the user: "Jeg likte ikke tabs eller noe av det egentlig. La oss kjøre at vi
   ikke har filtrering utenom søk"). Revision 2's layout A (tabs) is dropped, and so are favourites altogether: no star
@@ -42,9 +46,10 @@ The user's words (2026-11-09):
 
 - **The phone book becomes one list** of solid night tiles on the kid's wallpaper, a search pill under the header (from
   8 contacts), the contact request's "+" in the header.
-- **Order:** the contacts with unseen missed calls first, newest call first; then everyone else A-Å. No headers, no
-  groups, no filter. The request's answer shows once at the very top; open requests sit at the end under one small
-  "Venter på svar" label.
+- **Order:** the contacts with unseen missed calls first, newest call first; then everyone else A-Å; the emergency
+  numbers last (the user's change at approval, §3.1). No headers, no groups, no filter. The request's answer shows
+  once at the very top; open requests sit after the contacts under one small "Venter på svar" label, before the
+  emergency numbers.
 - **Each row:** the avatar (photo or initial, today's badge), the name, a second line only when there is something to
   say (a missed call in red, unread messages, "Nødnummer"), and two round buttons, **Ring** and **Melding**. A tap
   anywhere else opens today's contact card.
@@ -128,17 +133,23 @@ the kid's picture per contact (on the phone), the contact request's picture, whe
   [Kim     Ikke lagt til                ]     a request answer, once
   [Pappa ² 2 tapte anrop 14:02  (☎)(✉)]      unseen missed calls first, newest first
   [Ola ¹   Tapt anrop i går     (☎)(✉)]
-  [Ambulanse  Nødnummer         (☎)   ]      then everyone A-Å
-  [Anna                         (☎)(✉)]
+  [Anna                         (☎)(✉)]      then everyone else A-Å
   [Bestemor                     (☎)(✉)]
   [Mamma ² 2 uleste meldinger   (☎)(✉)]
   ...
   Venter på svar
   [Lina    Venter på svar               ]
+  [Ambulanse  Nødnummer         (☎)   ]      the emergency numbers last, A-Å among themselves
 ```
 
+- **The emergency numbers go last** (the user, approving the build, 2026-11-09: "ikke legg nødnr på toppen, man skal jo
+  i 99.99% av tilfellene ha tak i noen andre.. Legg den på bunnen"): after "Venter på svar", A-Å among themselves, in
+  the same look with the asking Ring (§3.5). An emergency number with an unseen missed call sits in the top like any
+  other contact (that is what the top is). With calls off only they are listed, A-Å, as before. While searching they
+  are the last hits too (§4.1).
 - **No headers** but "Venter på svar" (those rows can't be called). The red line says why a contact is at the top.
-- A contact shows once: at the top while its missed call is unseen, else in its A-Å place.
+- A contact shows once: at the top while its missed call is unseen, else in its A-Å place (an emergency number: at the
+  end).
 - **A-Å:** `java.text.Collator` in Vibb's language (nb puts Æ, Ø and Å last), strength SECONDARY, ties by contact id;
   the `Collator` kept per locale.
 - **The ground:** the phone book keeps the wallpaper. Every row and the pill are solid `kid_music_tile` tiles, so they
@@ -231,7 +242,8 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   of `ContactSheet.show` unchanged): **Ring** for every phone-book contact while calls are on (while calls are off only
   emergency contacts are listed, and theirs shows), off while another call is live (emergency excepted); **Melding** to
   our own thread (`opensOwnThread`), else `resolveMessageButton`'s app, else no button.
-- **Emergency contacts** sit A-Å with today's red disc and ring (2 dp at 44 dp), never a photo, the line "Nødnummer".
+- **Emergency contacts** sit at the end of the list (§3.1), A-Å among themselves, with today's red disc and ring (2 dp
+  at 44 dp), never a photo, the line "Nødnummer".
   Their row **Ring** is the tonal red pair (`kid_emergency_tonal` disc, `kid_emergency_text` glyph) and **asks first**
   ("Ringe Ambulanse?", the existing `calls_confirm_title` dialog): a one-tap 112 from a scrolling list costs more than a
   call to Mamma. The card's Ring stays as today. The fail-closed 112 row (no readable rules): the red disc,
@@ -278,7 +290,8 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   `textPersonName`, an autofill hint); IME action Search closes the keyboard. **It never takes focus by itself.**
 - **Live:** every keystroke filters. While a query is typed the top dissolves: one list of hits, ranked - the name
   starts with the query, then a word in it does, then it contains it - each rank A-Å (QA N2); the matched part in peach
-  (8.6:1 on the tile). Open requests are searched too and show as their waiting rows (QA L1).
+  (8.6:1 on the tile). Open requests are searched too and show as their waiting rows (QA L1), after the contacts'
+  hits; the emergency numbers' hits come last, as in the list.
 - **Empty:** "Fant ingenting" under a 72 dp tile-coloured disc with the magnifier in peach. In the phone book, while
   `canAsk`, only when nothing matches (requests included), with at least two letters and not all digits: a quiet button
   "Be om å legge til «Lina»" (en "Ask to add “Lina”"), the request form with the query as the name.

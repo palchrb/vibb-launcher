@@ -103,9 +103,17 @@ object MissedCallsRepo {
         }
     }
 
-    /** The kid opened this contact or called it: its missed calls so far are dealt with. */
-    fun markSeen(context: Context, number: String, nowMs: Long = System.currentTimeMillis()) {
-        prefs(context).edit { putLong(number, nowMs) }
+    /**
+     * The kid opened this contact, called it or wrote to it (now), or the phone book showed its missed calls up to
+     * [upToMs] (design 79 §3.2): its missed calls up to then are dealt with. The mark only ever moves forward
+     * ([seenMarkAfter]), so a visit's mark can't undo a card opened during it.
+     */
+    @Synchronized
+    fun markSeen(context: Context, number: String, upToMs: Long = System.currentTimeMillis()) {
+        val prefs = prefs(context)
+        val existing = if (prefs.contains(number)) prefs.getLong(number, Long.MIN_VALUE) else null
+        val next = seenMarkAfter(existing, upToMs)
+        if (next != existing) prefs.edit { putLong(number, next) }
     }
 
     /** Design r11 §3.3: contact number -> the newest missed call its row on the lock was dismissed with. Our
