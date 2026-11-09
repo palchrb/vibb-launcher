@@ -198,12 +198,14 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   series whole unless its UNTIL is over 60 days ago. Caps 2000 events and 2 MB served, the farthest from today first.
   A series' rev = 16 hex of SHA-256 over its JSON without the rev; the feed's over the events array.
 - **The fetch** (`src/calendar_feeds.rs`): `run` (spawned in `main`, its first pass 30 s on, then `run_due` every
-  minute) fetches each due source, most overdue first, `SPACING` 4 s apart, each in its own task - a parse that panics
+  minute) fetches each due source every `INTERVAL` - **30 min** since 2026-11-09 (design 72 decision 2's other choice;
+  it was 60: a removed event, the user's declined Spond event in an iCloud feed, lingered on the lock's reminder row;
+  branch `calendar-fresh`) -, most overdue first, `SPACING` 4 s apart, each in its own task - a parse that panics
   is caught (`catch_unwind`: the source's `unreadable`), a task that panics anyway is stored as that source's
   `unreadable` failure, and the pass goes on (QA H1); a fetch that couldn't be stored waits the interval (nit 6) - through `music_fetch` (one request in flight server-wide) with `Kind::Calendar` (5 MB,
   60 s; `SourceResponse.content_type` since design 72). Redirects are followed in `get`, one hop at a time (at most 5):
   never https → http (`insecure`), a LAN link only on its own host and port. Conditional GET; a 304 keeps the set; a
-  failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the hour; daily after 7 days of
+  failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the interval - 30 min, 6 h under UID churn; daily after 7 days of
   failing). A 200 with no events while the set had some is held (`empty`) until the third such answer in a row or 24 h
   after the first (its validators aren't kept, so the next fetch asks again; QA M1). UID churn - every series new at
   three fetches in a row - fetches every 6 h. A new rev is stored (`WHERE id AND uid`: a source removed mid-fetch
