@@ -19,6 +19,9 @@ const val ROLE_SMS = "android.app.role.SMS"
 /** The engine's capability in the status report: the server's per-channel `sms_mode` and the SMS keys (design 77 §7). */
 const val SMS_ENGINE_CAPABILITY = "sms_engine_v1"
 
+/** Design 80 D13: the phone honours `call_policy.sms_groups` and reports `sms_state.own_learned`. */
+const val SMS_GROUPS_CAPABILITY = "sms_groups_v1"
+
 /**
  * D1: "Styrt av Vibb" takes the role; "Ikke styrt" hands back a role we took ([takenByUs]); "Av" and unknown rules
  * ([mode] `null`) keep what is held and never take it - `DISALLOW_SMS` stops everything in "Av", the history stays, and

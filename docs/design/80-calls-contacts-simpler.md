@@ -12,8 +12,14 @@ sms og ringe, så skal nok det gjelde både inn og ut fra tlf. Bare en tanke".
   - a "Gruppemeldinger" switch is added (D13).
 
   §10 lists where each finding went.
-- Not approved for building. No question is open.
+- Not approved for building. No question is open. (Approved by the user 2026-11-09, "Bygg 80".)
 - Mockups: `docs/design/80-mockups.html`, before and after at 390 px, in light and dark.
+- **As built** (branch `calls-simpler`, 2026-11-09): steps 1-2 in `server/src/handlers/calls_form.rs`,
+  `handlers::calls`, `handlers::calls_sms`, `templates/device_calls.html`, `static/contact-form.js`; step 3 with
+  migration 0134, `call_policy.sms_groups`, `sms_state.own_learned` and the launcher's `sms/engine/OwnLearning.kt`.
+  Details: `docs/notes/server/calls-and-contacts.md` ("A simpler Calls & Contacts page") and
+  `docs/notes/launcher/calls.md` ("Group texts switch and the learned own number"). Built with the user's addition
+  of 2026-11-09: a kid's request for a short number starts with calls and texts off, saying the parent chooses.
 
 **What it changes:**
 - **Steps 1 and 2 (server and template):** no policy key, no contract file, no migration and no launcher change.

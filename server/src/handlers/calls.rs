@@ -967,6 +967,7 @@ async fn load_page(
                 known: None,
                 hint: None,
                 error: Some(refusal.why.clone()),
+                uses: Vec::new(),
             });
         }
     }
@@ -1042,7 +1043,11 @@ async fn load_page(
     if sms_page.lock_text {
         adv_messages.push(t(lang, "device.calls.adv.lock_text").to_string());
     }
-    let number_line = policy.sms_mode == "managed" && sms_page.number_missing;
+    if !sms_page.groups {
+        adv_messages.push(t(lang, "device.calls.adv.groups_off").to_string());
+    }
+    // With group texts off nothing is lost for want of the number, so nothing is said (D7).
+    let number_line = policy.sms_mode == "managed" && sms_page.groups && sms_page.number_missing;
     let rcs_recent = rcs_recent(&policy, now);
     let advanced_open = shown.advanced
         || emergency_add_error.is_some()

@@ -198,6 +198,12 @@ class FakeMessageStore : MessageStore {
     }
     override fun counters() = counters.toMap()
 
+    var ownLearnedJson: String? = null
+    override fun ownLearned(): String? = ownLearnedJson
+    override fun putOwnLearned(json: String?) {
+        ownLearnedJson = json
+    }
+
     override fun afterDeletes() {
         deletePasses++
     }

@@ -350,3 +350,35 @@ design 79 (the phone book as a list, with a photo the kid picks or takes); a fir
   number would pass the phone's check (the server's list is static too).
 - **The upload's step is pure (code QA L4):** `recordsAfterUpload` (only the sent request moves, only while PENDING)
   and `uploadGoesOn` (a RETRY ends the upload), tested in `ContactRequestsTest`.
+
+## Group texts switch and the learned own number (design 80 step 3, D13, §4.4; branch `calls-simpler`)
+
+- **`call_policy.sms_groups`** ("Gruppemeldinger", D13): `CallPolicy.smsGroups`, `CallRules.smsGroups`, both
+  defaulting to `true` - an older server's policy and rules stored before it keep today's behaviour (a deliberate
+  exception to "absent denies": the key loosens nothing, and D12's members rule under it fails closed). Off:
+  `MmsGate.group(..., groups = false)` turns every `Many` into `Blocked` (dropped as `group`, no allow path); a
+  one-to-one MMS and every SMS are untouched. The engine refuses a send to a group (`Refusal.GROUPS_OFF`) and fails a
+  queued group MMS at the outbox; a group thread's compose bar is `ComposeState.GROUPS_OFF`, "Gruppemeldinger er slått
+  av" (`messages_groups_off`; channel-level states - read-only, unavailable - still win).
+- **The capability `sms_groups_v1`** (`SMS_GROUPS_CAPABILITY`, in `STATUS_CAPABILITIES`): until a phone claims it the
+  PWA draws the switch disabled ("Oppdater Vibb One først"), since an older engine would ignore an "off".
+- **The learned own number** (§4.4, `sms/engine/OwnLearning.kt`, pure, `OwnLearningTest`): after D10's checks and the
+  retrieve-conf's `From` matched the notification's, `MmsFlow.onRetrieved` learns "us" only when no own number comes
+  from the parent or a SIM, no conflict is open, the sender is a contact with `sms_in` that isn't an emergency number
+  (rule 5, SMS managed - not the callback window), and the message has exactly one `To` and no `Cc` - a `/TYPE=PLMN`
+  full `+` number that isn't a short code, an emergency number, the sender or any contact. A later message meeting
+  every condition with another `To` is the conflict: no number in use (groups dropped), both kept, nothing learned
+  again. `OwnLearning.current` clears it on a change of the active SIMs (`SmsJudge.simSet`, the subscription ids,
+  sorted), a number the parent stored, or a contact with the number; the cleared state is deleted from the store.
+  `MmsGate.ownNumbers(parent, sim, learned)` takes it last, only while the parent's and the SIMs' are all missing.
+  Kept in the engine's store (`own_learned`, one row; `messages.db` version 4) as `OwnLearned` JSON.
+- **The report:** `sms_state.own_learned` (`SmsOwnLearned`: `number` - `null` during a conflict -, `from`, `at`,
+  `conflict`), `null` for none, always sent (`MmsFlow.ownLearned()` on the engine thread). The shapes are
+  `sms_contract.json`'s `report.sms_state.own_learned` and `report.own_learned_conflict`; the capability is
+  `groups_capability`; `policy.call_policy.sms_groups` and `policy.groups_off` (`SmsContractTest`,
+  `PolicyResponseCompatTest`).
+- Tests: `OwnLearningTest` (every condition, the conflict, what clears it, the order of the own numbers, D13 on
+  `MmsGate.group`), `MmsEngineTest` (groups off end to end - the blocked group, the refused reply and the failed queued
+  one; learning then a group judged with the learned number, the conflict, a SIM change; no learning from a stranger
+  the callback window let in or while a SIM knows the number; a contact clears it), `MessagesModelTest` (the compose
+  bar), `SmsContractTest`, `PolicyResponseCompatTest`.

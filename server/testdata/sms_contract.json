@@ -1,5 +1,6 @@
 {
   "capability": "sms_engine_v1",
+  "groups_capability": "sms_groups_v1",
   "migration": [
     {"calls_managed": false, "calls_enabled": false, "sms_enabled": false, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
     {"calls_managed": false, "calls_enabled": true, "sms_enabled": true, "calls_mode": "unmanaged", "sms_mode": "unmanaged"},
@@ -37,9 +38,11 @@
       "sms_names": ["DNB", "Posten"],
       "own_numbers": [{"slot": 1, "number": "+4790000001"}],
       "mmsc_hosts": [],
-      "sms_held_drop": ["00112233445566778899aabbccddeeff"]
+      "sms_held_drop": ["00112233445566778899aabbccddeeff"],
+      "sms_groups": true
     },
-    "mmsc_hosts_row": {"mccmnc": "24201", "hosts": ["mmsc.example.invalid"]}
+    "mmsc_hosts_row": {"mccmnc": "24201", "hosts": ["mmsc.example.invalid"]},
+    "groups_off": {"sms_groups": false}
   },
   "report": {
     "sms_state": {
@@ -57,8 +60,10 @@
       "mmsc_known": false,
       "last_error": null,
       "own_numbers": [{"slot": 1, "number": "+4790000001"}, {"slot": 2, "number": null}],
-      "hold_full": {"numbers": false, "names": true}
-    }
+      "hold_full": {"numbers": false, "names": true},
+      "own_learned": {"number": "+4790000002", "from": "+4791234567", "at": 1762700000000, "conflict": []}
+    },
+    "own_learned_conflict": {"number": null, "from": "+4791234567", "at": 1762700400000, "conflict": ["+4790000002", "+4790000003"]}
   },
   "held": {
     "request": {

@@ -25,7 +25,14 @@ data class SmsState(
     val lastError: String?,
     val ownNumbers: List<SmsOwnNumber>,
     val holdFull: SmsHoldFull,
+    /** Design 80 §4.4 (capability `sms_groups_v1`): the own number learned from a message, `null` for none. */
+    val ownLearned: SmsOwnLearned?,
 )
+
+/** Design 80 §4.4: [number] in use (`null` during a conflict), its teacher [from], when ([at], epoch ms), and
+ * [conflict] - `[]` or the two numbers seen. */
+@Serializable
+data class SmsOwnLearned(val number: String?, val from: String, val at: Long, val conflict: List<String>)
 
 /** Blocked messages by sender class, and those over a hold cap (D16). */
 @Serializable

@@ -954,3 +954,219 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
             .contains("<details class=\"section\" id=\"advanced\" open>")
     );
 }
+
+// ---- Step 3: "Gruppemeldinger" (D13) and the learned own number (§4.4) ----
+
+/// A report claiming the engine and the group switch, with this `sms_state`.
+async fn report_groups(app: &TestApp, token: &str, sms_state: serde_json::Value) {
+    app.post_status(
+        token,
+        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1", "sms_groups_v1"], "sms_state": sms_state }),
+    )
+    .await;
+}
+
+async fn groups_on(app: &TestApp, id: i64) -> bool {
+    sqlx::query_scalar("SELECT sms_groups FROM device_policy WHERE device_id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// D13: the switch is drawn disabled until the phone claims `sms_groups_v1` (a post can't turn it off then); with it,
+/// only a post carrying `groups_shown` writes it (an older page keeps it). Off: the policy says so, Avansert's row
+/// says "Group texts off", a blocked group row says why, and the missing number's lines are silent.
+#[tokio::test]
+async fn the_group_switch_needs_the_capability_and_its_marker() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    let calls = format!("/devices/{id}/calls");
+    let sms = format!("/devices/{id}/calls/sms");
+    report(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }] }),
+    )
+    .await;
+    let html = page(&app, &cookie, &calls).await;
+    let row = part(&html, "data-groups", "</label>");
+    assert!(
+        row.contains("Update Vibb One first") && row.contains("checked disabled"),
+        "{row}"
+    );
+    app.request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
+        .await;
+    assert!(groups_on(&app, id).await, "no capability: kept");
+
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }] }),
+    )
+    .await;
+    let html = page(&app, &cookie, &calls).await;
+    assert!(!part(&html, "data-groups", "</label>").contains("disabled"));
+    let res = app
+        .request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
+        .await;
+    assert_redirect(&res, &format!("{calls}?advanced=1"), Some("sms-settings"));
+    assert!(!groups_on(&app, id).await);
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["sms_groups"],
+        json!(false)
+    );
+    // An older page (no marker) keeps it off; the switch turned on with the marker writes it.
+    app.request_form(
+        Method::POST,
+        &sms,
+        Some(&cookie),
+        &[("sms_lock_text", "on")],
+    )
+    .await;
+    assert!(!groups_on(&app, id).await);
+    let at = Utc::now().timestamp_millis() - 60_000;
+    app.request(
+        Method::POST,
+        "/api/devices/sms-held",
+        Some(&token),
+        Some(json!({ "rows": [{ "id": format!("{:032x}", 9), "at": at, "kind": "mms", "sender_class": "group",
+            "sender": "", "expires_at": at, "state": "blocked" }] })),
+    )
+    .await;
+    let html = page(&app, &cookie, &calls).await;
+    assert!(html.contains("data-blocked-reason>Group texts are turned off<"));
+    assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · Message text on the lock screen · Group texts off<"));
+    assert!(
+        !html.contains("data-number-line") && !html.contains("data-adv-line=\"number\""),
+        "silent while off"
+    );
+    app.request_form(
+        Method::POST,
+        &sms,
+        Some(&cookie),
+        &[("groups_shown", "1"), ("sms_groups", "on")],
+    )
+    .await;
+    assert!(groups_on(&app, id).await);
+    let html = page(&app, &cookie, &calls).await;
+    assert!(html.contains(
+        "data-blocked-reason>While the phone's number is missing, every group text is blocked<"
+    ));
+}
+
+/// §4.4/§4.5: the number the phone learned shows with its teacher named by the contact, "Use this number" stores the
+/// reported one into the first free slot, a conflict shows both with a "Use" each, and the learned number is never a
+/// contact.
+#[tokio::test]
+async fn the_learned_number_and_a_conflict() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4791234567", [true; 6]).await;
+    let calls = format!("/devices/{id}/calls");
+    let learned =
+        json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }], "own_learned": learned }),
+    )
+    .await;
+    let html = page(&app, &cookie, &calls).await;
+    let settings = part(&html, "id=\"sms-settings\"", "</section>");
+    assert!(
+        settings.contains("Learnt from a message from Mamma"),
+        "{settings}"
+    );
+    assert!(
+        settings.contains("+4790000009") && settings.contains(r#"name="source" value="learned""#)
+    );
+    assert!(
+        !html.contains("data-number-line"),
+        "a learned number isn't missing"
+    );
+    // Never a contact.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[
+                ("name", "Meg"),
+                ("number", "+4790000009"),
+                ("switches", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let use_uri = format!("/devices/{id}/calls/own-number/use");
+    let res = app
+        .request_form(
+            Method::POST,
+            &use_uri,
+            Some(&cookie),
+            &[("source", "learned")],
+        )
+        .await;
+    assert_redirect(&res, &format!("{calls}?advanced=1"), Some("sms-settings"));
+    let own: Vec<(i64, String)> =
+        sqlx::query_as("SELECT slot, number FROM device_own_numbers WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(own, [(1, "+4790000009".to_string())]);
+
+    // A conflict: both shown, a "Use" each; the second stored. With slot 1 taken nothing is free: the notice.
+    let conflict = json!({ "number": null, "from": "+4791234567", "at": 2, "conflict": ["+4790000002", "+4790000003"] });
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }], "own_learned": conflict }),
+    )
+    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &use_uri,
+            Some(&cookie),
+            &[("source", "conflict:1")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("{calls}?advanced=1&notice=own_number_gone"),
+        Some("sms-settings"),
+    );
+    sqlx::query("DELETE FROM device_own_numbers")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = page(&app, &cookie, &calls).await;
+    let settings = part(&html, "id=\"sms-settings\"", "</section>");
+    assert!(
+        settings.contains("Two messages showed different numbers: +4790000002 and +4790000003."),
+        "{settings}"
+    );
+    assert!(settings.contains(">Use +4790000002<") && settings.contains(r#"value="conflict:1""#));
+    assert!(
+        html.contains("data-number-line"),
+        "a conflict leaves the number missing"
+    );
+    app.request_form(
+        Method::POST,
+        &use_uri,
+        Some(&cookie),
+        &[("source", "conflict:1")],
+    )
+    .await;
+    let own: Vec<(i64, String)> =
+        sqlx::query_as("SELECT slot, number FROM device_own_numbers WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(own, [(1, "+4790000003".to_string())]);
+}

@@ -104,9 +104,23 @@ object MmsGate {
      * address is blocked: with `To = [kid, stranger]`, "the one unknown address must be us" would let the stranger in.
      * One recipient alone is us (or we were Bcc'd), so it is the sender's own conversation either way. Every other
      * address must be a contact with `sms_in` or `sms_out` ([contacts]); a recipient that isn't a PLMN number is no
-     * contact. The caller has checked that the sender ALLOWs by D4 rule 5.
+     * contact. The caller has checked that the sender ALLOWs by D4 rule 5. Design 80 D13: with [groups] off
+     * ("Gruppemeldinger") every group is blocked, whatever its members; a one-to-one message is untouched.
      */
     fun group(
+        sender: String,
+        to: List<MmsAddress>,
+        cc: List<MmsAddress>,
+        own: Set<String>,
+        contacts: List<RuleContact>,
+        defaultCc: String,
+        groups: Boolean = true,
+    ): Group {
+        val judged = members(sender, to, cc, own, contacts, defaultCc)
+        return if (!groups && judged is Group.Many) Group.Blocked else judged
+    }
+
+    private fun members(
         sender: String,
         to: List<MmsAddress>,
         cc: List<MmsAddress>,
@@ -129,12 +143,14 @@ object MmsGate {
 
     /**
      * D12's own numbers: the parent's, per SIM slot; a slot the parent left empty takes the number its SIM knows
-     * ([sim]: slot to normalised number, `null` when the SIM doesn't know). At most two.
+     * ([sim]: slot to normalised number, `null` when the SIM doesn't know). At most two. Design 80 §4.4: the number
+     * [learned] from a message ([OwnLearning]) is "us" only while the parent's and the SIMs' are all missing.
      */
-    fun ownNumbers(parent: List<OwnNumberRule>, sim: List<Pair<Int, String?>>): Set<String> {
+    fun ownNumbers(parent: List<OwnNumberRule>, sim: List<Pair<Int, String?>>, learned: String? = null): Set<String> {
         val bySlot = parent.filter { it.number.isNotBlank() }.associate { it.slot to it.number }
         val filled = sim.filter { (slot, number) -> number != null && slot !in bySlot }.associate { it.first to it.second!! }
-        return (bySlot + filled).entries.sortedBy { it.key }.map { it.value }.take(2).toSet()
+        val known = (bySlot + filled).entries.sortedBy { it.key }.map { it.value }.take(2).toSet()
+        return known.ifEmpty { setOfNotNull(learned) }
     }
 
     /** A group conversation's key (§6.6): its sorted participant set. */

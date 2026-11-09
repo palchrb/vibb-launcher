@@ -541,6 +541,13 @@
                         <span class="row-label">{{ self.t("device.sms.settings.lock_text") }}</span>
                         <input type="checkbox" role="switch" class="sw" name="sms_lock_text" value="on"{% if sms.lock_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
+                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has it (an older page leaves the
+                        stored value); disabled until the phone claims `sms_groups_v1`. -#}
+                    <input type="hidden" name="groups_shown" value="1">
+                    <label class="row" data-groups>
+                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}<span class="row-sub">{{ self.t("device.sms.settings.groups_sub") }}</span>{% if !sms.groups_capable %}<span class="row-sub tone-orange">{{ self.t("device.sms.settings.groups_update_first") }}</span>{% endif %}</span>
+                        <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %}{% if !sms.groups_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                    </label>
                     {% for own in sms.own_rows %}
                     {% if let Some(known) = own.known %}
                     {#- §4.5: the number the phone has, with where it is from; "Endre…" opens the field (a plain
@@ -566,13 +573,21 @@
                         <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}>
                         {% if let Some(why) = own.error %}<p class="field-error" id="{{ own.field }}-error">{{ why }}</p>{% else if let Some(hint) = own.hint %}<p class="field-hint">{{ hint }}</p>{% endif %}
                     </div>
+                    {#- Design 80 §4.4: a conflict - "Bruk" beside each of the two numbers the phone saw. -#}
+                    {% if !own.uses.is_empty() %}
+                    <div class="own-actions" data-own-conflict>
+                        {% for (form_id, _, number) in own.uses %}<button type="submit" form="{{ form_id }}" class="link-button">{{ self.tp("device.sms.own.use_number", [("number", number.as_str())]) }}</button>{% endfor %}
+                    </div>
+                    {% endif %}
                     {% endif %}
                     {% endfor %}
                     <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                 </form>
                 {% for own in sms.own_rows %}{% if let Some(known) = own.known %}{% if let Some(source) = known.use_source %}
                 <form method="post" action="/devices/{{ device.id }}/calls/own-number/use#sms-settings" id="own-use-{{ own.slot }}"><input type="hidden" name="source" value="{{ source }}"></form>
-                {% endif %}{% endif %}{% endfor %}
+                {% endif %}{% endif %}{% for (form_id, source, _) in own.uses %}
+                <form method="post" action="/devices/{{ device.id }}/calls/own-number/use#sms-settings" id="{{ form_id }}"><input type="hidden" name="source" value="{{ source }}"></form>
+                {% endfor %}{% endfor %}
                 {#- D7 (M4): the RCS step, once its 14 days under SMS are over. -#}
                 {% if rcs_in_advanced %}
                 <details class="info cell" data-rcs-row>

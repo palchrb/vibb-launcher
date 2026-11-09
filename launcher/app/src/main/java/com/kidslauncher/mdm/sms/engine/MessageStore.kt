@@ -286,6 +286,10 @@ interface MessageStore {
     fun addCounter(key: String, by: Long = 1)
     fun counters(): Map<String, Long>
 
+    /** Design 80 §4.4: the own number learned from a message ([OwnLearned], encoded), `null` for none. */
+    fun ownLearned(): String?
+    fun putOwnLearned(json: String?)
+
     /** After deleting bodies (expiry, a drop, the kid's delete): no deleted text lingers in free pages or the WAL
      * (`secure_delete` is on; this checkpoints the WAL - QA R2-L3). */
     fun afterDeletes()

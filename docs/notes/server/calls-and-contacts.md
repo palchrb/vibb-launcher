@@ -363,6 +363,23 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   writes only the slots it is sent** (an absent field keeps its slot, an empty one removes it); `sms_lock_text` as
   before. "Bruk dette nummeret" is a `<button form="own-use-<slot>">` of a small form after the SMS form, so Enter in
   a field never posts it.
+- **Step 3, "Gruppemeldinger" and the learned number** (D13, §4.4; one commit with the launcher):
+  `device_policy.sms_groups` (migration 0134, default on), sent as `call_policy.sms_groups` always
+  (`policy_json_keys_snapshot`, `sms_contract.json`'s `policy` and `groups_off`). The switch sits in the SMS form
+  (Avansert › Meldinger) with a hidden `groups_shown`: only a post with it writes `sms_groups` (an older page keeps
+  it), and only for a phone whose last report claims `sms_groups_v1` (`sms::SMS_GROUPS_CAPABILITY`,
+  `sms::has_capability`) - before, the switch is drawn disabled with "Oppdater Vibb One først". Off: Avansert's row adds
+  "Gruppemeldinger av", a blocked group row says "Gruppemeldinger er slått av", and the missing-number lines are silent
+  (nothing is lost for want of the number). `sms_state.own_learned` (`sms::sanitize_state`: `null`, or every number by
+  `sender_ok` and a full `+` number, `at` >= 0, at most two in `conflict`; anything else drops the key) gives the
+  learned rows of §4.5 on the first slot while nothing is stored and no SIM knows the number: "Lært fra en melding fra
+  {contact}" (the teacher named by the contact, else the number) with "Bruk dette nummeret" (`source=learned`) and
+  "Endre…"; a conflict is the field with "To meldinger viste ulike numre: {a} og {b}. Skriv inn det riktige." and "Bruk
+  {number}" beside each (`source=conflict:<0|1>`). Those store the reported number into the first active slot with no
+  stored number. A learned number counts for "number missing" only while it is in use, and is refused as a contact
+  (`calls_sms::phone_numbers`). Tests: `tests::calls_simpler::the_group_switch_needs_the_capability_and_its_marker`,
+  `the_learned_number_and_a_conflict`, `tests::sms` (the policy with `sms_groups` both ways), `sms::tests` (the report's
+  `own_learned`, its conflict row and the hostile ones).
 - Tests: `tests::calls_simpler` (D3 through the form, L1, H2, N4, `more`, L2, the Avansert row and the Matrix ID, the
   sub-lines, Add Contact's ways in and the own-number refusal, the split settings form, the own number by its source,
   the page's order and Avansert row, the RCS line's 14 days), `calls_form::tests` (`both_ways`' table, the emergency

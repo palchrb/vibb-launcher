@@ -173,6 +173,7 @@
     <string name="messages_picture_too_large">The picture is too large to send</string>
     <string name="messages_picture_not_now">Pictures can\'t be sent right now</string>
     <string name="messages_group_not_allowed">You can only reply when everyone in the conversation is in your phone book</string>
+    <string name="messages_groups_off">Group texts are turned off</string>
     <string name="picture_title">Picture</string>
     <string name="picture_save">Save</string>
     <string name="picture_share">Share</string>

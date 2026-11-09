@@ -208,11 +208,13 @@ every `policy` row; both compare the copies. The built-in set itself stays the l
 never judges a chain. The policy's `server_tls` is pinned by `policy_json_keys_snapshot` and `ServerPinsTest`.
 
 The SMS engine's contract (design 77 §7, step 1) is `server/testdata/sms_contract.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`sms_engine_v1`), `migration` (D2's table: the old three switches to
+`launcher/app/src/test/resources/`: `capability` (`sms_engine_v1`) and `groups_capability` (`sms_groups_v1`, design 80
+D13), `migration` (D2's table: the old three switches to
 `calls_mode`/`sms_mode` - the server's migration 0130 and the launcher reading an older server), `modes` (each mode pair
 and the derived old keys an older launcher reads, failing closed), `policy` (a seeded `call_policy` with the SMS keys:
-the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`), `report` (the
-exact `sms_state`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
+the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`, design 80's
+`sms_groups`; `groups_off` the switch off), `report` (the exact `sms_state` with design 80's `own_learned`, and
+`own_learned_conflict`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
 sender cleaned by its class before it leaves the phone), `intake` (the server's sender check), `names` and
 `name_matches` (D17's letter rule and fold). The server's `sms::tests` produce the policy, post the report and the held
 body and run every row; the launcher's `SmsContractTest` decodes and encodes them exactly and runs the rows; both

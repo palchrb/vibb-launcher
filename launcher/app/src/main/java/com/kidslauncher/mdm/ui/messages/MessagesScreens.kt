@@ -95,6 +95,7 @@ object MessagesScreens {
         ComposeState.NOT_ALLOWED -> R.string.messages_compose_not_allowed
         ComposeState.UNAVAILABLE -> R.string.messages_compose_unavailable
         ComposeState.GROUP_NOT_ALLOWED -> R.string.messages_group_not_allowed
+        ComposeState.GROUPS_OFF -> R.string.messages_groups_off
     }
 
     /** The toast after a send the gate refused ([afterRefusal], code QA L5); `null` = nothing to say. */
@@ -104,6 +105,7 @@ object MessagesScreens {
         AfterRefusal.UNAVAILABLE -> R.string.messages_compose_unavailable
         AfterRefusal.READ_ONLY -> R.string.messages_read_only
         AfterRefusal.TOO_LONG -> R.string.messages_too_long
+        AfterRefusal.GROUPS_OFF -> R.string.messages_groups_off
         AfterRefusal.SEND_AGAIN, AfterRefusal.NOTHING -> null
     }
 

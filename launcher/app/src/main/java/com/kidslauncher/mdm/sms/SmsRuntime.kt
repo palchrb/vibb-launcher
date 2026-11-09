@@ -26,6 +26,7 @@ import com.kidslauncher.mdm.server.dto.SmsHeldBody
 import com.kidslauncher.mdm.server.dto.SmsHeldRefusal
 import com.kidslauncher.mdm.server.dto.SmsHeldRow
 import com.kidslauncher.mdm.server.dto.SmsHoldFull
+import com.kidslauncher.mdm.server.dto.SmsOwnLearned
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
 import com.kidslauncher.mdm.server.dto.SmsState
 import com.kidslauncher.mdm.sms.engine.Carrier
@@ -183,7 +184,16 @@ object SmsRuntime {
         simNumbers = {
             ownNumbers(context, (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47").map { it.slot to it.number }
         },
+        simSet = { simSet(context) },
     )
+
+    /** Design 80 §4.4: the active SIMs' subscription ids, sorted, as one key ("" when they can't be read). */
+    private fun simSet(context: Context): String = try {
+        context.getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty()
+            .map { it.subscriptionId }.sorted().joinToString(",")
+    } catch (e: SecurityException) {
+        ""
+    }
 
     /** The debug build's fake MMS server for the emulator ([MmsDebug]; the release build's list is always empty). */
     private fun withDebugMmsc(state: CallPolicyState): CallPolicyState {
@@ -407,6 +417,7 @@ object SmsRuntime {
             lastError = SmsPrefs.lastError(app),
             ownNumbers = ownNumbers(app, (state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47"),
             holdFull = SmsHoldFull(counts?.numbersFull == true, counts?.namesFull == true),
+            ownLearned = awaitResult(app) { it.mms.ownLearned() }?.let { SmsOwnLearned(it.number, it.from, it.at, it.conflict) },
         )
     }
 

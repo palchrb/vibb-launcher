@@ -452,7 +452,22 @@ class MmsFlow internal constructor(
             drop(m, CleanSender(SenderClass.MALFORMED, ""), fetched)
             return null
         }
-        val group = MmsGate.group(m.from, content.to, content.cc, judge.ownNumbers(), rules?.contacts.orEmpty(), judge.defaultCc)
+        // Design 80 §4.4: a gap in the own numbers is filled from an approved contact's message to the kid alone; the
+        // learned number is "us" only while the parent and the SIMs give none. Design 80 D13: groups off blocks every
+        // group.
+        val contacts = rules?.contacts.orEmpty()
+        var learned = ownLearnedFor(judge)
+        val senderAllowed = rules?.smsMode == com.kidslauncher.mdm.calls.ChannelMode.MANAGED &&
+            contacts.any { it.number == m.from && it.smsIn } && !judge.isEmergency(m.from)
+        OwnLearning.learn(
+            learned, judge.ownNumbers(), m.from, senderAllowed, content.to, content.cc, contacts, judge::isEmergency,
+            judge.defaultCc, clock(), judge.simSet(),
+        )?.let {
+            store.putOwnLearned(OwnLearning.encode(it))
+            learned = it
+        }
+        val own = MmsGate.ownNumbers(rules?.ownNumbers.orEmpty(), judge.simNumbers(), learned?.number)
+        val group = MmsGate.group(m.from, content.to, content.cc, own, contacts, judge.defaultCc, groups = rules?.smsGroups != false)
         val row = store.message(messageId)
         if (row == null) {
             dropUnheld(fetched)
@@ -502,6 +517,18 @@ class MmsFlow internal constructor(
         events.forEach(engine::emit)
         dropUnheld(fetched)
         return result
+    }
+
+    /** Design 80 §4.4: the own number learned from a message, in force now (`sms_state.own_learned`). */
+    fun ownLearned(): OwnLearned? = ownLearnedFor(judge())
+
+    /** [OwnLearning.current] on the stored state; a state it clears (a SIM change, the parent's number, a contact with
+     * the number) is forgotten in the store, so nothing comes back after the reason goes. */
+    private fun ownLearnedFor(judge: SmsJudge): OwnLearned? {
+        val raw = store.ownLearned() ?: return null
+        val current = OwnLearning.current(OwnLearning.decode(raw), judge.simSet(), judge.rules?.ownNumbers.orEmpty(), judge.rules?.contacts.orEmpty())
+        if (current == null) store.putOwnLearned(null)
+        return current
     }
 
     /** The isolated parse couldn't read the fetched message (not an m-retrieve-conf we accept): it shows as not
