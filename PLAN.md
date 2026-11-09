@@ -32,6 +32,8 @@ findings, merge to `main`, full suite once.
 
 Last tags: server-v0.71.0 + launcher-v0.39.0-rc.1 (2026-11-09, on a11cc107: design 77 steps 1, 2, 3a and 4 - the SMS engine, the kid's message screens, the PWA side; SMS stays "Ikke styrt" on the kid's phone until 3b and step 0; also the contact-sheet edge fix and the glance calendar lines; 0.38.0's RCs were used up, so a new minor), server-v0.70.0 + music-v0.6.0-rc.3 (2026-11-09, on 76edb9ba: Spotify audiobooks for real, the SMS engine's server side behind `sms_engine_v1`), server-v0.69.2 (2026-11-09, audiobook chapters under the spike), server-v0.69.1 (2026-11-09, the Spotify show diagnostic) after server-v0.69.0 + launcher-v0.38.0-rc.8 (2026-11-08, on d80fac83; music unchanged at music-v0.6.0-rc.2); every entry in "Done since the last release" up to the MET floor ships in those, the Spotify diagnostic in 0.69.1.
 
+**Next tags, the user's go given 2026-11-09 ("Tag når alt er klart"):** `server-v0.72.0` (bump `server/Cargo.toml` first) + `launcher-v0.39.0-rc.2` + `music-v0.6.0-rc.4`, once designs 79 (`phone-book-list`) and 80 (`calls-simpler`) are through code QA, fixed and merged and CI is green on that `main` commit. Design 81 (reactions) is not waited for; it ships in a later RC. The user approves the `release` environment.
+
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
 
