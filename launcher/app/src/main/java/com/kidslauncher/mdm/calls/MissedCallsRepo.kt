@@ -113,8 +113,19 @@ object MissedCallsRepo {
         val prefs = prefs(context)
         val existing = if (prefs.contains(number)) prefs.getLong(number, Long.MIN_VALUE) else null
         val next = seenMarkAfter(existing, upToMs)
-        if (next != existing) prefs.edit { putLong(number, next) }
+        if (next == existing) return
+        prefs.edit { putLong(number, next) }
+        // Home is resumed before the phone book stops (design 79 §3.3): it hears of the marks the visit wrote.
+        seenListeners.forEach { listener -> main.post(listener) }
     }
+
+    private val seenListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /** A seen mark moved (on the main thread, posted). */
+    fun addSeenListener(listener: () -> Unit) = seenListeners.add(listener)
+
+    fun removeSeenListener(listener: () -> Unit) = seenListeners.remove(listener)
 
     /** Design r11 §3.3: contact number -> the newest missed call its row on the lock was dismissed with. Our
      * notification counts after it ([noticeMarks]); the badges don't. */

@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -56,6 +57,8 @@ class KidScreensEscapeTest {
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
         "actions", "ui/messages",
+        // Design 79 (QA L4): the card, the list's model, the contact request, the search.
+        "calls/ContactSheet.kt", "calls/PhoneBookList.kt", "calls/ContactRequestForm.kt", "calls/ContactRequests.kt", "ui/search",
     )
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
@@ -119,6 +122,49 @@ class KidScreensEscapeTest {
         val threadSource = thread
         assertTrue(threadSource.contains("PicturePick.picked(this, result.data?.data)") && !threadSource.contains("Uri.fromFile"))
         assertTrue(!pick.contains("EXTRA_PICK_IMAGES_MAX") && !pick.contains("EXTRA_ALLOW_MULTIPLE"))
+    }
+
+    private fun code(path: String) = src(path).readText()
+        .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+        .replace(Regex("//[^\\n]*"), "")
+
+    /** Design 77 §14: the contact request's number field is the kid's only free number entry, and it only asks - the
+     * form and its store call, text and open nothing, and none of its three fields has a menu or a text action. */
+    @Test
+    fun `the contact request only asks`() {
+        val code = code("calls/ContactRequestForm.kt") + "\n" + code("calls/ContactRequests.kt")
+        for (token in listOf(
+            "startActivity", "Intent(", "placeCall", "ACTION_CALL", "ACTION_DIAL", "\"tel:", "smsto", "SmsManager",
+            "SmsRuntime", "TelecomManager", "PendingIntent", "Linkify",
+        )) {
+            assertTrue(token, !code.contains(token))
+        }
+        val form = src("calls/ContactRequestForm.kt").readText()
+        assertTrue(form.contains("form.contactRequestName, form.contactRequestNumber, form.contactRequestChat") && form.contains("NoTextActions.apply(field)"))
+        val layout = listOf(File("src/main/res/layout/view_contact_request_form.xml"), File("app/src/main/res/layout/view_contact_request_form.xml"))
+            .first { it.exists() }.readText()
+        assertTrue(!layout.contains("autoLink") && !layout.contains("textIsSelectable=\"true\""))
+        assertEquals(3, Regex("<EditText").findAll(layout).count())
+        assertEquals(3, Regex("""android:importantForAutofill="no"""").findAll(layout).count())
+    }
+
+    /** Design 79 (QA L4): the card's ways out are a call, our own thread and the message app ([openMessage]); the list
+     * and its model open nothing themselves - the activity's Ring and Melding go the card's ways. */
+    @Test
+    fun `the card and the list go only where the card always went`() {
+        val sheet = code("calls/ContactSheet.kt")
+        assertEquals(1, Regex("""startActivity\(""").findAll(sheet).count())
+        assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))"))
+        assertEquals(1, Regex("""CallSystem\.placeCall\(""").findAll(sheet).count())
+        assertEquals(1, Regex("""MessagesScreens\.startThread\(""").findAll(sheet).count())
+        for (path in listOf("calls/PhoneBookList.kt", "calls/PhoneBookAdapter.kt", "ui/search/SearchFold.kt")) {
+            val text = code(path)
+            for (token in listOf("startActivity", "Intent(", "placeCall", "PendingIntent")) assertTrue("$path $token", !text.contains(token))
+        }
+        val book = code("calls/PhoneBookActivity.kt")
+        val ways = book.substringAfter("private fun call(").substringBefore("private fun handleNumber(")
+        assertTrue(!ways.contains("startActivity") && !ways.contains("Intent("))
+        assertTrue(ways.contains("CallSystem.placeCall(this, contact.number)") && ways.contains("ContactSheet.openMessage(this, action.intent)"))
     }
 
     @Test

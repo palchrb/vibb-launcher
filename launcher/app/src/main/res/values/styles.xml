@@ -418,4 +418,15 @@
         <item name="android:windowEnterAnimation">@anim/kid_sheet_in</item>
         <item name="android:windowExitAnimation">@anim/kid_sheet_out</item>
     </style>
+
+    <!-- The contact request form's line under a field (design 77 §14): why it can't be sent, in the accent. -->
+    <style name="ContactRequestError">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">4dp</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:textColor">@color/kid_accent</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:visibility">gone</item>
+    </style>
 </resources>

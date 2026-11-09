@@ -1,5 +1,12 @@
 package com.kidslauncher.mdm.ui
 
+import com.kidslauncher.mdm.calls.ROW_AVATAR_DP
+import com.kidslauncher.mdm.calls.ROW_GAP_DP
+import com.kidslauncher.mdm.calls.ROW_PADDING_START_DP
+import com.kidslauncher.mdm.calls.ROW_STACKED_END_DP
+import com.kidslauncher.mdm.calls.RowLayout
+import com.kidslauncher.mdm.calls.rowLayout
+import com.kidslauncher.mdm.calls.rowTextColumnDp
 import com.kidslauncher.mdm.ui.home.contactItemDp
 import com.kidslauncher.mdm.ui.home.contactRow
 import com.kidslauncher.mdm.ui.home.gridMetrics
@@ -158,14 +165,50 @@ class WholeWordsTest {
             // The two the emulator showed cut ("Mamm/a", "Mormo/r") shrink.
             if (name == "Mamma" || name == "Mormor") assertTrue("$name shrinks at 2.0", size < 30f)
         }
-        // The phone book: 14 sp names in a cell of its 3-column grid (16 dp sides), at most the label's 104 dp - 96 dp on
-        // the Jelly Star, so an 88 dp line (code QA L-4 of launcher-glance-c).
-        val bookLine = nameLine(minOf(104f, (320f - 32f) / 3))
-        assertEquals(88f, bookLine, 0.01f)
-        for (scale in scales) for (name in names) {
-            val (size, display) = shown(name, 14f * scale, bookLine)
-            assertNoCut("phone book ${scale}x '$name'", size, display, bookLine)
+    }
+
+    /** Design 79 §3.4: the phone book's row at the Jelly Star's 288 dp - the text column 128 dp inline below font 1.3,
+     * the whole width less the avatar from 1.3 (the buttons on their own line). */
+    private fun rowColumn(scale: Float): Float = when (rowLayout(288f, scale)) {
+        RowLayout.INLINE -> rowTextColumnDp(288f)
+        RowLayout.STACKED -> 288f - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
+    }
+
+    private val rowLines = mapOf(
+        "nb" to listOf(
+            "Tapt anrop 14:02", "Tapt anrop i går", "Tapt anrop 30. nov.", "12 tapte anrop i går", "12 tapte anrop 30. nov.",
+            "2 tapte anrop 14:02 · 1 ulest", "Nødnummer", "12 uleste meldinger",
+        ),
+        "en" to listOf(
+            "Missed call 14:02", "Missed call yesterday", "12 missed calls yesterday", "12 missed calls Nov 30",
+            "2 missed calls 14:02 · 1 unread", "Emergency number", "12 unread messages",
+        ),
+    )
+
+    @Test
+    fun `the phone book row at 288 dp - names whole, the second line never cut, at 1_0 1_3 2_0 in nb and en`() {
+        assertEquals(128f, rowColumn(1.0f), 0.01f)
+        assertEquals(214f, rowColumn(1.3f), 0.01f)
+        for (scale in scales) {
+            val column = rowColumn(scale)
+            for (name in names + listOf("Trener Kari", "Sofie Østby", "Bestemor Ingrid")) {
+                val (size, display) = shown(name, 16f * scale, column)
+                assertNoCut("row ${scale}x '$name'", size, display, column)
+            }
+            for ((lang, lines) in rowLines) for (line in lines) {
+                val size = 13f * scale
+                // A plain TextView, at most two lines: it wraps at spaces and is never cut to one or past two.
+                assertTrue("$lang ${scale}x '$line' takes ${lineEnds(line, size, column).size} lines", lineEnds(line, size, column).size <= 2)
+                assertFalse("$lang ${scale}x '$line'", cuts(line, size, column, 2))
+            }
         }
+        val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(File(main, "res/layout/item_phone_book_row.xml"))
+        val all = doc.getElementsByTagName("*")
+        fun byId(id: String) = (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(ns, "id") == "@+id/$id" }
+        assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", byId("row_name").tagName)
+        assertEquals("2", byId("row_name").getAttributeNS(ns, "maxLines"))
+        assertEquals("2", byId("row_line").getAttributeNS(ns, "maxLines"))
     }
 
     @Test

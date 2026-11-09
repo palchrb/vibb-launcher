@@ -66,39 +66,54 @@ object ContactPhotos {
      * The decoded photo for [hash] if it's in memory; otherwise null, and a background decode is
      * started (the listeners run when it's ready). Safe on the main thread.
      */
-    fun cached(context: Context, hash: String?): Bitmap? {
+    fun cached(context: Context, hash: String?, thumb: Boolean = false): Bitmap? {
         if (hash == null || !isValidPhotoHash(hash)) return null
-        memory.get(hash)?.let { return it }
-        if (hash in failed || !pending.add(hash)) return null
+        return cachedFile(context, hash, thumb) { File(dir(it), "$hash.jpg") }
+    }
+
+    /**
+     * [key]'s decoded picture (memory key [photoMemoryKey]: the full one, or the row-sized copy, design 79 §3.7) if it
+     * is in memory; else `null`, and a decode of [file] starts on the background thread. Never the disk here.
+     */
+    internal fun cachedFile(context: Context, key: String, thumb: Boolean, file: (Context) -> File): Bitmap? {
+        val memoryKey = photoMemoryKey(key, thumb)
+        memory.get(memoryKey)?.let { return it }
+        if (memoryKey in failed || !pending.add(memoryKey)) return null
         val app = context.applicationContext
         decoder.execute {
-            val bitmap = decode(app, hash)
-            pending.remove(hash)
+            val bitmap = decode(app, key, file(app), thumb)
+            pending.remove(memoryKey)
             if (bitmap != null) {
-                memory.put(hash, bitmap)
+                memory.put(memoryKey, bitmap)
                 notifyListeners()
             } else {
-                failed.add(hash)
+                failed.add(memoryKey)
             }
         }
         return null
     }
 
-    private fun decode(context: Context, hash: String): Bitmap? {
+    private fun decode(context: Context, key: String, file: File, thumb: Boolean): Bitmap? {
         if (context.getSystemService(UserManager::class.java)?.isUserUnlocked != true) return null
-        val file = File(dir(context), "$hash.jpg")
         if (!file.isFile) return null
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, bounds)
             if (!photoBoundsOk(bounds.outWidth, bounds.outHeight)) {
-                Log.w(LOG_TAG, "Photo $hash declares ${bounds.outWidth}x${bounds.outHeight}, not decoded")
+                Log.w(LOG_TAG, "Photo $key declares ${bounds.outWidth}x${bounds.outHeight}, not decoded")
                 return null
             }
-            BitmapFactory.decodeFile(file.path)
+            if (!thumb) return BitmapFactory.decodeFile(file.path)
+            val sampled = BitmapFactory.decodeFile(
+                file.path, BitmapFactory.Options().apply { inSampleSize = photoSampleSize(bounds.outWidth, bounds.outHeight) },
+            ) ?: return null
+            val scale = minOf(1f, PHOTO_THUMB_PX.toFloat() / maxOf(sampled.width, sampled.height))
+            if (scale >= 1f) return sampled
+            Bitmap.createScaledBitmap(sampled, maxOf(1, (sampled.width * scale).toInt()), maxOf(1, (sampled.height * scale).toInt()), true)
+                .also { if (it !== sampled) sampled.recycle() }
         } catch (t: Throwable) {
             // OutOfMemoryError included: the initial is shown instead, Home keeps running.
-            Log.w(LOG_TAG, "Couldn't decode photo $hash", t)
+            Log.w(LOG_TAG, "Couldn't decode photo $key", t)
             null
         }
     }
@@ -123,6 +138,7 @@ object ContactPhotos {
             for (name in plan.delete) {
                 if (File(dir, name).delete()) changed = true
                 memory.remove(name.removeSuffix(".jpg"))
+                memory.remove(photoMemoryKey(name.removeSuffix(".jpg"), thumb = true))
             }
             if (plan.download.isNotEmpty()) dir.mkdirs()
             val newlyNotFound = mutableSetOf<String>()

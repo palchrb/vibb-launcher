@@ -65,10 +65,11 @@ object KidAvatars {
      * A contact's round avatar: the cached photo ([ContactPhotos]) cropped to a circle, or the
      * initial on its palette colour ([avatarStyle]).
      */
-    fun bindContact(photo: ImageView, initial: TextView, contact: RuleContact, isEmergency: Boolean, initialSp: Float) {
+    fun bindContact(photo: ImageView, initial: TextView, contact: RuleContact, isEmergency: Boolean, initialSp: Float, thumb: Boolean = false) {
         val context = photo.context
         val style = avatarStyle(contact, isEmergency)
-        val bitmap = if (isEmergency) null else ContactPhotos.cached(context, contact.photo)
+        // Design 79 §3.7: the rows take the row-sized copy, the card and the call screen the full square.
+        val bitmap = if (isEmergency) null else ContactPhotos.cached(context, contact.photo, thumb)
         if (bitmap != null) {
             photo.setBackgroundResource(R.drawable.bg_kid_circle)
             photo.backgroundTintList = null

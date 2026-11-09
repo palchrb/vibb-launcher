@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's contact request (design 77 §14, design 79 §7), in the phone book in place of the list while it is open: a
+     note, three fields (name, number, an optional chat ID), each with its own line for why not, and "Send til mamma og
+     pappa" / Avbryt; after Send a calm "Sendt" in the same place, then the list. It only asks: no field menus or text
+     actions (NoTextActions), nothing here calls, texts or opens anything (KidScreensEscapeTest). Its own file and
+     controller (ContactRequestForm), so the look can change on its own. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/contact_request_form"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:fillViewport="true"
+    android:visibility="gone">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+    <!-- After "Send" (design 79 §7): a peach check disc, "Sendt", the line, "Ferdig". -->
+    <LinearLayout
+        android:id="@+id/contact_request_sent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_messages_confirm"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_day_add"
+            android:importantForAccessibility="no"
+            android:padding="14dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_kid_check"
+            android:tint="@color/kid_ground" />
+
+        <TextView
+            android:id="@+id/contact_request_sent_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:accessibilityLiveRegion="polite"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/contact_request_sent"
+            android:textColor="@color/kid_core"
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/contact_request_sent_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:fontFamily="@font/nunito_semibold"
+            android:gravity="center_horizontal"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/contact_request_done"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_contact_request_send"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:text="@string/contact_request_done"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_ground"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/contact_request_fields"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_messages_confirm"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_semibold"
+            android:text="@string/contact_request_note"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:labelFor="@+id/contact_request_name"
+            android:fontFamily="@font/nunito_bold"
+            android:text="@string/contact_request_name"
+            android:textColor="@color/kid_core"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/contact_request_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/bg_contact_request_field"
+            android:fontFamily="@font/nunito_semibold"
+            android:importantForAutofill="no"
+            android:imeOptions="actionNext"
+            android:inputType="textPersonName|textCapWords"
+            android:maxLength="40"
+            android:minHeight="48dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/contact_request_name_error"
+            style="@style/ContactRequestError" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:labelFor="@+id/contact_request_number"
+            android:fontFamily="@font/nunito_bold"
+            android:text="@string/contact_request_number"
+            android:textColor="@color/kid_core"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/contact_request_number"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/bg_contact_request_field"
+            android:digits="0123456789+ -()"
+            android:fontFamily="@font/nunito_semibold"
+            android:importantForAutofill="no"
+            android:imeOptions="actionNext"
+            android:inputType="phone"
+            android:maxLength="32"
+            android:minHeight="48dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/contact_request_number_error"
+            style="@style/ContactRequestError" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:labelFor="@+id/contact_request_chat"
+            android:fontFamily="@font/nunito_bold"
+            android:text="@string/contact_request_chat"
+            android:textColor="@color/kid_core"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/contact_request_chat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/bg_contact_request_field"
+            android:fontFamily="@font/nunito_semibold"
+            android:hint="@string/contact_request_chat_hint"
+            android:importantForAutofill="no"
+            android:imeOptions="actionDone"
+            android:inputType="textNoSuggestions|textVisiblePassword"
+            android:maxLength="255"
+            android:minHeight="48dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textColor="@color/kid_ink"
+            android:textColorHint="@color/kid_core_dim"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/contact_request_chat_error"
+            style="@style/ContactRequestError" />
+
+        <TextView
+            android:id="@+id/contact_request_form_error"
+            style="@style/ContactRequestError"
+            android:accessibilityLiveRegion="polite" />
+
+        <!-- Stacked: "Send til mamma og pappa" doesn't fit half a 320 dp row. -->
+        <Button
+            android:id="@+id/contact_request_send"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_contact_request_send"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:text="@string/contact_request_send"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_ground"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/contact_request_cancel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_messages_button"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:text="@string/contact_request_cancel"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_core"
+            android:textSize="16sp" />
+    </LinearLayout>
+    </FrameLayout>
+</ScrollView>

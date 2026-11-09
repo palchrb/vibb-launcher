@@ -82,4 +82,8 @@
          sub-line a pale pink 4.9:1 (KidPaletteTest); the other rows are kid_sheet_button with kid_core text. -->
     <color name="kid_emergency_big">#B32A24</color>
     <color name="kid_emergency_big_sub">#FFD9D5</color>
+    <!-- The phone book's row (design 79 §3.4): Ring's phone glyph, a soft green on the tonal disc (kid_sheet_button)
+         over the row's tile kid_music_tile - 6.5:1 (KidPaletteTest). Tonal, not filled: fifty green discs down a list
+         would shout. -->
+    <color name="kid_call_glyph">#7FC28F</color>
 </resources>

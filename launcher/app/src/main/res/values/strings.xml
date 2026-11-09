@@ -44,6 +44,48 @@
     <string name="notification_channel_calls">Calls</string>
     <string name="notification_channel_calls_silent">Calls (call screen open)</string>
     <string name="calls_phone_book">Phone book</string>
+    <!-- Design 79: the phone book as one list - the row's short line, its buttons and TalkBack's sentence. -->
+    <string name="phone_book_emergency_line">Emergency number</string>
+    <string name="phone_book_emergency_description">%1$s, emergency number</string>
+    <plurals name="missed_short">
+        <item quantity="one">Missed call %1$s</item>
+        <item quantity="other">%2$d missed calls %1$s</item>
+    </plurals>
+    <string name="missed_short_yesterday">yesterday</string>
+    <plurals name="contact_unread_short">
+        <item quantity="one">%d unread</item>
+        <item quantity="other">%d unread</item>
+    </plurals>
+    <string name="phone_book_action_call">Call %1$s</string>
+    <string name="phone_book_action_message">Message %1$s</string>
+    <string name="phone_book_action_message_in">Message %1$s in %2$s</string>
+    <string name="phone_book_waiting">Waiting for an answer</string>
+    <!-- Design 77 §14 / design 79 §7: the kid's request for a new contact. -->
+    <string name="contact_request_open">Ask for a new contact</string>
+    <string name="contact_request_title">Ask for a contact</string>
+    <string name="contact_request_note">Mum and Dad get the question. If they say yes, the contact shows up here.</string>
+    <string name="contact_request_name">Name</string>
+    <string name="contact_request_number">Phone number</string>
+    <string name="contact_request_chat">Chat ID (optional)</string>
+    <string name="contact_request_chat_hint">\@name:server</string>
+    <string name="contact_request_send">Send to Mum and Dad</string>
+    <string name="contact_request_cancel">Cancel</string>
+    <string name="contact_request_name_empty">Write a name</string>
+    <string name="contact_request_name_long">The name can have at most 40 letters</string>
+    <string name="contact_request_number_invalid">That isn\'t a phone number</string>
+    <string name="contact_request_number_emergency">Emergency numbers always work - you don\'t need to ask</string>
+    <string name="contact_request_number_known">This number is already in the phone book or asked for</string>
+    <string name="contact_request_chat_invalid">A chat ID looks like \@name:server</string>
+    <string name="contact_request_too_many">You have 5 questions waiting. Wait for an answer first.</string>
+    <string name="contact_request_waiting">Waiting for an answer</string>
+    <string name="contact_request_not_added">Not added</string>
+    <string name="contact_request_capped">You\'ve asked enough today. Try again tomorrow.</string>
+    <string name="contact_request_known">Already added or asked for</string>
+    <string name="contact_request_not_sent">Couldn\'t be sent</string>
+    <string name="contact_request_sent">Sent</string>
+    <string name="contact_request_sent_body">Mum and Dad have been told. You\'ll see it in the phone book when %1$s has been added.</string>
+    <string name="contact_request_done">Done</string>
+    <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>
     <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
     <string name="torch_title">Flashlight</string>

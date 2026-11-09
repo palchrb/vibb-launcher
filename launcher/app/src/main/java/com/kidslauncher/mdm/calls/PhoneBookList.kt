@@ -35,6 +35,9 @@ const val ROW_AVATAR_DP = 44f
 const val ROW_GAP_DP = 10f
 const val ROW_BUTTONS_DP = 96f
 
+/** A stacked row's text keeps this much off the tile's end (the buttons are on their own line, §3.4: 214 dp at 288). */
+const val ROW_STACKED_END_DP = 10f
+
 /** Where a row's Ring and Melding sit. */
 enum class RowLayout {
     /** On the name's line, at the tile's end. */

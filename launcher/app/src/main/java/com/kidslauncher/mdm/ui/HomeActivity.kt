@@ -458,6 +458,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         ElementMissedCallStore.addListener(elementMissedListener)
+        MissedCallsRepo.addSeenListener(elementMissedListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -675,6 +676,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
+        MissedCallsRepo.removeSeenListener(elementMissedListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -917,7 +919,7 @@ class HomeActivity : UIObjectActivity() {
             KidAvatars.bindContact(
                 item.findViewById<ImageView>(R.id.contact_photo),
                 item.findViewById<TextView>(R.id.contact_initial),
-                contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
+                contact, emergency, initialSp = 30f * layout.avatarDp / 76f, thumb = true,
             )
             KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
             KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)

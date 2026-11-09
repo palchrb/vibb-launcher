@@ -62,7 +62,7 @@ object MessagesScreens {
     fun bindAvatar(photo: ImageView, initial: TextView, contact: RuleContact?, name: String, address: String) {
         val shown = contact ?: RuleContact(id = 0, name = name, number = address)
         val emergency = contact != null && CallSystem.isEmergencyOutgoing(photo.context, contact.number)
-        KidAvatars.bindContact(photo, initial, shown, emergency, initialSp = 20f)
+        KidAvatars.bindContact(photo, initial, shown, emergency, initialSp = 20f, thumb = true)
     }
 
     /** The list's time ([listTimeLabel]): the one clock format (P12), "I går", the weekday, the date. */
