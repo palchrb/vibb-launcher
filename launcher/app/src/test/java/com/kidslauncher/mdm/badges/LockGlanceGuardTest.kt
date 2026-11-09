@@ -272,7 +272,7 @@ class LockGlanceGuardTest {
 
     @Test
     fun `no glance facts or rows in the sync, the API, a DTO, push or the crash report`() {
-        val glanceTypes = Regex("""\b(GlanceNotice|GlanceRow|GlanceMessageRow|GlanceMissedRow|GlanceConversation|GlanceReader|GlanceLevel|GlancePolicy|GlanceCandidateFacts)\b""")
+        val glanceTypes = Regex("""\b(GlanceNotice|GlanceRow|GlanceMessageRow|GlanceMissedRow|GlanceSmsRow|SmsGlance|GlanceConversation|GlanceReader|GlanceLevel|GlancePolicy|GlanceCandidateFacts)\b""")
         val offenders = sources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .filter { f -> listOf("/mdm/server/", "/mdm/push/", "/mdm/crash/").any { it in f.invariantSeparatorsPath } }
@@ -378,7 +378,7 @@ class LockGlanceGuardTest {
         }
         // Q-4: the two dismiss entry points have one caller in the app - the panel.
         val mains = sources.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-        for (call in listOf("GlanceReader.dismiss(", "MissedCallNotifier.dismissContact(")) {
+        for (call in listOf("GlanceReader.dismiss(", "MissedCallNotifier.dismissContact(", "SmsGlance.dismiss(")) {
             assertEquals(call, listOf("GlancePanel.kt"), mains.filter { call in strip(it.readText()) }.map { it.name })
         }
         // Q-4: every rebind rests every row view; "Fjern" only on the GLANCE stage, never under the ring card (Q-2).
@@ -732,6 +732,10 @@ class LockGlanceGuardTest {
         assertTrue(code("PhoneBookActivity.kt").contains(".addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(opener.contains("activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))"))
         assertTrue(opener.contains("activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
+        // Design 77 §6.8: an SMS row's thread - the notification's own way in (the list under it, the messages task).
+        assertEquals(1, Regex("""\bstartThread\(""").findAll(opener).count())
+        assertTrue(opener.contains("com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, conversationId, null)"))
+        assertTrue(code("MessagesScreens.kt").contains("Intent(context, MessagesActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         // Only the app's own content intent - never an action, a reply or a delete intent.
         for (forbidden in listOf("actions", "actionIntent", "RemoteInput", "deleteIntent", "fullScreenIntent", "cancelNotification", "snoozeNotification", "setNotificationsShown")) {
             assertFalse("GlanceOpener uses $forbidden", opener.contains(forbidden))

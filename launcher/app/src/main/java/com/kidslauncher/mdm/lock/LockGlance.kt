@@ -76,6 +76,11 @@ sealed interface GlanceTarget {
 
     /** Dagen's reminder row (design 69 §2.2): Dagen on the event's day ([epochDay]). */
     data class Day(val epochDay: Long) : GlanceTarget
+
+    /** An SMS conversation's row (design 77 §6.8): its thread over the message list, in the messages task. */
+    data class Thread(val conversationId: String) : GlanceTarget {
+        override fun toString() = "Thread"
+    }
 }
 
 /** The app a target opens; null for the missed calls (the phone book). */
@@ -85,6 +90,7 @@ val GlanceTarget.appPackage: String?
         is GlanceTarget.ClockApp -> packageName
         is GlanceTarget.MissedCalls -> null
         is GlanceTarget.Day -> null
+        is GlanceTarget.Thread -> null
     }
 
 /** The stage and the target it carries. */
@@ -615,7 +621,8 @@ fun glancePrompt(
     waiting -> GlancePrompt.WAIT
     checking -> GlancePrompt.CHECKING
     wrong -> GlancePrompt.WRONG
-    target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp || target is GlanceTarget.Day -> GlancePrompt.OPEN_APP
+    target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp || target is GlanceTarget.Day ||
+        target is GlanceTarget.Thread -> GlancePrompt.OPEN_APP
     target is GlanceTarget.MissedCalls -> GlancePrompt.SEE_MISSED
     else -> GlancePrompt.PLAIN
 }
@@ -635,12 +642,15 @@ fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !t
  * lock - yes; a conversation - its app among the lock's usable apps (the budget's messaging and music
  * apps, a rule's exempt apps); missed calls - calls managed ([callsManaged]) and allowed by the rule
  * (the time-rule screen's own condition for its phone book); Kalender's reminder row - every rule allows
- * Kalender ([TimeLock.calendarUsable]).
+ * Kalender ([TimeLock.calendarUsable]); an SMS thread - the rule allows calls (design 77 §6.7: the message screens
+ * follow the phone book; the used-up budget keeps calls).
  */
 fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target: GlanceTarget, callsManaged: Boolean): Boolean = when {
     !lock.locked -> true
     // Kalender only under rules that each allow it (PLAN 2026-11-02; design 69 §2.2 had it never usable).
     target is GlanceTarget.Day -> lock.calendarUsable
+    // Design 77 §6.7: the message screens are reachable where the rule allows calls, as the phone book.
+    target is GlanceTarget.Thread -> lock.callsAllowed
     else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
 
@@ -673,6 +683,9 @@ enum class GlanceOpen {
     /** Dagen on the reminder's day (design 69 §2.2). */
     DAY,
 
+    /** An SMS conversation's thread (design 77 §6.8). */
+    THREAD,
+
     NOTHING,
 }
 
@@ -704,6 +717,8 @@ data class GlanceOpenFacts(
     val hasLaunchIntent: Boolean,
     /** The target is Dagen's reminder row (design 69 §2.2). */
     val day: Boolean = false,
+    /** The target is an SMS conversation's thread (design 77 §6.8). */
+    val thread: Boolean = false,
 )
 
 /** The decision with its reason (the log names the package and the reason only). */
@@ -723,6 +738,7 @@ fun glanceOpensSomething(step: GlanceOpenStep): Boolean = step.open != GlanceOpe
  * | from the time-rule screen, not usable under it | nothing                                      |
  * | kiosk on and no lock task running now          | nothing (the app would run outside it)        |
  * | missed calls                                   | one contact's sheet, else the phone book      |
+ * | Dagen's reminder / an SMS thread               | Dagen on its day / the thread over the list   |
  * | not installed, suspended or hidden             | nothing                                      |
  * | an activity intent created by the app itself   | sent from our visible window                 |
  * | otherwise, or the send failed or was refused   | the app's launch intent; none: nothing       |
@@ -734,6 +750,7 @@ fun glanceOpenStep(f: GlanceOpenFacts): GlanceOpenStep = when {
     f.kioskWithoutLockTask -> GlanceOpenStep(GlanceOpen.NOTHING, "lock task not running")
     f.missedCalls -> GlanceOpenStep(GlanceOpen.MISSED_CALLS, "missed calls")
     f.day -> GlanceOpenStep(GlanceOpen.DAY, "dagen")
+    f.thread -> GlanceOpenStep(GlanceOpen.THREAD, "thread")
     !f.installed -> GlanceOpenStep(GlanceOpen.NOTHING, "not installed")
     f.suspended -> GlanceOpenStep(GlanceOpen.NOTHING, "suspended")
     f.hidden -> GlanceOpenStep(GlanceOpen.NOTHING, "hidden")
