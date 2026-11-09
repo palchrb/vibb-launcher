@@ -87,7 +87,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  * line, [shuffle] previous / play-pause / next [slot] (v15's compact sizes on a 320 dp phone, [controlRow]),
  * then Liste / Sov / "Spill av på". On a Sonos room, or with Spotify's web player, a quiet line under the entry name
  * says why it isn't playing what we sent it ([rendererState], design 26a §5.2, 26c §5.8); nothing acts on it but the
- * kid. No source is named: a Spotify entry's player looks like any other's (design 26c §4.3, step 8).
+ * kid. When the item can't play ([cantPlayNotice], 2026-11-09, mockup D) the cover is greyed with the notice on it in
+ * the line's place, every button where it was, play greyed only when a tap can't help. No source is named: a Spotify
+ * entry's player looks like any other's (design 26c §4.3, step 8).
  */
 @Composable
 fun PlayerScreen(
@@ -139,17 +141,19 @@ fun PlayerScreen(
         Modifier.fillMaxSize().dragDownToClose(onBack).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        val notice = cantPlayNotice(rendererState)
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, stringResource(R.string.back_library), onBack)
             Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Line(now.entry.name, 15, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
-                rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
+                // the notice on the cover says it instead: never twice
+                rendererState?.takeIf { notice == null }?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
             }
         }
         // The cover, or the episode carousel in its place (design 27 §3); the title and number under
         // it follow the page the carousel is landing on.
         var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
-        PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
+        PlayerArt(now, notice, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
         val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
         // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
         Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
@@ -205,9 +209,13 @@ fun PlayerScreen(
                     Spacer(Modifier.requiredSize(row.side.dp))
                 }
                 RoundButton(Icons.previous, stringResource(R.string.previous), onPrevious, row.skip.dp, 24.dp)
+                // greyed when a tap can't help (the notice's own rule), still a button: what a tap does stays the renderer's
+                val off = notice?.takeIf { it.playGreyed }
+                val offState = off?.let { stringResource(it.title) }
                 RoundButton(
                     if (now.playing) Icons.pause else Icons.play, stringResource(if (now.playing) R.string.pause else R.string.play),
-                    onTogglePlay, row.play.dp, 32.dp, Palette.peach, Palette.bg,
+                    onTogglePlay, row.play.dp, 32.dp, if (off != null) Palette.track else Palette.peach, if (off != null) PLAY_OFF_FG else Palette.bg,
+                    if (offState != null) Modifier.semantics { stateDescription = offState } else Modifier,
                 )
                 RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
                 if (skips) {

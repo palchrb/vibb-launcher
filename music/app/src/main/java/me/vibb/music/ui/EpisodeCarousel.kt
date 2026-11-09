@@ -52,11 +52,13 @@ import kotlin.math.sign
  * The player's picture (design 27 §3): the Now Playing carousel when [NowView.carousel] holds and
  * the box has room for it ([playerCarousel]), else today's single cover. [onLanding] gets the queue
  * index of the page the carousel is landing on (null for the single cover), for the title and
- * "Episode N av M" under it.
+ * "Episode N av M" under it. With a [notice] the loaded item's cover is greyed under it ("Kan ikke spilles nå",
+ * [cantPlayNotice]); the neighbours keep their colours.
  */
 @Composable
 fun PlayerArt(
     now: NowView,
+    notice: CantPlayNotice?,
     modifier: Modifier,
     onSkip: (index: Int, forward: Boolean) -> Unit,
     onTogglePlay: () -> Unit,
@@ -67,7 +69,7 @@ fun PlayerArt(
             // A new queue (a cover tap, a pick, the shuffle toggle, an item dropped by a listing) starts
             // the pager over on the current item (QA M7 b).
             key(now.pagerKey) {
-                EpisodeCarousel(now, maxWidth.value, playerArt(maxWidth.value, maxHeight.value, true), onSkip, onTogglePlay, onLanding)
+                EpisodeCarousel(now, notice, maxWidth.value, playerArt(maxWidth.value, maxHeight.value, true), onSkip, onTogglePlay, onLanding)
             }
         } else {
             LaunchedEffect(Unit) { onLanding(null) }
@@ -77,7 +79,8 @@ fun PlayerArt(
                 now.cover, now.category, 26.dp, 104.dp,
                 Modifier.sizeIn(maxWidth = PLAYER_ART_MAX_DP.dp, maxHeight = PLAYER_ART_MAX_DP.dp).aspectRatio(1f).shadow(12.dp, RoundedCornerShape(26.dp)),
                 fallback = now.fallback,
-            )
+                greyed = notice != null,
+            ) { notice?.let { CantPlayOverlay(it) } }
         }
     }
 }
@@ -94,6 +97,7 @@ fun PlayerArt(
 @Composable
 private fun EpisodeCarousel(
     now: NowView,
+    notice: CantPlayNotice?,
     widthDp: Float,
     artDp: Float,
     onSkip: (index: Int, forward: Boolean) -> Unit,
@@ -176,6 +180,8 @@ private fun EpisodeCarousel(
         }
         // a favourites queue's page shows its own entry's cover (design r12 §3.2)
         val own = now.entryOf(item)
+        // the loaded item's pages only: the renderer's refusal is of that item, the neighbours may play
+        val refused = notice?.takeIf { carouselIndex(page, n) == now.index }
         Cover(
             item.artHash ?: own.cover, now.categoryOf(item), 26.dp, 104.dp,
             Modifier.size(artDp.dp)
@@ -199,6 +205,7 @@ private fun EpisodeCarousel(
                     }
                 },
             fallback = own.cover,
-        )
+            greyed = refused != null,
+        ) { refused?.let { CantPlayOverlay(it) } }
     }
 }

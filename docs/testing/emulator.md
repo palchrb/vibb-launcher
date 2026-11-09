@@ -1438,18 +1438,20 @@ Each check below restarts the fake with its option (`python3 -I scripts/fake-spo
   counts as ours (no pause, "Spor 2 av 3").
 - [ ] **Shuffle and repeat on the account**: `--shuffle --repeat track`: the first play turns both off first
   (`shuffle: false`, `repeat: off` before `play:`); the list plays in order, once.
-- [ ] **No Premium**: `--not-premium`: "Spør en voksen" on the player and every Spotify tile;
+- [ ] **No Premium**: `--not-premium`: the player's cover greyed with "Kan ikke spilles nå" / "Spør en voksen om
+  hjelp" on it, play greyed, nothing under the entry name (2026-11-09, `ui/CantPlay.kt`), and "Spør en voksen" on every
+  Spotify tile;
   `"spotify": "not_premium"` in the report; no item error.
-- [ ] **No Widevine**: `--no-eme`: "Virker ikke på telefonen", logcat `spotify: web player destroyed`;
+- [ ] **No Widevine**: `--no-eme`: "Virker ikke på telefonen" on the greyed cover (play lit), logcat `spotify: web player destroyed`;
   `"spotify": "no_widevine"`.
-- [ ] **The quota**: `--quota`: "Ikke tilgjengelig nå" (player and tiles); `"spotify": "quota"`; the fake
+- [ ] **The quota**: `--quota`: "Ikke tilgjengelig nå" (the player's greyed cover, play lit; the tiles); `"spotify": "quota"`; the fake
   logs one `… 429 QUOTA_EXCEEDED (--quota)` (the start's first call) and no `play:`.
 - [ ] **The token refused**: `--expire-refresh` (the fake's token route answers `reauthorize`): "Spør en voksen" on
   the player and the tiles, `"spotify": "reauthorize"`, no `connect:` line.
 - [ ] **No Wi-Fi, offline**: `adb shell cmd connectivity airplane-mode enable`, a cover tap: "Trenger internett" under
   the title and on the tile, nothing in the fake's log, the item unchanged (never "Ikke lastet ned",
   never the next track); next and previous say the same and don't move. `adb shell cmd connectivity airplane-mode
-  disable`. Wi-Fi off with only mobile data (`adb shell svc wifi disable`; `{"stream_mobile_data": false,
+  disable`. (Since 2026-11-09 the player says it on the greyed cover, play lit, not under the title.) Wi-Fi off with only mobile data (`adb shell svc wifi disable`; `{"stream_mobile_data": false,
   "download_mobile_data": true, "spotify_base": …}` in `config.json`, pushed and broadcast - design 30's streaming
   switch is the one Spotify obeys, the downloads switch never): "Trenger Wi-Fi"; with `"stream_mobile_data":
   true` (downloads off) it plays over mobile data. `adb shell svc wifi enable` afterwards.

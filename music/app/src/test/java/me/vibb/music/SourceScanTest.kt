@@ -275,6 +275,9 @@ class SourceScanTest {
         assertEquals("Spilles et annet sted", nb["renderer_spotify_elsewhere"])
         assertEquals("Stoppet - trykk spill", nb["renderer_spotify_stopped"])
         assertEquals("Lydboka trenger lyttetid", nb["renderer_spotify_no_listening_time"])
+        // the notice on the greyed cover (2026-11-09, mockup D)
+        assertEquals("Kan ikke spilles nå", nb["cant_play_now"])
+        assertEquals("Spør en voksen om hjelp", nb["cant_play_ask_adult"])
         val screen = code(moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt"))
         for (state in me.vibb.music.playback.RendererState.entries) {
             assertTrue("$state has its line", screen.contains("RendererState.${state.name} -> R.string.renderer_"))

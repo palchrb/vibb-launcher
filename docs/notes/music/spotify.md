@@ -93,6 +93,30 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`; `none` from the token's `off` and from `forget()`)
   is `noBackupFilesDir/spotify_state.json`, written only on a change, shown on **every** Spotify tile and sent as the
   report's `spotify`.
+- **"Kan ikke spilles nå" on the player's cover** (2026-11-09, the user's mockup D, `ui/CantPlay.kt`): the quiet line
+  under the entry name was too easy to miss ("Spør en voksen" small and grey while play looked normal). Now, when the
+  loaded item can't play here, its cover is greyed and darkened (the mockup's CSS `grayscale(1) brightness(.28)
+  contrast(.8)`: `coverGreyLevel`, the picture through `coverGreyMatrix`, the fallback gradient and glyph through
+  `coverGrey`; in the carousel the loaded item's pages only, the neighbours keep their colours) and a calm notice sits
+  on it - a 34 dp "!" disc in peach at 22 %, a bold line, a smaller line - and the line under the entry name goes (said
+  once). `cantPlayNotice(state)` is the rule, one exhaustive `when` (`CantPlayTest`):
+  - **The notice** (the web player refused the item on this phone): `SPOTIFY_ASK_ADULT` "Kan ikke spilles nå" / "Spør
+    en voksen om hjelp"; `SPOTIFY_NO_LISTENING_TIME` "Lydboka trenger lyttetid" / "Spør en voksen om hjelp";
+    `SPOTIFY_NOT_ON_PHONE` "Virker ikke på telefonen" / "Spør en voksen om hjelp"; `SPOTIFY_NEEDS_WIFI` "Trenger
+    Wi-Fi", `SPOTIFY_NEEDS_INTERNET` "Trenger internett", `SPOTIFY_UNAVAILABLE` "Ikke tilgjengelig nå" (the title
+    alone: no adult is needed). The titles are the lines' own strings; `cant_play_now` and `cant_play_ask_adult` are new.
+  - **The line stays** for what isn't a refusal of the item: a room's four (`GROUPED_AWAY`, `TAKEN_OVER`,
+    `LOST_SESSION`, `UNREACHABLE` - the speaker's state, not the item's; a tap or the next poll may bring it back, and
+    design 50 §1.4 dims nothing on a room), `SPOTIFY_ELSEWHERE` (the account plays elsewhere: a tap takes it back) and
+    `SPOTIFY_STOPPED` ("Stoppet - trykk spill": the tap is the fix).
+  - **Play is greyed** (`Palette.track`, its glyph white at 45 %, TalkBack's state the notice's title) only when a tap
+    can't help: `SPOTIFY_ASK_ADULT` and `SPOTIFY_NO_LISTENING_TIME`, both waiting on an adult. It stays lit for Wi-Fi,
+    internet, the quota and Widevine (a tap may work: the network back, the quota over, a new web player). Greyed is
+    a look only: play is still a button and does what it did (behaviour stays vibb's and the renderer's).
+  - Every button stays where it was and keeps working - previous, next and ±15 skip past one broken track (a
+    favourites queue's, say). No red, nothing blinking (the launcher-look rule).
+  - TalkBack: the notice's two lines are the cover's description (on the carousel's page they merge into its play
+    label) and a polite live region, so they are said when they appear.
 - **No source on the kid's screens** (26c step 8, the user's decision of 2026-10-14): a Spotify entry is a tile like any
   other. No string value says "Spotify" (`SourceScanTest` pins both languages, the `ui/` sources' literals, and those of
   `playback/`, `bridge/` and `sync/` - the notification, the lock screen and Home's card - with two allowlisted non-kid
@@ -102,7 +126,8 @@ Moved from music/CLAUDE.md on 2026-11-01.
   or artist `Kind.MUSIC` (`kind_music` "Musikk", tracks) - there is no `Kind.SPOTIFY`. The player has no source line
   under the title, "Liste" shows nothing in the offline summary's place (a context: "Musikk · rekkefølgen velges for
   deg"), and the web player's lines are plain ("Trenger Wi-Fi", "Trenger internett", "Ikke tilgjengelig nå", "Spør en
-  voksen", "Virker ikke på telefonen", "Spilles et annet sted", "Stoppet - trykk spill"). This is a stated deviation
+  voksen", "Virker ikke på telefonen", "Spilles et annet sted", "Stoppet - trykk spill"; the cover's notice: "Kan ikke
+  spilles nå", "Spør en voksen om hjelp"). This is a stated deviation
   from Spotify's Developer Policy II (attribution where its content is shown; 26c §7.3): the attribution is the parent's
   PWA's only. Don't add the word, a logo or a source line back without the user.
 - **The web player's WebView** (26c §5.2, §7.2): one WebView in the process, `SpotifyWebHost`'s, made with the

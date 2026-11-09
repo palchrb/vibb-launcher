@@ -118,6 +118,10 @@
     <string name="renderer_spotify_elsewhere">Playing somewhere else</string>
     <string name="renderer_spotify_stopped">Stopped - press play</string>
     <string name="renderer_spotify_no_listening_time">The book needs listening time</string>
+    <!-- The notice on the player's greyed cover when the item can't play (2026-11-09, mockup D, ui/CantPlay.kt): the
+         account's refusal gets these two lines; the other reasons take their line above as the title. -->
+    <string name="cant_play_now">Can\'t play right now</string>
+    <string name="cant_play_ask_adult">Ask a grown-up for help</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

@@ -247,6 +247,8 @@ fun Cover(
     fallback: String? = null,
     /** A list row's picture (design 39 §2.3): decoded for this size, in its own slot; null = the player's size. */
     decodeDp: Dp? = null,
+    /** Greyed and darkened (the player's "Kan ikke spilles nå", [coverGreyLevel]); [content] stays in colour. */
+    greyed: Boolean = false,
     content: @Composable () -> Unit = {},
 ) {
     val decodePx = decodeDp?.let { with(LocalDensity.current) { it.roundToPx() } }
@@ -254,15 +256,19 @@ fun Cover(
     val other = coverBitmap(fallback.takeIf { it != hash }, decodePx)
     val bitmap = own ?: other
     val color = categoryColor(category)
+    val shade = { c: Color -> if (greyed) coverGrey(c) else c }
     Box(
         modifier.clip(RoundedCornerShape(radius))
-            .background(Brush.linearGradient(listOf(color, lerp(color, Palette.bg, 0.8f)))),
+            .background(Brush.linearGradient(listOf(shade(color), shade(lerp(color, Palette.bg, 0.8f))))),
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap != null) {
-            Image(bitmap, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Image(
+                bitmap, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                colorFilter = if (greyed) coverGreyFilter else null,
+            )
         } else if (glyph > 0.dp) {
-            Image(painterResource(categoryGlyph(category)), contentDescription = null, modifier = Modifier.size(glyph), colorFilter = ColorFilter.tint(Palette.fg))
+            Image(painterResource(categoryGlyph(category)), contentDescription = null, modifier = Modifier.size(glyph), colorFilter = ColorFilter.tint(shade(Palette.fg)))
         }
         content()
     }

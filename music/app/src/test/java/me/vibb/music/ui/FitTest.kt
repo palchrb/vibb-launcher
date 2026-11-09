@@ -238,7 +238,7 @@ class FitTest {
         }
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {"))
-        assertTrue(player.contains("rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
+        assertTrue(player.contains("rendererState?.takeIf { notice == null }?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
     }
 
     /**
@@ -322,7 +322,7 @@ class FitTest {
     @Test
     fun `the player's art replaces only the cover box`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue(player.contains("PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        assertTrue(player.contains("PlayerArt(now, notice, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
         assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
         assertTrue("no cover of its own", !player.contains("Cover("))
     }
