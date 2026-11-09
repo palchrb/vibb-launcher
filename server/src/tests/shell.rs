@@ -600,8 +600,9 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: theme-color"
         );
         assert!(
-            html.contains("<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black\">")
-                && !html.contains("black-translucent"),
+            html.contains(
+                "<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black\">"
+            ) && !html.contains("black-translucent"),
             "{page}: the status bar"
         );
         if let Some(href) = add {
