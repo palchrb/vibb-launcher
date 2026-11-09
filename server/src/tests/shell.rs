@@ -685,6 +685,37 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     .execute(&app.db)
     .await
     .unwrap();
+    // Design 77 step 4: messages waiting (a stranger, a sender name, an emergency number), a blocked one and a listed
+    // name, so the Calls page's held rows, Delete Everything Waiting and the names card render every form.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for (n, class, sender, state) in [
+        (1, "number", "+4790000099", "held"),
+        (2, "alphanumeric", "DNB", "held"),
+        (3, "short", "113", "held"),
+        (4, "malformed", "", "blocked"),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_sms_held (device_id, held_id, at, kind, sender_class, sender, expires_at, state) \
+             VALUES (?, ?, ?, 'sms', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .bind(now_ms - 60_000)
+        .bind(class)
+        .bind(sender)
+        .bind(now_ms + 3_600_000)
+        .bind(state)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO device_sms_names (device_id, name, fold) VALUES (?, 'Posten', 'posten')",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     // Anna's bedtime (design 66), so its page shows Remove Bedtime...; Ola's opens as a new one.
     sqlx::query(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, bedtime) \

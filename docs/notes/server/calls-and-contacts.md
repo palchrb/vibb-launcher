@@ -144,7 +144,63 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   the capability SMS's choice reads "Styrt av Vibb (anbefalt)"; no phone is switched by itself. A stored pair the
   phone can't do (set up again with an older build) keeps the fail-closed derived keys and the calls report's finding
   "Telefonen må oppdateres" with what it costs (`Finding::NeedsUpdate`: "SMS går tapt og samtaler er bare til kontakter
-  til da.", or the half that applies). Left for step 4: the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
+  til da.", or the half that applies). Built in step 4 (the next section): the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
   the blocked list, the sender-name card, the `sms_held` event with its push and `PushBudget`, the findings.
 - Contract: `testdata/sms_contract.json`, byte-identical in the launcher's test resources (`sms::tests`). Tests:
   `sms::tests`, `tests::sms`.
+
+## SMS in Vibb One, step 4: the PWA (design 77 §7, D2, D3, D12, D16, D17; `handlers::calls_sms`)
+
+- **The two channel rows are a segmented control** (D2): three radios per channel (`calls_mode`/`sms_mode`, the same
+  form and handler as step 1), styled as the phone switcher's segments (`.segmented`, `.segment`, `.segment-face`;
+  sibling selectors only, no `:has()`), each saving on change (`data-autosave`, the `<noscript>` Save). The chosen
+  state's sub-line under it; SMS "Styrt av Vibb" adds "Slå av chatfunksjoner i Meldinger først" (§8.5). With
+  `sms_engine_v1`, SMS's managed segment carries a quiet "anbefalt"; without it the capability gate is step 1's: a
+  choice the phone can't do is a disabled radio, with "<choice> - Oppdater Vibb One først" under the row.
+- **Each contact's "Meldinger" group** (D3): "Kan sende melding til {kid}" (`sms_in`), "Kan få melding fra {kid}"
+  (`sms_out`), "Bilder i meldinger" (`mms`), in the contact's one form with the call switches (a missing one is off).
+  For an emergency number (`emergency::is_emergency`) "Kan sende melding til" is disabled with "Nødnumre kan ikke sende
+  meldinger hit - alle kan utgi seg for dem", and the save never stores it on (R2-H1). The row's summary gains
+  "· Melding begge veier" / "· Melding inn" / "· Melding ut".
+- **Add Contact shows every switch** (R2-M1), with `switches=on` in the form: all on for a new contact; "Opprett
+  kontakt…" from a held message is a link `?add_number=<encoded>#add-contact` that opens it with the number (escaped
+  by the template) and "Kan sende melding til" alone on. A post without `switches` (an older page) gets every flag on,
+  as before. Never `sms_in` for an emergency number.
+- **"Meldinger som venter"** (`#held`, at the top while it has rows; the section is always there so a redirect can
+  land): `device_sms_held` rows but `blocked`, newest first, the last 7 days, at most 100, each `#held-<id>`: "Nummer
+  {number}" / "Avsendernavn «{name}»", SMS/Bilde, when, and its state - "Venter til {time}", "Tillatt - leveres når
+  telefonen henter reglene", "Levert", "Utløpt - meldingen er slettet", "Slettet" (a parent's drop too, before the
+  phone confirms), or "Utløpt" for a row past `expires_at` by the server's clock (R2-L2). Actions only while it
+  waits: "Opprett kontakt…" (a number not in the phone book), "Tillat meldinger fra {contact}" (a contact without
+  `sms_in`), "Tillat avsendernavnet…" (behind a confirm with D17's warning), "Slett nå"; an emergency number or a name
+  without a letter gets "Slett nå" alone with its reason. `POST /devices/{id}/calls/held/{held_id}/allow` decides from
+  the stored row, never the form (a contact's `sms_in` alone, or the name added, at most 50); `…/drop` sets
+  `dropped_at` (the policy's `sms_held_drop`); `…/held/drop-all` drops every waiting row ("Slett alle som venter…",
+  behind a confirm with the count). A row no longer waiting answers `?notice=held_gone#held` (a refusal, nothing
+  written). "Blokkerte meldinger" (`#blocked`, a folded `details.section`): the `blocked` rows of 30 days, sender
+  label (or what the phone couldn't read), kind, when.
+- **The SMS settings** (`#sms-settings`, `POST /devices/{id}/calls/sms`, one form): "Vis meldingstekst på
+  låseskjermen" (`sms_lock_text`) and "Telefonens nummer, SIM 1/2" (`device_own_numbers`, `phone::normalize` with the
+  default country code, `+` and 3-16 digits; empty removes it). A number that isn't one renders in place (400) with
+  what was sent.
+- **"Avsendernavn som slipper gjennom"** (`#sms-names`): the names by fold, Remove (`…/names/remove`, by fold), "Legg
+  til navn…" (`…/names`: `sms::valid_name` - 1-11 characters after the shared cleaner, a letter -, unique by
+  `sms::fold`, at most `calls_sms::NAMES_MAX` 50; a refusal renders in place, 400, with what was typed), and D17's
+  warning "En falsk avsender med samme navn kommer også gjennom." under the card and in every allow's confirm.
+- **The MMSC host table** stays `mmsc_hosts.rs`, compiled in and empty until step 0 (§7: not parent-editable in v1);
+  with no row every MMS fails closed, and the phone's `mmsc_known: false` shows as the row "MMS kan ikke sjekkes på
+  dette SIM-kortet".
+- **The findings** (`calls::sms_findings`, from a launcher with the engine): while SMS is managed - "SMS-appen er
+  ikke Vibb One - meldinger går tapt" (`role_held` false; not while a change is pending), "Ventelisten er full" with
+  "Nye ukjente avsendere blir ikke holdt før {time}" (the earliest `expires_at` of the full pool's held rows), "Nummeret
+  i Vibb stemmer ikke med SIM-kortet" (a SIM's reported number differs from the typed one): warnings and Attention rows;
+  "Meldinger kunne ikke vises" (the count), "MMS kan ikke sjekkes på dette SIM-kortet", "Bilder i meldinger kommer ikke
+  fram uten mobildata": rows in the settings group, not Attention (`CallProblem::needs_attention`). While SMS isn't
+  managed: "Vibb One er fortsatt SMS-appen" (code QA L3), a row.
+- **The device page's row** "Meldinger": "2 meldinger venter · 3 blokkert denne uken" (`calls_sms::summary_value`),
+  under Calls & Contacts while either isn't nought, to `#held`.
+- Every write is one transaction scoped to the phone, 500 on a database error, and nudges the phone (`calls::saved`:
+  `command_notify`), so an allow reaches it with the policy within seconds while it is online. Tests: `tests::sms_page`
+  (each allow path's defaults, the escaped prefill, Slett nå / Slett alle, the names' rule, the SMS settings, the
+  Meldinger group, the push budget, the findings and the device-page row), `tests::sms` (the gate on the radios),
+  `tests::shell` (every new form lands on its own group), `calls::tests` (the findings' words, the summary).

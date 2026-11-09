@@ -638,6 +638,15 @@ async fn save_modes(
     .await
 }
 
+/// A channel radio's state on the page: (checked, disabled).
+fn radio(page: &str, name: &str, value: &str) -> (bool, bool) {
+    let tag = super::tags(page, "input")
+        .into_iter()
+        .find(|tag| tag.attr("name") == Some(name) && tag.attr("value") == Some(value))
+        .unwrap_or_else(|| panic!("no radio {name}={value}"));
+    (tag.has("checked"), tag.has("disabled"))
+}
+
 async fn stored_modes(app: &TestApp, id: i64) -> (String, String) {
     sqlx::query_as("SELECT calls_mode, sms_mode FROM device_policy WHERE device_id = ?")
         .bind(id)
@@ -661,14 +670,17 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
+    // Step 4: a segmented control of three radios; a choice the phone can't do is a disabled radio, with its line.
+    assert_eq!(radio(&page, "sms_mode", "managed"), (false, true), "{page}");
+    assert_eq!(radio(&page, "sms_mode", "off"), (false, true));
+    assert_eq!(radio(&page, "sms_mode", "unmanaged"), (true, false));
+    assert_eq!(radio(&page, "calls_mode", "off"), (false, false));
     assert!(
-        page.contains(
-            r#"<option value="managed" disabled>Managed by Vibb - Update Vibb One first</option>"#
-        ),
+        page.contains("Managed by Vibb - Update Vibb One first"),
         "{page}"
     );
-    assert!(page.contains(r#"<option value="off" disabled>Off - Update Vibb One first</option>"#));
-    assert!(!page.contains("(recommended)"));
+    assert!(page.contains("Off - Update Vibb One first"));
+    assert!(!page.contains("segment-note"));
 
     for (calls, sms) in [
         ("unmanaged", "managed"),
@@ -699,9 +711,8 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(page.contains(
-        r#"<option value="unmanaged" disabled>Not managed - Update Vibb One first</option>"#
-    ));
+    assert_eq!(radio(&page, "calls_mode", "unmanaged"), (false, true));
+    assert!(page.contains("Not managed - Update Vibb One first"));
 
     // With the engine: every pair, and the recommendation.
     app.post_status(
@@ -713,8 +724,14 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(page.contains("Managed by Vibb (recommended)"));
+    assert!(page.contains(r#"Managed by Vibb<span class="segment-note">recommended</span>"#));
     assert!(!page.contains("Update Vibb One first"));
+    assert!(
+        super::tags(&page, "input")
+            .iter()
+            .filter(|tag| tag.attr("type") == Some("radio"))
+            .all(|tag| !tag.has("disabled"))
+    );
     assert!(
         save_modes(&app, &cookie, id, "unmanaged", "managed")
             .await

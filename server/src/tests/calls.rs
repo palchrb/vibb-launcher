@@ -1151,6 +1151,17 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
             ],
             Some((calls.as_str(), Some("settings"))),
         ),
+        // Design 77 step 4: the SMS settings and Add Name, each back to its own group.
+        (
+            format!("/devices/{id}/calls/sms#sms-settings"),
+            vec![("sms_lock_text", "on"), ("own_number_1", "")],
+            Some((calls.as_str(), Some("sms-settings"))),
+        ),
+        (
+            format!("/devices/{id}/calls/names#sms-names"),
+            vec![("name", "Posten")],
+            Some((calls.as_str(), Some("sms-names"))),
+        ),
         (
             format!("/devices/{id}/contacts/{c}#{row}"),
             vec![("inbound", "on"), ("message_app", "")],

@@ -990,6 +990,8 @@ struct DeviceDetailTemplate {
     access: AccessCard,
     /// The Sections rows' values.
     calls_value: String,
+    /// Design 77 §7: the messages waiting and blocked this week, a row under Calls while either isn't nought.
+    sms_value: Option<String>,
     apps_value: String,
     music_value: String,
     /// Device › Music or Device › Time shows a warning: the value in orange ("Needs attention").
@@ -1942,6 +1944,12 @@ async fn render_device(
         (true, Some(n)) => t_count(lang, "device.summary.value.contacts", n, &[]),
     };
     let call_problems = call_problems.unwrap_or_default();
+    // Design 77 §7: "2 meldinger venter · 3 blokkert denne uken", a row of its own while either isn't nought.
+    let sms_value = crate::handlers::calls_sms::summary_value(&state.db, id, lang, now)
+        .await
+        .map_err(|err| tracing::error!(device_id = id, %err, "can't count the held messages"))
+        .ok()
+        .flatten();
 
     // The phone's effective rules: the Time row, Pause a rule…, the badge, and whether a calls-off
     // rule applies while calls aren't managed (an Attention row).
@@ -2162,6 +2170,7 @@ async fn render_device(
                     )
                 }),
             calls_value,
+            sms_value,
             apps_value,
             music_value,
             music_attention,

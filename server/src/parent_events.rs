@@ -73,10 +73,25 @@ pub enum Kind {
     /// horizon or an attack; at most one a day per phone (`server_tls::next_state`), no switch. Told from its
     /// parameters ([ServerTlsParams]).
     ServerTlsSeen,
+    /// Design 77 D16, §7: a stranger's message is held on the phone for the parent's allow (`POST
+    /// /api/devices/sms-held`, the first sight of a `held` row), keyed by the phone's id - who and when, never what.
+    /// Pushed within its [PushBudget]; past it the inbox only, and one digest at the hour's end. Told from its
+    /// parameters ([SmsHeldParams]).
+    SmsHeld,
+}
+
+/// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
+/// first `per_hour` events of the kind in a rolling hour push, at most `per_key_hour` of them with one key (the
+/// event's [NewEvent::budget_key]); the rest are stored for the inbox only and counted into one digest pushed when the
+/// hour that filled the budget ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PushBudget {
+    pub per_hour: i64,
+    pub per_key_hour: i64,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 17] = [
+    pub const ALL: [Kind; 18] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -94,6 +109,7 @@ impl Kind {
         Kind::PushOff,
         Kind::ServerTlsOff,
         Kind::ServerTlsSeen,
+        Kind::SmsHeld,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -115,6 +131,7 @@ impl Kind {
             Kind::PushOff => "push_off",
             Kind::ServerTlsOff => "server_tls_off",
             Kind::ServerTlsSeen => "server_tls_seen",
+            Kind::SmsHeld => "sms_held",
         }
     }
 
@@ -137,7 +154,8 @@ impl Kind {
     /// §2.6; the inbox keeps it), else 12 h.
     pub fn ttl(self) -> i64 {
         match self {
-            Kind::EmergencyCall => 86_400,
+            // Design 77: a held message waits on the phone for 24 hours at most.
+            Kind::EmergencyCall | Kind::SmsHeld => 86_400,
             Kind::LowBattery | Kind::ZoneArrived | Kind::ZoneLeft | Kind::ExtraTimeRequest => 3_600,
             _ => 43_200,
         }
@@ -175,6 +193,27 @@ impl Kind {
             Kind::AppUpdateAvailable | Kind::AppUpdated => {
                 Some((APP_UPDATES_SWITCH, "App updates"))
             }
+            // Design 77 §7: on by default (migration 0130).
+            Kind::SmsHeld => Some(("push_sms_held", "A message is waiting for you to allow it")),
+        }
+    }
+
+    /// Where a [PushBudget] digest of the kind leads: `sms_held`'s to the Calls page's waiting messages.
+    pub fn digest_target(self, device_id: i64) -> String {
+        match self {
+            Kind::SmsHeld => format!("/devices/{device_id}/calls#held"),
+            _ => format!("/devices/{device_id}"),
+        }
+    }
+
+    /// The kind's own push rate, if it has one (design 77 §7): `sms_held` pushes 3 a phone's hour, 1 a sender.
+    pub fn push_budget(self) -> Option<PushBudget> {
+        match self {
+            Kind::SmsHeld => Some(PushBudget {
+                per_hour: 3,
+                per_key_hour: 1,
+            }),
+            _ => None,
         }
     }
 
@@ -254,6 +293,7 @@ impl Phone {
             push_body: String::new(),
             happened_at,
             push: Push::Now,
+            budget_key: None,
         }
     }
 
@@ -921,6 +961,8 @@ pub struct NewEvent {
     pub happened_at: DateTime<Utc>,
     /// Whether and when a new row's push is queued (design 38 §3.2).
     pub push: Push,
+    /// A kind with a [PushBudget]: the key its per-key rate counts by (`sms_held`: the sender). `None` for the rest.
+    pub budget_key: Option<String>,
 }
 
 /// When a new event's push goes (design 38 §3.2): at once, held until an instant (the sender's
@@ -950,7 +992,8 @@ pub const URGENT_PUSHES_AN_HOUR: i64 = 3;
 /// Stores `event` once: the new row's id, or `None` when it was there already (the same phone,
 /// kind and key), its phone is past [EVENTS_AN_HOUR] of the kind (logged), or its target isn't a
 /// local path (a bug, logged). A new row queues its pushes (`push::queue`; an urgent kind past
-/// [URGENT_PUSHES_AN_HOUR], none). Runs on the caller's connection, so a caller's transaction holds
+/// [URGENT_PUSHES_AN_HOUR], none; a kind past its [PushBudget], none - the row counts into the hour's digest
+/// instead, [budget_digest]). Runs on the caller's connection, so a caller's transaction holds
 /// both; the caller wakes the sender (`state.push.wake()`) once that committed.
 pub async fn raise(
     conn: &mut SqliteConnection,
@@ -964,6 +1007,8 @@ pub async fn raise(
         return Ok(None);
     }
     let mut push = event.push;
+    let mut budget_key = None;
+    let mut past_budget = false;
     if let Some(device_id) = event.device_id {
         let this_hour: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = ? \
@@ -987,12 +1032,34 @@ pub async fn raise(
         {
             push = Push::No;
         }
+        // Design 77 §7: within the kind's budget the row keeps its key (the next one counts it); past it, no push of
+        // its own - it counts into the hour's digest.
+        if let (Some(budget), Some(key)) = (event.kind.push_budget(), event.budget_key.as_deref())
+            && push != Push::No
+        {
+            let (pushed, pushed_key): (i64, i64) = sqlx::query_as(
+                "SELECT COUNT(*), COALESCE(SUM(push_budget_key = ?), 0) FROM parent_events \
+                 WHERE device_id = ? AND kind = ? AND push_budget_key IS NOT NULL \
+                 AND created_at > datetime('now', '-1 hour')",
+            )
+            .bind(key)
+            .bind(device_id)
+            .bind(event.kind.wire())
+            .fetch_one(&mut *conn)
+            .await?;
+            if pushed < budget.per_hour && pushed_key < budget.per_key_hour {
+                budget_key = Some(key);
+            } else {
+                push = Push::No;
+                past_budget = true;
+            }
+        }
     }
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO parent_events \
          (device_id, kind, dedup_key, title, summary, target, detail, params, push_title, \
-          push_body, happened_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?) \
+          push_body, happened_at, push_budget_key) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?) \
          ON CONFLICT DO NOTHING RETURNING id",
     )
     .bind(event.device_id)
@@ -1006,6 +1073,7 @@ pub async fn raise(
     .bind(crate::audit::clip(&event.push_title, TITLE_MAX))
     .bind(crate::audit::clip(&event.push_body, SUMMARY_MAX))
     .bind(instant(event.happened_at))
+    .bind(budget_key)
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = id {
@@ -1014,8 +1082,95 @@ pub async fn raise(
             Push::Held(until) => crate::push::queue(conn, id, event.kind, Some(until)).await?,
             Push::No => {}
         }
+        if past_budget && let Some(device_id) = event.device_id {
+            budget_digest(conn, device_id, event.kind).await?;
+        }
     }
     Ok(id)
+}
+
+/// The dedup key of a [PushBudget] digest: this and the instant it is pushed at.
+pub const DIGEST_PREFIX: &str = "digest:";
+
+/// A budget digest's parameters (design 77 §7): the phone's name, when it is pushed (the hour's end, RFC 3339) and
+/// how many events of the hour went to the inbox only. A kind with a budget reads them from its own parameters
+/// ([SmsHeldParams] has the same keys).
+#[derive(serde::Serialize)]
+struct DigestParams<'a> {
+    phone: &'a str,
+    at: String,
+    waiting: i64,
+}
+
+/// One more event of `kind` past its budget: counted into the phone's open digest of the kind (one whose push time
+/// is still ahead), else a new digest held until the end of the hour that filled the budget - its oldest pushed
+/// event's time plus an hour. The digest is an event of the same kind (its own inbox row, its push under the same
+/// switch), worded from its count when it is pushed, so it says every event counted until then.
+async fn budget_digest(
+    conn: &mut SqliteConnection,
+    device_id: i64,
+    kind: Kind,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now();
+    let open: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM parent_events WHERE device_id = ? AND kind = ? AND dedup_key LIKE 'digest:%' \
+         AND happened_at > ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(kind.wire())
+    .bind(instant(now))
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(open) = open {
+        sqlx::query(
+            "UPDATE parent_events SET params = json_set(params, '$.waiting', \
+             COALESCE(json_extract(params, '$.waiting'), 0) + 1) WHERE id = ?",
+        )
+        .bind(open)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
+    let first: Option<String> = sqlx::query_scalar(
+        "SELECT MIN(created_at) FROM parent_events WHERE device_id = ? AND kind = ? \
+         AND push_budget_key IS NOT NULL AND created_at > datetime('now', '-1 hour')",
+    )
+    .bind(device_id)
+    .bind(kind.wire())
+    .fetch_one(&mut *conn)
+    .await?;
+    let at = first
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .map(|first| first + chrono::Duration::hours(1))
+        .filter(|at| *at > now)
+        .unwrap_or(now + chrono::Duration::hours(1));
+    let phone: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .unwrap_or_default();
+    let params = DigestParams {
+        phone: &phone,
+        at: instant(at),
+        waiting: 1,
+    };
+    let id: Option<i64> = sqlx::query_scalar(
+        "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, params, happened_at) \
+         VALUES (?, ?, ?, '', '', ?, ?, ?) ON CONFLICT DO NOTHING RETURNING id",
+    )
+    .bind(device_id)
+    .bind(kind.wire())
+    .bind(format!("{DIGEST_PREFIX}{}", instant(at)))
+    .bind(kind.digest_target(device_id))
+    .bind(serde_json::to_string(&params).expect("strings serialize"))
+    .bind(instant(at))
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(id) = id {
+        crate::push::queue(conn, id, kind, Some(at)).await?;
+    }
+    Ok(())
 }
 
 /// [raise] in its own transaction, for an intake without one, then the sender's wake-up; a
@@ -1277,6 +1432,7 @@ pub fn zone_crossing(
         push_body: String::new(),
         happened_at: at,
         push,
+        budget_key: None,
     }
 }
 
@@ -1383,6 +1539,7 @@ pub fn extra_time_request(
         push_body: String::new(),
         happened_at: at,
         push,
+        budget_key: None,
     }
 }
 
@@ -1468,6 +1625,124 @@ pub async fn open_extra_time_request(
         .map(|at| at.min(now)))
 }
 
+/// A held message's parameters (design 77 D16, §7): the phone's name as it was when raised, when the phone received
+/// the message and when it deletes it unless the sender is let in (RFC 3339), the sender's kind as the card labels it
+/// (`number` or `name`) and the sender as the intake checked it (`sms::sender_ok`: `+` and digits, or a cleaned name
+/// of at most 11 characters). Never anything of the message. A [PushBudget] digest has `waiting` (with `at`, its push
+/// time) instead of a sender.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SmsHeldParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub class: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sender: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<i64>,
+}
+
+/// A stranger's message held on the phone (design 77 D16): key the phone's held id, so a re-post gives one row; the
+/// words left to [told]. `sender_class` is the posted one (`number`/`short` read as a number, `alphanumeric` as a
+/// name); the budget key is the sender with its kind, so the per-sender rate never mixes a name and a number. Target:
+/// the row on the Calls page's "Messages waiting".
+#[allow(clippy::too_many_arguments)]
+pub fn sms_held(
+    device_id: i64,
+    phone: &str,
+    held_id: &str,
+    at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    sender_class: &str,
+    sender: &str,
+    push: Push,
+) -> NewEvent {
+    let class = if sender_class == "alphanumeric" {
+        "name"
+    } else {
+        "number"
+    };
+    let params = SmsHeldParams {
+        phone: phone.to_string(),
+        at: instant(at),
+        class: class.to_string(),
+        sender: sender.to_string(),
+        expires_at: Some(instant(expires_at)),
+        waiting: None,
+    };
+    NewEvent {
+        device_id: Some(device_id),
+        kind: Kind::SmsHeld,
+        dedup_key: held_id.to_string(),
+        title: String::new(),
+        summary: String::new(),
+        target: format!("/devices/{device_id}/calls#held-{held_id}"),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push,
+        budget_key: Some(format!("{class}:{sender}")),
+    }
+}
+
+/// A held message's words (design 77 §7, QA R2-M2), the same in the inbox and the push: the sender quoted and
+/// labelled by its kind, so a stranger's text never reads as Vibb's own words - "Anna: message from unknown number
+/// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23 h" (the time alone once it
+/// expired). Shorter than the design's sentence, which can't fit [TITLE_MAX] with a 16-character number. A digest:
+/// "Anna: 7 messages are waiting" / its push time.
+fn sms_held_told(p: &SmsHeldParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
+    let lang = zone.lang();
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let title = match p.waiting {
+        Some(waiting) => fit_name(&p.phone, TITLE_MAX, |n| {
+            t_count(lang, "events.sms_held.digest", waiting, &[("name", n)])
+        }),
+        None => {
+            let key = if p.class == "name" {
+                "events.sms_held.name"
+            } else {
+                "events.sms_held.number"
+            };
+            fit_name(&p.phone, TITLE_MAX, |n| {
+                t_params(lang, key, &[("name", n), ("sender", &p.sender)])
+            })
+        }
+    };
+    let left = p
+        .expires_at
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .filter(|end| p.waiting.is_none() && *end > now)
+        .map(|end| {
+            let minutes = (end - now).num_minutes().max(1);
+            // "23 h" rather than "23 h 59 min" (whole hours, rounded down: never more time than is left).
+            let minutes = if minutes > 60 {
+                minutes / 60 * 60
+            } else {
+                minutes
+            };
+            crate::display_time::duration(lang, minutes)
+        });
+    let summary = match left {
+        Some(left) => t_params(
+            lang,
+            "events.sms_held.summary",
+            &[("at", &at), ("left", &left)],
+        ),
+        None => at,
+    };
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&summary, SUMMARY_MAX).to_string(),
+    )
+}
+
 /// An app update notice's parameters (2026-10-25, migration 0099): the catalog app's id and name
 /// as they were when it was raised, the version before (none known: `None`) and the new one -
 /// the release's version as the Apps tab shows it -, when (RFC 3339), and for `app_updated` the
@@ -1532,6 +1807,7 @@ pub fn app_update_available(
         push_body: String::new(),
         happened_at: at,
         push: Push::Now,
+        budget_key: None,
     }
 }
 
@@ -1561,6 +1837,7 @@ pub fn app_updated(
         push_body: String::new(),
         happened_at: at,
         push: Push::Now,
+        budget_key: None,
     }
 }
 
@@ -1629,6 +1906,7 @@ pub fn passkey_added(id: i64, parent: &str, passkey: &str, at: DateTime<Utc>) ->
         push_body: String::new(),
         happened_at: at,
         push: Push::Now,
+        budget_key: None,
     }
 }
 
@@ -1697,6 +1975,7 @@ pub fn push_off(
         push_body: String::new(),
         happened_at: at,
         push: Push::Now,
+        budget_key: None,
     }
 }
 
@@ -1935,6 +2214,9 @@ pub fn told_as(
         Kind::PushOff => params
             .and_then(|p| serde_json::from_str::<PushOffParams>(p).ok())
             .map(|p| push_off_told(form, &p, zone, now)),
+        Kind::SmsHeld => params
+            .and_then(|p| serde_json::from_str::<SmsHeldParams>(p).ok())
+            .map(|p| sms_held_told(&p, zone, now)),
         Kind::ServerTlsOff | Kind::ServerTlsSeen => params
             .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
             .map(|p| server_tls_told(form, kind, &p, zone, now)),
@@ -2982,6 +3264,22 @@ mod tests {
                 "14:02 · Wi-Fi",
                 "/devices/3/advanced#server-tls",
             ),
+            // Design 77: a held message, told from its parameters, to its row on the Calls page.
+            (
+                sms_held(
+                    3,
+                    "Anna",
+                    "ab12",
+                    two,
+                    two + chrono::Duration::hours(24),
+                    "alphanumeric",
+                    "DNB",
+                    Push::Now,
+                ),
+                "Anna: message from sender name «DNB»",
+                "14:02 · Allow within 23 h",
+                "/devices/3/calls#held-ab12",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -3564,7 +3862,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            10,
+            11,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -3757,6 +4055,27 @@ mod tests {
             server_tls_off(&phone, "Mamma", two),
             server_tls_seen(&phone, &tls_outside("seen"), two),
             server_tls_seen(&phone, &tls_outside("refused"), two),
+            // Design 77: the longest number the intake takes, and the longest name.
+            sms_held(
+                3,
+                &phone.name,
+                "ab15",
+                two,
+                two + chrono::Duration::hours(24),
+                "number",
+                "+479000000000000",
+                Push::Now,
+            ),
+            sms_held(
+                3,
+                &phone.name,
+                "ab16",
+                two,
+                two + chrono::Duration::hours(24),
+                "alphanumeric",
+                "Østlandsakt",
+                Push::Now,
+            ),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();
@@ -3941,5 +4260,106 @@ mod tests {
             detail(i64::MAX, Lang::Nb),
             "Siste posisjon – se kartet i Finn"
         );
+    }
+
+    /// Design 77 §7 (QA R2-M2): a held message's words quote and label the sender - a number as a number, a name in
+    /// «» -, say how long the parent has (whole hours, rounded down) and nothing once it expired; a digest counts.
+    #[test]
+    fn a_held_message_is_labelled_and_quoted() {
+        let phone = anna();
+        let two = utc("2026-10-18 12:02:00");
+        let day = two + chrono::Duration::hours(24);
+        let number = sms_held(
+            3,
+            "Anna",
+            "ab12",
+            two,
+            day,
+            "number",
+            "+4791234567",
+            Push::Now,
+        );
+        assert_eq!(
+            inbox(&phone, &number),
+            (
+                "Anna: message from unknown number +4791234567".to_string(),
+                "14:02 · Allow within 23 h".to_string()
+            )
+        );
+        assert_eq!(number.target, "/devices/3/calls#held-ab12");
+        assert_eq!(number.budget_key.as_deref(), Some("number:+4791234567"));
+        let name = sms_held(
+            3,
+            "Anna",
+            "ab13",
+            two,
+            day,
+            "alphanumeric",
+            "DNB",
+            Push::Now,
+        );
+        assert_eq!(
+            inbox(&phone, &name).0,
+            "Anna: message from sender name «DNB»"
+        );
+        assert_eq!(name.budget_key.as_deref(), Some("name:DNB"));
+        let gone = sms_held(
+            3,
+            "Anna",
+            "ab14",
+            two,
+            two + chrono::Duration::minutes(10),
+            "short",
+            "2222",
+            Push::No,
+        );
+        assert_eq!(inbox(&phone, &gone).1, "14:02");
+        let digest = SmsHeldParams {
+            phone: "Anna".into(),
+            at: instant(two),
+            class: String::new(),
+            sender: String::new(),
+            expires_at: None,
+            waiting: Some(7),
+        };
+        let digest = serde_json::to_string(&digest).unwrap();
+        assert_eq!(
+            told(
+                "sms_held",
+                String::new(),
+                String::new(),
+                Some(&digest),
+                &phone.zone,
+                phone.now
+            ),
+            (
+                "Anna: 7 messages are waiting".to_string(),
+                "14:02".to_string()
+            )
+        );
+        let nb = phone.zone.in_lang(Lang::Nb);
+        assert_eq!(
+            told(
+                "sms_held",
+                String::new(),
+                String::new(),
+                number.params.as_deref(),
+                &nb,
+                phone.now
+            ),
+            (
+                "Anna: melding fra ukjent nummer +4791234567".to_string(),
+                "14:02 · Tillat innen 23 t".to_string()
+            )
+        );
+        assert_eq!(Kind::SmsHeld.switch().unwrap().0, "push_sms_held");
+        assert_eq!(
+            Kind::SmsHeld.push_budget(),
+            Some(PushBudget {
+                per_hour: 3,
+                per_key_hour: 1
+            })
+        );
+        assert!(!Kind::SmsHeld.urgent());
     }
 }
