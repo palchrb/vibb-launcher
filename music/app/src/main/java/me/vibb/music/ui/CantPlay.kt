@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import me.vibb.music.R
 import me.vibb.music.logic.carouselIndex
+import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.RendererState
 
 /*
@@ -84,23 +85,44 @@ fun cantPlayNotice(state: RendererState?): CantPlayNotice? = when (state) {
 fun playOff(notice: CantPlayNotice?): Boolean = notice?.playGreyed == true
 
 /**
+ * Play shows the pause glyph (and says "Pause"): while [playing] - but never greyed (qa-music-cant-play-2 N2: during a
+ * held retry `playing` follows the attempt, and a grey pause would read as a working player). A tap does what it did.
+ */
+fun showsPause(playing: Boolean, notice: CantPlayNotice?): Boolean = playing && !playOff(notice)
+
+/**
  * A refusal held over a retry (qa-music-cant-play M3): the web player clears its line at every start and sets it again
  * only when the start fails, so a tap on a refused item would turn the cover back to colour and play to peach for the
- * length of the attempt - a flash per tap, the blinking the approval ruled out. [state] is the last refusal (a state
- * with a [cantPlayNotice]) of the run [run] (`PlayerHub.State.entryId`: the queue the attempt is in).
+ * length of the attempt - a flash per tap, the blinking the approval ruled out. [state] is the last refusal of the run
+ * [run] (`PlayerHub.State.entryId`: the queue the attempt is in).
  */
 data class HeldRefusal(val state: RendererState, val run: Long?)
 
 /**
- * The next [HeldRefusal] from the renderer's [state], [connecting] (`PlayerHub.State.connecting`: a start on its way,
- * true until the renderer reports playing) and the [run]: a refusal is held; a moment without a line keeps it only
- * while an attempt in the same run is on its way; a real playing state (connecting over), another line, or another run
- * ends it. Next and previous in the run keep it too - an account's or a book's refusal is the run's, and the next
- * item's start says otherwise by playing.
+ * The refusals a retry holds (qa-music-cant-play-2 V2): the account's and the book's, which arrive only after an attempt
+ * (the start clears the line first). The network lines come from the gate before any start and never flash; held, a
+ * stale "Trenger Wi-Fi" would stay over a good retry's connect.
  */
-fun holdRefusal(held: HeldRefusal?, state: RendererState?, connecting: Boolean, run: Long?): HeldRefusal? = when {
-    state != null -> if (cantPlayNotice(state) != null) HeldRefusal(state, run) else null
-    connecting && held != null && held.run == run -> held
+fun heldOverRetry(state: RendererState): Boolean = state in HELD_OVER_RETRY
+
+private val HELD_OVER_RETRY = setOf(RendererState.SPOTIFY_ASK_ADULT, RendererState.SPOTIFY_NO_LISTENING_TIME)
+
+/**
+ * The phone's web player is starting (qa-music-cant-play-2 V1): `PlayerHub.State.connecting` while the output isn't a
+ * Sonos room - on a room `connecting` is the speaker's connect, a renderer the held refusal isn't of.
+ */
+fun webPlayerStarting(connecting: Boolean, output: OutputKind): Boolean = connecting && output != OutputKind.SONOS
+
+/**
+ * The next [HeldRefusal] from the renderer's [state], [webStarting] (the phone's web player is starting: the player's
+ * `connecting` off a room - qa-music-cant-play-2 V1, never a Sonos room's connect, a renderer the refusal isn't of) and
+ * the [run]: a [heldOverRetry] refusal is held; a moment without a line keeps it only while an attempt in the same run
+ * is starting; a real playing state (the start over), another line, or another run ends it. Next and previous in the
+ * run keep it too - an account's or a book's refusal is the run's, and the next item's start says otherwise by playing.
+ */
+fun holdRefusal(held: HeldRefusal?, state: RendererState?, webStarting: Boolean, run: Long?): HeldRefusal? = when {
+    state != null -> if (heldOverRetry(state)) HeldRefusal(state, run) else null
+    webStarting && held != null && held.run == run -> held
     else -> null
 }
 
@@ -112,7 +134,7 @@ fun shownState(held: HeldRefusal?, state: RendererState?): RendererState? = stat
  * (a large font or display size; the carousel's pages down to PLAYER_ART_MIN_DP = 96): the text is set in dp, never the
  * font scale's sp (as SKIP_NUMBER_DP: a fixed box), the title may take three lines, and what doesn't fit goes - the
  * disc first, then the help line, then the title (the "!" alone). The overlay measures its own words in its own box
- * and asks [noticeFit]; the line under the entry name comes back while the notice can't say it all ([headerLine]).
+ * and asks [noticeFit]; the line under the entry name comes back while the notice can't say it all ([headerLineText]).
  */
 
 /** The notice's sizes (dp): the disc, the gap between its parts, the title's, the help's and the "!"'s text. */
@@ -154,16 +176,19 @@ fun noticeFit(innerHeightDp: Float, titleHeightDp: Float, helpHeightDp: Float?):
 }
 
 /**
- * The quiet line under the entry name for [state]: always without a notice; with one only while the notice can't say
- * it all ([fit]: the overlay's last measure, null before it - taken as whole): the title gone, or the help line gone
- * where the line says more than the title (its string isn't the title's: "Spør en voksen" under "Kan ikke spilles nå").
+ * The quiet line under the entry name for [state], as a string, or null for none: always without a notice (the state's
+ * line); with one only while the notice can't say it all ([fit]: the overlay's last measure, null before it - taken as
+ * whole). The title gone: the state's line. The help line gone: the state's line where it says more than the title
+ * ("Spør en voksen" under "Kan ikke spilles nå"), else the help itself (qa-music-cant-play-2 N4: "Spør en voksen om
+ * hjelp" under "Lydboka trenger lyttetid" on a 96 dp page, never lost).
  */
-fun headerLine(state: RendererState?, notice: CantPlayNotice?, fit: NoticeFit?): Boolean = when {
-    state == null -> false
-    notice == null -> true
-    fit == null -> false
-    !fit.title -> true
-    else -> !fit.complete(notice.help != null) && rendererStateText(state) != notice.title
+fun headerLineText(state: RendererState?, notice: CantPlayNotice?, fit: NoticeFit?): Int? = when {
+    state == null -> null
+    notice == null -> rendererStateText(state)
+    fit == null || fit.complete(notice.help != null) -> null
+    !fit.title -> rendererStateText(state)
+    rendererStateText(state) != notice.title -> rendererStateText(state)
+    else -> notice.help
 }
 
 /**

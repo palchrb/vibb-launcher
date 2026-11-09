@@ -1,6 +1,7 @@
 package me.vibb.music.ui
 
 import me.vibb.music.R
+import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.RendererState
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -47,27 +48,52 @@ class CantPlayTest {
     @Test
     fun `a refusal is held over its retry and ends with a play, another line or another run`() {
         val ask = RendererState.SPOTIFY_ASK_ADULT
-        var held = holdRefusal(null, ask, connecting = false, run = 6)
+        var held = holdRefusal(null, ask, webStarting = false, run = 6)
         assertEquals(HeldRefusal(ask, 6), held)
         // the tap: the web player clears its line and starts - the cover stays greyed
-        held = holdRefusal(held, null, connecting = true, run = 6)
+        held = holdRefusal(held, null, webStarting = true, run = 6)
         assertEquals(ask, shownState(held, null))
         // refused again: still the same notice, no flash in between
-        held = holdRefusal(held, ask, connecting = false, run = 6)
+        held = holdRefusal(held, ask, webStarting = false, run = 6)
         assertEquals(ask, shownState(held, ask))
-        // it plays after all (the adult fixed the account): connecting is over, the line gone
-        held = holdRefusal(held, null, connecting = true, run = 6)
-        held = holdRefusal(held, null, connecting = false, run = 6)
+        // it plays after all (the adult fixed the account): the start is over, the line gone
+        held = holdRefusal(held, null, webStarting = true, run = 6)
+        held = holdRefusal(held, null, webStarting = false, run = 6)
         assertNull(held)
         assertNull(shownState(held, null))
-        // another line in the attempt's place wins, and one without a notice ends the hold
-        assertEquals(HeldRefusal(RendererState.SPOTIFY_NEEDS_WIFI, 6), holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_NEEDS_WIFI, false, 6))
+        // the book's refusal is held the same way
+        val book = RendererState.SPOTIFY_NO_LISTENING_TIME
+        assertEquals(book, shownState(holdRefusal(HeldRefusal(book, 6), null, webStarting = true, run = 6), null))
+        // V2: only the account's and the book's - the network lines come before any start and are never held; a stale
+        // "Trenger Wi-Fi" never stays over a good retry
+        val notHeld = RendererState.entries.filter { cantPlayNotice(it) != null } - setOf(ask, book)
+        for (state in notHeld) assertNull(state.name, holdRefusal(null, state, webStarting = false, run = 6))
+        assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_NEEDS_WIFI, false, 6))
+        // another line ends the hold
         assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_ELSEWHERE, false, 6))
         assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.UNREACHABLE, true, 6))
         // another run (a new entry or the favourites) never inherits it
-        assertNull(holdRefusal(HeldRefusal(ask, 6), null, connecting = true, run = 7))
+        assertNull(holdRefusal(HeldRefusal(ask, 6), null, webStarting = true, run = 7))
         // nothing held without a refusal first
-        assertNull(holdRefusal(null, null, connecting = true, run = 6))
+        assertNull(holdRefusal(null, null, webStarting = true, run = 6))
+        // V1: a Sonos room's connect is not the web player's start - the hold ends when the kid picks a room
+        assertTrue(webPlayerStarting(connecting = true, output = OutputKind.PHONE))
+        assertTrue(webPlayerStarting(connecting = true, output = OutputKind.BLUETOOTH))
+        assertFalse(webPlayerStarting(connecting = true, output = OutputKind.SONOS))
+        assertFalse(webPlayerStarting(connecting = false, output = OutputKind.PHONE))
+        assertNull(holdRefusal(HeldRefusal(ask, 6), null, webPlayerStarting(true, OutputKind.SONOS), 6))
+    }
+
+    /** N2: greyed play shows play, also while a held retry's attempt runs ([NowView.playing] follows it). */
+    @Test
+    fun `greyed play keeps the play glyph`() {
+        val ask = cantPlayNotice(RendererState.SPOTIFY_ASK_ADULT)
+        val wifi = cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI)
+        assertFalse(showsPause(playing = true, notice = ask))
+        assertFalse(showsPause(playing = false, notice = ask))
+        assertTrue(showsPause(playing = true, notice = wifi))
+        assertTrue(showsPause(playing = true, notice = null))
+        assertFalse(showsPause(playing = false, notice = null))
     }
 
     @Test
@@ -96,20 +122,24 @@ class CantPlayTest {
         val all = NoticeFit(disc = true, title = true, help = true)
         val titleOnly = NoticeFit(disc = false, title = true, help = false)
         val mark = NoticeFit(disc = true, title = false, help = false)
-        assertFalse(headerLine(null, null, null))
+        val wifi = RendererState.SPOTIFY_NEEDS_WIFI
+        val phone = RendererState.SPOTIFY_NOT_ON_PHONE
+        assertNull(headerLineText(null, null, null))
         // no notice: today's line
-        assertTrue(headerLine(RendererState.TAKEN_OVER, null, null))
+        assertEquals(R.string.renderer_taken_over, headerLineText(RendererState.TAKEN_OVER, null, null))
         // the notice says it all, or hasn't been measured yet: once only
-        assertFalse(headerLine(ask, cantPlayNotice(ask), all))
-        assertFalse(headerLine(ask, cantPlayNotice(ask), null))
+        assertNull(headerLineText(ask, cantPlayNotice(ask), all))
+        assertNull(headerLineText(ask, cantPlayNotice(ask), null))
         // the help line gone: "Spør en voksen" comes back under "Kan ikke spilles nå"
-        assertTrue(headerLine(ask, cantPlayNotice(ask), titleOnly))
-        // ... but not when the line is the title itself
-        assertFalse(headerLine(book, cantPlayNotice(book), titleOnly))
-        // the title gone: always
-        assertTrue(headerLine(book, cantPlayNotice(book), mark))
-        assertTrue(headerLine(RendererState.SPOTIFY_NEEDS_WIFI, cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI), mark))
-        assertFalse(headerLine(RendererState.SPOTIFY_NEEDS_WIFI, cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI), titleOnly))
+        assertEquals(R.string.renderer_spotify_ask_adult, headerLineText(ask, cantPlayNotice(ask), titleOnly))
+        // ... and where the state's line is the title itself, the help comes back (N4: never lost)
+        assertEquals(R.string.cant_play_ask_adult, headerLineText(book, cantPlayNotice(book), titleOnly))
+        assertEquals(R.string.cant_play_ask_adult, headerLineText(phone, cantPlayNotice(phone), titleOnly))
+        // the title gone: the state's line
+        assertEquals(R.string.renderer_spotify_no_listening_time, headerLineText(book, cantPlayNotice(book), mark))
+        assertEquals(R.string.renderer_spotify_needs_wifi, headerLineText(wifi, cantPlayNotice(wifi), mark))
+        // no help to lose: the title says it all
+        assertNull(headerLineText(wifi, cantPlayNotice(wifi), titleOnly))
     }
 
     /** L2: the page the pager rests on, while it shows the loaded item - one page, also with two items. */

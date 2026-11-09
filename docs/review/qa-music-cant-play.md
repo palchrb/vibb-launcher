@@ -210,3 +210,99 @@ branch compiles with warnings as errors, and the three classes pass). The full s
 - **N1** - fixed: no Spacer; one 4 dp gap between the parts. **N2** - fixed: the gradient is greyed inline, no lambda.
   **N3** - fixed in `spotify.md` (which layout says what). **N4** - `off` is `playOff(notice)` and the state string is
   read only when play is off.
+
+## Fix round verification (2026-11-09, commit 1af6821d, reviewed on `qa-music-cant-play-2`)
+
+Method: read the whole fix diff against the code it relies on (`SpotifyRenderer.begin/starting/fail`,
+`PlaybackService`'s `connecting`, `PlayerHub.State`), recomputed the notice fits independently from the shipped Nunito
+files (PIL advances, dp text, 3 title and 2 help lines, 1.364 em lines; a script of my own, not the test's table), and ran
+`CantPlayTest`, `FitTest`, `SourceScanTest` under `~/build.lock` with no emulator up: BUILD SUCCESSFUL, warnings as errors.
+
+Result: every finding of the first round is fixed for real (L3 stays open on purpose, for the user). The fix round
+brought no C, H or M. It brought two low findings (V1, V2) and four notes.
+
+### Per finding
+
+- **M3 `holdRefusal`: real, and it cannot stick.** The hold ends on any of: a real state without a notice, a state of
+  another kind, the attempt over (`connecting` false: `SpotifyRenderer.starting` is `pwr && !ended && !stopped &&
+  line == null && (start != null || tracker STARTING)`, bounded by the 25 s start budget and the first-state timer, and
+  false after a pause, a failure with a line, or a playing state), or another run. Queue changes: `run` is
+  `PlayerHub.State.entryId`, so a tap on another entry, or the favourites queue, never inherits it (a new entry shows
+  colour for its own attempt, then its own refusal); in a mixed queue a skip to a local item switches the renderer, so
+  `connecting` is false and the hold ends. The function is idempotent for fixed inputs, so the assignment during
+  composition (`heldRefusal[0] = ...`) is safe on recomposition. A real recovery is not hidden for good: the adult fixed
+  the account, the kid taps, the cover stays grey with "Kobler til..." until the first playing state, then clears. That
+  delay is the price, see V2. The test walks the sequence by value.
+- **M1/M2 dp text and `noticeFit`: real.** My own numbers agree with the test's table: at 224 and 150 dp every notice
+  shows in full in both languages (inner 134 dp; the account's: 34 + 2 x 20.5 + 4 + 2 x 16.4 + 8 = 116 dp at most); at
+  120 dp the title and help show without the disc (en "The book needs listening time": 3 + 2 lines); at 96 dp nb
+  "Kan ikke spilles nå" keeps disc + title and loses the help, "Spør en voksen" returns above (`headerLine`), en "The
+  book needs listening time" is the "!" alone and the line returns. `fit == null` before the first measure counts as
+  whole, so the first frame has no line and no jump (the header row is a fixed 56 dp). `hasVisualOverflow` with
+  `maxLines` makes a title that needs a 4th line infinite, so a title is shown whole or not at all, never with an
+  ellipsis. The measure and the drawn text use the same style, width (cover less 12 dp) and font. Text in dp means the
+  large-font user gets a 12 dp help line; that follows `SKIP_NUMBER_DP` and is a stated choice, not a defect.
+- **L1 TalkBack split: real in the tree, one thing left to hear.** The page's `.semantics { stateDescription;
+  liveRegion }` sits on the same node as the clickable (same modifier chain), the overlay's empty
+  `clearAndSetSemantics` drops its text from the merge, so the label stays "Spill X"/"Pause X" and the notice is the
+  state, once. The single cover keeps its own node. What a JVM test cannot show: that TalkBack speaks a live region
+  whose only change is the state description. Compose sends a state-description content change for it, so it should; it
+  wants one TalkBack pass on a device (see N1).
+- **L2, L4, L5, N1-N4 of the first round: fixed as described.** `noticePage` is pure and tested (two items: one page
+  only; a settled neighbour gets nothing); the source-grep test is gone and `playOff`, `noticePage`, `noticeFit`,
+  `headerLine`, `holdRefusal`, `shownState` are tested by value; FitTest measures both languages at 224, 150, 120, 96
+  dp and pins the strings to the table.
+
+### New findings
+
+- **V1 (L) - The hold also runs over a room's connect.** `MusicRoot.kt` (`holdRefusal(..., hub.connecting, hub.entryId)`)
+  `connecting` is true for a Sonos room's play too (`PlaybackService.kt:2425`), and the entry id does not change when
+  the output does. Scenario: a Spotify entry is refused (ASK_ADULT), the kid picks a room in "Spill av pa"; the renderer
+  is Sonos (state null), the room connects for a few seconds, and the held refusal keeps the cover greyed with "Kan ikke
+  spilles nå" while the speaker is on its way, and play greyed. It ends when the room reports playing or fails, so it is
+  short, but it is a refusal of a renderer that is no longer in use. Fix: hold only while the web player is the one
+  starting (pass `onRoom`/the output, or a `spotifyStarting` flag, into `holdRefusal`, with a row in the test).
+- **V2 (L) - A stale network refusal stays while a good retry connects.** The network refusals (`NEEDS_WIFI`,
+  `NEEDS_INTERNET` from the gate) are set by `refuse()` before `begin` clears the line, so they never flashed; the hold
+  adds nothing for them and costs something: the Wi-Fi is back, the kid taps play, and "Trenger Wi-Fi" stays on the grey
+  cover for the whole connect (typically seconds, at most the 25 s budget) before it clears. The account and the book
+  (`ASK_ADULT`, `NO_LISTENING_TIME`) are the ones the hold was for (their refusal comes after an attempt).
+  `NEEDS_INTERNET` set by an attempt that timed out, and `NOT_ON_PHONE`, are in between. Fix: hold only the states whose
+  refusal arrives after an attempt, or let the network ones end the hold when `connecting` starts.
+- **N1 - TalkBack to hear once.** On a device with TalkBack: a refused carousel page and the single cover should each
+  say the notice once when it appears and not on every play/pause flip; add it to the emulator test list
+  (`docs/testing/emulator.md`, the web player's checks).
+- **N2 - Greyed play shows the pause glyph during a held retry.** `now.playing` follows `pwr`, so while the attempt runs
+  the grey button reads "pause" and a tap pauses the attempt. Harmless; it is what a peach button did before.
+- **N3 - Notice on a carousel page while the pager follows the player.** `noticePage` uses `settledPage`, so when the
+  player moves the pager (a skip from elsewhere, auto-advance) the loaded page has no overlay for the length of the
+  animation (about 300 ms), then gets it. Only visible with a refusal that survives a skip (the account's).
+- **N4 - At 96 dp the help line is dropped without a trace for `NO_LISTENING_TIME` and `NOT_ON_PHONE`.** `headerLine`
+  restores the line only when its string differs from the title, and for these two it is the title itself, so
+  "Spør en voksen om hjelp" is simply lost on the smallest cover. The title still says what is wrong; noted, not a defect.
+
+### Verdict
+
+Not "all fixed" only because of V1 and V2 (both low, both in the hold's reach), plus L3 left to the user. Nothing found
+that blocks the merge.
+
+### Outcome of the verification's findings (2026-11-09, on `music-cant-play`)
+
+- **V1** - fixed. The hold runs only over the web player's start: `webPlayerStarting(connecting, output)` is
+  `connecting` while the output isn't a Sonos room, and `MusicRoot` passes it to `holdRefusal` (renamed parameter
+  `webStarting`). Picking a room after a refusal ends the hold at once. CantPlayTest has the rows (phone, Bluetooth,
+  Sonos, not connecting).
+- **V2** - fixed. Only the account's and the book's refusals are held (`heldOverRetry`: `SPOTIFY_ASK_ADULT`,
+  `SPOTIFY_NO_LISTENING_TIME`); every other notice state is never held, and a network line arriving ends a held one.
+- **N1** - noted, not code: a TalkBack pass on a device (a refused carousel page and the single cover each say the notice
+  once when it appears, not on every play/pause flip) goes on the next device checklist.
+- **N2** - fixed. `showsPause(playing, notice)`: greyed play shows the play glyph and says "Spill" also while a held
+  retry runs; a tap still does what it did (it pauses the attempt).
+- **N3** - noted, left: with `settledPage` the overlay is missing from the loaded page for the pager's follow animation
+  (~300 ms) after a skip that keeps the account's refusal. It stays out of a neighbour mid-swipe, which mattered more.
+- **N4** - fixed. `headerLine` became `headerLineText` (the string, or null): when the help line is dropped and the
+  state's line is the title itself (`NO_LISTENING_TIME`, `NOT_ON_PHONE`), the line under the entry name says the help
+  ("Spør en voksen om hjelp"); FitTest now asserts that every notice that isn't complete has a line, and measures the
+  help line in the header's width (136.8 / 136.3 dp at 12 sp, inside the 320 dp header's room).
+
+Targeted tests only (CantPlayTest, FitTest, SourceScanTest), no emulator: see the commit.

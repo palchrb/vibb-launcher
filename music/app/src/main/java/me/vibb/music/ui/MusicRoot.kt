@@ -65,7 +65,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
     // every start) until the attempt plays or ends otherwise - no flash back to colour per tap. Read at every new hub
     // state; the time row still says "Kobler til…" from the live state meanwhile.
     val heldRefusal = remember { arrayOfNulls<HeldRefusal>(1) }
-    heldRefusal[0] = holdRefusal(heldRefusal[0], hub.rendererState, hub.connecting, hub.entryId)
+    heldRefusal[0] = holdRefusal(heldRefusal[0], hub.rendererState, webPlayerStarting(hub.connecting, hub.output.kind), hub.entryId)
     val playerState = shownState(heldRefusal[0], hub.rendererState)
     // the stored row and whether it has been read, as one value (the launch splash's contentReady)
     val rowRead by vm.nowRowRead.collectAsStateWithLifecycle()

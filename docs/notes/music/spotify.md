@@ -119,17 +119,23 @@ Moved from music/CLAUDE.md on 2026-11-01.
   - **A retry keeps the notice** (qa-music-cant-play M3): the web player clears its line at every start (`begin`) and
     sets it again only when the start fails, so the cover would flash back to colour and play to peach for each tap.
     `MusicRoot` holds the last refusal (`holdRefusal`, `HeldRefusal`: the state and its run, `PlayerHub.State.entryId`)
-    while an attempt in the same run is on its way (`connecting`, until the renderer reports playing) and shows it
-    (`shownState`); a real playing state, another line or another run ends the hold. Next and previous in the run keep
-    it too (an account's or a book's refusal is the run's; the next item's start says otherwise by playing). The time
-    row reads the live state, so it says "Kobler til…" under the still greyed cover meanwhile.
+    while an attempt in the same run is on its way and shows it (`shownState`); a real playing state, another line or
+    another run ends the hold. Only the account's and the book's (`heldOverRetry`: `SPOTIFY_ASK_ADULT`,
+    `SPOTIFY_NO_LISTENING_TIME`, whose refusal comes after an attempt; the network lines come from the gate before any
+    start and never flashed - held, a stale "Trenger Wi-Fi" would stay over a good retry), and only over the web
+    player's start (`webPlayerStarting`: `connecting` off a Sonos room - on a room it is the speaker's connect;
+    qa-music-cant-play-2 V1, V2). Next and previous in the run keep it too (an account's or a book's refusal is the
+    run's; the next item's start says otherwise by playing). The time row reads the live state, so it says "Kobler
+    til…" under the still greyed cover meanwhile, and greyed play keeps its play glyph (`showsPause`; a tap still does
+    what it did - here it pauses the attempt).
   - **The notice fits its cover** (qa-music-cant-play M1, M2): the cover is 224 dp at most and shrinks (a shuffle row
     on the Jelly Star: 150 dp; a large font or display size; the carousel's pages down to 96 dp). The text is dp, not
     the font scale's sp (`NOTICE_TITLE_DP` 15, `NOTICE_HELP_DP` 12, as `SKIP_NUMBER_DP`: a fixed box), 6 dp at the
     sides, the title up to three lines, the help up to two. The overlay measures its words in its own box and
     `noticeFit` drops what doesn't fit - the disc, then the help line, then the title (the "!" alone); the player then
-    brings the line under the entry name back (`headerLine`: the title gone, or the help line gone where the line says
-    more than the title - "Spør en voksen" under "Kan ikke spilles nå"). FitTest measures every notice in both languages
+    brings the line under the entry name back (`headerLineText`: the title gone - the state's line; the help line gone -
+    the state's line where it says more than the title, "Spør en voksen" under "Kan ikke spilles nå", else the help
+    itself, "Spør en voksen om hjelp" under "Lydboka trenger lyttetid"). FitTest measures every notice in both languages
     at 224, 150, 120 and 96 dp: all of it from 150, title and help from 120. English says "Can't play now" (one line).
   - Every button stays where it was and keeps working - previous, next and ±15 skip past one broken track (a
     favourites queue's, say). No red, nothing blinking (the launcher-look rule).

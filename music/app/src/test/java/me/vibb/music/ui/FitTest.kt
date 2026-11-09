@@ -233,6 +233,8 @@ class FitTest {
         val longest = mapOf(
             "Får ikke kontakt med høyttaleren" to 184.8f, "Noen andre bruker høyttaleren" to 172.2f,
             "Someone else is using the speaker" to 191.8f, "Can't reach the speaker" to 131.4f, "Spilles i en annen gruppe" to 141.4f,
+            // the notice's help line when a small cover drops it (qa-music-cant-play-2 N4)
+            "Spør en voksen om hjelp" to 136.8f, "Ask a grown-up for help" to 136.3f,
         ) + spotifyLines
         for (screen in widths) {
             val room = available(screen) - 44 - 44
@@ -240,7 +242,7 @@ class FitTest {
         }
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {"))
-        assertTrue(player.contains("rendererState?.takeIf { headerLine(it, notice, noticeFit) }?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
+        assertTrue(player.contains("headerLineText(rendererState, notice, noticeFit)?.let { Line(stringResource(it), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
     }
 
     /**
@@ -334,11 +336,8 @@ class FitTest {
                     val at = "$cover dp: $title"
                     if (cover >= 150f) assertEquals(at, NoticeFit(disc = true, title = true, help = help != null), fit)
                     if (cover >= 120f) assertTrue(at, fit.complete(help != null))
-                    // whatever the notice can't say, the line under the entry name says (or the title already does)
-                    if (!fit.title) assertTrue(at, headerLine(state, notice, fit))
-                    if (fit.title && !fit.complete(help != null)) {
-                        assertEquals(at, rendererStateText(state) != notice.title, headerLine(state, notice, fit))
-                    }
+                    // whatever the notice can't say, the line under the entry name says (N4: the help too)
+                    if (!fit.complete(help != null)) assertTrue(at, headerLineText(state, notice, fit) != null)
                 }
             }
         }
@@ -350,7 +349,7 @@ class FitTest {
             height(noticeHelps.getValue("Spør en voksen om hjelp"), 3.25f, NOTICE_HELP_DP, 96f - 2 * NOTICE_PAD_X_DP, NOTICE_HELP_LINES),
         )
         assertEquals(NoticeFit(disc = true, title = true, help = false), small)
-        assertTrue(headerLine(RendererState.SPOTIFY_ASK_ADULT, ask, small))
+        assertEquals(R.string.renderer_spotify_ask_adult, headerLineText(RendererState.SPOTIFY_ASK_ADULT, ask, small))
     }
 
     @Test

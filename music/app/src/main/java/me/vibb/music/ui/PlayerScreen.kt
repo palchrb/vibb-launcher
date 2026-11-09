@@ -149,7 +149,7 @@ fun PlayerScreen(
             Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Line(now.entry.name, 15, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
                 // the notice on the cover says it instead: never twice, unless the cover is too small for all of it
-                rendererState?.takeIf { headerLine(it, notice, noticeFit) }?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
+                headerLineText(rendererState, notice, noticeFit)?.let { Line(stringResource(it), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
             }
         }
         // The cover, or the episode carousel in its place (design 27 §3); the title and number under
@@ -214,8 +214,10 @@ fun PlayerScreen(
                 // greyed when a tap can't help (the notice's own rule), still a button: what a tap does stays the renderer's
                 val off = playOff(notice)
                 val offState = if (off) notice?.let { stringResource(it.title) } else null
+                // greyed, it shows play even while a held retry runs (showsPause)
+                val pause = showsPause(now.playing, notice)
                 RoundButton(
-                    if (now.playing) Icons.pause else Icons.play, stringResource(if (now.playing) R.string.pause else R.string.play),
+                    if (pause) Icons.pause else Icons.play, stringResource(if (pause) R.string.pause else R.string.play),
                     onTogglePlay, row.play.dp, 32.dp, if (off) Palette.track else Palette.peach, if (off) PLAY_OFF_FG else Palette.bg,
                     if (offState != null) Modifier.semantics { stateDescription = offState } else Modifier,
                 )
