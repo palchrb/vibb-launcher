@@ -3078,6 +3078,19 @@ details.adv[open] > summary .chev {
 [data-adv-value][hidden] {
     display: none;
 }
+/* D4/L8: "Tilpasset" is one line and as tall as the switch it replaces (11 + 31 + 11 px), so a save that splits a
+   channel moves nothing under it. */
+div.row[data-way],
+div.row[data-custom] {
+    min-height: 53px;
+}
+div.row[data-way] > .row-value,
+div.row[data-custom] > .row-value {
+    flex: none;
+    margin-left: 8px;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
 
 /* Design 80 §4.5: the phone's own number as a row with its source, then "Bruk dette nummeret" and "Endre…" as two
    tinted words; "Endre…" opens the field on a line of its own. The quiet line under SMS while it is missing. */
