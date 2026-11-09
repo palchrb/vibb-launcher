@@ -68,10 +68,11 @@ class SplashThemeTest {
         }
     }
 
+    /** Values only: a file-based qualified directory (`mipmap-anydpi-v26`, the adaptive icon) replaces no style. */
     @Test
-    fun `no version qualifier at or below minSdk`() {
+    fun `no values version qualifier at or below minSdk`() {
         val min = minSdk()
-        val dead = res.listFiles { f -> f.isDirectory }.orEmpty().map { it.name }.filter { dir ->
+        val dead = res.listFiles { f -> f.isDirectory && f.name.startsWith("values-") }.orEmpty().map { it.name }.filter { dir ->
             dir.split('-').any { part -> Regex("""v(\d+)""").matchEntire(part)?.groupValues?.get(1)?.toInt()?.let { it <= min } == true }
         }
         assertTrue("fold into the unqualified directory: $dead", dead.isEmpty())
