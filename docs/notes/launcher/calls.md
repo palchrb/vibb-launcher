@@ -368,10 +368,13 @@ pictures and the contact request's screen.
   rows and "Be om å legge til".
 - **The visit and "seen" (§3.2):** the visit's top is fixed by its first missed calls loaded (`visitTopAfter`: nothing
   leaves, a newcomer joins - a call-log observer while the phone book is started, and the Element X store's listener);
-  the list waits for that first load, and a new visit starts at the list's top. `TopSightings` counts a top row with a
+  the list waits for that first load, and a new visit starts at the list's top; a visit that ends empties the list
+  (code QA L1), so a returning kid never taps a row of the last visit while the new one loads. Only the latest
+  missed-call load is applied (`LatestOnly`, code QA L2; Home's loads too). `TopSightings` counts a top row with a
   red line as seen once it was at least half on screen for `PHONE_BOOK_SEEN_MS` (1 s, in all) while the phone book was
   resumed and focused (updated after every layout, scroll, resume, pause and focus change); at `onStop` (not a
-  rotation) each such contact gets `MissedCallsRepo.markSeen(number, upToMs)` - up to the newest call the row showed;
+  rotation) the visit's contacts get `MissedCallsRepo.markSeen(marks)` (one write, one word to Home - code QA N6) - up to
+  the newest call the row showed;
   the mark only moves forward (`seenMarkAfter`). The card, the row's Ring and Melding and the card's Melding mark it
   seen at once. `MissedCallsRepo.addSeenListener` tells Home (resumed before the phone book stops), so Home's badge goes
   with the row. The notification and the lock glance's rows still go when the phone book **opens** (unchanged).
@@ -386,19 +389,26 @@ pictures and the contact request's screen.
   the full sentence ("Pappa, 2 tapte anrop i dag 14:02, 1 ulest melding"; "Ambulanse, nødnummer"), Ring and Melding
   its custom actions ("… i Element X" when Melding leaves Vibb); the two buttons are focusable for a keyboard only.
 - **Search (`ui/search/`, `SearchFoldTest`, `KidSearchTest`):** `searchFold` (per code point: lowercase ROOT, NFD, marks
-  dropped, ø æ œ ß đ ł þ ı; each folded char mapped back to the shown string for the peach highlight, clamped) - for
-  finding only, never deciding (nothing under `sms/` or in `CallRules.kt` calls it: D17's sender names stay exact);
-  `searchMatch` (prefix, a word, inside) and `searchHits` (by rank, each A-Å). `KidSearchField` (`view_kid_search.xml`):
+  dropped, ø æ œ ß đ ł þ ı; the peach highlight on the shown string) - for finding only, never deciding (nothing under
+  `sms/` or in `CallRules.kt` calls it: D17's sender names stay exact); `searchMatch` (prefix, a word, inside) and
+  `searchHits` (by rank, each A-Å). **One way** (code QA M3, decided): only the name folds; the query keeps Æ, Ø, Å and
+  marked letters as typed - "o" finds Ola, Ørjan and Østby, "ø" finds only Ø names, "å" never finds Anna. A keystroke
+  only filters (code QA M2): `render()` gathers the inputs (the view, the emergency set, unread, requests, every
+  contact's buttons and app label - one lookup per package) at resume and from the listeners, the search runs
+  `filter()` over them; Meldinger likewise, its emergency check asked once per number per render. `KidSearchField` (`view_kid_search.xml`):
   the 44 dp pill, never focused by itself, no menus, autofill or suggestions, the count line "3 treff" (a polite live
   region, at most every 500 ms). From 8 rows, sticky while it holds text (`searchShown`). In the phone book while
   searching the top dissolves, waiting requests are hits too and the emergency numbers' hits come last; "Fant
-  ingenting" and, from two letters with nothing matching, "Be om å legge til «Lina»" (the form, prefilled). Back:
-  the form, then the search's text, then leave (`phoneBookBack`); the query is cleared after Send. **Meldinger:** the
+  ingenting" and, from two letters with nothing matching, "Be om å legge til «Lina»" (the form, prefilled). Back
+  (code QA L10): with the keyboard up only the keyboard closes; then the form, then the search's text, then leave
+  (`phoneBookBack`); the query is cleared after Send and when the screen is left (kept across a rotation only). **Meldinger:** the
   same pill in the list and "Ny melding", the rows' shown titles only (`searchConversations`, `whoTitle`), never message
-  text; Back: the delete confirm, the search, "Ny melding", then leave (`messagesBack`).
+  text; Back: the keyboard, the delete confirm, the search, "Ny melding", then leave (`messagesBack`).
 - **The contact request's screen (`ContactRequestForm`, from the parked WIP):** the header's "+" (a 40 dp peach disc
   laid over the shared header, which keeps room for it), the form in the list's place, a calm "Sendt" after Send
-  ("Ferdig" back to the list), the answers shown once and dropped when the phone book is left. The form's picture
+  ("Ferdig" back to the list; the line in the future tense, "Mamma og pappa får beskjed", code QA L5: the request goes
+  with the next sync), an answer counts as shown only once its row was laid out on the visible list (code QA L9), and
+  the shown ones are dropped when the phone book is left. The form's picture
   circle (tap or long-press) calls back into the phone book (`onPicture`); the form starts nothing itself
   (`KidScreensEscapeTest`, "the contact request only asks").
 - **The kid's own pictures:** `docs/notes/launcher/home-and-photos.md`, "The kid's own contact pictures (design 79)".
@@ -408,9 +418,11 @@ pictures and the contact request's screen.
   the visit's first missed calls rather than reordering under the finger; "Be om å legge til" needs two letters (not
   two characters); while searching the waiting requests come after the contacts' hits and the emergency numbers' hits
   last; Meldinger's hits are ranked like the phone book's (A-Å within a rank), not newest first; the request's picture
-  draft is deleted when the form closes without Send (Avbryt, Back, calls going off); the row's badge is the count
-  alone. On Android 16 Back with text in the pill clears it even while the keyboard is up (the activity's callback
-  gets Back first), which is the design's Back order anyway.
+  draft is deleted when the form closes without Send (Avbryt, Back, calls going off), when a returned draft finds the
+  form closed, when the phone book finishes, and at `onCreate` every draft but the restored form's (code QA L3); the
+  row's badge is the count alone. The code QA's open points, decided: (a) the request rows stay hidden while calls are
+  off; (c) an incoming call's screen ends the visit; (d) no long-press hint for now; (e) the emergency avatar keeps
+  its 3 dp ring.
 - **Not device-tested yet:** the Jelly Star (fling through 50 rows and count accidental presses, §9; whether a kid
   finds the long-press, §5.1), TalkBack's custom actions (the sentence was read from the UI dump), an incoming call
   before the first unlock (the test AVD has no Android screen lock, so it never is "before the unlock"). The emulator

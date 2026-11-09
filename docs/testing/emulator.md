@@ -2587,6 +2587,14 @@ some of a long string).
   file. Home's long-press on Mamma opens only the card. Mamma removed on the server at a sync: her picture's file goes.
 - Not checked here: TalkBack's custom actions (the row's sentence was read from the UI dump), the Jelly Star's fling
   through 50 rows (§9's pocket-call check), an incoming call before the first unlock (the AVD has no Android lock).
+- **After the code QA's fix round** (a fourth run, with a Child PIN `1234` in `device_policy`): Home's card -> "Bilde
+  av Mamma" open -> power off and on: the lock's glance alone, and after the PIN Home has neither the card nor the sheet
+  (M1). A missed call from Pappa, the phone book, Home, then the phone book started and tapped at once: the tap lands
+  on an empty list, no card opens, the list fills A-Å (L1). "o" typed with the keyboard up: Back closes the keyboard
+  ("o" kept), Back clears it, Back leaves (L10). "o" 5 hits, "ø" (Gboard: hold o) 2 - Ørjan, Sofie Østby -, "å" (hold
+  a) 1 - Åse, not Anna (M3). A request with a picture from the picker: "Sendt / Mamma og pappa får beskjed …" (L5), the
+  waiting row, Lina added on the server, a sync (`adb install -r`): Lina's contact has the picture,
+  `contact_request_photos/` and `request_photo_draft/` are empty.
 
 ## 7. Reporting back
 

@@ -246,8 +246,8 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   of `ContactSheet.show` unchanged): **Ring** for every phone-book contact while calls are on (while calls are off only
   emergency contacts are listed, and theirs shows), off while another call is live (emergency excepted); **Melding** to
   our own thread (`opensOwnThread`), else `resolveMessageButton`'s app, else no button.
-- **Emergency contacts** sit at the end of the list (§3.1), A-Å among themselves, with today's red disc and ring (2 dp
-  at 44 dp), never a photo, the line "Nødnummer".
+- **Emergency contacts** sit at the end of the list (§3.1), A-Å among themselves, with today's red disc and ring (3 dp,
+  as on Home, the card and the glance - code QA (e), kept), never a photo, the line "Nødnummer".
   Their row **Ring** is the tonal red pair (`kid_emergency_tonal` disc, `kid_emergency_text` glyph) and **asks first**
   ("Ringe Ambulanse?", the existing `calls_confirm_title` dialog): a one-tap 112 from a scrolling list costs more than a
   call to Mamma. The card's Ring stays as today. The fail-closed 112 row (no readable rules): the red disc,
@@ -279,8 +279,10 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   for the rows, Home's row and the glance rows, and the full square only for the card and the call screen; each size its
   own cache key (`<hash>@160`), so 50 thumbnails take about 5 MB of the 16 MB cache.
 - Computed once per render (QA N7): `CallSystem.isEmergencyOutgoing` per contact, `defaultSmsPackage`,
-  `ElementRoomStore.lookup`, the message apps' usability (at most four packages), the folded names. A keystroke only
-  filters. The call log is read on IO, as today. The visible-range bookkeeping of §3.2 is a set of ids, updated after a
+  `ElementRoomStore.lookup`, the message apps' usability (at most four packages) and their labels. A keystroke only
+  filters (as built after code QA M2: `render()` gathers these inputs at resume and from the listeners, the search's
+  keystroke runs `filter()` over them - no binder call, prefs decode or label lookup per character; Meldinger the
+  same, its emergency check asked once per number per render). The search's match is one way (§4.2). The call log is read on IO, as today. The visible-range bookkeeping of §3.2 is a set of ids, updated after a
   layout or a scroll.
 
 ## 4. Search
@@ -301,7 +303,9 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   "Be om å legge til «Lina»" (en "Ask to add “Lina”"), the request form with the query as the name.
 - **The form over a search** (QA N4): the pill hides while the form is up; Back closes the form, then clears the query,
   then leaves; after "Send" the query is cleared.
-- **Back** with text in the pill clears it and closes the keyboard; the next Back leaves. Kept across a rotation only.
+- **Back** (as built after code QA L10): with the keyboard up, Back only closes it (stock Android, wherever the focus
+  is); then the form, then the pill's text, then the screen leaves. Meldinger: the keyboard, the delete confirm, the
+  text, "Ny melding", leave. The query is kept across a rotation only: leaving the screen clears it.
 - **From 8 rows** (`SEARCH_MIN_ROWS`: contacts in the phone book, conversations in Meldinger, contacts in "Ny
   melding"). Once shown, it stays while it holds text, even if a sync takes the list under 8 (QA N3).
 - **Names only, in both places.** Meldinger matches the row's shown title, never message text (the user: "bare kontakt
@@ -315,7 +319,11 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   point `lowercase(Locale.ROOT)`, NFD, the combining marks dropped, then the letters NFD can't split: ø -> o, æ -> ae,
   œ -> oe, ß -> ss, đ -> d, ł -> l, þ -> th, ı -> i. Each folded char records the index of the code point it came from
   (a combining mark folds to nothing and belongs to the letter before); the span is clamped before `setSpan`. "o" finds
-  "Ørjan", "a" finds "Åse", "e" finds "Hélène". **It never decides anything**: D17's sender names stay exact (a looser
+  "Ørjan", "a" finds "Åse", "e" finds "Hélène". **One way** (code QA M3, decided 2026-11-09): only the **name** is
+  folded; the query is lowercased and normalised but keeps Æ, Ø, Å and every marked letter as typed. A query letter
+  matches a name letter that is the same after lowercase, and a plain query letter also matches what the name's letter
+  folds to. So "o" finds Ola, Ørjan and Østby, but "ø" finds only Ø names and "å" never finds "Anna"; "é" finds only
+  é. The same match serves Meldinger. **It never decides anything**: D17's sender names stay exact (a looser
   fold would let a "Vípps" through on the parent's "Vipps"); `SearchFoldTest` pins that nothing under `sms/` or in
   `CallRules.kt` calls it.
 - `searchMatch(name, query): Match?` - `Match(rank: PREFIX | WORD | INSIDE, span)`; a word starts after a space, "-"
@@ -447,8 +455,8 @@ mockups are drawn at these sizes, 1 px = 1 dp at font scale 1.0.
   with calls off). The same rule gates "Be om å legge til".
 - **The form**: in the list's place, as the WIP has it; `ContactRequestForm.open(name: String? = null)` for "Fant
   ingenting"'s prefill. The picture circle comes with step 4 here, as a callback into `PhoneBookActivity`.
-- **After "Send"**: a calm confirmation in the form's place (a peach check disc, "Sendt", "Mamma og pappa har fått
-  beskjed. Du ser det i telefonboka når Lina er lagt til.", "Ferdig"), then the list - in a long list the new waiting
+- **After "Send"**: a calm confirmation in the form's place (a peach check disc, "Sendt", "Mamma og pappa får
+  beskjed (code QA L5: future tense - the request goes with the next sync). Du ser det i telefonboka når Lina er lagt til.", "Ferdig"), then the list - in a long list the new waiting
   row is off screen.
 - **The rows**: the WIP's rows above today's grid until step 2 here; then the answer once at the top and the open
   requests at the end under "Venter på svar".

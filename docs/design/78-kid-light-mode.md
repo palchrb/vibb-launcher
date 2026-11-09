@@ -104,6 +104,7 @@ wallpaper or over Home, and everything that is night on purpose, stays night.**
 | Contact card (`sheet_contact`, over Home and the phone book) | `kid_ground_lift` | Out (night) | The user, answer 4: it sits over Home, which doesn't switch, and a white card would flash white at every tap; design 34 P3's "the contact sheet is night, never a white surface" stays |
 | Home (`activity_home`), its music and call cards | the wallpaper (`WallpaperGround`) | Out | The kid's background is the look there (ui-polish.md "Drawing") |
 | Phone book (`activity_phone_book`) | the wallpaper | Out | As Home |
+| The kid's contact picture (`KidPhotoActivity`, design 79 §5.2) and its "Bilde av …" sheet (`sheet_kid_photo`) | `kid_ground`, the sheet `kid_ground_lift` | Out (night) | A photo is framed best on dark, as `PictureActivity`; the sheet sits over the contact card, which stays night |
 | Kid Settings (`activity_kid_settings`) | the wallpaper | Out | As Home; the new row shows a small preview instead (§7) |
 | App drawer (`ui/list`, MIT) | `kid_ground` via `colorThemeDefault` | Out | Home's swipe-up: it belongs with Home; MIT code takes no new GPL code |
 | PIN lock and its glance (`PinLockActivity`, `view_lock_glance`) | wallpaper under a black scrim, a black stand-in (design 32) | Out | Night on purpose; design 32's black-or-lock rule must not move |

@@ -362,3 +362,32 @@ hide the keyboard and return. The next Back clears, and the one after leaves.
   wires them. Also `MmsParser.decodeImage` and the isolated service (design 77 step 3b, `qa-sms-mms.md`).
 - **The camera's write grant.** It is never revoked after the capture, the same as `ThreadActivity`'s (pre-existing,
   design 77 D11). The file is deleted once read.
+
+## Fix round (2026-11-09, branch `phone-book-list`)
+
+Code in 4aa3796c; the design, the notes, design 78's table row, the emulator run (§6v "design 79") and this section in the docs commit after it. Every finding was checked against
+the code first; none was refuted. The coordinator decided the open points: M3 one way, L10 fix it, L5 future tense,
+(a) request rows hidden while calls are off, (c) an incoming call's screen ends the visit, (d) no long-press hint now,
+(e) the 3 dp emergency ring stays.
+
+| Finding | Fixed |
+|---|---|
+| M1 | Confirmed. `ContactSheet.show` keeps the "Bilde av …" `Dialog` and dismisses it in the card's `OnDismissListener`, so Home's `closeOverlays()` (the lock, Home pressed, `onDestroy`) closes both; the phone book's own request sheet closes at its `onStop`/`onDestroy`. Pinned in `KidScreensEscapeTest`. |
+| M2 | Confirmed. `render()` gathers the inputs (the view, the emergency set, unread, requests, each contact's `ContactActions`, each app's label once per package) at resume and from the listeners; the search's keystroke and the missed-call loads run only `filter()`. Meldinger: the search runs `filter()` over the last read, its emergency check memoised per number per render (`bindAvatar`'s `isEmergency`). |
+| M3 | Decided one way. `searchMatch` folds the name only; the query is lowercase + NFC and keeps Æ, Ø, Å and marked letters; a plain query letter also matches what the name's letter folds to (a query may end inside "æ" -> "ae"). `SearchFoldTest` pins "o" -> Ola, Ørjan, Østby; "ø" -> only Ø; "å" -> not Anna; "é" -> only é. |
+| L1 | Confirmed (by reading). A visit that ends (a non-rotation `onStop`) empties the adapter (`submitList(null)`), so the next visit starts empty and fills once; no row of the last visit can take a Ring tap. |
+| L2 | Confirmed. `LatestOnly` (pure, `MissedCallsTest`): the phone book's and Home's missed-call loads each take a generation; only the latest is applied. |
+| L3 | Confirmed. A returned draft the form doesn't take is deleted; `onCreate` deletes every draft but the restored form's; `onDestroy` with `isFinishing` drops the form's draft; a draft pick in `KidPhotoActivity` ends when the kid can no longer ask. |
+| L4 | Confirmed. `KidPhotoActivity.onCreate` runs `MessagesScreens.redirectIfLocked` (and the contact's checks) before anything opens and finishes without launching. |
+| L5 | "Mamma og pappa får beskjed. Du ser det i telefonboka når %1$s er lagt til." / "Mum and Dad will be told. …"; the title stays "Sendt". The optional "Ikke sendt ennå" line was not added. |
+| L6 | Confirmed. `KidContactPhotos.edit` calls `ContactPhotos.changed()` only when the published snapshot changed (the first load included); `ensureLoaded` only for a non-empty first load. |
+| L7 | Confirmed. `kidPhotoMayAdd(.., contactsOnPhone)` counts every contact on the phone (what the prune keeps); `KidPhotoActivity` checks it before the picker opens and says "Du har bilder på så mange kontakter som det er plass til. Fjern et bilde først." (en + nb). `KidPhotosTest` pins the text-only case. |
+| L8 | `ShownPhoto.Kid` carries the parent's hash; `cachedShown` falls back to it once the kid's key failed, and a failed kid decode tells the listeners so the avatar rebinds. |
+| L9 | Confirmed. `answersShown()` moved into `noteSightings`: only when an answer row is laid out on the visible list while the phone book is resumed and focused. |
+| L10 | Fixed as decided: `phoneBookBack`/`messagesBack` take `keyboardUp` first (from the root's IME insets); the callbacks are enabled only while there is a form, a query (or in Meldinger the confirm or "Ny melding"), so with neither the system's own Back closes the keyboard. `KidSearchTest`. Design §4.1 corrected. |
+| N1 | `share_paths.xml`'s comment names `ui.pictures.PicturePick`. |
+| N2 | Design 78's scope table has the "Out (night)" row for `KidPhotoActivity` and `sheet_kid_photo`. |
+| N3 | The query is cleared at a non-rotation `onStop` (phone book and Meldinger), as §4.1 says. |
+| N4 | The snapshot is published by the first `edit` too, and `afterRefresh` runs at `Application`'s CE refresh after the unlock, so it is in memory before Home's first binding. |
+| N5 | The duplicate KDoc is gone. |
+| N6 | `MissedCallsRepo.markSeen(context, marks)`: one write and one listener post per visit. |

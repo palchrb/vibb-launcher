@@ -18,27 +18,32 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## The kid's own contact pictures (design 79 §5; branch `phone-book-list`)
 
 - **What shows** (pure `calls/KidPhotos.kt` `shownPhoto`, `KidPhotosTest`): an emergency number none; else the kid's own
-  picture (only while the contact's number is the one it was set for); else the parent's; else the initial. Every avatar
+  picture (only while the contact's number is the one it was set for); else the parent's; else the initial. A kid's
+  picture that can't be decoded gives way to the parent's (`ShownPhoto.Kid.fallback`, code QA L8). Every avatar
   binding goes through it - `KidAvatars.bindContact` (Home, the phone book, the card, the glance rows, the call screen,
   Meldinger) and the SMS notification's person; Home's call card and the call screen key their rebind on it.
 - **Where** (`KidContactPhotos`): `filesDir/kid_contact_photos/<random>.jpg` (CE) and CE prefs `kid_contact_photos`
   (contact id -> file, number, set at). Never in DE storage, a report, an upload or a backup. One per contact, at most as
-  many as the phone book has contacts and never more than `KID_PHOTOS_MAX` (100), each at most 150 KB.
+  many as there are contacts **on the phone** (what the prune keeps, code QA L7) and never more than `KID_PHOTOS_MAX`
+  (100), each at most 150 KB; the cap is checked before the picker opens, with its own line ("Du har bilder på så
+  mange kontakter som det er plass til. Fjern et bilde først.").
 - **No disk in a binding** (QA H2): `KidContactPhotos.snapshot` is loaded on the store's own IO thread after the first
   unlock (empty before it); a binding reads the snapshot and `ContactPhotos`' memory only. The kid's JPEG decodes on
-  `ContactPhotos`' thread under `kid:<file>` (`cachedKid`); every change calls `ContactPhotos.changed()`, so avatars
-  rebind in place. A source check in `KidPhotosTest` pins it.
+  `ContactPhotos`' thread under `kid:<file>` (`cachedKid`); a change of the published snapshot - only that, code QA
+  L6 - calls `ContactPhotos.changed()`, so avatars rebind in place. The snapshot is loaded at the unlock's CE refresh
+  (`Application` -> `CallPolicyStore.refresh` -> `afterRefresh`), before Home's first binding (code QA N4). A source check in `KidPhotosTest` pins it.
 - **Pruned only on a CE refresh of managed rules** (`kidPhotosAfterRefresh`, from `CallPolicyStore.refresh` after the
   Element rooms): a record whose contact left the phone (`rules.contacts`) or whose number changed goes with its file;
   calls off, unknown or unmanaged rules keep them; files no record names are swept at each change.
 - **Setting one:** a long-press on the card's photo (haptic, dimmed while held; TalkBack "Endre bilde av Mamma") opens
   "Bilde av …" (`KidPhotoSheet`: Velg bilde, Ta bilde only with a camera the parent allows, Fjern bildet ditt, "Bildet
   blir bare på denne telefonen."), offered only for a phone-book contact, not an emergency number, after the unlock,
-  with a way to pick (`kidPhotoOffered`). `KidPhotoActivity` opens the picker or the camera at once
+  with a way to pick (`kidPhotoOffered`). The sheet closes with the card (code QA M1), so Home's `closeOverlays()` at
+  the lock leaves nothing of it. `KidPhotoActivity` opens the picker or the camera at once
   (`ui/pictures/PicturePick.kt`, moved from `ui/messages/` and split: `decode` in the isolated process, the SMS
   `prepare` on top), frames the picture (`PhotoCropView`, pure `PhotoCrop`: cover, drag, pinch to
   `max(1, min(3, shortSide / 384))`, clamped) and re-encodes the square (`PictureEncoder.forContact`: 512 px, quality
-  stepped to 150 KB, no EXIF). It checks the time rule at resume and watches it, finishes when a sync takes the
+  stepped to 150 KB, no EXIF). It checks the time rule before it opens anything (code QA L4), at resume, and watches it, finishes when a sync takes the
   contact out of the phone book or makes its number an emergency number, and is no free screen for screen time.
 - **The contact request's picture** (§5.5): the form's draft in `cacheDir/request_photo_draft/` (swept after a day),
   renamed to `filesDir/contact_request_photos/<request id>.jpg` at Send; shown on the "Venter på svar" row; handed to
