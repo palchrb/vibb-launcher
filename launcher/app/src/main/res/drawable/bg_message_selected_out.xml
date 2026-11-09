@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's own bubble the kid long-pressed, while the delete confirm is up: a 2 dp peach ring over it (its foreground),
+     its corners the bubble's (bg_message_out). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <stroke android:width="2dp" android:color="@color/kid_accent" />
+    <corners
+        android:bottomLeftRadius="18dp"
+        android:bottomRightRadius="6dp"
+        android:topLeftRadius="18dp"
+        android:topRightRadius="18dp" />
+</shape>

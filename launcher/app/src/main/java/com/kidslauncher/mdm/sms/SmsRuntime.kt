@@ -2,6 +2,8 @@ package com.kidslauncher.mdm.sms
 
 import android.app.role.RoleManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
@@ -36,6 +38,14 @@ import com.kidslauncher.mdm.sms.engine.SmsEngine
 import com.kidslauncher.mdm.sms.engine.SmsJudge
 import com.kidslauncher.mdm.sms.store.SqliteMessageStore
 import com.kidslauncher.mdm.timerules.TimeRulesStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -61,6 +71,16 @@ private const val POSTS_PER_SYNC = 10
 object SmsRuntime {
     val receiveExecutor: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "sms-receive") }
     val engineExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { Thread(it, "sms-engine") }
+
+    /** The engine thread as a coroutine dispatcher (the screens' event stream, the summary's refresh). */
+    private val engineDispatcher = engineExecutor.asCoroutineDispatcher()
+
+    private val main = Handler(Looper.getMainLooper())
+
+    /** The conversation whose thread is in front and resumed (design 77 §6.7): its new messages are read there, so they
+     * get no notification. Set and cleared by `ThreadActivity`. */
+    @Volatile
+    var threadInFront: String? = null
 
     @Volatile
     private var engine: SmsEngine? = null
@@ -119,13 +139,20 @@ object SmsRuntime {
         if (listening) return
         listening = true
         // D15 and the conversations' canSend/name at every rule change (the release waits for an accepted policy:
-        // the parent's deletions come first, policyAccepted).
+        // the parent's deletions come first, policyAccepted). Home's tile and the screens hear of it after (SmsHome).
         CallPolicyStore.addListener {
             onEngine(app) { engine ->
                 engine.judgeHeldForRules().forEach { notifyShown(app, engine, it) }
                 engine.rulesChanged()
             }
+            SmsHome.refresh(app)
         }
+        // Every event moves Home's badge (a message in, a read mark, a delete) - read on the engine thread.
+        val opened = engine ?: return
+        CoroutineScope(SupervisorJob() + engineDispatcher).launch {
+            opened.live.collect { SmsHome.refresh(app) }
+        }
+        SmsHome.refresh(app)
     }
 
     /** What the engine judges with now: the whole policy from memory, never decoded per message. */
@@ -181,6 +208,8 @@ object SmsRuntime {
     }
 
     private fun notifyShown(app: Context, engine: SmsEngine, shown: Received.Shown) {
+        // The kid is reading this thread: it marks the message read itself, no notification (§6.7).
+        if (shown.conversation.id == threadInFront) return
         SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow())
     }
 
@@ -203,8 +232,8 @@ object SmsRuntime {
 
     // ---- Send ----
 
-    /** Every front end's send (the notification's reply, respond-via-message; the screens in step 2): the gate is in
-     * the engine; the outbox runs on the engine thread. */
+    /** Every front end's send (the notification's reply, respond-via-message, the kid's screens): the gate is in the
+     * engine; the outbox runs on the engine thread. */
     fun send(context: Context, command: SendCommand): SendResult? {
         val app = context.applicationContext
         val engine = engine(app) ?: return null
@@ -236,6 +265,8 @@ object SmsRuntime {
             engine.drainOutbox()
             engine.prune()
         }
+        // §6.7: a shared picture's copy lives an hour.
+        runCatching { com.kidslauncher.mdm.ui.messages.PictureShare.prune(app) }
     }
 
     /**
@@ -342,6 +373,32 @@ object SmsRuntime {
         }.sortedBy { it.slot }
     } catch (e: SecurityException) {
         emptyList()
+    }
+
+    // ---- The kid's screens (design 77 §6.7) ----
+
+    /** [work] on the engine thread, then [then] on the main thread with its result - `null` without an engine (before
+     * the first unlock, a store that can't be opened) or after a throw (recorded). */
+    fun <T> ask(context: Context, work: (SmsEngine) -> T, then: (T?) -> Unit) {
+        val app = context.applicationContext
+        engineExecutor.execute {
+            val result = try {
+                engine(app)?.let(work)
+            } catch (t: Throwable) {
+                recordError(app, "screen: ${t.javaClass.simpleName}")
+                null
+            }
+            main.post { then(result) }
+        }
+    }
+
+    /** The engine's live events for a screen (the engine opened on its own thread); empty without an engine. */
+    fun events(context: Context): Flow<com.kidslauncher.mdm.sms.engine.EngineEvent> {
+        val app = context.applicationContext
+        return flow {
+            val opened = withContext(engineDispatcher) { engine(app) } ?: return@flow
+            emitAll(opened.live)
+        }
     }
 
     // ---- Threads ----

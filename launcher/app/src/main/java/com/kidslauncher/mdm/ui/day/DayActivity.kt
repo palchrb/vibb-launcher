@@ -363,9 +363,12 @@ class DayPagerAdapter(
  * reason may stay, its key moves - or the rule's Kalender switch goes off) asks [DayActivity.redirectIfLocked] again,
  * so a rule that doesn't allow Kalender never finds the kid there (a rule's start brings the time-rule screen anyway).
  * Started in `onResume` once the page is let through, stopped in `onPause`; the page holds it (SharedPreferences keeps
- * its listeners weakly).
+ * its listeners weakly). The message screens (design 77 §6.7) watch the same way with their own [check].
  */
-internal class LockWatch(private val activity: android.app.Activity) : android.content.SharedPreferences.OnSharedPreferenceChangeListener {
+internal class LockWatch(
+    private val activity: android.app.Activity,
+    private val check: (android.app.Activity) -> Unit = { DayActivity.redirectIfLocked(it) },
+) : android.content.SharedPreferences.OnSharedPreferenceChangeListener {
     private var on = false
 
     fun start() {
@@ -382,6 +385,6 @@ internal class LockWatch(private val activity: android.app.Activity) : android.c
 
     override fun onSharedPreferenceChanged(prefs: android.content.SharedPreferences?, key: String?) {
         val keys = LauncherPreferences.mdm().keys()
-        if (on && (key == keys.lockReason() || key == keys.lockKey())) DayActivity.redirectIfLocked(activity)
+        if (on && (key == keys.lockReason() || key == keys.lockKey())) check(activity)
     }
 }

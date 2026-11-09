@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's own message (design 77 §6.7): the peach tint (kid_message_out), the corner by the kid's side smaller. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_message_out" />
+    <corners
+        android:bottomLeftRadius="18dp"
+        android:bottomRightRadius="6dp"
+        android:topLeftRadius="18dp"
+        android:topRightRadius="18dp" />
+</shape>

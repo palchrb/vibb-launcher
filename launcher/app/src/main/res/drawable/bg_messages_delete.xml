@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The confirm's "Slett": the tonal red pill (kid_emergency_tonal, its text kid_emergency_text 6.6:1) - calm, but it
+     reads as the one that removes. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_emergency_tonal" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+</ripple>

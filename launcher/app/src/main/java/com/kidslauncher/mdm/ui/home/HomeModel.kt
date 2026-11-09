@@ -25,6 +25,11 @@ sealed interface GridTile {
     /** The phone book, first whenever calls are managed (or their rules are unknown). */
     data object PhoneBook : GridTile
 
+    /** Meldinger (design 77 §6.7): next to the phone book, while SMS is "Styrt av Vibb" with the role ours or there is
+     * history to read ([com.kidslauncher.mdm.ui.messages.messagesTileShown]). [badge]: the unread total. No
+     * long-press menu. */
+    data class Messages(val badge: Int) : GridTile
+
     /** Dagen (design 69 §2.2): the kid's day, right after the phone book - when the parent keeps it on Home and a
      * calendar is shown ([com.kidslauncher.mdm.calendar.CalendarStore.tileShown]). No badge, no long-press menu. */
     data object Day : GridTile
@@ -49,7 +54,8 @@ sealed interface GridTile {
 fun showPhoneBookTile(state: CallPolicyState): Boolean = state !is CallPolicyState.Unmanaged
 
 /**
- * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), Dagen ([showDay]), then
+ * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), Meldinger ([messages]: its
+ * unread total, `null` = no tile), Dagen ([showDay]), then
  * [apps] by label (case-insensitive, stable), each with its unread count from [badges]
  * (0 = no badge), then the flashlight ([torch]; `null` = no flash unit, no tile) and the Settings tile.
  */
@@ -59,9 +65,11 @@ fun homeGrid(
     badges: Map<String, Int>,
     torch: com.kidslauncher.mdm.torch.TorchState? = null,
     showDay: Boolean = false,
+    messages: Int? = null,
 ): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
+    if (messages != null) tiles += GridTile.Messages(messages)
     if (showDay) tiles += GridTile.Day
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
@@ -220,6 +228,7 @@ fun avatarStyle(contact: RuleContact, isEmergency: Boolean): AvatarStyle {
 fun gridTileId(tile: GridTile): String = when (tile) {
     GridTile.PhoneBook -> "phone_book"
     GridTile.Day -> "day"
+    is GridTile.Messages -> "messages"
     GridTile.Settings -> "settings"
     is GridTile.Flashlight -> "flashlight"
     is GridTile.App -> "app:${tile.app.key}"

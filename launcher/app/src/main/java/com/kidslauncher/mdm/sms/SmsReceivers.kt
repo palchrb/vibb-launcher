@@ -22,11 +22,13 @@ import com.kidslauncher.mdm.sms.engine.IncomingSms
 import com.kidslauncher.mdm.sms.engine.Origin
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
 import com.kidslauncher.mdm.sms.engine.RandomIds
+import com.kidslauncher.mdm.sms.engine.Refusal
 import com.kidslauncher.mdm.sms.engine.SendCommand
 import com.kidslauncher.mdm.sms.engine.SendResult
 import com.kidslauncher.mdm.sms.engine.SenderKind
 import com.kidslauncher.mdm.sms.engine.SmsRules
 import com.kidslauncher.mdm.sms.engine.SmsSenderType
+import com.kidslauncher.mdm.ui.messages.MessagesScreens
 import java.util.UUID
 
 private const val LOG_TAG = "SmsReceivers"
@@ -199,16 +201,28 @@ class RespondViaMessageService : Service() {
 }
 
 /**
- * `SENDTO`/`VIEW` for `sms: smsto: mms: mmsto:` (required for the SMS role). A number the kid may not text says so
- * ("You can't send a message to this number"); an allowed one opens its thread with any `sms_body` as a draft in step
- * 2 (the kid's screens) - never sent without a tap. Until then it closes.
+ * `SENDTO`/`VIEW` for `sms: smsto: mms: mmsto:` (required for the SMS role). A number the kid may text opens its thread
+ * (design 77 §6.1, step 2) with any `sms_body` (the extra, or the link's `?body=`) as a draft - never sent without a
+ * tap; the gate decides here as at every send. Otherwise it says why: "Du kan ikke sende meldinger nå" under a time
+ * rule, else "You can't send a message to this number". It never shows anything of its own and closes at once.
  */
 class ComposeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val number = intent?.data?.schemeSpecificPart?.substringBefore('?')?.substringBefore(',')
-        val allowed = number != null && SmsRules.decideSend(number, SmsRuntime.judge(this)) is SmsRules.SendVerdict.Allow
-        if (!allowed) Toast.makeText(this, R.string.sms_compose_refused, Toast.LENGTH_LONG).show()
+        val data = intent?.data
+        val number = data?.schemeSpecificPart?.substringBefore('?')?.substringBefore(',')?.trim()
+        val verdict = number?.takeIf { it.isNotEmpty() }?.let { SmsRules.decideSend(it, SmsRuntime.judge(this)) }
+        when {
+            verdict is SmsRules.SendVerdict.Allow -> {
+                // `smsto:` is an opaque URI: its `?body=` is read from the decoded scheme-specific part.
+                val body = intent?.getStringExtra("sms_body")
+                    ?: data?.schemeSpecificPart?.substringAfter('?', "")?.split('&')?.firstOrNull { it.startsWith("body=") }?.removePrefix("body=")
+                MessagesScreens.startThread(this, null, verdict.number, body?.take(com.kidslauncher.mdm.sms.engine.SmsEngine.SEND_MAX))
+            }
+            verdict is SmsRules.SendVerdict.Refused && verdict.reason == Refusal.TIME_RULE ->
+                Toast.makeText(this, R.string.messages_compose_not_now, Toast.LENGTH_LONG).show()
+            else -> Toast.makeText(this, R.string.sms_compose_refused, Toast.LENGTH_LONG).show()
+        }
         finish()
     }
 }

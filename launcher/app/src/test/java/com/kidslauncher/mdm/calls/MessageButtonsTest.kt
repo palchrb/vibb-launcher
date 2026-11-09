@@ -26,6 +26,19 @@ class MessageButtonsTest {
         assertNull(resolveMessageButton(contact("sms"), smsEnabled = true, defaultSmsPackage = messages, usable = nothing))
     }
 
+    /** Design 77 §6.7: in "Styrt av Vibb" an SMS contact the kid may text opens our own thread; nothing else does. */
+    @Test
+    fun `sms in Styrt av Vibb opens our own thread when sms_out allows`() {
+        val texts = contact("sms").copy(smsOut = true)
+        assertTrue(opensOwnThread(texts, ChannelMode.MANAGED))
+        assertFalse(opensOwnThread(contact("sms"), ChannelMode.MANAGED))
+        assertFalse(opensOwnThread(texts, ChannelMode.UNMANAGED))
+        assertFalse(opensOwnThread(texts, ChannelMode.OFF))
+        assertFalse(opensOwnThread(texts, null))
+        assertFalse(opensOwnThread(contact("element", "@mamma:matrix.org").copy(smsOut = true), ChannelMode.MANAGED))
+        assertFalse(opensOwnThread(texts.copy(number = ""), ChannelMode.MANAGED))
+    }
+
     @Test
     fun `element needs a Matrix ID and an allowed Element X`() {
         assertEquals(

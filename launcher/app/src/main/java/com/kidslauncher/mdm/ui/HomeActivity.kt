@@ -174,6 +174,8 @@ class HomeActivity : UIObjectActivity() {
     private val torchListener: () -> Unit = { renderGrid() }
     /** Dagen's tile follows the calendars and the policy (design 69 §2.2). */
     private val calendarListener: () -> Unit = { renderGrid() }
+    /** Meldinger's tile and badge follow the engine and the policy (design 77 §6.7). */
+    private val messagesListener: () -> Unit = { renderGrid() }
     private val badgeListener: () -> Unit = {
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
@@ -451,6 +453,8 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
+        com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
+        com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         ElementMissedCallStore.addListener(elementMissedListener)
         started = true
         renderCallCard()
@@ -667,6 +671,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
+        com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
@@ -818,6 +823,7 @@ class HomeActivity : UIObjectActivity() {
             homeGrid(
                 data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
+                messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
             ),
             data.infos,
             data.icons,

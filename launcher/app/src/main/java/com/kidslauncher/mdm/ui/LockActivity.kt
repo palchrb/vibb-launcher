@@ -278,8 +278,10 @@ class LockActivity : UIObjectActivity() {
         val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
         // E7's M1: a ringing alarm's row first, whatever the rule.
         val alarm = getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }
+        // Design 77 §6.7: Meldinger where the rule allows calls, while Home shows its tile.
+        val messages = getString(R.string.messages_title).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
         renderRows(
-            timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm),
+            timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm, messages),
         )
     }
 
@@ -293,6 +295,8 @@ class LockActivity : UIObjectActivity() {
             // phone book (our own package) still calls the allowed contacts. With calls unmanaged only Emergency call
             // remains.
             is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this))
+            // Its own task (MessagesScreens.listIntent), as Kalender's; Back from it comes back here.
+            is LockRow.Messages -> startActivity(com.kidslauncher.mdm.ui.messages.MessagesScreens.listIntent(this))
             // Its own task (`DayActivity.intent`); Back from it comes back here.
             is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))
             // The clock's own ringing screen (Stop, Snooze); Stop brings this screen back.
@@ -344,6 +348,7 @@ class LockActivity : UIObjectActivity() {
             view.root.accessibilityDelegate = ButtonRole
             when (row) {
                 is LockRow.PhoneBook -> glyphIcon(view.lockRowIcon, R.color.kid_phone_book, R.drawable.ic_kid_phone_book)
+                is LockRow.Messages -> glyphIcon(view.lockRowIcon, R.color.kid_messages_tile, R.drawable.app_glyph_chat)
                 // Home's Kalender tile: the calendar glyph on its colour.
                 is LockRow.Calendar -> glyphIcon(view.lockRowIcon, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month)
                 is LockRow.Alarm -> glyphIcon(view.lockRowIcon, R.color.kid_lock_alarm_row, R.drawable.app_glyph_alarm)

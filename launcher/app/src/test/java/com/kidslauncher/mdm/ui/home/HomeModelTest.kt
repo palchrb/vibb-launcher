@@ -60,6 +60,19 @@ class HomeModelTest {
         assertEquals("day", gridTileId(GridTile.Day))
     }
 
+    /** Design 77 §6.7: Meldinger next to the phone book, before Dagen, with its unread total; no tile for `null`. */
+    @Test
+    fun `Meldinger sits next to the phone book with its unread badge`() {
+        assertEquals(
+            listOf(GridTile.PhoneBook, GridTile.Messages(3), GridTile.Day, GridTile.App(app("a"), 0), GridTile.Settings),
+            homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), showDay = true, messages = 3),
+        )
+        assertEquals(listOf(GridTile.Messages(0), GridTile.Settings), homeGrid(emptyList(), false, emptyMap(), messages = 0))
+        assertTrue(homeGrid(listOf(app("a")), true, emptyMap()).none { it is GridTile.Messages })
+        assertEquals("messages", gridTileId(GridTile.Messages(5)))
+        assertEquals(TileChange.FULL, tileChange(GridTile.Messages(1), GridTile.Messages(2), sameIcon = true))
+    }
+
     @Test
     fun `the flashlight sits right before settings with its state, and is absent without a flash`() {
         val dark = homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), torch = TorchState(lit = false))

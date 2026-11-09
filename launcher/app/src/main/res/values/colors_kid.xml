@@ -52,6 +52,10 @@
          start time in Dagen (§1b): a soft green, 9.6:1 on the tile. -->
     <color name="kid_day_tile">#496C9C</color>
     <color name="kid_day_mine">#9FD3A8</color>
+    <!-- Home's Meldinger tile (design 77 §6.7): the teal tone (IconTones TONE_TEAL; white 5.4:1). The kid's own
+         bubbles: the peach tint, the accent at about 25 % over the night (white 12:1). -->
+    <color name="kid_messages_tile">#347470</color>
+    <color name="kid_message_out">#453330</color>
     <color name="kid_switch_on">@color/kid_accent</color>
     <color name="kid_slider">@color/kid_accent</color>
     <color name="kid_divider">#1AFFFFFF</color>

@@ -19,8 +19,9 @@ import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.ui.home.KidAvatars
 
 /**
- * The contact sheet (mockup ContactCard.dc.html): photo, name, missed calls, Call, Message (only
- * when [resolveMessageButton] finds an app that can work, with "Message opens in <app>") and
+ * The contact sheet (mockup ContactCard.dc.html): photo, name, missed calls, Call, Message (our own thread in SMS
+ * "Styrt av Vibb", [opensOwnThread]; else only when [resolveMessageButton] finds an app that can work, with "Message
+ * opens in <app>") and
  * Close. Opening it marks the contact's missed calls as seen - the phone's own and, since round L5, the missed
  * Element X calls ([elementMissedSummaries] counts after the same mark); [onDone] runs when it closes.
  */
@@ -70,7 +71,9 @@ object ContactSheet {
             }
         }
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        val message = rules?.let {
+        // Design 77 §6.7: our own thread in "Styrt av Vibb" (no "opens in" line - it is Vibb One's own screen).
+        val ownThread = rules != null && opensOwnThread(contact, rules.smsMode)
+        val message = rules?.takeUnless { ownThread }?.let {
             resolveMessageButton(
                 contact, it.smsEnabled, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
                 learnedRoom = ElementRoomStore.lookup(activity),
@@ -78,7 +81,13 @@ object ContactSheet {
         }
         val messageButton = view.findViewById<View>(R.id.sheet_message)
         val messageApp = view.findViewById<TextView>(R.id.sheet_message_app)
-        if (message == null) {
+        if (ownThread) {
+            messageApp.visibility = View.GONE
+            messageButton.setOnClickListener {
+                com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, null, contact.number)
+                dialog.dismiss()
+            }
+        } else if (message == null) {
             messageButton.visibility = View.GONE
             messageApp.visibility = View.GONE
         } else {

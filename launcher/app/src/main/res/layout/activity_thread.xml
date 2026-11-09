@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A conversation (design 77 §6.7): the shared header with the name, the bubbles with their days, and at the bottom
+     the compose bar - or, in its place, the line that says why not (a time rule, read-only history, this sender), or
+     the delete confirm. The root's bottom padding follows the keyboard (ThreadActivity's inset listener). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/thread_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="4dp"
+    android:paddingEnd="16dp">
+
+    <include
+        android:id="@+id/thread_header"
+        layout="@layout/include_kid_header" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/thread_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingTop="4dp"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/thread_line"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="12dp"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center"
+        android:minHeight="48dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/thread_compose"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="10dp"
+        android:gravity="bottom"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@drawable/bg_message_compose"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="4dp">
+
+            <EditText
+                android:id="@+id/thread_field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@null"
+                android:fontFamily="@font/nunito_semibold"
+                android:hint="@string/messages_compose_hint"
+                android:importantForAutofill="no"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxLength="1600"
+                android:maxLines="5"
+                android:minHeight="44dp"
+                android:textColor="@color/kid_ink"
+                android:textColorHint="@color/kid_core_dim"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/thread_counter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:fontFamily="@font/nunito_bold"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/thread_send"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_day_add"
+            android:contentDescription="@string/messages_send"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_message_send" />
+    </LinearLayout>
+
+    <include layout="@layout/view_messages_confirm" />
+</LinearLayout>

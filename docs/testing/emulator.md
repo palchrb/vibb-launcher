@@ -2438,6 +2438,36 @@ with `adb shell dumpsys notification --noredact`, the server's `device_sms_held`
 - **The reply**: the shade's "Reply" on Mamma's notification -> an `OUT` row, origin `NOTIFICATION`, `SENT`, then
   `DELIVERED` by the emulator's delivery report. A sender name's notification has no "Reply".
 
+### 6v, step 2: the kid's message screens (design 77 §6.7)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-09, branch `sms-screens`, against a throwaway server whose
+database was seeded by hand: calls and SMS "Styrt av Vibb", "Block USB debugging" off, Mamma `+4790000001` and Pappa
+`+4790000002` (calls and texts both ways) and Bestemor `+4790000005` (texts out only, no calls). The launcher's
+language comes from the policy (`device_policy.launcher_language`, `nb`/`en`) - `cmd locale set-app-locales` is undone
+by the next Home. A device owner can't be force-stopped: to make the phone sync after a database edit, kill its
+process as its own uid (`adb shell run-as me.vibb.launcher.debug kill <pid>`) and start Home.
+
+- **The tile**: after the first sync the role is ours and Home shows "Meldinger" after the phone book (teal, the chat
+  glyph); `adb emu sms send +4790000001 ...` (and from Pappa) -> its badge counts the unread.
+- **The list**: one row per conversation, newest first - avatar, name, the last line ("Du: ..." for the kid's own),
+  the time in the system's clock format, a peach dot while unread. "Ny melding" lists Mamma, Pappa and Bestemor (the
+  text-only contact too), never a free number.
+- **The thread and the compose bar**: bubbles with "I dag"/"Today", the kid's on the right in the peach tint with
+  "Levert"/"Delivered" under the last. Opening it reads it (the badge drops) and clears its notification.
+- **QA N2, the scripted double-send**: type a reply, hide the keyboard (`input keyevent 111`; a tap with the keyboard
+  up lands on it), then `adb shell 'input tap <send x y>; input tap <send x y>'` -> one `OUT` row (origin
+  `KID_SCREEN`, one `client_id`) in `messages.db`, one bubble, `DELIVERED`.
+- **Deleting**: long-press a bubble -> its peach ring and "Slette meldingen? / Det kan ikke angres." in place of the
+  compose bar; Slett removes it. Long-press a row in the list -> "Slette samtalen med Pappa?"; Slett removes the row.
+- **Ways in**: the contact sheet's Message (Mamma) opens her thread over the list (Back goes to the list, no "opens in"
+  line); `adb shell am start -a android.intent.action.SENDTO -d smsto:90000005 --es sms_body Utkast -p
+  me.vibb.launcher.debug` opens Bestemor's thread with "Utkast" in the field, unsent. The notification's tap: on this
+  AVD the shade didn't open from adb in this run, so only its PendingIntent was checked
+  (`dumpsys activity intents`: `ThreadActivity`, identified by the conversation id) - tap it on a phone.
+- **The read-only history**: `sms_mode = 'unmanaged'` -> the role goes back to Google Messages, the tile stays (history),
+  the list and the thread say "Meldingene her kan bare leses." / "These messages can only be read.", no "Ny melding",
+  no compose bar. (Google Messages' own tile is on Home next to it then - in English both read "Messages".)
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

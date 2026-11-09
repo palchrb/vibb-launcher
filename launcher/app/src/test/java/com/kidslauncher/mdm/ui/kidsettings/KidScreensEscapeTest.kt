@@ -44,8 +44,12 @@ class KidScreensEscapeTest {
     private val guarded = listOf(
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
-        "actions",
+        "actions", "ui/messages",
     )
+
+    /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
+     * helper; only allowed apps resolve), from this file alone. */
+    private val shareSheet = mapOf("PictureShare.kt" to setOf("Intent.createChooser"))
 
     @Test
     fun `kid screens reference no system settings, picker or chooser`() {
@@ -54,7 +58,7 @@ class KidScreensEscapeTest {
                 .firstOrNull { it.exists() }
         }.flatMap { f -> if (f.isDirectory) f.walk().filter { it.isFile && it.name.endsWith(".kt") }.toList() else listOf(f) }
         assertTrue("guarded sources found", files.size >= 10)
-        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "KidSoundPickerActivity.kt", "KidSounds.kt", "HomeGridAdapter.kt", "AppAction.kt", "BluetoothAudio.kt")) {
+        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "KidSoundPickerActivity.kt", "KidSounds.kt", "HomeGridAdapter.kt", "AppAction.kt", "BluetoothAudio.kt", "MessagesActivity.kt", "ThreadActivity.kt", "PictureActivity.kt", "PictureShare.kt")) {
             assertTrue(name, files.any { it.name == name })
         }
         for (file in files) {
@@ -63,9 +67,28 @@ class KidScreensEscapeTest {
                 .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
                 .replace(Regex("//[^\\n]*"), "")
             for (token in banned) {
+                if (token in shareSheet[file.name].orEmpty()) continue
                 if (text.contains(token)) fail("${file.name} references $token")
             }
         }
+    }
+
+    /** The message screens open nothing from a message: no links, no selectable text, a field without menus (design 77
+     * §6.7) - and the share sheet carries only our own picture, with a read grant. */
+    @Test
+    fun `the message screens link nothing and share only the picture`() {
+        val layouts = listOf("item_message_bubble", "activity_thread", "item_messages_row").map { name ->
+            listOf(File("src/main/res/layout/$name.xml"), File("app/src/main/res/layout/$name.xml")).first { it.exists() }.readText()
+        }
+        for (layout in layouts) {
+            assertTrue(!layout.contains("autoLink") && !layout.contains("textIsSelectable=\"true\"") && !layout.contains("linksClickable"))
+        }
+        val thread = src("ui/messages/ThreadActivity.kt").readText()
+        assertTrue(thread.contains("NoTextActions.apply(binding.threadField)"))
+        for (token in listOf("Linkify", "LinkMovementMethod", "ACTION_VIEW")) assertTrue(token, !thread.contains(token))
+        val share = src("ui/messages/PictureShare.kt").readText()
+        assertTrue(share.contains("Intent(Intent.ACTION_SEND)") && share.contains("setType(\"image/jpeg\")"))
+        assertTrue(share.contains("FLAG_GRANT_READ_URI_PERMISSION") && !share.contains("FLAG_GRANT_WRITE_URI_PERMISSION"))
     }
 
     @Test

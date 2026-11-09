@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.ui.home.EMERGENCY_AVATAR
 import com.kidslauncher.mdm.ui.home.TONE_SLATE
+import com.kidslauncher.mdm.ui.home.TONE_TEAL
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -245,7 +246,9 @@ class KidPaletteTest {
         // Design 34 P1 (QA M3): the Phone book tile is a muted call green, Settings the slate tone.
         assertTrue(resolve("kid_phone_book").equals("#3A7552", ignoreCase = true))
         assertTrue(resolve("kid_settings_tile").equals("#%06X".format(TONE_SLATE and 0xFFFFFF), ignoreCase = true))
-        for (tile in listOf("kid_phone_book", "kid_settings_tile")) {
+        // Design 77 §6.7: Meldinger's tile is the teal tone.
+        assertTrue(resolve("kid_messages_tile").equals("#%06X".format(TONE_TEAL and 0xFFFFFF), ignoreCase = true))
+        for (tile in listOf("kid_phone_book", "kid_settings_tile", "kid_messages_tile")) {
             assertTrue(tile, contrast("kid_ink", tile) >= 4.5)
             assertTrue(tile, contrast(tile, "kid_ground") >= 3.5)
         }
