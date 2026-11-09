@@ -77,6 +77,11 @@
         <item quantity="one">%1$s, %2$d tapt anrop</item>
         <item quantity="other">%1$s, %2$d tapte anrop</item>
     </plurals>
+    <!-- Design 77 §6.7: a contact avatar's unread messages, after its name and missed calls. -->
+    <plurals name="contact_unread">
+        <item quantity="one">%1$d ulest melding</item>
+        <item quantity="other">%1$d uleste meldinger</item>
+    </plurals>
     <string name="notification_channel_missed_calls">Tapte anrop</string>
     <string name="notification_channel_messages">Meldinger</string>
     <string name="notification_channel_messages_silent">Meldinger (stille)</string>
@@ -88,6 +93,8 @@
     <string name="sms_compose_refused">Du kan ikke sende melding til dette nummeret</string>
     <!-- Design 77 §6.7: barnets meldingsskjermer (Meldinger, en samtale, et bilde). -->
     <string name="messages_title">Meldinger</string>
+    <!-- The history only (SMS not "Styrt av Vibb"): the tile, the time-rule row and the list's header. -->
+    <string name="messages_history">Meldingslogg</string>
     <string name="messages_new">Ny melding</string>
     <string name="messages_empty">Ingen meldinger ennå.</string>
     <string name="messages_new_empty">Du har ingen å sende melding til ennå.</string>
@@ -114,6 +121,10 @@
     <string name="messages_delivered">Levert</string>
     <string name="messages_not_sent">Ikke sendt - trykk for å prøve igjen</string>
     <string name="messages_maybe_not_sent">Kanskje ikke sendt - trykk for å prøve igjen</string>
+    <!-- Code QA L5: a failed message where the kid can't send now - no invitation to tap. -->
+    <string name="messages_not_sent_plain">Ikke sendt</string>
+    <string name="messages_maybe_not_sent_plain">Kanskje ikke sendt</string>
+    <string name="messages_too_long">Meldingen er for lang</string>
     <string name="messages_delete">Slett</string>
     <string name="messages_delete_conversation">Slett samtale</string>
     <string name="messages_delete_message_title">Slette meldingen?</string>

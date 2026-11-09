@@ -83,6 +83,13 @@ class ThreadActivity : UIObjectActivity() {
 
     /** The message whose delete confirm is up. */
     private var selected: String? = null
+
+    /** Failed messages whose "Prøv igjen" was tapped, until the next read shows what became of them (code QA M1: the
+     * link answers once; the retry's own id makes a second tap the engine's repeat anyway). */
+    private val retrying = mutableSetOf<String>()
+
+    /** One read at a time, one more for whatever came meanwhile (code QA L2). */
+    private val reload = Coalescer { done -> loadNow(done) }
     private var events: Job? = null
     private val homeListener: () -> Unit = { renderCompose() }
     private val lockWatch = LockWatch(this) { if (!MessagesScreens.redirectIfLocked(it)) renderCompose() }
@@ -117,20 +124,21 @@ class ThreadActivity : UIObjectActivity() {
             override fun afterTextChanged(s: Editable?) = renderCounter()
         })
         binding.threadSend.setOnClickListener { send() }
-        take(intent, savedInstanceState)
+        take(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         keepDraft()
-        take(intent, null)
+        take(intent)
         if (resumed) SmsRuntime.threadInFront = conversationId
         load()
     }
 
-    /** The thread [intent] asks for; a saved state's draft id wins over a fresh one (a rotation keeps the draft). */
-    private fun take(intent: Intent, saved: Bundle?) {
+    /** The thread [intent] asks for, with its unsent draft and id from memory (a recreation keeps them: [keepDraft] ran
+     * in `onPause`; the field saves nothing in the instance state - code QA N4). */
+    private fun take(intent: Intent) {
         conversationId = intent.getStringExtra(EXTRA_CONVERSATION)
         number = intent.getStringExtra(EXTRA_NUMBER)
         conversation = null
@@ -140,18 +148,13 @@ class ThreadActivity : UIObjectActivity() {
         cancelDelete()
         val kept = drafts[draftKey()]
         val draft = intent.getStringExtra(EXTRA_DRAFT)?.take(SmsEngine.SEND_MAX)
-        clientId = saved?.getString(STATE_CLIENT_ID) ?: kept?.second ?: UUID.randomUUID().toString()
-        if (saved == null) binding.threadField.setText(draft ?: kept?.first.orEmpty())
+        clientId = kept?.second ?: UUID.randomUUID().toString()
+        binding.threadField.setText(draft ?: kept?.first.orEmpty())
         // Read once: a draft is never sent again by a recreation.
         intent.removeExtra(EXTRA_DRAFT)
         renderHeader()
         renderCompose()
         adapter.submitList(emptyList())
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString(STATE_CLIENT_ID, clientId)
     }
 
     override fun onStart() {
@@ -204,20 +207,23 @@ class ThreadActivity : UIObjectActivity() {
 
     private class Loaded(val conversation: Conversation?, val messages: List<Message>)
 
-    /** The conversation (by its id, else the number's) and its newest [limit] messages, from the engine thread; read
-     * up to the newest while the thread is in front. */
-    private fun load() {
+    /** A read, coalesced ([reload]): every engine event asks for one. */
+    private fun load() = reload.request()
+
+    /** The conversation (by its id, else the number's - one conversation, code QA L2) and its newest [limit] messages,
+     * from the engine thread; read up to the newest while the thread is in front. */
+    private fun loadNow(done: () -> Unit) {
         val id = conversationId
         val wanted = number?.let { normalised(it) }
         val count = limit
         val markRead = resumed
         SmsRuntime.ask(this, { engine ->
-            val all = engine.conversations()
-            val found = id?.let { want -> all.firstOrNull { it.id.value == want } } ?: wanted?.let { conversationOf(it, all) }
+            val found = id?.let { engine.conversation(ConversationId(it)) } ?: wanted?.let { engine.conversationWith(it) }
             val list = found?.let { engine.messages(it.id, null, count) }.orEmpty()
             if (markRead && found != null && found.unread > 0) engine.markRead(found.id, found.lastSeq, Origin.KID_SCREEN)
             Loaded(found, list)
         }) { loaded ->
+            done()
             if (isDestroyed || loaded == null) return@ask
             show(loaded, markRead)
         }
@@ -246,6 +252,7 @@ class ThreadActivity : UIObjectActivity() {
         }
         conversation = found
         messages = loaded.messages
+        retrying.clear()
         if (selected != null && messages.none { it.id.value == selected }) cancelDelete()
         renderHeader()
         renderCompose()
@@ -273,10 +280,14 @@ class ThreadActivity : UIObjectActivity() {
 
     // ---- the compose bar ----
 
-    /** The bar while the gate would send now; else its line. The confirm takes the place of both. */
+    /** The bar while the gate would send now; else its line. The confirm takes the place of both. A change also
+     * redraws the bubbles: "trykk for å prøve igjen" follows it ([retryOffered]). */
+    @android.annotation.SuppressLint("NotifyDataSetChanged")
     private fun renderCompose() {
         val target = conversation?.participants?.let { if (it.size == 1) it.single().address else null } ?: number?.let(::normalised)
+        val before = compose
         compose = composeState(SmsRuntime.judge(this), target)
+        if (before != compose && adapter.itemCount > 0) adapter.notifyDataSetChanged()
         val confirming = selected != null
         val line = MessagesScreens.composeLine(compose)
         binding.threadCompose.visibility = if (!confirming && line == null) View.VISIBLE else View.GONE
@@ -298,7 +309,7 @@ class ThreadActivity : UIObjectActivity() {
      * it). The field clears and the id moves on only when the engine accepted this text - a second tap before that
      * carries the same id and the same text, and the engine sends once (§6.2, QA N2).
      */
-    private fun send() {
+    private fun send(again: Boolean = false) {
         val text = binding.threadField.text?.toString()?.trim().orEmpty()
         if (text.isEmpty() || compose != ComposeState.OPEN) return
         val app = applicationContext
@@ -320,34 +331,44 @@ class ThreadActivity : UIObjectActivity() {
                     if (conversationId == null) conversationId = result.message.conversationId.value
                     load()
                 }
-                is SendResult.Refused -> if (!isDestroyed) refused(result.reason)
-                null -> if (!isDestroyed) refused(null)
+                is SendResult.Refused -> if (!isDestroyed) refused(afterRefusal(result.reason), command.clientId, again)
+                null -> if (!isDestroyed) refused(AfterRefusal.UNAVAILABLE, command.clientId, again)
             }
         }
     }
 
-    /** A send the gate refused after all (the rules moved since the bar was drawn): its words, and the bar again. */
-    private fun refused(reason: com.kidslauncher.mdm.sms.engine.Refusal?) {
-        if (reason == com.kidslauncher.mdm.sms.engine.Refusal.DUPLICATE_CLIENT_ID) clientId = UUID.randomUUID().toString()
-        val state = reason?.let(::refusalState) ?: ComposeState.UNAVAILABLE
-        Toast.makeText(this, MessagesScreens.composeLine(state) ?: R.string.messages_compose_unavailable, Toast.LENGTH_LONG).show()
+    /** A send the gate refused after all (the rules moved since the bar was drawn): its own words (code QA L5), and the
+     * bar again. A draft id another text took (an edit between two taps) is replaced and the text sent once more. */
+    private fun refused(after: AfterRefusal, sentId: String, again: Boolean) {
+        if (after == AfterRefusal.SEND_AGAIN) {
+            if (sentId == clientId) clientId = UUID.randomUUID().toString()
+            if (!again) send(again = true)
+            return
+        }
+        MessagesScreens.refusalLine(after)?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
         renderCompose()
     }
 
-    /** "Prøv igjen" ([MessageActions.retry]): the same text with a new id; the failed one goes once it is accepted. */
+    /** "Prøv igjen" ([MessageActions.retry]): the same text under the failed message's retry id; the failed one goes once
+     * it is accepted. The link answers once until the next read (code QA M1). */
+    @android.annotation.SuppressLint("NotifyDataSetChanged")
     private fun retry(failed: Message) {
+        if (!retrying.add(failed.id.value)) return
+        adapter.notifyDataSetChanged()
         val app = applicationContext
         SmsRuntime.ask(this, { engine ->
-            MessageActions.retry({ SmsRuntime.send(app, it) }, { engine.delete(it, Origin.KID_SCREEN) }, failed, UUID.randomUUID().toString())
+            MessageActions.retry({ SmsRuntime.send(app, it) }, { engine.delete(it, Origin.KID_SCREEN) }, failed)
         }) { result ->
             if (isDestroyed) return@ask
-            if (result is SendResult.Refused) refused(result.reason) else load()
+            if (result is SendResult.Refused) refused(afterRefusal(result.reason), "", again = true)
+            load()
         }
     }
 
     private fun draftKey(): String = conversationId ?: "number:${number.orEmpty()}"
 
-    /** The unsent text and its id stay in memory (never on disk) while the kid looks elsewhere. */
+    /** The unsent text and its id stay in this process's memory while the kid looks elsewhere - never in the saved
+     * instance state, which the system may write to disk (the field has `saveEnabled="false"`, code QA N4). */
     private fun keepDraft() {
         val text = binding.threadField.text?.toString().orEmpty()
         if (text.isBlank()) drafts.remove(draftKey()) else drafts[draftKey()] = text to clientId
@@ -417,6 +438,9 @@ class ThreadActivity : UIObjectActivity() {
             val mine = m.direction == Direction.OUT
             (holder.bubble.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
             holder.bubble.setBackgroundResource(if (mine) R.drawable.bg_message_out else R.drawable.bg_message_in)
+            // The user's colours (2026-11-09): dark ink on the peach bubble, white on the lilac-grey; each time in its dim.
+            holder.text.setTextColor(context.getColor(if (mine) R.color.kid_message_out_ink else R.color.kid_ink))
+            holder.time.setTextColor(context.getColor(if (mine) R.color.kid_message_out_dim else R.color.kid_message_in_dim))
             val ring = if (mine) R.drawable.bg_message_selected_out else R.drawable.bg_message_selected_in
             holder.bubble.foreground = if (m.id.value == selected) ContextCompat.getDrawable(context, ring) else null
             val maxWidth = (bubbleRoom(context) * 0.8f).toInt()
@@ -428,11 +452,13 @@ class ThreadActivity : UIObjectActivity() {
             val time = ClockFormat.formatClock(context, m.at)
             holder.time.text = time
             val partWords = bindParts(holder, m)
-            val delivery = item.delivery?.let { deliveryText(it) }
+            // Code QA L5: the tap is offered only where the kid could send now, and once until the next read.
+            val retry = retryOffered(item.delivery, compose) && m.id.value !in retrying
+            val delivery = item.delivery?.let { deliveryText(it, retry) }
             holder.delivery.visibility = if (delivery == null) View.GONE else View.VISIBLE
             holder.delivery.text = delivery
-            val retry = item.delivery == DeliveryLine.NOT_SENT || item.delivery == DeliveryLine.MAYBE_NOT_SENT
-            holder.delivery.setTextColor(context.getColor(if (retry) R.color.kid_missed_text else R.color.kid_core_dim))
+            val failed = item.delivery == DeliveryLine.NOT_SENT || item.delivery == DeliveryLine.MAYBE_NOT_SENT
+            holder.delivery.setTextColor(context.getColor(if (failed) R.color.kid_missed_text else R.color.kid_core_dim))
             holder.delivery.isClickable = retry
             holder.delivery.isFocusable = retry
             holder.delivery.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
@@ -474,7 +500,7 @@ class ThreadActivity : UIObjectActivity() {
                         holder.parts.addView(
                             TextView(context).apply {
                                 this.text = text
-                                setTextColor(context.getColor(R.color.kid_core_dim))
+                                setTextColor(context.getColor(dimOf(m)))
                                 textSize = 14f
                                 typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_semibold)
                             },
@@ -506,7 +532,7 @@ class ThreadActivity : UIObjectActivity() {
                 // Its place until the bytes open (step 3b brings them): the picture glyph, dim.
                 image.scaleType = ImageView.ScaleType.CENTER
                 image.setImageResource(R.drawable.app_glyph_photo_library)
-                image.imageTintList = android.content.res.ColorStateList.valueOf(context.getColor(R.color.kid_core_dim))
+                image.imageTintList = android.content.res.ColorStateList.valueOf(context.getColor(dimOf(m)))
                 SmsRuntime.ask(context, { engine ->
                     SmsPictures.decode({ engine.openPart(m.id, part.index) }, width)?.also { SmsPictures.keep(key, it) }
                 }) { bitmap ->
@@ -520,16 +546,19 @@ class ThreadActivity : UIObjectActivity() {
         }
     }
 
+    /** A bubble's second tone (its time, a part's line, a picture's place): legible on its own surface. */
+    private fun dimOf(m: Message): Int = if (m.direction == Direction.OUT) R.color.kid_message_out_dim else R.color.kid_message_in_dim
+
     private fun bubbleRoom(context: Context): Int =
         binding.threadList.width.takeIf { it > 0 } ?: (context.resources.displayMetrics.widthPixels - KidAvatars.dp(context, 32f))
 
-    private fun deliveryText(line: DeliveryLine): String = getString(
+    private fun deliveryText(line: DeliveryLine, retry: Boolean): String = getString(
         when (line) {
             DeliveryLine.SENDING -> R.string.messages_sending
             DeliveryLine.SENT -> R.string.messages_sent
             DeliveryLine.DELIVERED -> R.string.messages_delivered
-            DeliveryLine.NOT_SENT -> R.string.messages_not_sent
-            DeliveryLine.MAYBE_NOT_SENT -> R.string.messages_maybe_not_sent
+            DeliveryLine.NOT_SENT -> if (retry) R.string.messages_not_sent else R.string.messages_not_sent_plain
+            DeliveryLine.MAYBE_NOT_SENT -> if (retry) R.string.messages_maybe_not_sent else R.string.messages_maybe_not_sent_plain
         },
     )
 
@@ -545,7 +574,6 @@ class ThreadActivity : UIObjectActivity() {
         const val EXTRA_CONVERSATION = "me.vibb.launcher.extra.SMS_CONVERSATION"
         const val EXTRA_NUMBER = "me.vibb.launcher.extra.SMS_NUMBER"
         const val EXTRA_DRAFT = "me.vibb.launcher.extra.SMS_DRAFT"
-        private const val STATE_CLIENT_ID = "client_id"
 
         /** Messages read at a time; scrolling to the top reads the next page. */
         private const val PAGE = 100

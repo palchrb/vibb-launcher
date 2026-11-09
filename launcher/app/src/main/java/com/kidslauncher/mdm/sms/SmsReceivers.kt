@@ -214,10 +214,12 @@ class ComposeActivity : Activity() {
         val verdict = number?.takeIf { it.isNotEmpty() }?.let { SmsRules.decideSend(it, SmsRuntime.judge(this)) }
         when {
             verdict is SmsRules.SendVerdict.Allow -> {
-                // `smsto:` is an opaque URI: its `?body=` is read from the decoded scheme-specific part.
-                val body = intent?.getStringExtra("sms_body")
-                    ?: data?.schemeSpecificPart?.substringAfter('?', "")?.split('&')?.firstOrNull { it.startsWith("body=") }?.removePrefix("body=")
-                MessagesScreens.startThread(this, null, verdict.number, body?.take(com.kidslauncher.mdm.sms.engine.SmsEngine.SEND_MAX))
+                // `sms_body`, else EXTRA_TEXT, else the link's `?body=` from the encoded part (code QA N1: "&" survives).
+                val body = com.kidslauncher.mdm.ui.messages.smsDraft(
+                    intent?.getStringExtra("sms_body"), intent?.getStringExtra(Intent.EXTRA_TEXT), data?.encodedSchemeSpecificPart,
+                    com.kidslauncher.mdm.sms.engine.SmsEngine.SEND_MAX,
+                )
+                MessagesScreens.startThread(this, null, verdict.number, body)
             }
             verdict is SmsRules.SendVerdict.Refused && verdict.reason == Refusal.TIME_RULE ->
                 Toast.makeText(this, R.string.messages_compose_not_now, Toast.LENGTH_LONG).show()

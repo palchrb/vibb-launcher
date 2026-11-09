@@ -1043,6 +1043,8 @@ object AppEnforcer {
 
     /** B1 for the SMS role: a change since the server last heard asks for a sync (coalesced). */
     private fun signalSmsRoleChange(context: Context, held: Boolean) {
+        // Design 77 §6.7 (code QA of step 2, L4): Home's tile and an open thread's compose bar follow the role at once.
+        if (com.kidslauncher.mdm.sms.SmsHome.summary.roleHeld != held) com.kidslauncher.mdm.sms.SmsHome.refresh(context)
         if (SmsPrefs.roleSignalled(context) == held) return
         SmsPrefs.roleSignalled(context, held)
         try {

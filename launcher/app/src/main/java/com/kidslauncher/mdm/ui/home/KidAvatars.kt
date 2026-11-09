@@ -182,6 +182,27 @@ object KidAvatars {
         badge.text = text
     }
 
+    /** A contact avatar's badge ([ContactBadge], design 77 §6.7): the count, the missed-call glyph only with a missed
+     * call. */
+    fun bindContactBadge(badge: TextView, contact: ContactBadge) {
+        bindBadge(badge, contact.count)
+        badge.setCompoundDrawablesRelativeWithIntrinsicBounds(if (contact.callGlyph) R.drawable.ic_kid_missed_call else 0, 0, 0, 0)
+    }
+
+    /** What TalkBack reads for a contact avatar: the name, its missed calls, its unread messages. */
+    fun contactDescription(context: Context, name: String, contact: ContactBadge): String {
+        val head = if (contact.missed > 0) {
+            context.resources.getQuantityString(R.plurals.contact_missed, contact.missed, name, contact.missed)
+        } else {
+            name
+        }
+        return if (contact.unread > 0) {
+            head + ", " + context.resources.getQuantityString(R.plurals.contact_unread, contact.unread, contact.unread)
+        } else {
+            head
+        }
+    }
+
     /** The sheet's missed-call line: the phone's own, then (round L5) the missed Element X calls, one line each. */
     fun missedText(context: Context, missed: ContactMissed?): String? {
         if (missed == null) return null

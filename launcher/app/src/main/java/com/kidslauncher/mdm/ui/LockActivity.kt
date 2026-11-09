@@ -158,6 +158,9 @@ class LockActivity : UIObjectActivity() {
         reevaluateLockReasonFromCache(this)
         // The Kalender row follows Home's tile (the calendars read, the policy's switches).
         CalendarStore.addListener(calendarListener)
+        // Design 77 §6.7 (code QA L3): the Meldinger row follows the history and the role.
+        com.kidslauncher.mdm.sms.SmsHome.addListener(calendarListener)
+        com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         render()
@@ -209,6 +212,7 @@ class LockActivity : UIObjectActivity() {
         }
         WallpaperStore.removeListener(wallpaperListener)
         CalendarStore.removeListener(calendarListener)
+        com.kidslauncher.mdm.sms.SmsHome.removeListener(calendarListener)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
         icons.cancel()
@@ -279,7 +283,8 @@ class LockActivity : UIObjectActivity() {
         // E7's M1: a ringing alarm's row first, whatever the rule.
         val alarm = getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }
         // Design 77 §6.7: Meldinger where the rule allows calls, while Home shows its tile.
-        val messages = getString(R.string.messages_title).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
+        val messagesLabel = if (com.kidslauncher.mdm.sms.SmsHome.historyOnly()) R.string.messages_history else R.string.messages_title
+        val messages = getString(messagesLabel).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
         renderRows(
             timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm, messages),
         )

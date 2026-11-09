@@ -16,7 +16,8 @@ import com.kidslauncher.mdm.ui.home.PressFeedback
 
 /** One phone-book tile: a contact, or the "Emergency call" tile when no rules can be read. */
 sealed interface PhoneBookTile {
-    data class Contact(val contact: RuleContact, val emergency: Boolean, val missed: ContactMissed?) : PhoneBookTile
+    /** [unread]: the contact's unread messages (design 77 §6.7: the badge is missed calls plus unread messages). */
+    data class Contact(val contact: RuleContact, val emergency: Boolean, val missed: ContactMissed?, val unread: Int = 0) : PhoneBookTile
     data object Emergency : PhoneBookTile
 }
 
@@ -85,20 +86,16 @@ class PhoneBookAdapter(
         when (val tile = tiles[position]) {
             is PhoneBookTile.Contact -> {
                 KidAvatars.bindContact(holder.photo, holder.initial, tile.contact, tile.emergency, initialSp = 26f)
-                val count = tile.missed?.count ?: 0
-                KidAvatars.bindBadge(holder.badge, count)
+                val badge = com.kidslauncher.mdm.ui.home.ContactBadge(tile.missed?.count ?: 0, tile.unread)
+                KidAvatars.bindContactBadge(holder.badge, badge)
                 holder.name.text = tile.contact.name
-                holder.itemView.contentDescription = if (count > 0) {
-                    context.resources.getQuantityString(R.plurals.contact_missed, count, tile.contact.name, count)
-                } else {
-                    tile.contact.name
-                }
+                holder.itemView.contentDescription = KidAvatars.contactDescription(context, tile.contact.name, badge)
             }
             PhoneBookTile.Emergency -> {
                 KidAvatars.bindContact(
                     holder.photo, holder.initial, RuleContact(number = EMERGENCY_NUMBER), isEmergency = true, initialSp = 26f,
                 )
-                KidAvatars.bindBadge(holder.badge, 0)
+                KidAvatars.bindContactBadge(holder.badge, com.kidslauncher.mdm.ui.home.ContactBadge(0, 0))
                 holder.name.setText(R.string.calls_emergency)
                 holder.itemView.contentDescription = context.getString(R.string.calls_emergency)
             }

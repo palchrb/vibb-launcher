@@ -113,11 +113,17 @@ class MessagesActivity : UIObjectActivity() {
         super.onStop()
     }
 
+    /** One read at a time, one more for whatever came meanwhile (code QA L2). */
+    private val reload = Coalescer { done -> loadNow(done) }
+
+    private fun load() = reload.request()
+
     /** The conversations with their newest message, from the engine thread. */
-    private fun load() {
+    private fun loadNow(done: () -> Unit) {
         SmsRuntime.ask(this, { engine ->
             engine.conversations().map { it to engine.messages(it.id, null, 1).firstOrNull() }
         }) { entries ->
+            done()
             if (isDestroyed) return@ask
             rows = listRows(entries.orEmpty(), MessagesScreens.rules())
             if (deleting != null && rows.none { it.conversation.id == deleting?.conversation?.id }) cancelDelete()
@@ -126,12 +132,8 @@ class MessagesActivity : UIObjectActivity() {
     }
 
     /** Whether the kid may start a conversation now: "Styrt av Vibb", the role ours, the gate not shut by a time rule
-     * ([composeState] for any allowed contact - the list is only those). */
-    private fun mayStart(): Boolean {
-        val judge = SmsRuntime.judge(this)
-        val first = newMessageContacts(MessagesScreens.rules()).firstOrNull()?.number
-        return first != null && composeState(judge, first) == ComposeState.OPEN
-    }
+     * ([mayStartNew]: judged on a contact that isn't an emergency number - code QA N3). */
+    private fun mayStart(): Boolean = mayStartNew(SmsRuntime.judge(this), MessagesScreens.rules())
 
     private fun render() {
         val readOnly = historyReadOnlyNow()
@@ -145,7 +147,9 @@ class MessagesActivity : UIObjectActivity() {
             adapter.submit(contacts.map { Row.Contact(it) })
             return
         }
-        KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
+        // "Meldingslogg" for the history only (code QA N6), as Home's tile.
+        val title = if (SmsHome.historyOnly()) R.string.messages_history else R.string.messages_title
+        KidHeader.bind(this, binding.messagesHeader, title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
             picking = true
             render()
         }

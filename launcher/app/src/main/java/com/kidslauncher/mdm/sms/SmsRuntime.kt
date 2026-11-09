@@ -147,9 +147,10 @@ object SmsRuntime {
             }
             SmsHome.refresh(app)
         }
-        // Every event moves Home's badge (a message in, a read mark, a delete) - read on the engine thread.
+        // Every event moves Home's badges (a message in, a read mark, a delete) - read on the engine thread. Collected
+        // off it (code QA of step 2, L1): a collector on the emitting thread can't drain while that thread runs a burst.
         val opened = engine ?: return
-        CoroutineScope(SupervisorJob() + engineDispatcher).launch {
+        CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
             opened.live.collect { SmsHome.refresh(app) }
         }
         SmsHome.refresh(app)

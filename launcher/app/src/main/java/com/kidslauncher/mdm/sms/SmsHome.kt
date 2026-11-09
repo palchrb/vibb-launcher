@@ -7,6 +7,7 @@ import android.util.Log
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.smsMode
 import com.kidslauncher.mdm.ui.messages.messagesTileShown
+import com.kidslauncher.mdm.ui.messages.unreadByNumber
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LOG_TAG = "SmsHome"
@@ -18,7 +19,9 @@ private const val LOG_TAG = "SmsHome"
  * the main thread after every refresh, so the message screens also hear of a rule change that touched no conversation.
  */
 object SmsHome {
-    data class Summary(val hasHistory: Boolean, val unread: Int, val roleHeld: Boolean)
+    /** [unreadByNumber]: each one-to-one conversation's unread, by its number - the contact avatars' badge (§6.7,
+     * [com.kidslauncher.mdm.ui.messages.unreadByNumber]). */
+    data class Summary(val hasHistory: Boolean, val unread: Int, val roleHeld: Boolean, val unreadByNumber: Map<String, Int> = emptyMap())
 
     @Volatile
     var summary = Summary(hasHistory = false, unread = 0, roleHeld = false)
@@ -35,6 +38,13 @@ object SmsHome {
     /** Home's Meldinger tile ([messagesTileShown]). */
     fun tileShown(): Boolean = messagesTileShown(CallPolicyStore.state.smsMode, summary.roleHeld, summary.hasHistory)
 
+    /** The tile and the screens read "Meldingslogg" ([com.kidslauncher.mdm.ui.messages.historyOnly]): the history in
+     * Av / Ikke styrt / rules unknown (code QA N6 - next to another app's "Meldinger"). */
+    fun historyOnly(): Boolean = com.kidslauncher.mdm.ui.messages.historyOnly(CallPolicyStore.state.smsMode)
+
+    /** A contact's unread messages (its avatar's badge, §6.7). */
+    fun unreadFrom(number: String): Int = summary.unreadByNumber[number] ?: 0
+
     /** Reads the summary again on the engine thread (one refresh queued at a time), then tells the listeners. Nothing
      * before the first unlock: the store is CE. */
     fun refresh(context: Context) {
@@ -42,11 +52,13 @@ object SmsHome {
         if (!CallPolicyStore.userUnlocked(app)) return
         if (!pending.compareAndSet(false, true)) return
         SmsRuntime.ask(app, { engine ->
+            // Cleared as the read begins: a change after this point queues the next read (code QA N5: only here).
             pending.set(false)
             val conversations = engine.conversations()
-            Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app))
+            Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations))
         }) { next ->
-            pending.set(false)
+            // No engine (the work never ran): nothing cleared the flag.
+            if (next == null) pending.set(false)
             if (next != null) summary = next
             for (listener in listeners.toList()) {
                 try {

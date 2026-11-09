@@ -210,11 +210,12 @@ class HomeGridAdapter(
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
             // Design 77 §6.7: the chat glyph on the teal tone, the unread total as its badge.
             is GridTile.Messages -> {
-                glyphTile(holder, R.color.kid_messages_tile, R.drawable.app_glyph_chat, R.string.messages_title)
+                val label = if (tile.history) R.string.messages_history else R.string.messages_title
+                glyphTile(holder, R.color.kid_messages_tile, R.drawable.app_glyph_chat, label)
                 KidAvatars.bindBadge(holder.badge, tile.badge)
                 if (tile.badge > 0) {
                     holder.itemView.contentDescription =
-                        context.resources.getQuantityString(R.plurals.app_unread, tile.badge, context.getString(R.string.messages_title), tile.badge)
+                        context.resources.getQuantityString(R.plurals.app_unread, tile.badge, context.getString(label), tile.badge)
                 }
             }
             GridTile.Day -> glyphTile(holder, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month, R.string.day_title)

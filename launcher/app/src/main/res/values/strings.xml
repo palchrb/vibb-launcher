@@ -96,6 +96,11 @@
         <item quantity="one">%1$s, %2$d missed call</item>
         <item quantity="other">%1$s, %2$d missed calls</item>
     </plurals>
+    <!-- Design 77 §6.7: a contact avatar's unread messages, after its name and missed calls. -->
+    <plurals name="contact_unread">
+        <item quantity="one">%1$d unread message</item>
+        <item quantity="other">%1$d unread messages</item>
+    </plurals>
     <!-- The missed-call notification (design 12) -->
     <string name="notification_channel_missed_calls">Missed calls</string>
     <!-- Design 77 §6.8: the message notifications. -->
@@ -110,6 +115,8 @@
     <string name="sms_compose_refused">You can\'t send a message to this number</string>
     <!-- Design 77 §6.7: the kid's message screens (Meldinger, a thread, a picture). -->
     <string name="messages_title">Messages</string>
+    <!-- The history only (SMS not "Styrt av Vibb"): the tile, the time-rule row and the list's header. -->
+    <string name="messages_history">Message history</string>
     <string name="messages_new">New message</string>
     <string name="messages_empty">No messages yet.</string>
     <string name="messages_new_empty">There\'s no one you can message yet.</string>
@@ -139,6 +146,10 @@
     <string name="messages_delivered">Delivered</string>
     <string name="messages_not_sent">Not sent - tap to try again</string>
     <string name="messages_maybe_not_sent">Maybe not sent - tap to try again</string>
+    <!-- Code QA L5: a failed message where the kid can't send now - no invitation to tap. -->
+    <string name="messages_not_sent_plain">Not sent</string>
+    <string name="messages_maybe_not_sent_plain">Maybe not sent</string>
+    <string name="messages_too_long">This message is too long</string>
     <string name="messages_delete">Delete</string>
     <string name="messages_delete_conversation">Delete conversation</string>
     <string name="messages_delete_message_title">Delete this message?</string>

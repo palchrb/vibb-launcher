@@ -79,17 +79,63 @@ fun composeState(judge: SmsJudge, target: String?): ComposeState {
     }
     return when (val verdict = SmsRules.decideSend(target, judge)) {
         is SmsRules.SendVerdict.Allow -> ComposeState.OPEN
-        is SmsRules.SendVerdict.Refused -> refusalState(verdict.reason)
+        is SmsRules.SendVerdict.Refused -> when (verdict.reason) {
+            Refusal.TIME_RULE -> ComposeState.NOT_NOW
+            Refusal.RULES_UNKNOWN -> ComposeState.UNAVAILABLE
+            Refusal.SMS_OFF -> ComposeState.READ_ONLY
+            else -> ComposeState.NOT_ALLOWED
+        }
     }
 }
 
-/** A refusal's words: the compose bar's, and the toast after a send the gate refused. */
-fun refusalState(reason: Refusal): ComposeState = when (reason) {
-    Refusal.TIME_RULE -> ComposeState.NOT_NOW
-    Refusal.RULES_UNKNOWN -> ComposeState.UNAVAILABLE
-    Refusal.SMS_OFF -> ComposeState.READ_ONLY
-    Refusal.NOT_ALLOWED, Refusal.TOO_LARGE, Refusal.EMPTY, Refusal.DUPLICATE_CLIENT_ID -> ComposeState.NOT_ALLOWED
+/** What the thread does after the gate refused a send (code QA of step 2, L5: each refusal its own words). */
+enum class AfterRefusal {
+    NOT_NOW,
+    NOT_ALLOWED,
+    UNAVAILABLE,
+    READ_ONLY,
+
+    /** "Meldingen er for lang" - the field's own limit keeps this from happening. */
+    TOO_LONG,
+
+    /** The draft's id was taken by another text (an edit between two taps): a new id, sent again once, silently. */
+    SEND_AGAIN,
+
+    /** An empty text: nothing to say. */
+    NOTHING,
 }
+
+fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
+    Refusal.TIME_RULE -> AfterRefusal.NOT_NOW
+    Refusal.RULES_UNKNOWN -> AfterRefusal.UNAVAILABLE
+    Refusal.SMS_OFF -> AfterRefusal.READ_ONLY
+    Refusal.NOT_ALLOWED -> AfterRefusal.NOT_ALLOWED
+    Refusal.TOO_LARGE -> AfterRefusal.TOO_LONG
+    Refusal.DUPLICATE_CLIENT_ID -> AfterRefusal.SEND_AGAIN
+    Refusal.EMPTY -> AfterRefusal.NOTHING
+}
+
+/** The history is only for reading: SMS isn't "Styrt av Vibb" (or the rules are unknown). Home's tile, the time-rule
+ * screen's row and the list's header then read "Meldingslogg" (code QA N6: another app's "Meldinger" may sit next to
+ * it). */
+fun historyOnly(smsMode: ChannelMode?): Boolean = smsMode != ChannelMode.MANAGED
+
+/**
+ * Whether "Ny melding" shows: the gate would send to a contact on its list now. Judged on a contact that isn't an
+ * emergency number (code QA N3: D5 lets those through even under a rule without calls), so the answer is the time
+ * rule's and the role's, not rule 1's.
+ */
+fun mayStartNew(judge: SmsJudge, rules: CallRules?): Boolean {
+    val contact = newMessageContacts(rules).firstOrNull { !judge.isEmergency(it.number) } ?: return false
+    return composeState(judge, contact.number) == ComposeState.OPEN
+}
+
+/** The contact avatars' share of the messages (§6.7: the badge is missed calls plus unread messages): each one-to-one
+ * conversation with a number and something unread, by that number - never a sender name, a group or `unknown:`. */
+fun unreadByNumber(conversations: List<Conversation>): Map<String, Int> = conversations.mapNotNull { c ->
+    val address = c.participants.singleOrNull()?.address ?: return@mapNotNull null
+    if (c.unread <= 0 || address.startsWith(SmsEngine.NAME_PREFIX) || address.startsWith(SmsEngine.UNKNOWN_PREFIX)) null else address to c.unread
+}.groupBy({ it.first }, { it.second }).mapValues { (_, counts) -> counts.sum() }
 
 /** "Ny melding" (§6.7, D3): the contacts the kid may text, in the parent's order - text-only contacts included, only
  * those with "Kan få melding fra" (`sms_out`). No free number: a number outside the list never gets a thread here. */
@@ -226,6 +272,11 @@ enum class DeliveryLine {
     MAYBE_NOT_SENT,
 }
 
+/** Whether a failed or uncertain message invites a tap: only where the kid could send now (code QA L5) - in "Av",
+ * "Ikke styrt", under a rule or to a contact no longer allowed it says "Ikke sendt" and nothing more. */
+fun retryOffered(line: DeliveryLine?, compose: ComposeState): Boolean =
+    (line == DeliveryLine.NOT_SENT || line == DeliveryLine.MAYBE_NOT_SENT) && compose == ComposeState.OPEN
+
 /** "Sendt"/"Levert"/"Sender…" under the kid's last message only; a failed or uncertain one always says so, wherever it
  * is - a quiet failure higher up would read as sent. */
 fun deliveryLine(message: Message, lastOut: Boolean): DeliveryLine? {
@@ -319,16 +370,68 @@ object MessageActions {
     }
 
     /**
-     * "Prøv igjen" on a failed (or uncertain) message: the same text again with a new [clientId] (§6.2: never the old
-     * one - at most once), through [send] (the gate again). Once accepted the failed message goes, so the thread holds
-     * the text once; refused, it stays as it was.
+     * "Prøv igjen" on a failed (or uncertain) message: the same text again through [send] (the gate again), under an id
+     * of its own derived from the failed message ([retryClientId]; §6.2: never the failed one's - at most once). Two
+     * taps on the same failed bubble are the engine's repeat and send once (code QA of step 2, M1); a retry of the
+     * retry, if that fails too, is a new message with a new id. Once accepted the failed message goes, so the thread
+     * holds the text once; refused, it stays as it was.
      */
-    fun retry(send: (SendCommand) -> SendResult?, delete: (MessageId) -> Unit, failed: Message, clientId: String): SendResult? {
+    fun retry(send: (SendCommand) -> SendResult?, delete: (MessageId) -> Unit, failed: Message): SendResult? {
         if (failed.direction != Direction.OUT || failed.delivery !in RETRYABLE) return null
-        val result = send(SendCommand(clientId, failed.conversationId, null, failed.body.orEmpty(), origin = Origin.KID_SCREEN))
+        val result = send(SendCommand(retryClientId(failed.id), failed.conversationId, null, failed.body.orEmpty(), origin = Origin.KID_SCREEN))
         if (result is SendResult.Accepted && result.message.id != failed.id) delete(failed.id)
         return result
     }
 
+    fun retryClientId(failed: MessageId): String = "retry:" + failed.value
+
     val RETRYABLE = setOf(Delivery.FAILED, Delivery.UNCERTAIN)
+}
+
+/**
+ * One reload at a time, and one more for everything asked meanwhile (code QA of step 2, L2): a burst of engine events
+ * is at most two reads, never one per event. [start] runs the read and calls its `done` when the answer is shown.
+ * Main thread only.
+ */
+class Coalescer(private val start: (done: () -> Unit) -> Unit) {
+    private var running = false
+    private var again = false
+
+    fun request() {
+        if (running) {
+            again = true
+            return
+        }
+        running = true
+        start(::finished)
+    }
+
+    private fun finished() {
+        running = false
+        if (again) {
+            again = false
+            request()
+        }
+    }
+}
+
+/**
+ * "Del" (§6.7, code QA of step 2, L6): the share sheet's targets the parent didn't allow, to leave out
+ * (`EXTRA_EXCLUDE_COMPONENTS`) - every resolved component ([resolved]: package to component name) whose package
+ * isn't [usable] (installed, not suspended, on the allowlist), and the system's nearby-share component ([nearby]) unless
+ * its package is. On an unmanaged phone ([usable] always true) nothing is left out.
+ */
+fun shareExclusions(resolved: List<Pair<String, String>>, nearby: Pair<String, String>?, usable: (String) -> Boolean): List<String> =
+    (resolved + listOfNotNull(nearby)).filter { (pkg, _) -> !usable(pkg) }.map { it.second }.distinct()
+
+/**
+ * The draft an `smsto:` brings (`ComposeActivity`, code QA N1): the `sms_body` extra, else `EXTRA_TEXT`, else the
+ * link's own `?body=` read from the *encoded* scheme-specific part and decoded once - so "&" in a body survives as
+ * "%26". Cut to [max].
+ */
+fun smsDraft(smsBody: String?, extraText: String?, encodedSsp: String?, max: Int): String? {
+    val fromLink = encodedSsp?.substringAfter('?', "")?.split('&')?.firstOrNull { it.startsWith("body=") }?.removePrefix("body=")?.let {
+        runCatching { java.net.URLDecoder.decode(it.replace("+", "%2B"), Charsets.UTF_8) }.getOrNull()
+    }
+    return (smsBody ?: extraText ?: fromLink)?.take(max)?.takeIf { it.isNotEmpty() }
 }

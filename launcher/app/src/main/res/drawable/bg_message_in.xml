@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A received message's bubble (design 77 §6.7): the night tile surface, 18 dp corners, the corner by the sender's side
-     smaller. -->
+<!-- A received message's bubble (design 77 §6.7): the lilac-grey surface (kid_message_in, the user's D2), 18 dp
+     corners, the corner by the sender's side smaller. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/kid_music_tile" />
+    <solid android:color="@color/kid_message_in" />
     <corners
         android:bottomLeftRadius="6dp"
         android:bottomRightRadius="18dp"

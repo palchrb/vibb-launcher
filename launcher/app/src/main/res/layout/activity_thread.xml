@@ -73,6 +73,7 @@
                 android:maxLength="1600"
                 android:maxLines="5"
                 android:minHeight="44dp"
+                android:saveEnabled="false"
                 android:textColor="@color/kid_ink"
                 android:textColorHint="@color/kid_core_dim"
                 android:textSize="16sp" />

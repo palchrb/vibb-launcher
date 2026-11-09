@@ -95,6 +95,16 @@ object MessagesScreens {
         ComposeState.UNAVAILABLE -> R.string.messages_compose_unavailable
     }
 
+    /** The toast after a send the gate refused ([afterRefusal], code QA L5); `null` = nothing to say. */
+    fun refusalLine(after: AfterRefusal): Int? = when (after) {
+        AfterRefusal.NOT_NOW -> R.string.messages_compose_not_now
+        AfterRefusal.NOT_ALLOWED -> R.string.messages_compose_not_allowed
+        AfterRefusal.UNAVAILABLE -> R.string.messages_compose_unavailable
+        AfterRefusal.READ_ONLY -> R.string.messages_read_only
+        AfterRefusal.TOO_LONG -> R.string.messages_too_long
+        AfterRefusal.SEND_AGAIN, AfterRefusal.NOTHING -> null
+    }
+
     /** Shows the in-screen confirm (D18: one confirm, built into the screen, no system dialog) and moves TalkBack to
      * it; [onDelete] after "Slett". Cancel and Back hide it ([hideConfirm]). */
     fun showConfirm(panel: View, title: String, onCancel: () -> Unit, onDelete: () -> Unit) {
@@ -102,7 +112,9 @@ object MessagesScreens {
         panel.findViewById<View>(R.id.messages_confirm_cancel).setOnClickListener { onCancel() }
         panel.findViewById<View>(R.id.messages_confirm_delete).setOnClickListener { onDelete() }
         panel.visibility = View.VISIBLE
-        panel.findViewById<View>(R.id.messages_confirm_title).sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED)
+        // TalkBack's focus moves to the question (code QA N2), not only its announcement.
+        val question = panel.findViewById<View>(R.id.messages_confirm_title)
+        question.post { question.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
     }
 
     fun hideConfirm(panel: View) {

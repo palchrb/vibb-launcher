@@ -60,6 +60,7 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
+import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.GRID_COLUMN_GAP_DP
 import com.kidslauncher.mdm.ui.home.GRID_ROW_GAP_DP
 import com.kidslauncher.mdm.ui.home.GridApp
@@ -174,8 +175,9 @@ class HomeActivity : UIObjectActivity() {
     private val torchListener: () -> Unit = { renderGrid() }
     /** Dagen's tile follows the calendars and the policy (design 69 §2.2). */
     private val calendarListener: () -> Unit = { renderGrid() }
-    /** Meldinger's tile and badge follow the engine and the policy (design 77 §6.7). */
-    private val messagesListener: () -> Unit = { renderGrid() }
+    /** Meldinger's tile and badge, and the contacts' unread messages, follow the engine and the policy (design 77
+     * §6.7; renderCallParts renders the grid too). */
+    private val messagesListener: () -> Unit = { renderCallParts() }
     private val badgeListener: () -> Unit = {
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
@@ -824,6 +826,7 @@ class HomeActivity : UIObjectActivity() {
                 data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
+                messagesHistory = com.kidslauncher.mdm.sms.SmsHome.historyOnly(),
             ),
             data.infos,
             data.icons,
@@ -919,18 +922,15 @@ class HomeActivity : UIObjectActivity() {
             )
             KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
             KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)
-            val missedCount = missed[contact.number]?.count ?: 0
-            KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
+            // Design 77 §6.7: missed calls plus unread messages.
+            val badge = ContactBadge(missed[contact.number]?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number))
+            KidAvatars.bindContactBadge(item.findViewById(R.id.contact_badge), badge)
             item.findViewById<TextView>(R.id.contact_name).apply {
                 text = contact.name
                 KidInk.label(this, shownInk)
                 maxWidth = itemPx
             }
-            item.contentDescription = if (missedCount > 0) {
-                resources.getQuantityString(R.plurals.contact_missed, missedCount, contact.name, missedCount)
-            } else {
-                contact.name
-            }
+            item.contentDescription = KidAvatars.contactDescription(this, contact.name, badge)
             // Tap and long-press open the contact sheet (Call / Message / Close) - user decision in
             // the fix round 2026-10-06, replacing "tap calls straight away" (02/05 docs): a stray
             // tap on Home no longer starts a call.

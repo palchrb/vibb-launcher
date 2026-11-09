@@ -52,7 +52,11 @@ object ContactSheet {
             onDone()
         }
         view.findViewById<ImageView>(R.id.sheet_ring).setImageDrawable(KidAvatars.ring(activity, contact, emergency))
-        KidAvatars.bindBadge(view.findViewById(R.id.sheet_badge), missed?.count ?: 0)
+        // Design 77 §6.7: missed calls plus unread messages.
+        KidAvatars.bindContactBadge(
+            view.findViewById(R.id.sheet_badge),
+            com.kidslauncher.mdm.ui.home.ContactBadge(missed?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number)),
+        )
         view.findViewById<TextView>(R.id.sheet_name).text = contact.name
         view.findViewById<TextView>(R.id.sheet_missed).apply {
             val text = KidAvatars.missedText(activity, missed)

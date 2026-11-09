@@ -33,6 +33,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -117,8 +118,42 @@ class MessagesModelTest {
             assertEquals(ComposeState.READ_ONLY, composeState(judge(rules(mode)), null))
         }
         assertEquals(ComposeState.READ_ONLY, composeState(SmsJudge(CallPolicyState.Unmanaged, roleHeld = false), "+4790000001"))
-        assertEquals(ComposeState.NOT_NOW, refusalState(Refusal.TIME_RULE))
-        assertEquals(ComposeState.READ_ONLY, refusalState(Refusal.SMS_OFF))
+        assertTrue(historyOnly(ChannelMode.OFF) && historyOnly(ChannelMode.UNMANAGED) && historyOnly(null))
+        assertFalse(historyOnly(ChannelMode.MANAGED))
+    }
+
+    /** Code QA L5: each refusal its own words; a taken draft id is sent again under a new one, an empty text says
+     * nothing. */
+    @Test
+    fun `each refusal has its own outcome`() {
+        assertEquals(
+            listOf(
+                AfterRefusal.NOT_ALLOWED, AfterRefusal.NOT_NOW, AfterRefusal.READ_ONLY, AfterRefusal.UNAVAILABLE,
+                AfterRefusal.TOO_LONG, AfterRefusal.NOTHING, AfterRefusal.SEND_AGAIN,
+            ),
+            listOf(
+                Refusal.NOT_ALLOWED, Refusal.TIME_RULE, Refusal.SMS_OFF, Refusal.RULES_UNKNOWN, Refusal.TOO_LARGE, Refusal.EMPTY,
+                Refusal.DUPLICATE_CLIENT_ID,
+            ).map(::afterRefusal),
+        )
+        // "Trykk for å prøve igjen" only where the kid could send now.
+        assertTrue(retryOffered(DeliveryLine.NOT_SENT, ComposeState.OPEN))
+        assertTrue(retryOffered(DeliveryLine.MAYBE_NOT_SENT, ComposeState.OPEN))
+        for (state in ComposeState.entries - ComposeState.OPEN) assertFalse("$state", retryOffered(DeliveryLine.NOT_SENT, state))
+        assertFalse(retryOffered(DeliveryLine.SENT, ComposeState.OPEN))
+        assertFalse(retryOffered(null, ComposeState.OPEN))
+    }
+
+    /** Code QA N3: "Ny melding" follows the gate on a contact that isn't an emergency number - an emergency contact
+     * first in the list (always sendable, D5 rule 1) doesn't open it under a rule without calls. */
+    @Test
+    fun `Ny melding shows only where the gate would send to an ordinary contact`() {
+        val emergency = RuleContact(9, "Nød", "112", smsOut = true)
+        val list = rules(contacts = listOf(emergency, mamma))
+        val withEmergency = SmsJudge(CallPolicyState.Managed(list), roleHeld = true, timeBlocked = { true }, platformEmergency = { it == "112" })
+        assertFalse(mayStartNew(withEmergency, list))
+        assertTrue(mayStartNew(SmsJudge(CallPolicyState.Managed(list), roleHeld = true, platformEmergency = { it == "112" }), list))
+        assertFalse(mayStartNew(judge(), rules(contacts = listOf(trener))))
     }
 
     @Test
@@ -272,18 +307,113 @@ class MessagesModelTest {
         assertEquals(Delivery.FAILED, stored.delivery)
         // A refusal (SMS switched off meanwhile) keeps the failed message.
         engineRules = rules(ChannelMode.OFF)
-        val refused = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stored, "second")
+        val refused = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stored)
         assertEquals(SendResult.Refused(Refusal.SMS_OFF), refused)
         assertEquals(listOf(stored.id), engine.messages(failed.conversationId, null, 10).map { it.id })
         // Allowed again: the same text once more, under a new id; the failed one goes.
         engineRules = rules()
-        val again = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stored, "third") as SendResult.Accepted
-        assertEquals("third", again.message.clientId)
+        val again = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stored) as SendResult.Accepted
+        assertEquals(MessageActions.retryClientId(stored.id), again.message.clientId)
         assertEquals(listOf(again.message.id), engine.messages(failed.conversationId, null, 10).map { it.id })
         engine.drainOutbox()
         assertEquals(listOf("kommer snart", "kommer snart"), sent)
         // Only a failed or uncertain message of the kid's is ever sent again.
-        assertNull(MessageActions.retry(engine::send, {}, again.message, "fourth"))
+        assertNull(MessageActions.retry(engine::send, {}, again.message))
+    }
+
+    /** Code QA M1: two taps on the same (stale) failed bubble before the thread redraws send the text once. */
+    @Test
+    fun `try again tapped twice on the same failed message sends once`() {
+        val failed = (engine.send(SendCommand("first", null, "+4790000001", "kommer", origin = Origin.KID_SCREEN)) as SendResult.Accepted).message
+        engine.drainOutbox()
+        engine.onSent(failed.id.value, 0, 1, ok = false, code = 1)
+        sent.clear()
+        val stale = engine.messages(failed.conversationId, null, 10).single()
+        val one = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stale) as SendResult.Accepted
+        val two = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, stale) as SendResult.Accepted
+        assertEquals(one.message.id, two.message.id)
+        engine.drainOutbox()
+        assertEquals(listOf("kommer"), sent)
+        assertEquals(listOf(one.message.id), engine.messages(failed.conversationId, null, 10).map { it.id })
+    }
+
+    // ---- code QA of step 2: the badges, the reloads, the live signal, the share sheet, the smsto: draft ----
+
+    /** §6.7 (code QA M2): a contact avatar's share - one-to-one numbers with something unread; never a name, a group or
+     * `unknown:`. */
+    @Test
+    fun `unread by number feeds the contact avatars`() {
+        val mammaUnread = conversation("a", "+4790000001", unread = 2)
+        val read = conversation("b", "+4790000002", unread = 0)
+        val name = conversation("c", "name:DNB", unread = 3)
+        val unknown = conversation("d", "unknown:x", unread = 1)
+        val group = Conversation(
+            ConversationId("e"), listOf(Participant("+4790000001", 1), Participant("+4790000002", 2)), null, null, 1, 0, 4, false,
+        )
+        assertEquals(mapOf("+4790000001" to 2), unreadByNumber(listOf(mammaUnread, read, name, unknown, group)))
+    }
+
+    @Test
+    fun `reloads are coalesced - one at a time, one more for everything asked meanwhile`() {
+        val pending = mutableListOf<() -> Unit>()
+        var starts = 0
+        val reload = Coalescer { done ->
+            starts++
+            pending += done
+        }
+        reload.request()
+        repeat(50) { reload.request() }
+        assertEquals(1, starts)
+        pending.removeAt(0)()
+        assertEquals(2, starts)
+        pending.removeAt(0)()
+        assertEquals(2, starts)
+        reload.request()
+        assertEquals(3, starts)
+    }
+
+    /** Code QA L1: a burst larger than the live buffer keeps the newest - the last change always arrives. */
+    @Test
+    fun `a burst on the engine's thread still delivers its last event`() {
+        repeat(100) { receive("+4790000001", "melding $it") }
+        val id = ConversationId(engine.conversations().single().id.value)
+        val got = mutableListOf<EngineEvent>()
+        kotlinx.coroutines.runBlocking {
+            val job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { engine.live.collect { got += it } }
+            // The whole delete runs without suspending: the collector can't drain until it is done.
+            MessageActions.delete(engine, DeleteTarget.WholeConversation(id))
+            repeat(200) { if (got.size < 64) kotlinx.coroutines.yield() }
+            job.cancel()
+        }
+        val last = engine.events(0).filterIsInstance<EngineEvent.MessageDeleted>().last()
+        assertEquals(last.id, (got.last() as EngineEvent.MessageDeleted).id)
+    }
+
+    @Test
+    fun `the share sheet leaves out every target the parent didn't allow`() {
+        val resolved = listOf(
+            "com.whatsapp" to "com.whatsapp/.Share",
+            "com.android.bluetooth" to "com.android.bluetooth/.opp.Send",
+            "org.signal" to "org.signal/.Share",
+        )
+        val nearby = "com.google.android.gms" to "com.google.android.gms/.nearby.Share"
+        assertEquals(
+            listOf("com.android.bluetooth/.opp.Send", "org.signal/.Share", "com.google.android.gms/.nearby.Share"),
+            shareExclusions(resolved, nearby, usable = { it == "com.whatsapp" }),
+        )
+        assertTrue(shareExclusions(resolved, nearby, usable = { true }).isEmpty())
+        assertEquals(listOf("org.signal/.Share"), shareExclusions(resolved, null, usable = { it != "org.signal" }))
+    }
+
+    /** Code QA N1: the extra first, then EXTRA_TEXT, then the link's own body from the encoded part ("&" survives). */
+    @Test
+    fun `the smsto draft`() {
+        assertEquals("Hei", smsDraft("Hei", "Tekst", "+4790000001?body=Link", 1600))
+        assertEquals("Tekst", smsDraft(null, "Tekst", "+4790000001?body=Link", 1600))
+        assertEquals("Fisk & chips + is", smsDraft(null, null, "+4790000001?subject=x&body=Fisk%20%26%20chips%20+%20is", 1600))
+        assertEquals("ab", smsDraft("abc", null, null, 2))
+        assertNull(smsDraft(null, null, "+4790000001", 1600))
+        assertNull(smsDraft("", null, null, 1600))
     }
 
     @Test

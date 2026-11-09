@@ -81,6 +81,9 @@ object SmsNotifier {
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setStyle(style)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                // Design 77 §6.7 (code QA of step 2, M3): no "Open link" / "Call" / "Directions" / "Copy" chips the
+                // system's assistant would add from the text - nothing in a message opens another app, here either.
+                .setAllowSystemGeneratedContextualActions(false)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setPublicVersion(public)
                 .setAutoCancel(true)
@@ -103,6 +106,7 @@ object SmsNotifier {
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_MESSAGES_SILENT)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle(context.getString(R.string.sms_reply_not_sent))
+                .setAllowSystemGeneratedContextualActions(false)
                 .setAutoCancel(true)
                 .setContentIntent(openIntent(context, conversationId))
                 .build()

@@ -27,8 +27,8 @@ sealed interface GridTile {
 
     /** Meldinger (design 77 §6.7): next to the phone book, while SMS is "Styrt av Vibb" with the role ours or there is
      * history to read ([com.kidslauncher.mdm.ui.messages.messagesTileShown]). [badge]: the unread total. No
-     * long-press menu. */
-    data class Messages(val badge: Int) : GridTile
+     * long-press menu. [history]: SMS isn't "Styrt av Vibb" - it reads "Meldingslogg" (code QA N6). */
+    data class Messages(val badge: Int, val history: Boolean = false) : GridTile
 
     /** Dagen (design 69 §2.2): the kid's day, right after the phone book - when the parent keeps it on Home and a
      * calendar is shown ([com.kidslauncher.mdm.calendar.CalendarStore.tileShown]). No badge, no long-press menu. */
@@ -66,10 +66,11 @@ fun homeGrid(
     torch: com.kidslauncher.mdm.torch.TorchState? = null,
     showDay: Boolean = false,
     messages: Int? = null,
+    messagesHistory: Boolean = false,
 ): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
-    if (messages != null) tiles += GridTile.Messages(messages)
+    if (messages != null) tiles += GridTile.Messages(messages, messagesHistory)
     if (showDay) tiles += GridTile.Day
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
@@ -156,6 +157,13 @@ fun relativeLuminance(argb: Int): Double {
 /** WCAG contrast ratio of two luminances (order doesn't matter). */
 fun contrastRatio(lumA: Double, lumB: Double): Double =
     (max(lumA, lumB) + 0.05) / (min(lumA, lumB) + 0.05)
+
+/** Design 77 §6.7: a contact avatar's badge - missed calls plus unread messages. The missed-call glyph shows only
+ * with a missed call (a text alone isn't one). */
+data class ContactBadge(val missed: Int, val unread: Int) {
+    val count: Int get() = missed + unread
+    val callGlyph: Boolean get() = missed > 0
+}
 
 /** Badge text: nothing for 0 or less, the count up to 99, then "99+". */
 fun badgeText(count: Int): String? = when {

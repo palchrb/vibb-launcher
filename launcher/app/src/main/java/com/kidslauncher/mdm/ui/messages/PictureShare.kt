@@ -90,7 +90,10 @@ object PictureShare {
     }
 
     /** "Del", step two (main thread): `ACTION_SEND` with a read grant on our `FileProvider` URI (not exported) - the
-     * grant lasts as long as the receiving screen, the file an hour. */
+     * grant lasts as long as the receiving screen, the file an hour. The sheet offers only the apps the parent allows
+     * ([shareExclusions], code QA of step 2, L6): every other resolved target is left out, and so is the system's
+     * nearby share (Quick Share), Bluetooth among them. The chooser's own "Copy" stays (our app's clipboard); its
+     * "Edit" opens the system's image editor, which lock task blocks while kiosk is on (a step 0 check on the phone). */
     fun share(activity: Activity, file: File) {
         val uri = FileProvider.getUriForFile(activity, authority(activity), file)
         val send = Intent(Intent.ACTION_SEND)
@@ -99,11 +102,32 @@ object PictureShare {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         // The chooser hands the grant on only through the clip.
         send.clipData = ClipData.newRawUri(null, uri)
+        val chooser = Intent.createChooser(send, activity.getString(R.string.picture_share_title))
+        excluded(activity, send).takeIf { it.isNotEmpty() }?.let { chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, it.toTypedArray()) }
         try {
-            activity.startActivity(Intent.createChooser(send, activity.getString(R.string.picture_share_title)))
+            activity.startActivity(chooser)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "No share sheet: ${e.javaClass.simpleName}")
         }
+    }
+
+    /** The targets [send] resolves to that the parent doesn't allow ([shareExclusions] over the contact sheet's
+     * [com.kidslauncher.mdm.calls.ContactSheet.usablePackages]: installed, not suspended, on the allowlist). */
+    private fun excluded(activity: Activity, send: Intent): List<android.content.ComponentName> {
+        val usable = com.kidslauncher.mdm.calls.ContactSheet.usablePackages(activity)
+        val resolved = try {
+            activity.packageManager.queryIntentActivities(send, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+                .map { it.activityInfo.packageName to android.content.ComponentName(it.activityInfo.packageName, it.activityInfo.name).flattenToString() }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val nearby = try {
+            android.provider.Settings.Secure.getString(activity.contentResolver, "nearby_sharing_component")
+                ?.let(android.content.ComponentName::unflattenFromString)?.let { it.packageName to it.flattenToString() }
+        } catch (e: Exception) {
+            null
+        }
+        return shareExclusions(resolved, nearby, usable).mapNotNull(android.content.ComponentName::unflattenFromString)
     }
 
     /** The share copies older than [SHARE_KEEP_MS] go (at every share, every picture opened, every sync). */

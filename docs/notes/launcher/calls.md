@@ -155,8 +155,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   text again with a new `clientId` and deletes the failed message once accepted - refused, it stays).
 - **Screens (`ui/messages/`, XML views, Dagen's ground and header):** `MessagesActivity` (the list; "Ny melding" as the
   header's action while `composeState` would send; long-press or TalkBack's "Slett samtale" asks in the screen),
-  `ThreadActivity` (bubbles - received on the tile surface, the kid's in `kid_message_out`, the peach tint - with day
-  separators and times in the one clock format, "Ukjent avsender" over a callback-window message, the delivery line;
+  `ThreadActivity` (bubbles - received in `kid_message_in` (#34324A, the user's D2), the kid's in `kid_message_out`
+  (the accent peach, dark ink), each time in its bubble's dim tone - with day separators and times in the one clock
+  format, "Ukjent avsender" over a callback-window message, the delivery line;
   long-press or TalkBack's "Slett" asks "Slette meldingen?"; the compose bar or its line), `PictureActivity` (fit to
   screen, "Lagre" into `Pictures/Vibb One/` through MediaStore with a name that says nothing, "Del" through
   `PictureShare`: a copy in `cacheDir/share/` behind the not-exported `FileProvider` `${applicationId}.share`, deleted
@@ -185,3 +186,11 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   width, the picture glyph) until `engine.openPart` gives its bytes, then the thumbnail (`SmsPictures`, our own JPEG,
   decoded off the main thread); a tap opens `PictureActivity`. Today `Message.parts` is always empty and `openPart` is
   `null`, so no picture shows anywhere yet.
+- **Fix round after the code QA (`docs/review/qa-sms-screens.md`):** "Prøv igjen" sends under `retry:<failed id>` (two
+  taps send once) and only while the compose bar is open; the contact avatars' badge is missed calls plus unread
+  messages (`ContactBadge`, `SmsHome.unreadFrom`, Home, the phone book, the sheet); the notification lets the system add
+  no contextual actions; the engine's live flow is a drop-oldest change signal collected off the engine thread, and the
+  screens coalesce their reads (`Coalescer`, the thread reads its one conversation); the time-rule row and the tile
+  follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
+  parent didn't allow and the nearby share (`shareExclusions`); the history-only tile reads "Meldingslogg"; drafts never
+  go into the saved state.
