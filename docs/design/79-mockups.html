@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telefonboka som liste</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap">
+<style>
+/* Design 79, revision 2. The phones are the Jelly Star at its real size: 320 x 569 dp, 1 px = 1 dp at font scale 1.0,
+   16 dp page sides, so 288 dp of content. A neutral dark page around them. */
+:root { --page:#18181e; --label:#a3a3ae; --fg:#ececf1; --hair:#34343f; --peach:#F0A884; color-scheme: dark; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--fg); font-family:Nunito, system-ui, sans-serif;
+  padding-block:28px 64px; padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width:1100px; margin:0 auto; display:grid; gap:44px; }
+header { display:grid; gap:6px; max-width:72ch; }
+.kicker { text-transform:uppercase; letter-spacing:.12em; font-size:12px; font-weight:800; color:var(--peach); }
+h1 { margin:0; font-size:clamp(26px,4vw,36px); font-weight:800; line-height:1.1; text-wrap:balance; }
+h2 { margin:0; font-size:20px; font-weight:800; }
+p { margin:0; } .note { color:var(--label); font-size:15px; line-height:1.5; }
+section { display:grid; gap:16px; }
+.row { display:flex; flex-wrap:wrap; gap:28px 24px; align-items:flex-start; }
+figure { margin:0; width:320px; max-width:100%; display:grid; gap:10px; }
+figcaption { font-size:13px; color:var(--label); line-height:1.45; } figcaption b { color:var(--fg); }
+.phone { position:relative; width:320px; height:569px; max-width:100%; overflow:hidden; border-radius:18px; box-shadow:0 0 0 1px var(--hair); }
+.tag { display:inline-block; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#0C0C14; background:var(--peach); border-radius:6px; padding:2px 7px; margin-right:6px; }
+.tag.b { background:#9FC3E3; }
+
+/* grounds */
+.kid { background:#0C0C14; color:#fff; }
+.wall { background:linear-gradient(160deg,#3a3358 0%,#1f2a48 45%,#24324a 70%,#0f1424 100%); }
+.wall-photo { background:
+  radial-gradient(120px 90px at 70% 18%, rgba(255,214,150,.6), transparent 70%),
+  radial-gradient(160px 140px at 20% 60%, rgba(120,190,170,.5), transparent 70%),
+  linear-gradient(170deg,#7a9ab3 0%,#557474 40%,#2f3f37 75%,#1a221e 100%); }
+
+/* status bar 24, header 56 */
+.bar { height:24px; padding:5px 16px; font-size:12px; font-weight:700; }
+.hd { height:56px; display:flex; align-items:center; gap:8px; padding:0 16px 0 14px; }
+.bk { width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,.12); display:grid; place-items:center; flex:none; }
+.tt { font-size:24px; font-weight:800; flex:1; text-shadow:0 1px 3px rgba(0,0,0,.35); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.plus { width:40px; height:40px; border-radius:50%; background:#F0A884; display:grid; place-items:center; flex:none; }
+.act { font-size:15px; font-weight:800; color:#F0A884; }
+
+.page { position:absolute; left:16px; right:16px; top:80px; bottom:0; display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-content:start; }
+
+/* the search pill (44) and B's star button */
+.sline { display:flex; gap:8px; align-items:center; }
+.search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:44px; border-radius:22px; background:#1B1B28; padding:0 6px 0 14px; font-size:16px; font-weight:700; color:rgba(251,228,220,.78); }
+.search.on { color:#fff; box-shadow:inset 0 0 0 1.5px rgba(240,168,132,.5); }
+.search .q { flex:1; white-space:nowrap; overflow:hidden; } .caret { display:inline-block; width:2px; height:18px; background:#F0A884; vertical-align:-3px; margin-left:1px; }
+.x { width:32px; height:32px; border-radius:50%; background:rgba(255,255,255,.1); display:grid; place-items:center; flex:none; }
+.starbtn { width:44px; height:44px; border-radius:50%; background:#1B1B28; display:grid; place-items:center; flex:none; }
+.starbtn.on { background:#F0A884; }
+.count { font-size:12px; font-weight:700; color:rgba(255,255,255,.75); padding:0 6px; text-shadow:0 1px 2px rgba(0,0,0,.5); margin-top:-2px; }
+.wline { font-size:13px; font-weight:800; color:rgba(255,255,255,.8); padding:2px 6px 0; text-shadow:0 1px 2px rgba(0,0,0,.5); }
+.wline span { color:#F0A884; }
+.lbl { font-size:13px; font-weight:800; color:rgba(255,255,255,.78); padding:6px 4px 0; text-shadow:0 1px 2px rgba(0,0,0,.45); }
+
+/* the row at the spec's sizes: 10 start, 44 avatar, 10 gap, text, 96 of targets, 0 end */
+.crow { display:flex; align-items:center; background:#1B1B28; border-radius:18px; padding:8px 0 8px 10px; min-height:64px; }
+.av { position:relative; width:44px; height:44px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:18px; color:#1B1B28; flex:none; background-size:cover; background-position:center; }
+.av.em { background:#3A1E24; color:#FF8A8A; box-shadow:inset 0 0 0 2px #FF8A8A; }
+.bdg { position:absolute; right:-5px; top:-5px; min-width:20px; height:20px; padding:0 5px; border-radius:10px; background:#B4532C; color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; gap:2px; box-shadow:0 0 0 2px #1B1B28; }
+.tx { flex:1; min-width:0; margin-left:10px; }
+.tx b { font-size:16px; font-weight:800; display:block; line-height:1.3; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.tx small { font-size:13px; font-weight:700; line-height:1.3; color:rgba(251,228,220,.78); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.tx small .r, .tx small.r { color:#FF8A8A; }
+.hl { color:#F0A884; }
+.btns { display:flex; flex:none; }
+.t { width:48px; height:48px; display:grid; place-items:center; }
+.d { width:38px; height:38px; border-radius:50%; background:rgba(255,255,255,.08); display:grid; place-items:center; }
+.d.em { background:#3A1E24; }
+.d svg { width:18px; height:18px; }
+.crow.wait { box-shadow:inset 0 0 0 1.5px rgba(240,168,132,.45); }
+.crow.wait .av { background-color:#2A2A3A; color:#F0A884; }
+.crow.answer .av { background:#2A2A3A; color:rgba(251,228,220,.78); }
+.crow.answer, .crow.wait { padding-right:12px; }
+
+/* font scale 1.3: stacked */
+.fs13 .tx b { font-size:20.8px; } .fs13 .tx small { font-size:16.9px; } .fs13 .av { width:44px; height:44px; font-size:23px; }
+.crow.stack { display:grid; grid-template-columns:44px 1fr; column-gap:10px; align-items:start; padding:10px 10px 4px 10px; }
+.crow.stack .tx { margin-left:0; padding-top:4px; }
+.crow.stack .btns { grid-column:2; margin-left:-5px; }
+.fs13 .tt { font-size:31px; } .fs13 .search { height:50px; font-size:20.8px; border-radius:25px; }
+
+/* A: the music app's category tiles as the bottom tabs */
+.tabs { position:absolute; left:0; right:0; bottom:0; padding:8px 16px 14px; background:#0C0C14; border-top:1px solid rgba(255,255,255,.1); display:flex; justify-content:space-around; }
+.tab { width:88px; display:grid; justify-items:center; gap:4px; }
+.tab .disc { position:relative; width:44px; height:44px; border-radius:50%; background:#1B1B28; box-shadow:inset 0 0 0 1px rgba(251,228,220,.25); display:grid; place-items:center; }
+.tab.on .disc { background:#F0A884; box-shadow:0 0 0 3px #FBE4DC; }
+.tab span { font-size:11px; font-weight:800; color:rgba(251,228,220,.72); }
+.tab.on span { color:#fff; }
+.tab .bdg { right:-6px; top:-6px; box-shadow:0 0 0 2px #0C0C14; }
+
+/* empty search */
+.empty { display:grid; justify-items:center; gap:10px; padding:28px 6px 0; text-align:center; }
+.empty .disc { width:72px; height:72px; border-radius:50%; background:#1B1B28; display:grid; place-items:center; }
+.empty b { font-size:18px; text-shadow:0 1px 3px rgba(0,0,0,.45); }
+.ghostbtn { min-height:48px; border-radius:24px; background:#1B1B28; color:#fff; display:inline-flex; align-items:center; gap:8px; padding:0 18px; font-size:15px; font-weight:800; }
+.ghostbtn i { width:22px; height:22px; border-radius:50%; background:#F0A884; display:grid; place-items:center; }
+.kb { position:absolute; left:0; right:0; bottom:0; height:230px; background:#1d1d24; display:grid; place-items:center; color:rgba(255,255,255,.35); font-size:13px; font-weight:700; border-top:1px solid #2a2a33; }
+
+/* Meldinger */
+.mrow { display:flex; align-items:center; gap:12px; background:#1B1B28; border-radius:18px; padding:8px 14px 8px 12px; min-height:64px; }
+.mrow .av { width:48px; height:48px; }
+.mrow .tx { margin-left:0; }
+.mrow .tm { font-size:12px; font-weight:700; color:rgba(251,228,220,.78); align-self:flex-start; padding-top:6px; display:grid; justify-items:end; gap:7px; }
+.dot { width:10px; height:10px; border-radius:50%; background:#F0A884; }
+
+/* the card */
+.dim { position:absolute; inset:0; background:rgba(0,0,0,.55); }
+.sheet { position:absolute; left:0; right:0; bottom:0; background:#1C1A2A; border-radius:26px 26px 0 0; padding:12px 16px 20px; display:grid; justify-items:center; }
+.handle { width:40px; height:5px; border-radius:3px; background:rgba(255,255,255,.22); }
+.star { position:absolute; right:8px; top:6px; width:48px; height:48px; display:grid; place-items:center; }
+.bigav { position:relative; width:132px; height:132px; border-radius:50%; margin-top:12px; background-size:cover; background-position:center; box-shadow:0 0 0 4px #9FC3E3; }
+.bigav.held::after { content:""; position:absolute; inset:0; border-radius:50%; background:rgba(0,0,0,.1); }
+.finger { position:absolute; width:46px; height:46px; border-radius:50%; background:rgba(255,255,255,.28); box-shadow:0 0 0 2px rgba(255,255,255,.55), 0 0 0 10px rgba(255,255,255,.12); }
+.bdg2 { position:absolute; right:2px; bottom:6px; height:30px; min-width:34px; padding:0 8px; border-radius:15px; background:#B4532C; color:#fff; font-size:15px; font-weight:800; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 3px #1C1A2A; }
+.sname { font-size:26px; font-weight:800; color:#FBE4DC; margin-top:12px; }
+.sline2 { font-size:15px; font-weight:700; color:rgba(251,228,220,.85); margin-top:2px; }
+.sbtns { display:flex; gap:10px; width:100%; margin-top:12px; }
+.sbtn { flex:1; height:72px; border-radius:18px; display:grid; place-items:center; align-content:center; gap:4px; font-size:15px; font-weight:800; }
+.sbtn.call { background:#29833B; color:#fff; } .sbtn.msg { background:rgba(255,255,255,.08); color:#FBE4DC; }
+.sclose { font-size:16px; font-weight:700; color:rgba(251,228,220,.78); margin-top:6px; padding:10px 20px; }
+
+/* the picture sheet */
+.psheet { position:absolute; left:0; right:0; bottom:0; background:#1C1A2A; border-radius:26px 26px 0 0; padding:12px 16px 18px; display:grid; gap:12px; justify-items:center; }
+.psheet h4 { margin:2px 0 0; font-size:20px; font-weight:800; color:#FBE4DC; }
+.card { width:100%; background:#262337; border-radius:18px; overflow:hidden; }
+.card .r { display:flex; align-items:center; gap:12px; padding:0 14px; min-height:56px; font-size:16px; font-weight:800; border-bottom:1px solid rgba(255,255,255,.1); }
+.card .r:last-child { border-bottom:0; }
+.card .r .ic { width:36px; height:36px; border-radius:50%; background:rgba(240,168,132,.16); display:grid; place-items:center; flex:none; }
+.card .r.quiet { color:rgba(251,228,220,.85); }
+.pnote { font-size:13px; font-weight:700; color:rgba(251,228,220,.78); text-align:center; }
+
+/* framing */
+.cropwrap { margin:4px 16px 0; position:relative; width:288px; height:288px; border-radius:6px; overflow:hidden; background-size:150%; background-position:42% 38%; }
+.cropwrap .veil { position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, transparent 0 49.4%, rgba(255,255,255,.7) 49.5% 49.9%, rgba(0,0,0,.58) 50%); }
+.fingers { position:absolute; width:28px; height:28px; border-radius:50%; background:rgba(255,255,255,.35); box-shadow:0 0 0 2px rgba(255,255,255,.6); }
+.crophint { text-align:center; font-size:14px; font-weight:700; color:rgba(251,228,220,.78); padding:12px 16px 0; }
+.btn { height:52px; border-radius:26px; background:#F0A884; color:#0C0C14; display:grid; place-items:center; font-size:17px; font-weight:800; }
+.btn.ghost { background:transparent; color:rgba(251,228,220,.85); height:44px; }
+
+/* request form */
+.field { display:grid; gap:5px; }
+.field span { font-size:13px; font-weight:700; color:rgba(251,228,220,.78); padding-left:4px; }
+.field div { background:#1B1B28; border-radius:16px; height:48px; padding:13px 14px; font-size:16px; font-weight:600; }
+.field div.ph { color:rgba(251,228,220,.5); }
+.reqpic { display:grid; justify-items:center; gap:6px; }
+.reqpic .c { position:relative; width:76px; height:76px; border-radius:50%; background-size:cover; background-position:center; }
+.reqpic small { font-size:13px; font-weight:700; color:rgba(251,228,220,.78); }
+
+.callout { border-left:3px solid var(--peach); padding:4px 0 4px 14px; max-width:72ch; display:grid; gap:8px; }
+.callout b { color:var(--fg); }
+
+/* stand-in photos (no real people) */
+.p-mamma { background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><radialGradient id='g' cx='.3' cy='.25' r='.9'><stop offset='0' stop-color='%23f5d6b8'/><stop offset='.55' stop-color='%23c48a6a'/><stop offset='1' stop-color='%23704a3e'/></radialGradient></defs><rect width='100' height='100' fill='url(%23g)'/><circle cx='50' cy='40' r='17' fill='%23efc3a0'/><path d='M22 100 C24 70 38 62 50 62 C62 62 76 70 78 100 Z' fill='%234a6e8c'/><path d='M31 42 C30 22 44 16 52 18 C66 19 72 30 69 46 C66 36 60 30 50 30 C40 30 35 36 31 42 Z' fill='%23593b2c'/></svg>"); }
+.p-mamma2 { background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%239bc4d8'/><stop offset='1' stop-color='%233c6b5d'/></linearGradient></defs><rect width='100' height='100' fill='url(%23g)'/><circle cx='80' cy='18' r='9' fill='%23fff3c4' opacity='.8'/><circle cx='47' cy='43' r='15' fill='%23e7b896'/><path d='M20 100 C22 72 35 64 47 64 C60 64 72 72 75 100 Z' fill='%23d06b55'/><path d='M30 46 C28 27 40 22 49 23 C62 24 66 34 64 50 C61 40 56 34 47 34 C39 34 34 40 30 46 Z' fill='%23382620'/></svg>"); }
+.p-lina { background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23a7c7e7'/><stop offset='1' stop-color='%23577a5c'/></linearGradient></defs><rect width='100' height='100' fill='url(%23g)'/><circle cx='50' cy='42' r='16' fill='%23f0c8a8'/><path d='M22 100 C24 71 37 63 50 63 C63 63 76 71 78 100 Z' fill='%23e3a33b'/><path d='M34 38 C34 26 44 22 52 23 C62 24 67 30 66 40 C60 33 44 32 34 38 Z' fill='%23c9a06a'/></svg>"); }
+.p-pappa { background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><radialGradient id='g' cx='.7' cy='.2' r='1'><stop offset='0' stop-color='%23e9e2c9'/><stop offset='1' stop-color='%23686a52'/></radialGradient></defs><rect width='100' height='100' fill='url(%23g)'/><circle cx='50' cy='41' r='16' fill='%23e2b48f'/><path d='M22 100 C24 71 37 62 50 62 C63 62 76 71 78 100 Z' fill='%23395064'/><path d='M35 36 C36 26 44 23 51 23 C60 23 66 28 65 37 C58 31 44 31 35 36 Z' fill='%236b4a34'/></svg>"); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-phone-f" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" fill="currentColor"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></g></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.2l2.6 5.5 6 .8-4.4 4.1 1.1 5.9L12 16.6 6.7 19.5l1.1-5.9L3.4 9.5l6-.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star-f" viewBox="0 0 24 24"><path d="M12 3.2l2.6 5.5 6 .8-4.4 4.1 1.1 5.9L12 16.6 6.7 19.5l1.1-5.9L3.4 9.5l6-.8z" fill="currentColor"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></g></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c.6-4 3.6-6 7.5-6s6.9 2 7.5 6z"/></g></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-pic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 2-2 5 5"/><circle cx="15.5" cy="9.5" r="1.5"/></g></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.4"/></g></symbol>
+  <symbol id="i-missed" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" fill="currentColor"/></symbol>
+</svg>
+
+<main>
+<header>
+  <span class="kicker">Telefonboka · design 79, revisjon 3</span>
+  <h1>Telefonboka som liste</h1>
+  <p class="note">Slik du valgte: én liste uten filter, bare søk. Usette tapte anrop først, så alle A–Å. Et tapt anrop regnes som sett når barnet har vært inne i telefonboka og sett det; neste gang står kontakten på sin vanlige plass. Raden har Ring og Melding på høyre side; et trykk ellers åpner kontaktkortet. Telefonene er tegnet i Jelly Stars faktiske størrelse (320 × 569 dp).</p>
+</header>
+
+<section>
+  <header><h2>Telefonboka</h2><p class="note">Én liste. Kontakter med usette tapte anrop først, nyeste først. Så alle A–Å. Ingen overskrifter, ingen filter - bare søk.</p></header>
+  <div class="row">
+
+<figure><div class="phone kid wall">
+  <div class="bar">14:32</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span><span class="plus"><svg width="20" height="20" color="#0C0C14"><use href="#i-plus"/></svg></span></div>
+  <div class="page">
+    <div class="search"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">Søk</span></div>
+    <div class="crow answer"><span class="av">K</span><span class="tx"><b>Kim</b><small>Ikke lagt til</small></span></div>
+    <div class="crow"><span class="av p-pappa"><span class="bdg"><svg width="9" height="9" color="#fff"><use href="#i-missed"/></svg>2</span></span><span class="tx"><b>Pappa</b><small class="r">2 tapte anrop 14:02</small></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#C9B3DE">O<span class="bdg"><svg width="9" height="9" color="#fff"><use href="#i-missed"/></svg>1</span></span><span class="tx"><b>Ola</b><small class="r">Tapt anrop i går</small></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av em">A</span><span class="tx"><b>Ambulanse</b><small>Nødnummer</small></span><span class="btns"><span class="t"><span class="d em"><svg color="#FF8A8A"><use href="#i-phone"/></svg></span></span><span class="t"></span></span></div>
+    <div class="crow"><span class="av" style="background:#E3CF9A">A</span><span class="tx"><b>Anna</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestemor</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av p-mamma"><span class="bdg">2</span></span><span class="tx"><b>Mamma</b><small>2 uleste meldinger</small></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+  </div>
+</div><figcaption><b>Med usette tapte anrop.</b> Pappa og Ola står først, med rød linje og merke - Pappa først fordi hans anrop er nyest. Så alle A–Å. Et svar på en forespørsel («Ikke lagt til») står øverst én gang; åpne forespørsler står helt nederst under «Venter på svar».</figcaption></figure>
+
+<figure><div class="phone kid wall">
+  <div class="bar">16:10</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span><span class="plus"><svg width="20" height="20" color="#0C0C14"><use href="#i-plus"/></svg></span></div>
+  <div class="page">
+    <div class="search"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">Søk</span></div>
+    <div class="crow"><span class="av em">A</span><span class="tx"><b>Ambulanse</b><small>Nødnummer</small></span><span class="btns"><span class="t"><span class="d em"><svg color="#FF8A8A"><use href="#i-phone"/></svg></span></span><span class="t"></span></span></div>
+    <div class="crow"><span class="av" style="background:#E3CF9A">A</span><span class="tx"><b>Anna</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestemor</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av p-mamma"><span class="bdg">2</span></span><span class="tx"><b>Mamma</b><small>2 uleste meldinger</small></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#C9B3DE">O</span><span class="tx"><b>Ola</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av p-pappa"></span><span class="tx"><b>Pappa</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#E8B49A">S</span><span class="tx"><b>Sofie Østby</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+  </div>
+</div><figcaption><b>Neste gang telefonboka åpnes.</b> Barnet har vært inne og sett anropene, så de regnes som sett: Pappa og Ola står på sin plass A–Å, uten rød linje og uten merke - også på Hjem-skjermen. Mens barnet ser på lista flytter ingenting seg.</figcaption></figure>
+
+<figure><div class="phone kid wall fs13">
+  <div class="bar">14:33</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span><span class="plus"><svg width="20" height="20" color="#0C0C14"><use href="#i-plus"/></svg></span></div>
+  <div class="page">
+    <div class="sline"><div class="search"><svg width="22" height="22"><use href="#i-search"/></svg><span class="q">Søk</span></div></div>
+    <div class="crow stack"><span class="av p-pappa"><span class="bdg">2</span></span><span class="tx"><b>Pappa</b><small class="r">2 tapte anrop i går</small></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow stack"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestemor</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow stack"><span class="av" style="background:#9FC3E3">T</span><span class="tx"><b>Trener Kari</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span></span></div>
+  </div>
+</div><figcaption><b>Stor tekst (1,3).</b> Fra skriftstørrelse 1,3 får knappene sin egen linje under navnet, så verken navnet eller den røde linjen blir kuttet.</figcaption></figure>
+
+  </div>
+</section>
+
+<section>
+  <header><h2>Søk</h2><p class="note">Som i musikkappen: lista filtrerer mens barnet skriver. Bare navn. «o» finner også «ø». Feltet åpner ikke tastaturet av seg selv.</p></header>
+  <div class="row">
+
+<figure><div class="phone kid wall">
+  <div class="bar">14:35</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span><span class="plus"><svg width="20" height="20" color="#0C0C14"><use href="#i-plus"/></svg></span></div>
+  <div class="page">
+    <div class="sline"><div class="search on"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">o<span class="caret"></span></span><span class="x"><svg width="16" height="16" color="#fff"><use href="#i-x"/></svg></span></div></div>
+    <div class="count">4 treff</div>
+    <div class="crow"><span class="av" style="background:#C9B3DE">O</span><span class="tx"><b><span class="hl">O</span>la</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#E8B49A">Ø</span><span class="tx"><b><span class="hl">Ø</span>rjan</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"></span></span></div>
+    <div class="crow"><span class="av" style="background:#E3CF9A">S</span><span class="tx"><b>Sofie <span class="hl">Ø</span>stby</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+    <div class="crow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestem<span class="hl">o</span>r</b></span><span class="btns"><span class="t"><span class="d"><svg color="#7FC28F"><use href="#i-phone"/></svg></span></span><span class="t"><span class="d"><svg color="#F0A884"><use href="#i-msg"/></svg></span></span></span></div>
+  </div>
+  <div class="kb">tastatur</div>
+</div><figcaption><b>Søk i bruk.</b> Først navn som begynner med «o», så et ord i navnet, så resten - A–Å innen hver. Treffet er fersken. × tømmer; Tilbake tømmer først. Åpne forespørsler søkes også, så «Lina» finner ventende Lina.</figcaption></figure>
+
+<figure><div class="phone kid wall-photo">
+  <div class="bar">14:36</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span><span class="plus"><svg width="20" height="20" color="#0C0C14"><use href="#i-plus"/></svg></span></div>
+  <div class="page">
+    <div class="sline"><div class="search on"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">Jonas<span class="caret"></span></span><span class="x"><svg width="16" height="16" color="#fff"><use href="#i-x"/></svg></span></div></div>
+    <div class="empty"><span class="disc"><svg width="30" height="30" color="#F0A884"><use href="#i-search"/></svg></span><b>Fant ingenting</b><span class="ghostbtn"><i><svg width="14" height="14" color="#0C0C14"><use href="#i-plus"/></svg></i>Be om å legge til «Jonas»</span></div>
+  </div>
+  <div class="kb">tastatur</div>
+</div><figcaption><b>Fant ingenting.</b> Knappen åpner forespørselen med navnet fylt inn - bare når ingenting treffer (heller ikke en ventende forespørsel), fra to bokstaver, og ikke for bare tall. Lyst fotobakgrunnsbilde: flatene er like lesbare.</figcaption></figure>
+
+  </div>
+</section>
+
+<section>
+  <header><h2>Meldinger med søk</h2><p class="note">Samme felt. Søker bare i navn, ikke i meldingstekst. Vises fra 8 samtaler.</p></header>
+  <div class="row">
+
+<figure><div class="phone kid">
+  <div class="bar">14:37</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Meldinger</span><span class="act">Ny melding</span></div>
+  <div class="page">
+    <div class="search"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">Søk etter navn</span></div>
+    <div class="mrow"><span class="av p-pappa"></span><span class="tx"><b>Pappa</b><small style="-webkit-line-clamp:1">Hentes du etter trening?</small></span><span class="tm">12:59<span class="dot"></span></span></div>
+    <div class="mrow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestemor</b><small style="-webkit-line-clamp:1">Du: Hei Bestemor!</small></span><span class="tm">12:55</span></div>
+    <div class="mrow"><span class="av p-mamma"></span><span class="tx"><b>Mamma</b><small style="-webkit-line-clamp:1">Du: Ja, kommer hjem nå</small></span><span class="tm">12:54</span></div>
+    <div class="mrow"><span class="av" style="background:#C9B3DE">O</span><span class="tx"><b>Ola</b><small>Bilde</small></span><span class="tm">I går</span></div>
+    <div class="mrow"><span class="av" style="background:#9FC3E3">T</span><span class="tx"><b>Trener Kari</b><small style="-webkit-line-clamp:1">Trening flyttes til 18</small></span><span class="tm">tir.</span></div>
+    <div class="mrow"><span class="av" style="background:#E8B49A">Ø</span><span class="tx"><b>Ørjan</b><small>Du: ok</small></span><span class="tm">man.</span></div>
+    <div class="mrow"><span class="av" style="background:#E3CF9A">A</span><span class="tx"><b>Anna</b><small>Takk!</small></span><span class="tm">4. nov.</span></div>
+  </div>
+</div><figcaption><b>Meldinger.</b> Feltet under overskriften; lista fortsetter nedover (8 samtaler eller flere).</figcaption></figure>
+
+<figure><div class="phone kid">
+  <div class="bar">14:37</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Meldinger</span><span class="act">Ny melding</span></div>
+  <div class="page">
+    <div class="search on"><svg width="18" height="18"><use href="#i-search"/></svg><span class="q">be<span class="caret"></span></span><span class="x"><svg width="16" height="16" color="#fff"><use href="#i-x"/></svg></span></div>
+    <div class="count">1 treff</div>
+    <div class="mrow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b><span class="hl">Be</span>stemor</b><small style="-webkit-line-clamp:1">Du: Hei Bestemor!</small></span><span class="tm">12:55</span></div>
+  </div>
+  <div class="kb">tastatur</div>
+</div><figcaption><b>Søk i bruk.</b> «be» finner Bestemor på navnet. «trening» finner ingenting - meldingsteksten søkes ikke.</figcaption></figure>
+
+  </div>
+</section>
+
+<section>
+  <header><h2>Kontaktkortet og barnets bilde</h2><p class="note">Ikke noe kamera på bildet lenger. Hold inne bildet på kortet for å bytte det. Bildet blir bare på telefonen - serveren og PWA-en ser det ikke.</p></header>
+  <div class="row">
+
+<figure><div class="phone kid wall">
+  <div class="bar">14:38</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span></div>
+  <div class="page"><div class="crow"><span class="av" style="background:#A9CDB0">B</span><span class="tx"><b>Bestemor</b></span></div><div class="crow"><span class="av p-mamma"></span><span class="tx"><b>Mamma</b></span></div></div>
+  <div class="dim"></div>
+  <div class="sheet">
+    <span class="handle"></span>
+    <span class="bigav p-mamma held"><span class="bdg2">2</span><span class="finger" style="left:44px;top:44px"></span></span>
+    <span class="sname">Mamma</span>
+    <span class="sline2">2 uleste meldinger</span>
+    <div class="sbtns">
+      <span class="sbtn call"><svg width="22" height="22" color="#fff"><use href="#i-phone-f"/></svg>Ring</span>
+      <span class="sbtn msg"><svg width="22" height="22" color="#F0A884"><use href="#i-msg"/></svg>Melding</span>
+    </div>
+    <span class="sclose">Lukk</span>
+  </div>
+</div><figcaption><b>Kontaktkortet.</b> Som i dag. Barnet holder inne bildet (fingeren): bildet mørkner litt og telefonen gir et lite rykk, så kommer valgene. Et vanlig trykk på bildet gjør ingenting, som i dag. TalkBack: handlingen «Endre bilde av Mamma».</figcaption></figure>
+
+<figure><div class="phone kid wall">
+  <div class="bar">14:38</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Telefonbok</span></div>
+  <div class="dim" style="background:rgba(0,0,0,.7)"></div>
+  <div class="psheet">
+    <span class="handle"></span>
+    <h4>Bilde av Mamma</h4>
+    <div class="card">
+      <div class="r"><span class="ic"><svg width="18" height="18" color="#F0A884"><use href="#i-pic"/></svg></span>Velg bilde</div>
+      <div class="r"><span class="ic"><svg width="18" height="18" color="#F0A884"><use href="#i-cam"/></svg></span>Ta bilde</div>
+      <div class="r quiet"><span class="ic" style="background:rgba(255,255,255,.08)"><svg width="16" height="16" color="#FBE4DC"><use href="#i-x"/></svg></span>Fjern bildet ditt</div>
+    </div>
+    <p class="pnote">Bildet blir bare på denne telefonen.</p>
+    <span class="sclose" style="margin-top:0">Avbryt</span>
+  </div>
+</div><figcaption><b>«Bilde av Mamma».</b> Et lite ark over kortet. «Ta bilde» bare med et kamera du har tillatt. «Fjern bildet ditt» bare når barnet har satt et; da kommer ditt bilde (eller forbokstaven) tilbake.</figcaption></figure>
+
+<figure><div class="phone kid">
+  <div class="bar">14:39</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Velg utsnitt</span></div>
+  <div class="cropwrap p-mamma2"><div class="veil"></div><span class="fingers" style="left:30%;top:62%"></span><span class="fingers" style="left:62%;top:30%"></span></div>
+  <p class="crophint">Dra og knip for å velge utsnittet</p>
+  <div style="padding:14px 16px 0;display:grid;gap:4px"><div class="btn">Bruk bildet</div><div class="btn ghost">Avbryt</div></div>
+</div><figcaption><b>Utsnittet.</b> Bildet fyller ruta; sirkelen viser det kortet og lista vil vise. Én finger flytter, to knip zoomer (inntil 3×). Ingen glidebryter, ingen rotering. Med TalkBack tar «Bruk bildet» midten.</figcaption></figure>
+
+  </div>
+</section>
+
+<section>
+  <header><h2>Forespørselen med bilde</h2><p class="note">«+» øverst i telefonboka som før. Bildet er valgfritt og blir på telefonen. Når du har lagt til kontakten i telefonboka, blir det barnets bilde av den; ellers slettes det.</p></header>
+  <div class="row">
+
+<figure><div class="phone kid">
+  <div class="bar">14:40</div>
+  <div class="hd"><span class="bk"><svg width="20" height="20" color="#fff"><use href="#i-back"/></svg></span><span class="tt">Be om ny kontakt</span></div>
+  <div class="page" style="gap:10px">
+    <div class="reqpic"><span class="c p-lina"></span><small>Hold inne for å bytte bilde</small></div>
+    <label class="field"><span>Navn</span><div>Lina</div></label>
+    <label class="field"><span>Nummer</span><div>412 34 567</div></label>
+    <label class="field"><span>Chat-ID (valgfritt)</span><div class="ph">@lina:eksempel.no</div></label>
+    <div class="btn" style="margin-top:2px">Send til mamma og pappa</div>
+  </div>
+</div><figcaption><b>Skjemaet med bilde.</b> Uten bilde står en tom sirkel med «Legg til bilde (valgfritt)», og et trykk på den åpner valgene. Med bilde: hold inne for å bytte. Etter «Send» kommer en rolig «Sendt», og Lina står under «Venter på svar» med bildet.</figcaption></figure>
+
+  </div>
+</section>
+
+<div class="callout">
+  <p class="note"><b>Bestemt (9. nov.):</b> én liste uten faner og uten favoritter - bare søk. Usette tapte anrop først, nyeste først, så A–Å. Sett = telefonboka har vist det (minst ett sekund på skjermen); det forsvinner fra toppen neste gang telefonboka åpnes, og merket på Hjem forsvinner samtidig. Søkefeltet fra 8 kontakter. Barnets bilder bare på telefonen; hold inne bildet for å bytte.</p>
+</div>
+</main>
+</body>
+</html>
