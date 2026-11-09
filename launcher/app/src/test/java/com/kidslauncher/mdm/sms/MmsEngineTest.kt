@@ -81,6 +81,7 @@ class MmsEngineTest {
     private val downloads = mutableListOf<Pair<String, String>>()
     private val sends = mutableListOf<Pair<String, ByteArray>>()
     private val answers = mutableListOf<ByteArray>()
+    private val discarded = mutableListOf<String>()
     private var downloadThrows = false
     private val mmsRadio = object : MmsRadio {
         override fun download(messageId: String, location: String, subId: Int?, maxBytes: Int) {
@@ -94,6 +95,10 @@ class MmsEngineTest {
 
         override fun answer(pdu: ByteArray, subId: Int?) {
             answers += pdu
+        }
+
+        override fun discardDownload(messageId: String) {
+            discarded += messageId
         }
     }
     private val files = object : PartFiles {
@@ -727,5 +732,59 @@ class MmsEngineTest {
         assertEquals(1, files.stored.size)
         engine.deleteConversation(ConversationId(shown.conversation.id), Origin.KID_SCREEN)
         assertTrue(files.stored.isEmpty())
+    }
+
+    // ---- the fix round's verification ----
+
+    @Test
+    fun `an unknown-operator MMS from a sender no longer allowed is dropped, not fetched, once the table knows the SIM (N-V3)`() {
+        table = emptyList()
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        assertEquals(MmsRow.MMSC_UNKNOWN, store.mms(id)!!.failure)
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        table = listOf(MmscRule(operator, listOf(host)))
+        assertTrue(mms.retryWaiting(dataOn = false))
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+        assertNull(store.message(id))
+    }
+
+    @Test
+    fun `a fetched message dropped before its parse takes its downloaded file with it (N-V3)`() {
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        assertTrue(mms.parseJobs().isEmpty())
+        assertEquals(listOf(id), discarded)
+        assertNull(store.message(id))
+    }
+
+    @Test
+    fun `a parse answered while the rules can't be read doesn't use up an attempt (N-V3)`() {
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        assertTrue(mms.beginParse(id).first)
+        assertEquals(1, store.mms(id)!!.crashes)
+        rules = null
+        assertNull(mms.onRetrieved(id, retrieved()))
+        assertEquals(0, store.mms(id)!!.crashes)
+        assertTrue(mms.awaitsParse(id))
+    }
+
+    @Test
+    fun `a released MMS whose push never settles expires after a week and frees its slot (N-V2)`() {
+        val held = (arrive(notification(from = "+4790000041/TYPE=PLMN")) as PushOutcome.Held).row
+        rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Ny", "+4790000041", smsIn = true))
+        engine.releasePass(emptyList())
+        assertEquals(1, store.pushes.size)
+        // Rules unknown for good: the push waits, the row stays held past its day.
+        rules = null
+        now += 2 * 24 * 60 * 60 * 1000L
+        engine.expire()
+        assertEquals(HeldState.HELD, store.held(held.id)!!.state)
+        now = held.at + SmsEngine.RELEASE_IN_TRANSIT_MS
+        engine.expire()
+        assertEquals(HeldState.EXPIRED, store.held(held.id)!!.state)
+        assertTrue(store.pushes.isEmpty())
     }
 }

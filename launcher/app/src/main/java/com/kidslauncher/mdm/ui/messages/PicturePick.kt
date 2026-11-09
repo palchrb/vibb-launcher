@@ -111,7 +111,16 @@ object PicturePick {
      * isolated process, its pixels back, our own JPEG under the carrier's limit ([PictureEncoder.sendLimit]), held by
      * the engine until a send takes it.
      */
-    fun prepare(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> {
+    fun prepare(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> = try {
+        prepareOrThrow(context, source, subId)
+    } catch (e: Exception) {
+        // Verification V1: whatever fails here fails the pick calmly - never the `sms-picture` thread, which would take
+        // the launcher (Home, the dialer, the Device Owner) with it.
+        Log.w(LOG_TAG, "The picked picture couldn't be made ready: ${e.javaClass.simpleName}")
+        null to Problem.UNREADABLE
+    }
+
+    private fun prepareOrThrow(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> {
         val app = context.applicationContext
         val bytes = try {
             when (source) {

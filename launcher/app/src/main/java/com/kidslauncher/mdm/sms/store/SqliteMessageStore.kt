@@ -535,13 +535,20 @@ class SqliteMessageStore(context: Context) : MessageStore {
         /** Each version adds its own steps, never drops the history. */
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) for (statement in VERSION_2) db.execSQL(statement)
+            if (oldVersion < 3) for (statement in VERSION_3) db.execSQL(statement)
         }
     }
 
     companion object {
         private const val LOG_TAG = "SmsStore"
         const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 2
+        private const val DB_VERSION = 3
+
+        /** Step 3b's code QA fix round (L2): whether an MMS was fetched deferred. Its own step (verification N-V1), so a
+         * development install of the first step 3b build, already at version 2, gains it too. */
+        private val VERSION_3 = listOf(
+            "ALTER TABLE mms ADD COLUMN deferred INTEGER NOT NULL DEFAULT 0",
+        )
 
         /** Step 3b: the MMS fetch's state machine (§6.4), whether a message is an MMS, the push's release and tries. */
         private val VERSION_2 = listOf(
@@ -551,7 +558,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
             "CREATE TABLE mms (message_id TEXT PRIMARY KEY, state TEXT NOT NULL, transaction_id TEXT NOT NULL, " +
                 "content_location TEXT NOT NULL, from_number TEXT NOT NULL, size INTEGER NOT NULL, expires_at INTEGER, " +
                 "mms_version INTEGER NOT NULL, sub_id INTEGER, tries INTEGER NOT NULL, requested_at INTEGER, " +
-                "crashes INTEGER NOT NULL, failure TEXT, notified INTEGER NOT NULL, deferred INTEGER NOT NULL DEFAULT 0)",
+                "crashes INTEGER NOT NULL, failure TEXT, notified INTEGER NOT NULL)",
             "CREATE INDEX mms_state ON mms (state)",
             "CREATE INDEX part_sha256 ON part (sha256)",
         )

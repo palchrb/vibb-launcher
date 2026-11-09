@@ -442,3 +442,103 @@ Checks: launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` 2291 
 unchanged in this round. The run also found a fault in `scripts/fake-mmsc.py` (its embedded test picture was
 truncated - the launcher showed what it could decode); the constant is now the real picture, pinned by its SHA-256 in
 the selftest.
+
+## Fix round verification
+
+By the reviewer, on `sms-mms` at a2c53603 (fix commits 36d9ecb4, a2c53603 on b06ac01d). Every finding was checked in the
+code, not only in the fix-round notes.
+
+**Fixed, and no new problem found:**
+- **M1** - The budget (`ParseWire.PictureBudget`: 4 pictures, 8 MP) is applied in the service, which checks room before
+  decoding and stops at the budget, and again in `parseRetrieve`, where an answer past it is out of protocol. The main
+  process holds only the descriptors and makes, encodes and recycles one bitmap at a time (`MmsRuntime.retrieved`; a
+  failure there becomes `Undecodable`). `beginParse` writes `crashes + 1` before the call, `DONE` resets it, and
+  `Unavailable` gives it back. So a main-process death counts, and the third start gives up.
+- **M2** - `senderNow` (D4 as of now) runs in `drainDownloads` before `DOWNLOADING`, in `parseJobs` and in
+  `onRetrieved`. A sender no longer allowed is dropped: placeholder, files, `MessageDeleted`, no answer. A waiting or
+  failed message reaches the check through `retryWaiting` and `retryDownload`, which only move it to `NOTIFIED`, so at
+  most one sync later. The callback window closing ends a stranger's fetch.
+- **M3** - The picker intent goes to a `MATCH_SYSTEM_ONLY` package with `FLAG_SYSTEM` (none: "not now").
+  `pickedUriAcceptable` takes only `content://` with an authority that isn't ours (user-qualified ones included). The
+  camera's file is read as a `File`.
+- **L1/L2** - The answer comes after the sender, From and group checks, and only for a kept message. An immediate
+  fetch gets NotifyResp(`retrieved`) with the notification's id; a released, waited or failed one gets Acknowledge.
+  The push key is kept until the push's own expiry (1-7 days), and early blocks and unparseable pushes (by their
+  bytes' hash) are deduplicated too.
+- **L3** - `bindIsolatedService` with a fresh `parse<n>` instance per call; the emulator log shows `:parse3/u0i3`.
+- **L4** - Nothing is mapped. The main process reads exactly `w*h*4` bytes with `Os.pread`, and a short read is out
+  of protocol. See the new finding V1 for the one gap.
+- **L5, L6, L7, L8, L9** - All as described. L9: the held row stays `held` with its push gone until `judgePush`
+  settles it (`released` only when shown); a parent's delete after the allow wins.
+- **L10** - `retryWaiting` (at each sync and each rule change) only moves `FAILED/mmsc_unknown` to `NOTIFIED`.
+  `drainDownloads` then judges the sender before anything is fetched, so a sender no longer allowed is dropped, not
+  fetched. Safe. The test doesn't cover that combination (N-V3).
+- **Migration** - v1 to v2 was run on the emulator from main 77671a37's step-2 store with SMS, a held SMS and two step-1
+  pushes: everything kept, and the pushes were judged after the upgrade (`docs/testing/emulator.md` §6v).
+- **Nits N1-N9** - done or written down where the review asked.
+
+**New in this round:**
+- **V1 (Low)** - `ErrnoException` from `Os.pread` escapes, and on the picker path it kills the launcher process.
+  - Where: `sms/parse/MmsParser.kt:147` (`Os.pread`), `:209-219` (`transact` catches `RemoteException`,
+    `WireMalformed` and `RuntimeException`), `:175` (`task.get`).
+  - Why: `android.system.ErrnoException` is a checked exception, not a `RuntimeException`. Thrown inside
+    `decodeImage`'s reader, it escapes `transact`, comes out of `task.get` as `ExecutionException`, and goes through
+    `call()` and `PicturePick.prepare`, which catch neither, onto the `sms-picture` executor thread. There
+    `Application`'s handler calls `exitProcess(1)`, which kills Home, the dialer and the Device Owner.
+  - Scenario: a parser compromised by the picked image itself (L3 keeps it to that one call) hands back a pipe or
+    socket fd. `pread` then fails with ESPIPE, and the launcher dies each time the kid picks that picture. A plainer
+    path: if `pread` on a real ashmem region fails on the Jelly Star's kernel (the emulator ran memfd-backed android-36),
+    every picture pick kills the launcher. On the retrieve path the same error is caught (`Undecodable`), so it only
+    affects the kid's own pick.
+  - Fix: catch `Exception` (or add `ErrnoException` and `java.io.IOException`) in `transact` and map it to `Crashed`.
+    Catch `ExecutionException` around `task.get` too. Add `pread` on Android 13 ashmem to step 0's device list.
+- **N-V1** - The `deferred` column was added to v2's `CREATE TABLE mms` without a version bump. That is right for
+  release phones, since v2 never shipped. A dev or emulator install of the first `sms-mms` build has a v2 store without
+  the column and fails on the first `mms` write until its data is wiped. Say so in emulator.md, or make the column a v3
+  step.
+- **N-V2** - A released held MMS whose push never settles (rules unknown for good, or the parse service unbindable)
+  stays `held` with no push. It never expires (expiry skips rows in transit) and holds a pool slot; `pending_push`
+  keeps its row (prune skips `held_id`). This is rare and holds no content. A last-resort expiry, e.g. 7 days in
+  transit, would close it.
+- **N-V3** - Small leftovers:
+  - A `DOWNLOADED` message dropped in `parseJobs` for its sender leaves its raw file in `no_backup/mms/in/` until the
+    day-old prune. Delete it with the drop.
+  - `onRetrieved`'s rare `WAIT` uses up one of the three parse attempts.
+  - There is no test that an `mmsc_unknown` MMS from a sender no longer allowed is dropped, not fetched, once the table
+    knows the SIM (the code is right, see L10).
+
+**Tests run** (`testDebugUnitTest -PwarningsAsErrors=true`, targeted, under the build lock, no emulator up):
+`MmsEngineTest`, `MmsGateTest`, `ParseWireTest`, `MmsParseBoundaryTest`, `DebugHookAbsentTest`, `KidScreensEscapeTest`,
+`MessagesModelTest`, `SmsEngineTest`: 111 tests, 0 failed.
+
+**Verdict:** M1-M3 and L1-L10 are fixed. One new Low is open (V1, a one-line fix to make before the device run),
+plus three nits.
+
+### Outcome of the verification items
+
+On `sms-mms` after a2c53603, by the builder.
+
+- **V1** - fixed. The pixel read is `ParseWire.readFully`: a short read, an end, or **any** exception the read throws
+  (`ErrnoException` from `Os.pread` is a checked one) is `WireMalformed`, so the call's answer is `Crashed`, never an
+  exception. Behind it, `MmsParser.transact` now catches `Exception` (checked ones included), `call` catches
+  `ExecutionException` around `task.get`, and `PicturePick.prepare` turns anything else into a calm "Dette bildet kan
+  ikke sendes" (`prepareOrThrow` inside a catch-all). Tests: `ParseWireTest`'s `a pixel read that fails - a checked
+  exception included - is out of protocol, never thrown on` (a reader throwing `IOException`, a checked exception like
+  `ErrnoException`, whose Android stub can't be built on the JVM; a short read; an unchecked throw), and
+  `MmsParseBoundaryTest` pins the three catches. "`pread` on the Jelly Star's ashmem" is on step 0's list (design §9
+  step 0, `calls.md`).
+- **N-V1** - fixed: `mms.deferred` is store version 3's own step (`ALTER TABLE mms ADD COLUMN deferred`), out of v2's
+  `CREATE TABLE`; a fresh store runs v1, v2 and v3 in order, and a development install of the first step 3b build
+  (v2 without the column) gains it.
+- **N-V2** - fixed: a released held MMS still in transit (its push not settled) expires `RELEASE_IN_TRANSIT_MS` (7
+  days) after its receipt - `expired`, its pool slot free, its waiting push deleted. Test: `a released MMS whose push
+  never settles expires after a week and frees its slot`.
+- **N-V3** - fixed: every drop of a fetched message (in `parseJobs`, or at its answer) asks the radio to discard the
+  downloaded file (`MmsRadio.discardDownload`, `MmsFileProvider.deleteDownload` on the phone); a `WAIT` at the answer
+  gives its parse attempt back. Tests: `an unknown-operator MMS from a sender no longer allowed is dropped, not fetched,
+  once the table knows the SIM`, `a fetched message dropped before its parse takes its downloaded file with it`, `a
+  parse answered while the rules can't be read doesn't use up an attempt`.
+
+Checks (no emulator): targeted `sms.*`, `ui.messages.*`, `KidScreensEscapeTest`, `DebugHookAbsentTest` - 189 tests, 0
+failed (`MmsEngineTest` 37, `ParseWireTest` 6); the full launcher `testDebugUnitTest -PwarningsAsErrors=true` - 2296
+tests, 0 failed. The server is unchanged.

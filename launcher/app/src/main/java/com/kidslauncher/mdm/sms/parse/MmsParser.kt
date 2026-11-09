@@ -141,12 +141,10 @@ object MmsParser {
      */
     internal fun bitmap(pixels: ParcelFileDescriptor, width: Int, height: Int): Bitmap {
         val size = ParseWire.pixelBytes(width, height, MmsParseProtocol.PICTURE_MAX_PX)
-        val bytes = ByteArray(size)
-        var done = 0
-        while (done < size) {
-            val n = android.system.Os.pread(pixels.fileDescriptor, bytes, done, size - done, done.toLong())
-            if (n <= 0) throw WireMalformed("pixels ended at $done of $size")
-            done += n
+        // Verification V1: a pread that fails (`ErrnoException`, a checked exception - e.g. a pipe instead of a region)
+        // is out of protocol like a short read, never an exception that escapes.
+        val bytes = ParseWire.readFully(size) { buffer, offset, length, position ->
+            android.system.Os.pread(pixels.fileDescriptor, buffer, offset, length, position)
         }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
@@ -176,6 +174,10 @@ object MmsParser {
             } catch (e: TimeoutException) {
                 task.cancel(true)
                 Log.w(LOG_TAG, "The parse service didn't answer in time")
+                Answer.Crashed
+            } catch (e: java.util.concurrent.ExecutionException) {
+                // Verification V1: whatever the call threw stays here - never onto the caller's thread.
+                Log.w(LOG_TAG, "The parse call failed: ${e.cause?.javaClass?.simpleName}")
                 Answer.Crashed
             }
         } finally {
@@ -213,7 +215,8 @@ object MmsParser {
         } catch (e: WireMalformed) {
             Log.w(LOG_TAG, "An answer out of protocol: ${e.message}")
             return Answer.Crashed
-        } catch (e: RuntimeException) {
+        } catch (e: Exception) {
+            // Checked ones included (verification V1: `ErrnoException`, `IOException`).
             Log.w(LOG_TAG, "An answer that couldn't be read: ${e.javaClass.simpleName}")
             return Answer.Crashed
         } finally {

@@ -50,6 +50,28 @@ object ParseWire {
     }
 
     /**
+     * Exactly [size] bytes through [read] (`pread`: buffer, offset, length, position -> bytes read). A short read, an
+     * end, or any exception the read throws - `ErrnoException` is a checked one (verification V1) - is out of protocol,
+     * [WireMalformed]; nothing else escapes.
+     */
+    fun readFully(size: Int, read: (ByteArray, Int, Int, Long) -> Int): ByteArray {
+        val bytes = ByteArray(size)
+        var done = 0
+        while (done < size) {
+            val n = try {
+                read(bytes, done, size - done, done.toLong())
+            } catch (e: WireMalformed) {
+                throw e
+            } catch (e: Exception) {
+                throw WireMalformed("pixels unreadable at $done of $size: ${e.javaClass.simpleName}")
+            }
+            if (n <= 0) throw WireMalformed("pixels ended at $done of $size")
+            done += n
+        }
+        return bytes
+    }
+
+    /**
      * Code QA M1: one message's pictures, bounded as a whole - at most [MAX_PICTURES] decoded, at most [MAX_PIXELS]
      * between them. The isolated service stops decoding at the bound (the rest are "not shown"); the main process
      * refuses an answer past it as out of protocol.

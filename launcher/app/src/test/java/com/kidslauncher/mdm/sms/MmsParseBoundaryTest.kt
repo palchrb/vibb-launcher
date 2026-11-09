@@ -84,8 +84,15 @@ class MmsParseBoundaryTest {
         val parser = code(file("java/com/kidslauncher/mdm/sms/parse/MmsParser.kt"))
         assertFalse(parser.contains("BitmapFactory") || parser.contains("ImageDecoder"))
         // Code QA L4: read with pread, exactly width x height x 4 bytes - never mapped.
-        assertTrue(parser.contains("android.system.Os.pread(pixels.fileDescriptor, bytes, done, size - done, done.toLong())"))
+        assertTrue(parser.contains("ParseWire.readFully(size) { buffer, offset, length, position ->"))
+        assertTrue(parser.contains("android.system.Os.pread(pixels.fileDescriptor, buffer, offset, length, position)"))
         assertTrue(parser.contains("bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))"))
+        // Verification V1: nothing a parse call throws escapes it - checked exceptions included.
+        val rawParser = file("java/com/kidslauncher/mdm/sms/parse/MmsParser.kt").readText()
+        assertTrue(rawParser.contains("} catch (e: Exception) {\n            // Checked ones included"))
+        assertTrue(rawParser.contains("} catch (e: java.util.concurrent.ExecutionException) {"))
+        val rawPick = file("java/com/kidslauncher/mdm/ui/messages/PicturePick.kt").readText()
+        assertTrue(rawPick.contains("prepareOrThrow(context, source, subId)\n    } catch (e: Exception) {"))
         assertFalse(parser.contains("mapReadOnly") || parser.contains("SharedMemory"))
         // The picked picture goes to the isolated process before anything reads it as an image.
         val pick = code(file("java/com/kidslauncher/mdm/ui/messages/PicturePick.kt"))

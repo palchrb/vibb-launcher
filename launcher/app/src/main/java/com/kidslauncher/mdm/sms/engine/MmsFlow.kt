@@ -30,6 +30,9 @@ interface MmsRadio {
     /** An answer to the MMSC (m-acknowledge-ind after a download), fire and forget. */
     fun answer(pdu: ByteArray, subId: Int?)
 
+    /** A fetched message was dropped before its parse: its downloaded file goes now (verification N-V3). */
+    fun discardDownload(messageId: String) {}
+
     object None : MmsRadio {
         override fun download(messageId: String, location: String, subId: Int?, maxBytes: Int) = throw IllegalStateException("no MMS")
         override fun send(messageId: String, pdu: ByteArray, subId: Int?) = throw IllegalStateException("no MMS")
@@ -433,7 +436,9 @@ class MmsFlow internal constructor(
         when (senderNow(m, judge)) {
             SenderNow.ALLOW -> Unit
             SenderNow.WAIT -> {
-                // Rules that can't be read: it stays fetched and is parsed again once they can.
+                // Rules that can't be read: it stays fetched and is parsed again once they can - and this parse doesn't
+                // count against its three (verification N-V3).
+                store.updateMms(m.copy(crashes = (m.crashes - 1).coerceAtLeast(0)))
                 dropUnheld(fetched)
                 return null
             }
@@ -580,6 +585,7 @@ class MmsFlow internal constructor(
     private fun drop(m: MmsRow, clean: CleanSender, fetched: List<String>) {
         val row = store.message(m.messageId)
         val held = store.parts(m.messageId).mapNotNull { it.sha256 }
+        if (m.state == MmsState.DOWNLOADED || m.state == MmsState.DOWNLOADING) radio.discardDownload(m.messageId)
         val seq = store.transaction {
             store.deleteMessageRow(m.messageId)
             engine.block(row?.at ?: clock(), KIND_MMS, clean, SmsEngine.REASON_RULE)

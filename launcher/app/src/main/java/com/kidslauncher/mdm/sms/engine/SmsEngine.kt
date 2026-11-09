@@ -326,12 +326,17 @@ class SmsEngine(
         var any = false
         store.transaction {
             for (row in store.heldRows()) {
-                // A held MMS on its way back through the pushes (released in time, push gone) isn't expired under it.
-                if (row.state == HeldState.HELD && HoldPolicy.expired(row, now) && !(row.mms && row.push == null)) {
-                    store.updateHeld(row.copy(state = HeldState.EXPIRED, body = null, push = null, reported = false))
-                    store.addCounter(COUNT_EXPIRED)
-                    any = true
-                }
+                if (row.state != HeldState.HELD) continue
+                // A held MMS on its way back through the pushes (released in time, push gone) isn't expired under it -
+                // unless its push never settles (rules unknown for good, the parse service unbindable): after
+                // [RELEASE_IN_TRANSIT_MS] it expires, frees its pool slot, and its push goes (verification N-V2).
+                val inTransit = row.mms && row.push == null
+                val due = if (inTransit) now >= row.at + RELEASE_IN_TRANSIT_MS else HoldPolicy.expired(row, now)
+                if (!due) continue
+                if (inTransit) store.pendingPushes().filter { it.heldId == row.id }.forEach { store.deletePendingPush(it.id) }
+                store.updateHeld(row.copy(state = HeldState.EXPIRED, body = null, push = null, reported = false))
+                store.addCounter(COUNT_EXPIRED)
+                any = true
             }
         }
         if (any) store.afterDeletes()
@@ -745,6 +750,9 @@ class SmsEngine(
         const val REASON_OVER_CAP = "over_cap"
         const val STATE_BLOCKED = "blocked"
         const val COUNT_SLOW_RECEIVES = "slow_receives"
+
+        /** Verification N-V2: a released MMS whose second judgement never comes expires this long after its receipt. */
+        const val RELEASE_IN_TRANSIT_MS = 7 * 24 * 60 * 60 * 1000L
 
         /** QA L6: a received message's identity is kept a day. */
         const val RECEIVED_KEEP_MS = 24 * 60 * 60 * 1000L

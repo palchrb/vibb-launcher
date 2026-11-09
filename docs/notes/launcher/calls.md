@@ -282,7 +282,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 - **Left for step 0 (the real phone):** the MMSC host table (`server/src/mmsc_hosts.rs`, empty: every MMS fails closed
   until then; `tests::the_table_is_well_formed` checks a new row's shape), each carrier's `From` and `X-Mms-Expiry`,
   the MMS maximum, whether the acknowledgement needs the content location as its URL (`MMS_CONFIG_NOTIFY_WAP_MMSC_ENABLED`),
-  a real round trip, HEIF/AVIF in the isolated process, the "MMS-meldinger" toggle, and the "Del" checks
+  a real round trip, HEIF/AVIF in the isolated process, `pread` of the pixels' region on the Jelly Star's kernel
+  (Android 13's ashmem - the emulator's android-36 ran memfd; a failing read only fails the picture, verification V1),
+  the "MMS-meldinger" toggle, and the "Del" checks
   (`docs/review/qa-sms-screens.md`, "Step 3b").
 - **Fix round after the code QA (`docs/review/qa-sms-mms.md`):**
   - one message's pictures are bounded as a whole (`ParseWire.PictureBudget`: four, 8 MP between them; past it "not

@@ -324,6 +324,8 @@ class PlatformMmsRadio(private val app: Context) : MmsRadio {
         manager(subId).sendMultimediaMessage(app, uri, null, null, result)
     }
 
+    override fun discardDownload(messageId: String) = MmsFileProvider.deleteDownload(app, messageId)
+
     private fun token(): String = ByteArray(16).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 

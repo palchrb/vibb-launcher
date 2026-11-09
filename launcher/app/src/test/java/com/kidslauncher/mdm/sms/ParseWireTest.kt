@@ -79,6 +79,23 @@ class ParseWireTest {
     }
 
     @Test
+    fun `a pixel read that fails - a checked exception included - is out of protocol, never thrown on (verification V1)`() {
+        // Exactly the bytes, in chunks.
+        val source = ByteArray(10) { it.toByte() }
+        val chunked = ParseWire.readFully(10) { buffer, offset, length, position ->
+            val n = minOf(length, 3)
+            System.arraycopy(source, position.toInt(), buffer, offset, n)
+            n
+        }
+        assertTrue(chunked.contentEquals(source))
+        // A short read, and a read that throws what `Os.pread` throws on a pipe: `ErrnoException` is a checked
+        // exception, as `IOException` is - both become WireMalformed, which the parse maps to a calm failure.
+        malformed { ParseWire.readFully(10) { _, _, _, position -> if (position == 0L) 4 else 0 } }
+        malformed { ParseWire.readFully(10) { _, _, _, _ -> throw java.io.IOException("ESPIPE (Illegal seek)") } }
+        malformed { ParseWire.readFully(10) { _, _, _, _ -> throw IllegalStateException("closed") } }
+    }
+
+    @Test
     fun `one message's pictures are bounded as a whole (code QA M1)`() {
         val budget = ParseWire.PictureBudget()
         repeat(ParseWire.MAX_PICTURES) { assertTrue(budget.take(1000, 1000)) }

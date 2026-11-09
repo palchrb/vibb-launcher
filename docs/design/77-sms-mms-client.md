@@ -1560,6 +1560,7 @@ risk.
      - whether each carrier's m-notification-ind carries `From`, and its `X-Mms-Expiry` (D16's window against it);
      - the carrier's MMS maximum (`getCarrierConfigValues`);
      - a real MMS round trip with a picture.
+     - `pread` of the isolated parse's pixel region on the Jelly Star's kernel (ashmem; step 3b's verification V1).
    - **Data:** the "MMS-meldinger" toggle with mobile data off.
    - **Other receivers:** every holder of `RECEIVE_SMS`, `RECEIVE_MMS` and `RECEIVE_WAP_PUSH`; denying GMS's and what
      breaks (§8.6); a Bluetooth MAP push to a non-contact.
