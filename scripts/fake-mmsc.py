@@ -17,6 +17,7 @@ The launcher only fetches from a host on its MMSC list (D10) on port 80, 443 or 
 on the list with the debug hook's `--es mmsc_host`.
 """
 import base64
+import hashlib
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -32,11 +33,28 @@ JPEG_B64 = (
     "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"
-    "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"
+    "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"
+    "xRiiii7CyDFGKKKLsLIMUYooouwsj//Z"
 )
+
+# The picture's SHA-256: the selftest checks the constant decodes to exactly these bytes.
+JPEG_SHA256 = "02858e03303f132f975fa00e93149c3cd3dcf68103f907c28abafbdf8cb93ab1"
 
 KID = "+4790000010"
 
@@ -173,6 +191,7 @@ def selftest():
     assert r[:2] == b"\x8c\x84" and r.count(b"\x97") >= 2 and b"\x84\xa3" in r
     picture = jpeg()
     assert picture[:3] == b"\xff\xd8\xff" and picture[-2:] == b"\xff\xd9" and b"Exif" not in picture
+    assert hashlib.sha256(picture).hexdigest() == JPEG_SHA256, "the embedded picture isn't the one made"
     assert r.endswith(b"hei") and picture in r
     assert send_conf()[:2] == b"\x8c\x81" and b"\x92\x80" in send_conf()
     assert uintvar(0) == b"\x00" and uintvar(127) == b"\x7f" and uintvar(128) == b"\x81\x00"

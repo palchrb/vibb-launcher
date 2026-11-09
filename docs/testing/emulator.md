@@ -2514,6 +2514,17 @@ The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080
   the text, "Sendt" under the bubble. "Ta bilde" opens the AVD's camera (`com.android.camera2`, the allowed camera
   app) in capture mode; Done brings the picture back as a preview, its file in `cache/capture/` deleted once read.
 - Screenshots of the run (en and nb) are in the session's `scratchpad/sms-mms/shots/`.
+- **The store's upgrade from step 1/2 (v1 -> v2, code QA test 9)**, 2026-11-09 after the fix round: main 77671a37's
+  build (step 2, store v1) installed, enrolled, an SMS from Mamma shown and a stranger's SMS held; two step-1 pushes
+  added to its v1 `pending_push` by hand (a contact's and a stranger's - the AVD can't deliver a WAP push; pull
+  `databases/messages.db`, insert, write it back under another name with `exec-in "run-as ... sh -c 'cat > ...'"`,
+  `mv` it over and remove the `-wal`/`-shm`), then this branch's build installed over it (`install -r`, data kept).
+  At its first open the store is version 2: the SMS and the held SMS are there, Mamma's push is judged (failed closed:
+  no MMSC list yet) and the stranger's held with its push. With the fake MMSC put on the list, the next sync fetched
+  Mamma's (code QA L10: an unknown-operator MMS is fetched once the list knows the SIM) and answered it with an
+  m-notifyresp-ind (type 0x83, L2). The parse ran in its own instance (`...MmsParseService:parse3/u0i3`, L3); the
+  "Velg bilde" picker was the system's (`com.google.android.photopicker`, M3), and the picture it sent matched the
+  source to JPEG noise (pixels read with `pread`, L4).
 - **Not on the AVD**: a real carrier's MMS service and MMSC, a real push, the platform's own byte stream into the
   provider (the stand-in writes it), HEIF/AVIF, the parse service dying on a crafted message (JVM tests:
   `MmsEngineTest`'s three deaths) - step 0 on the Jelly Star.

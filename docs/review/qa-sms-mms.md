@@ -432,4 +432,13 @@ On `sms-mms` after b06ac01d, by the builder. Every finding is fixed or answered;
 ### The missing tests
 
 1-6 and 10 are in `MmsEngineTest` (33 now), `MessagesModelTest` and `ParseWireTest`; 7 (the wire) and 8 (the provider's
-routes, `MmsFileRoutes`) in `ParseWireTest`; 9 (the v1-to-v2 migration on step-1/2 data) is an emulator run, below.
+routes, `MmsFileRoutes`) in `ParseWireTest`; 9 (the v1-to-v2 migration on step-1/2 data) is an emulator run:
+`docs/testing/emulator.md` §6v "step 3b", the store's upgrade - main 77671a37's build with an SMS, a held SMS and two
+step-1 pushes in its v1 store, this branch's installed over it: everything kept, the pushes judged after the upgrade,
+the contact's fetched once the MMSC list knew the SIM (L10), answered with a NotifyResp (L2), parsed in its own
+isolated instance (L3); the system picker (M3) and the pread pixels (L4) checked in the same run.
+
+Checks: launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` 2291 tests, 0 failed. The server is
+unchanged in this round. The run also found a fault in `scripts/fake-mmsc.py` (its embedded test picture was
+truncated - the launcher showed what it could decode); the constant is now the real picture, pinned by its SHA-256 in
+the selftest.
