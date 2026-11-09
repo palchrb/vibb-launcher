@@ -134,8 +134,11 @@
   .adv > .row .row-label { color: var(--tint); }
   .adv-body { margin: 0 0 6px 16px; border-radius: 12px; background: var(--bg); }
   .adv-body .mini { font-size: 12px; color: var(--label-2); text-transform: uppercase; letter-spacing: .03em; padding: 10px 16px 0; }
-  .val-custom { color: var(--orange-text); font-weight: 600; }
+  .val-custom { color: var(--label-2); }
   .mark { outline: 2px dashed var(--peach); outline-offset: -2px; border-radius: 12px; }
+  .link { color: var(--tint); font-size: 15px; }
+  .actions { display: flex; gap: 18px; padding: 0 16px 12px; margin-top: -4px; }
+  .actions span { color: var(--tint); font-size: 16px; }
   .cut { text-align: center; color: var(--label-2); font-size: 13px; padding: 6px 0 0; }
 </style>
 </head>
@@ -146,7 +149,9 @@
     <h1>Anrop og kontakter, enklere</h1>
     <p class="lead">Før og etter, 390 px, lyst og mørkt. Eksempelet er Emmas telefon med SMS «Styrt av Vibb». En kontakt får
       fire vanlige valg, og resten ligger under <b>Avansert</b>. Siden viser det som trenger en avgjørelse, og resten
-      ligger i én Avansert nederst.</p>
+      ligger i én Avansert nederst, også nødmenyen og den nye bryteren «Gruppemeldinger».
+      <b>Revisjon 2</b>: retningen står i kontaktlisten, «Bruk dette nummeret», «Lært fra en melding», en stille linje når
+      nummeret mangler, og RCS-steget under SMS mens det trengs.</p>
     <p class="note">«Før»-bildene er bygd opp fra <b>device_calls.html</b> på main (og fra step 6-grenen for «Legg til fra
       forespørsel»), ikke tatt fra en kjørende server. De stiplede rammene viser hva som er nytt.</p>
   </header>
@@ -156,7 +161,7 @@
     <div class="wrap-table">
     <table class="count">
       <tr><th></th><th>I dag</th><th>Etter (synlig)</th><th>Etter (under Avansert)</th></tr>
-      <tr><td>Siden</td><td>2 segmentvalg, 1 meny, 1 bryter, 2 nummerfelt, avsendernavn, nødmeny øverst</td><td>2 segmentvalg, nødmeny under kontaktene</td><td>1 meny, 1 bryter, 0-2 nummerfelt, avsendernavn</td></tr>
+      <tr><td>Siden</td><td>2 segmentvalg, 1 meny, 1 bryter, 2 nummerfelt, avsendernavn, nødmeny øverst</td><td>2 segmentvalg</td><td>nødmeny, 1 meny, 2 brytere (låseskjerm, gruppemeldinger), telefonens nummer (en rad med «Bruk dette nummeret», et felt bare når telefonen ikke vet), avsendernavn</td></tr>
       <tr><td>Grupper før kontaktene</td><td>4-5</td><td>1</td><td>-</td></tr>
       <tr><td>Én kontakt</td><td>6 brytere + 1 meny + 1 felt = 8</td><td>4 brytere</td><td>4 enveisbrytere + meldingsknapp</td></tr>
       <tr><td>Fem kontakter</td><td>40</td><td>20</td><td>-</td></tr>
@@ -171,19 +176,28 @@
   </section>
   <section class="shot" data-shot="a-page">
     <h2><span class="tag">Etter</span>Siden</h2>
-    <p class="note">Det som venter og forespørslene står øverst, så samtaler og SMS, kontaktene og nødmenyen. Avansert ligger
-      nederst og sier selv hva den inneholder. Den oransje linjen vises bare når telefonens nummer mangler.</p>
+    <p class="note">Det som venter og forespørslene står øverst, så samtaler og SMS, og så kontaktene. Under SMS: RCS-steget de første 14
+      dagene etter byttet, og en stille linje mens telefonens nummer mangler. Mormor viser retningen i listen. Avansert ligger
+      nederst og viser nødmenyen og alt som ikke er standard.</p>
   </section>
   <section class="shot" data-shot="a-page-adv">
     <h2><span class="tag">Etter</span>Sidens Avansert, åpnet</h2>
-    <p class="note">Telefonens nummer: SIM-kortet visste ikke nummeret sitt, så her er det ett felt. Når SIM-kortet vet nummeret,
-      står det her uten felt (se neste bilde). Chatfunksjoner (RCS) er flyttet hit etter at SMS er styrt.</p>
+    <p class="note">Nødmenyen ligger her (brukerens valg), og numrene står allerede på Avansert-raden. «Gruppemeldinger» er ny og står på
+      som i dag. Telefonens nummer: telefonen vet det ikke ennå (verken SIM-kortet eller en melding), så her er det ett felt.
+      Chatfunksjoner (RCS) kommer hit 14 dager etter byttet.</p>
   </section>
   <section class="shot" data-shot="a-page-adv-known">
     <h2><span class="tag">Etter</span>Sidens Avansert når SIM-kortet vet nummeret</h2>
-    <p class="note">Ingenting å skrive inn. Den oransje linjen på Avansert forsvinner.</p>
+    <p class="note">Ingenting å skrive inn. «Bruk dette nummeret» lagrer nummeret telefonen meldte, så det gjelder selv om SIM-kortet
+      senere ikke vet det. «Endre…» åpner feltet. Den oransje linjen forsvinner.</p>
   </section>
 
+  <section class="shot" data-shot="a-page-adv-learned">
+    <h2><span class="tag">Etter</span>Telefonens nummer lært fra en melding</h2>
+    <p class="note">SIM-kortet visste det ikke. Telefonen så nummeret sitt i en MMS fra Mamma som bare var sendt til Emma, og
+      bruker det for gruppemeldinger. Er det feil, retter du det med «Endre…». «Bruk dette nummeret» lagrer det for godt.
+      Under: en blokkert gruppemelding sier hvorfor.</p>
+  </section>
   <section class="shot" data-shot="b-contact">
     <h2><span class="tag before">Før</span>En kontakt, åpnet</h2>
     <p class="note">Seks brytere, meldingsknappen og et Matrix-ID-felt som alltid vises.</p>
@@ -194,8 +208,9 @@
   </section>
   <section class="shot" data-shot="a-contact-adv">
     <h2><span class="tag">Etter</span>En «Tilpasset» kontakt, Avansert åpen</h2>
-    <p class="note">Mormor kan ringe Emma, men Emma kan ikke ringe Mormor. Raden viser «Tilpasset» i stedet for en bryter som bare
-      er halvt sann, og Avansert er åpen med enveisbryterne. Siden endrer aldri kontakten av seg selv.</p>
+    <p class="note">Mormor kan ringe Emma, men Emma kan ikke ringe Mormor. Listeraden sier retningen («Anrop inn · Melding inn»).
+      I skjemaet er raden én linje, «Tilpasset», i stedet for en bryter som bare er halvt sann, og Avansert er åpen med
+      enveisbryterne. Siden endrer aldri kontakten av seg selv.</p>
   </section>
 
   <section class="shot" data-shot="b-add-request">
@@ -205,7 +220,7 @@
   <section class="shot" data-shot="a-add-request">
     <h2><span class="tag">Etter</span>Legg til fra en forespørsel</h2>
     <p class="note">Det samme skjemaet med fire valg og standardene fra §14: ringe og meldinger på, bilder og Hjem av. Matrix-ID-en
-      barnet foreslo, står fortsatt for seg og er ikke krysset av.</p>
+      barnet foreslo, står fortsatt for seg og er ikke krysset av. Krysses den av, åpner meldingsknappen Element X med den.</p>
   </section>
   <section class="shot" data-shot="a-add-held">
     <h2><span class="tag">Etter</span>«Opprett kontakt…» fra en melding som venter</h2>
@@ -305,7 +320,9 @@
         <span class="seg-sub">Bare kontaktene du har tillatt kan ringe og bli ringt.</span></div>
       <div class="row stack"><span class="row-label">SMS</span>
         <div class="seg"><span>Av</span><span class="on">Styrt av Vibb<small>anbefalt</small></span><span>Ikke styrt</span></div>
-        <span class="seg-sub">Bare kontaktene og avsendernavnene du har tillatt. Andre meldinger venter på deg.</span></div>
+        <span class="seg-sub">Bare kontaktene og avsendernavnene du har tillatt. Andre meldinger venter på deg.</span>
+        <span class="seg-sub">Slå av chatfunksjoner i Meldinger hvis du ikke har gjort det. <span class="info">i</span></span>
+        <span class="seg-sub mark" style="padding:2px 4px">Telefonens nummer mangler - gruppemeldinger blokkeres. <span class="link">Avansert ›</span></span></div>
     </div>
     <p class="group-footer">Når det styres, kan bare kontaktene nedenfor ringe eller sende meldinger. Nødnumre virker alltid. <span class="info">i</span></p>
 
@@ -313,15 +330,25 @@
     <div class="group group-avatars mark">
       <div class="cell"><div class="row"><span class="avatar">M</span><span class="row-label">Mamma<span class="row-sub">+47 900 11 222</span></span><span class="row-value">Anrop og meldinger<span class="row-sub">Hjem</span></span><span class="chev"></span></div></div>
       <div class="cell"><div class="row"><span class="avatar">P</span><span class="row-label">Pappa<span class="row-sub">+47 900 33 444</span></span><span class="row-value">Anrop og meldinger<span class="row-sub">Hjem</span></span><span class="chev"></span></div></div>
-      <div class="cell"><div class="row"><span class="avatar">M</span><span class="row-label">Mormor<span class="row-sub">+47 900 55 666</span></span><span class="row-value"><span class="val-custom">Tilpasset</span></span><span class="chev"></span></div></div>
+      <div class="cell"><div class="row"><span class="avatar">M</span><span class="row-label">Mormor<span class="row-sub">+47 900 55 666</span></span><span class="row-value">Anrop inn<span class="row-sub">Melding inn</span></span><span class="chev"></span></div></div>
       <div class="cell"><div class="row"><span class="avatar">S</span><span class="row-label">Sofie<span class="row-sub">+47 900 77 888</span></span><span class="row-value">Anrop og meldinger<span class="row-sub">uten bilder</span></span><span class="chev"></span></div></div>
       <div class="row row-button">Legg til kontakt</div>
       <div class="row row-button">Legg til fra familien</div>
     </div>
     <p class="group-footer">Navnet og bildet til en kontakt deles av alle telefoner med det nummeret.</p>
 
+    <div class="section-toggle mark"><div class="row"><span class="row-label">Avansert<span class="row-sub">Nødmeny: 112</span><span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span><span class="row-sub tone-orange">Telefonens nummer mangler - gruppemeldinger blokkeres</span></span><span class="chev"></span></div></div>
+  </div>
+</template>
+
+<!-- ======================================================================================== AFTER: the page's Avansert open -->
+<template id="a-page-adv">
+  <div class="status"></div>
+  <div class="ct">
+    <div class="cut">… samtaler og kontakter som over …</div>
+    <div class="section-toggle" style="margin-top:12px"><div class="row"><span class="row-label">Avansert<span class="row-sub">Nødmeny: 112</span><span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span><span class="row-sub tone-orange">Telefonens nummer mangler - gruppemeldinger blokkeres</span></span><span class="chev down"></span></div></div>
     <div class="group-header">Nødmeny</div>
-    <div class="group">
+    <div class="group mark">
       <div class="row"><span class="row-label"><b>112</b> Nødnummer<span class="row-sub">Først og størst på telefonen</span></span></div>
       <div class="row row-button">Legg til nummer…</div>
     </div>
@@ -331,23 +358,13 @@
       <div class="row"><span class="row-label"><b>113</b> Ambulanse<span class="row-sub">Nødnummer: virker alltid</span></span><span style="color:var(--tint)">Legg til</span></div>
       <div class="row"><span class="row-label"><b>110</b> Brann<span class="row-sub">Nødnummer: virker alltid</span></span><span style="color:var(--tint)">Legg til</span></div>
     </div>
-
-    <div class="section-toggle mark"><div class="row"><span class="row-label">Avansert<span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span><span class="row-sub tone-orange">Telefonens nummer mangler - gruppemeldinger blokkeres</span></span><span class="chev"></span></div></div>
-  </div>
-</template>
-
-<!-- ======================================================================================== AFTER: the page's Avansert open -->
-<template id="a-page-adv">
-  <div class="status"></div>
-  <div class="ct">
-    <div class="cut">… samtaler, kontakter og nødmeny som over …</div>
-    <div class="section-toggle" style="margin-top:12px"><div class="row"><span class="row-label">Avansert<span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span><span class="row-sub tone-orange">Telefonens nummer mangler - gruppemeldinger blokkeres</span></span><span class="chev down"></span></div></div>
     <div class="group-header">Meldinger</div>
-    <div class="group mark">
+    <div class="group">
       <div class="row"><span class="row-label">Meldingsknapp</span><span class="pick">SMS</span></div>
       <div class="row"><span class="row-label">Vis meldingstekst på låseskjermen</span><span class="sw"></span></div>
-      <div class="field"><span class="field-label">Telefonens nummer</span><span class="input ph">+47 …</span><p class="hint">SIM-kortet vet ikke nummeret sitt. Uten det blokkeres gruppemeldinger.</p></div>
-      <div class="row"><span class="row-label">Chatfunksjoner (RCS)<span class="row-sub">Slå av chatfunksjoner i Meldinger først.</span></span><span class="info">i</span></div>
+      <div class="row mark"><span class="row-label">Gruppemeldinger<span class="row-sub">Bare når alle andre i gruppen er kontakter med meldinger slått på, og telefonens nummer er kjent.</span></span><span class="sw on"></span></div>
+      <div class="field mark"><span class="field-label">Telefonens nummer</span><span class="input ph">+47 …</span><p class="hint">Telefonen vet ikke nummeret sitt ennå. Uten det blokkeres gruppemeldinger.</p></div>
+      <div class="row"><span class="row-label">Chatfunksjoner (RCS)<span class="row-sub">Slå av chatfunksjoner i Meldinger hvis du ikke har gjort det.</span></span><span class="info">i</span></div>
     </div>
     <p class="group-footer">Dette gjelder når SMS er styrt av Vibb.</p>
     <div class="group-header">Avsendernavn som slipper gjennom</div>
@@ -363,15 +380,38 @@
   <div class="status"></div>
   <div class="ct">
     <div class="cut">… som over …</div>
-    <div class="section-toggle" style="margin-top:12px"><div class="row"><span class="row-label">Avansert<span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span></span><span class="chev down"></span></div></div>
+    <div class="section-toggle" style="margin-top:12px"><div class="row"><span class="row-label">Avansert<span class="row-sub">Nødmeny: 112, 113</span><span class="row-sub">Meldingsknapp: SMS · 1 avsendernavn</span></span><span class="chev down"></span></div></div>
     <div class="group-header">Meldinger</div>
     <div class="group">
       <div class="row"><span class="row-label">Meldingsknapp</span><span class="pick">SMS</span></div>
       <div class="row"><span class="row-label">Vis meldingstekst på låseskjermen</span><span class="sw"></span></div>
-      <div class="row mark"><span class="row-label">Telefonens nummer<span class="row-sub">Fra SIM-kortet</span></span><span class="row-value">+47 912 34 000</span></div>
-      <div class="row"><span class="row-label">Chatfunksjoner (RCS)<span class="row-sub">Slå av chatfunksjoner i Meldinger først.</span></span><span class="info">i</span></div>
+      <div class="row"><span class="row-label">Gruppemeldinger</span><span class="sw on"></span></div>
+      <div class="cell mark"><div class="row"><span class="row-label">Telefonens nummer<span class="row-sub">Fra SIM-kortet</span></span><span class="row-value">+47 912 34 000</span></div>
+        <div class="actions"><span>Bruk dette nummeret</span><span>Endre…</span></div></div>
+      <div class="row"><span class="row-label">Chatfunksjoner (RCS)<span class="row-sub">Slå av chatfunksjoner i Meldinger hvis du ikke har gjort det.</span></span><span class="info">i</span></div>
     </div>
     <p class="group-footer">Dette gjelder når SMS er styrt av Vibb.</p>
+  </div>
+</template>
+
+<template id="a-page-adv-learned">
+  <div class="status"></div>
+  <div class="ct">
+    <div class="cut">… Avansert, åpnet …</div>
+    <div class="group-header">Meldinger</div>
+    <div class="group">
+      <div class="row"><span class="row-label">Meldingsknapp</span><span class="pick">SMS</span></div>
+      <div class="row"><span class="row-label">Vis meldingstekst på låseskjermen</span><span class="sw"></span></div>
+      <div class="row"><span class="row-label">Gruppemeldinger</span><span class="sw on"></span></div>
+      <div class="cell mark"><div class="row"><span class="row-label">Telefonens nummer<span class="row-sub">Lært fra en melding fra Mamma</span></span><span class="row-value">+47 912 34 000</span></div>
+        <div class="actions"><span>Bruk dette nummeret</span><span>Endre…</span></div></div>
+    </div>
+    <p class="group-footer">Dette gjelder når SMS er styrt av Vibb.</p>
+    <div class="group-header">Blokkerte meldinger (utdrag)</div>
+    <div class="group">
+      <div class="row mark"><span class="row-label">En gruppemelding med ukjente i<span class="row-sub">Bilde · i går 18:40</span><span class="row-sub">Gruppemeldinger er slått av</span></span></div>
+    </div>
+    <p class="group-footer">Eksempelet over viser grunnen når bryteren er av. Mens telefonens nummer mangler, står det «Mens telefonens nummer mangler, blokkeres alle gruppemeldinger».</p>
   </div>
 </template>
 
@@ -429,10 +469,10 @@
     <div class="cut">… Kontakter …</div>
     <div class="group group-avatars" style="margin-top:12px">
       <div class="cell">
-        <div class="row"><span class="avatar">M</span><span class="row-label">Mormor<span class="row-sub">+47 900 55 666</span></span><span class="row-value"><span class="val-custom">Tilpasset</span></span><span class="chev down"></span></div>
+        <div class="row"><span class="avatar">M</span><span class="row-label">Mormor<span class="row-sub">+47 900 55 666</span></span><span class="row-value">Anrop inn<span class="row-sub">Melding inn</span></span><span class="chev down"></span></div>
         <div class="body">
-          <div class="row mark"><span class="row-label">Kan ringe og ringes<span class="row-sub">Bare Mormor kan ringe Emma</span></span><span class="row-value val-custom">Tilpasset</span></div>
-          <div class="row mark"><span class="row-label">Kan sende og få meldinger<span class="row-sub">Bare Mormor kan sende melding til Emma</span></span><span class="row-value val-custom">Tilpasset</span></div>
+          <div class="row mark"><span class="row-label">Kan ringe og ringes</span><span class="row-value val-custom">Tilpasset</span></div>
+          <div class="row mark"><span class="row-label">Kan sende og få meldinger</span><span class="row-value val-custom">Tilpasset</span></div>
           <div class="row"><span class="row-label">Bilder i meldinger</span><span class="sw on"></span></div>
           <div class="row"><span class="row-label">På Hjem-skjermen<span class="row-sub">Vises når Emma kan ringe Mormor</span></span><span class="sw on"></span></div>
           <div class="adv"><div class="row"><span class="row-label">Avansert</span><span class="row-value val-custom">Tilpasset</span><span class="chev down"></span></div></div>
@@ -494,7 +534,7 @@
           <div class="row" style="padding-inline:4px"><span class="row-label">Bilder i meldinger</span><span class="sw"></span></div>
           <div class="row" style="padding-inline:4px"><span class="row-label">På Hjem-skjermen</span><span class="sw"></span></div>
         </div>
-        <div class="row" style="padding-inline:4px"><span class="row-label">Bruk Matrix-ID-en<span class="row-sub">Emma foreslo @ola:matrix.org. Hvem som helst kan stå bak en Matrix-ID: sjekk at det er riktig person før du bruker den.</span></span><span class="sw"></span></div>
+        <div class="row mark" style="padding-inline:4px"><span class="row-label">Bruk Matrix-ID-en<span class="row-sub">Emma foreslo @ola:matrix.org. Meldingsknappen åpner Element X med den. Hvem som helst kan stå bak en Matrix-ID: sjekk at det er riktig person.</span></span><span class="sw"></span></div>
         <div class="row" style="padding-inline:4px"><span class="row-label" style="color:var(--tint)">Avansert</span><span class="chev"></span></div>
         <div class="button-wide" style="margin-top:12px">Legg til kontakt</div>
       </div>
@@ -513,7 +553,7 @@
         <span class="field-label">Navn</span><span class="input ph"> </span>
         <span class="field-label">Telefonnummer</span><span class="input">+4798765432</span>
         <div class="row" style="padding-inline:4px"><span class="row-label">Kan ringe og ringes</span><span class="sw"></span></div>
-        <div class="row mark" style="padding-inline:4px"><span class="row-label">Kan sende og få meldinger<span class="row-sub">Bare kontakten kan sende melding til Emma</span></span><span class="row-value val-custom">Tilpasset</span></div>
+        <div class="row mark" style="padding-inline:4px"><span class="row-label">Kan sende og få meldinger</span><span class="row-value val-custom">Tilpasset</span></div>
         <div class="row" style="padding-inline:4px"><span class="row-label">Bilder i meldinger</span><span class="sw"></span></div>
         <div class="row" style="padding-inline:4px"><span class="row-label">På Hjem-skjermen<span class="row-sub">Vises når Emma kan ringe kontakten</span></span><span class="sw"></span></div>
         <div class="row" style="padding-inline:4px"><span class="row-label" style="color:var(--tint)">Avansert</span><span class="row-value val-custom">Tilpasset</span><span class="chev down"></span></div>
