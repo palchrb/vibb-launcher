@@ -882,6 +882,26 @@ class PolicyResponseCompatTest {
         assertTrue(decodeCached(withCalls) is CachedPolicy.Ok)
     }
 
+    /** Design 77 §14: `call_policy.contact_requests` (always sent by the server, `policy_json_keys_snapshot`) decodes
+     * as `contact_request.json`'s `policy` rows; an older server's policy without it has none. */
+    @Test
+    fun `call_policy's contact requests decode, and an older server has none`() {
+        val rows = kotlinx.serialization.json.Json.parseToJsonElement(
+            javaClass.classLoader!!.getResource("contact_request.json")!!.readText(),
+        ).jsonObject["policy"]!!.jsonObject["contact_requests"].toString()
+        val withRows = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"call_policy\": {\"managed\": true, \"contacts\": [], \"contact_requests\": $rows}, \"packages_to_uninstall\"",
+        )
+        val callPolicy = (decodeCached(withRows) as CachedPolicy.Ok).policy.callPolicy!!
+        assertEquals(listOf("open", "declined", "added"), callPolicy.contactRequests.map { it.state })
+        val older = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"",
+        )
+        assertTrue((decodeCached(older) as CachedPolicy.Ok).policy.callPolicy!!.contactRequests.isEmpty())
+    }
+
     /** Design 77 §7: the SMS keys of `call_policy` - every one always sent by the server (`policy_json_keys_snapshot`),
      * the per-contact switches absent from an older server deny. The full shape is `sms_contract.json`'s. */
     @Test

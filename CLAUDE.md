@@ -220,6 +220,15 @@ compare the copies. The receive and send rules (D4/D5) stay the launcher's alone
 `launcher/app/src/test/resources/sms_rules.json` (`SmsRulesTest`). The policy's new `call_policy` keys are pinned by
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
+The kid's contact request from the phone book (design 77 §14) is `server/testdata/contact_request.json`, byte-identical
+in `launcher/app/src/test/resources/`: `request` and `request_without_matrix` (the exact `POST
+/api/devices/contact-request` bodies), `answers` (accepted, `capped`, `invalid`, `known`), the check vectors `valid`
+(with the cleaned name and normalised number) and `invalid`, and `policy` (`call_policy.contact_requests` rows: `open`,
+`declined`, `added`). The server's `tests::contact_requests` posts the requests and produces every answer, and
+`handlers::contact_requests::tests` runs the vectors; the launcher's `ContactRequestsTest` encodes the requests exactly,
+reads each answer and policy row and runs the vectors through its own check; both compare the copies. The policy's
+`call_policy.contact_requests` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -227,7 +236,7 @@ compare the copies. The receive and send rules (D4/D5) stay the launcher's alone
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json` and `sms_contract.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json` and `contact_request.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -236,7 +245,7 @@ compare the copies. The receive and send rules (D4/D5) stay the launcher's alone
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json` and `sms_contract.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json` and `contact_request.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

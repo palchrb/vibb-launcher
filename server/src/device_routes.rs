@@ -91,6 +91,13 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::device_api::TIME_REQUEST_BODY_LIMIT,
             )),
         )
+        // Design 77 §14: the kid asks for a new contact from the phone book.
+        .route(
+            "/api/devices/contact-request",
+            post(handlers::contact_requests::intake).layer(DefaultBodyLimit::max(
+                handlers::contact_requests::BODY_LIMIT,
+            )),
+        )
         // Design 77 D16: the phone's held and blocked senders - who and when, never what.
         .route(
             "/api/devices/sms-held",

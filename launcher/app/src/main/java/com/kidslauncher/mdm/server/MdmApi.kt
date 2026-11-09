@@ -117,6 +117,11 @@ interface MdmApi {
     @POST("api/devices/time-request")
     suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
 
+    /** The kid's contact request from the phone book (design 77 §14): the raw answer, read by `contactRequestAnswer`
+     * (an old server's 404 included) - see `calls/ContactRequests`. */
+    @POST("api/devices/contact-request")
+    suspend fun sendContactRequest(@Body request: com.kidslauncher.mdm.server.dto.ContactRequestBody): Response<ResponseBody>
+
     /** The messages held for the parent and the blocked ones (design 77 §7): who and when, never what - see
      * `sms/SmsRuntime.postHeld`. The raw answer: 200 `SmsHeldAnswer`, 400 `SmsHeldRefusal`. */
     @POST("api/devices/sms-held")

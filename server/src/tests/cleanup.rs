@@ -384,6 +384,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             install_progress: 0,
             weather: 0,
             sms_held: 0,
+            contact_requests: 0,
             failed: vec![],
         }
     );

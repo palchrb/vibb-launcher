@@ -203,6 +203,19 @@ struct DeviceCallsTemplate {
     /// Add Contact's switches (design 77 R2-M1): `inbound`, `outbound`, `show_on_home`, `sms_in`, `sms_out`, `mms` -
     /// all on for a new contact, only `sms_in` for "Opprett kontakt…" from a held message.
     add_switches: [bool; 6],
+    /// Design 77 §14: Add Contact came from the kid's request - its id (sent back as `request`) and the Matrix ID the
+    /// kid suggested, shown with its own "Bruk Matrix-ID-en" ([Self::use_matrix], unticked until the parent ticks it);
+    /// a family contact's kept name (QA M1) and a short number's cost warning (QA L3).
+    add_request: Option<crate::handlers::contact_requests::Prefill>,
+    /// From a request: the family contact's name the number in the field already has (kept on save), and whether that
+    /// number is a short one (QA M1/L3, judged by the field's number, as the save judges it).
+    add_kept: Option<String>,
+    add_short: bool,
+    use_matrix: bool,
+    /// Design 77 §14: the "Forespørsler" card's rows.
+    requests: Vec<crate::handlers::contact_requests::RequestView>,
+    /// The requests card's line (`?notice=`).
+    requests_notice: Option<&'static str>,
     /// Design 77 step 4: "Meldinger som venter", the blocked list, the names, the SMS settings.
     sms: crate::handlers::calls_sms::SmsPage,
     /// The waiting card's line (`?notice=`).
@@ -239,6 +252,13 @@ struct DeviceCallsTemplate {
 crate::i18n::words!(DeviceCallsTemplate);
 
 impl DeviceCallsTemplate {
+    /// Add Contact's name field was refused (its error line describes the field, not the kept-name hint).
+    fn name_refused(&self) -> bool {
+        self.add_error
+            .as_ref()
+            .is_some_and(|(field, _)| *field == "name")
+    }
+
     /// Add Contact's switches (design 77 R2-M1), in [ADD_SWITCHES]' order: the form name, the label, on.
     fn add_switch_rows(&self) -> Vec<(&'static str, String, bool)> {
         let kid = [("name", self.device.name.as_str())];
@@ -478,6 +498,11 @@ pub(super) struct Shown<'a> {
     /// Design 77 "Opprett kontakt…" (`?add_number=`): Add Contact open with the held number, only "Kan sende
     /// melding til" on (R2-M1).
     pub(super) add_held: Option<&'a str>,
+    /// Design 77 §14 "Legg til…" (`?request=<id>`): Add Contact open with the kid's request - its name and number,
+    /// §14's switches, the Matrix ID behind its unticked "Bruk Matrix-ID-en".
+    pub(super) add_request: Option<&'a str>,
+    /// `?notice=` for the requests card.
+    pub(super) requests_notice: Option<&'static str>,
     /// `?notice=` for "Meldinger som venter".
     pub(super) held_notice: Option<&'static str>,
     /// A refused SMS settings save.
@@ -543,6 +568,11 @@ pub async fn show_calls(
             .get("add_number")
             .map(|n| n.trim())
             .filter(|n| !n.is_empty() && n.chars().count() <= 32),
+        // Design 77 §14 "Legg til…": read from the stored request of this phone, never from the link.
+        add_request: query.get("request").map(String::as_str),
+        requests_notice: query
+            .get("notice")
+            .and_then(|code| crate::handlers::contact_requests::notice(lang, code)),
         ..Default::default()
     };
     render(&state, id, StatusCode::OK, shown, lang).await
@@ -708,23 +738,70 @@ async fn load_page(
     if report.screening_hint {
         notes.push(screening_note(lang));
     }
-    let (add_open, add_name, add_number, add_error) = match (shown.add, shown.add_held) {
-        (Some((name, number, field, why)), _) => (
-            true,
-            name.to_string(),
-            number.to_string(),
-            Some((field, why)),
-        ),
-        (None, Some(number)) => (true, String::new(), number.to_string(), None),
-        (None, None) => (false, String::new(), String::new(), None),
+    // Design 77 §14: "Legg til…"'s request, only while it is this phone's and live. One prefill source wins (QA L1): a
+    // held number's link ignores a request; a refused form carries its own `request` or none; else the link's.
+    let request_id = match (shown.add_held, shown.add_sent, shown.add.is_some()) {
+        (Some(_), _, _) => None,
+        (None, Some(sent), _) => sent.get("request").map(String::as_str),
+        (None, None, false) => shown.add_request,
+        (None, None, true) => None,
     };
-    // R2-M1: a new contact gets every switch on, an allow from a held message "Kan sende melding til" alone; a
-    // refusal shows what was sent.
-    let add_switches = match (shown.add_sent, shown.add_held) {
-        (Some(sent), _) => ADD_SWITCHES.map(|name| sent.contains_key(name)),
-        (None, Some(_)) => HELD_ADD_SWITCHES,
-        (None, None) => [true; 6],
+    let add_request = match request_id {
+        Some(request) => {
+            crate::handlers::contact_requests::prefill(&state.db, id, request.trim()).await?
+        }
+        None => None,
     };
+    let (add_open, add_name, add_number, add_error) =
+        match (shown.add, shown.add_held, add_request.as_ref()) {
+            (Some((name, number, field, why)), _, _) => (
+                true,
+                name.to_string(),
+                number.to_string(),
+                Some((field, why)),
+            ),
+            (None, Some(number), _) => (true, String::new(), number.to_string(), None),
+            (None, None, Some(request)) => {
+                (true, request.name.clone(), request.number.clone(), None)
+            }
+            (None, None, None) => (false, String::new(), String::new(), None),
+        };
+    // R2-M1: a new contact gets every switch on, an allow from a held message "Kan sende melding til" alone, the kid's
+    // request §14's; a refusal shows what was sent.
+    let add_switches = match (shown.add_sent, shown.add_held, add_request.is_some()) {
+        (Some(sent), _, _) => ADD_SWITCHES.map(|name| sent.contains_key(name)),
+        (None, Some(_), _) => HELD_ADD_SWITCHES,
+        // QA L3: a short number may cost money - the kid can't text it until the parent says so.
+        (None, None, true) if add_request.as_ref().is_some_and(|r| r.short) => {
+            let mut switches = REQUEST_ADD_SWITCHES;
+            switches[4] = false;
+            switches
+        }
+        (None, None, true) => REQUEST_ADD_SWITCHES,
+        (None, None, false) => [true; 6],
+    };
+    // QA M1/L3 follow-up: the kept name's hint and the short number's warning follow the number in the field (the
+    // request's at first, what was sent after a refusal) - the save judges that number too.
+    let (add_kept, add_short) = match &add_request {
+        Some(_) => match phone::normalize(&add_number, &default_country_code) {
+            Ok(number) => (
+                sqlx::query_scalar::<_, String>("SELECT name FROM contacts WHERE phone_number = ?")
+                    .bind(&number)
+                    .fetch_optional(&state.db)
+                    .await?,
+                !number.starts_with('+'),
+            ),
+            Err(_) => (None, false),
+        },
+        None => (None, false),
+    };
+    // "Bruk Matrix-ID-en" starts unticked (R2-M1); a refusal shows what was sent.
+    let use_matrix = shown
+        .add_sent
+        .is_some_and(|sent| sent.contains_key("use_matrix"));
+    let requests =
+        crate::handlers::contact_requests::load(&state.db, id, &zone, now, &default_country_code)
+            .await?;
     let sms_page =
         crate::handlers::calls_sms::load(&state.db, id, &zone, now, &default_country_code).await?;
     let mut sms_page = sms_page;
@@ -757,7 +834,8 @@ async fn load_page(
         && shown.settings_error.is_none()
         && sms_error.is_none()
         && name_add_error.is_none()
-        && shown.add_held.is_none();
+        && shown.add_held.is_none()
+        && add_request.is_none();
 
     let phone_book: Vec<String> = contacts
         .iter()
@@ -792,6 +870,12 @@ async fn load_page(
         add_number,
         add_error,
         add_switches,
+        add_request,
+        add_kept,
+        add_short,
+        use_matrix,
+        requests,
+        requests_notice: shown.requests_notice,
         sms: sms_page,
         held_notice: shown.held_notice,
         names_full,
@@ -1761,13 +1845,19 @@ const ADD_SWITCHES: [&str; 6] = [
 ];
 /// "Opprett kontakt…" from a held message (D16, R2-M1): an allow grants exactly one thing, this sender's texts.
 const HELD_ADD_SWITCHES: [bool; 6] = [false, false, false, true, false, false];
+/// "Legg til…" from the kid's request (§14, R2-M1's named defaults): the kid asked to call and text this person - "Kan
+/// ringe", "I telefonboken" and both ways of texting on; "På Hjem-skjermen" and pictures off.
+const REQUEST_ADD_SWITCHES: [bool; 6] = [true, true, false, true, true, false];
 
 /// Adds a contact to this device: normalises the number with the default country code, reuses
 /// the global contact with that number (renaming it - the name is shared by every device that
 /// has it) and attaches it at the end of the list. Its switches are the form's (design 77 R2-M1: the form says
 /// `switches`, and a missing one is off - "Opprett kontakt…" sends "Kan sende melding til" alone); a post without
-/// them gets every flag on, as before. "Kan sende melding til" is never stored for an emergency number (R2-H1). Back
-/// to its row; a refusal renders the page (400) with Add Contact open, what was typed and the reason under its field.
+/// them gets every flag on, as before. "Kan sende melding til" is never stored for an emergency number (R2-H1). The
+/// kid's open requests for the number - and the one "Legg til…" came from (`request`) - are answered `added` in the
+/// same transaction, and that request's Matrix ID becomes the contact's only with "Bruk Matrix-ID-en" ticked
+/// (`use_matrix`; design 77 §14, R2-M1). Back to its row; a refusal renders the page (400) with Add Contact open, what
+/// was typed and the reason under its field.
 pub async fn add_contact(
     State(state): State<AppState>,
     lang: Lang,
@@ -1822,6 +1912,37 @@ pub async fn add_contact(
             .await;
         }
     };
+    // Design 77 §14 (QA M1): from a kid's live request, a number the family already has keeps its contact's name -
+    // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
+    // with the kept name in the field and why, never silently ignored; saving again adds the contact under it.
+    if let Some(request) = form.get("request").map(|r| r.trim()) {
+        let kept = async {
+            if crate::handlers::contact_requests::prefill(&state.db, id, request)
+                .await?
+                .is_none()
+            {
+                return Ok::<_, sqlx::Error>(None);
+            }
+            sqlx::query_scalar::<_, String>("SELECT name FROM contacts WHERE phone_number = ?")
+                .bind(&number)
+                .fetch_optional(&state.db)
+                .await
+        }
+        .await;
+        match kept {
+            Ok(Some(kept)) if kept != name => {
+                let why = t_params(lang, "device.requests.kept_refused", &[("contact", &kept)]);
+                let shown = Shown {
+                    add: Some((kept.as_str(), raw_number, "name", why)),
+                    add_sent: with_switches.then_some(form),
+                    ..Default::default()
+                };
+                return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
+            }
+            Ok(_) => {}
+            Err(err) => return db_error(lang, id, err),
+        }
+    }
 
     let result = async {
         let mut tx = state.db.begin().await?;
@@ -1833,20 +1954,43 @@ pub async fn add_contact(
         if !device_exists {
             return Ok(None);
         }
-        let contact_id: i64 = sqlx::query_scalar(
+        // Design 77 §14: "Legg til…"'s request, read from this phone's stored rows (never the form's words).
+        let request = form.get("request").map(|r| r.trim());
+        let from_request = match request {
+            Some(request) => {
+                crate::handlers::contact_requests::from_request(&mut tx, id, request).await?
+            }
+            None => None,
+        };
+        // QA M1: from a kid's request an existing family contact keeps its name - the kid's words never rename it on
+        // the other phones (a photo later follows the same rule). Otherwise the name is the parent's, as before.
+        let rename = if from_request.is_some() {
+            "name = contacts.name"
+        } else {
+            "name = excluded.name"
+        };
+        let contact_id: i64 = sqlx::query_scalar(&format!(
             "INSERT INTO contacts (name, phone_number) VALUES (?, ?) \
-             ON CONFLICT(phone_number) DO UPDATE SET name = excluded.name RETURNING id",
-        )
+             ON CONFLICT(phone_number) DO UPDATE SET {rename} RETURNING id"
+        ))
         .bind(name)
         .bind(&number)
         .fetch_one(&mut *tx)
         .await?;
         let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
+        // The number's live requests (and "Legg til…"'s own) are added; the kid's Matrix ID is saved only when the
+        // parent ticked "Bruk Matrix-ID-en" (R2-M1), and then the Message button opens Element X with it (design 80
+        // M6).
+        crate::handlers::contact_requests::mark_added(&mut tx, id, &number, request).await?;
+        let message_address = from_request
+            .and_then(|r| r.matrix_id)
+            .filter(|_| form.contains_key("use_matrix"));
+        let message_app = message_address.as_ref().map(|_| "element");
         sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
-             allow_outbound, show_on_home, sms_in, sms_out, mms) \
+             allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \
              VALUES (?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
-                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?)",
+                            WHERE device_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(contact_id)
@@ -1857,6 +2001,8 @@ pub async fn add_contact(
         .bind(sms_in && !emergency::is_emergency(&number, &cc))
         .bind(sms_out)
         .bind(mms)
+        .bind(message_address)
+        .bind(message_app)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -1904,6 +2050,15 @@ async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &
         .await?
         .rows_affected()
             > 0;
+        if added {
+            // Design 77 §14: the kid's open requests for this number are answered too.
+            let number: String =
+                sqlx::query_scalar("SELECT phone_number FROM contacts WHERE id = ?")
+                    .bind(contact_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            crate::handlers::contact_requests::mark_added(&mut tx, id, &number, None).await?;
+        }
         tx.commit().await?;
         Ok((true, true, added))
     }
@@ -1928,7 +2083,7 @@ async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &
 /// `isMatrixId`: localpart `a-z 0-9 . _ = - / +`, server a hostname, IPv4 or `[IPv6]` with an
 /// optional `:port` - so `?`, `#`, `&` and spaces never end up in the phone's `matrix:` URI
 /// (qa-09-code #8).
-fn valid_matrix_id(value: &str) -> bool {
+pub(crate) fn valid_matrix_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix('@') else {
         return false;
     };

@@ -696,6 +696,11 @@ async fn build_call_policy(
         own_numbers,
         mmsc_hosts: crate::mmsc_hosts::policy(),
         sms_held_drop,
+        contact_requests: crate::handlers::contact_requests::policy_rows(
+            &state.db,
+            policy.device_id,
+        )
+        .await?,
     })
 }
 

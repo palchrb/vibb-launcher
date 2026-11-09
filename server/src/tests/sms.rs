@@ -143,10 +143,16 @@ async fn the_policy_is_the_contracts() {
         .await
         .unwrap();
     }
+    // The kid's contact requests (design 77 §14) are their own contract, `contact_request.json`.
+    let mut call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(
-        app.policy(&token).await["call_policy"],
-        contract()["policy"]["call_policy"]
+        call_policy
+            .as_object_mut()
+            .unwrap()
+            .remove("contact_requests"),
+        Some(serde_json::json!([]))
     );
+    assert_eq!(call_policy, contract()["policy"]["call_policy"]);
 }
 
 /// D2's wire: each of the nine combinations sends its modes and the old keys derived from them

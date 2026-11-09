@@ -172,6 +172,8 @@ pub struct Pruned {
     pub weather: u64,
     /// The held and blocked senders a phone posted (design 77 D16), `sms::HELD_KEEP_DAYS` after their `at`.
     pub sms_held: u64,
+    /// The kid's requests for a new contact (design 77 §14), 30 days after the server got them.
+    pub contact_requests: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -508,6 +510,18 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 77 §14: the kid's requests for a new contact, 30 days after the server got them.
+    let contact_requests = rows(
+        failed,
+        "device_contact_requests",
+        sqlx::query("DELETE FROM device_contact_requests WHERE received_at < ?")
+            .bind(
+                chrono::Utc::now().timestamp_millis()
+                    - crate::handlers::contact_requests::KEEP_DAYS * 24 * 60 * 60 * 1000,
+            )
+            .execute(db)
+            .await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -525,6 +539,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         install_progress,
         weather,
         sms_held,
+        contact_requests,
         failed: std::mem::take(failed),
     }
 }

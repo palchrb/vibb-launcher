@@ -359,6 +359,15 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             "+4790000099",
             parent_events::Push::Now,
         ),
+        // Design 77 §14: the kid asks for a new contact.
+        parent_events::contact_request(
+            anna,
+            &phone.name,
+            "10112233445566778899aabbccddeeff",
+            "Bestemor",
+            "+4790000098",
+            ago(121),
+        ),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");
@@ -366,6 +375,18 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         parent_events::raise(&mut conn, event).await.unwrap();
     }
     drop(conn);
+    // Design 77 §14 (QA L4): Anna's open contact request with a Matrix ID, so the Calls page's "Forespørsler" card and
+    // "Legg til…"'s "Bruk Matrix-ID-en" are read in Norwegian too.
+    sqlx::query(
+        "INSERT INTO device_contact_requests (device_id, id, name, number, matrix_id, asked_at, received_at) \
+         VALUES (?, '10112233445566778899aabbccddeeff', 'Bestemor', '1881', '@bestemor:example.org', ?, ?)",
+    )
+    .bind(anna)
+    .bind(ago(121).timestamp_millis())
+    .bind(ago(121).timestamp_millis())
+    .execute(&app.db)
+    .await
+    .unwrap();
 
     // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
     // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.
