@@ -984,7 +984,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         "{cell}"
     );
     assert!(
-        cell.contains("For the apps on the lock below and missed calls"),
+        cell.contains("For the apps on the lock below, missed calls and messages"),
         "{cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");

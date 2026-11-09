@@ -345,11 +345,20 @@ Meldinger rows". What was decided (the design left it open):
   "Bilde" either.
 - **When it goes:** the thread read (opening it marks the messages read: `Read` -> the summary's refresh), the
   message or the conversation deleted (`MessageDeleted`), and a swipe or "Fjern" on the lock (`SmsGlance.dismiss`:
-  hidden in memory until the conversation's next message, our notification of it cancelled, nothing marked read - Home's
+  hidden in memory until the conversation's next message, our notification of it cancelled unless a newer message came during the drag, nothing marked read - Home's
   badge stays, as for a dismissed missed call).
-- **The notice wake** (launcher round 7, the parent's `lock_wake_on_notification`): our SMS notification's alerting post
-  is a notice that came (`SmsNotifier.notify` -> `PinLockRuntime.noticeCame()` on the main thread, as the missed-call
-  notice's), so the switch and `noticeWakeAllowed` decide the rest - switch off, nothing changes. Pure `smsPostAlerts`:
-  the post went through, not silent (a time rule without calls, a picture told again), notifications on, the channel at
-  DEFAULT or above. A held or blocked message is never posted, the reply's "not sent" update and a message read in the
-  thread in front never wake.
+- **The notice wake** (launcher round 7, the parent's `lock_wake_on_notification`; the PWA's line says "tapte anrop og
+  meldinger" since this step): our SMS notification's post is a notice that came (`SmsNotifier.notify` ->
+  `PinLockRuntime.noticeCame()` on the main thread, as the missed-call notice's), so the switch and `noticeWakeAllowed`
+  decide the rest - switch off, nothing changes. Pure `smsPostAlerts`, round 7's conditions for an app's notice:
+  - the post went through and is a message's own (a held or blocked message is never posted; the reply's "not sent"
+    update, a group move's quiet re-post and a message read in the thread in front never wake);
+  - not silent (a time rule without calls, a picture told again);
+  - no Do Not Disturb at all, fail closed (code QA H1): a silent bedtime that allows calls has our own zen rule on,
+    which lets no message through - the screen stays dark too;
+  - notifications on, the channel at DEFAULT or above;
+  - the rows gain a row (code QA M1, `smsGainsRow`): the conversation's only unread message, or the first one after its
+    row was swiped away. Twelve messages from a cousin wake once, as twelve in one Element X room do.
+- **A group MMS leaving a one-to-one conversation** (D12; step 3b's code QA L8): `SmsNotifier.afterMove` rebuilds that
+  conversation's notification quietly from what is still unread there (`smsNotifiedMessages`), and cancels it only when
+  nothing is - before, a group's message took away the sender's own unread messages from the shade.

@@ -240,8 +240,9 @@ class GlancePanel(
     /** Dagen on the page (design 69 §5): the reminder row and the "Neste" line. */
     private val calendar = GlanceCalendar(activity) { render() }
 
-    /** Design 77 §6.8: the engine's Meldinger rows as last rendered - a summary refresh that leaves them as they were
-     * (a delivery report, an outgoing message) renders nothing. */
+    /** Design 77 §6.8: the engine's Meldinger rows as last rendered - a summary refresh that leaves every row as it was
+     * renders nothing (a row carries its whole conversation, so an outgoing message or a `canSend` change in a
+     * conversation with unread messages renders once - harmless; code QA N2). */
     private var smsRows: List<GlanceSmsRow>? = null
     private val smsChanged: () -> Unit = {
         guarded("sms") { if (started && SmsHome.summary.glance != smsRows) renderNow() }
@@ -864,7 +865,7 @@ class GlancePanel(
                 is GlanceCalendarRow -> false
                 // Design 77 §6.8: ours - hidden until the conversation's next message, our notification of it gone.
                 is GlanceSmsRow -> {
-                    SmsGlance.dismiss(activity, row)
+                    SmsGlance.dismiss(activity, row, current = SmsHome.summary.glance.firstOrNull { it.conversationId == row.conversationId })
                     Log.i(LOG_TAG, "Glance: a row dismissed (sms)")
                     true
                 }
