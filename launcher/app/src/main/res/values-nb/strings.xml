@@ -451,14 +451,18 @@
     <string name="event_gone">Denne hendelsen er ikke i kalenderen lenger.</string>
     <string name="event_change">Endre</string>
     <string name="event_delete">Slett</string>
-    <string name="glance_next">Neste: %1$s %2$s</string>
+    <string name="glance_next">Neste %2$s: %1$s</string>
     <!-- The "Neste" line in the evening, once today's last timed event has started: tomorrow's first (the calmer
          glance, 2026-11-04). %1$s the title, %2$s its start. -->
-    <string name="glance_tomorrow">I morgen: %1$s %2$s</string>
+    <string name="glance_tomorrow">I morgen %2$s: %1$s</string>
     <string name="glance_reminder_in">%1$s om %2$d min</string>
     <string name="glance_reminder_now">%1$s nå</string>
     <string name="glance_reminder_now_spoken">nå</string>
     <string name="glance_reminder_spoken">Påminnelse: %1$s, %2$s, %3$s</string>
+    <!-- Det samme med kalenderens navn: %1$s tittelen, %2$s "om 15 minutter", %3$s starten, %4$s kalenderen. -->
+    <string name="glance_reminder_spoken_calendar">Påminnelse: %1$s, %2$s, %3$s, %4$s-kalenderen</string>
+    <!-- Påminnelsesradens andre linje: %1$s starten, %2$s kalenderens navn (kuttes først når det er langt). -->
+    <string name="glance_reminder_when">%1$s · %2$s</string>
     <string name="glance_reminder_action">Lås opp og åpne Kalender</string>
     <plurals name="glance_reminder_minutes">
         <item quantity="one">om %d minutt</item>

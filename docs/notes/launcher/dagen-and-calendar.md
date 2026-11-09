@@ -80,13 +80,18 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   every provider or policy change, one main-thread callback at the next boundary - no alarm, no notification, no wake.
   C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc - since 2026-10-27 the calendar's 16 dp
   dot in the disc instead when it has a colour, `bg_glance_dot`, the row's `color` from the reminder's row -, "Fotball
-  om 15 min" / "… nå", the start; never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
+  om 15 min" / "… nå", the start and the calendar's name ("17:30 · Fotball", `glance_reminder_when`; 2026-11-09 - the dot
+  has no legend on the lock; the name is the provider's display name as Dagen shows it, `GlanceReminder.calendarName`
+  from `DayRow.calendarName`, since the policy's `calendars` rows carry no name - a link's name is the parent's, it
+  becomes the provider's display name; blank = the time alone; the time first, so a long name is what is cut; TalkBack
+  `glance_reminder_spoken_calendar`); never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
   tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, under a time rule only when every rule
   in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`).
-  A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
+  A: `lock_glance_next` ("Neste 17:30: Trening", 2026-11-09: the time before the title, so the one-line ellipsis cuts only the
+  title; no horizon, all day) under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
   row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out. Since the calmer glance
-  (2026-11-04): from 18:00, once today's last timed event has started, tomorrow's first timed event - "I morgen: Gym
-  09:00" (`GlanceNext.tomorrow`; tomorrow read only while `glance_next` is on; the evening's start and midnight are
+  (2026-11-04): from 18:00, once today's last timed event has started, tomorrow's first timed event - "I morgen 09:00:
+  Gym" (`GlanceNext.tomorrow`; tomorrow read only while `glance_next` is on; the evening's start and midnight are
   boundaries) - `docs/notes/launcher/lock-and-glance.md`, "The calmer glance".
 - **Enforcement and Home**: `CALENDAR_SYNC_APPS` (ICSx5, DAVx5) are never suspended by a time rule while allowed
   (`EnforcementPlan`), and an app with `app_display.on_home: false` is off Home and the drawer except while the pause or

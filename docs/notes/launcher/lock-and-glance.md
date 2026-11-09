@@ -408,7 +408,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     own line with the glyph.
   - **"I morgen"**: pure `glanceNext(today, policy, now, zone)` -> `GlanceNext(row, tomorrow)` (`day/Reminders.kt`,
     `RemindersTest`): today's next timed event as before; once today's last timed event has started (an ongoing one
-    has) and it is evening, tomorrow's first timed event - "I morgen: Gym 09:00" (`glance_tomorrow`; en "Tomorrow: …");
+    has) and it is evening, tomorrow's first timed event - "I morgen 09:00: Gym" (`glance_tomorrow`; en "Tomorrow 09:00: …"; the
+    time first since 2026-11-09, as "Neste 17:30: …", so a long title is cut, never the time);
     all-day never, nothing when tomorrow has none, "Neste" again after midnight. The same switch `glance_next`.
     `GlanceCalendar` reads tomorrow (`CalendarStore.dayBlocking`, the rules applied) only while the switch is on
     (`TodayCalendar.tomorrow`); `nextReminderBoundary` adds the evening's start and the next midnight while it is on.

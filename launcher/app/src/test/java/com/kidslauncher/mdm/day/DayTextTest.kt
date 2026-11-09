@@ -50,6 +50,17 @@ class DayTextTest {
         assertTrue(glance.contains("val time = ClockFormat.formatClock(activity, line.row.begin)"))
         assertTrue(glance.contains("if (line.tomorrow) R.string.glance_tomorrow else R.string.glance_next, line.row.title, time)"))
         assertTrue(glance.contains("val time = ClockFormat.formatClock(activity, row.beginMs)"))
+        // The line puts the time before the title (the one-line ellipsis cuts the title); the reminder row's second line
+        // is the time, then the calendar's name when it has one, and TalkBack names it too.
+        fun res(dir: String) = listOf("src/main", "app/src/main").map { File(it, "res/$dir/strings.xml") }.first { it.exists() }.readText()
+        for ((dir, next, tomorrow) in listOf(Triple("values", "Next", "Tomorrow"), Triple("values-nb", "Neste", "I morgen"))) {
+            assertTrue(dir, res(dir).contains("<string name=\"glance_next\">$next %2\$s: %1\$s</string>"))
+            assertTrue(dir, res(dir).contains("<string name=\"glance_tomorrow\">$tomorrow %2\$s: %1\$s</string>"))
+            assertTrue(dir, res(dir).contains("<string name=\"glance_reminder_when\">%1\$s · %2\$s</string>"))
+        }
+        assertTrue(res("values-nb").contains("<string name=\"glance_reminder_spoken_calendar\">Påminnelse: %1\$s, %2\$s, %3\$s, %4\$s-kalenderen</string>"))
+        assertTrue(glance.contains("activity.getString(R.string.glance_reminder_when, time, name)"))
+        assertTrue(glance.contains("R.string.glance_reminder_spoken_calendar, row.title, left, time, name"))
         // The form's day is the one-line day, not weekday + date glued with a space.
         val form = File(src, "ui/day/EventEditActivity.kt").readText()
         assertTrue(form.contains("binding.eventEditDay.text = DayActivity.dayLine(this, day)"))
