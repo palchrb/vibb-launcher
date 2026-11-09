@@ -111,17 +111,18 @@ Moved from music/CLAUDE.md on 2026-11-01.
     design 50 §1.4 dims nothing on a room), `SPOTIFY_ELSEWHERE` (the account plays elsewhere: a tap takes it back) and
     `SPOTIFY_STOPPED` ("Stoppet - trykk spill": the tap is the fix).
   - **Play is greyed** (`playOff`: `Palette.track`, its glyph white at 45 %, the play button's TalkBack state the
-    notice's title) only when a tap can't help: `SPOTIFY_ASK_ADULT` and `SPOTIFY_NO_LISTENING_TIME`, both waiting on an
-    adult. It stays lit for Wi-Fi, internet, the quota and Widevine (a tap may work: the network back, the quota over,
-    a new web player; `SPOTIFY_NOT_ON_PHONE`'s help line against lit play is with the user, qa-music-cant-play L3).
+    notice's title) only when a tap can't help: `SPOTIFY_ASK_ADULT`, `SPOTIFY_NO_LISTENING_TIME` and
+    `SPOTIFY_NOT_ON_PHONE` (no Widevine: only an update helps; the user, 2026-11-09, "play knapp skal være grå når den
+    er i virker ikke modus!", qa-music-cant-play L3), each waiting on an adult. It stays lit for Wi-Fi, internet and
+    the quota (a tap may work: the network back, the quota over).
     Greyed is a look only: play is still a button and does what it did (behaviour stays vibb's and the renderer's) -
     nothing pushes an adult's fix in the PWA to the phone, so the kid's tap is the retry.
   - **A retry keeps the notice** (qa-music-cant-play M3): the web player clears its line at every start (`begin`) and
     sets it again only when the start fails, so the cover would flash back to colour and play to peach for each tap.
     `MusicRoot` holds the last refusal (`holdRefusal`, `HeldRefusal`: the state and its run, `PlayerHub.State.entryId`)
     while an attempt in the same run is on its way and shows it (`shownState`); a real playing state, another line or
-    another run ends the hold. Only the account's and the book's (`heldOverRetry`: `SPOTIFY_ASK_ADULT`,
-    `SPOTIFY_NO_LISTENING_TIME`, whose refusal comes after an attempt; the network lines come from the gate before any
+    another run ends the hold. Only the refusals that grey play (`heldOverRetry`: `SPOTIFY_ASK_ADULT`,
+    `SPOTIFY_NO_LISTENING_TIME`, `SPOTIFY_NOT_ON_PHONE`, whose refusal comes after an attempt; the network lines come from the gate before any
     start and never flashed - held, a stale "Trenger Wi-Fi" would stay over a good retry), and only over the web
     player's start (`webPlayerStarting`: `connecting` off a Sonos room - on a room it is the speaker's connect;
     qa-music-cant-play-2 V1, V2). Next and previous in the run keep it too (an account's or a book's refusal is the

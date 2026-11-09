@@ -128,6 +128,11 @@ lit by design, drop the help line for it; if the help line stays, grey play like
 two signals disagree, and "greyed only when a tap can't help" does not describe the table (a tap cannot help here
 either).
 
+**The user's decision (2026-11-09):** "play knapp skal være grå når den er i virker ikke modus!" - play is greyed for
+`SPOTIFY_NOT_ON_PHONE`, as for the account and the listening time, and the help line stays. It is also held over a retry
+of the phone's web player (`heldOverRetry` is now "the refusals that grey play"), so nothing blinks. Built on branch
+`music-not-on-phone`.
+
 ### L4 - Tests check source text where a function would do
 
 `CantPlayTest.kt:57-68` (`the player shows the notice in the line's place`), `FitTest.kt:241`, `:325`.
