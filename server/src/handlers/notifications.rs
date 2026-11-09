@@ -818,7 +818,8 @@ async fn delivery_lines(
                 ELSE d.status END, \
                 d.reason, d.receipt_at IS NOT NULL, s.label, d.clicked_at IS NOT NULL \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
-         WHERE d.event_id IN (SELECT value FROM json_each(?)) AND s.admin_id = ? ORDER BY d.id",
+         WHERE d.event_id IN (SELECT value FROM json_each(?)) AND s.admin_id = ? AND d.kind != 'digest' \
+         ORDER BY d.id",
     )
     .bind(serde_json::to_string(event_ids).unwrap_or_default())
     .bind(admin_id)

@@ -1024,6 +1024,20 @@ pub async fn raise(
                 kind = event.kind.wire(),
                 "a phone's events of one kind are past their hourly budget; not stored"
             );
+            // Code QA M2: a kind with a push budget is past it too, so the hour's digest still goes (it counts what
+            // waits when it is pushed, these included). Its anchor is the kind's newest stored event of the phone.
+            if event.kind.push_budget().is_some() && event.push != Push::No {
+                let anchor: Option<i64> = sqlx::query_scalar(
+                    "SELECT MAX(id) FROM parent_events WHERE device_id = ? AND kind = ?",
+                )
+                .bind(device_id)
+                .bind(event.kind.wire())
+                .fetch_one(&mut *conn)
+                .await?;
+                if let Some(anchor) = anchor {
+                    budget_digest(conn, device_id, event.kind, anchor).await?;
+                }
+            }
             return Ok(None);
         }
         if event.kind.urgent()
@@ -1083,52 +1097,33 @@ pub async fn raise(
             Push::No => {}
         }
         if past_budget && let Some(device_id) = event.device_id {
-            budget_digest(conn, device_id, event.kind).await?;
+            budget_digest(conn, device_id, event.kind, id).await?;
         }
     }
     Ok(id)
 }
 
-/// The dedup key of a [PushBudget] digest: this and the instant it is pushed at.
-pub const DIGEST_PREFIX: &str = "digest:";
-
-/// A budget digest's parameters (design 77 §7): the phone's name, when it is pushed (the hour's end, RFC 3339) and
-/// how many events of the hour went to the inbox only. A kind with a budget reads them from its own parameters
-/// ([SmsHeldParams] has the same keys).
-#[derive(serde::Serialize)]
-struct DigestParams<'a> {
-    phone: &'a str,
-    at: String,
-    waiting: i64,
-}
-
-/// One more event of `kind` past its budget: counted into the phone's open digest of the kind (one whose push time
-/// is still ahead), else a new digest held until the end of the hour that filled the budget - its oldest pushed
-/// event's time plus an hour. The digest is an event of the same kind (its own inbox row, its push under the same
-/// switch), worded from its count when it is pushed, so it says every event counted until then.
+/// One more event of `kind` past its budget (design 77 §7, code QA M2/L3): the phone's digest - a push of its own,
+/// no inbox row (`push_deliveries.kind = 'digest'`, anchored on `anchor`, the kind's newest event of the phone, for
+/// the phone, the switch and the tap) - is queued unless one is already waiting, held until the end of the hour that
+/// filled the budget (its oldest pushed event's time plus an hour). It is worded when it is pushed, from what still
+/// waits then ([digest_words], [waiting_count]); with nothing waiting it isn't sent.
 async fn budget_digest(
     conn: &mut SqliteConnection,
     device_id: i64,
     kind: Kind,
+    anchor: i64,
 ) -> Result<(), sqlx::Error> {
     let now = Utc::now();
-    let open: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM parent_events WHERE device_id = ? AND kind = ? AND dedup_key LIKE 'digest:%' \
-         AND happened_at > ? ORDER BY id DESC LIMIT 1",
+    let open: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM push_deliveries d JOIN parent_events e ON e.id = d.event_id \
+         WHERE d.kind = 'digest' AND d.status = 'queued' AND e.device_id = ? AND e.kind = ?)",
     )
     .bind(device_id)
     .bind(kind.wire())
-    .bind(instant(now))
-    .fetch_optional(&mut *conn)
+    .fetch_one(&mut *conn)
     .await?;
-    if let Some(open) = open {
-        sqlx::query(
-            "UPDATE parent_events SET params = json_set(params, '$.waiting', \
-             COALESCE(json_extract(params, '$.waiting'), 0) + 1) WHERE id = ?",
-        )
-        .bind(open)
-        .execute(&mut *conn)
-        .await?;
+    if open {
         return Ok(());
     }
     let first: Option<String> = sqlx::query_scalar(
@@ -1145,32 +1140,52 @@ async fn budget_digest(
         .map(|first| first + chrono::Duration::hours(1))
         .filter(|at| *at > now)
         .unwrap_or(now + chrono::Duration::hours(1));
-    let phone: String = sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+    crate::push::queue_digest(conn, anchor, kind, at).await
+}
+
+/// What a kind's digest counts when it is pushed (code QA M2: the live count, not the events stored): `sms_held`'s
+/// messages the phone still holds for a decision - held, not dropped, inside their window by the server's clock.
+/// `None` for a kind without a digest.
+pub async fn waiting_count(
+    db: &SqlitePool,
+    kind: Kind,
+    device_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Option<i64>, sqlx::Error> {
+    match kind {
+        Kind::SmsHeld => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_sms_held WHERE device_id = ? AND state = 'held' \
+             AND dropped_at IS NULL AND expires_at > ?",
+        )
         .bind(device_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .unwrap_or_default();
-    let params = DigestParams {
-        phone: &phone,
-        at: instant(at),
-        waiting: 1,
-    };
-    let id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, params, happened_at) \
-         VALUES (?, ?, ?, '', '', ?, ?, ?) ON CONFLICT DO NOTHING RETURNING id",
-    )
-    .bind(device_id)
-    .bind(kind.wire())
-    .bind(format!("{DIGEST_PREFIX}{}", instant(at)))
-    .bind(kind.digest_target(device_id))
-    .bind(serde_json::to_string(&params).expect("strings serialize"))
-    .bind(instant(at))
-    .fetch_optional(&mut *conn)
-    .await?;
-    if let Some(id) = id {
-        crate::push::queue(conn, id, kind, Some(at)).await?;
+        .bind(now.timestamp_millis())
+        .fetch_one(db)
+        .await
+        .map(Some),
+        _ => Ok(None),
     }
-    Ok(())
+}
+
+/// A digest's words in `zone`'s language (design 77 §7): "Anna: 7 messages are waiting" / "Anna: 7 meldinger venter"
+/// and the time it is pushed.
+pub fn digest_words(
+    kind: Kind,
+    phone: &str,
+    waiting: i64,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let title = match kind {
+        Kind::SmsHeld => fit_name(phone, TITLE_MAX, |n| {
+            t_count(lang, "events.sms_held.digest", waiting, &[("name", n)])
+        }),
+        _ => t(lang, "push.summary.title").to_string(),
+    };
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        capitalized(&zone.at(now, now)),
+    )
 }
 
 /// [raise] in its own transaction, for an intake without one, then the sender's wake-up; a
@@ -1628,20 +1643,17 @@ pub async fn open_extra_time_request(
 /// A held message's parameters (design 77 D16, §7): the phone's name as it was when raised, when the phone received
 /// the message and when it deletes it unless the sender is let in (RFC 3339), the sender's kind as the card labels it
 /// (`number` or `name`) and the sender as the intake checked it (`sms::sender_ok`: `+` and digits, or a cleaned name
-/// of at most 11 characters). Never anything of the message. A [PushBudget] digest has `waiting` (with `at`, its push
-/// time) instead of a sender.
+/// of at most 11 characters). Never anything of the message.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SmsHeldParams {
     pub phone: String,
     pub at: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub class: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub sender: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waiting: Option<i64>,
 }
 
 /// A stranger's message held on the phone (design 77 D16): key the phone's held id, so a re-post gives one row; the
@@ -1670,7 +1682,6 @@ pub fn sms_held(
         class: class.to_string(),
         sender: sender.to_string(),
         expires_at: Some(instant(expires_at)),
-        waiting: None,
     };
     NewEvent {
         device_id: Some(device_id),
@@ -1692,33 +1703,26 @@ pub fn sms_held(
 /// A held message's words (design 77 §7, QA R2-M2), the same in the inbox and the push: the sender quoted and
 /// labelled by its kind, so a stranger's text never reads as Vibb's own words - "Anna: message from unknown number
 /// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23 h" (the time alone once it
-/// expired). Shorter than the design's sentence, which can't fit [TITLE_MAX] with a 16-character number. A digest:
-/// "Anna: 7 messages are waiting" / its push time.
+/// expired). Shorter than the design's sentence, which can't fit [TITLE_MAX] with a 16-character number. The hour's
+/// digest is a push alone, worded by [digest_words].
 fn sms_held_told(p: &SmsHeldParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
     let lang = zone.lang();
     let at = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
-    let title = match p.waiting {
-        Some(waiting) => fit_name(&p.phone, TITLE_MAX, |n| {
-            t_count(lang, "events.sms_held.digest", waiting, &[("name", n)])
-        }),
-        None => {
-            let key = if p.class == "name" {
-                "events.sms_held.name"
-            } else {
-                "events.sms_held.number"
-            };
-            fit_name(&p.phone, TITLE_MAX, |n| {
-                t_params(lang, key, &[("name", n), ("sender", &p.sender)])
-            })
-        }
+    let key = if p.class == "name" {
+        "events.sms_held.name"
+    } else {
+        "events.sms_held.number"
     };
+    let title = fit_name(&p.phone, TITLE_MAX, |n| {
+        t_params(lang, key, &[("name", n), ("sender", &p.sender)])
+    });
     let left = p
         .expires_at
         .as_deref()
         .and_then(crate::display_time::parse_db_utc)
-        .filter(|end| p.waiting.is_none() && *end > now)
+        .filter(|end| *end > now)
         .map(|end| {
             let minutes = (end - now).num_minutes().max(1);
             // "23 h" rather than "23 h 59 min" (whole hours, rounded down: never more time than is left).
@@ -4314,28 +4318,23 @@ mod tests {
             Push::No,
         );
         assert_eq!(inbox(&phone, &gone).1, "14:02");
-        let digest = SmsHeldParams {
-            phone: "Anna".into(),
-            at: instant(two),
-            class: String::new(),
-            sender: String::new(),
-            expires_at: None,
-            waiting: Some(7),
-        };
-        let digest = serde_json::to_string(&digest).unwrap();
         assert_eq!(
-            told(
-                "sms_held",
-                String::new(),
-                String::new(),
-                Some(&digest),
-                &phone.zone,
-                phone.now
-            ),
+            digest_words(Kind::SmsHeld, "Anna", 7, &phone.zone, phone.now),
             (
                 "Anna: 7 messages are waiting".to_string(),
-                "14:02".to_string()
+                "14:30".to_string()
             )
+        );
+        assert_eq!(
+            digest_words(
+                Kind::SmsHeld,
+                "Anna",
+                1,
+                &phone.zone.in_lang(Lang::Nb),
+                phone.now
+            )
+            .0,
+            "Anna: 1 melding venter"
         );
         let nb = phone.zone.in_lang(Lang::Nb);
         assert_eq!(

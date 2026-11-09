@@ -3014,6 +3014,9 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 .segment input:focus + .segment-face { outline: 2px solid var(--tint); outline-offset: -2px; }
 .segment input:focus:not(:focus-visible) + .segment-face { outline: none; }
 .segmented-sub { margin-top: 4px; }
+/* §8.5's RCS step under the SMS row, its ⓘ after the sentence (code QA M1). */
+.rcs-line details.info { display: inline; }
+.rcs-line .info-icon { vertical-align: -3px; }
 
 /* Design 77 D16: a waiting message's actions under its row, each a full-width row with a hairline above. Add
    Contact's switches (R2-M1) sit in its form between the fields and the button. */

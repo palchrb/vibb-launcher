@@ -56,9 +56,15 @@
                     </details>
                     {% endif %}
                     {% if row.can_drop %}
-                    <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/drop#held-{{ row.id }}">
-                        <button type="submit" class="row row-button row-danger" data-held-action="drop">{{ self.t("device.sms.held.drop") }}</button>
-                    </form>
+                    {#- Code QA L1: deleting can't be undone, so it sits behind a confirm like every delete. -#}
+                    <details class="confirm cell">
+                        <summary class="row row-danger" data-held-action="drop">{{ self.t("device.sms.held.drop") }}&hellip;</summary>
+                        <form method="post" action="/devices/{{ device.id }}/calls/held/{{ row.id }}/drop#held-{{ row.id }}" class="confirm-body">
+                            <p>{{ self.tp("device.sms.held.drop_confirm", [("sender", row.label.as_str())]) }}</p>
+                            <button type="submit" class="button-destructive">{{ self.t("device.sms.held.drop") }}</button>
+                            {% include "partials/confirm_cancel.html" %}
+                        </form>
+                    </details>
                     {% endif %}
                 </div>
             </div>
@@ -168,7 +174,17 @@
                     <label class="segment"><input type="radio" name="{{ channel.name }}" value="{{ option.value }}"{% if option.selected %} checked{% endif %}{% if option.disabled %} disabled{% endif %} data-autosave><span class="segment-face">{{ option.label }}{% if let Some(note) = option.note %}<span class="segment-note">{{ note }}</span>{% endif %}</span></label>
                     {% endfor %}
                 </div>
-                <span class="row-sub segmented-sub">{{ channel.sub }}{% if let Some(extra) = channel.extra %} {{ extra }}{% endif %}</span>
+                <span class="row-sub segmented-sub">{{ channel.sub }}</span>
+                {#- Design 77 §8.5 (code QA M1): the RCS step before "Styrt av Vibb" is chosen (Messages is visible
+                    then) and under it; the ⓘ has Google's form for a phone already locked down. -#}
+                {% if let Some(extra) = channel.extra %}
+                <div class="row-sub segmented-sub rcs-line" data-rcs>{{ extra }}
+                    <details class="info">
+                        <summary aria-label="{{ self.t("device.calls.channel.sms_rcs_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                        <div class="info-panel"><p>{{ self.t("device.calls.channel.sms_rcs_info_before") }} <a href="{{ rcs_form_url }}" rel="noopener noreferrer" target="_blank">{{ rcs_form_label }}</a>{{ self.t("device.calls.channel.sms_rcs_info_after") }}</p></div>
+                    </details>
+                </div>
+                {% endif %}
                 {% for line in channel.update_first %}<span class="row-sub segmented-sub tone-orange">{{ line }}</span>{% endfor %}
             </div>
             {% endfor %}

@@ -132,20 +132,23 @@ fn instant_of(ms: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(ms).unwrap_or_default()
 }
 
-/// Whether a held number is a phone-book contact here: its id, name and whether its texts may already come in.
-async fn contact_by_number(
+/// The phone's contacts by number (one query for the card, code QA N1): each one's name and whether its texts may
+/// already come in.
+async fn contacts_by_number(
     db: &sqlx::SqlitePool,
     device_id: i64,
-    number: &str,
-) -> Result<Option<(i64, String, bool)>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT c.id, c.name, dc.sms_in FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
-         WHERE dc.device_id = ? AND c.phone_number = ? LIMIT 1",
+) -> Result<HashMap<String, (String, bool)>, sqlx::Error> {
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT c.phone_number, c.name, dc.sms_in FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ?",
     )
     .bind(device_id)
-    .bind(number)
-    .fetch_optional(db)
-    .await
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(number, name, sms_in)| (number, (name, sms_in)))
+        .collect())
 }
 
 /// The listed names' folds.
@@ -176,6 +179,7 @@ pub(super) async fn load(
     .fetch_all(db)
     .await?;
     let folds = listed_folds(db, device_id).await?;
+    let contacts = contacts_by_number(db, device_id).await?;
     let mut held = Vec::with_capacity(rows.len());
     let mut waiting = 0;
     for row in rows {
@@ -212,11 +216,11 @@ pub(super) async fn load(
                 "number" | "short" if emergency::is_emergency(&row.sender, cc) => {
                     view.reason = Some(t(lang, "device.sms.emergency_reason"));
                 }
-                "number" | "short" => match contact_by_number(db, device_id, &row.sender).await? {
-                    Some((_, _, true)) => {
+                "number" | "short" => match contacts.get(&row.sender) {
+                    Some((_, true)) => {
                         view.status = t(lang, "device.sms.held.allowed").to_string();
                     }
-                    Some((_, name, false)) => view.allow_contact = Some(name),
+                    Some((name, false)) => view.allow_contact = Some(name.clone()),
                     None => {
                         view.create_number =
                             Some(form_urlencoded::byte_serialize(row.sender.as_bytes()).collect())
@@ -371,9 +375,29 @@ fn held_notice(id: i64, code: &str) -> Response {
 pub(super) fn notice(lang: Lang, code: &str) -> Option<&'static str> {
     match code {
         "held_gone" => Some(t(lang, "device.sms.held.gone")),
+        "held_no_contact" => Some(t(lang, "device.sms.held.no_contact")),
         "names_full" => Some(t(lang, "device.sms.names.full")),
         _ => None,
     }
+}
+
+/// Code QA L4: a parent's own allow or delete settles the message for every parent - its `sms_held` event is read
+/// (the rows `held_ids` names), as the phone's `released`/`dropped` would make it.
+async fn mark_read(
+    tx: &mut sqlx::SqliteConnection,
+    id: i64,
+    held_ids: &[String],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) \
+         SELECT a.id, e.id FROM admin_users a JOIN parent_events e \
+         ON e.device_id = ? AND e.kind = 'sms_held' AND e.dedup_key IN (SELECT value FROM json_each(?))",
+    )
+    .bind(id)
+    .bind(serde_json::to_string(held_ids).expect("strings serialize"))
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
 }
 
 /// A held id as the phone writes it (16-64 lowercase hex); anything else is no row.
@@ -392,7 +416,8 @@ enum Allow {
 /// "Tillat meldinger fra {contact}" or "Tillat avsendernavnet" (D16 "The allow"): grants exactly one thing, this
 /// sender's texts. Only a row still waiting by the server's clock; never an emergency number or a name without a
 /// letter; a number not in the phone book has "Opprett kontakt…" instead. Back to the row (`#held-<id>`); a row that
-/// is no longer waiting, or nothing to allow, lands on the card's notice; past 50 names, "the list is full".
+/// is no longer waiting, or nothing to allow, lands on the card's notice ("Opprett kontakt…"'s number without a contact
+/// its own, code QA N3); past 50 names, "the list is full". The row's event is read for every parent (L4).
 pub async fn allow_held(
     State(state): State<AppState>,
     lang: Lang,
@@ -425,7 +450,7 @@ pub async fn allow_held(
         let allow = match row {
             Some((class, sender)) if class == "number" || class == "short" => {
                 if emergency::is_emergency(&sender, &cc) {
-                    None
+                    Err("held_gone")
                 } else {
                     sqlx::query_scalar::<_, i64>(
                         "SELECT dc.contact_id FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
@@ -436,16 +461,17 @@ pub async fn allow_held(
                     .fetch_optional(&mut *tx)
                     .await?
                     .map(Allow::Contact)
+                    .ok_or("held_no_contact")
                 }
             }
             Some((class, sender)) if class == "alphanumeric" && sms::valid_name(&sender) => {
-                Some(Allow::Name(sms::clean_name(&sender)))
+                Ok(Allow::Name(sms::clean_name(&sender)))
             }
-            _ => None,
+            _ => Err("held_gone"),
         };
         let outcome = match allow {
-            None => "held_gone",
-            Some(Allow::Contact(contact)) => {
+            Err(code) => code,
+            Ok(Allow::Contact(contact)) => {
                 sqlx::query(
                     "UPDATE device_contacts SET sms_in = 1 WHERE device_id = ? AND contact_id = ?",
                 )
@@ -455,9 +481,10 @@ pub async fn allow_held(
                 .await?;
                 ""
             }
-            Some(Allow::Name(name)) => insert_name(&mut tx, id, &name).await?,
+            Ok(Allow::Name(name)) => insert_name(&mut tx, id, &name).await?,
         };
         if outcome.is_empty() {
+            mark_read(&mut tx, id, std::slice::from_ref(&held_id)).await?;
             tx.commit().await?;
         }
         Ok(Some(outcome))
@@ -501,9 +528,9 @@ async fn insert_name(
     Ok("")
 }
 
-/// "Slett nå" (D16): the row's id goes into the policy's `sms_held_drop` (24 hours), and the phone deletes the
-/// message at its next policy. Back to the row, which then reads "Slettet"; a row no longer waiting lands on the
-/// card's notice.
+/// "Slett nå" (D16, behind its confirm - code QA L1): the row's id goes into the policy's `sms_held_drop` (24 hours),
+/// and the phone deletes the message at its next policy; its event is read for every parent (L4). Back to the row,
+/// which then reads "Slettet"; a row no longer waiting (expired by the server's clock too) lands on the card's notice.
 pub async fn drop_held(
     State(state): State<AppState>,
     lang: Lang,
@@ -524,13 +551,17 @@ pub async fn drop_held(
         }
         let dropped = sqlx::query(
             "UPDATE device_sms_held SET dropped_at = datetime('now') WHERE device_id = ? AND held_id = ? \
-             AND state = 'held' AND dropped_at IS NULL",
+             AND state = 'held' AND dropped_at IS NULL AND expires_at > ?",
         )
         .bind(id)
         .bind(&held_id)
+        .bind(Utc::now().timestamp_millis())
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        if dropped > 0 {
+            mark_read(&mut tx, id, std::slice::from_ref(&held_id)).await?;
+        }
         tx.commit().await?;
         Ok(Some(dropped > 0))
     }
@@ -558,13 +589,24 @@ pub async fn drop_all_held(
                 .fetch_one(&mut *tx)
                 .await?;
         if device {
-            sqlx::query(
-                "UPDATE device_sms_held SET dropped_at = datetime('now') WHERE device_id = ? \
-                 AND state = 'held' AND dropped_at IS NULL",
+            // Code QA L5: only rows still inside their window - an expired one is gone on the phone.
+            let waiting: Vec<String> = sqlx::query_scalar(
+                "SELECT held_id FROM device_sms_held WHERE device_id = ? \
+                 AND state = 'held' AND dropped_at IS NULL AND expires_at > ?",
             )
             .bind(id)
+            .bind(Utc::now().timestamp_millis())
+            .fetch_all(&mut *tx)
+            .await?;
+            sqlx::query(
+                "UPDATE device_sms_held SET dropped_at = datetime('now') WHERE device_id = ? \
+                 AND held_id IN (SELECT value FROM json_each(?))",
+            )
+            .bind(id)
+            .bind(serde_json::to_string(&waiting).expect("strings serialize"))
             .execute(&mut *tx)
             .await?;
+            mark_read(&mut tx, id, &waiting).await?;
         }
         tx.commit().await?;
         Ok::<_, sqlx::Error>(device)
@@ -608,12 +650,16 @@ pub async fn save_sms(
         if raw.is_empty() {
             continue;
         }
+        // Code QA L7: a SIM's own number is a full number with its country code - never a short code or an
+        // emergency number, which D12's group rule would then take for "us".
         match phone::normalize(raw, &cc) {
-            Ok(number) if sms::sender_ok("number", &number) => own.push((slot, number)),
+            Ok(number) if sms::sender_ok("number", &number) && number.starts_with('+') => {
+                own.push((slot, number))
+            }
             outcome => {
                 let why = match outcome {
                     Err(err) => t(lang, err.key()),
-                    Ok(_) => t(lang, "device.calls.number.bad_length"),
+                    Ok(_) => t(lang, "device.sms.settings.own_number_short"),
                 };
                 let shown = Shown {
                     sms: Some(SmsRefusal {

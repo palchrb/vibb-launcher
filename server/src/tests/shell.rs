@@ -177,7 +177,7 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         // The manifest URL stays: older Chrome keys a WebAPK to it.
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
         // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
-        "<script src=\"/static/autosave.js?v=2\"></script>",
+        "<script src=\"/static/autosave.js?v=3\"></script>",
         // Edge to edge on an iPhone, so the safe-area insets are real (style.css takes them).
         "content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\"",
         "<link rel=\"apple-touch-icon\" href=\"/static/icons/icon-180.png\">",

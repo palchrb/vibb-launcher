@@ -153,8 +153,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 - **The two channel rows are a segmented control** (D2): three radios per channel (`calls_mode`/`sms_mode`, the same
   form and handler as step 1), styled as the phone switcher's segments (`.segmented`, `.segment`, `.segment-face`;
-  sibling selectors only, no `:has()`), each saving on change (`data-autosave`, the `<noscript>` Save). The chosen
-  state's sub-line under it; SMS "Styrt av Vibb" adds "Slå av chatfunksjoner i Meldinger først" (§8.5). With
+  sibling selectors only, no `:has()`), each saving on change (`data-autosave`, the `<noscript>` Save; a radio checked
+  from the keyboard saves on Enter/Space or when the focus leaves the group, never on each arrow - code QA L6,
+  `autosave.js` v=3). The chosen state's sub-line under it. SMS's RCS step (§8.5, code QA M1): before "Styrt av Vibb"
+  is chosen ("Ikke styrt" or "Av" on a phone with the engine) "Før du velger Styrt av Vibb: slå av chatfunksjoner i
+  Meldinger.", under it "Slå av chatfunksjoner i Meldinger først."; its ⓘ links Google's form
+  (`calls::RCS_FORM_URL`, messages.google.com/disable-chat) for a phone whose Messages is already hidden. With
   `sms_engine_v1`, SMS's managed segment carries a quiet "anbefalt"; without it the capability gate is step 1's: a
   choice the phone can't do is a disabled radio, with "<choice> - Oppdater Vibb One først" under the row.
 - **Each contact's "Meldinger" group** (D3): "Kan sende melding til {kid}" (`sms_in`), "Kan få melding fra {kid}"
@@ -172,16 +176,19 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   telefonen henter reglene", "Levert", "Utløpt - meldingen er slettet", "Slettet" (a parent's drop too, before the
   phone confirms), or "Utløpt" for a row past `expires_at` by the server's clock (R2-L2). Actions only while it
   waits: "Opprett kontakt…" (a number not in the phone book), "Tillat meldinger fra {contact}" (a contact without
-  `sms_in`), "Tillat avsendernavnet…" (behind a confirm with D17's warning), "Slett nå"; an emergency number or a name
+  `sms_in`), "Tillat avsendernavnet…" (behind a confirm with D17's warning), "Slett nå…" (behind a confirm, code QA
+  L1); an emergency number or a name
   without a letter gets "Slett nå" alone with its reason. `POST /devices/{id}/calls/held/{held_id}/allow` decides from
   the stored row, never the form (a contact's `sms_in` alone, or the name added, at most 50); `…/drop` sets
-  `dropped_at` (the policy's `sms_held_drop`); `…/held/drop-all` drops every waiting row ("Slett alle som venter…",
-  behind a confirm with the count). A row no longer waiting answers `?notice=held_gone#held` (a refusal, nothing
-  written). "Blokkerte meldinger" (`#blocked`, a folded `details.section`): the `blocked` rows of 30 days, sender
+  `dropped_at` (the policy's `sms_held_drop`, rows inside their window only - code QA L5); `…/held/drop-all` drops
+  every row still inside its window ("Slett alle som venter…", behind a confirm with the count). Each marks the rows'
+  `sms_held` events read for every parent (code QA L4). A row no longer waiting answers `?notice=held_gone#held`, a
+  number without a contact `?notice=held_no_contact#held` (refusals, nothing written). "Blokkerte meldinger" (`#blocked`, a folded `details.section`): the `blocked` rows of 30 days, sender
   label (or what the phone couldn't read), kind, when.
 - **The SMS settings** (`#sms-settings`, `POST /devices/{id}/calls/sms`, one form): "Vis meldingstekst på
   låseskjermen" (`sms_lock_text`) and "Telefonens nummer, SIM 1/2" (`device_own_numbers`, `phone::normalize` with the
-  default country code, `+` and 3-16 digits; empty removes it). A number that isn't one renders in place (400) with
+  default country code, a full `+` number of at most 16 characters - never a short code or an emergency number, code
+  QA L7; empty removes it). A number that isn't one renders in place (400) with
   what was sent.
 - **"Avsendernavn som slipper gjennom"** (`#sms-names`): the names by fold, Remove (`…/names/remove`, by fold), "Legg
   til navn…" (`…/names`: `sms::valid_name` - 1-11 characters after the shared cleaner, a letter -, unique by

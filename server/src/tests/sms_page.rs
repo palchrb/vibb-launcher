@@ -553,9 +553,24 @@ async fn the_contacts_messages_group() {
     assert!(switch.has("disabled") && !switch.has("checked"));
 }
 
-/// QA R2-M3: the `sms_held` event is raised once per held row; within the budget (3 an hour, 1 a sender) it pushes,
-/// the rest go to the inbox only and into one digest held until the hour's end, worded with the count; a row that
-/// moves on marks its event read.
+/// The titles the sender pushes at `at`.
+async fn pushed_titles(app: &TestApp, at: chrono::DateTime<Utc>) -> Vec<String> {
+    crate::push::send_due(&app.state, at).await.unwrap();
+    app.pushes
+        .take()
+        .iter()
+        .map(|r| {
+            super::web_push::payload(r)["notification"]["title"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+/// QA R2-M3, code QA M2/L3: the `sms_held` event is raised once per held row; within the budget (3 an hour, 1 a
+/// sender) it pushes, the rest go to the inbox only; one digest - a push alone, no inbox row - goes at the hour's end,
+/// worded from what still waits then.
 #[tokio::test]
 async fn the_push_budget() {
     let app = TestApp::new().await;
@@ -579,90 +594,415 @@ async fn the_push_budget() {
     .await;
     // A re-post raises nothing more.
     post_held(&app, &token, vec![held_row(1, "number", "+4790000091", 6)]).await;
-    let events: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT dedup_key, push_budget_key, params FROM parent_events WHERE device_id = ? \
+    let events: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT dedup_key, push_budget_key FROM parent_events WHERE device_id = ? \
          AND kind = 'sms_held' ORDER BY id",
     )
     .bind(id)
     .fetch_all(&app.db)
     .await
     .unwrap();
-    let keys: Vec<(&str, Option<&str>)> = events
-        .iter()
-        .map(|(key, budget, _)| (key.as_str(), budget.as_deref()))
-        .collect();
     let id_of = |n: u32| format!("{n:032x}");
-    let (one, two, three, four, five, six) =
-        (id_of(1), id_of(2), id_of(3), id_of(4), id_of(5), id_of(6));
-    assert_eq!(keys.len(), 7, "six rows and one digest: {keys:?}");
-    assert_eq!(keys[0], (one.as_str(), Some("number:+4790000091")));
-    assert_eq!(keys[1], (two.as_str(), None));
-    assert!(keys[2].0.starts_with("digest:"));
-    assert_eq!(keys[3], (three.as_str(), Some("name:DNB")));
-    assert_eq!(keys[4], (four.as_str(), Some("number:2222")));
-    assert_eq!(keys[5], (five.as_str(), None));
-    assert_eq!(keys[6], (six.as_str(), None));
-    let digest: serde_json::Value = serde_json::from_str(events[2].2.as_deref().unwrap()).unwrap();
-    assert_eq!(digest["waiting"], 3);
-    // Three pushes now; the digest waits for the hour's end.
-    let held: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT e.dedup_key, d.next_try_at FROM push_deliveries d JOIN parent_events e ON e.id = d.event_id \
-         ORDER BY d.id",
-    )
-    .fetch_all(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(held.len(), 4, "{held:?}");
-    for (key, at) in &held {
-        assert_eq!(key.starts_with("digest:"), at.is_some(), "{held:?}");
+    let expected: Vec<(String, Option<String>)> = vec![
+        (id_of(1), Some("number:+4790000091".into())),
+        (id_of(2), None),
+        (id_of(3), Some("name:DNB".into())),
+        (id_of(4), Some("number:2222".into())),
+        (id_of(5), None),
+        (id_of(6), None),
+    ];
+    assert_eq!(events, expected, "six inbox rows, no digest row (L3)");
+    // Three pushes now and one digest waiting for the hour's end.
+    let deliveries: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT kind, next_try_at FROM push_deliveries ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(deliveries.len(), 4, "{deliveries:?}");
+    for (kind, at) in &deliveries {
+        assert_eq!(kind == "digest", at.is_some(), "{deliveries:?}");
     }
-    crate::push::send_due(&app.state, Utc::now()).await.unwrap();
-    let titles: Vec<String> = app
-        .pushes
-        .take()
-        .iter()
-        .map(|r| {
-            super::web_push::payload(r)["notification"]["title"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        })
-        .collect();
     assert_eq!(
-        titles,
+        pushed_titles(&app, Utc::now()).await,
         [
             "Anna: message from unknown number +4790000091",
             "Anna: message from sender name «DNB»",
             "Anna: message from unknown number 2222",
         ]
     );
-    crate::push::send_due(&app.state, Utc::now() + chrono::Duration::minutes(61))
-        .await
-        .unwrap();
-    let digest = app.pushes.take();
-    assert_eq!(digest.len(), 1);
-    assert_eq!(
-        super::web_push::payload(&digest[0])["notification"]["title"],
-        "Anna: 3 messages are waiting"
-    );
-    // Released: the event is read.
+    // The parent let one in meanwhile: the digest counts what still waits.
     let mut released = held_row(1, "number", "+4790000091", 6);
     released["state"] = "released".into();
     post_held(&app, &token, vec![released]).await;
-    let read: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM parent_event_reads r JOIN parent_events e ON e.id = r.event_id \
-         WHERE e.dedup_key = ?)",
-    )
-    .bind(&one)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert!(read);
+    assert_eq!(
+        pushed_titles(&app, Utc::now() + chrono::Duration::minutes(61)).await,
+        ["Anna: 5 messages are waiting"]
+    );
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(!inbox.contains("messages are waiting"), "{inbox}");
     let page = app
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
     assert!(held_html(&page, 1).contains("Delivered"));
+}
+
+/// Code QA M2: past `EVENTS_AN_HOUR` (20 a phone's hour) no event is stored, but the digest still goes and counts
+/// every message waiting - 25, not the 20 stored.
+#[tokio::test]
+async fn the_digest_counts_past_the_hourly_cap() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let (id, token) = managed_phone(&app).await;
+    post_held(
+        &app,
+        &token,
+        (1..=25)
+            .map(|n| held_row(n, "number", &format!("+47900001{n:02}"), 30))
+            .collect(),
+    )
+    .await;
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = 'sms_held'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, crate::parent_events::EVENTS_AN_HOUR);
+    assert_eq!(pushed_titles(&app, Utc::now()).await.len(), 3);
+    assert_eq!(
+        pushed_titles(&app, Utc::now() + chrono::Duration::minutes(61)).await,
+        ["Anna: 25 messages are waiting"]
+    );
+}
+
+/// Code QA L3/M2: a digest whose messages were all decided before its hour ended isn't sent.
+#[tokio::test]
+async fn a_digest_with_nothing_waiting_isnt_sent() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let (id, token) = managed_phone(&app).await;
+    post_held(
+        &app,
+        &token,
+        (1..=4)
+            .map(|n| held_row(n, "number", &format!("+47900001{n:02}"), 30))
+            .collect(),
+    )
+    .await;
+    assert_eq!(pushed_titles(&app, Utc::now()).await.len(), 3);
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/held/drop-all"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert!(
+        pushed_titles(&app, Utc::now() + chrono::Duration::minutes(61))
+            .await
+            .is_empty()
+    );
+    let reason: String =
+        sqlx::query_scalar("SELECT reason FROM push_deliveries WHERE kind = 'digest'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(reason, "nothing_waiting");
+}
+
+/// §7 and code QA L4: every way a held message is settled marks its event read for every parent - the phone's
+/// `released`, `expired` and `dropped`, and a parent's own allow and "Slett nå" - and a message still waiting stays
+/// unread.
+#[tokio::test]
+async fn every_settling_marks_the_event_read_for_every_parent() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let _pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Trener", "+4790000104", false).await;
+    post_held(
+        &app,
+        &token,
+        (1..=6)
+            .map(|n| held_row(n, "number", &format!("+47900001{n:02}"), 30))
+            .collect(),
+    )
+    .await;
+    let mut moved = Vec::new();
+    for (n, state) in [(1, "released"), (2, "expired"), (3, "dropped")] {
+        let mut row = held_row(n, "number", &format!("+47900001{n:02}"), 30);
+        row["state"] = state.into();
+        moved.push(row);
+    }
+    post_held(&app, &token, moved).await;
+    for action in [
+        format!("/devices/{id}/calls/held/{:032x}/allow", 4),
+        format!("/devices/{id}/calls/held/{:032x}/drop", 5),
+    ] {
+        let res = app
+            .request_form(Method::POST, &action, Some(&cookie), &[])
+            .await;
+        assert!(res.status.is_redirection(), "{action}");
+        assert!(!res.location().unwrap().contains("notice"), "{action}");
+    }
+    for n in 1..=6 {
+        let reads: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM parent_event_reads r JOIN parent_events e ON e.id = r.event_id \
+             WHERE e.device_id = ? AND e.dedup_key = ?",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(reads, if n == 6 { 0 } else { 2 }, "row {n}");
+    }
+}
+
+/// §8.5 (code QA M1): the RCS step shows before "Styrt av Vibb" is chosen - SMS "Ikke styrt" or "Av" on a phone that
+/// can take it - and under it, with Google's form behind the ⓘ; not for a phone without the engine.
+#[tokio::test]
+async fn the_rcs_step_shows_before_and_under_managed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    let rcs = |page: &str| {
+        let start = page.find("data-rcs")?;
+        Some(page[start..start + page[start..].find("</div>").unwrap()].to_string())
+    };
+    for (mode, words) in [
+        (
+            "unmanaged",
+            "Before you choose Managed by Vibb: turn off chat features in Messages.",
+        ),
+        (
+            "off",
+            "Before you choose Managed by Vibb: turn off chat features in Messages.",
+        ),
+        ("managed", "Turn off chat features in Messages first."),
+    ] {
+        sqlx::query("UPDATE device_policy SET sms_mode = ? WHERE device_id = ?")
+            .bind(mode)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let page = app
+            .get_page(&format!("/devices/{id}/calls"), &cookie)
+            .await
+            .text();
+        let line = rcs(&page).unwrap_or_else(|| panic!("{mode}: no RCS line"));
+        assert!(line.contains(words), "{mode}: {line}");
+        assert!(
+            line.contains(r#"href="https://messages.google.com/disable-chat""#),
+            "{mode}: {line}"
+        );
+    }
+    // Without the engine "Styrt av Vibb" can't be chosen, so there is no step before it.
+    sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
+        .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(rcs(&page).is_none(), "{page}");
+}
+
+/// Code QA L2: the intake refuses a held row of a class with no allow path; a blocked one is taken.
+#[tokio::test]
+async fn a_held_row_without_an_allow_path_is_refused() {
+    let app = TestApp::new().await;
+    let (_, token) = managed_phone(&app).await;
+    for class in ["malformed", "empty", "group", "bad_location"] {
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/sms-held",
+                Some(&token),
+                Some(json!({ "rows": [held_row(1, class, "", 1)] })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{class}");
+        assert_eq!(
+            res.json(),
+            json!({ "refused": 0, "reason": "state" }),
+            "{class}"
+        );
+    }
+    let mut blocked = held_row(1, "malformed", "", 1);
+    blocked["state"] = "blocked".into();
+    blocked["expires_at"] = blocked["at"].clone();
+    post_held(&app, &token, vec![blocked]).await;
+}
+
+/// Code QA L5: an expired row stays out of "Slett alle som venter" and the policy's drop list; code QA L1: "Slett
+/// nå" sits behind its confirm.
+#[tokio::test]
+async fn delete_everything_waiting_leaves_expired_rows_out() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    post_held(
+        &app,
+        &token,
+        vec![
+            held_row(1, "number", "+4790000091", 5),
+            held_row(2, "number", "+4790000092", 25 * 60),
+        ],
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    let row = held_html(&page, 1);
+    let confirm = row.find(r#"<details class="confirm cell">"#).unwrap();
+    assert!(
+        row[confirm..].contains(&format!("/drop#held-{:032x}", 1)),
+        "{row}"
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/held/drop-all"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["sms_held_drop"],
+        json!([format!("{:032x}", 1)])
+    );
+    let stale: Option<String> = sqlx::query_scalar(
+        "SELECT dropped_at FROM device_sms_held WHERE device_id = ? AND held_id = ?",
+    )
+    .bind(id)
+    .bind(format!("{:032x}", 2))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stale, None);
+}
+
+/// Code QA L7: a short code or an emergency number is never the phone's own number.
+#[tokio::test]
+async fn the_own_number_is_a_full_number() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    for number in ["112", "2222"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/calls/sms"),
+                Some(&cookie),
+                &[("own_number_1", number), ("own_number_2", "")],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{number}");
+        assert!(
+            res.text().contains("not a short or emergency number"),
+            "{number}"
+        );
+    }
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["own_numbers"],
+        json!([])
+    );
+}
+
+/// The allow is scoped to the path's phone: another phone's held id is no row here, and nothing is written.
+#[tokio::test]
+async fn an_allow_never_reaches_another_phones_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (_, token) = managed_phone(&app).await;
+    post_held(&app, &token, vec![held_row(1, "alphanumeric", "DNB", 5)]).await;
+    let (other, other_token) = app.enrolled_device("Ola").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{other}/calls/held/{:032x}/allow", 1),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location().unwrap(),
+        format!("/devices/{other}/calls?notice=held_gone#held")
+    );
+    let names: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_sms_names")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(names, 0);
+    assert_eq!(
+        app.policy(&other_token).await["call_policy"]["sms_names"],
+        json!([])
+    );
+}
+
+/// R2-H1 on Add Contact: "Kan sende melding til" sent on for "113" is stored off.
+#[tokio::test]
+async fn add_contact_never_lets_an_emergency_number_text_in() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[
+                ("name", "Ambulanse"),
+                ("number", "113"),
+                ("switches", "on"),
+                ("inbound", "on"),
+                ("sms_in", "on"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let flags: (bool, bool) = sqlx::query_as(
+        "SELECT dc.allow_inbound, dc.sms_in FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ? AND c.phone_number = '113'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(flags, (true, false));
+}
+
+/// R2-M2: a sender name with markup in it (a valid name the phone's cleaning keeps) is escaped on the card and in
+/// the inbox.
+#[tokio::test]
+async fn a_hostile_sender_name_is_escaped() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    post_held(&app, &token, vec![held_row(1, "alphanumeric", "\"<&x", 5)]).await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("\"<&x"), "{page}");
+    assert!(page.contains("«&#34;&#60;&#38;x»"), "{page}");
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(!inbox.contains("\"<&x"), "{inbox}");
+    assert!(inbox.contains("«&#34;&#60;&#38;x»"), "{inbox}");
 }
 
 /// The findings (§7): a full name pool says until when, with the drop-all hint; the role not ours says messages are

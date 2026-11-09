@@ -134,6 +134,64 @@ test("Enter or blur without a change saves nothing", () => {
     assert.strictEqual(select.form.submits, 1);
 });
 
+// Design 77 step 4, code QA L6: a segmented control's radios share one form and one name.
+function radioGroup(values) {
+    const form = { submits: 0, submit() { this.submits += 1; } };
+    return values.map((value) => ({
+        tagName: "INPUT",
+        type: "radio",
+        name: "sms_mode",
+        value,
+        form,
+        hasAttribute: (name) => name === "data-autosave",
+    }));
+}
+
+test("a radio checked with a pointer saves at once", () => {
+    const { doc, fire } = fakeDocument();
+    install(doc);
+    const [, managed] = radioGroup(["off", "managed", "unmanaged"]);
+    fire("mousedown", { tagName: "SPAN" });
+    fire("change", managed);
+    assert.strictEqual(managed.form.submits, 1);
+});
+
+test("arrow keys through a radio group save only the radio left checked", () => {
+    const { doc, fire } = fakeDocument();
+    install(doc);
+    const [off, managed, unmanaged] = radioGroup(["off", "managed", "unmanaged"]);
+    // From "off" to "unmanaged" passes "managed": no save on the way.
+    fire("keydown", off, { key: "ArrowRight" });
+    fire("change", managed);
+    fire("focusout", off, { relatedTarget: managed });
+    fire("keydown", managed, { key: "ArrowRight" });
+    fire("change", unmanaged);
+    fire("focusout", managed, { relatedTarget: unmanaged });
+    assert.strictEqual(off.form.submits, 0, "nothing saved while moving");
+    // Enter (or Space) saves the checked one, once.
+    const enter = fire("keydown", unmanaged, { key: "Enter" });
+    assert.ok(enter.defaultPrevented);
+    assert.strictEqual(off.form.submits, 1);
+    fire("focusout", unmanaged, { relatedTarget: null });
+    assert.strictEqual(off.form.submits, 1, "saved once");
+});
+
+test("leaving a radio group by the keyboard saves the radio left checked", () => {
+    const { doc, fire } = fakeDocument();
+    install(doc);
+    const [off, managed] = radioGroup(["off", "managed"]);
+    fire("keydown", off, { key: "ArrowDown" });
+    fire("change", managed);
+    fire("focusout", off, { relatedTarget: managed });
+    assert.strictEqual(off.form.submits, 0);
+    fire("focusout", managed, { relatedTarget: null });
+    assert.strictEqual(off.form.submits, 1);
+    // Back to the pointer: a click saves at once again.
+    fire("mousedown", { tagName: "SPAN" });
+    fire("change", off);
+    assert.strictEqual(off.form.submits, 2);
+});
+
 test("a text field or file input saves on change (its change fires once, on commit)", () => {
     const { doc, fire } = fakeDocument();
     install(doc);

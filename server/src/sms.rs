@@ -147,10 +147,12 @@ pub async fn policy_parts(
     let drop = sqlx::query_scalar(
         "SELECT held_id FROM device_sms_held WHERE device_id = ? AND dropped_at IS NOT NULL \
          AND state IN ('held', 'dropped') AND datetime(dropped_at) >= datetime('now', ?) \
-         ORDER BY datetime(dropped_at) DESC, held_id LIMIT ?",
+         AND expires_at > ? ORDER BY datetime(dropped_at) DESC, held_id LIMIT ?",
     )
     .bind(device_id)
     .bind(format!("-{DROP_HOURS} hours"))
+    // Code QA L5: a row past its window is gone on the phone (it expires first); the 100 ids are for the rest.
+    .bind(chrono::Utc::now().timestamp_millis())
     .bind(DROP_MAX)
     .fetch_all(db)
     .await?;
@@ -305,6 +307,15 @@ fn refusal(row: &HeldRow, now_ms: i64) -> Option<&'static str> {
         return Some("time");
     }
     if !STATES.contains(&row.state.as_str()) {
+        return Some("state");
+    }
+    // Code QA L2 (D4 rule 8): a sender the phone couldn't read, a group with a stranger or a picture from an unknown
+    // server has no allow path, so it is only ever `blocked` - never held, pushed or shown with an empty sender.
+    if matches!(
+        row.sender_class.as_str(),
+        "malformed" | "empty" | "group" | "bad_location"
+    ) && row.state != "blocked"
+    {
         return Some("state");
     }
     None

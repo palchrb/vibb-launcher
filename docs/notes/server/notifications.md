@@ -689,15 +689,23 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   sender name «DNB»" and "14:02 · Allow within 23 h" (whole hours, rounded down; the time alone once expired), nb
   "Anna: melding fra ukjent nummer …" / "… avsendernavnet «…»", "Tillat innen 23 t". Shorter than the design's
   sentence, which can't fit `TITLE_MAX` (60) with a 16-character number; the quotes and the label stay (R2-M2). A row
-  that moves on (`released`, `expired`, `dropped`) marks its event read for every parent.
+  that moves on (`released`, `expired`, `dropped`) marks its event read for every parent, and so does a parent's own
+  allow, "Slett nå" or "Slett alle som venter" (code QA L4, `calls_sms::mark_read`).
 - **The switch** `push_sms_held` ("A message is waiting for you to allow it" / "En melding venter på at du tillater
   den"), on by default (migration 0130).
 - **The push budget** (`PushBudget { per_hour: 3, per_key_hour: 1 }`, `Kind::push_budget`, in `parent_events::raise`
   beside `EVENTS_AN_HOUR` and `URGENT_PUSHES_AN_HOUR`): a phone's first three `sms_held` of a rolling hour push, at
   most one per sender (`NewEvent::budget_key`, `number:<n>`/`name:<n>`); an event pushed within it keeps the key in
-  `parent_events.push_budget_key` (0132), which the next one counts. Past it the event is stored with no push and
-  counted into one digest: an event of the same kind, key `digest:<instant>`, `params.waiting` the count, its push
-  held (`push_deliveries.next_try_at`) until the end of the hour that filled the budget (the oldest pushed event's
-  time plus an hour); later ones before then add to it (`json_set`), and its words are made when it is pushed -
-  "Anna: 7 messages are waiting" / "Anna: 7 meldinger venter", target `/devices/{id}/calls#held`. Tests:
-  `tests::sms_page::the_push_budget`, `parent_events::tests::a_held_message_is_labelled_and_quoted`.
+  `parent_events.push_budget_key` (0132), which the next one counts. Past it the event is stored with no push (an
+  inbox row), and one digest is queued unless one already waits for the phone: a push of its own, no inbox row and no
+  badge (code QA L3: `push_deliveries.kind = 'digest'`, `push::queue_digest`, anchored on the triggering event for the
+  phone, the switch and the tap; the inbox's delivery lines leave it out), held (`next_try_at`) until the end of the
+  hour that filled the budget (the oldest pushed event's time plus an hour). `send_due` words it when it is due from
+  the live count (code QA M2: `parent_events::waiting_count` - held, not dropped, inside the window by the server's
+  clock), "Anna: 7 messages are waiting" / "Anna: 7 meldinger venter" (`parent_events::digest_words`), target
+  `/devices/{id}/calls#held`, and drops it (`nothing_waiting`) when nothing waits. An event past `EVENTS_AN_HOUR` (not
+  stored) still opens the digest, so a flood is counted in full. Within one rolling hour the parent can get three
+  pushes, the digest, then one more as soon as the oldest push leaves the window, and a second digest an hour on (code
+  QA N5) - inside R2-M3's spirit. Tests: `tests::sms_page::the_push_budget`, `the_digest_counts_past_the_hourly_cap`,
+  `a_digest_with_nothing_waiting_isnt_sent`, `every_settling_marks_the_event_read_for_every_parent`,
+  `parent_events::tests::a_held_message_is_labelled_and_quoted`.

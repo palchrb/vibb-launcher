@@ -40,6 +40,12 @@ const ROLES_PENDING_SECS: i64 = 5 * 60;
 /// The calls page reloads itself (`static/auto-reload.js`) for this long while it waits.
 const ROLES_REFRESH_SECS: i64 = 2 * 60;
 
+/// Design 77 §8.5's path 2 (code QA M1): Google's web form that deregisters a number from RCS chat features, for a
+/// phone whose Messages app is already hidden. It texts the number a code - that message is held, so the parent lets
+/// its sender in under "Meldinger som venter".
+const RCS_FORM_URL: &str = "https://messages.google.com/disable-chat";
+const RCS_FORM_LABEL: &str = "messages.google.com/disable-chat";
+
 /// The launcher's package as an adb command names it (behind an ⓘ only, never visible text).
 const LAUNCHER_FOR_ADB: &str = "me.vibb.launcher (a debug build: me.vibb.launcher.debug; a launcher from before 2026-10-06: \
      com.kidslauncher.mdm)";
@@ -226,6 +232,9 @@ struct DeviceCallsTemplate {
     emergency_add_error: Option<(&'static str, String)>,
     /// A refused channel choice (code QA M2), shown under the two rows.
     settings_error: Option<&'static str>,
+    /// Design 77 §8.5's path 2: Google's form that turns a number's chat features off, the RCS line's ⓘ link.
+    rcs_form_url: &'static str,
+    rcs_form_label: &'static str,
 }
 crate::i18n::words!(DeviceCallsTemplate);
 
@@ -281,7 +290,8 @@ struct ChannelRow {
     label: &'static str,
     options: Vec<Segment>,
     sub: &'static str,
-    /// A second line under the chosen state: SMS "Styrt av Vibb"'s "Slå av chatfunksjoner i Meldinger først" (§8.5).
+    /// SMS's RCS step (§8.5): "Før du velger Styrt av Vibb: slå av chatfunksjoner i Meldinger" before it is chosen,
+    /// "Slå av chatfunksjoner i Meldinger først" under it; with an ⓘ that links Google's form.
     extra: Option<&'static str>,
     /// "<choice> - Oppdater Vibb One først", one line per choice the phone can't do yet (code QA M2).
     update_first: Vec<String>,
@@ -374,7 +384,14 @@ fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> 
         label: t(lang, label),
         options,
         sub: t(lang, sub),
-        extra: (sms && mode == "managed").then(|| t(lang, "device.calls.channel.sms_rcs")),
+        // §8.5 (code QA M1): "først" - the step is shown before the switch, while Messages is still visible (SMS
+        // "Ikke styrt" or "Av" on a phone that can take "Styrt av Vibb"), and stays under it.
+        extra: match (sms, mode) {
+            (false, _) => None,
+            (true, "managed") => Some(t(lang, "device.calls.channel.sms_rcs")),
+            (true, _) if engine => Some(t(lang, "device.calls.channel.sms_rcs_before")),
+            (true, _) => None,
+        },
         update_first,
     }
 }
@@ -761,6 +778,8 @@ async fn load_page(
             channel_row(lang, true, &policy.sms_mode, &policy.calls_mode, engine),
         ],
         settings_error: shown.settings_error,
+        rcs_form_url: RCS_FORM_URL,
+        rcs_form_label: RCS_FORM_LABEL,
         default_message_options: message_app_options(lang, Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
