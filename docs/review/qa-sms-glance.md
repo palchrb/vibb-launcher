@@ -202,3 +202,72 @@ the engine thread and is small at a kid's scale. If it ever matters, read only t
 
 Once H1 and M1 are fixed, the notice-wake bullet in `lock-and-glance.md` and `calls.md` should list the SMS
 conditions the way it lists the app's five: not silent, Do Not Disturb, gains a row, notifications on, the channel.
+
+## Fix round (branch `sms-glance`, a6ba594d, after the fast-forward to `qa-sms-glance`)
+
+- **H1 - fixed.** `smsPostAlerts` has a `passesFilter` parameter; `SmsNotifier.wakeIfAlerts` passes
+  `NotificationManager.currentInterruptionFilter == INTERRUPTION_FILTER_ALL`, so any Do Not Disturb, an unknown filter
+  included, means no wake (fail closed). This covers a silent rule that allows calls, the kid's own Do Not Disturb and a
+  system mode. The posted notification's own ranking isn't read: under any Do Not Disturb, no wake is the safe side.
+  `SmsGlanceTest` has the row; the notes list it.
+- **M1 - fixed.** `smsGainsRow(unreadAfter, hiddenMark, messageSeq)` is passed to `smsPostAlerts` as `gainsRow`. A
+  message gains a row when it is the conversation's only unread message (`unread` after it, read on the engine thread
+  in `notify`) or the first one after its row was swiped away. `SmsGlance.comeBack` spends the swipe mark on the main
+  thread: a later message in the same row no longer counts, while the row itself comes back as before. Tests: the rule's
+  rows, and the engine's count after the first and the second message.
+- **L1 - fixed.** `device.lock.wake_sub`: "For the apps on the lock below, missed calls and messages" / "For appene på
+  låsen nedenfor, tapte anrop og meldinger". The server test that pins it
+  (`tests::lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`) is updated. The `lock_glance` and
+  `i18n` tests pass: 37, 0 failed (`CARGO_PROFILE_DEV_DEBUG=line-tables-only`, own target dir seeded from main's,
+  deleted after).
+- **L2 - fixed.** `SmsGlance.dismiss(context, row, current)` cancels the notification only when
+  `smsDismissCancels(row.upToSeq, current?.upToSeq)` holds: the summary's row for the conversation still has the
+  swiped `upToSeq`, or there is no row any more. A message that came during the drag keeps the notification. Test rows
+  are added.
+- **L3 - fixed.** Added behaviour tests:
+  - a picture with the switch off (no "Bilde", no text) and on (`picture`), and a picture with text (the text);
+  - a group's newest sender, and none for a one-to-one;
+  - the callback window's stranger (`unknownSender`, its text only with the switch on);
+  - the newest unread message past the kid's own reply;
+  - the 8-row cut: eight missed calls plus an SMS row give 8 rows and "+ 1"; the SMS row is bound because it is the
+    newest, and the oldest call goes.
+
+  The exact-line tests ("the wiring", the second half of the wake test) are gone. One source check stays: the
+  notifier's one `noticeCame`, behind `if (wake) wakeIfAlerts(` after `manager.notify(`, with `afterMove`'s
+  `wake = false`, and never in `notSent`.
+- **L4 - done.** One emulator run of the wake under the lock, after H1 and M1: see "L4's emulator run" below and `docs/testing/emulator.md` §6v, step 5.
+- **N1 - explained.** It is consistent with round 7: an SMS is a notice like the others. Left as it is.
+- **N2 - fixed.** The comment now says what renders: a change that leaves every row as it was renders nothing; an
+  outgoing message or a `canSend` change in a conversation with unread messages renders once.
+- **N3 - left.** It is small at a kid's scale and runs on the engine thread, coalesced. The suggested cut is noted
+  here if it ever matters.
+- **N4 - fixed.** The notice-wake bullet in `lock-and-glance.md`, the step 5 section of `calls.md` and design 77
+  §6.8's "As built" line list the SMS conditions: the message's own post, not silent, no Do Not Disturb, notifications
+  and the channel, gains a row.
+- **Also fixed: step 3b's code QA L8 / design 81 QA N7.** A group MMS that leaves the sender's one-to-one
+  conversation no longer cancels that conversation's whole notification. `SmsRuntime.notifyShown` calls
+  `SmsNotifier.afterMove`, which rebuilds the notification quietly (silent channel, no wake) from what is still unread
+  there (`smsNotifiedMessages`, the same pick `notify` uses), and cancels it only when nothing is unread.
+  `SmsEngine.conversationRow` gives it the stored conversation. Test:
+  `after a group move the one-to-one notification keeps what is still unread`.
+- **Tests:**
+  - targeted (`sms.*`, `lock.*`, `badges.*`, `ui.messages.*`): 716, 0 failed;
+  - full launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true` under `flock ~/build.lock`, with no
+    emulator up: BUILD SUCCESSFUL, 2318 tests, 0 failed.
+
+### L4's emulator run (2026-11-09, a6ba594d's debug build)
+
+Run on `handy36`, wiped, against a throwaway server built from this branch and seeded with the Child PIN, both
+channels "Styrt av Vibb" and `lock_wake_on_notification = 1`. The emulator held `~/build.lock` while it ran, so no
+build overlapped it. The rows from a first pass (Mamma 2, Pappa 1, Bestemor 1) were swiped away first, so each
+contact's next message brings its row back. The screen was turned off by hand before each step, followed by 35 s
+(the gate's 30 s gap). Results (`dumpsys power`'s `mWakefulness`, and `PinLock: Notice wake` in the log):
+
+1. Mamma's message after her row was swiped away: **Awake** (one "Notice wake").
+2. Mamma's next message, her row already there: **Asleep** (M1).
+3. Pappa's message after his swipe, under `cmd notification set_dnd priority`: **Asleep** (H1).
+4. Bestemor's message after her swipe, Do Not Disturb off: **Awake** (the second "Notice wake").
+
+A side note: the AVD has "Stay awake" on (`stay_on_while_plugged_in` 1), so in own mode the woken screen stayed on
+past the 15 s end. That comes from round 7's end on this AVD, not from the SMS trigger, which is why each step turns
+the screen off by hand.

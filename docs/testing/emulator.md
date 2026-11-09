@@ -2547,6 +2547,15 @@ PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credenti
 - A tap on Mamma's row: "Skriv koden for å åpne Meldinger" / "Enter your code to open Messages"; the PIN opens her
   thread (`GlanceOpener: Glance: opened the messages`), Back gives the list. At the next lock-up her row is gone (read).
 - Pappa's row swiped sideways: gone (`Glance: a row dismissed (sms)`); his next SMS brings it back as "· 3 nye".
+- **The notice wake** (after the code QA's H1/M1, a6ba594d), with `device_policy.lock_wake_on_notification = 1` and the
+  screen off, 35 s between steps (the gate's 30 s gap):
+  - the first message after a row was swiped away lights the lock (`PinLock: Notice wake`);
+  - the next message in that row doesn't;
+  - a new row's message under `cmd notification set_dnd priority` doesn't;
+  - with Do Not Disturb off again, it does.
+
+  The AVD's "Stay awake" (`stay_on_while_plugged_in` 1) keeps a woken screen on past round 7's 15 s, so turn it off by
+  hand between the steps (`docs/review/qa-sms-glance.md`, "L4's emulator run").
 - The glance's window is `FLAG_SECURE`: screenshots with `adb emu screenrecord screenshot <host path>`; the language
   with `cmd locale set-app-locales me.vibb.launcher.debug --locales nb` right before the lock-up (Home undoes it).
 
