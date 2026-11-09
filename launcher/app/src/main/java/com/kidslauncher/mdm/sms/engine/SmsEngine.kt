@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.sms.engine
 
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -73,7 +74,13 @@ class SmsEngine(
     private val radio: SmsRadio,
     private val ids: IdSource = RandomIds,
 ) : MessageEngine {
-    private val events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
+    /**
+     * The live events: a "something changed" signal for the front ends on the phone, never the record (that is
+     * [events]'s replayable log). A burst larger than the buffer - a long conversation deleted, a rule change over many
+     * conversations - keeps the newest and drops the oldest, so [emit] never fails and the last change always arrives
+     * (code QA of step 2, L1: with the default it dropped the newest for every collector).
+     */
+    private val events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     override val live: Flow<EngineEvent> = events.asSharedFlow()
 
@@ -513,13 +520,22 @@ class SmsEngine(
 
     override fun conversations(): List<Conversation> {
         val judge = judge()
-        return store.conversations().mapNotNull { row ->
-            val last = store.lastMessage(row.id) ?: return@mapNotNull null
-            Conversation(
-                id = ConversationId(row.id), participants = row.participants.sortedBy { it.address }, displayName = row.displayName,
-                subId = row.subId, lastSeq = last.seq, lastAt = last.at, unread = store.unread(row.id), canSend = canSend(row, judge),
-            )
-        }.sortedByDescending { it.lastSeq }
+        return store.conversations().mapNotNull { conversationOf(it, judge) }.sortedByDescending { it.lastSeq }
+    }
+
+    /** One conversation (a thread's read, code QA of step 2, L2: not every conversation's); `null` when it is gone or
+     * has no message left. */
+    fun conversation(id: ConversationId): Conversation? = store.conversation(id.value)?.let { conversationOf(it, judge()) }
+
+    /** The one-to-one conversation keyed by [address] (a normalised number, `name:<text>`), as [conversation]. */
+    fun conversationWith(address: String): Conversation? = store.conversationByKey(address)?.let { conversationOf(it, judge()) }
+
+    private fun conversationOf(row: ConversationRow, judge: SmsJudge): Conversation? {
+        val last = store.lastMessage(row.id) ?: return null
+        return Conversation(
+            id = ConversationId(row.id), participants = row.participants.sortedBy { it.address }, displayName = row.displayName,
+            subId = row.subId, lastSeq = last.seq, lastAt = last.at, unread = store.unread(row.id), canSend = canSend(row, judge),
+        )
     }
 
     override fun messages(id: ConversationId, beforeSeq: Long?, limit: Int): List<Message> =

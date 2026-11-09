@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The delete confirm built into the message screens (design 77 D18: one confirm, no system dialog, no trash, no
+     undo): the question, that it can't be undone, Avbryt and Slett. It takes the compose bar's place in a thread and
+     sits at the list's bottom; TalkBack hears the question as it appears (a live region). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/messages_confirm"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:layout_marginBottom="8dp"
+    android:accessibilityLiveRegion="polite"
+    android:background="@drawable/bg_messages_confirm"
+    android:clickable="true"
+    android:focusable="false"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:visibility="gone">
+
+    <TextView
+        android:id="@+id/messages_confirm_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:focusable="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:textColor="@color/kid_core"
+        android:textSize="17sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:fontFamily="@font/nunito_semibold"
+        android:text="@string/messages_delete_note"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="14sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/messages_confirm_cancel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_messages_button"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:text="@string/messages_cancel"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_core"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/messages_confirm_delete"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_messages_delete"
+            android:fontFamily="@font/nunito_extrabold"
+            android:minHeight="48dp"
+            android:text="@string/messages_delete"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_emergency_text"
+            android:textSize="16sp" />
+    </LinearLayout>
+</LinearLayout>

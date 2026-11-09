@@ -85,6 +85,15 @@ fun resolveMessageButton(
 }
 
 /**
+ * Design 77 §6.7: while SMS is "Styrt av Vibb" an SMS contact's Message button opens our own thread - only when the kid
+ * may text them ("Kan få melding fra", `sms_out`, D3); without it there is no button. Element X and Signal contacts keep
+ * [resolveMessageButton]'s rule, and so does every contact while SMS isn't "Styrt av Vibb". The engine's gate still
+ * decides every send.
+ */
+fun opensOwnThread(contact: RuleContact, smsMode: ChannelMode?): Boolean =
+    contact.messageApp == "sms" && smsMode == ChannelMode.MANAGED && contact.smsOut && contact.number.isNotEmpty()
+
+/**
  * The messaging apps the parent chose for the contacts (handy step 6): they stay usable when the
  * screen-time budget is used up. SMS only while SMS is on; Signal means every Signal-protocol app
  * we open for it. Still subject to the allowlist (the caller doesn't need to check).

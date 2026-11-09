@@ -565,6 +565,38 @@
         <receiver
             android:name=".sms.SmsReplyReceiver"
             android:exported="false" />
+        <!-- The kid's message screens (design 77 §6.7, step 2): the list, a thread and a received picture. Not exported
+             (the role's ComposeActivity is the way in from other apps). A task of their own, as Dagen's: in Recents as
+             "Meldinger", never destroyed with the lock's task. A thread follows the keyboard itself (edge to edge). -->
+        <activity
+            android:name=".ui.messages.MessagesActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.messages" />
+        <activity
+            android:name=".ui.messages.ThreadActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.messages"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.messages.PictureActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:taskAffinity="${applicationId}.messages" />
+        <!-- "Del" on a received picture (§6.7): a one-shot read grant on a copy in cacheDir/share/ (deleted after an
+             hour) - not exported, only what share_paths.xml names. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/share_paths" />
+        </provider>
         <!-- Answers market:// and play.google.com/store links (handy step 7): the device owner makes
              it their persistent preferred activity, which AOSP honours only when the activity
              declares matching filters. Passes the link on to Play while Play isn't suspended. -->

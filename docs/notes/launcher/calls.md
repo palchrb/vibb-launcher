@@ -111,8 +111,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   commit, `finish()`, then the notification), `MmsPushReceiver` (step 1 only commits the raw push to `pending_push`),
   `SmsSentReceiver` (sent and delivery results, manifest-registered), `SmsReplyReceiver` (the notification's reply,
   `setAuthenticationRequired`, the notification's own `clientId`), `RespondViaMessageService`, `ComposeActivity` (a
-  stub until step 2: a number the kid may not text says so), `SmsNotifier` (`MessagingStyle`, public version "Ny
-  melding", silent under a time rule without calls; the tap opens Home until step 2's thread).
+  step 2: an allowed number opens its thread with any `sms_body` as a draft, else it says why), `SmsNotifier`
+  (`MessagingStyle`, public version "Ny melding", silent under a time rule without calls; since step 2 the tap opens
+  the thread).
 - **The role and the permissions (`SmsRole.kt`, `AppEnforcer.applySmsRole`/`applySmsPermissions`):** taken in
   "Styrt av Vibb" before the plan (so `DISALLOW_SMS` stays off), handed back in "Ikke styrt" after the package loop
   to the holder before us; kept in "Av" and with unknown rules. `DISALLOW_SMS` is `smsRestricted`: "Av", or no role of
@@ -136,3 +137,60 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
     (`slow_receives`), and `markRead` is one statement (L7);
   - MMS pushes: at most 100, 2 KB each, 7 days; more is counted as blocked `malformed` (L4);
   - `secure_delete` is read back after it is set, and `last_error` says so when it isn't (N4).
+
+## The kid's message screens, step 2 (design 77 §6.7; branch `sms-screens`)
+
+- **Pure model (`ui/messages/MessagesModel.kt`, `MessagesModelTest`):** `messagesTileShown` (Home's tile: SMS "Styrt av
+  Vibb" with the role ours, or any history); `messagesUsableUnder(lock)` (a time rule: reachable where the rule allows
+  calls, as the phone book; the used-up budget keeps calls); `composeState(judge, target)` - `OPEN`, `READ_ONLY` (SMS
+  "Av"/"Ikke styrt": the history stays readable in Vibb One, no compose bar, also for an emergency number), `NOT_NOW` (a
+  time rule without calls: "Du kan ikke sende meldinger nå"), `NOT_ALLOWED` (a sender name, a stranger, a contact
+  without `sms_out`, a group), `UNAVAILABLE` (rules unknown, role not ours) - the gate's own answer
+  (`SmsRules.decideSend`) shown before the kid types; the engine still decides every send. `newMessageContacts` ("Ny
+  melding": only `sms_out` contacts, the parent's order, no free number), `listRows` (newest first by `seq`; the
+  contact's name now, else the name the conversation last had, D18), `listTimeLabel` (the clock today, "I går", the
+  weekday this week, else the date), `threadItems` (by `seq`, a day separator per day), `deliveryLine` ("Sendt"/"Levert"/
+  "Sender …" under the kid's last message; "Ikke sendt"/"Kanskje ikke sendt - trykk for å prøve igjen" wherever a
+  failed or `UNCERTAIN` one is), `partViews` (step 3b's parts), `MessageActions` (D18's deletes; "Prøv igjen" sends the
+  text again with a new `clientId` and deletes the failed message once accepted - refused, it stays).
+- **Screens (`ui/messages/`, XML views, Dagen's ground and header):** `MessagesActivity` (the list; "Ny melding" as the
+  header's action while `composeState` would send; long-press or TalkBack's "Slett samtale" asks in the screen),
+  `ThreadActivity` (bubbles - received in `kid_message_in` (#34324A, the user's D2), the kid's in `kid_message_out`
+  (the accent peach, dark ink), each time in its bubble's dim tone - with day separators and times in the one clock
+  format, "Ukjent avsender" over a callback-window message, the delivery line;
+  long-press or TalkBack's "Slett" asks "Slette meldingen?"; the compose bar or its line), `PictureActivity` (fit to
+  screen, "Lagre" into `Pictures/Vibb One/` through MediaStore with a name that says nothing, "Del" through
+  `PictureShare`: a copy in `cacheDir/share/` behind the not-exported `FileProvider` `${applicationId}.share`, deleted
+  after an hour at every share, picture and sync). The delete confirm (`view_messages_confirm.xml`) is part of the
+  screen, no system dialog; no trash, no undo. One task of their own (`.messages` affinity, as Dagen's), in Recents as
+  "Meldinger"; `MessagesScreens.startThread` puts the list under a thread opened from outside.
+- **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
+  the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
+  once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
+  never selectable or linked: nothing opens another app (`KidScreensEscapeTest`, which guards `ui/messages` and allows
+  `Intent.createChooser` in `PictureShare.kt` alone).
+- **The engine's thread:** every read and write goes through `SmsRuntime.ask` (the engine thread, the answer posted to
+  the main thread) and the screens reload on `SmsRuntime.events` (the engine's live flow). `SmsHome` holds what Home
+  and the time-rule screen need (history, the unread total, the role), refreshed after every event, every rule change
+  and at Home's start; its listeners also tell the screens of a rule change that touched no conversation. A thread in
+  front (`SmsRuntime.threadInFront`) marks its messages read and gets no notification for them.
+- **Ways in:** Home's tile (`GridTile.Messages`, after the phone book, the teal tone `kid_messages_tile`, the chat glyph,
+  the unread total as its badge); the time-rule screen's "Meldinger" row (`LockRow.Messages`, where the rule allows
+  calls and Home shows the tile; never opened by itself after an unlock); the notification's tap (the thread over the
+  list, `PendingIntent.getActivities`, told apart by the thread intent's identifier); the contact sheet's Message button
+  (`opensOwnThread`: an SMS contact with `sms_out` while SMS is "Styrt av Vibb", no "opens in" line - the other apps and
+  the other modes keep `resolveMessageButton`); `ComposeActivity` (`smsto:` from another app). Under a time rule each
+  screen checks at resume and watches the lock (`LockWatch` with its own check) - a rule without calls brings the
+  time-rule screen.
+- **Pictures (step 3b plugs in):** a bubble shows `partViews(message.parts)` - a picture's rounded place (70 % of the
+  width, the picture glyph) until `engine.openPart` gives its bytes, then the thumbnail (`SmsPictures`, our own JPEG,
+  decoded off the main thread); a tap opens `PictureActivity`. Today `Message.parts` is always empty and `openPart` is
+  `null`, so no picture shows anywhere yet.
+- **Fix round after the code QA (`docs/review/qa-sms-screens.md`):** "Prøv igjen" sends under `retry:<failed id>` (two
+  taps send once) and only while the compose bar is open; the contact avatars' badge is missed calls plus unread
+  messages (`ContactBadge`, `SmsHome.unreadFrom`, Home, the phone book, the sheet); the notification lets the system add
+  no contextual actions; the engine's live flow is a drop-oldest change signal collected off the engine thread, and the
+  screens coalesce their reads (`Coalescer`, the thread reads its one conversation); the time-rule row and the tile
+  follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
+  parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
+  history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").

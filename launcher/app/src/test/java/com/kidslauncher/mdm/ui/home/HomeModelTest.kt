@@ -60,6 +60,29 @@ class HomeModelTest {
         assertEquals("day", gridTileId(GridTile.Day))
     }
 
+    /** Design 77 §6.7: Meldinger next to the phone book, before Dagen, with its unread total; no tile for `null`. */
+    @Test
+    fun `Meldinger sits next to the phone book with its unread badge`() {
+        assertEquals(
+            listOf(GridTile.PhoneBook, GridTile.Messages(3), GridTile.Day, GridTile.App(app("a"), 0), GridTile.Settings),
+            homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), showDay = true, messages = 3),
+        )
+        assertEquals(listOf(GridTile.Messages(0), GridTile.Settings), homeGrid(emptyList(), false, emptyMap(), messages = 0))
+        assertTrue(homeGrid(listOf(app("a")), true, emptyMap()).none { it is GridTile.Messages })
+        assertEquals("messages", gridTileId(GridTile.Messages(5)))
+        assertEquals(TileChange.FULL, tileChange(GridTile.Messages(1), GridTile.Messages(2), sameIcon = true))
+    }
+
+    /** Design 77 §6.7 (code QA M2): a contact avatar's badge is missed calls plus unread messages; the missed-call
+     * glyph only with a missed call. */
+    @Test
+    fun `a contact's badge counts missed calls and unread messages`() {
+        assertEquals(5, ContactBadge(2, 3).count)
+        assertTrue(ContactBadge(1, 0).callGlyph)
+        assertFalse(ContactBadge(0, 4).callGlyph)
+        assertEquals(0, ContactBadge(0, 0).count)
+    }
+
     @Test
     fun `the flashlight sits right before settings with its state, and is absent without a flash`() {
         val dark = homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), torch = TorchState(lit = false))

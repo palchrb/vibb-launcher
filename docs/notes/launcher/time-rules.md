@@ -29,6 +29,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   have opened the dialer or a browser. Back returns to the time-rule screen; Back/Home/other resumes don't
   open it again. Reminder ping stays silent under every rule, Recents unchanged. `TimeRulesTest`, `TimeLockModelTest`,
   `LockGlanceTest`, `DayTaskTest`, `PolicyResponseCompatTest`.
+- **Meldinger during a rule** (design 77 §6.7, step 2): reachable where the rule allows calls, as the phone book
+  (`messagesUsableUnder`; the used-up budget keeps calls). The time-rule screen has a **Meldinger** row
+  (`LockRow.Messages`, after the phone book, while `lock.callsAllowed` and Home shows the tile) that never opens by
+  itself after an unlock; the three message screens check at resume and watch the lock (`LockWatch` with
+  `MessagesScreens.redirectIfLocked`). Messages that come in under a rule without calls are stored and notified
+  silently (step 1), and the gate refuses a send then (`TIME_RULE`: "Du kan ikke sende meldinger nå").
 - **A rule's Silent** (PLAN "an alarm ringing during school mode", the user 2026-11-02; server 0121; code QA fix round
   2026-11-02): `TimeRule.silent` (default false). The pure `timerules/RuleSilence.kt` (`RuleSilenceTest`):
   `ruleSilenceFor(lock)` from the lock's rules (the active, un-lifted ones - none under the override or the pause, so

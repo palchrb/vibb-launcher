@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.ui.home.EMERGENCY_AVATAR
 import com.kidslauncher.mdm.ui.home.TONE_SLATE
+import com.kidslauncher.mdm.ui.home.TONE_TEAL
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -245,7 +246,28 @@ class KidPaletteTest {
         // Design 34 P1 (QA M3): the Phone book tile is a muted call green, Settings the slate tone.
         assertTrue(resolve("kid_phone_book").equals("#3A7552", ignoreCase = true))
         assertTrue(resolve("kid_settings_tile").equals("#%06X".format(TONE_SLATE and 0xFFFFFF), ignoreCase = true))
-        for (tile in listOf("kid_phone_book", "kid_settings_tile")) {
+        // Design 77 §6.7, the user's bubble colours (2026-11-09): every text and time on its own bubble at 4.5:1 or
+        // more, and the kid's own bubble the accent itself.
+        assertTrue(resolve("kid_message_out").equals(resolve("kid_accent"), ignoreCase = true))
+        assertTrue(resolve("kid_message_in").equals("#34324A", ignoreCase = true))
+        for ((ink, bubble) in listOf(
+            "kid_message_out_ink" to "kid_message_out", "kid_message_out_dim" to "kid_message_out",
+            "kid_ink" to "kid_message_in", "kid_message_in_dim" to "kid_message_in",
+        )) {
+            assertTrue("$ink on $bubble", contrast(ink, bubble) >= 4.5)
+        }
+        // The delete ring stands off the bubble it sits on (verification N7), read from the drawables themselves.
+        fun drawableColour(name: String, tag: String): String {
+            val file = listOf("src/main/res/drawable/$name.xml", "app/src/main/res/drawable/$name.xml").map(::File).first { it.exists() }
+            return Regex("<$tag[^>]*android:color=\"([^\"]+)\"").find(file.readText())!!.groupValues[1]
+        }
+        for ((ring, bubble) in listOf("bg_message_selected_out" to "bg_message_out", "bg_message_selected_in" to "bg_message_in")) {
+            val c = contrast(drawableColour(ring, "stroke"), drawableColour(bubble, "solid"))
+            assertTrue("$ring on $bubble: $c", c >= 3.0)
+        }
+        // Design 77 §6.7: Meldinger's tile is the teal tone.
+        assertTrue(resolve("kid_messages_tile").equals("#%06X".format(TONE_TEAL and 0xFFFFFF), ignoreCase = true))
+        for (tile in listOf("kid_phone_book", "kid_settings_tile", "kid_messages_tile")) {
             assertTrue(tile, contrast("kid_ink", tile) >= 4.5)
             assertTrue(tile, contrast(tile, "kid_ground") >= 3.5)
         }

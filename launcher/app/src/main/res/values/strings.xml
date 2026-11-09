@@ -96,6 +96,11 @@
         <item quantity="one">%1$s, %2$d missed call</item>
         <item quantity="other">%1$s, %2$d missed calls</item>
     </plurals>
+    <!-- Design 77 §6.7: a contact avatar's unread messages, after its name and missed calls. -->
+    <plurals name="contact_unread">
+        <item quantity="one">%1$d unread message</item>
+        <item quantity="other">%1$d unread messages</item>
+    </plurals>
     <!-- The missed-call notification (design 12) -->
     <string name="notification_channel_missed_calls">Missed calls</string>
     <!-- Design 77 §6.8: the message notifications. -->
@@ -108,6 +113,59 @@
     <!-- D4 rule 2: a message let in by the callback window after an emergency call, from someone not in the phone book. -->
     <string name="sms_unknown_sender_line">Unknown sender: %1$s</string>
     <string name="sms_compose_refused">You can\'t send a message to this number</string>
+    <!-- Design 77 §6.7: the kid's message screens (Meldinger, a thread, a picture). -->
+    <string name="messages_title">Messages</string>
+    <string name="messages_new">New message</string>
+    <string name="messages_empty">No messages yet.</string>
+    <string name="messages_new_empty">There\'s no one you can message yet.</string>
+    <string name="messages_read_only">These messages can only be read.</string>
+    <string name="messages_unknown">Unknown sender</string>
+    <string name="messages_you">You</string>
+    <!-- The list's last line of the kid's own message: %1$s = the text, or "Picture". -->
+    <string name="messages_you_wrote">You: %1$s</string>
+    <string name="messages_picture">Picture</string>
+    <string name="messages_today">Today</string>
+    <string name="messages_yesterday">Yesterday</string>
+    <plurals name="messages_unread">
+        <item quantity="one">%1$d unread</item>
+        <item quantity="other">%1$d unread</item>
+    </plurals>
+    <!-- TalkBack on a bubble: %1$s = who ("You" or the name), %2$s = the time. -->
+    <string name="messages_bubble_description">%1$s, %2$s</string>
+    <string name="messages_compose_hint">Message</string>
+    <string name="messages_send">Send</string>
+    <!-- Over the compose field once a text needs more than one SMS: %1$d = how many. -->
+    <string name="messages_counter">%1$d SMS</string>
+    <string name="messages_compose_not_now">You can\'t send messages now</string>
+    <string name="messages_compose_not_allowed">You can\'t reply here</string>
+    <string name="messages_compose_unavailable">Messages can\'t be sent right now</string>
+    <string name="messages_sending">Sending…</string>
+    <string name="messages_sent">Sent</string>
+    <string name="messages_delivered">Delivered</string>
+    <string name="messages_not_sent">Not sent - tap to try again</string>
+    <string name="messages_maybe_not_sent">Maybe not sent - tap to try again</string>
+    <!-- Code QA L5: a failed message where the kid can't send now - no invitation to tap. -->
+    <string name="messages_not_sent_plain">Not sent</string>
+    <string name="messages_maybe_not_sent_plain">Maybe not sent</string>
+    <string name="messages_too_long">This message is too long</string>
+    <string name="messages_delete">Delete</string>
+    <string name="messages_delete_conversation">Delete conversation</string>
+    <string name="messages_delete_message_title">Delete this message?</string>
+    <!-- %1$s = the name the conversation is with. -->
+    <string name="messages_delete_conversation_title">Delete the conversation with %1$s?</string>
+    <string name="messages_delete_note">It can\'t be undone.</string>
+    <string name="messages_cancel">Cancel</string>
+    <string name="messages_open_picture">Picture, tap to open</string>
+    <string name="messages_picture_waiting">A picture is on its way</string>
+    <string name="messages_picture_not_shown">A picture wasn\'t shown</string>
+    <string name="messages_picture_failed">The picture couldn\'t be fetched</string>
+    <string name="messages_attachment_unsupported">An attachment that can\'t be shown</string>
+    <string name="picture_title">Picture</string>
+    <string name="picture_save">Save</string>
+    <string name="picture_share">Share</string>
+    <string name="picture_share_title">Share the picture</string>
+    <string name="picture_saved">Saved in Pictures</string>
+    <string name="picture_save_failed">Couldn\'t save the picture</string>
     <!-- %1$s = contact name -->
     <string name="missed_call_from">Missed call from %1$s</string>
     <!-- %1$d = count (2 or more), %2$s = contact name -->

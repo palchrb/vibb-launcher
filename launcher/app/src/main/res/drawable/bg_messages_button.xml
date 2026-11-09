@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The confirm's "Avbryt", and the picture's "Del": a tonal white pill, as the sheet's buttons. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_sheet_button" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+</ripple>

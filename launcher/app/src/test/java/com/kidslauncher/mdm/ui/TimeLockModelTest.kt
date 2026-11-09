@@ -143,6 +143,13 @@ class TimeLockModelTest {
         assertEquals(listOf<LockRow>(LockRow.Alarm("Slå av alarmen")), timeLockRows(true, false, "Telefonbok", emptyList(), alarmLabel = "Slå av alarmen"))
         // After an unlock the alarm row never opens by itself - the screen's own settled send does, once (E7 code QA 4).
         assertNull(unlockOpenRow(true, false, listOf(LockRow.Alarm("Slå av alarmen"))))
+        // Design 77 §6.7: Meldinger after the phone book, only where the rule allows calls - as the phone book, and never
+        // opened by itself after an unlock.
+        val withMessages = timeLockRows(true, true, "Telefonbok", apps, calendarLabel = "Kalender", messagesLabel = "Meldinger")
+        assertEquals(listOf("Telefonbok", "Meldinger", "Kalender", "Bøker", "meldinger", "Musikk"), withMessages.map { it.label })
+        assertTrue(timeLockRows(true, false, "Telefonbok", apps, messagesLabel = "Meldinger").none { it is LockRow.Messages })
+        assertEquals(listOf<LockRow>(LockRow.Messages("Meldinger")), timeLockRows(false, true, "Telefonbok", emptyList(), messagesLabel = "Meldinger"))
+        assertNull(unlockOpenRow(true, false, listOf(LockRow.Messages("Meldinger"))))
         // E7 code QA 1: without the notification listener the lock's clock apps are offered as rows too.
         val clocks = setOf("com.google.android.deskclock")
         assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = true))

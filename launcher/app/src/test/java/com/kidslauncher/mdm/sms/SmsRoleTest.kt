@@ -132,5 +132,12 @@ class SmsRoleTest {
         for (name in listOf("SmsDeliverReceiver", "MmsPushReceiver", "RespondViaMessageService", "ComposeActivity")) {
             assertFalse(name, element(name).contains("directBootAware"))
         }
+        // Step 2: the kid's screens and the share provider are private (§6.7; ComposeActivity is the way in).
+        for (name in listOf("MessagesActivity", "ThreadActivity", "PictureActivity")) {
+            val screen = Regex("<activity[^>]*android:name=\"\\.ui\\.messages\\.$name\"[^>]*>").find(manifest)!!.value
+            assertTrue(name, screen.contains("android:exported=\"false\""))
+        }
+        val share = Regex("<provider[^>]*androidx\\.core\\.content\\.FileProvider[^>]*>").find(manifest)!!.value
+        assertTrue(share.contains("android:exported=\"false\"") && share.contains("android:grantUriPermissions=\"true\""))
     }
 }

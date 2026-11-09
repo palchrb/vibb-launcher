@@ -27,7 +27,7 @@ import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 
 /**
- * The home grid (mockup Main.dc.html, design 08): the phone book first, then the apps as
+ * The home grid (mockup Main.dc.html, design 08): the phone book first, Meldinger (design 77), then the apps as
  * coloured circles with their unread badge, then the flashlight (design 41) and the kid's Settings.
  * What is shown is decided by
  * [homeGrid], the sizes by [gridMetrics]. Icons arrive already rendered ([KidAvatars.renderAppIcon]
@@ -114,6 +114,8 @@ class HomeGridAdapter(
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
+                    // Meldinger's own task (design 77 §6.7), as Dagen's.
+                    is GridTile.Messages -> activity.startActivity(com.kidslauncher.mdm.ui.messages.MessagesScreens.listIntent(activity))
                     // Dagen's own task (2026-10-27): the one intent the glance uses too.
                     GridTile.Day -> activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity))
                     GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
@@ -206,6 +208,15 @@ class HomeGridAdapter(
         holder.itemView.stateDescription = null
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
+            // Design 77 §6.7: the chat glyph on the teal tone, the unread total as its badge.
+            is GridTile.Messages -> {
+                glyphTile(holder, R.color.kid_messages_tile, R.drawable.app_glyph_chat, R.string.messages_title)
+                KidAvatars.bindBadge(holder.badge, tile.badge)
+                if (tile.badge > 0) {
+                    holder.itemView.contentDescription =
+                        context.resources.getQuantityString(R.plurals.app_unread, tile.badge, context.getString(R.string.messages_title), tile.badge)
+                }
+            }
             GridTile.Day -> glyphTile(holder, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month, R.string.day_title)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)
             // Design 41: dark - the indigo tone; lit - a filled peach disc with the night glyph. One glyph

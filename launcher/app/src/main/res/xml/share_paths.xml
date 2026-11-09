@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 77 §6.7, "Del": the only files the share provider serves - the picture copies in cacheDir/share/, each
+     deleted after an hour (ui.messages.PictureShare). -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>

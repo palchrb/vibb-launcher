@@ -19,6 +19,7 @@ import com.kidslauncher.mdm.sms.engine.ConversationRow
 import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.SmsEngine
+import com.kidslauncher.mdm.ui.messages.MessagesScreens
 import java.util.UUID
 
 private const val LOG_TAG = "SmsNotifier"
@@ -80,6 +81,9 @@ object SmsNotifier {
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setStyle(style)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                // Design 77 §6.7 (code QA of step 2, M3): no "Open link" / "Call" / "Directions" / "Copy" chips the
+                // system's assistant would add from the text - nothing in a message opens another app, here either.
+                .setAllowSystemGeneratedContextualActions(false)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setPublicVersion(public)
                 .setAutoCancel(true)
@@ -102,6 +106,7 @@ object SmsNotifier {
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_MESSAGES_SILENT)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle(context.getString(R.string.sms_reply_not_sent))
+                .setAllowSystemGeneratedContextualActions(false)
                 .setAutoCancel(true)
                 .setContentIntent(openIntent(context, conversationId))
                 .build()
@@ -126,12 +131,14 @@ object SmsNotifier {
         return builder.build()
     }
 
-    // Step 2 (the kid's screens) points this at the conversation's thread; until then it opens Home.
+    /** The tap (§6.8): the conversation's thread over the list, in the messages task - Back goes to the list. Told
+     * apart by the thread intent's identifier (part of the intent's identity, not of its resolution; the last intent is
+     * the PendingIntent's key), never by a hashCode (QA L1). The thread checks the time rule itself. */
     private fun openIntent(context: Context, conversationId: String): PendingIntent {
-        // A typed HOME start, never an explicit one (HomeFrontTest). Told apart by its identifier (part of the intent's
-        // identity, not of its resolution), never by a hashCode (QA L1).
-        val intent = com.kidslauncher.mdm.lock.HomeFront.intent(context).setIdentifier(conversationId)
-        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val thread = MessagesScreens.threadIntent(context, conversationId, null).setIdentifier(conversationId)
+        return PendingIntent.getActivities(
+            context, 0, arrayOf(MessagesScreens.listUnder(context), thread), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
     }
 
     /**

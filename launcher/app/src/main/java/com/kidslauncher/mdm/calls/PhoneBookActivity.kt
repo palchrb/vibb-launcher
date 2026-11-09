@@ -44,6 +44,8 @@ class PhoneBookActivity : UIObjectActivity() {
      * calls are loaded. */
     private var pendingSheet: String? = null
     private val photoListener: () -> Unit = { render() }
+    /** Design 77 §6.7: the avatars' unread messages follow the engine. */
+    private val messagesListener: () -> Unit = { render() }
     private val wallpaperListener: () -> Unit = { render() }
     /** Round L5: a missed Element X call came or went. */
     private val elementMissedListener: () -> Unit = { loadMissedCalls() }
@@ -78,6 +80,8 @@ class PhoneBookActivity : UIObjectActivity() {
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
         ElementMissedCallStore.addListener(elementMissedListener)
+        com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
+        com.kidslauncher.mdm.sms.SmsHome.refresh(this)
     }
 
     override fun onResume() {
@@ -94,6 +98,7 @@ class PhoneBookActivity : UIObjectActivity() {
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
+        com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         super.onStop()
     }
 
@@ -177,7 +182,9 @@ class PhoneBookActivity : UIObjectActivity() {
         val tiles = mutableListOf<PhoneBookTile>()
         if (view.emergencyDialer) tiles += PhoneBookTile.Emergency
         view.contacts.mapTo(tiles) {
-            PhoneBookTile.Contact(it, CallSystem.isEmergencyOutgoing(this, it.number), missed[it.number])
+            PhoneBookTile.Contact(
+                it, CallSystem.isEmergencyOutgoing(this, it.number), missed[it.number], com.kidslauncher.mdm.sms.SmsHome.unreadFrom(it.number),
+            )
         }
         adapter.submit(tiles, ink)
     }

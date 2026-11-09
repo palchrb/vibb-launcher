@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Meldinger (design 77 §6.7): the shared header with "Ny melding" while the kid may text, a quiet line when the list
+     is empty or the history can only be read, the conversations newest first, and the in-screen delete confirm at the
+     bottom. Dagen's ground, sides and header. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/messages_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="4dp"
+    android:paddingEnd="16dp">
+
+    <include
+        android:id="@+id/messages_header"
+        layout="@layout/include_kid_header" />
+
+    <TextView
+        android:id="@+id/messages_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        android:fontFamily="@font/nunito_semibold"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/messages_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp" />
+
+    <include layout="@layout/view_messages_confirm" />
+</LinearLayout>
