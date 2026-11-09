@@ -39,6 +39,7 @@ import com.kidslauncher.mdm.day.feedColour
 import com.kidslauncher.mdm.day.feedUidOf
 import com.kidslauncher.mdm.day.CalendarInfo
 import com.kidslauncher.mdm.day.CalendarPolicy
+import com.kidslauncher.mdm.day.DayRowsCache
 import com.kidslauncher.mdm.day.DayView
 import com.kidslauncher.mdm.day.InstanceRow
 import com.kidslauncher.mdm.day.TitleRules
@@ -63,7 +64,8 @@ import java.util.concurrent.Executors
  * Dagen's window onto Android's calendar provider (design 69 §2.4), which ICSx5 and DAVx5 feed. Read-only but for the
  * kid's own events (step 3, [KidEvents]) and the local "Min kalender" ([ensureKidCalendar]). Every provider call runs on
  * one background thread; the results reach the main thread. The rows of the last 9 days read are kept (an LRU) and
- * dropped by the provider's change notification, debounced to one reload a second. Nothing read here leaves the phone
+ * dropped by the provider's change notification, debounced to one reload a second; a read begun before the drop never
+ * stores its rows after it ([DayRowsCache]'s generation). Nothing read here leaves the phone
  * but [report]'s calendars - never an event, a title or a time - and nothing is logged beyond counts and exception
  * classes.
  */
@@ -92,9 +94,7 @@ object CalendarStore {
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "calendar").apply { isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
-    private val rows = object : LinkedHashMap<LocalDate, List<InstanceRow>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LocalDate, List<InstanceRow>>?) = size > LRU_DAYS
-    }
+    private val rows = DayRowsCache<List<InstanceRow>>(LRU_DAYS)
     private val listeners = LinkedHashSet<() -> Unit>()
     private var observer: ContentObserver? = null
     private var lastSyncAsk = 0L
@@ -104,7 +104,7 @@ object CalendarStore {
         private set
 
     private val changed = Runnable {
-        synchronized(rows) { rows.clear() }
+        rows.clear()
         appContext?.let { refreshCalendars(it) }
     }
 
@@ -241,7 +241,9 @@ object CalendarStore {
     /** One day's instances, from the LRU or the provider (off the main thread). The provider is asked for the day and
      * its two neighbours, so its own time zone setting can't drop an event; [dayView] keeps the day's. */
     fun rowsBlocking(context: Context, day: LocalDate): List<InstanceRow>? {
-        synchronized(rows) { rows[day] }?.let { return it }
+        // Taken before the provider is asked: a change that drops the days meanwhile keeps these rows out (DayRowsCache).
+        val readAt = rows.generation()
+        rows.get(day)?.let { return it }
         if (!canRead(context)) return null
         return try {
             val builder = Instances.CONTENT_BY_DAY_URI.buildUpon()
@@ -274,7 +276,7 @@ object CalendarStore {
                     )
                 }
             }
-            synchronized(rows) { rows[day] = out }
+            rows.put(day, readAt, out)
             out
         } catch (e: Exception) {
             // A day the provider can't answer (an out-of-range year) is an empty day.
@@ -300,6 +302,9 @@ object CalendarStore {
         val view = dayBlocking(context, day) ?: return null
         return TodayCalendar(view, remindersBlocking(context, ownReminderEvents(view, policy)))
     }
+
+    /** These days are read from the provider again at their next read (the glance's reminder row tapped). */
+    fun forgetDays(vararg days: LocalDate) = rows.forget(*days)
 
     /** [dayBlocking] on the worker, answered on the main thread. */
     fun day(context: Context, day: LocalDate, answer: (DayView?) -> Unit) {

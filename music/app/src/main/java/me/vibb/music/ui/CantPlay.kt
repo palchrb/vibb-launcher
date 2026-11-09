@@ -57,8 +57,9 @@ data class CantPlayNotice(@StringRes val title: Int, @StringRes val help: Int?, 
  *
  * - The notice: the web player's refusals of the item on this phone - the account ("Kan ikke spilles nå" / "Spør en
  *   voksen om hjelp"), no listening time for the book, no Widevine, no Wi-Fi, no internet, the quota. Play is greyed
- *   for the account and the listening time only: both wait on an adult, a tap meanwhile ends the same way. The others
- *   keep play lit: a tap may work (the network back, a new web player for Widevine, the quota over).
+ *   for the account, the listening time and the phone without Widevine (the user, 2026-11-09: "play knapp skal være grå
+ *   når den er i virker ikke modus!"): each waits on an adult or an update, a tap meanwhile ends the same way. The
+ *   others keep play lit: a tap may work (the network back, the quota over).
  * - The line: a room's four (the speaker, not the item: grouped away, taken over, its session lost, not answering - a
  *   tap or the next poll may bring it back, and design 50 §1.4 never dims anything on a room), "Spilles et annet
  *   sted" (the account plays elsewhere: a tap takes it back) and "Stoppet - trykk spill" (a tap is the fix).
@@ -75,7 +76,7 @@ fun cantPlayNotice(state: RendererState?): CantPlayNotice? = when (state) {
     RendererState.SPOTIFY_ASK_ADULT -> CantPlayNotice(R.string.cant_play_now, R.string.cant_play_ask_adult, playGreyed = true)
     RendererState.SPOTIFY_NO_LISTENING_TIME ->
         CantPlayNotice(R.string.renderer_spotify_no_listening_time, R.string.cant_play_ask_adult, playGreyed = true)
-    RendererState.SPOTIFY_NOT_ON_PHONE -> CantPlayNotice(R.string.renderer_spotify_not_on_phone, R.string.cant_play_ask_adult, playGreyed = false)
+    RendererState.SPOTIFY_NOT_ON_PHONE -> CantPlayNotice(R.string.renderer_spotify_not_on_phone, R.string.cant_play_ask_adult, playGreyed = true)
     RendererState.SPOTIFY_NEEDS_WIFI -> CantPlayNotice(R.string.renderer_spotify_needs_wifi, null, playGreyed = false)
     RendererState.SPOTIFY_NEEDS_INTERNET -> CantPlayNotice(R.string.renderer_spotify_needs_internet, null, playGreyed = false)
     RendererState.SPOTIFY_UNAVAILABLE -> CantPlayNotice(R.string.renderer_spotify_unavailable, null, playGreyed = false)
@@ -99,13 +100,12 @@ fun showsPause(playing: Boolean, notice: CantPlayNotice?): Boolean = playing && 
 data class HeldRefusal(val state: RendererState, val run: Long?)
 
 /**
- * The refusals a retry holds (qa-music-cant-play-2 V2): the account's and the book's, which arrive only after an attempt
- * (the start clears the line first). The network lines come from the gate before any start and never flash; held, a
- * stale "Trenger Wi-Fi" would stay over a good retry's connect.
+ * The refusals a retry holds (qa-music-cant-play-2 V2): those that grey play - the account's, the book's and the phone
+ * without Widevine (2026-11-09) - which arrive only after an attempt (the start clears the line first). The network
+ * lines come from the gate before any start and never flash; held, a stale "Trenger Wi-Fi" would stay over a good
+ * retry's connect.
  */
-fun heldOverRetry(state: RendererState): Boolean = state in HELD_OVER_RETRY
-
-private val HELD_OVER_RETRY = setOf(RendererState.SPOTIFY_ASK_ADULT, RendererState.SPOTIFY_NO_LISTENING_TIME)
+fun heldOverRetry(state: RendererState): Boolean = playOff(cantPlayNotice(state))
 
 /**
  * The phone's web player is starting (qa-music-cant-play-2 V1): `PlayerHub.State.connecting` while the output isn't a

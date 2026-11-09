@@ -1442,7 +1442,7 @@ Each check below restarts the fake with its option (`python3 -I scripts/fake-spo
   hjelp" on it, play greyed, nothing under the entry name (2026-11-09, `ui/CantPlay.kt`), and "Spør en voksen" on every
   Spotify tile;
   `"spotify": "not_premium"` in the report; no item error.
-- [ ] **No Widevine**: `--no-eme`: "Virker ikke på telefonen" on the greyed cover (play lit), logcat `spotify: web player destroyed`;
+- [ ] **No Widevine**: `--no-eme`: "Virker ikke på telefonen" on the greyed cover, play greyed, logcat `spotify: web player destroyed`;
   `"spotify": "no_widevine"`.
 - [ ] **The quota**: `--quota`: "Ikke tilgjengelig nå" (the player's greyed cover, play lit; the tiles); `"spotify": "quota"`; the fake
   logs one `… 429 QUOTA_EXCEEDED (--quota)` (the start's first call) and no `play:`.

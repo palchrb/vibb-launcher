@@ -1098,6 +1098,8 @@ class GlancePanel(
             ?: activity.getString(R.string.day_title).takeIf { taken && row is GlanceCalendarRow }
             ?: activity.getString(R.string.messages_title).takeIf { taken && row is GlanceSmsRow }
         step(GlanceStageEvent.Row(target.takeIf { taken }))
+        // 2026-11-09: the row read afresh while the keypad is up - an event removed since leaves it; the day still opens.
+        if (row is GlanceCalendarRow) calendar.refresh()
     }
 
     /**

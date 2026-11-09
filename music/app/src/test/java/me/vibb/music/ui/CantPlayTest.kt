@@ -22,7 +22,7 @@ class CantPlayTest {
         val expected = mapOf(
             RendererState.SPOTIFY_ASK_ADULT to CantPlayNotice(R.string.cant_play_now, R.string.cant_play_ask_adult, true),
             RendererState.SPOTIFY_NO_LISTENING_TIME to CantPlayNotice(R.string.renderer_spotify_no_listening_time, R.string.cant_play_ask_adult, true),
-            RendererState.SPOTIFY_NOT_ON_PHONE to CantPlayNotice(R.string.renderer_spotify_not_on_phone, R.string.cant_play_ask_adult, false),
+            RendererState.SPOTIFY_NOT_ON_PHONE to CantPlayNotice(R.string.renderer_spotify_not_on_phone, R.string.cant_play_ask_adult, true),
             RendererState.SPOTIFY_NEEDS_WIFI to CantPlayNotice(R.string.renderer_spotify_needs_wifi, null, false),
             RendererState.SPOTIFY_NEEDS_INTERNET to CantPlayNotice(R.string.renderer_spotify_needs_internet, null, false),
             RendererState.SPOTIFY_UNAVAILABLE to CantPlayNotice(R.string.renderer_spotify_unavailable, null, false),
@@ -61,12 +61,20 @@ class CantPlayTest {
         held = holdRefusal(held, null, webStarting = false, run = 6)
         assertNull(held)
         assertNull(shownState(held, null))
-        // the book's refusal is held the same way
+        // the book's refusal and the phone without Widevine (2026-11-09) are held the same way
         val book = RendererState.SPOTIFY_NO_LISTENING_TIME
-        assertEquals(book, shownState(holdRefusal(HeldRefusal(book, 6), null, webStarting = true, run = 6), null))
-        // V2: only the account's and the book's - the network lines come before any start and are never held; a stale
+        val phone = RendererState.SPOTIFY_NOT_ON_PHONE
+        for (state in listOf(book, phone)) {
+            assertEquals(state.name, HeldRefusal(state, 6), holdRefusal(null, state, webStarting = false, run = 6))
+            assertEquals(state.name, state, shownState(holdRefusal(HeldRefusal(state, 6), null, webStarting = true, run = 6), null))
+        }
+        // V2: only those that grey play - the network lines come before any start and are never held; a stale
         // "Trenger Wi-Fi" never stays over a good retry
-        val notHeld = RendererState.entries.filter { cantPlayNotice(it) != null } - setOf(ask, book)
+        val notHeld = RendererState.entries.filter { cantPlayNotice(it) != null } - setOf(ask, book, phone)
+        assertEquals(
+            setOf(RendererState.SPOTIFY_NEEDS_WIFI, RendererState.SPOTIFY_NEEDS_INTERNET, RendererState.SPOTIFY_UNAVAILABLE),
+            notHeld.toSet(),
+        )
         for (state in notHeld) assertNull(state.name, holdRefusal(null, state, webStarting = false, run = 6))
         assertNull(holdRefusal(HeldRefusal(ask, 6), RendererState.SPOTIFY_NEEDS_WIFI, false, 6))
         // another line ends the hold
@@ -91,6 +99,7 @@ class CantPlayTest {
         val wifi = cantPlayNotice(RendererState.SPOTIFY_NEEDS_WIFI)
         assertFalse(showsPause(playing = true, notice = ask))
         assertFalse(showsPause(playing = false, notice = ask))
+        assertFalse(showsPause(playing = true, notice = cantPlayNotice(RendererState.SPOTIFY_NOT_ON_PHONE)))
         assertTrue(showsPause(playing = true, notice = wifi))
         assertTrue(showsPause(playing = true, notice = null))
         assertFalse(showsPause(playing = false, notice = null))
