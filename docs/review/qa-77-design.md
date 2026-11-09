@@ -797,3 +797,66 @@ re-encoded JPEG (EXIF-free, made by the main process from the isolated process's
 
 The original MMS part never leaves; its bytes aren't kept anyway. The share sheet lists only unsuspended apps. Where a
 picture can go is then the allowlist's business, as for any photo.
+
+## Fix round, revision 2 (architect, 2026-11-09, on `sms-design-3`, with revision 3)
+
+Every finding is fixed in `docs/design/77-sms-mms-client.md` (revision 3) or explained there.
+
+**High:**
+- **R2-H1 - fixed.**
+  - D4 rule 5 never lets in a text from an emergency-number contact. Its texts are held, and the release rule follows
+    (D16 "The release", step 3).
+  - In the PWA, "Kan sende melding til" is disabled for such a contact, and the server never sends `sms_in: true` for
+    one (D3 "The rules").
+  - The held card offers only "Slett nå" for an emergency number (D16 "Never allowed", §7 card).
+  - D17 names need at least one letter, on both sides, with contract vectors (D17 "A valid name", D4 rule 6).
+  - The card labels each row "Nummer …" or "Avsendernavn «…»", and a letterless name reads "Utgir seg for å være et
+    nummer" (D16, §7).
+  - Vectors are in §10.1.
+
+**Medium:**
+- **R2-M1 - fixed.**
+  - An allow from a held message turns on "Kan sende melding til" alone. The prefilled Add Contact shows every switch
+    with the rest off (D16 "The allow").
+  - §14's "Legg til…" has its own named defaults, and its Matrix ID needs the parent's tick, "Bruk Matrix-ID-en" (§14
+    PWA).
+  - `tests::calls` rows cover each path (§10.2).
+- **R2-M2 - fixed.**
+  - The phone cleans `sender` by its class before posting (D16 "Nothing of the body leaves the phone"). The intake
+    checks it by class and refuses otherwise, using `calendar::clean`'s grammar for names (§7 "The intake checks").
+  - The push and inbox words quote and label the sender (§7 "The words"). Prefills are escaped and encoded (§7 card).
+  - Tests are in §10.1 and §10.2.
+- **R2-M3 - fixed.**
+  - At most 500 rows per phone in 30 days, then `capped` and one `PhoneLine::SmsHeldCapped` line.
+  - Time checks, and states that only move forward.
+  - The rate is a `PushBudget { per_hour: 3, per_key_hour: 1 }` option in `parent_events::raise`, beside
+    `EVENTS_AN_HOUR` and `URGENT_PUSHES_AN_HOUR`, with an hourly digest (§7 "The rate").
+  - Pinned in `sms::tests` (§10.2).
+- **R2-M4 - fixed.**
+  - The hold is split into pools of 30 numbers and 20 names, with 3 per name sender (D16 "The caps").
+  - `hold_full` in `sms_state`, with the finding "Ventelisten er full …" and "Slett alle som venter"; `sms_held_drop`
+    raised to 100 ids (D16, §7).
+  - D16 says plainly what a flood can do.
+  - Sync requests for `sms_held` are coalesced to one a minute (D16 "The push", §10.1).
+
+**Low:**
+- **R2-L1 - fixed.** One fold rule: NFC, then lowercase with Locale.ROOT, no full folding, with the shared vectors (D17
+  "Match", §10.1, §10.2).
+- **R2-L2 - fixed.** Expiry runs at sync, the alarm, boot and immediately before a release. The server renders a
+  row past `expires_at` as expired (D16 "At expiry", §7 card).
+- **R2-L3 - fixed.** `PRAGMA secure_delete = ON` and a WAL checkpoint after each expiry or drop pass (D16).
+- **R2-L4 - fixed.** Drops are applied before releases in the same policy (D16 "The release", §10.1).
+- **R2-L5 - fixed.** §14's intake gets r13's checks plus re-normalising, `valid_matrix_id`, `calendar::clean`, and the
+  short or emergency number marks on its card (§14).
+- **R2-L6 - fixed.** The bridge's double puppeting uses an appservice registration scoped to the kid's user ID, never a
+  login or token of his on the Vibb server, and portal rooms are encrypted (§6.2).
+- **R2-L7 - fixed.** In revision 3's per-channel model (D2, "An older launcher"):
+  - the capability gate covers every combination with SMS managed;
+  - `managed` stays true whenever either channel isn't `unmanaged`;
+  - a contract row pins the old-launcher view of "Calls not managed, SMS managed".
+
+**Info:**
+- **R2-I1 - fixed.** Every new key is always sent, also when a channel is unmanaged and for every contact (§7 Policy).
+- **R2-I2, R2-I3, R2-I4 - noted.** No change needed.
+- **R2-I5 - followed.** §6.7's save and share take only the main process's own JPEG, through a MediaStore insert and a
+  one-shot `FileProvider` grant.
