@@ -1,9 +1,13 @@
 # 79 - The kid's phone book as a list: missed calls first, search, the kid's own pictures
 
-Status: design note by the architect, 2026-11-09, on `main` at 23a92f3a, branch `design-79-phone-book`. **Nothing is
-built.** Mockups: `docs/design/79-mockups.html` (the list with missed calls first, large text, search, "Fant
-ingenting", Meldinger with search, the contact card's long-press, the "Bilde av …" sheet and the framing, the contact
-request with a picture).
+Status: design note by the architect, 2026-11-09, on `main` at 23a92f3a, branch `design-79-phone-book`. **As built**
+(2026-11-09, branch `phone-book-list`, steps 1-4 and the contact request's screen): `docs/notes/launcher/calls.md`,
+"The phone book as one list (design 79)"; `docs/notes/launcher/home-and-photos.md`, "The kid's own contact pictures
+(design 79 §5)"; `docs/notes/launcher/ui-polish.md`, "The phone book's row (design 79 §3.4)"; the emulator run in
+`docs/testing/emulator.md` §6v "design 79". Where the build decided what this note left open, calls.md's section says
+so. Mockups: `docs/design/79-mockups.html` (the list with missed calls first, large text, search, "Fant ingenting",
+Meldinger with search, the contact card's long-press, the "Bilde av …" sheet and the framing, the contact request with
+a picture).
 
 **Approved 2026-11-09 ("Bygg 79") with one change: the emergency numbers go to the bottom of the list, not A-Å among
 the contacts** (§3.1; the user: "ikke legg nødnr på toppen, man skal jo i 99.99% av tilfellene ha tak i noen andre..

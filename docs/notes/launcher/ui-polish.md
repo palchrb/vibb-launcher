@@ -68,6 +68,31 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`setUpKidSheet`, used by `ContactSheet` and `EmergencySheet`) lays the window out full width at the bottom and adds
   the bar's inset to the sheet's XML bottom padding. Tap outside still closes it.
 
+## The phone book's row (design 79 §3.4; branch `phone-book-list`)
+
+- **Designed at the Jelly Star's 288 dp** (`item_phone_book_row.xml`): a solid night tile (`bg_day_event`, #1B1B28, 18
+  dp corners, white 12 % ripple) so a row reads on any wallpaper; rows 8 dp apart; start padding 10 dp, end 0 (the
+  buttons' targets reach the tile's edge). The 44 dp avatar (18 sp initials, the row-sized photo, no ring, no press
+  scale, no long-press), the badge as the count alone at its top end (the missed-call glyph made it as wide as the
+  avatar, emulator run). The text column 288 - 10 - 44 - 10 - 96 = 128 dp: the name Nunito 800 16 sp `kid_ink` in a
+  `WholeWordTextView` (at most 2 lines), the second line 13 sp 700 at most 2 lines, there only when there is something
+  to say - "Nødnummer"; the unseen missed calls in `kid_missed_text` ("2 tapte anrop 14:02", "Tapt anrop i går",
+  `MissedCallText.short`), then " · 1 ulest" in `kid_core_dim`; or alone "1 ulest melding".
+- **Ring and Melding:** two 38 dp tonal discs (`kid_sheet_button`, white 8 %) in touching 48 dp targets - Ring's phone in
+  the new `kid_call_glyph` #7FC28F (6.5:1 on the disc over the tile), Melding's in `kid_accent`; an emergency number's
+  Ring is the tonal red pair (`kid_emergency_tonal` disc, `kid_emergency_text` glyph). Tonal, not filled: fifty green
+  discs down a list would shout. The press is design 34's `PressMotion` on the disc (visual only) with an oval ripple
+  and a 2 dp peach focus ring (`PressFeedback.cellBackground`/`attach`). Dimmed to 40 % and inert while another call is
+  live (an emergency number excepted). Without a Melding the slot stays empty inline, so the Rings line up.
+- **Large text** (`rowLayout`): below font scale 1.3 with a 120 dp column the buttons sit inline; else they move to a
+  line of their own under the text, from the text's start, and the text takes 214 dp (`ROW_STACKED_END_DP`).
+  `WholeWordsTest` checks the names and every second line at 1.0 / 1.3 / 2.0 in nb and en; `KidPaletteTest` every ink.
+- **The rest of the page:** the header with the "+" (a 40 dp peach disc in a 48 dp target over the shared header, which
+  keeps 48 dp for it), the search pill (`kid_music_tile`, 22 dp corners, a 1.5 dp peach outline at 50 % while focused,
+  a peach cursor), the request rows (the answer on the plain tile with a `kid_music_control` disc; an open request
+  with a 1.5 dp peach outline at 45 % and its picture or a peach initial), the one label "Venter på svar" and the count
+  line - text on the wallpaper in `KidInk`.
+
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
 - **Depth on the view, never in the bitmap** (QA M2): `ui/home/PressFeedback.depth` gives Home's `tile_icon` and the contact avatar (`contact_avatar`, Home's row and the phone book) an oval `ViewOutlineProvider`, `elevation` 2 dp (Home's contact avatars 4 dp, below) and black shadow colours. The icon cache, its sizes and the glance/time-rule renders are untouched. The parents don't clip the shadow (`tile_frame` `clipChildren=false`; the contact item already had it). Elevation changes the drawing order among siblings, so the badges are lifted to the same 2 dp (4 dp on Home's contacts) with no outline of their own (`KidBadge` style: `elevation` + `outlineProvider none`; the call badge in `PressFeedback.contact`). No top light.

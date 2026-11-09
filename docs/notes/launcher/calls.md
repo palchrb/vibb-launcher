@@ -321,10 +321,10 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 ## The kid's contact request: the model and the API client (design 77 §14; branch `sms-contact-request`)
 
 A phone book and contacts feature, not an SMS one (the user, 2026-11-09): the kid asks the parents to add someone, and
-a parent adds the contact in the PWA. **Only the model and the API client are built.** The kid's screen waits for
-design 79 (the phone book as a list, with a photo the kid picks or takes); a first form was parked on the local branch
-`sms-contact-request-kid-form-wip` (not for merge). Whatever screen design 79 gives calls `checkContactRequest`, then
-`ContactRequests.add` and `SyncRunner.request(.., "contact_request")`, and shows `contactRequestRows`.
+a parent adds the contact in the PWA. The model and the API client came first; the kid's screen (the "+", the form,
+the rows, the request's picture) came with design 79 (branch `phone-book-list`, below: "The phone book as one list").
+The form calls `checkContactRequest`, then `ContactRequests.add` and `SyncRunner.request(.., "contact_request")`, and
+the list shows `contactRequestRows`.
 - **Pure model (`calls/ContactRequests.kt`, `ContactRequestsTest`):** `checkContactRequest` - the server's checks on
   the shared vectors of `contact_request.json` (the name through `TitleRules.clean`, 1-40 characters; the number
   through `PhoneNumbers.normalize`, never an emergency number - `Emergency.staticSet` or the platform's answer passed
@@ -333,23 +333,88 @@ design 79 (the phone book as a list, with a photo the kid picks or takes); a fir
   `invalid`, another 4xx and an old server's 404 are "not sent"; 401/408/429/5xx/no answer retry).
   `reconcileContactRequests` at every accepted policy: a week-old request goes; an open one goes when its number is a
   contact (the contact arrived) or the policy's `call_policy.contact_requests` says `added`, and becomes "declined"
-  (shown once) when it says `declined`. `contactRequestRows` / `markContactRequestsShown` /
+  (shown once) when it says `declined`. Since design 79 it returns `Reconciled(records, handOvers)`: the request's
+  picture goes to a contact that arrived **in the phone book** (request id -> contact id), done before the list is
+  written without the request. `contactRequestRows` / `markContactRequestsShown` /
   `dropShownContactRequests`: an answer shows once.
 - **Store and sync:** `ContactRequests` keeps the records in credential-encrypted prefs (`contact_requests`: names and
   numbers), with listeners for a screen; `performMdmSync` reconciles after `SmsRuntime.policyAccepted` and uploads each
   PENDING request after the time request (`POST /api/devices/contact-request`, `MdmApi.sendContactRequest`,
   `ContactRequestBody`).
-- **A photo later** (design 79): the body gains an optional `photo` (a hash of a picture uploaded first on its own
-  route); `ContactRequestBody` gets one more nullable field left out when null (`encodeDefaults` off), and an older
-  server ignores the key. The QA's conditions for it (`docs/review/qa-contact-request.md`, "The photo extension
-  plan"): the hash scoped to this phone's own upload, re-encoded without EXIF on the server, orphans purged, served
-  to the PWA alone, offered behind its own unticked switch, and never replacing an existing family contact's photo.
-- **For design 79's screen (code QA L5):** pass the platform's answer as `checkContactRequest`'s `isEmergency`
+- **The picture stays on the phone** (design 79 revision 2, the user: "Server trenger ikke se bilde barnet selv legger
+  til?"): the request's picture is never uploaded, `ContactRequestBody` is unchanged (`ContactRequestRecord.photo` is
+  a flag of the phone's own, never in `body()`). The upload extension the contact request's QA planned
+  (`docs/review/qa-contact-request.md`, "The photo extension plan") is not needed.
+- **Code QA L5, done:** the form passes the platform's answer as `checkContactRequest`'s `isEmergency`
   (`CallSystem.isEmergencyOutgoing`, which asks Android's `TelephonyManager.isEmergencyNumber` and keeps the static
-  list) - without it the phone knows only `Emergency.staticSet`, and a SIM's or a roaming country's own emergency
-  number would pass the phone's check (the server's list is static too).
+  list) - without it the phone would know only `Emergency.staticSet`, and a SIM's or a roaming country's own
+  emergency number would pass the phone's check (the server's list is static too).
 - **The upload's step is pure (code QA L4):** `recordsAfterUpload` (only the sent request moves, only while PENDING)
   and `uploadGoesOn` (a RETRY ends the upload), tested in `ContactRequestsTest`.
+
+## The phone book as one list (design 79; branch `phone-book-list`)
+
+Design `docs/design/79-phone-book-list.md` (approved 2026-11-09 with one change: the emergency numbers at the bottom).
+The grid of avatars became one list of solid night rows on the kid's wallpaper, with search, the kid's own contact
+pictures and the contact request's screen.
+
+- **The order (pure `calls/PhoneBookList.kt`, `PhoneBookListTest`):** `phoneBookRows` - a request's answer once at the
+  very top; the contacts with an unseen missed call, newest call first; everyone else A-Å (`listCollator`: the
+  language's `Collator`, strength SECONDARY, kept per locale - nb puts Æ Ø Å last; ties by id); the kid's open requests
+  under the one label "Venter på svar"; the **emergency numbers last**, A-Å among themselves (the user: "ikke legg nødnr
+  på toppen ... Legg den på bunnen"). An emergency number with an unseen missed call sits in the top like anyone. With
+  calls off only the emergency contacts are listed (no search, no "+", no requests); with no readable rules the one 112
+  row ("Nødsamtale", the emergency menu). `canAsk` = managed and calls on (QA L2) gates the "+", the search, the request
+  rows and "Be om å legge til".
+- **The visit and "seen" (§3.2):** the visit's top is fixed by its first missed calls loaded (`visitTopAfter`: nothing
+  leaves, a newcomer joins - a call-log observer while the phone book is started, and the Element X store's listener);
+  the list waits for that first load, and a new visit starts at the list's top. `TopSightings` counts a top row with a
+  red line as seen once it was at least half on screen for `PHONE_BOOK_SEEN_MS` (1 s, in all) while the phone book was
+  resumed and focused (updated after every layout, scroll, resume, pause and focus change); at `onStop` (not a
+  rotation) each such contact gets `MissedCallsRepo.markSeen(number, upToMs)` - up to the newest call the row showed;
+  the mark only moves forward (`seenMarkAfter`). The card, the row's Ring and Melding and the card's Melding mark it
+  seen at once. `MissedCallsRepo.addSeenListener` tells Home (resumed before the phone book stops), so Home's badge goes
+  with the row. The notification and the lock glance's rows still go when the phone book **opens** (unchanged).
+  An incoming call's screen over the phone book ends the visit (its `onStop`), so the call's return starts a new one.
+- **The buttons:** `contactActions` - the card's logic moved out of `ContactSheet.show` unchanged (`ContactActionsTest`):
+  Ring off while another call is live (an emergency number excepted), Melding to our own thread, else the app
+  `resolveMessageButton` finds, else none. The row's Ring calls at once, but an emergency number's asks first ("Ringe
+  Ambulanse?", `calls_confirm_title`).
+- **The row, the adapter, TalkBack:** `PhoneBookAdapter` (a `ListAdapter` over stable keys, no item animator, the
+  `PHOTO` payload rebinds only the avatars); `item_phone_book_row.xml` (`docs/notes/launcher/ui-polish.md`, "The phone
+  book's row"); `rowLayout` - the buttons stacked under the text from font scale 1.3. A row is one node, role button,
+  the full sentence ("Pappa, 2 tapte anrop i dag 14:02, 1 ulest melding"; "Ambulanse, nødnummer"), Ring and Melding
+  its custom actions ("… i Element X" when Melding leaves Vibb); the two buttons are focusable for a keyboard only.
+- **Search (`ui/search/`, `SearchFoldTest`, `KidSearchTest`):** `searchFold` (per code point: lowercase ROOT, NFD, marks
+  dropped, ø æ œ ß đ ł þ ı; each folded char mapped back to the shown string for the peach highlight, clamped) - for
+  finding only, never deciding (nothing under `sms/` or in `CallRules.kt` calls it: D17's sender names stay exact);
+  `searchMatch` (prefix, a word, inside) and `searchHits` (by rank, each A-Å). `KidSearchField` (`view_kid_search.xml`):
+  the 44 dp pill, never focused by itself, no menus, autofill or suggestions, the count line "3 treff" (a polite live
+  region, at most every 500 ms). From 8 rows, sticky while it holds text (`searchShown`). In the phone book while
+  searching the top dissolves, waiting requests are hits too and the emergency numbers' hits come last; "Fant
+  ingenting" and, from two letters with nothing matching, "Be om å legge til «Lina»" (the form, prefilled). Back:
+  the form, then the search's text, then leave (`phoneBookBack`); the query is cleared after Send. **Meldinger:** the
+  same pill in the list and "Ny melding", the rows' shown titles only (`searchConversations`, `whoTitle`), never message
+  text; Back: the delete confirm, the search, "Ny melding", then leave (`messagesBack`).
+- **The contact request's screen (`ContactRequestForm`, from the parked WIP):** the header's "+" (a 40 dp peach disc
+  laid over the shared header, which keeps room for it), the form in the list's place, a calm "Sendt" after Send
+  ("Ferdig" back to the list), the answers shown once and dropped when the phone book is left. The form's picture
+  circle (tap or long-press) calls back into the phone book (`onPicture`); the form starts nothing itself
+  (`KidScreensEscapeTest`, "the contact request only asks").
+- **The kid's own pictures:** `docs/notes/launcher/home-and-photos.md`, "The kid's own contact pictures (design 79)".
+- **Decided in the build (the design left it open):** the request rows (answers and waiting) show only while the kid
+  can ask - under calls off an answer waits for a visit where it can be read; waiting rows newest first, without the
+  number (the phone book shows no numbers); a row counts as on screen when at least half of it is; the list waits for
+  the visit's first missed calls rather than reordering under the finger; "Be om å legge til" needs two letters (not
+  two characters); while searching the waiting requests come after the contacts' hits and the emergency numbers' hits
+  last; Meldinger's hits are ranked like the phone book's (A-Å within a rank), not newest first; the request's picture
+  draft is deleted when the form closes without Send (Avbryt, Back, calls going off); the row's badge is the count
+  alone. On Android 16 Back with text in the pill clears it even while the keyboard is up (the activity's callback
+  gets Back first), which is the design's Back order anyway.
+- **Not device-tested yet:** the Jelly Star (fling through 50 rows and count accidental presses, §9; whether a kid
+  finds the long-press, §5.1), TalkBack's custom actions (the sentence was read from the UI dump), an incoming call
+  before the first unlock (the test AVD has no Android screen lock, so it never is "before the unlock"). The emulator
+  run: `docs/testing/emulator.md` §6v "design 79".
 
 ## The lock glance's Meldinger row, step 5 (design 77 §6.8; branch `sms-glance`)
 
