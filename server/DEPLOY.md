@@ -723,9 +723,14 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
   | `SPOTIFY_CLIENT_ID` | unset | The app's client ID (32 letters and digits). Wins over the page's, whose field is then read-only. A client ID is public; it is stored in the clear. |
   | `SPOTIFY_REDIRECT_URI` | unset | `https://<the PWA's host>/music/spotify/callback`, or exactly `http://127.0.0.1:43117/callback` (the paste, below). Wins over the page's. |
   | `SPOTIFY_ARTIST_ALBUMS` | unset (off) | `1` (or `true`) lists an artist as the tracks of its newest 20 albums and singles - with a track list, resume and the order setting - instead of playing it as a Spotify context in Spotify's order. Opt-in: turn it on once the design's checklist item 18 shows the albums endpoint works for your app; an artist Spotify refuses falls back to a context. |
-  | `SPOTIFY_AUDIOBOOK_SPIKE` | unset (off) | `1` (or `true`) lists an audiobook Spotify shares as a show anyway: its chapters - as Spotify's Web API sends them, `type: "chapter"` objects (seen 2026-11-09), or episodes marked unplayable for this app - become the show's episodes, so you can try whether the phone plays one (a test, 2026-11-01). Off, such a show isn't listed and says "This is a Spotify audiobook - Spotify lets only its own apps play them." The server log says what Spotify sent (`a Spotify show listed nothing`, `a Spotify show with unplayable episodes`). |
 
   A value that doesn't fit is ignored with one warning in the log at start.
+- **Spotify audiobooks** (2026-11-09; `SPOTIFY_AUDIOBOOK_SPIKE` is gone - it was the test): an audiobook shared as a
+  show link is listed as its chapters, without the free "sample" chapter, and its entry page says that a Spotify
+  audiobook needs listening time on the child's own account (on Premium Family the plan manager buys "Audiobooks+ for
+  Plan Members" for the child). Without it Spotify plays the sample instead, and the phone pauses that and says the
+  book needs listening time. The server log says what a show held (`a Spotify show of audiobook chapters`: the
+  chapters, the samples left out, the chapters' uri kind; `a Spotify show listed nothing`).
 - **A Spotify login needs the PWA on https, or the paste.** Spotify accepts only https redirect URIs (or a loopback
   address). Behind `tailscale serve` or Caddy with https, the redirect URI is the PWA's own https address, and a login
   must be started **from that address** (the page refuses another address of the server with a link to the right one).

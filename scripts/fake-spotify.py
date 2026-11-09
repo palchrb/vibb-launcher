@@ -41,7 +41,8 @@ The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switc
     GET  /v1/me, /v1/playlists/<id>[/items] (403 unless the bearer's user owns the fixture's playlist;
          --snapshot changes its snapshot_id), /v1/albums/<id>[/tracks], /v1/tracks/<id>,
          /v1/artists/<id>[/albums], /v1/shows/<id>[/episodes], /v1/episodes/<id> (--audiobook: the show's
-         episodes are an audiobook's chapters, every one is_playable false - show_audiobook_episodes.json)
+         episodes are an audiobook's chapters, `type: "chapter"` with a free "Sample" among them, as Spotify
+         sends them - show_audiobook_chapters.json, 2026-11-09)
     PUT  /v1/me/player/play?device_id=<id>           the body checked against play_request.json's shapes;
                                                      404 for an unknown device; --not-premium 403
                                                      PREMIUM_REQUIRED; handed to the stub device. A context
@@ -77,6 +78,8 @@ track that isn't ours), --transfer-in S (a foreign track starts S s after the fi
 <id>), --no-eme, --not-premium, --slow-ready S, --token-ttl S, --shuffle and --repeat context|track (the
 account's settings until the phone sets the entry's wanted ones: PUT /v1/me/player/shuffle?state= and
 /repeat?state=; repeat track replays the track, repeat context wraps the context). Spotify's queue (the phone's add-to-queue) survives a new play, as Spotify's does.
+--no-book-time (2026-11-09: an account without audiobook listening time): a play of the --audiobook book's chapters
+plays its free sample instead, as Spotify does.
 """
 
 import argparse
@@ -223,6 +226,12 @@ class Spotify:
             self.add(t, "track")
         for e in [e for e in server_fixture("show_episodes.json")["items"] if e] + [self.episode]:
             self.add(e, "episode")
+        # --audiobook's chapters play as spotify:episode:<id> (the reference's chapter uri); --no-book-time plays the sample
+        book = server_fixture("show_audiobook_chapters.json")["items"]
+        for e in book:
+            self.add(e, "episode")
+        self.book_sample = next(e["uri"] for e in book if e["name"].strip().lower() == "sample")
+        self.book_chapters = {e["uri"] for e in book} - {self.book_sample}
         for t in (AUTOPLAY, FOREIGN):
             self.catalogue[t["uri"]] = dict(t)
         self.unplayable = set(filter(None, (args.unplayable or "").split(",")))
@@ -571,7 +580,7 @@ def handler_for(sp):
             elif seg[:1] == ["artists"] and len(seg) >= 2 and seg[1] == sp.artist["id"]:
                 doc = sp.artist if len(seg) == 2 else server_fixture("artist_albums.json") if seg[2:] == ["albums"] else None
             elif seg[:1] == ["shows"] and len(seg) >= 2 and seg[1] == sp.show["id"]:
-                episodes = "show_audiobook_episodes.json" if sp.args.audiobook else "show_episodes.json"
+                episodes = "show_audiobook_chapters.json" if sp.args.audiobook else "show_episodes.json"
                 doc = sp.show if len(seg) == 2 else server_fixture(episodes) if seg[2:] == ["episodes"] else None
             elif seg == ["episodes", sp.episode["id"]]:
                 doc = sp.episode
@@ -600,7 +609,11 @@ def handler_for(sp):
                 return self.send(400, {"error": {"status": 400, "message": "Malformed json"}})
             command = {"type": "play", "position_ms": body.get("position_ms", 0), "context_uri": body.get("context_uri"),
                        "index": 0, "autoplay_context": None}
-            if "uris" in body:
+            if "uris" in body and sp.args.no_book_time and sp.book_chapters & set(body["uris"]):
+                # no audiobook listening time: Spotify plays the book's free sample in place of what was asked
+                command.update(tracks=[sp.meta(sp.book_sample)], autoplay=None)
+                log(f"play: {len(body['uris'])} uris of the book - its sample instead (--no-book-time) on {d.id}")
+            elif "uris" in body:
                 command["tracks"] = [sp.meta(u) for u in body["uris"]]
                 command["autoplay"] = sp.meta(AUTOPLAY["uri"]) if sp.args.autoplay else None
                 log(f"play: {len(body['uris'])} uris from {body['uris'][0]} at {body['position_ms']} ms on {d.id}")
@@ -1055,7 +1068,8 @@ def defaults(**over):
     ns = argparse.Namespace(port=0, as_user="parent", deny=False, offset_404=False, rotate=False, access_ttl=3600.0, expire_refresh=False,
                             bad_client=False, snapshot=None, rate_limit=0, quota=False, not_premium=False, no_eme=False,
                             slow_ready=0.0, token_ttl=0, track_seconds=None, elsewhere=None, autoplay=False,
-                            transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off", audiobook=False)
+                            transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off", audiobook=False,
+                            no_book_time=False)
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -1078,6 +1092,11 @@ def selftest():
     # --audiobook (2026-11-01): a show of chapters Spotify marks unplayable for this app, an audiobook-shaped reason each
     book = server_fixture("show_audiobook_episodes.json")["items"]
     assert book and all(e["is_playable"] is False and e["restrictions"]["reason"] == "payment_required" for e in book)
+    # --audiobook (2026-11-09): a book as Spotify sends it - chapters with their numbers, one free "Sample", episode uris
+    chapters = server_fixture("show_audiobook_chapters.json")["items"]
+    assert all(e["type"] == "chapter" and isinstance(e["chapter_number"], int) for e in chapters)
+    assert all(e["uri"] == "spotify:episode:" + e["id"] for e in chapters)
+    assert [e["name"] for e in chapters].count("Sample") == 1 and len(chapters) > 2
     shapes, answers, tokens = music_fixture("play_request.json"), music_fixture("play_answers.json"), music_fixture("token_answers.json")
     for key in ("play", "play_context", "transfer", "queue", "shuffle", "repeat", "shuffle_on", "repeat_context", "repeat_track"):
         r = shapes[key]
@@ -1458,7 +1477,9 @@ def main():
     p.add_argument("--relink", default="", metavar="ID:OTHER,...", help="track ID plays as OTHER with linked_from ID")
     p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone sets the entry's wanted one")
     p.add_argument("--audiobook", action="store_true",
-                   help="the fixture show's episodes are an audiobook's chapters, every one is_playable false (2026-11-01)")
+                   help="the fixture show's episodes are an audiobook's chapters with a free sample (2026-11-09)")
+    p.add_argument("--no-book-time", action="store_true",
+                   help="no audiobook listening time: a play of the book's chapters plays its sample instead")
     p.add_argument("--offset-404", action="store_true",
                    help="a context play whose offset isn't in the context answers 404 (else it plays from the top)")
     p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone sets the entry's wanted one")

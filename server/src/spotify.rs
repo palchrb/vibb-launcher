@@ -478,10 +478,6 @@ pub struct Config {
     /// `SPOTIFY_ARTIST_ALBUMS` (`1`/`true`; off by default): an artist is listed as its albums'
     /// tracks instead of played as a context (§3.3's option, QA checklist item 18).
     pub artist_albums: bool,
-    /// `SPOTIFY_AUDIOBOOK_SPIKE` (`1`/`true`; off by default; 2026-11-01, PLAN "Spotify audiobooks shared as shows"):
-    /// a show's unplayable episodes whose restriction is audiobook-shaped ([audiobook_shaped]) are listed anyway, so
-    /// the family can try whether the phone's web player plays an audiobook's chapters (go-librespot does).
-    pub audiobook_spike: bool,
     /// One line per variable that was ignored, for the start's log.
     pub warnings: Vec<String>,
 }
@@ -565,9 +561,6 @@ impl Config {
                 .is_some_and(|v| v == "true" || v == "1"),
             artist_albums: vars
                 .get("SPOTIFY_ARTIST_ALBUMS")
-                .is_some_and(|v| matches!(v.trim(), "1" | "true")),
-            audiobook_spike: vars
-                .get("SPOTIFY_AUDIOBOOK_SPIKE")
                 .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             warnings,
         }
@@ -2274,7 +2267,8 @@ pub struct Listed {
     pub title: String,
     pub duration_ms: Option<i64>,
     pub art: Option<String>,
-    /// An album track's `(disc_number, track_number)`: an album lists in that order.
+    /// An album track's `(disc_number, track_number)`: an album lists in that order. An audiobook's chapter:
+    /// `(0, chapter_number)` - a book lists in that order (2026-11-09).
     pub disc_track: Option<(i64, i64)>,
 }
 
@@ -2283,7 +2277,10 @@ pub const MARKET: &str = "from_token";
 
 /// What a page's items were, as Spotify sent them (counts and a type word, for the log of a show that lists nothing,
 /// 2026-11-09): `items` in all, `nulls` JSON null, `other` objects of another `type` than `episode` (the first
-/// `other_type`), `playable` episodes that are not marked unplayable and have a usable id.
+/// `other_type`), `playable` episodes that are not marked unplayable and have a usable id. An audiobook's chapters
+/// (2026-11-09): `chapters` the `type: "chapter"` items listed, `chapter_uri` the first one's uri kind (`episode`
+/// is the documented form; the word only, for the log), `samples` the ids of those titled as the free sample
+/// ([is_sample_title]) - the sweep leaves them out of a book of more than one chapter.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Shape {
     pub items: usize,
@@ -2291,6 +2288,9 @@ pub struct Shape {
     pub other: usize,
     pub other_type: Option<String>,
     pub playable: usize,
+    pub chapters: usize,
+    pub chapter_uri: Option<String>,
+    pub samples: Vec<String>,
 }
 
 impl Shape {
@@ -2299,9 +2299,20 @@ impl Shape {
         self.nulls += page.nulls;
         self.other += page.other;
         self.playable += page.playable;
+        self.chapters += page.chapters;
         if self.other_type.is_none() {
             self.other_type = page.other_type;
         }
+        if self.chapter_uri.is_none() {
+            self.chapter_uri = page.chapter_uri;
+        }
+        self.samples.extend(page.samples);
+    }
+
+    /// Every item of the show was an audiobook's chapter (none null, no episode): the entry is an audiobook - the
+    /// PWA says it needs listening time on the child's account and the phone's library marks it (2026-11-09).
+    pub fn audiobook(&self) -> bool {
+        self.chapters > 0 && self.chapters == self.items
     }
 }
 
@@ -2343,11 +2354,11 @@ pub struct Page {
     pub next: bool,
     /// The paging object's `total`, when it says.
     pub total: Option<usize>,
-    /// A show's episodes marked `is_playable: false` (counted in [Page::skipped] unless the audiobook spike listed
-    /// them): every episode of a show unplayable is an audiobook Spotify shares as a show (2026-11-01).
+    /// A show's episodes marked `is_playable: false` (counted in [Page::skipped]): every episode of a show
+    /// unplayable is an audiobook this account can't play (2026-11-01).
     pub unplayable: usize,
     /// The first unplayable episode's `restrictions.reason` (a Spotify word such as `payment_required`), for the log
-    /// and the spike's rule ([audiobook_shaped]).
+    /// and the audiobook sentence's rule ([audiobook_shaped]).
     pub restriction: Option<String>,
     /// What the items were (a show's only; [Shape]).
     pub shape: Shape,
@@ -2471,9 +2482,29 @@ fn is_episode(value: &Value) -> bool {
         .is_none_or(|kind| kind == "episode")
 }
 
-/// An audiobook's chapter in an episode's place (`type: "chapter"`, 2026-11-09).
+/// An audiobook's chapter in an episode's place (`type: "chapter"`, 2026-11-09: what `GET /shows/{id}/episodes`
+/// sends for an audiobook shared as a show; the reference documents `type: "episode"` for a chapter object).
 fn is_chapter(value: &Value) -> bool {
     value.get("type").and_then(Value::as_str) == Some("chapter")
+}
+
+/// A chapter's title as an audiobook's free sample has it (2026-11-09: one book listed its chapter and one named
+/// "sample", which Spotify plays to an account without audiobook listening time): the whole title, any case, one
+/// of these words. Spotify's chapter object has no field that marks a sample (the reference's `chapter_number`,
+/// `audio_preview_url` - a 30 s clip of any chapter -, `is_playable` and `restrictions` say nothing of it), so the
+/// title is the only signal; the sweep uses it only in a book of more than one chapter.
+pub fn is_sample_title(title: &str) -> bool {
+    const SAMPLE: [&str; 3] = ["sample", "smakebit", "preview"];
+    let title = title.trim();
+    SAMPLE.iter().any(|word| title.eq_ignore_ascii_case(word))
+}
+
+/// The kind word of an item's `uri` (`spotify:<kind>:<id>`), for the log only: a short lowercase word, or none.
+fn uri_kind(value: &Value) -> Option<String> {
+    let uri = value.get("uri").and_then(Value::as_str)?;
+    let kind = uri.strip_prefix("spotify:")?.split(':').next()?;
+    ((1..=16).contains(&kind.len()) && kind.bytes().all(|b| b.is_ascii_lowercase()))
+        .then(|| kind.to_string())
 }
 
 fn unplayable(value: &Value) -> bool {
@@ -2494,14 +2525,15 @@ fn restriction_reason(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The listing's code for a show whose every episode is unplayable (2026-11-01): an audiobook Spotify shares as a
-/// show - Spotify lets only its own apps play them (`music.spotify.audiobook`); `no_items` stays a really empty one.
+/// The listing's code for a show whose every episode is marked unplayable with an audiobook-shaped reason
+/// (2026-11-01): an audiobook this account can't play (`music.spotify.audiobook`); `no_items` stays a really empty
+/// one. An audiobook whose chapters come as `type: "chapter"` (what Spotify really sends, 2026-11-09) is listed.
 pub const AUDIOBOOK_CODE: &str = "audiobook";
 
-/// An unplayable episode's restriction as an audiobook's chapter has it (2026-11-01, the spike): anything but the
-/// two a podcast episode has for itself - `market` (not in this country) and `explicit` (the account's filter) -
-/// and no reason at all. Spotify's own word for audiobooks is expected to be `payment_required` or `product`; the
-/// server logs the first reason it saw, so the user's real show tells.
+/// An unplayable episode's restriction as an audiobook's chapter has it (2026-11-01): anything but the two a podcast
+/// episode has for itself - `market` (not in this country) and `explicit` (the account's filter) - and no reason at
+/// all. Spotify's own word for audiobooks is expected to be `payment_required` or `product`; the server logs the
+/// first reason it saw.
 pub fn audiobook_shaped(reason: Option<&str>) -> bool {
     !matches!(reason, Some("market" | "explicit"))
 }
@@ -2638,19 +2670,12 @@ pub fn parse_named(body: &[u8]) -> Option<Meta> {
 }
 
 /// A page of `GET /shows/{id}/episodes` (newest first). An episode marked `is_playable: false` is left out and
-/// counted in [Page::unplayable], the first one's `restrictions.reason` kept (2026-11-01: Spotify shares an
-/// audiobook as a show whose every chapter is unplayable for this app).
+/// counted in [Page::unplayable], the first one's `restrictions.reason` kept (2026-11-01). An audiobook's chapters
+/// (`type: "chapter"`, 2026-11-09: neither null nor marked unplayable) are listed as the show's episodes, whatever
+/// `is_playable` says - the phone plays one as `spotify:episode:<id>`, the uri the reference gives a chapter; whether
+/// the account has audiobook listening time is the family's matter, and the phone says so when Spotify plays
+/// something else instead ([Shape]'s `chapters` and `samples`).
 pub fn parse_show_episodes(body: &[u8]) -> Option<Page> {
-    show_episodes(body, false)
-}
-
-/// [parse_show_episodes] under `SPOTIFY_AUDIOBOOK_SPIKE` (2026-11-01): an unplayable episode whose restriction is
-/// [audiobook_shaped] is listed anyway (still counted in [Page::unplayable]), so the phone's web player can try it.
-pub fn parse_show_episodes_spike(body: &[u8]) -> Option<Page> {
-    show_episodes(body, true)
-}
-
-fn show_episodes(body: &[u8], spike: bool) -> Option<Page> {
     paging_with(&object(body)?, |item, page| {
         if !item.is_object() {
             page.shape.nulls += usize::from(item.is_null());
@@ -2668,20 +2693,28 @@ fn show_episodes(body: &[u8], spike: bool) -> Option<Page> {
                     })
                     .map(str::to_string);
             }
-            // Under the spike, an audiobook's chapters (2026-11-09: Spotify sends a show's chapters as `type:
-            // "chapter"` objects, neither null nor marked unplayable) are listed too, so the phone can try one.
-            if spike && is_chapter(item) {
-                return episode_fields(item);
+            if is_chapter(item) {
+                // Its `chapter_number` (the reference's, required) is the book's order: the sweep sorts by it.
+                let number = item.get("chapter_number").and_then(Value::as_i64);
+                let listed = Listed {
+                    disc_track: number.map(|n| (0, n)),
+                    ..episode_fields(item)?
+                };
+                page.shape.chapters += 1;
+                if page.shape.chapter_uri.is_none() {
+                    page.shape.chapter_uri = uri_kind(item);
+                }
+                if is_sample_title(&listed.title) {
+                    page.shape.samples.push(listed.id.clone());
+                }
+                return Some(listed);
             }
         } else if unplayable(item) {
-            let reason = restriction_reason(item);
             page.unplayable += 1;
             if page.restriction.is_none() {
-                page.restriction = reason.clone();
+                page.restriction = restriction_reason(item);
             }
-            return (spike && audiobook_shaped(reason.as_deref()))
-                .then(|| episode_fields(item))
-                .flatten();
+            return None;
         }
         let listed = episode(item);
         page.shape.playable += usize::from(listed.is_some());
@@ -4292,30 +4325,15 @@ pub(crate) mod tests {
             page.listed[0].art.as_deref(),
             Some("https://i.scdn.co/image/fake-episode-3")
         );
-        // 2026-11-01: an audiobook shared as a show - every chapter unplayable, its reason kept; the spike lists the
-        // audiobook-shaped ones (a podcast's market or explicit restriction never).
+        // 2026-11-01: a show whose every episode is marked unplayable - its reason kept, nothing listed (the
+        // audiobook sentence when the reason is audiobook-shaped; a podcast's market or explicit restriction never).
         let book = parse_show_episodes(&fixture("show_audiobook_episodes.json")).unwrap();
         assert_eq!(
             (book.listed.len(), book.skipped, book.unplayable),
             (0, 3, 3)
         );
         assert_eq!(book.restriction.as_deref(), Some("payment_required"));
-        let spike = parse_show_episodes_spike(&fixture("show_audiobook_episodes.json")).unwrap();
-        assert_eq!(
-            spike
-                .listed
-                .iter()
-                .map(|e| e.id.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "6FakeChapter0000000003",
-                "6FakeChapter0000000002",
-                "6FakeChapter0000000001"
-            ]
-        );
-        assert_eq!((spike.skipped, spike.unplayable), (0, 3));
-        assert_eq!(spike.listed[2].title, "Kapittel 1");
-        assert_eq!(spike.listed[2].duration_ms, Some(1_020_000));
+        assert!(!book.shape.audiobook(), "no chapters: not listed as a book");
         for (reason, shaped) in [
             (None, true),
             (Some("payment_required"), true),
@@ -4328,7 +4346,7 @@ pub(crate) mod tests {
         let market = String::from_utf8(fixture("show_audiobook_episodes.json"))
             .unwrap()
             .replace("payment_required", "market");
-        let page = parse_show_episodes_spike(market.as_bytes()).unwrap();
+        let page = parse_show_episodes(market.as_bytes()).unwrap();
         assert_eq!((page.listed.len(), page.unplayable), (0, 3));
         assert_eq!(page.restriction.as_deref(), Some("market"));
         // A reason that isn't a Spotify word is none.
@@ -4472,26 +4490,46 @@ pub(crate) mod tests {
         assert_eq!(show_mark(b"not json"), None);
     }
 
-    /// 2026-11-09: what a show's items were, for the log of a show that lists nothing - null entries, objects of
-    /// another `type`, unplayable and playable episodes counted apart, summed over the pages.
+    /// 2026-11-09: an audiobook's chapters (`type: "chapter"`, whatever `is_playable` says) are a show's episodes; one
+    /// titled as the free sample is marked for the sweep, the first chapter's uri kind kept for the log.
     #[test]
-    fn the_spike_lists_an_audiobooks_chapters() {
+    fn an_audiobooks_chapters_are_listed_and_its_sample_marked() {
         let body = serde_json::json!({"items": [
-            {"id": "6FakeChapter0000000001", "type": "chapter", "name": "K1"},
-            {"id": "6FakeChapter0000000002", "type": "chapter", "name": "K2"}
-        ], "total": 2, "next": null})
+            {"id": "6FakeChapter0000000001", "type": "chapter", "name": "Kapittel 1",
+             "uri": "spotify:episode:6FakeChapter0000000001"},
+            {"id": "6FakeChapter0000000002", "type": "chapter", "name": "Kapittel 2", "is_playable": false},
+            {"id": "6FakeSample00000000001", "type": "chapter", "name": " Sample "}
+        ], "total": 3, "next": null})
         .to_string();
-        let plain = parse_show_episodes(body.as_bytes()).unwrap();
+        let page = parse_show_episodes(body.as_bytes()).unwrap();
+        let ids: Vec<&str> = page.listed.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(
-            (plain.listed.len(), plain.skipped, plain.shape.other),
-            (0, 2, 2)
+            ids,
+            [
+                "6FakeChapter0000000001",
+                "6FakeChapter0000000002",
+                "6FakeSample00000000001"
+            ]
         );
-        let spike = parse_show_episodes_spike(body.as_bytes()).unwrap();
-        let ids: Vec<&str> = spike.listed.iter().map(|l| l.id.as_str()).collect();
-        assert_eq!(ids, ["6FakeChapter0000000001", "6FakeChapter0000000002"]);
-        assert_eq!(spike.shape.other, 2);
+        assert_eq!((page.skipped, page.unplayable), (0, 0));
+        assert_eq!(page.shape.chapters, 3);
+        assert_eq!(page.shape.samples, ["6FakeSample00000000001"]);
+        assert_eq!(page.shape.chapter_uri.as_deref(), Some("episode"));
+        assert!(page.shape.audiobook());
+        for (title, sample) in [
+            ("sample", true),
+            ("SMAKEBIT", true),
+            ("Preview", true),
+            ("Sample 1", false),
+            ("Kapittel 1: Sample", false),
+            ("", false),
+        ] {
+            assert_eq!(is_sample_title(title), sample, "{title:?}");
+        }
     }
 
+    /// 2026-11-09: what a show's items were, for the log - null entries, objects of another `type`, chapters,
+    /// unplayable and playable episodes counted apart, summed over the pages.
     #[test]
     fn a_shows_items_are_counted_by_what_they_were() {
         let body = |items: serde_json::Value, next: serde_json::Value| {
@@ -4518,9 +4556,12 @@ pub(crate) mod tests {
             other: 2,
             other_type: Some("chapter".to_string()),
             playable: 1,
+            chapters: 2,
+            ..Shape::default()
         };
         assert_eq!(first.shape, shape);
-        assert_eq!((first.listed.len(), first.skipped), (1, 4));
+        assert!(!first.shape.audiobook(), "an episode and a null too");
+        assert_eq!((first.listed.len(), first.skipped), (3, 2));
         let mut last = parse_show_episodes(
             body(serde_json::json!([null]), serde_json::Value::Null).as_bytes(),
         )
@@ -4785,18 +4826,6 @@ pub(crate) mod tests {
                 &[("SPOTIFY_ARTIST_ALBUMS".to_string(), value.to_string())].into(),
             );
             assert_eq!(config.artist_albums, on, "{value}");
-        }
-    }
-
-    /// `SPOTIFY_AUDIOBOOK_SPIKE` (2026-11-01) lists an audiobook's unplayable chapters; off by default.
-    #[test]
-    fn the_audiobook_spike_is_off_by_default() {
-        assert!(!Config::default().audiobook_spike);
-        for (value, on) in [("1", true), ("true", true), ("0", false), ("yes", false)] {
-            let config = Config::from_vars(
-                &[("SPOTIFY_AUDIOBOOK_SPIKE".to_string(), value.to_string())].into(),
-            );
-            assert_eq!(config.audiobook_spike, on, "{value}");
         }
     }
 

@@ -372,22 +372,36 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
   checklist item 18) lists an artist as its newest 20 albums' tracks (pages of 10, at most 500 tracks), with a
   403/404 falling back to context mode. **Audiobooks shared as shows** (2026-11-01, PLAN "Spotify audiobooks shared
-  as shows"): Spotify lists an audiobook's chapters under `GET /shows/{id}/episodes`, each `is_playable: false` for
-  this app; `parse_show_episodes` counts them (`Page::unplayable`, the first `restrictions.reason`, logged as "a
-  Spotify show with unplayable episodes"), and a show whose every episode is unplayable fails with its own code
-  `audiobook` (`spotify::AUDIOBOOK_CODE`, the catalogs' `music.spotify.audiobook`: "This is a Spotify audiobook -
-  Spotify lets only its own apps play them.") instead of `no_items`, which stays a really empty show's.
+  as shows"): **since 2026-11-09 they are listed.** What `GET /shows/{id}/episodes` really sends for an audiobook
+  (server 0.69.1's line on the user's server) is `type: "chapter"` objects, neither null nor marked unplayable;
+  `parse_show_episodes` lists them as the show's episodes whatever `is_playable` says (`Shape::chapters`), and the
+  phone plays one as `spotify:episode:<id>` (the uri the reference gives a chapter; the emulator's play call of
+  2026-11-09 was taken and Spotify's state named our item by it). **The free sample**: Spotify plays a chapter titled
+  "sample" to an account without audiobook listening time (Premium Family: only the plan manager has hours; a member
+  needs "Audiobooks+ for Plan Members"). The chapter object has no field that marks it (`chapter_number`,
+  `audio_preview_url`, `is_playable`, `restrictions` say nothing of it), so `spotify::is_sample_title` - the whole
+  title, any case, `sample`/`smakebit`/`preview` - marks it (`Shape::samples`) and the sweep leaves it out of a book of
+  more than one chapter (never counted as left out). A show whose every item was a chapter is an audiobook
+  (`Shape::audiobook`, `music_listings.spotify_audiobook`, migration 0131 with its library revision trigger; it clears every show's gate mark once, so a book listed under the old spike is read again in full): the entry
+  page says `music.card.audiobook` (listening time on the child's own account, "Audiobooks+ for Plan Members" bought by
+  the plan manager) and the library says `"audiobook": true` on the entry (absent otherwise; the music app tells the
+  kid "Lydboka trenger lyttetid" when Spotify plays something else in its place). Logged as "a Spotify show of
+  audiobook chapters" (the chapters, the samples left out, `audiobook`, the first chapter's uri kind). The older
+  shape - episodes each `is_playable: false` - is counted (`Page::unplayable`, the first `restrictions.reason`,
+  logged as "a Spotify show with unplayable episodes"), and a show whose every episode is unplayable with an
+  audiobook-shaped reason fails with its own code `audiobook` (`spotify::AUDIOBOOK_CODE`, the catalogs'
+  `music.spotify.audiobook`: "This is a Spotify audiobook Spotify marks as not playable for this account - ...")
+  instead of `no_items`, which stays a really empty show's.
   A show that lists nothing (either outcome) logs one more line, "a Spotify show listed nothing" (2026-11-09), with
   what Spotify sent in the items' place (`spotify::Tally`/`Shape`, summed over the pages read): `total`, `items`,
   `nulls` (JSON null), `other` and `other_type` (objects that aren't `type: episode`), `unplayable` and `reason`,
   `playable` (a usable episode that is not marked unplayable), `next` (the last page read had one) and `market`.
   `items > 0` with `nulls == items` = Spotify nulled every episode for this account or app; `items == 0` = none sent.
-  `SPOTIFY_AUDIOBOOK_SPIKE=1` (off by default; the user's go-librespot plays these, so the refusal may be the Web
-  API's view only) lists the chapters whose reason is audiobook-shaped (`audiobook_shaped`: anything but `market` and
-  `explicit`, or none) as the show's episodes (`parse_show_episodes_spike`), so one can be tried on the phone; the
-  result decides whether they stay listed or the sentence is the answer. The add form says nothing at add time yet
-  (the show object has no audiobook marker the server reads). Tests: `listing::an_audiobook_shared_as_a_show_says_so_and_the_spike_lists_its_chapters`,
-  the parsers in `spotify::tests`; fixture `testdata/spotify/show_audiobook_episodes.json` (fake-spotify `--audiobook`).
+  `SPOTIFY_AUDIOBOOK_SPIKE` (2026-11-01 to 2026-11-09, the test that found the chapters) is gone. The add form says
+  nothing at add time (the show object has no audiobook marker the server reads). Tests:
+  `listing::an_audiobooks_chapters_are_listed_without_the_sample`, `listing::a_show_of_unplayable_episodes_says_so`,
+  the parsers in `spotify::tests`; fixtures `testdata/spotify/show_audiobook_chapters.json` (fake-spotify
+  `--audiobook`) and `show_audiobook_episodes.json`.
   A playlist's `snapshot_id` gates its items: unchanged = one request and the
   items are **never** read again (2026-10-21, the user: the snapshot moves with any change to the list); only a moved
   snapshot or Check now reads them. Knowingly given up: a track's availability, relinking or metadata changing without

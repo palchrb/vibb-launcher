@@ -486,6 +486,7 @@ pub async fn confirm(
                 items: None,
                 lan: false,
                 spotify: None,
+                audiobook: false,
                 sort,
             };
             added.push((entry, candidate.name.clone()));

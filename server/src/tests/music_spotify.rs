@@ -201,7 +201,8 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// emergency menu 0114 sits between them). Design 72b's CalDAV write-back 0120 (0117 on its branch, renumbered past calendar-in-rules' 0119).
 /// A contact photo's kept original 0123, after design 75's lock weather 0122 (which reaches `main` first). Security
 /// review S-L5's Bluetooth switch 0124, the status report's `tailnet_joined` 0125, the weather's place name dropped 0126,
-/// the lock screen's media apps 0127, Push never lost silently's Remove notes 0128, design 76's certificate check 0129.
+/// the lock screen's media apps 0127, Push never lost silently's Remove notes 0128, design 76's certificate check 0129,
+/// Spotify audiobooks' marker 0131 (0130 is the SMS engine's, design 77, on its branch).
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -267,7 +268,8 @@ fn migrations_from_73_in_order() {
             (126, "weather no place".to_string()),
             (127, "lock media apps".to_string()),
             (128, "push removed".to_string()),
-            (129, "server tls".to_string())
+            (129, "server tls".to_string()),
+            (131, "spotify audiobook".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
@@ -2671,12 +2673,100 @@ pub(in crate::tests) mod listing {
         assert!(row.capped);
     }
 
-    /// Spotify audiobooks shared as shows (2026-11-01): a show whose every episode is `is_playable: false` fails with
-    /// its own code, `audiobook`, worded "This is a Spotify audiobook - ..." (a really empty show stays `no_items`);
-    /// with `SPOTIFY_AUDIOBOOK_SPIKE` its audiobook-shaped chapters are listed as the show's episodes, oldest first,
-    /// to try on a phone.
+    /// Spotify audiobooks shared as shows (2026-11-09: what Spotify really sends): a show of `type: "chapter"` items is
+    /// listed as the book's chapters in their `chapter_number` order, its free "sample" chapter left out (and not
+    /// counted as left out); the listing is marked an audiobook - the library says `audiobook: true`, the entry page
+    /// says it needs listening time on the child's account.
     #[tokio::test]
-    async fn an_audiobook_shared_as_a_show_says_so_and_the_spike_lists_its_chapters() {
+    async fn an_audiobooks_chapters_are_listed_without_the_sample() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        ready(&app).await;
+        let show = entry(&app, "show", SHOW).await;
+        app.fetch
+            .answer(&url(&app, Read::Show(SHOW)), 200, fixture("show.json"));
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes(SHOW, 0)),
+            200,
+            fixture("show_audiobook_chapters.json"),
+        );
+        assert_eq!(check(&app, show, t0()).await.error, None);
+        let list = items(&app, show).await;
+        assert_eq!(
+            keys(&list),
+            [
+                "6FakeChapter0000000001",
+                "6FakeChapter0000000002",
+                "6FakeChapter0000000003"
+            ],
+            "the book's order, the sample left out"
+        );
+        assert_eq!(list[0].title.as_deref(), Some("Kapittel 1"));
+        let row = listing(&app, show).await;
+        assert!(row.spotify_audiobook);
+        assert_eq!(row.spotify_skipped, 0, "the sample isn't 'left out'");
+        let page = app
+            .get_page(&format!("/music/entries/{show}"), &cookie)
+            .await
+            .text();
+        assert!(
+            page.contains(
+                "A Spotify audiobook plays only with audiobook listening time on the child"
+            ),
+            "{page}"
+        );
+        assert!(page.contains("Audiobooks+ for Plan Members"), "{page}");
+        let nb = app
+            .get_page(&format!("/music/entries/{show}?lang=nb"), &cookie)
+            .await
+            .text();
+        assert!(
+            nb.contains("En lydbok fra Spotify spilles bare med lyttetid for lydbøker"),
+            "{nb}"
+        );
+
+        // A podcast's entry page says nothing of it.
+        let podcast = entry(&app, "show", "4FakeShow0000000000004").await;
+        app.fetch.answer(
+            &url(&app, Read::Show("4FakeShow0000000000004")),
+            200,
+            fixture("show.json"),
+        );
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes("4FakeShow0000000000004", 0)),
+            200,
+            fixture("show_episodes.json"),
+        );
+        assert_eq!(check(&app, podcast, t0()).await.error, None);
+        assert!(!listing(&app, podcast).await.spotify_audiobook);
+        let page = app
+            .get_page(&format!("/music/entries/{podcast}"), &cookie)
+            .await
+            .text();
+        assert!(!page.contains("Audiobooks+"), "{page}");
+
+        // One chapter alone, titled "sample", is the book: kept.
+        let one = entry(&app, "show", "4FakeShow0000000000005").await;
+        app.fetch.answer(
+            &url(&app, Read::Show("4FakeShow0000000000005")),
+            200,
+            fixture("show.json"),
+        );
+        app.fetch.answer(
+            &url(&app, Read::ShowEpisodes("4FakeShow0000000000005", 0)),
+            200,
+            r#"{"items": [{"id": "6FakeSample00000000001", "type": "chapter", "name": "Sample"}],
+                "next": null, "total": 1}"#,
+        );
+        assert_eq!(check(&app, one, t0()).await.error, None);
+        assert_eq!(keys(&items(&app, one).await), ["6FakeSample00000000001"]);
+    }
+
+    /// The older shape (2026-11-01): a show whose every episode is `is_playable: false` with an audiobook-shaped
+    /// reason fails with its own code, `audiobook` (a really empty show, or a podcast whose episodes are all
+    /// `market`-restricted, stays `no_items`).
+    #[tokio::test]
+    async fn a_show_of_unplayable_episodes_says_so() {
         let app = TestApp::new().await;
         ready(&app).await;
         let show = entry(&app, "show", SHOW).await;
@@ -2691,45 +2781,20 @@ pub(in crate::tests) mod listing {
         assert_eq!(report.error.as_deref(), Some("audiobook"));
         let row = listing(&app, show).await;
         assert_eq!((row.version, row.failures), (None, 1));
+        assert!(!row.spotify_audiobook);
         assert!(items(&app, show).await.iter().all(|i| i.state != "ok"));
         assert_eq!(
             crate::music::CheckError::Spotify("audiobook".to_string())
                 .message(crate::i18n::Lang::En),
-            "This is a Spotify audiobook - Spotify lets only its own apps play them."
+            "This is a Spotify audiobook Spotify marks as not playable for this account - an audiobook needs \
+             listening time on the child's Spotify account."
         );
         assert_eq!(
             crate::music::sweep_error_text(crate::i18n::Lang::En, "spotify", "audiobook"),
-            "it is a Spotify audiobook, and Spotify lets only its own apps play them"
-        );
-        assert_eq!(
-            crate::i18n::t(crate::i18n::Lang::Nb, "music.spotify.audiobook"),
-            "Dette er en lydbok fra Spotify - Spotify lar bare sine egne apper spille lydbøker."
+            "it is a Spotify audiobook Spotify marks as not playable for this account"
         );
 
-        // The spike (read once at start: a server with the variable set): the chapters are the show's episodes.
-        let mut state = app.state.clone();
-        state.spotify = Arc::new(Accounts::new(Config::from_vars(
-            &[("SPOTIFY_AUDIOBOOK_SPIKE".to_string(), "1".to_string())].into(),
-        )));
-        let report = sweep::check_entry(&state, show, t0() + TimeDelta::hours(25))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(report.error, None);
-        let list = items(&app, show).await;
-        assert_eq!(
-            keys(&list),
-            [
-                "6FakeChapter0000000001",
-                "6FakeChapter0000000002",
-                "6FakeChapter0000000003"
-            ],
-            "oldest first, as a show's episodes"
-        );
-        assert_eq!(list[0].title.as_deref(), Some("Kapittel 1"));
-        assert_eq!(listing(&app, show).await.spotify_skipped, 0);
-
-        // A podcast whose every episode is `market`-restricted is no audiobook: `no_items`, with the spike too.
+        // A podcast whose every episode is `market`-restricted is no audiobook: `no_items`.
         let market = entry(&app, "show", "4FakeShow0000000000003").await;
         app.fetch.answer(
             &url(&app, Read::Show("4FakeShow0000000000003")),
@@ -2747,11 +2812,6 @@ pub(in crate::tests) mod listing {
             check(&app, market, t0()).await.error.as_deref(),
             Some("no_items")
         );
-        let report = sweep::check_entry(&state, market, t0() + TimeDelta::hours(25))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(report.error.as_deref(), Some("no_items"));
 
         // A really empty show is still `no_items`.
         let empty = entry(&app, "show", "4FakeShow0000000000002").await;

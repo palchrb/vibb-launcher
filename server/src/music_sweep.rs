@@ -882,6 +882,9 @@ pub struct Listing {
     pub spotify_reader: Option<i64>,
     /// Tracks or episodes left out (not playable here, local files, podcast episodes).
     pub spotify_skipped: i64,
+    /// A show whose every item was an audiobook's chapter (migration 0131, 2026-11-09): the PWA's entry page says it
+    /// needs listening time on the child's account; the phone's library says `audiobook`.
+    pub spotify_audiobook: bool,
 }
 
 pub async fn load_listing(
@@ -1440,6 +1443,7 @@ struct SpotifyPlan {
     items_at: Option<String>,
     reader: Option<i64>,
     skipped: i64,
+    audiobook: bool,
 }
 
 impl SpotifyPlan {
@@ -1450,6 +1454,7 @@ impl SpotifyPlan {
             items_at: old.spotify_items_at.clone(),
             reader: old.spotify_reader,
             skipped: old.spotify_skipped,
+            audiobook: old.spotify_audiobook,
         }
     }
 }
@@ -2876,6 +2881,8 @@ async fn spotify_check(
     let mut capped = false;
     let mut keep_end = "first";
     let mut snapshot = None;
+    // A show whose every item was an audiobook's chapter (2026-11-09; [spotify::Shape::audiobook]).
+    let mut audiobook = false;
     let reader;
     // The metadata read: the name, the picture (a playlist's snapshot).
     let meta_read = match kind {
@@ -3020,14 +3027,7 @@ async fn spotify_check(
                     return Ok(Ok(()));
                 }
             }
-            // The audiobook spike (2026-11-01, `SPOTIFY_AUDIOBOOK_SPIKE`): an audiobook's chapters are listed though
-            // Spotify marks them unplayable for this app, to try them on the phone.
-            let spike = accounts.config().audiobook_spike;
-            let parse: fn(&[u8]) -> Option<spotify::Page> = if spike {
-                spotify::parse_show_episodes_spike
-            } else {
-                spotify::parse_show_episodes
-            };
+            let parse: fn(&[u8]) -> Option<spotify::Page> = spotify::parse_show_episodes;
             let url = accounts.read_url(Read::ShowEpisodes(id, 0));
             let page = match reads.get(meta_reader, &url).await {
                 Ok(body) => match parse(&body) {
@@ -3057,8 +3057,29 @@ async fn spotify_check(
                     unplayable,
                     listed = listed.len(),
                     reason = restriction.unwrap_or("none"),
-                    spike,
                     "a Spotify show with unplayable episodes"
+                );
+            }
+            // An audiobook's chapters (2026-11-09): listed as the show's episodes. Its free sample - a chapter titled
+            // "sample" (`spotify::is_sample_title`), which Spotify plays to an account without audiobook listening
+            // time - is left out of a book of more than one chapter, never counted as left out; the log says how many,
+            // and the chapters' uri kind (the phone plays them as `spotify:episode:<id>`).
+            if tally.shape.chapters > 0 {
+                let samples = if tally.shape.chapters > 1 {
+                    let before = listed.len();
+                    listed.retain(|t| !tally.shape.samples.contains(&t.id));
+                    before - listed.len()
+                } else {
+                    0
+                };
+                audiobook = tally.shape.audiobook();
+                tracing::info!(
+                    entry = old.entry_id,
+                    chapters = tally.shape.chapters,
+                    samples,
+                    audiobook,
+                    uri = tally.shape.chapter_uri.as_deref().unwrap_or("none"),
+                    "a Spotify show of audiobook chapters"
                 );
             }
             // A show that lists nothing (`no_items`, or the audiobook sentence): what Spotify sent in its place,
@@ -3080,24 +3101,25 @@ async fn spotify_check(
                 );
             }
             // Every episode unplayable (none listed, none left out for anything else) with an audiobook-shaped
-            // restriction, or every item an audiobook's chapter (2026-11-09: what Spotify really sends): an audiobook
-            // Spotify shares as a show - its own sentence instead of `no_items` (2026-11-01). A really empty show, or
-            // a podcast whose episodes are all `market`/`explicit`-restricted, stays `no_items`.
-            let chapters = tally.shape.other > 0
-                && tally.shape.other == skipped
-                && tally.shape.other_type.as_deref() == Some("chapter");
+            // restriction: an audiobook this account can't play - its own sentence instead of `no_items`
+            // (2026-11-01). A really empty show, or a podcast whose episodes are all `market`/`explicit`-restricted,
+            // stays `no_items`. (A book whose chapters come as `type: "chapter"` is listed above.)
             if listed.is_empty()
-                && ((unplayable > 0
-                    && unplayable == skipped
-                    && spotify::audiobook_shaped(restriction))
-                    || chapters)
+                && unplayable > 0
+                && unplayable == skipped
+                && spotify::audiobook_shaped(restriction)
             {
                 return Ok(Err(CheckError::Spotify(
                     spotify::AUDIOBOOK_CODE.to_string(),
                 )));
             }
-            // Spotify lists a show newest first; the list is kept oldest first, as a podcast's.
-            listed.reverse();
+            // Spotify lists a show newest first; the list is kept oldest first, as a podcast's. An audiobook whose every
+            // chapter has its number: in the book's order (2026-11-09).
+            if audiobook && listed.iter().all(|t| t.disc_track.is_some()) {
+                listed.sort_by_key(|t| t.disc_track);
+            } else {
+                listed.reverse();
+            }
             keep_end = "newest";
             reader = meta_reader;
         }
@@ -3153,6 +3175,7 @@ async fn spotify_check(
         items_at: Some(stamp(now)),
         reader: Some(reader),
         skipped: skipped as i64,
+        audiobook,
     };
     Ok(Ok(()))
 }
@@ -3175,6 +3198,7 @@ fn spotify_context(
         items_at: tried,
         reader,
         skipped: 0,
+        audiobook: false,
     };
 }
 
@@ -4220,7 +4244,7 @@ async fn finish(
            cover_alt_url = ?, cover_alt_print = ?, cover_alt_at = ?, old_prints = ?, \
            art_refs = ?, art_backlog = ?, art_same_run = ?, art_backlog_at = ?, art_refresh = ?, \
            art_more = ?, spotify_mode = ?, spotify_snapshot = ?, spotify_items_at = ?, spotify_reader = ?, \
-           spotify_skipped = ? \
+           spotify_skipped = ?, spotify_audiobook = ? \
          WHERE entry_id = ?",
     )
     .bind(if keep_fields {
@@ -4322,6 +4346,11 @@ async fn finish(
         old.spotify_skipped
     } else {
         plan.spotify.skipped
+    })
+    .bind(if keep_fields {
+        old.spotify_audiobook
+    } else {
+        plan.spotify.audiobook
     })
     .bind(entry_id)
     .execute(&mut *tx)

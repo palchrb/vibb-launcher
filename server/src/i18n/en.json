@@ -25,8 +25,8 @@
   "device.filter.off": "Off",
   "device.filter.lists_footer": "As for everyone follows the switch in Settings › Web Filter.",
 
-  "music.spotify.audiobook": "This is a Spotify audiobook - Spotify lets only its own apps play them.",
-  "music.spotify.audiobook_short": "it is a Spotify audiobook, and Spotify lets only its own apps play them",
+  "music.spotify.audiobook": "This is a Spotify audiobook Spotify marks as not playable for this account - an audiobook needs listening time on the child's Spotify account.",
+  "music.spotify.audiobook_short": "it is a Spotify audiobook Spotify marks as not playable for this account",
 
   "advanced.spotify_diag.title": "Spotify",
   "advanced.spotify_diag.start": "Turn On Diagnostic Log for 15 Minutes",
@@ -3203,6 +3203,7 @@
   "music.card.spotify_picks": "Spotify picks the order",
   "music.card.artist_refused": "Spotify refused the artist's albums - played as Spotify picks.",
   "music.card.artist_context": "An artist plays as Spotify picks: no track list, and it starts from Spotify's own beginning each time.",
+  "music.card.audiobook": "This is an audiobook. A Spotify audiobook plays only with audiobook listening time on the child's own Spotify account - on Premium Family the plan manager buys \"Audiobooks+ for Plan Members\" for the child. Without it the phone says the book needs listening time.",
   "music.card.left_out": "{count} left out: not playable here, local files or podcast episodes",
   "music.card.capped_show": "the newest {cap} episodes (the podcast has more)",
   "music.card.capped_artist": "the newest {albums} albums and singles, at most {tracks} tracks (the artist has more)",
