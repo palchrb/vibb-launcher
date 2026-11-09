@@ -391,3 +391,20 @@ the code first; none was refuted. The coordinator decided the open points: M3 on
 | N4 | The snapshot is published by the first `edit` too, and `afterRefresh` runs at `Application`'s CE refresh after the unlock, so it is in memory before Home's first binding. |
 | N5 | The duplicate KDoc is gone. |
 | N6 | `MissedCallsRepo.markSeen(context, marks)`: one write and one listener post per visit. |
+
+### Second pass (c9748b52)
+
+The reviewer's read of the fix round found one regression and five small gaps. Each was confirmed in the code first;
+none was refuted.
+
+| Finding | Fixed |
+|---|---|
+| L3 regression: the sweep deleted a draft still in use | Confirmed: the sweep ran in `onCreate`, and a recreated draft pick's result is delivered after it. The sweep now runs at the phone book's first `onResume` (results are delivered before it), keeping the form's draft, and never takes a draft younger than an hour (`REQUEST_DRAFT_SWEEP_FLOOR_MS`: a pick in flight, another phone book's) - pure `draftsToSweep`, `KidPhotosTest`. Emulator: the launcher killed (`run-as … kill -9`) under the camera; capture -> the framing screen recreated -> "Bruk bildet" -> the recreated phone book's form shows the picture -> Send -> the waiting row has it, `request_photo_draft/` empty. (On the boot's first process start `BootHome` brings Home to the front and clears the task instead - the first kill in that run did this; the second took the reviewer's path.) |
+| M2 gap: no `CallPolicyStore` listener | Confirmed for the phone book: a rule change reached it only through `SmsHome` while the SMS runtime listens. It now registers a `CallPolicyStore` listener in `onStart` (removed in `onStop`) that renders on the main thread; the KDoc is true. Meldinger has no such gap: it exists only with the engine running, and every rule change reaches it through `SmsRuntime`'s policy listener -> `SmsHome.refresh` -> its `homeListener` -> `load()`. |
+| L10 nit: Back's enabled state | `back.isEnabled` is set at the top of `filter()`, before the wait for the visit's first load, so the form closing or the query changing updates it at once. |
+| L4 nit: a restored capture left behind | `KidPhotoActivity` deletes a restored capture file when it finishes on a time rule or a contact no longer offered. |
+| L9 nit: a prefs decode per scroll | An answer row is counted once per visit (`answersCounted`); `answersShown()` (the prefs read) runs only for an answer not yet counted. |
+| M3 nit: `Folded.sourceSpan` used only by tests | Removed with its test lines; `searchFold` returns the folded string, and the one-way match spans whole letters of the shown string. |
+
+Tests: 2382 (one new test function, the draft sweep's rule; the removed `sourceSpan` lines were inside an existing
+test). The fix round itself added three test functions (2378 -> 2381), not 23 as first reported.

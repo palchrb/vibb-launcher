@@ -370,7 +370,7 @@ pictures and the contact request's screen.
   leaves, a newcomer joins - a call-log observer while the phone book is started, and the Element X store's listener);
   the list waits for that first load, and a new visit starts at the list's top; a visit that ends empties the list
   (code QA L1), so a returning kid never taps a row of the last visit while the new one loads. Only the latest
-  missed-call load is applied (`LatestOnly`, code QA L2; Home's loads too). `TopSightings` counts a top row with a
+  missed-call load is applied (`LatestOnly`, code QA L2; Home's loads too). A `CallPolicyStore` listener renders the list when a sync changes the rules mid-visit. `TopSightings` counts a top row with a
   red line as seen once it was at least half on screen for `PHONE_BOOK_SEEN_MS` (1 s, in all) while the phone book was
   resumed and focused (updated after every layout, scroll, resume, pause and focus change); at `onStop` (not a
   rotation) the visit's contacts get `MissedCallsRepo.markSeen(marks)` (one write, one word to Home - code QA N6) - up to
@@ -419,7 +419,7 @@ pictures and the contact request's screen.
   two characters); while searching the waiting requests come after the contacts' hits and the emergency numbers' hits
   last; Meldinger's hits are ranked like the phone book's (A-Å within a rank), not newest first; the request's picture
   draft is deleted when the form closes without Send (Avbryt, Back, calls going off), when a returned draft finds the
-  form closed, when the phone book finishes, and at `onCreate` every draft but the restored form's (code QA L3); the
+  form closed, when the phone book finishes, and at its first resume every draft but the form's and none younger than an hour (code QA L3 and its second pass: never between a draft being written and the form taking it); the
   row's badge is the count alone. The code QA's open points, decided: (a) the request rows stay hidden while calls are
   off; (c) an incoming call's screen ends the visit; (d) no long-press hint for now; (e) the emergency avatar keeps
   its 3 dp ring.

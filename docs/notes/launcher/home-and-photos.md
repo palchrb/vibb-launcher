@@ -46,7 +46,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   stepped to 150 KB, no EXIF). It checks the time rule before it opens anything (code QA L4), at resume, and watches it, finishes when a sync takes the
   contact out of the phone book or makes its number an emergency number, and is no free screen for screen time.
 - **The contact request's picture** (§5.5): the form's draft in `cacheDir/request_photo_draft/` (swept after a day),
-  renamed to `filesDir/contact_request_photos/<request id>.jpg` at Send; shown on the "Venter på svar" row; handed to
+  renamed to `filesDir/contact_request_photos/<request id>.jpg` at Send (strays swept at the phone book's first resume, `draftsToSweep`: never the form's, never one younger than an hour); shown on the "Venter på svar" row; handed to
   the contact that arrives in the phone book unless the kid set one already (`reconcileContactRequests`' hand-overs,
   `KidContactPhotos.adopt`), deleted on every other outcome (only an open request keeps one, `requestPhotosToKeep`).
 - **List-sized photos** (§3.7, QA N8): the rows, Home's contacts and the glance rows take a copy at most 160 px
