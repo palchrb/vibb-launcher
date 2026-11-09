@@ -192,5 +192,5 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   no contextual actions; the engine's live flow is a drop-oldest change signal collected off the engine thread, and the
   screens coalesce their reads (`Coalescer`, the thread reads its one conversation); the time-rule row and the tile
   follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
-  parent didn't allow and the nearby share (`shareExclusions`); the history-only tile reads "Meldingslogg"; drafts never
-  go into the saved state.
+  parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
+  history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").

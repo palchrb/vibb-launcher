@@ -147,9 +147,7 @@ class MessagesActivity : UIObjectActivity() {
             adapter.submit(contacts.map { Row.Contact(it) })
             return
         }
-        // "Meldingslogg" for the history only (code QA N6), as Home's tile.
-        val title = if (SmsHome.historyOnly()) R.string.messages_history else R.string.messages_title
-        KidHeader.bind(this, binding.messagesHeader, title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
+        KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
             picking = true
             render()
         }

@@ -283,8 +283,7 @@ class LockActivity : UIObjectActivity() {
         // E7's M1: a ringing alarm's row first, whatever the rule.
         val alarm = getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }
         // Design 77 §6.7: Meldinger where the rule allows calls, while Home shows its tile.
-        val messagesLabel = if (com.kidslauncher.mdm.sms.SmsHome.historyOnly()) R.string.messages_history else R.string.messages_title
-        val messages = getString(messagesLabel).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
+        val messages = getString(R.string.messages_title).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
         renderRows(
             timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm, messages),
         )

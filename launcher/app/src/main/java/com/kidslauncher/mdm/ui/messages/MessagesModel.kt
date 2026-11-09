@@ -115,11 +115,6 @@ fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
     Refusal.EMPTY -> AfterRefusal.NOTHING
 }
 
-/** The history is only for reading: SMS isn't "Styrt av Vibb" (or the rules are unknown). Home's tile, the time-rule
- * screen's row and the list's header then read "Meldingslogg" (code QA N6: another app's "Meldinger" may sit next to
- * it). */
-fun historyOnly(smsMode: ChannelMode?): Boolean = smsMode != ChannelMode.MANAGED
-
 /**
  * Whether "Ny melding" shows: the gate would send to a contact on its list now. Judged on a contact that isn't an
  * emergency number (code QA N3: D5 lets those through even under a rule without calls), so the answer is the time

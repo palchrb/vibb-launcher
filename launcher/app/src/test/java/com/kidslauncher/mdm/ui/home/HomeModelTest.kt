@@ -74,14 +74,13 @@ class HomeModelTest {
     }
 
     /** Design 77 §6.7 (code QA M2): a contact avatar's badge is missed calls plus unread messages; the missed-call
-     * glyph only with a missed call. Code QA N6: the history-only tile carries its flag. */
+     * glyph only with a missed call. */
     @Test
     fun `a contact's badge counts missed calls and unread messages`() {
         assertEquals(5, ContactBadge(2, 3).count)
         assertTrue(ContactBadge(1, 0).callGlyph)
         assertFalse(ContactBadge(0, 4).callGlyph)
         assertEquals(0, ContactBadge(0, 0).count)
-        assertEquals(GridTile.Messages(2, history = true), homeGrid(emptyList(), false, emptyMap(), messages = 2, messagesHistory = true).first())
     }
 
     @Test

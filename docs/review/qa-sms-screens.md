@@ -255,8 +255,10 @@ On `sms-screens`, after this review was brought in; with it the user's bubble co
 - **N4** - the field has `saveEnabled="false"` and the client id no longer goes into the saved state: text and id stay in
   the process's memory (`drafts`), restored from there after a recreation.
 - **N5** - `SmsHome.refresh` clears its flag as the read begins, and in the callback only when no read ran.
-- **N6** - the history-only tile, the time-rule row and the list's header read "Meldingslogg" / "Message history"
-  (`historyOnly`: SMS not "Styrt av Vibb").
+- **N6** - not changed, by the user's decision (2026-11-09: "la være inntil videre"): offered hiding the history-only
+  tile, renaming it (e.g. "Meldinger (arkiv)") or leaving it, they chose to leave it. The tile, the time-rule row and the
+  list's header keep reading "Meldinger" / "Messages" in every mode (a "Meldingslogg" label was built in this round and
+  taken out again before the merge).
 - **The user's bubble colours** - the kid's own: `kid_message_out` = the accent peach, its text `kid_message_out_ink`
   (= `kid_sheet_ink`, 8.7:1), its time `kid_message_out_dim` #5E4034 (4.7:1; the suggested #6B4A3C was 3.98:1, below
   4.5 for 11 sp); received: `kid_message_in` #34324A (D2), white text (12.3:1), its time `kid_message_in_dim` #A6A0B4

@@ -118,8 +118,6 @@ class MessagesModelTest {
             assertEquals(ComposeState.READ_ONLY, composeState(judge(rules(mode)), null))
         }
         assertEquals(ComposeState.READ_ONLY, composeState(SmsJudge(CallPolicyState.Unmanaged, roleHeld = false), "+4790000001"))
-        assertTrue(historyOnly(ChannelMode.OFF) && historyOnly(ChannelMode.UNMANAGED) && historyOnly(null))
-        assertFalse(historyOnly(ChannelMode.MANAGED))
     }
 
     /** Code QA L5: each refusal its own words; a taken draft id is sent again under a new one, an empty text says

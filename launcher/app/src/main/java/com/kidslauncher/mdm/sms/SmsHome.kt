@@ -38,9 +38,6 @@ object SmsHome {
     /** Home's Meldinger tile ([messagesTileShown]). */
     fun tileShown(): Boolean = messagesTileShown(CallPolicyStore.state.smsMode, summary.roleHeld, summary.hasHistory)
 
-    /** The tile and the screens read "Meldingslogg" ([com.kidslauncher.mdm.ui.messages.historyOnly]): the history in
-     * Av / Ikke styrt / rules unknown (code QA N6 - next to another app's "Meldinger"). */
-    fun historyOnly(): Boolean = com.kidslauncher.mdm.ui.messages.historyOnly(CallPolicyStore.state.smsMode)
 
     /** A contact's unread messages (its avatar's badge, §6.7). */
     fun unreadFrom(number: String): Int = summary.unreadByNumber[number] ?: 0

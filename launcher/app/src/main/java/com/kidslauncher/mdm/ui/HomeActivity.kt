@@ -826,7 +826,6 @@ class HomeActivity : UIObjectActivity() {
                 data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
-                messagesHistory = com.kidslauncher.mdm.sms.SmsHome.historyOnly(),
             ),
             data.infos,
             data.icons,

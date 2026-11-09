@@ -115,8 +115,6 @@
     <string name="sms_compose_refused">You can\'t send a message to this number</string>
     <!-- Design 77 §6.7: the kid's message screens (Meldinger, a thread, a picture). -->
     <string name="messages_title">Messages</string>
-    <!-- The history only (SMS not "Styrt av Vibb"): the tile, the time-rule row and the list's header. -->
-    <string name="messages_history">Message history</string>
     <string name="messages_new">New message</string>
     <string name="messages_empty">No messages yet.</string>
     <string name="messages_new_empty">There\'s no one you can message yet.</string>
