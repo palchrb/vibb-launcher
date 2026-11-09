@@ -377,6 +377,7 @@ class SpotifyRulesTest {
             SpotifyProblem.STOPPED to (SpotifyLine.STOPPED to null),
             SpotifyProblem.OFF to (null to "none"),
             SpotifyProblem.CONTEXT_REFUSED to (SpotifyLine.ASK_ADULT to null),
+            SpotifyProblem.NO_LISTENING_TIME to (SpotifyLine.NO_LISTENING_TIME to null),
         )
         assertEquals(SpotifyProblem.entries.toSet(), table.keys)
         for ((problem, want) in table) assertEquals(problem.name, want, problem.line to problem.outcome)

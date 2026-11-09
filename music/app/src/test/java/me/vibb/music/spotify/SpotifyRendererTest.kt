@@ -270,8 +270,8 @@ class SpotifyRendererTest {
         settle()
     }
 
-    private fun CoroutineScope.renderer(count: Int = 5, duration: Long = DURATION, session: Boolean = false): SpotifyRenderer {
-        val entry = Entry(6, "e6", "Kveldsliste", null, Source.SPOTIFY, "spotify:playlist:FAKEplaylist0000000001", "auto", 0, true, null, "11ee", 6, spotifyMode = "list")
+    private fun CoroutineScope.renderer(count: Int = 5, duration: Long = DURATION, session: Boolean = false, audiobook: Boolean = false): SpotifyRenderer {
+        val entry = Entry(6, "e6", "Kveldsliste", null, Source.SPOTIFY, "spotify:playlist:FAKEplaylist0000000001", "auto", 0, true, null, "11ee", 6, spotifyMode = "list", audiobook = audiobook)
         val items = (0 until count).map { PlayItem(6, key(it), "Fake track $it — Fake Artist", null, false, duration) }
         active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
         val dispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher
@@ -556,6 +556,24 @@ class SpotifyRendererTest {
         advance(1)
         assertFalse(r.showsPlaying)
         assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        r.release()
+    }
+
+    @Test
+    fun `an audiobook's start answered by another track - paused at once, the book's own line, no stored word (2026-11-09)`() = runBlocking {
+        val r = renderer(audiobook = true)
+        r.load(mediaItems(3), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(1, api.plays().size)
+        val words = ports.outcomes.toList()
+        // Spotify plays the book's free sample in place of the chapter (no audiobook listening time on the account)
+        post(SdkState(false, 18_000, 300_000, "spotify:episode:FAKEsample0000000001", null, emptyList(), emptyList(), "episode", "Sample", emptyList(), null))
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        assertEquals(RendererState.SPOTIFY_NO_LISTENING_TIME, r.rendererState)
+        assertEquals("one book, not the account: no stored word", words, ports.outcomes)
+        advance(10_000)
+        assertEquals("never the wait's trenger internett", RendererState.SPOTIFY_NO_LISTENING_TIME, r.rendererState)
         r.release()
     }
 

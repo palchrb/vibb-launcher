@@ -76,4 +76,7 @@ enum class RendererState(val remote: Boolean) {
 
     /** "Stoppet - trykk spill": the web player's renderer process died. */
     SPOTIFY_STOPPED(false),
+
+    /** "Lydboka trenger lyttetid": Spotify played something else in place of an audiobook's chapter (2026-11-09). */
+    SPOTIFY_NO_LISTENING_TIME(false),
 }

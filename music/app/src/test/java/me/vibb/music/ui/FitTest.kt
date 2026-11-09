@@ -242,17 +242,17 @@ class FitTest {
     }
 
     /**
-     * The web player's seven lines in both languages (design 26c §5.8; qa-26c-step5b-code L1; step 8's wording, which names
+     * The web player's eight lines in both languages (design 26c §5.8; the audiobook's since 2026-11-09; qa-26c-step5b-code L1; step 8's wording, which names
      * no source), Nunito Bold 12 sp from the font's advances (as the Sonos lines above): the player's state line, and on the
      * tiles (13 sp in 288 dp) they fit too.
      */
     private val spotifyLines = mapOf(
         "Trenger Wi-Fi" to 78.8f, "Trenger internett" to 96.0f, "Ikke tilgjengelig nå" to 106.1f,
         "Spør en voksen" to 85.5f, "Virker ikke på telefonen" to 133.2f, "Spilles et annet sted" to 114.6f,
-        "Stoppet - trykk spill" to 111.8f,
+        "Stoppet - trykk spill" to 111.8f, "Lydboka trenger lyttetid" to 135.9f,
         "Needs Wi-Fi" to 69.7f, "Needs the internet" to 103.7f, "Not available right now" to 131.5f,
         "Ask a grown-up" to 89.8f, "Doesn't work on this phone" to 153.4f, "Playing somewhere else" to 135.8f,
-        "Stopped - press play" to 116.2f,
+        "Stopped - press play" to 116.2f, "The book needs listening time" to 167.4f,
     )
 
     @Test
@@ -260,7 +260,7 @@ class FitTest {
         for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
             val text = moduleFile(path).readText()
             val lines = Regex("""<string name="renderer_spotify_[a-z_]+"[^>]*>([^<]*)</string>""").findAll(text).map { it.groupValues[1].replace("\\'", "'") }.toList()
-            assertEquals(path, 7, lines.size)
+            assertEquals(path, 8, lines.size)
             for (line in lines) assertTrue("$path: $line is measured", line in spotifyLines)
         }
         for (screen in widths) {
