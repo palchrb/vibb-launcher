@@ -35,6 +35,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   itself after an unlock; the three message screens check at resume and watch the lock (`LockWatch` with
   `MessagesScreens.redirectIfLocked`). Messages that come in under a rule without calls are stored and notified
   silently (step 1), and the gate refuses a send then (`TIME_RULE`: "Du kan ikke sende meldinger nå").
+  Two system helpers stay reachable from a thread under a rule that allows calls (step 3b's code QA N9, and step 2's
+  L6): the photo picker behind "+" (read-only, the kid's own gallery; it is a lock-task helper, never suspended) and the
+  share sheet behind a picture's "Del" (only allowed apps resolve). The "+" shows only while the compose bar is open,
+  so a rule without calls hides it; with calls allowed the parent may accept it or ask for the "+" to follow the rule.
 - **A rule's Silent** (PLAN "an alarm ringing during school mode", the user 2026-11-02; server 0121; code QA fix round
   2026-11-02): `TimeRule.silent` (default false). The pure `timerules/RuleSilence.kt` (`RuleSilenceTest`):
   `ruleSilenceFor(lock)` from the lock's rules (the active, un-lifted ones - none under the override or the pause, so

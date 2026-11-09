@@ -135,6 +135,7 @@
     <string name="messages_picture_failed">Bildet kunne ikke hentes</string>
     <string name="messages_attachment_unsupported">Vedlegg som ikke kan vises</string>
     <string name="messages_picture_waiting_data">Bilde venter - trenger mobildata</string>
+    <string name="messages_unreadable">Meldingen kunne ikke vises</string>
     <string name="messages_picture_gone">Bildet er ikke lenger tilgjengelig</string>
     <string name="messages_picture_retry">Bildet kunne ikke hentes - trykk for å prøve igjen</string>
     <string name="messages_add_picture">Legg til bilde</string>

@@ -161,6 +161,7 @@
     <string name="messages_picture_failed">The picture couldn\'t be fetched</string>
     <string name="messages_attachment_unsupported">An attachment that can\'t be shown</string>
     <string name="messages_picture_waiting_data">Picture waiting - needs mobile data</string>
+    <string name="messages_unreadable">The message couldn\'t be shown</string>
     <string name="messages_picture_gone">The picture isn\'t available any more</string>
     <string name="messages_picture_retry">The picture couldn\'t be fetched - tap to try again</string>
     <string name="messages_add_picture">Add a picture</string>

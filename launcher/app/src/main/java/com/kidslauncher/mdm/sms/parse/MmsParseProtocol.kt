@@ -9,8 +9,9 @@ import com.kidslauncher.mdm.sms.mms.MmsCodec
  * from the isolated process is unparcelled by generated code.
  *
  * Every request carries the input as a pipe (a [android.os.ParcelFileDescriptor]) and its length; every answer starts
- * with a status. Pictures come back as raw RGBA_8888 pixels in a [android.os.SharedMemory] region with their width and
- * height - never an image format.
+ * with a status. Pictures come back as raw RGBA_8888 pixels in a shared-memory file descriptor with their width and
+ * height - never an image format; the main process reads them with `pread` (a peer that shrinks the region gets a
+ * short read, never a fault - code QA L4).
  */
 internal object MmsParseProtocol {
     const val DESCRIPTOR = "me.vibb.launcher.sms.parse.MmsParse"
@@ -57,29 +58,15 @@ internal object MmsParseProtocol {
     /** A part's type, as handed back for a part that isn't shown. */
     const val MIME_MAX_CHARS = MmsCodec.MAX_ID_CHARS
 
-    /** The protocol's own error: a field over its cap, a count out of range, a size that doesn't match. */
-    class Malformed(what: String) : Exception(what)
-
-    /**
-     * Reads a string the other side wrote with [Parcel.writeString], after checking its length: Parcel writes the
-     * length in UTF-16 units first (-1 for null), so it is read and judged, the position put back, and only then the
-     * string read.
-     */
-    fun readString(parcel: Parcel, maxChars: Int, nullable: Boolean = false): String? {
-        val position = parcel.dataPosition()
-        val length = parcel.readInt()
-        if (length == -1 && nullable) return null
-        if (length < 0 || length > maxChars) throw Malformed("string length $length")
-        parcel.setDataPosition(position)
-        val value = parcel.readString() ?: throw Malformed("null string")
-        if (value.length != length) throw Malformed("string length")
-        return value
+    /** A [Parcel] as [WireIn], for [ParseWire]'s length-first reads. */
+    class ParcelWire(private val parcel: Parcel) : WireIn {
+        override val position: Int get() = parcel.dataPosition()
+        override fun seek(position: Int) = parcel.setDataPosition(position)
+        override fun readInt(): Int = parcel.readInt()
+        override fun readString(): String? = parcel.readString()
     }
 
-    /** A count the other side wrote, within 0..[max]. */
-    fun readCount(parcel: Parcel, max: Int): Int {
-        val count = parcel.readInt()
-        if (count < 0 || count > max) throw Malformed("count $count")
-        return count
-    }
+    fun readString(parcel: Parcel, maxChars: Int, nullable: Boolean = false): String? = ParseWire.readString(ParcelWire(parcel), maxChars, nullable)
+
+    fun readCount(parcel: Parcel, max: Int): Int = ParseWire.readCount(ParcelWire(parcel), max)
 }

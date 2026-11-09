@@ -110,7 +110,14 @@ class KidScreensEscapeTest {
         assertTrue(pick.contains("Intent(MediaStore.ACTION_IMAGE_CAPTURE)\n            .setPackage(pkg)"))
         assertTrue(pick.contains("usable(it.packageName)"))
         assertTrue(pick.contains("FileProvider.getUriForFile(context, PictureShare.authority(context), file)"))
-        assertTrue(pick.contains("Intent(MediaStore.ACTION_PICK_IMAGES).setType(\"image/*\")"))
+        assertTrue(pick.contains("val pick = Intent(MediaStore.ACTION_PICK_IMAGES).setType(\"image/*\")"))
+        // Code QA M3: the system's own picker only, and its answer read only as another app's content URI.
+        assertTrue(pick.contains("queryIntentActivities(pick, PackageManager.MATCH_SYSTEM_ONLY)"))
+        assertTrue(pick.contains("return pick.setPackage(system)"))
+        assertTrue(pick.contains("pickedUriAcceptable(it.scheme, it.authority, context.packageName)"))
+        assertTrue(!pick.contains("FLAG_GRANT_READ_URI_PERMISSION"))
+        val threadSource = thread
+        assertTrue(threadSource.contains("PicturePick.picked(this, result.data?.data)") && !threadSource.contains("Uri.fromFile"))
         assertTrue(!pick.contains("EXTRA_PICK_IMAGES_MAX") && !pick.contains("EXTRA_ALLOW_MULTIPLE"))
     }
 

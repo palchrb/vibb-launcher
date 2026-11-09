@@ -271,6 +271,36 @@ class MessagesModelTest {
     }
 
     @Test
+    fun `an unreadable MMS says so, not that its picture couldn't be fetched (code QA N7)`() {
+        val failed = Part(0, "image/jpeg", 0, null, null, null, PartState.FAILED)
+        assertEquals(listOf(PartView.Unreadable), partViews(listOf(failed), unreadable = true))
+        val message = message("u", 1, 0, parts = listOf(failed)).copy(failure = com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_UNREADABLE)
+        assertTrue(fetchUnreadable(message))
+        assertFalse(fetchRetryOffered(message))
+    }
+
+    @Test
+    fun `the photo picker's answer is read only as another app's content URI (code QA M3)`() {
+        val own = "me.vibb.launcher"
+        assertTrue(pickedUriAcceptable("content", "media", own))
+        assertTrue(pickedUriAcceptable("content", "com.android.providers.media.photopicker", own))
+        assertTrue(pickedUriAcceptable("CONTENT", "10@media", own))
+        // Our own files: a file:// path, our share and MMS providers, the debug build's, a user-qualified one.
+        assertFalse(pickedUriAcceptable("file", null, own))
+        assertFalse(pickedUriAcceptable("file", "", own))
+        assertFalse(pickedUriAcceptable("content", "me.vibb.launcher.share", own))
+        assertFalse(pickedUriAcceptable("content", "me.vibb.launcher.mms", own))
+        assertFalse(pickedUriAcceptable("content", "0@me.vibb.launcher.mms", own))
+        assertFalse(pickedUriAcceptable("content", "ME.VIBB.LAUNCHER", own))
+        assertFalse(pickedUriAcceptable("content", "me.vibb.launcher.debug.share", "me.vibb.launcher.debug"))
+        assertFalse(pickedUriAcceptable("content", null, own))
+        assertFalse(pickedUriAcceptable("http", "example.invalid", own))
+        assertFalse(pickedUriAcceptable(null, "media", own))
+        // Another app whose name only starts like ours is another app.
+        assertTrue(pickedUriAcceptable("content", "me.vibb.launcherx", own))
+    }
+
+    @Test
     fun `a picture's thumbnail takes its shape from its size, within bounds`() {
         assertEquals(0.75f, pictureRatio(1600, 1200), 0.001f)
         assertEquals(1.6f, pictureRatio(100, 1000), 0.001f)

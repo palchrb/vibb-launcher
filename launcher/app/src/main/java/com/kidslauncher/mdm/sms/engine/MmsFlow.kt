@@ -129,6 +129,9 @@ class MmsFlow internal constructor(
     private val radio: MmsRadio,
     private val files: PartFiles,
 ) {
+    /** Picks the kid hasn't sent yet ([putPicture]), by hash and when: a delete never takes their files (code QA N8). */
+    private val staged = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     // ---- the push (D7, D10) ----
 
     /** The committed pushes to judge, oldest first. */
@@ -138,34 +141,46 @@ class MmsFlow internal constructor(
      * D10 for one committed push, with what the isolated parse made of it ([parsed]; `null` = not a notification we
      * accept): the sender (`/TYPE=PLMN` digits), D4 on the number, then - only for an allowed sender - the host and the
      * size. A stranger's push is held unfetched for the parent (D16); a released one ([PendingPushRow.heldId]) runs every
-     * check again. The push row goes in the same transaction as its outcome.
+     * check again, and its held row says what came of it ("released" only once the kid has it, code QA L9). The push
+     * row goes in the same transaction as its outcome, and a repeat of the same push - blocked ones included - is known
+     * until its own expiry (at most a week, code QA L2).
      */
     fun judgePush(push: PendingPushRow, parsed: MmsNotification?): PushOutcome {
         val judge = judge()
+        val now = clock()
+        val key = parsed?.let(::pushKey) ?: rawPushKey(push.pdu)
+        val keepUntil = (parsed?.expirySeconds?.takeIf { it > 0 }?.let { it * 1000 } ?: (now + PUSH_KEY_KEEP_MS))
+            .coerceIn(now + SmsEngine.RECEIVED_KEEP_MS, now + PUSH_KEY_KEEP_MS)
+        if (push.heldId != null && store.held(push.heldId)?.state != HeldState.HELD) {
+            // The parent's "Slett nå" came after the allow: nothing of it is fetched.
+            store.deletePendingPush(push.id)
+            return PushOutcome.Blocked(null)
+        }
         if (parsed == null || !MmsGate.answerableId(parsed.transactionId)) {
-            return blockPush(push, CleanSender(SenderClass.MALFORMED, ""))
+            return blockPush(push, CleanSender(SenderClass.MALFORMED, ""), key, keepUntil)
         }
         val number = when (val sender = MmsGate.sender(parsed.from)) {
-            is MmsGate.Sender.Blocked -> return blockPush(push, CleanSender(sender.senderClass, ""))
+            is MmsGate.Sender.Blocked -> return blockPush(push, CleanSender(sender.senderClass, ""), key, keepUntil)
             is MmsGate.Sender.Number -> sender.number
         }
         val verdict = SmsRules.decideIncoming(SenderKind.NUMBER, number, judge)
         if (verdict == IncomingVerdict.HoldRules) return PushOutcome.Waiting
         val clean = SenderClean.of(SenderKind.NUMBER, number, judge.defaultCc)
-        val key = pushKey(parsed)
         val outcome = store.transaction {
             store.deletePendingPush(push.id)
             if (push.heldId == null) {
                 // QA L5: an MMSC that repeats a push it got no answer to adds no rows.
                 if (store.receivedBefore(key)) return@transaction PushOutcome.Duplicate
-                store.rememberReceived(key, push.at)
+                remember(key, keepUntil)
                 store.addCounter(SmsEngine.COUNT_RECEIVED)
             }
-            when (verdict) {
+            val result = when (verdict) {
                 is IncomingVerdict.Allow -> admit(push, parsed, clean, verdict, judge)
                 IncomingVerdict.HoldParent -> hold(push, clean)
                 else -> PushOutcome.Blocked(engine.block(push.at, KIND_MMS, clean, SmsEngine.REASON_RULE))
             }
+            push.heldId?.let { settleRelease(it, result) }
+            result
         }
         if (outcome is PushOutcome.Shown) engine.emit(EngineEvent.MessageAdded(outcome.shown.message.seq, outcome.shown.message))
         return outcome
@@ -178,12 +193,32 @@ class MmsFlow internal constructor(
             return null
         }
         store.addCounter(SmsEngine.COUNT_PARSE_FAILURES)
-        return blockPush(push, CleanSender(SenderClass.MALFORMED, ""))
+        val now = clock()
+        return blockPush(push, CleanSender(SenderClass.MALFORMED, ""), rawPushKey(push.pdu), now + PUSH_KEY_KEEP_MS)
     }
 
-    private fun blockPush(push: PendingPushRow, clean: CleanSender): PushOutcome = store.transaction {
+    private fun blockPush(push: PendingPushRow, clean: CleanSender, key: String, keepUntil: Long): PushOutcome = store.transaction {
         store.deletePendingPush(push.id)
-        PushOutcome.Blocked(engine.block(push.at, KIND_MMS, clean, SmsEngine.REASON_RULE))
+        if (push.heldId == null) {
+            // Code QA L2: a repeated push that blocks early adds no second blocked row.
+            if (store.receivedBefore(key)) return@transaction PushOutcome.Duplicate
+            remember(key, keepUntil)
+        }
+        val result = PushOutcome.Blocked(engine.block(push.at, KIND_MMS, clean, SmsEngine.REASON_RULE))
+        push.heldId?.let { settleRelease(it, result) }
+        result
+    }
+
+    /** `received_key` keeps a key a day past its `at`: the push's key is kept until [keepUntil]. */
+    private fun remember(key: String, keepUntil: Long) = store.rememberReceived(key, keepUntil - SmsEngine.RECEIVED_KEEP_MS)
+
+    /** Code QA L9: a released push's held row is "released" once the kid has the message (shown - a fetch that then
+     * fails is still shown), "dropped" when the second judgement blocks it or holds it again. Inside the transaction. */
+    private fun settleRelease(heldId: String, result: PushOutcome) {
+        val held = store.held(heldId)?.takeIf { it.state == HeldState.HELD } ?: return
+        val state = if (result is PushOutcome.Shown) HeldState.RELEASED else HeldState.DROPPED
+        store.updateHeld(held.copy(state = state, body = null, push = null, reported = false))
+        if (state == HeldState.RELEASED) store.addCounter(SmsEngine.COUNT_RELEASED)
     }
 
     /** D16: a stranger's push, held unfetched - only the push (at most 2 KB) is kept. */
@@ -230,7 +265,7 @@ class MmsFlow internal constructor(
         val mms = MmsRow(
             messageId = row.id, state = state, transactionId = parsed.transactionId, contentLocation = parsed.contentLocation,
             from = clean.sender, size = parsed.messageSize, expiresAt = expiresAt, mmsVersion = parsed.mmsVersion,
-            subId = push.subId, failure = failure, notified = state != MmsState.NOTIFIED,
+            subId = push.subId, failure = failure, notified = state != MmsState.NOTIFIED, deferred = push.heldId != null,
         )
         store.insertMms(mms)
         val parts = listOf(placeholder(state))
@@ -239,17 +274,43 @@ class MmsFlow internal constructor(
         return PushOutcome.Shown(Received.Shown(row.toMessage(parts), conversation), fetch = state == MmsState.NOTIFIED)
     }
 
+    // ---- the sender, again (code QA M2) ----
+
+    private enum class SenderNow { ALLOW, WAIT, DROP }
+
+    /**
+     * D10's promise holds at every fetch, not only at the push: the sender is judged again by D4 as of now. A contact
+     * whose "Kan sende melding til" went off (or who was removed), or a stranger the callback window let in after the
+     * window closed, is no longer allowed - nothing more is fetched for them. Rules that can't be read wait.
+     */
+    private fun senderNow(m: MmsRow, judge: SmsJudge): SenderNow = when (SmsRules.decideIncoming(SenderKind.NUMBER, m.from, judge)) {
+        is IncomingVerdict.Allow -> SenderNow.ALLOW
+        IncomingVerdict.HoldRules -> SenderNow.WAIT
+        else -> SenderNow.DROP
+    }
+
+    private fun dropForSender(m: MmsRow, judge: SmsJudge, fetched: List<String> = emptyList()) =
+        drop(m, SenderClean.of(SenderKind.NUMBER, m.from, judge.defaultCc), fetched)
+
     // ---- the download (D10, D14) ----
 
     /**
-     * Hands every notified MMS to the platform's download, oldest first: the host checked again (the list may have
-     * changed), the expiry, then `downloading` committed with its try **before** the platform has it. A refusal at once
-     * waits (D14). Returns what is newly shown in a final state (to notify).
+     * Hands every notified MMS to the platform's download, oldest first: the sender judged again (code QA M2), the host
+     * checked again (the list may have changed), the expiry, then `downloading` committed with its try **before** the
+     * platform has it. A refusal at once waits (D14). Returns what is newly shown in a final state (to notify).
      */
     fun drainDownloads(): List<Received.Shown> {
         val told = mutableListOf<Received.Shown>()
         for (m in store.mmsIn(setOf(MmsState.NOTIFIED)).sortedBy { it.messageId }) {
             val judge = judge()
+            when (senderNow(m, judge)) {
+                SenderNow.ALLOW -> Unit
+                SenderNow.WAIT -> continue
+                SenderNow.DROP -> {
+                    dropForSender(m, judge)
+                    continue
+                }
+            }
             val carrier = judge.carrier(m.subId)
             val location = MmsGate.location(m.contentLocation, carrier.operator, judge.rules?.mmscHosts.orEmpty())
             if (location !is MmsGate.Location.Ok) {
@@ -282,6 +343,13 @@ class MmsFlow internal constructor(
         }
     }
 
+    /** Code QA L5: the download ran past our byte cap (the MMSC sent more than its notification said, or more than the
+     * carrier's maximum) - too large, final; never fetched again. */
+    fun onDownloadTooLarge(messageId: String): Received.Shown? {
+        val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADING } ?: return null
+        return move(m, MmsState.TOO_LARGE)
+    }
+
     /** The file is ours now: `downloaded` is committed before the parse, so a process death resumes there. Returns
      * whether it is to be parsed. */
     fun onDownloaded(messageId: String): Boolean {
@@ -290,21 +358,59 @@ class MmsFlow internal constructor(
         return true
     }
 
-    /** The fetched messages to parse (also what a process death left behind), with whether their pictures are decoded
-     * (D11: the sender's `mms` switch; a sender not in the phone book - the callback window - gets none). */
+    /**
+     * The fetched messages to parse (also what a process death left behind), with whether their pictures are decoded
+     * (D11: the sender's `mms` switch; a sender not in the phone book - the callback window - gets none). A sender no
+     * longer allowed is dropped here, before the parse (code QA M2); one the rules can't judge waits.
+     */
     fun parseJobs(): List<ParseJob> {
         val judge = judge()
-        return store.mmsIn(setOf(MmsState.DOWNLOADED)).map { m ->
+        return store.mmsIn(setOf(MmsState.DOWNLOADED)).mapNotNull { m ->
+            when (senderNow(m, judge)) {
+                SenderNow.WAIT -> return@mapNotNull null
+                SenderNow.DROP -> {
+                    dropForSender(m, judge)
+                    return@mapNotNull null
+                }
+                SenderNow.ALLOW -> Unit
+            }
             val contact = judge.rules?.contacts?.firstOrNull { it.number == m.from }
             ParseJob(m.messageId, m.subId, pictures = contact?.mms == true, maxBytes = MmsCodec.capOf(judge.carrier(m.subId).maxMessageBytes))
         }
     }
 
     /**
-     * The isolated parse's answer for a fetched MMS: its retrieve status, then D10's From (equal to the notification's),
-     * then D12's group rule. A message that fails either is dropped (its placeholder goes, `MessageDeleted`) and counted
-     * as blocked. Otherwise its text and parts are written, an accepted group moves it to the group's conversation, and
-     * the MMSC gets its acknowledgement. Returns it to notify, unless the kid was told already.
+     * Code QA M1: the parse's attempt is counted **before** it runs, so a death of the main process while it handles
+     * the answer (not only of the isolated one) counts too - the third start gives up instead of looping. Returns
+     * whether to parse now, and what to notify when the message is given up.
+     */
+    fun beginParse(messageId: String): Pair<Boolean, Received.Shown?> {
+        val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADED } ?: return false to null
+        if (m.crashes >= PARSE_DEATHS) {
+            store.addCounter(SmsEngine.COUNT_PARSE_FAILURES)
+            return false to move(m, MmsState.FAILED, FAILURE_CRASH)
+        }
+        store.updateMms(m.copy(crashes = m.crashes + 1))
+        return true to null
+    }
+
+    /** The isolated service couldn't be reached (not the message's fault): the attempt [beginParse] counted is given
+     * back. */
+    fun parseUnavailable(messageId: String) {
+        val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADED && it.crashes > 0 } ?: return
+        store.updateMms(m.copy(crashes = m.crashes - 1))
+    }
+
+    /** Whether a fetched message still waits for its parse (its downloaded file is kept then). */
+    fun awaitsParse(messageId: String): Boolean = store.mms(messageId)?.state == MmsState.DOWNLOADED
+
+    /**
+     * The isolated parse's answer for a fetched MMS: its retrieve status, the sender judged again (code QA M2), D10's
+     * From (equal to the notification's), then D12's group rule. A message that fails one is dropped (its placeholder
+     * goes, `MessageDeleted`), counted as blocked, and **not answered** (code QA L1). Otherwise its text and parts are
+     * written, an accepted group moves it to the group's conversation, and the MMSC gets its answer - an m-notifyresp-ind
+     * "retrieved" for an immediate fetch, an m-acknowledge-ind for a deferred one (code QA L2). Returns it to notify:
+     * quietly when the kid was told of it before (it waited), with the conversation it left when it moved (code QA L8).
      */
     fun onRetrieved(messageId: String, content: RetrievedMms): Received.Shown? {
         // The pictures this answer stored: kept only if a part ends up holding them.
@@ -323,8 +429,19 @@ class MmsFlow internal constructor(
                 else -> move(m, MmsState.FAILED, "retrieve:$status")
             }
         }
-        answer(m, content.transactionId)
         val judge = judge()
+        when (senderNow(m, judge)) {
+            SenderNow.ALLOW -> Unit
+            SenderNow.WAIT -> {
+                // Rules that can't be read: it stays fetched and is parsed again once they can.
+                dropUnheld(fetched)
+                return null
+            }
+            SenderNow.DROP -> {
+                dropForSender(m, judge, fetched)
+                return null
+            }
+        }
         val rules = judge.rules
         if (!MmsGate.sameSender(m.from, content.from, judge.defaultCc)) {
             drop(m, CleanSender(SenderClass.MALFORMED, ""), fetched)
@@ -342,10 +459,12 @@ class MmsFlow internal constructor(
             drop(m, CleanSender(SenderClass.GROUP, ""), fetched)
             return null
         }
+        answer(m, content.transactionId)
         val parts = content.parts.mapIndexed { i, part -> partOf(i, part) }
         val body = content.texts.filter { it.isNotBlank() }.joinToString("\n").take(BODY_MAX).ifEmpty { null }
         val now = clock()
         val events = mutableListOf<EngineEvent>()
+        var movedFrom: String? = null
         val result = store.transaction {
             var updated = row.copy(body = body, failure = null)
             var conversation = store.conversation(row.conversationId.orEmpty())
@@ -353,6 +472,7 @@ class MmsFlow internal constructor(
                 // Moved to the group's own conversation: gone from the sender's, added to the group's with a new seq.
                 val target = engine.groupConversationFor(listOf(m.from) + group.others, m.subId)
                 if (target.id != row.conversationId) {
+                    movedFrom = row.conversationId
                     val deleted = store.nextSeq()
                     store.insertEvent(EventRow(deleted, EventType.MESSAGE_DELETED, row.id, row.conversationId, Origin.ENGINE, null, now))
                     events += EngineEvent.MessageDeleted(deleted, MessageId(row.id), Origin.ENGINE)
@@ -363,7 +483,7 @@ class MmsFlow internal constructor(
             }
             store.updateMessage(updated)
             store.putParts(row.id, parts)
-            store.updateMms(m.copy(state = MmsState.DONE, failure = null, notified = true))
+            store.updateMms(m.copy(state = MmsState.DONE, failure = null, notified = true, crashes = 0))
             val message = updated.toMessage(parts)
             if (updated.seq != row.seq) {
                 events += EngineEvent.MessageAdded(updated.seq, message)
@@ -372,48 +492,54 @@ class MmsFlow internal constructor(
                 store.insertEvent(EventRow(seq, EventType.MESSAGE_UPDATED, row.id, row.conversationId, Origin.ENGINE, null, now))
                 events += EngineEvent.MessageUpdated(seq, MessageId(row.id), message.delivery, parts)
             }
-            conversation?.let { Received.Shown(message, it) }
+            conversation?.let { Received.Shown(message, it, again = m.notified, movedFrom = movedFrom) }
         }
         events.forEach(engine::emit)
         dropUnheld(fetched)
-        return result?.takeIf { !m.notified }
+        return result
     }
 
-    /** The isolated parse couldn't read the fetched message (not an m-retrieve-conf we accept): it shows as failed and
-     * is counted (D8, §6.10). */
+    /** The isolated parse couldn't read the fetched message (not an m-retrieve-conf we accept): it shows as not
+     * readable and is counted (D8, §6.10). */
     fun onParseFailed(messageId: String): Received.Shown? {
         val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADED } ?: return null
         store.addCounter(SmsEngine.COUNT_PARSE_FAILURES)
-        return move(m, MmsState.FAILED, "parse")
+        return move(m, MmsState.FAILED, FAILURE_PARSE)
     }
 
-    /** §6.10: the isolated process died on this message; the third time it is failed for good (no retry). */
+    /** §6.10: the isolated process died on this message. Its attempt was counted by [beginParse]; the third one fails
+     * it for good (no retry). */
     fun onParseCrashed(messageId: String): Received.Shown? {
         val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADED } ?: return null
-        if (m.crashes + 1 < PARSE_DEATHS) {
-            store.updateMms(m.copy(crashes = m.crashes + 1))
-            return null
-        }
+        if (m.crashes < PARSE_DEATHS) return null
         store.addCounter(SmsEngine.COUNT_PARSE_FAILURES)
-        return move(m.copy(crashes = m.crashes + 1), MmsState.FAILED, "crash")
+        return move(m, MmsState.FAILED, FAILURE_CRASH)
     }
 
     /**
-     * D14's retry: every waiting MMS is notified again (the next [drainDownloads] fetches it). With [dataOn] (mobile
-     * data just came back) also those whose five tries ran out - their count starts again. A download the platform
-     * never answered (15 minutes) waits too.
+     * D14's retry: every waiting MMS is notified again (the next [drainDownloads] judges the sender again and fetches
+     * it). With [dataOn] (mobile data just came back) also those whose five tries ran out - their count starts again. A
+     * download the platform never answered (15 minutes) waits too. One that failed for an unknown MCC/MNC is tried again
+     * once the MMSC list knows this SIM (a policy after step 0's table, code QA L10). Returns whether anything moved.
      */
-    fun retryWaiting(dataOn: Boolean) {
+    fun retryWaiting(dataOn: Boolean): Boolean {
         val now = clock()
+        var moved = false
         for (m in store.mmsIn(setOf(MmsState.DOWNLOADING))) {
             if (now - (m.requestedAt ?: 0) >= DOWNLOAD_SILENT_MS) onDownloadFailed(m.messageId, DownloadError.OTHER)
         }
+        val judge = judge()
         for (m in store.mmsIn(setOf(MmsState.WAITING_DATA, MmsState.FAILED))) {
-            when {
-                m.state == MmsState.WAITING_DATA -> move(m.copy(tries = if (dataOn) 0 else m.tries), MmsState.NOTIFIED)
-                dataOn && m.failure == MmsRow.RETRY -> move(m.copy(tries = 0), MmsState.NOTIFIED)
-            }
+            val again = when {
+                m.state == MmsState.WAITING_DATA -> m.copy(tries = if (dataOn) 0 else m.tries)
+                dataOn && m.failure == MmsRow.RETRY -> m.copy(tries = 0)
+                m.failure == MmsRow.MMSC_UNKNOWN && MmsGate.known(judge.carrier(m.subId).operator, judge.rules?.mmscHosts.orEmpty()) -> m
+                else -> null
+            } ?: continue
+            move(again, MmsState.NOTIFIED)
+            moved = true
         }
+        return moved
     }
 
     /** The kid's "Trykk for å prøve igjen" (D14): a failed fetch that offers it starts again. Returns whether it did. */
@@ -423,18 +549,23 @@ class MmsFlow internal constructor(
         return true
     }
 
+    /** Code QA L6: the isolated parse service couldn't be bound (counted; `last_error` says so). */
+    fun countUnavailable() = store.addCounter(COUNT_PARSE_UNAVAILABLE)
+
     /** `sms_state.mms_waiting`: the MMS waiting for data. */
     fun waiting(): Int = store.mmsIn(setOf(MmsState.WAITING_DATA)).size
 
     /** The message's state change: the `mms` row, its placeholder part and the message's failure, with `MessageUpdated`.
-     * Returns the message to notify the first time it shows in a state the kid should hear of. */
+     * Returns the message to notify the first time it shows in a state the kid should hear of. A fetch that waits or
+     * fails is deferred: its answer is then an acknowledgement (code QA L2). */
     private fun move(m: MmsRow, state: MmsState, failure: String? = null): Received.Shown? {
         val row = store.message(m.messageId) ?: return null
         val tell = !m.notified && state in TOLD_STATES
         val parts = listOf(placeholder(state))
         val updated = row.copy(failure = messageFailure(state, failure))
+        val deferred = m.deferred || state == MmsState.WAITING_DATA || state == MmsState.FAILED
         val seq = store.transaction {
-            store.updateMms(m.copy(state = state, failure = failure, notified = m.notified || tell))
+            store.updateMms(m.copy(state = state, failure = failure, notified = m.notified || tell, deferred = deferred))
             store.updateMessage(updated)
             store.putParts(row.id, parts)
             store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_UPDATED, row.id, row.conversationId, Origin.ENGINE, null, clock())) }
@@ -444,7 +575,8 @@ class MmsFlow internal constructor(
         return if (tell && conversation != null) Received.Shown(updated.toMessage(parts), conversation) else null
     }
 
-    /** D10/D12: a fetched message that fails the From or group check goes - placeholder and all - and is counted. */
+    /** D10/D12, code QA M2: a message that fails the sender, From or group check goes - placeholder and all - and is
+     * counted. It is never answered. */
     private fun drop(m: MmsRow, clean: CleanSender, fetched: List<String>) {
         val row = store.message(m.messageId)
         val held = store.parts(m.messageId).mapNotNull { it.sha256 }
@@ -458,10 +590,17 @@ class MmsFlow internal constructor(
         dropUnheld(held + fetched)
     }
 
-    /** The m-acknowledge-ind for a fetched message (AM's `MmsSender`), through the platform; a failure only logs. */
+    /** The answer for a fetched, kept message, through the platform (a failure only logs): an immediate fetch's
+     * m-notifyresp-ind "retrieved" with the notification's transaction id, a deferred one's m-acknowledge-ind (AM's
+     * `MmsSender`, OMA MMS ENC; code QA L2). */
     private fun answer(m: MmsRow, transactionId: String?) {
-        val id = transactionId?.takeIf(MmsGate::answerableId) ?: m.transactionId
-        val pdu = (MmsCodec.composeAcknowledge(id, m.mmsVersion) as? MmsComposeResult.Ok)?.bytes ?: return
+        val immediate = !m.deferred && m.tries <= 1
+        val composed = if (immediate) {
+            MmsCodec.composeNotifyResp(m.transactionId, com.kidslauncher.mdm.sms.mms.MmsNotifyStatus.RETRIEVED, m.mmsVersion)
+        } else {
+            MmsCodec.composeAcknowledge(transactionId?.takeIf(MmsGate::answerableId) ?: m.transactionId, m.mmsVersion)
+        }
+        val pdu = (composed as? MmsComposeResult.Ok)?.bytes ?: return
         try {
             radio.answer(pdu, m.subId)
         } catch (e: Exception) {
@@ -473,7 +612,11 @@ class MmsFlow internal constructor(
 
     /** A picture the kid picked, as the main process re-encoded it (D8, D11: EXIF and GPS gone): kept by its hash until
      * a send takes it (an unsent one goes after a day, [prune]). */
-    fun putPicture(jpeg: ByteArray, width: Int, height: Int): PictureRef = PictureRef(files.put(jpeg), width, height)
+    fun putPicture(jpeg: ByteArray, width: Int, height: Int): PictureRef {
+        val sha = files.put(jpeg)
+        staged[sha] = clock()
+        return PictureRef(sha, width, height)
+    }
 
     /**
      * Hands one queued MMS to the platform (from [SmsEngine.drainOutbox], the gate already passed for every
@@ -495,8 +638,9 @@ class MmsFlow internal constructor(
 
     internal fun sendPdu(row: MessageRow, pdu: ByteArray) = radio.send(row.id, pdu, row.subId)
 
-    /** The parts of an outgoing picture message: our own JPEGs, available from the start. */
+    /** The parts of an outgoing picture message: our own JPEGs, available from the start (no longer a pick). */
     internal fun outgoingParts(pictures: List<PictureRef>): List<Part> = pictures.mapIndexed { i, p ->
+        staged.remove(p.sha256)
         Part(i, MIME_JPEG, files.size(p.sha256) ?: 0, p.sha256, p.width, p.height, PartState.AVAILABLE)
     }
 
@@ -507,11 +651,11 @@ class MmsFlow internal constructor(
     fun open(sha256: String): java.io.InputStream? = files.open(sha256)
 
     /** A picture file no part holds any more goes at once - of [candidates], the files a deleted or dropped message
-     * held, or a parse stored (D18, §6.4). A pick the kid hasn't sent yet ([putPicture]) is never one of them. */
+     * held, or a parse stored (D18, §6.4). A pick the kid hasn't sent yet ([putPicture]) is never taken (code QA N8). */
     fun dropUnheld(candidates: Collection<String>) {
         if (candidates.isEmpty()) return
         val held = store.partHashes()
-        candidates.filter { it !in held }.forEach(files::delete)
+        candidates.filter { it !in held && !staged.containsKey(it) }.forEach(files::delete)
     }
 
     /** At each sync: any file no part holds that is older than [STAGED_KEEP_MS] - an unsent pick, or one a process death
@@ -519,7 +663,8 @@ class MmsFlow internal constructor(
     fun prune() {
         val held = store.partHashes()
         val before = clock() - STAGED_KEEP_MS
-        for ((sha, modified) in files.all()) if (sha !in held && modified < before) files.delete(sha)
+        staged.entries.removeIf { it.value < before }
+        for ((sha, modified) in files.all()) if (sha !in held && !staged.containsKey(sha) && modified < before) files.delete(sha)
     }
 
     private fun partOf(index: Int, part: RetrievedPart): Part = when (part) {
@@ -552,6 +697,21 @@ class MmsFlow internal constructor(
 
         /** The message's failure while its fetch offers the kid's tap (the screens read it). */
         const val FAILURE_RETRY = "mms_retry"
+
+        /** The message's failure when the fetched message couldn't be read or killed the parse: "Meldingen kunne ikke
+         * vises" (D8; code QA N7), not "couldn't be fetched". */
+        const val FAILURE_UNREADABLE = "mms_unreadable"
+
+        /** Code QA L6: passes the parse service couldn't be reached in. */
+        const val COUNT_PARSE_UNAVAILABLE = "mms_parse_unavailable"
+
+        /** The `mms` row's failure for a parse that refused the bytes, and for one that died three times. */
+        const val FAILURE_PARSE = "parse"
+        const val FAILURE_CRASH = "crash"
+
+        /** Code QA L2: a push's identity is kept until its own expiry, at least a day and at most this long - an
+         * unanswered push the MMSC repeats until then adds no second row. */
+        const val PUSH_KEY_KEEP_MS = 7 * 24 * 60 * 60 * 1000L
 
         /** X-Mms-Retrieve-Status (OMA MMS ENC 1.3 §7.3.50): ok, the transient range, "message not found". */
         const val RETRIEVE_OK = 0x80
@@ -587,8 +747,12 @@ class MmsFlow internal constructor(
             MmsState.TOO_LARGE -> PartState.TOO_LARGE
         }
 
-        private fun messageFailure(state: MmsState, failure: String?): String? =
-            if (state == MmsState.FAILED && failure == MmsRow.RETRY) FAILURE_RETRY else null
+        private fun messageFailure(state: MmsState, failure: String?): String? = when {
+            state != MmsState.FAILED -> null
+            failure == MmsRow.RETRY -> FAILURE_RETRY
+            failure == FAILURE_PARSE || failure == FAILURE_CRASH -> FAILURE_UNREADABLE
+            else -> null
+        }
 
         /** A received part's type as stored: lower case, `type/subtype` of token characters, else `application/octet-stream`. */
         fun cleanMime(raw: String): String {
@@ -597,6 +761,14 @@ class MmsFlow internal constructor(
         }
 
         private val MIME = Regex("""[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*""")
+
+        /** A push the isolated parse couldn't read: its identity is its bytes, hashed. */
+        fun rawPushKey(pdu: ByteArray): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            digest.update("mms-raw\u0000".toByteArray(Charsets.UTF_8))
+            digest.update(pdu)
+            return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
 
         /** QA L5: a push's identity - (transaction id, content location), hashed. */
         fun pushKey(n: MmsNotification): String {

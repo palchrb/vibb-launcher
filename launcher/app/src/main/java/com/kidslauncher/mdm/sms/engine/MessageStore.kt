@@ -188,6 +188,9 @@ data class MmsRow(
     val failure: String? = null,
     /** The kid was told of it (one notification per MMS). */
     val notified: Boolean = false,
+    /** Not fetched at once: released by the parent (D16), or after waiting or failing (D14). Its answer to the MMSC is
+     * then an m-acknowledge-ind, an immediate fetch's an m-notifyresp-ind "retrieved" (code QA L2). */
+    val deferred: Boolean = false,
 ) {
     companion object {
         /** D14: five tries gave up - the bubble offers "Trykk for å prøve igjen". */

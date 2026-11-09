@@ -44,8 +44,32 @@ object PicturePick {
 
     private val random = SecureRandom()
 
-    /** The system photo picker, one image. */
-    fun pickIntent(): Intent = Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*")
+    /** The system photo picker, one image - sent to the system's own picker package, never to another app that declares
+     * the same action (code QA M3); `null` when there is none. */
+    fun pickIntent(context: Context): Intent? {
+        val pick = Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*")
+        val system = try {
+            context.packageManager.queryIntentActivities(pick, PackageManager.MATCH_SYSTEM_ONLY)
+                .firstOrNull { it.activityInfo?.applicationInfo?.let { info -> info.flags and ApplicationInfo.FLAG_SYSTEM != 0 } == true }
+                ?.activityInfo?.packageName
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return pick.setPackage(system)
+    }
+
+    /** Where a picture to send comes from: the picker's answer (checked by [pickedUriAcceptable]), or our own camera
+     * file (read as the file it is, never through a URI the answer could choose). */
+    sealed interface Source {
+        data class Picked(val uri: Uri) : Source
+
+        data class Captured(val file: File) : Source
+    }
+
+    /** Code QA M3: the picker's answer is read only as a `content://` URI of another app - never a `file://`, never one
+     * of our own providers (the launcher would read its own files on the answer's say-so). */
+    fun picked(context: Context, uri: Uri?): Source? =
+        uri?.takeIf { pickedUriAcceptable(it.scheme, it.authority, context.packageName) }?.let { Source.Picked(it) }
 
     /** The camera app the parent allows (a system one first), or `null`: then "Ta bilde" isn't offered. */
     fun cameraPackage(activity: Activity): String? {
@@ -70,7 +94,8 @@ object PicturePick {
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
             .setPackage(pkg)
             .putExtra(MediaStore.EXTRA_OUTPUT, uri)
-            .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Write only: the camera fills our empty file and needs nothing else (code QA N5).
+            .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         intent.clipData = ClipData.newRawUri(null, uri)
         return intent to file
     }
@@ -86,10 +111,13 @@ object PicturePick {
      * isolated process, its pixels back, our own JPEG under the carrier's limit ([PictureEncoder.sendLimit]), held by
      * the engine until a send takes it.
      */
-    fun prepare(context: Context, uri: Uri): Pair<Prepared?, Problem?> {
+    fun prepare(context: Context, source: Source, subId: Int?): Pair<Prepared?, Problem?> {
         val app = context.applicationContext
         val bytes = try {
-            app.contentResolver.openInputStream(uri)?.use { it.readNBytes(MmsParseProtocol.PICK_MAX_BYTES + 1) }
+            when (source) {
+                is Source.Picked -> app.contentResolver.openInputStream(source.uri)?.use { it.readNBytes(MmsParseProtocol.PICK_MAX_BYTES + 1) }
+                is Source.Captured -> source.file.inputStream().use { it.readNBytes(MmsParseProtocol.PICK_MAX_BYTES + 1) }
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "The picked picture couldn't be read: ${e.javaClass.simpleName}")
             null
@@ -101,7 +129,8 @@ object PicturePick {
             else -> return null to Problem.UNREADABLE
         }
         try {
-            val limit = PictureEncoder.sendLimit(SmsRuntime.judge(app).carrier(null).maxMessageBytes)
+            // The conversation's own SIM, the one the send goes out on (code QA N3).
+            val limit = PictureEncoder.sendLimit(SmsRuntime.judge(app).carrier(subId).maxMessageBytes)
             val encoded = PictureEncoder.forSending(pixels, limit) ?: return null to Problem.TOO_LARGE
             val ref = SmsRuntime.call(app) { it.putPicture(encoded.bytes, encoded.width, encoded.height) } ?: return null to Problem.UNAVAILABLE
             val scale = minOf(1f, PREVIEW_PX.toFloat() / maxOf(pixels.width, pixels.height))

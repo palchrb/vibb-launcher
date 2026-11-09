@@ -663,7 +663,8 @@ image format** (QA M1).
   - **pictures as raw pixels**: width, height and RGBA_8888 in a `SharedMemory` region, at most 1,600 px a side (so at
     most about 10 MB).
 - The main process checks `width * height * 4 == size` and builds the bitmap with `Bitmap.copyPixelsFromBuffer` (no
-  parser). It then encodes its own JPEG (at most 1,600 px) and thumbnail (320 px) from those pixels.
+  parser). It then encodes its own JPEG (at most 1,600 px) from those pixels; a thumbnail is that JPEG sampled down
+  (step 3b: one file per picture). At most four pictures, and 8 MP between them, are decoded per message.
 - **Every image file the main process ever decodes is one it encoded itself.** A compromised isolated process can hand
   over wrong pixels, never a second decoder exploit.
 - A parser or codec crash kills only the isolated process. The message is then shown as "Meldingen kunne ikke vises"
@@ -1086,7 +1087,12 @@ sealed interface InsertOutgoing { data class Inserted(val m: Message) : InsertOu
   conversation it touches.
   - A contact losing "Kan få melding fra {name}" keeps the history but loses the compose bar.
   - A contact losing "Kan sende melding til {name}": their later messages are held for the
-    parent (D16). What is already stored stays, as do a removed contact's messages (D18).
+    parent (D16). What is already stored stays, as do a removed contact's messages (D18). An MMS of theirs not fetched
+    yet (waiting for data, or the kid's "try again") is never fetched now: the sender is judged again at every fetch
+    and after it, and the message goes (step 3b's code QA M2).
+- **What a consumer of the events must know (step 3b):** `MessageUpdated` can change a message's `body` too (an MMS's
+  text arrives with its fetch) - re-read the message; and an MMS that turns out to be a group is `MessageDeleted` from
+  the sender's conversation and `MessageAdded` again, with the same id, in the group's.
 - **A raw sender** (an alphanumeric or unknown one let in by the callback window) gets a conversation keyed
   `name:<text>` (or the number), with `contactId = null` and `canSend = false` (QA L11). A listed sender name (D17)
   uses the same key.
@@ -1534,6 +1540,14 @@ risk.
   - If it is sent: in `managed` mode, deny `SEND_SMS` to the Bluetooth package if a Device Owner may and nothing else
     breaks. Otherwise it is named here as a residual and put to the user.
   - Reading over MAP is no leak (D6: the provider is empty).
+- **A compromised parser forges headers** (code QA of step 3b, N1). D8 trusts the isolated process's `From`, `To`,
+  `Cc` and `Content-Location` strings. A decoder or codec exploit in it can name an allowed `From` for its own push and
+  pass both From checks, and alter the pixels it hands back. It can't reach the main process's memory, our files, the
+  network or another message: every call has an isolated process of its own (`bindIsolatedService` with a fresh
+  instance), pixels are read with `pread`, never mapped, and one message's pictures are bounded. Accepted as D8's bound.
+- **Redirects after the host check** (N2). The platform's `MmsHttpClient` follows same-protocol redirects, so D10's host
+  check covers the first hop only. The MMSC is the carrier's; step 0 checks whether the MMS APN reaches outside hosts at
+  all.
 
 ## 9. Steps and sizes
 

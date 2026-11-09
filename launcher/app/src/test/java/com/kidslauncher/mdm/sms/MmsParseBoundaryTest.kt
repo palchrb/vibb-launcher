@@ -83,8 +83,10 @@ class MmsParseBoundaryTest {
         // The parse client builds bitmaps from the shared pixels only, after checking their size.
         val parser = code(file("java/com/kidslauncher/mdm/sms/parse/MmsParser.kt"))
         assertFalse(parser.contains("BitmapFactory") || parser.contains("ImageDecoder"))
-        assertTrue(parser.contains("it.size.toLong() != width.toLong() * height * 4"))
-        assertTrue(parser.contains("bitmap.copyPixelsFromBuffer(buffer)"))
+        // Code QA L4: read with pread, exactly width x height x 4 bytes - never mapped.
+        assertTrue(parser.contains("android.system.Os.pread(pixels.fileDescriptor, bytes, done, size - done, done.toLong())"))
+        assertTrue(parser.contains("bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))"))
+        assertFalse(parser.contains("mapReadOnly") || parser.contains("SharedMemory"))
         // The picked picture goes to the isolated process before anything reads it as an image.
         val pick = code(file("java/com/kidslauncher/mdm/ui/messages/PicturePick.kt"))
         assertFalse(pick.contains("BitmapFactory") || pick.contains("ImageDecoder"))
@@ -97,7 +99,15 @@ class MmsParseBoundaryTest {
         // No unchecked string or count from the other side.
         assertFalse(parser.contains("reply.readString()"))
         assertFalse(parser.contains("createStringArrayList") || parser.contains("readParcelable("))
-        val protocol = code(file("java/com/kidslauncher/mdm/sms/parse/MmsParseProtocol.kt"))
-        assertTrue(protocol.contains("if (length < 0 || length > maxChars) throw Malformed"))
+        val wire = code(file("java/com/kidslauncher/mdm/sms/parse/ParseWire.kt"))
+        assertTrue(wire.contains("if (length < 0 || length > maxChars) throw WireMalformed"))
+        // Code QA M1: both sides bound the message's pictures; the main process keeps descriptors, one bitmap at a time.
+        assertTrue(parser.contains("if (!budget.take(width, height)) throw WireMalformed"))
+        val service = code(file("java/com/kidslauncher/mdm/sms/parse/MmsParseService.kt"))
+        assertTrue(service.contains("!pictures || !budget.roomForOne() -> out.writeInt(MmsParseProtocol.PART_NOT_SHOWN)"))
+        // Code QA L3: a fresh isolated process for every call.
+        assertTrue(parser.contains("app.bindIsolatedService("))
+        assertTrue(parser.contains("\"parse\" + instances.incrementAndGet()"))
+        assertFalse(parser.contains("app.bindService("))
     }
 }

@@ -25,7 +25,14 @@ data class IncomingSms(
 
 /** What became of an incoming message (the receive path notifies after `finish()` from it). */
 sealed interface Received {
-    data class Shown(val message: Message, val conversation: ConversationRow) : Received
+    /** [again]: the kid was told of this message before (an MMS that waited, now arrived) - notified quietly.
+     * [movedFrom]: an MMS that turned out to be a group left this conversation (its notification goes, D12). */
+    data class Shown(
+        val message: Message,
+        val conversation: ConversationRow,
+        val again: Boolean = false,
+        val movedFrom: String? = null,
+    ) : Received
     data object HeldForRules : Received
     data class HeldForParent(val row: HeldRow) : Received
     data class Blocked(val row: BlockedRow?) : Received
@@ -284,14 +291,15 @@ class SmsEngine(
         expire()
         val released = mutableListOf<Received.Shown>()
         val judge = judge()
-        for (row in store.heldRows().filter { it.state == HeldState.HELD && it.mms }.sortedBy { it.at }) {
+        for (row in store.heldRows().filter { it.state == HeldState.HELD && it.mms && it.push != null }.sortedBy { it.at }) {
             if (!SmsRules.releases(row.kind, row.sender, judge)) continue
             // A held MMS push (D16): back to the pushes with its first receipt, judged again there (MmsFlow.judgePush) -
-            // every D10 check (From, the SIM's MMS server, the size) runs again before anything is fetched.
+            // every D10 check (From, the SIM's MMS server, the size) runs again before anything is fetched. The row
+            // stays held (its push gone) until that judgement: "released" is posted only once the kid has the message
+            // (code QA L9), a block there makes it "dropped".
             store.transaction {
                 store.insertPendingPush(PendingPushRow(ids.hex(), row.push ?: ByteArray(0), row.subId, row.at, heldId = row.id))
-                store.updateHeld(row.copy(state = HeldState.RELEASED, body = null, push = null, reported = false))
-                store.addCounter(COUNT_RELEASED)
+                store.updateHeld(row.copy(push = null))
             }
         }
         for (row in store.heldRows().filter { it.state == HeldState.HELD && !it.mms }.sortedBy { it.at }) {
@@ -318,7 +326,8 @@ class SmsEngine(
         var any = false
         store.transaction {
             for (row in store.heldRows()) {
-                if (row.state == HeldState.HELD && HoldPolicy.expired(row, now)) {
+                // A held MMS on its way back through the pushes (released in time, push gone) isn't expired under it.
+                if (row.state == HeldState.HELD && HoldPolicy.expired(row, now) && !(row.mms && row.push == null)) {
                     store.updateHeld(row.copy(state = HeldState.EXPIRED, body = null, push = null, reported = false))
                     store.addCounter(COUNT_EXPIRED)
                     any = true
@@ -413,7 +422,9 @@ class SmsEngine(
             // JPEGs the engine holds, within the carrier's maximum.
             if (command.pictures.size > SEND_PICTURES_MAX || allows.any { it.contact?.mms != true }) return SendResult.Refused(Refusal.NOT_ALLOWED)
             val sizes = command.pictures.map { mms.pictureSize(it) ?: return SendResult.Refused(Refusal.NOT_ALLOWED) }
-            val cap = com.kidslauncher.mdm.sms.mms.MmsCodec.capOf(judge.carrier(null).maxMessageBytes)
+            // The conversation's own SIM, which the outbox sends on (code QA N3).
+            val subId = command.conversationId?.let { store.conversation(it.value)?.subId }
+            val cap = com.kidslauncher.mdm.sms.mms.MmsCodec.capOf(judge.carrier(subId).maxMessageBytes)
             if (sizes.sum() + command.body.length * 4L + MMS_OVERHEAD > cap) return SendResult.Refused(Refusal.TOO_LARGE)
         }
         val isMms = command.pictures.isNotEmpty() || targets.size > 1

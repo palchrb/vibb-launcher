@@ -474,6 +474,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
         put("crashes", row.crashes)
         put("failure", row.failure)
         put("notified", if (row.notified) 1 else 0)
+        put("deferred", if (row.deferred) 1 else 0)
     }
 
     private fun mmsOf(c: Cursor) = MmsRow(
@@ -491,6 +492,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
         crashes = c.long("crashes").toInt(),
         failure = c.str("failure"),
         notified = c.long("notified") != 0L,
+        deferred = c.long("deferred") != 0L,
     )
 
     override fun addCounter(key: String, by: Long) {
@@ -549,7 +551,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
             "CREATE TABLE mms (message_id TEXT PRIMARY KEY, state TEXT NOT NULL, transaction_id TEXT NOT NULL, " +
                 "content_location TEXT NOT NULL, from_number TEXT NOT NULL, size INTEGER NOT NULL, expires_at INTEGER, " +
                 "mms_version INTEGER NOT NULL, sub_id INTEGER, tries INTEGER NOT NULL, requested_at INTEGER, " +
-                "crashes INTEGER NOT NULL, failure TEXT, notified INTEGER NOT NULL)",
+                "crashes INTEGER NOT NULL, failure TEXT, notified INTEGER NOT NULL, deferred INTEGER NOT NULL DEFAULT 0)",
             "CREATE INDEX mms_state ON mms (state)",
             "CREATE INDEX part_sha256 ON part (sha256)",
         )

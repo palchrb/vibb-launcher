@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.os.IBinder
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
-import android.os.SharedMemory
 import android.util.Log
 import com.kidslauncher.mdm.sms.mms.MmsAddress
 import com.kidslauncher.mdm.sms.mms.MmsCodec
@@ -23,9 +22,9 @@ private const val LOG_TAG = "MmsParser"
 /**
  * The main process's side of the isolated parse (design 77 D8): binds [MmsParseService], hands it the bytes through a
  * pipe, and reads its answer field by field with every length and count checked before the value
- * ([MmsParseProtocol]). Pictures come back as pixels: `width * height * 4 == size` is checked, the bitmap is built with
- * `copyPixelsFromBuffer` (no parser), and only then does the main process encode its own JPEG ([MmsPictures]). Every
- * call blocks: never on the main thread.
+ * ([MmsParseProtocol], [ParseWire]). Pictures come back as pixels: exactly `width * height * 4` bytes are read with
+ * `pread`, the bitmap is built with `copyPixelsFromBuffer` (no parser), and only then does the main process encode its
+ * own JPEG ([PictureEncoder]). Every call blocks: never on the main thread.
  *
  * [Answer.Crashed] means the isolated process died, hung or answered out of protocol - the caller counts it against the
  * message (§6.10: three deaths fail it); [Answer.Unavailable] means the service couldn't be reached at all (not the
@@ -39,9 +38,18 @@ object MmsParser {
         data object Unavailable : Answer<Nothing>
     }
 
-    /** One part of a fetched message as handed back: pixels (to encode), or why there are none. */
+    /** One part of a fetched message as handed back: pixels (to encode, one at a time - code QA M1), or why there are
+     * none. */
     sealed interface Media {
-        class Picture(val bitmap: Bitmap) : Media
+        /** The pixels behind a descriptor, read only when [bitmap] is asked for; [close] always. */
+        class Picture(val width: Int, val height: Int, private val pixels: ParcelFileDescriptor) : Media, java.io.Closeable {
+            fun bitmap(): Bitmap = MmsParser.bitmap(pixels, width, height)
+
+            override fun close() {
+                runCatching { pixels.close() }
+            }
+        }
+
         data object NotShown : Media
         data object Undecodable : Media
         data class Other(val mime: String) : Media
@@ -62,6 +70,7 @@ object MmsParser {
 
     private val bindThread = Executors.newSingleThreadExecutor { Thread(it, "mms-parse-bind") }
     private val calls = Executors.newCachedThreadPool { Thread(it, "mms-parse-call") }
+    private val instances = java.util.concurrent.atomic.AtomicLong()
 
     fun parseNotification(context: Context, pdu: ByteArray): Answer<MmsNotification> =
         call(context, MmsParseProtocol.PARSE_NOTIFICATION, pdu, { }) { reply ->
@@ -90,18 +99,27 @@ object MmsParser {
             val texts = List(MmsParseProtocol.readCount(reply, MmsCodec.MAX_PARTS)) { MmsParseProtocol.readString(reply, MmsParseProtocol.TEXT_MAX_CHARS)!! }
             val count = MmsParseProtocol.readCount(reply, MmsCodec.MAX_PARTS)
             val media = mutableListOf<Media>()
+            // Code QA M1: the main process holds the pictures as descriptors, never all as bitmaps, and refuses an answer
+            // past the message's budget.
+            val budget = ParseWire.PictureBudget()
             try {
                 repeat(count) {
                     media += when (reply.readInt()) {
-                        MmsParseProtocol.PART_PICTURE -> Media.Picture(pixels(reply, MmsParseProtocol.PICTURE_MAX_PX))
+                        MmsParseProtocol.PART_PICTURE -> {
+                            val width = reply.readInt()
+                            val height = reply.readInt()
+                            ParseWire.pixelBytes(width, height, MmsParseProtocol.PICTURE_MAX_PX)
+                            if (!budget.take(width, height)) throw WireMalformed("over the message's picture budget")
+                            Media.Picture(width, height, reply.readFileDescriptor() ?: throw WireMalformed("no pixels"))
+                        }
                         MmsParseProtocol.PART_NOT_SHOWN -> Media.NotShown
                         MmsParseProtocol.PART_UNDECODABLE -> Media.Undecodable
                         MmsParseProtocol.PART_OTHER -> Media.Other(MmsParseProtocol.readString(reply, MmsParseProtocol.MIME_MAX_CHARS)!!)
-                        else -> throw MmsParseProtocol.Malformed("part kind")
+                        else -> throw WireMalformed("part kind")
                     }
                 }
             } catch (e: Exception) {
-                media.forEach { (it as? Media.Picture)?.bitmap?.recycle() }
+                media.forEach { (it as? Media.Picture)?.close() }
                 throw e
             }
             Retrieved(from?.let(::MmsAddress), to, cc, transactionId, status, texts, media)
@@ -109,26 +127,30 @@ object MmsParser {
 
     /** D11: a picture the kid picked, decoded in the isolated process to at most [maxPx] a side. */
     fun decodeImage(context: Context, bytes: ByteArray, maxPx: Int): Answer<Bitmap> =
-        call(context, MmsParseProtocol.DECODE_IMAGE, bytes, { it.writeInt(maxPx) }) { reply -> pixels(reply, maxPx) }
-
-    /** D8: width and height within the cap, the shared region exactly `width * height * 4`, then the bitmap from the
-     * buffer - the main process never runs a decoder on what came from the other side. */
-    private fun pixels(reply: Parcel, maxPx: Int): Bitmap {
-        val width = reply.readInt()
-        val height = reply.readInt()
-        if (width !in 1..maxPx || height !in 1..maxPx) throw MmsParseProtocol.Malformed("size $width x $height")
-        val memory = reply.readTypedObject(SharedMemory.CREATOR) ?: throw MmsParseProtocol.Malformed("no pixels")
-        memory.use {
-            if (it.size.toLong() != width.toLong() * height * 4) throw MmsParseProtocol.Malformed("pixel bytes")
-            val buffer = it.mapReadOnly()
-            try {
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
-                return bitmap
-            } finally {
-                SharedMemory.unmap(buffer)
-            }
+        call(context, MmsParseProtocol.DECODE_IMAGE, bytes, { it.writeInt(maxPx) }) { reply ->
+            val width = reply.readInt()
+            val height = reply.readInt()
+            ParseWire.pixelBytes(width, height, maxPx)
+            (reply.readFileDescriptor() ?: throw WireMalformed("no pixels")).use { bitmap(it, width, height) }
         }
+
+    /**
+     * D8, code QA L4: exactly `width * height * 4` bytes read from the descriptor with `pread` - never mapped, so a peer
+     * that shrinks its region after the size check causes a short read (out of protocol), not a fault in this process -
+     * then the bitmap from those bytes. The main process never runs a decoder on what came from the other side.
+     */
+    internal fun bitmap(pixels: ParcelFileDescriptor, width: Int, height: Int): Bitmap {
+        val size = ParseWire.pixelBytes(width, height, MmsParseProtocol.PICTURE_MAX_PX)
+        val bytes = ByteArray(size)
+        var done = 0
+        while (done < size) {
+            val n = android.system.Os.pread(pixels.fileDescriptor, bytes, done, size - done, done.toLong())
+            if (n <= 0) throw WireMalformed("pixels ended at $done of $size")
+            done += n
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
+        return bitmap
     }
 
     /** Binds, hands [input] over a pipe (written on its own thread), waits at most [CALL_WAIT_S] for the answer, reads
@@ -137,7 +159,11 @@ object MmsParser {
         val app = context.applicationContext
         val connection = Connection()
         val bound = try {
-            app.bindService(Intent(app, MmsParseService::class.java), android.content.Context.BIND_AUTO_CREATE, bindThread, connection)
+            // Code QA L3: a fresh isolated process for every call - a parser one input compromised never sees another.
+            app.bindIsolatedService(
+                Intent(app, MmsParseService::class.java), android.content.Context.BIND_AUTO_CREATE,
+                "parse" + instances.incrementAndGet(), bindThread, connection,
+            )
         } catch (e: Exception) {
             false
         }
@@ -184,7 +210,7 @@ object MmsParser {
             // DeadObjectException: the isolated process died on these bytes.
             Log.w(LOG_TAG, "The parse service died: ${e.javaClass.simpleName}")
             return Answer.Crashed
-        } catch (e: MmsParseProtocol.Malformed) {
+        } catch (e: WireMalformed) {
             Log.w(LOG_TAG, "An answer out of protocol: ${e.message}")
             return Answer.Crashed
         } catch (e: RuntimeException) {

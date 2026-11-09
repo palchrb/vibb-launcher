@@ -155,8 +155,10 @@ object SmsRuntime {
             onEngine(app) { engine ->
                 engine.judgeHeldForRules().forEach { notifyShown(app, engine, it) }
                 engine.rulesChanged()
-                // A push the rules couldn't judge (D15) waits in `pending_push`: judged now.
-                if (engine.mms.pendingPushes().isNotEmpty()) MmsRuntime.kick(app)
+                // A push the rules couldn't judge (D15) waits in `pending_push`: judged now. An MMS that failed for an
+                // unknown MCC/MNC is fetched once the policy's MMSC list knows the SIM (code QA L10).
+                val retried = engine.mms.retryWaiting(dataOn = false)
+                if (retried || engine.mms.pendingPushes().isNotEmpty()) MmsRuntime.kick(app)
             }
             SmsHome.refresh(app)
         }
@@ -246,9 +248,12 @@ object SmsRuntime {
     }
 
     private fun notifyShown(app: Context, engine: SmsEngine, shown: Received.Shown) {
+        // An MMS that turned out to be a group left the sender's conversation: its notification goes too (code QA L8).
+        shown.movedFrom?.let { SmsNotifier.cancel(app, it) }
         // The kid is reading this thread: it marks the message read itself, no notification (§6.7).
         if (shown.conversation.id == threadInFront) return
-        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow())
+        // A picture that waited and has now arrived is told again, quietly: the kid heard of it once (code QA L8).
+        SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow() || shown.again)
     }
 
     /** Step 3b: an MMS shown or fetched (from the MMS thread) - notified on the engine thread. */
@@ -405,14 +410,14 @@ object SmsRuntime {
         )
     }
 
-    /** D14: whether MMS data may flow now; `false` if it can't be read. `isDataEnabledForApn(TYPE_MMS)` is a system
-     * API, so this is mobile data being on. Step 0 check: whether the per-SIM "MMS-meldinger" setting (MMS with data
-     * off) shows anywhere an app can read it - then step 3b counts it too. */
-    private fun mmsDataAllowed(context: Context): Boolean = try {
-        context.getSystemService(TelephonyManager::class.java)?.isDataEnabled == true
-    } catch (e: Exception) {
-        false
-    }
+    /**
+     * D14 (code QA L7): whether MMS can be fetched now. Mobile data on, or - with it off - the last fetch that ran with
+     * data off worked (the per-SIM "MMS-meldinger" setting, or a carrier that allows MMS data always: neither can be read
+     * by an app, `isDataEnabledForApn(TYPE_MMS)` and the mobile-data policies being system APIs, so the phone learns it
+     * from what the platform did). A fetch that failed for want of data with data off says `false`.
+     */
+    private fun mmsDataAllowed(context: Context): Boolean =
+        MmsRuntime.mobileDataOn(context) || SmsPrefs.mmsWithoutData(context) == true
 
     /** D10: whether the SMS SIM's MCC/MNC is on the policy's MMSC list (the rules in memory - the same table the
      * download gate reads). */
@@ -520,6 +525,17 @@ object SmsPrefs {
 
     fun previousHolder(context: Context, value: String?) {
         prefs(context).edit().putString(PREVIOUS_HOLDER, value).commit()
+    }
+
+    private const val MMS_WITHOUT_DATA = "mdm.sms.mms_without_data"
+
+    /** D14, code QA L7: whether an MMS fetch worked with mobile data off (`null`: none has run with data off yet). */
+    fun mmsWithoutData(context: Context): Boolean? =
+        if (prefs(context).contains(MMS_WITHOUT_DATA)) prefs(context).getBoolean(MMS_WITHOUT_DATA, false) else null
+
+    /** A fetch that worked ([withoutData]: with mobile data off), or one that failed for want of data with it off. */
+    fun mmsFetched(context: Context, withoutData: Boolean) {
+        if (withoutData || mmsWithoutData(context) != null) prefs(context).edit().putBoolean(MMS_WITHOUT_DATA, withoutData).apply()
     }
 
     fun lastError(context: Context): String? = prefs(context).getString(LAST_ERROR, null)

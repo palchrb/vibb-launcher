@@ -284,3 +284,34 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the MMS maximum, whether the acknowledgement needs the content location as its URL (`MMS_CONFIG_NOTIFY_WAP_MMSC_ENABLED`),
   a real round trip, HEIF/AVIF in the isolated process, the "MMS-meldinger" toggle, and the "Del" checks
   (`docs/review/qa-sms-screens.md`, "Step 3b").
+- **Fix round after the code QA (`docs/review/qa-sms-mms.md`):**
+  - one message's pictures are bounded as a whole (`ParseWire.PictureBudget`: four, 8 MP between them; past it "not
+    shown", both sides), the main process keeps the pixels as descriptors and makes one bitmap at a time, and a parse's
+    attempt is counted before it runs (`beginParse`), so a death of the main process while it handles the answer ends
+    after three tries too (M1);
+  - the sender is judged again (D4, as of now) before every fetch, before the parse and at its answer: a contact
+    switched off, a removed one, or a callback-window stranger after the window closed gets nothing more fetched, and
+    the waiting message goes (M2);
+  - the photo picker is the system's own (`setPackage` of the system handler), and its answer is read only as another
+    app's `content://` URI (`pickedUriAcceptable`); the camera's file is read as the file it is (M3);
+  - the MMSC is answered only for a kept message, after every check (L1): an immediate fetch with an m-notifyresp-ind
+    "retrieved", a released or retried (deferred) one with an m-acknowledge-ind; a push's identity is kept until its
+    own expiry (at least a day, at most a week), blocked ones included (L2);
+  - every parse runs in its own isolated process (`bindIsolatedService`, a fresh instance per call, L3); pixels are read
+    with `pread`, never mapped (L4); a download past our cap is "too large" for good (a marker beside the file, L5);
+    a parse service that can't be bound is counted and said in `last_error`, and nothing is lost meanwhile (L6);
+  - `mms_data_allowed` is mobile data on, or a fetch that worked with data off (the per-SIM "MMS-meldinger" can't be
+    read by an app; `SmsPrefs.mmsWithoutData`, L7);
+  - a picture that waited is notified again, quietly, when it arrives; a message that moved to a group's conversation
+    takes its notification from the sender's (L8);
+  - a released MMS's held row stays held until its second judgement: "released" once the kid has it, "dropped" when it
+    is blocked then (L9);
+  - an MMS that failed for an unknown MCC/MNC is fetched once a policy's MMSC list knows the SIM (L10);
+  - a fetched message that can't be read says "Meldingen kunne ikke vises" (N7); a pick the kid hasn't sent is never
+    deleted with a message (N8); the send limit uses the conversation's own SIM and 10 KB of headroom (N3, N4); the
+    camera gets a write grant only (N5).
+  - **"Ikke styrt" with the role still ours** (N6): the rules aren't read then, so every MMS fails closed as
+    "Bildet kunne ikke hentes" (no MMSC list) and groups fail D12 - SMS stays unfiltered (step 1's L3), MMS doesn't.
+  - **D15's push pool** (deviation 7): a push the rules can't judge waits in `pending_push`, re-parsed in a fresh
+    isolated process at each pass; its 100 rows are shared with strangers, so a flood while the rules are unknown can
+    push out a contact's push (counted `malformed`). Accepted, as D15's 200 `HELD_RULES` rows for SMS.

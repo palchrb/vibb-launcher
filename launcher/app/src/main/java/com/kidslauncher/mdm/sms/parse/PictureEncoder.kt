@@ -57,7 +57,9 @@ object PictureEncoder {
 
     /** D11's default for a sent picture (the user's brief: the design's 200 KB). */
     const val SEND_DEFAULT_BYTES = 200 * 1024
-    private const val SEND_HEADROOM_BYTES = 8 * 1024
+    /** Room for the rest of the message: the headers and SMIL (2 KB) and a 1,600-character text (6.4 KB), rounded up
+     * (code QA N4). */
+    private const val SEND_HEADROOM_BYTES = 10 * 1024
     private const val SEND_MIN_BYTES = 30 * 1024
     private val SEND_SIZES = listOf(1280, 1024, 800, 640, 480)
     private val SEND_QUALITIES = listOf(85, 75, 65, 55)

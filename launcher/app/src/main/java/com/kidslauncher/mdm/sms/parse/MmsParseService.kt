@@ -112,6 +112,8 @@ class MmsParseService : Service() {
                 out.writeInt(texts.size)
                 texts.forEach { out.writeString(it) }
                 val media = message.parts.filter { !it.isText && !it.isSmil }
+                // Code QA M1: the message as a whole is bounded - past the budget a picture is "not shown".
+                val budget = ParseWire.PictureBudget()
                 out.writeInt(media.size)
                 for (part in media) {
                     when {
@@ -119,17 +121,23 @@ class MmsParseService : Service() {
                             out.writeInt(MmsParseProtocol.PART_OTHER)
                             out.writeString(part.mimeType.take(MmsParseProtocol.MIME_MAX_CHARS))
                         }
-                        !pictures -> out.writeInt(MmsParseProtocol.PART_NOT_SHOWN)
+                        !pictures || !budget.roomForOne() -> out.writeInt(MmsParseProtocol.PART_NOT_SHOWN)
                         else -> {
                             val pixels = decode(part.data, MmsParseProtocol.PICTURE_MAX_PX)
-                            if (pixels == null) {
-                                out.writeInt(MmsParseProtocol.PART_UNDECODABLE)
-                            } else {
-                                shared += pixels.memory
-                                out.writeInt(MmsParseProtocol.PART_PICTURE)
-                                out.writeInt(pixels.width)
-                                out.writeInt(pixels.height)
-                                out.writeTypedObject(pixels.memory, 0)
+                            when {
+                                pixels == null -> out.writeInt(MmsParseProtocol.PART_UNDECODABLE)
+                                !budget.take(pixels.width, pixels.height) -> {
+                                    pixels.memory.close()
+                                    out.writeInt(MmsParseProtocol.PART_NOT_SHOWN)
+                                }
+                                else -> {
+                                    shared += pixels.memory
+                                    out.writeInt(MmsParseProtocol.PART_PICTURE)
+                                    out.writeInt(pixels.width)
+                                    out.writeInt(pixels.height)
+                                    // The region's descriptor alone (the main process reads it with pread, code QA L4).
+                                    pixels.memory.writeToParcel(out, 0)
+                                }
                             }
                         }
                     }
@@ -158,7 +166,7 @@ class MmsParseService : Service() {
                 out.writeInt(MmsParseProtocol.STATUS_OK)
                 out.writeInt(pixels.width)
                 out.writeInt(pixels.height)
-                out.writeTypedObject(pixels.memory, 0)
+                pixels.memory.writeToParcel(out, 0)
             } finally {
                 pixels.memory.close()
             }

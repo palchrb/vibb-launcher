@@ -67,9 +67,12 @@ class MmsEngineTest {
         ownNumbers = own, mmscHosts = table,
     )
 
+    private var callbackWindow = false
+
     private fun judge() = SmsJudge(
         state = rules?.copy(mmscHosts = table, ownNumbers = own)?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,
         roleHeld = true,
+        callbackWindowOpen = { callbackWindow },
         platformEmergency = { false },
         carrier = { Carrier(operator, carrierMax) },
     )
@@ -179,11 +182,13 @@ class MmsEngineTest {
         assertNotNull(engine.openPartByHash(message.parts.single().sha256!!))
         assertNull(engine.openPart(MessageId(id), 1))
         assertNull(engine.openPartByHash("0".repeat(64)))
-        // MessageUpdated carries the parts; the MMSC got its acknowledgement.
+        // MessageUpdated carries the parts; the MMSC got its answer - an immediate fetch's m-notifyresp-ind "retrieved"
+        // (code QA L2), with the notification's transaction id.
         val updated = engine.events(0).filterIsInstance<EngineEvent.MessageUpdated>().last()
         assertEquals(PartState.AVAILABLE, updated.parts.single().state)
         assertEquals(1, answers.size)
-        assertEquals(0x85, answers.single()[1].toInt() and 0xff)
+        assertEquals(0x83, answers.single()[1].toInt() and 0xff)
+        assertTrue(String(answers.single(), Charsets.ISO_8859_1).contains("T1"))
         // A second result for the same message changes nothing.
         assertNull(mms.onRetrieved(id, retrieved()))
     }
@@ -199,14 +204,26 @@ class MmsEngineTest {
         now += 60_000
         rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Ny", "+4790000041", smsIn = true))
         assertTrue(engine.releasePass(emptyList()).isEmpty())
-        assertEquals(HeldState.RELEASED, store.heldRows().single().state)
+        // Code QA L9: still held (its push gone back) until the second judgement - "released" only once it is shown.
+        assertEquals(HeldState.HELD, store.heldRows().single().state)
+        assertNull(store.heldRows().single().push)
         val released = store.pushes.single()
         assertEquals(first, released.at)
+        // A second policy releases nothing twice.
+        engine.releasePass(emptyList())
+        assertEquals(1, store.pushes.size)
         // ... and judged again there: From, the host, the size - fetched only now.
         val shown = mms.judgePush(released, notification(from = "+4790000041/TYPE=PLMN")) as PushOutcome.Shown
         assertEquals(first, shown.shown.message.at)
+        assertEquals(HeldState.RELEASED, store.heldRows().single().state)
+        assertFalse(store.heldRows().single().reported)
         mms.drainDownloads()
         assertEquals(1, downloads.size)
+        // A released (deferred) fetch is answered with an m-acknowledge-ind (code QA L2).
+        val id = shown.shown.message.id.value
+        mms.onDownloaded(id)
+        mms.onRetrieved(id, retrieved(from = "+4790000041/TYPE=PLMN"))
+        assertEquals(0x85, answers.single()[1].toInt() and 0xff)
     }
 
     @Test
@@ -217,6 +234,8 @@ class MmsEngineTest {
         table = listOf(MmscRule(operator, listOf("other.carrier.invalid")))
         assertTrue(mms.judgePush(store.pushes.single(), notification(from = "+4790000041/TYPE=PLMN")) is PushOutcome.Blocked)
         assertTrue(downloads.isEmpty())
+        // Code QA L9: the parent sees "dropped", never "delivered", for what the kid never got.
+        assertEquals(HeldState.DROPPED, store.heldRows().first { it.mms }.state)
         assertEquals(SenderClass.BAD_LOCATION, store.blockedRows().last().senderClass)
     }
 
@@ -339,8 +358,9 @@ class MmsEngineTest {
         assertNull(store.message(id))
         assertTrue(engine.events(0).last() is EngineEvent.MessageDeleted)
         assertEquals(SenderClass.MALFORMED, store.blockedRows().last().senderClass)
-        // Its picture file went with it.
+        // Its picture file went with it, and nothing answered the MMSC for it (code QA L1).
         assertTrue(files.stored.isEmpty())
+        assertTrue(answers.isEmpty())
     }
 
     @Test
@@ -395,16 +415,42 @@ class MmsEngineTest {
     fun `a parse that fails, or kills the isolated process three times, fails the message`() {
         val bad = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(bad)
+        assertTrue(mms.beginParse(bad).first)
         assertNotNull(mms.onParseFailed(bad))
         assertEquals(MmsState.FAILED, store.mms(bad)!!.state)
+        // Code QA N7: "Meldingen kunne ikke vises", not "couldn't be fetched".
+        assertEquals(MmsFlow.FAILURE_UNREADABLE, store.message(bad)!!.failure)
         val crash = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(crash)
-        assertNull(mms.onParseCrashed(crash))
-        assertNull(mms.onParseCrashed(crash))
+        repeat(2) {
+            assertTrue(mms.beginParse(crash).first)
+            assertNull(mms.onParseCrashed(crash))
+        }
         assertEquals(MmsState.DOWNLOADED, store.mms(crash)!!.state)
+        assertTrue(mms.beginParse(crash).first)
         assertNotNull(mms.onParseCrashed(crash))
         assertEquals(MmsState.FAILED, store.mms(crash)!!.state)
         assertEquals(2L, store.counters()[SmsEngine.COUNT_PARSE_FAILURES])
+    }
+
+    @Test
+    fun `the parse's attempt counts before it runs - a main-process death three times ends the loop (code QA M1)`() {
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        // Three starts that died while handling the answer: nothing came back, the count went up anyway.
+        repeat(3) { assertTrue(mms.beginParse(id).first) }
+        val (go, givenUp) = mms.beginParse(id)
+        assertFalse(go)
+        assertNotNull(givenUp)
+        assertEquals(MmsState.FAILED, store.mms(id)!!.state)
+        assertFalse(mms.awaitsParse(id))
+        // A service that couldn't be bound gives its attempt back.
+        val other = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(other)
+        assertTrue(mms.beginParse(other).first)
+        mms.parseUnavailable(other)
+        assertEquals(0, store.mms(other)!!.crashes)
+        assertTrue(mms.awaitsParse(other))
     }
 
     @Test
@@ -494,4 +540,192 @@ class MmsEngineTest {
     }
 
     private fun SmsEngine.groupConversationForTest(addresses: List<String>): String = store.transaction { groupConversationFor(addresses, null).id }
+
+    // ---- the code QA's fix round ----
+
+    @Test
+    fun `a contact switched off before the fetch - nothing is fetched, the waiting message goes (code QA M2)`() {
+        downloadThrows = true
+        val waiting = (arrive() as PushOutcome.Shown).shown.message.id.value
+        assertEquals(MmsState.WAITING_DATA, store.mms(waiting)!!.state)
+        downloadThrows = false
+        // The parent turns Mamma's "Kan sende melding til" off; data comes back.
+        rules = rules()!!.copy(contacts = listOf(mamma.copy(smsIn = false), pappa, bestemor))
+        downloads.clear()
+        mms.retryWaiting(dataOn = true)
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+        assertNull(store.message(waiting))
+        assertEquals(SenderClass.NUMBER, store.blockedRows().last().senderClass)
+    }
+
+    @Test
+    fun `the kid's tap and a fetched file are judged again too (code QA M2)`() {
+        downloadThrows = true
+        val tapped = (arrive() as PushOutcome.Shown).shown.message.id.value
+        repeat(4) {
+            mms.retryWaiting(dataOn = false)
+            mms.drainDownloads()
+        }
+        assertEquals(MmsRow.RETRY, store.mms(tapped)!!.failure)
+        downloadThrows = false
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        downloads.clear()
+        assertTrue(mms.retryDownload(tapped))
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+        assertNull(store.message(tapped))
+        // Fetched, then removed before the parse: no parse job, nothing shown, nothing answered.
+        rules = rules()
+        val fetched = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(fetched)
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        assertTrue(mms.parseJobs().isEmpty())
+        assertNull(store.message(fetched))
+        assertTrue(answers.isEmpty())
+        // ... and after the parse ran: dropped at its answer.
+        rules = rules()
+        val parsed = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(parsed)
+        assertEquals(1, mms.parseJobs().size)
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        assertNull(mms.onRetrieved(parsed, retrieved()))
+        assertNull(store.message(parsed))
+        assertTrue(answers.isEmpty())
+        // Rules that can't be read keep a fetched message waiting for its parse.
+        rules = rules()
+        val unknown = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(unknown)
+        rules = null
+        assertTrue(mms.parseJobs().isEmpty())
+        assertTrue(mms.awaitsParse(unknown))
+    }
+
+    @Test
+    fun `a stranger the callback window let in isn't fetched once the window closed, nor in a group (D12, code QA M2)`() {
+        callbackWindow = true
+        val stranger = "+4790000066"
+        val shown = (arrive(notification(from = "$stranger/TYPE=PLMN")) as PushOutcome.Shown).shown.message
+        assertTrue(shown.unknownSender)
+        // A group from the callback window alone is blocked as a group.
+        mms.onDownloaded(shown.id.value)
+        assertNull(mms.onRetrieved(shown.id.value, retrieved(from = "$stranger/TYPE=PLMN", to = listOf(kid, bestemor.number))))
+        assertEquals(SenderClass.GROUP, store.blockedRows().last().senderClass)
+        // One waiting while the window closes is never fetched.
+        downloadThrows = true
+        val later = (arrive(notification(from = "$stranger/TYPE=PLMN")) as PushOutcome.Shown).shown.message.id.value
+        downloadThrows = false
+        callbackWindow = false
+        downloads.clear()
+        mms.retryWaiting(dataOn = true)
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+        assertNull(store.message(later))
+    }
+
+    @Test
+    fun `a held MMS from an emergency number is never released (D16, R2-H1)`() {
+        arrive(notification(from = "113/TYPE=PLMN"))
+        assertEquals(1, store.heldRows().count { it.mms })
+        rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Ambulanse", "113", inbound = true, outbound = true, smsIn = true))
+        engine.releasePass(emptyList())
+        assertTrue(store.pushes.isEmpty())
+        assertEquals(HeldState.HELD, store.heldRows().single { it.mms }.state)
+        assertNotNull(store.heldRows().single { it.mms }.push)
+    }
+
+    @Test
+    fun `the parent's delete after the allow wins - nothing is fetched (D16)`() {
+        val held = (arrive(notification(from = "+4790000041/TYPE=PLMN")) as PushOutcome.Held).row
+        rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Ny", "+4790000041", smsIn = true))
+        engine.releasePass(emptyList())
+        // The push waits (rules unknown) while the parent's "Slett nå" arrives.
+        store.updateHeld(store.held(held.id)!!.copy(state = HeldState.DROPPED))
+        assertEquals(PushOutcome.Blocked(null), mms.judgePush(store.pushes.single(), notification(from = "+4790000041/TYPE=PLMN")))
+        assertTrue(store.pushes.isEmpty())
+        assertTrue(store.mms.isEmpty())
+    }
+
+    @Test
+    fun `a download past the cap is too large for good, never fetched again (code QA L5)`() {
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        assertNotNull(mms.onDownloadTooLarge(id))
+        assertEquals(MmsState.TOO_LARGE, store.mms(id)!!.state)
+        downloads.clear()
+        mms.retryWaiting(dataOn = true)
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+    }
+
+    @Test
+    fun `an MMS that failed for an unknown operator is fetched once the table knows the SIM (code QA L10)`() {
+        table = emptyList()
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        assertEquals(MmsRow.MMSC_UNKNOWN, store.mms(id)!!.failure)
+        assertFalse(mms.retryWaiting(dataOn = false))
+        table = listOf(MmscRule(operator, listOf(host)))
+        assertTrue(mms.retryWaiting(dataOn = false))
+        mms.drainDownloads()
+        assertEquals(id, downloads.single().first)
+    }
+
+    @Test
+    fun `a picture that waited is told again quietly when it arrives, a group move names the conversation it left (code QA L8)`() {
+        downloadThrows = true
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        val told = store.mms(id)!!
+        assertTrue(told.notified)
+        downloadThrows = false
+        mms.retryWaiting(dataOn = true)
+        mms.drainDownloads()
+        mms.onDownloaded(id)
+        val oneToOne = store.message(id)!!.conversationId
+        val arrived = mms.onRetrieved(id, retrieved(to = listOf(kid, bestemor.number)))!!
+        assertTrue(arrived.again)
+        assertEquals(oneToOne, arrived.movedFrom)
+        // A fresh one is told loudly, once, and has moved nowhere.
+        val fresh = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(fresh)
+        val first = mms.onRetrieved(fresh, retrieved())!!
+        assertFalse(first.again)
+        assertNull(first.movedFrom)
+    }
+
+    @Test
+    fun `repeated pushes are known until their own expiry, blocked ones too (code QA L2)`() {
+        val hidden = notification(from = null)
+        assertTrue(arrive(hidden) is PushOutcome.Blocked)
+        assertEquals(PushOutcome.Duplicate, arrive(hidden))
+        assertEquals(1, store.blockedRows().size)
+        val held = notification(from = "+4790000041/TYPE=PLMN")
+        assertTrue(arrive(held) is PushOutcome.Held)
+        // Two days later the MMSC repeats it (its expiry is a week): no second held row, no second push to the parent.
+        now += 2 * 24 * 60 * 60 * 1000L
+        store.pruneReceived(now - SmsEngine.RECEIVED_KEEP_MS)
+        assertEquals(PushOutcome.Duplicate, arrive(held))
+        assertEquals(1, store.heldRows().size)
+        // Past its expiry (a week) the key is gone.
+        now += 6 * 24 * 60 * 60 * 1000L
+        store.pruneReceived(now - SmsEngine.RECEIVED_KEEP_MS)
+        assertFalse(arrive(held) is PushOutcome.Duplicate)
+    }
+
+    @Test
+    fun `a pick the kid hasn't sent survives a delete of a message with the same picture (code QA N8)`() {
+        val sent = engine.send(SendCommand("s", null, mamma.number, "", listOf(engine.putPicture(byteArrayOf(1, 2), 10, 10)), Origin.KID_SCREEN)) as SendResult.Accepted
+        val again = engine.putPicture(byteArrayOf(1, 2), 10, 10)
+        engine.delete(sent.message.id, Origin.KID_SCREEN)
+        assertTrue(again.sha256 in files.stored)
+        assertTrue(engine.send(SendCommand("t", null, mamma.number, "", listOf(again), Origin.KID_SCREEN)) is SendResult.Accepted)
+    }
+
+    @Test
+    fun `deleting a conversation deletes its pictures' files (D18)`() {
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        val shown = mms.onRetrieved(id, retrieved())!!
+        assertEquals(1, files.stored.size)
+        engine.deleteConversation(ConversationId(shown.conversation.id), Origin.KID_SCREEN)
+        assertTrue(files.stored.isEmpty())
+    }
 }

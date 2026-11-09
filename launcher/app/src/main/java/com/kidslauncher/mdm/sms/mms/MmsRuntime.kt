@@ -11,6 +11,7 @@ import android.telephony.SubscriptionManager
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
+import com.kidslauncher.mdm.sms.SmsPrefs
 import com.kidslauncher.mdm.sms.SmsRuntime
 import com.kidslauncher.mdm.sms.engine.DownloadError
 import com.kidslauncher.mdm.sms.engine.MmsFlow
@@ -98,7 +99,12 @@ object MmsRuntime {
                     MmsParser.Answer.Crashed -> engine.mms.pushCrashed(push)
                     MmsParser.Answer.Unavailable -> null
                 }
-            } ?: continue
+            }
+            if (answer == MmsParser.Answer.Unavailable) {
+                unavailable(app)
+                return
+            }
+            if (outcome == null) continue
             when (outcome) {
                 is PushOutcome.Shown -> if (!outcome.fetch) SmsRuntime.notifyShown(app, outcome.shown)
                 is PushOutcome.Held, is PushOutcome.Blocked -> SmsRuntime.requestHeldSyncSoon(app)
@@ -107,11 +113,21 @@ object MmsRuntime {
         }
     }
 
-    /** The fetched messages: the isolated parse, our own JPEGs from its pixels, then the engine's checks (D10, D12). */
+    /**
+     * The fetched messages: the attempt counted first (code QA M1: a death of this process while it handles the answer
+     * counts too), the isolated parse, our own JPEGs from its pixels one at a time, then the engine's checks (the sender
+     * again, D10's From, D12). The downloaded file goes once the message no longer waits for a parse.
+     */
     private fun parses(app: Context) {
         val jobs = SmsRuntime.call(app) { it.mms.parseJobs() }.orEmpty()
         val files = files(app)
         for (job in jobs) {
+            val (go, givenUp) = SmsRuntime.call(app) { it.mms.beginParse(job.messageId) } ?: (false to null)
+            givenUp?.let { SmsRuntime.notifyShown(app, it) }
+            if (!go) {
+                if (SmsRuntime.call(app) { it.mms.awaitsParse(job.messageId) } == false) MmsFileProvider.deleteDownload(app, job.messageId)
+                continue
+            }
             val file = File(File(File(app.noBackupFilesDir, "mms"), "in"), job.messageId)
             val bytes = file.takeIf { it.isFile && it.length() <= job.maxBytes }?.readBytes()
             if (bytes == null) {
@@ -122,27 +138,47 @@ object MmsRuntime {
             val told: Received.Shown? = when (val answer = MmsParser.parseRetrieve(app, bytes, job.maxBytes, job.pictures)) {
                 is MmsParser.Answer.Ok -> {
                     val content = retrieved(answer.value, files)
-                    SmsRuntime.call(app) { it.mms.onRetrieved(job.messageId, content) }.also { MmsFileProvider.deleteDownload(app, job.messageId) }
+                    SmsRuntime.call(app) { it.mms.onRetrieved(job.messageId, content) }
                 }
-                MmsParser.Answer.Rejected -> SmsRuntime.call(app) { it.mms.onParseFailed(job.messageId) }.also { MmsFileProvider.deleteDownload(app, job.messageId) }
+                MmsParser.Answer.Rejected -> SmsRuntime.call(app) { it.mms.onParseFailed(job.messageId) }
                 MmsParser.Answer.Crashed -> SmsRuntime.call(app) { it.mms.onParseCrashed(job.messageId) }
-                MmsParser.Answer.Unavailable -> null
+                MmsParser.Answer.Unavailable -> {
+                    SmsRuntime.call(app) { it.mms.parseUnavailable(job.messageId) }
+                    unavailable(app)
+                    return
+                }
             }
+            if (SmsRuntime.call(app) { it.mms.awaitsParse(job.messageId) } == false) MmsFileProvider.deleteDownload(app, job.messageId)
             told?.let { SmsRuntime.notifyShown(app, it) }
         }
     }
 
-    /** D8: the pixels become our own JPEGs here, stored by hash; the isolated process's bitmaps are recycled. */
+    /**
+     * Code QA L6: the isolated service can't be bound at all (a vendor restriction, a broken install) - nothing is
+     * parsed, so nothing is lost: pushes and fetched files wait. It is said, though: counted, and in `sms_state.last_error`
+     * so the parent's page shows it.
+     */
+    private fun unavailable(app: Context) {
+        SmsRuntime.recordError(app, "mms: the parse service can't be reached - MMS wait")
+        SmsRuntime.call(app) { it.mms.countUnavailable() }
+    }
+
+    /** D8: the pixels become our own JPEGs here, one picture at a time (code QA M1), stored by hash; each picture's
+     * bitmap is recycled and its descriptor closed before the next is read. */
     private fun retrieved(r: MmsParser.Retrieved, files: FilePartFiles): RetrievedMms {
         val parts = r.media.map { media ->
             when (media) {
-                is MmsParser.Media.Picture -> try {
-                    val encoded = PictureEncoder.received(media.bitmap)
-                    RetrievedPart.Picture(files.put(encoded.bytes), encoded.width, encoded.height, encoded.bytes.size.toLong())
-                } catch (e: Exception) {
-                    RetrievedPart.Undecodable
-                } finally {
-                    media.bitmap.recycle()
+                is MmsParser.Media.Picture -> media.use {
+                    var bitmap: android.graphics.Bitmap? = null
+                    try {
+                        bitmap = media.bitmap()
+                        val encoded = PictureEncoder.received(bitmap)
+                        RetrievedPart.Picture(files.put(encoded.bytes), encoded.width, encoded.height, encoded.bytes.size.toLong())
+                    } catch (e: Exception) {
+                        RetrievedPart.Undecodable
+                    } finally {
+                        bitmap?.recycle()
+                    }
                 }
                 MmsParser.Media.NotShown -> RetrievedPart.NotShown
                 MmsParser.Media.Undecodable -> RetrievedPart.Undecodable
@@ -156,15 +192,31 @@ object MmsRuntime {
 
     fun onDownloadResult(app: Context, messageId: String, resultCode: Int, httpStatus: Int) {
         MmsFileProvider.revokeDownload(app, messageId)
-        if (resultCode == Activity.RESULT_OK && MmsFileProvider.downloaded(app, messageId) != null) {
+        val file = if (resultCode == Activity.RESULT_OK) MmsFileProvider.downloaded(app, messageId) else null.also { MmsFileProvider.settled(messageId) }
+        if (MmsFileProvider.overCap(app, messageId)) {
+            // Code QA L5: past our byte cap - too large, final; never fetched again (whatever the platform answered).
+            MmsFileProvider.deleteDownload(app, messageId)
+            SmsRuntime.call(app) { it.mms.onDownloadTooLarge(messageId) }?.let { SmsRuntime.notifyShown(app, it) }
+            return
+        }
+        if (resultCode == Activity.RESULT_OK && file != null) {
+            if (!mobileDataOn(app)) SmsPrefs.mmsFetched(app, withoutData = true)
             // `downloaded` is committed; the parse runs in the next pass (and after a process death, at the next start).
             if (SmsRuntime.call(app) { it.mms.onDownloaded(messageId) } == true) kick(app)
             return
         }
         MmsFileProvider.deleteDownload(app, messageId)
         val error = if (resultCode == Activity.RESULT_OK) DownloadError.OTHER else MmsFlow.downloadErrorOf(resultCode, httpStatus)
+        if (error == DownloadError.NO_DATA && !mobileDataOn(app)) SmsPrefs.mmsFetched(app, withoutData = false)
         Log.w(LOG_TAG, "A download failed: $resultCode (http $httpStatus) -> $error")
         SmsRuntime.call(app) { it.mms.onDownloadFailed(messageId, error) }?.let { SmsRuntime.notifyShown(app, it) }
+    }
+
+    /** Mobile data as the user's switch has it (`false` when it can't be read). */
+    fun mobileDataOn(context: Context): Boolean = try {
+        context.getSystemService(TelephonyManager::class.java)?.isDataEnabled == true
+    } catch (e: Exception) {
+        false
     }
 
     /** A send's result: the MMSC's m-send-conf is read in the isolated parse - a refusal there is `FAILED`. */

@@ -375,13 +375,18 @@ sealed interface PartView {
     /** The carrier's server no longer has it (D16): "Bildet er ikke lenger tilgjengelig". */
     data object Gone : PartView
 
+    /** The fetched message couldn't be read, or killed the parse (D8; code QA N7): "Meldingen kunne ikke vises". */
+    data object Unreadable : PartView
+
     /** Video, audio, anything else: "Vedlegg som ikke kan vises"; its bytes aren't kept. */
     data object Unsupported : PartView
 }
 
-/** [retry]: the message's fetch offers the kid's tap ([MmsFlow.FAILURE_RETRY] on the message). */
-fun partViews(parts: List<Part>, retry: Boolean = false): List<PartView> = parts.sortedBy { it.index }.mapNotNull { part ->
+/** [retry]: the message's fetch offers the kid's tap ([MmsFlow.FAILURE_RETRY] on the message); [unreadable]: the
+ * fetched message couldn't be read ([MmsFlow.FAILURE_UNREADABLE]). */
+fun partViews(parts: List<Part>, retry: Boolean = false, unreadable: Boolean = false): List<PartView> = parts.sortedBy { it.index }.mapNotNull { part ->
     when {
+        unreadable && part.state == PartState.FAILED -> PartView.Unreadable
         part.mime == "text/plain" -> null
         part.state == PartState.NOT_SHOWN -> PartView.NotShown
         !part.mime.startsWith("image/") -> PartView.Unsupported
@@ -397,6 +402,10 @@ fun partViews(parts: List<Part>, retry: Boolean = false): List<PartView> = parts
 /** Whether a message's failed fetch offers "Trykk for å prøve igjen" (D14). */
 fun fetchRetryOffered(message: Message): Boolean =
     message.direction == Direction.IN && message.failure == com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_RETRY
+
+/** Whether a received MMS couldn't be read (code QA N7). */
+fun fetchUnreadable(message: Message): Boolean =
+    message.direction == Direction.IN && message.failure == com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_UNREADABLE
 
 /** A picture's thumbnail shape (height over width) from its stored size, kept between a wide and a tall bound; 3:4
  * when the size isn't known. */
@@ -493,4 +502,17 @@ fun smsDraft(smsBody: String?, extraText: String?, encodedSsp: String?, max: Int
         runCatching { java.net.URLDecoder.decode(it.replace("+", "%2B"), Charsets.UTF_8) }.getOrNull()
     }
     return (smsBody ?: extraText ?: fromLink)?.take(max)?.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * Code QA M3: whether the photo picker's answer may be read - a `content://` URI whose authority isn't one of ours
+ * (`<package>` and `<package>.*`: the share provider, the MMS provider). A `file://` URI, or one into our own providers,
+ * would have the launcher read its own private files on the answering activity's say-so.
+ */
+fun pickedUriAcceptable(scheme: String?, authority: String?, ownPackage: String): Boolean {
+    if (scheme?.lowercase() != "content" || authority.isNullOrEmpty()) return false
+    // A user-qualified authority (`10@media`) is judged by its provider part.
+    val owner = authority.substringAfterLast('@').lowercase()
+    val own = ownPackage.lowercase()
+    return owner != own && !owner.startsWith("$own.")
 }

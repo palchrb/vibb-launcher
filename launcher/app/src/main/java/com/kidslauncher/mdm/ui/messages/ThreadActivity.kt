@@ -94,14 +94,20 @@ class ThreadActivity : UIObjectActivity() {
     private var captureFile: java.io.File? = null
 
     private val pickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val uri = result.data?.data
-        if (result.resultCode == RESULT_OK && uri != null) usePicture(uri, null)
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        // Code QA M3: only another app's content URI is read - never a file:// or one of our own providers.
+        val source = PicturePick.picked(this, result.data?.data)
+        if (source == null) {
+            Toast.makeText(this, R.string.messages_picture_unusable, Toast.LENGTH_LONG).show()
+            return@registerForActivityResult
+        }
+        usePicture(source, null)
     }
 
     private val captureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val file = captureFile
         captureFile = null
-        if (result.resultCode == RESULT_OK && file != null && file.length() > 0) usePicture(android.net.Uri.fromFile(file), file) else file?.delete()
+        if (result.resultCode == RESULT_OK && file != null && file.length() > 0) usePicture(PicturePick.Source.Captured(file), file) else file?.delete()
     }
 
     /** Failed messages whose "Prøv igjen" was tapped, until the next read shows what became of them (code QA M1: the
@@ -394,8 +400,13 @@ class ThreadActivity : UIObjectActivity() {
     }
 
     private fun openPicker() {
+        val pick = PicturePick.pickIntent(this)
+        if (pick == null) {
+            Toast.makeText(this, R.string.messages_picture_not_now, Toast.LENGTH_LONG).show()
+            return
+        }
         try {
-            pickLauncher.launch(PicturePick.pickIntent())
+            pickLauncher.launch(pick)
         } catch (e: android.content.ActivityNotFoundException) {
             Toast.makeText(this, R.string.messages_picture_not_now, Toast.LENGTH_LONG).show()
         }
@@ -414,14 +425,15 @@ class ThreadActivity : UIObjectActivity() {
     }
 
     /** The picked file to a picture the engine holds - off the main and the engine thread ([PicturePick.prepare]). */
-    private fun usePicture(uri: android.net.Uri, file: File?) {
+    private fun usePicture(source: PicturePick.Source, file: File?) {
         val app = applicationContext
         val key = draftKey()
+        val subId = conversation?.subId
         preparing = true
         renderAttachment()
         preparer.execute {
             val (prepared, problem) = try {
-                PicturePick.prepare(app, uri)
+                PicturePick.prepare(app, source, subId)
             } finally {
                 file?.delete()
             }
@@ -665,7 +677,7 @@ class ThreadActivity : UIObjectActivity() {
         private fun bindParts(holder: Bubble, m: Message): String? {
             val context = holder.itemView.context
             holder.parts.removeAllViews()
-            val views = partViews(m.parts, retry = fetchRetryOffered(m) && m.id.value !in retrying)
+            val views = partViews(m.parts, retry = fetchRetryOffered(m) && m.id.value !in retrying, unreadable = fetchUnreadable(m))
             holder.parts.visibility = if (views.isEmpty()) View.GONE else View.VISIBLE
             val words = mutableListOf<String>()
             for (view in views) {
@@ -755,6 +767,7 @@ class ThreadActivity : UIObjectActivity() {
         PartView.NotShown -> R.string.messages_picture_not_shown
         is PartView.Failed -> if (view.retry) R.string.messages_picture_retry else R.string.messages_picture_failed
         PartView.Gone -> R.string.messages_picture_gone
+        PartView.Unreadable -> R.string.messages_unreadable
         PartView.Unsupported -> R.string.messages_attachment_unsupported
         is PartView.Picture -> R.string.messages_picture
     }
