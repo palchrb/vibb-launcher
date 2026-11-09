@@ -20,5 +20,10 @@
             android:name="com.kidslauncher.mdm.music.HeadsetDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <!-- Design 77 step 3b: an MMS push the emulator can't receive, and its fake MMS server. -->
+        <receiver
+            android:name="com.kidslauncher.mdm.sms.MmsDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>

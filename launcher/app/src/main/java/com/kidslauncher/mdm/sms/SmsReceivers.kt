@@ -77,9 +77,10 @@ class SmsDeliverReceiver : BroadcastReceiver() {
 }
 
 /**
- * `WAP_PUSH_DELIVER` for MMS (`permission=BROADCAST_WAP_PUSH`), required for the SMS role. Step 1 only commits the raw
- * push (at most 2 KB) to `pending_push` and finishes (D7); parsing, the sender and host gate and the download are step
- * 3b's, which takes the rows from there. Nothing is fetched or shown before it.
+ * `WAP_PUSH_DELIVER` for MMS (`permission=BROADCAST_WAP_PUSH`), required for the SMS role. Only commits the raw push
+ * (at most 2 KB) to `pending_push` and finishes (D7); after `finish()` the MMS thread takes it from there
+ * (`MmsRuntime`: the isolated parse, D10's gate, the download). Nothing is parsed in this process, nothing fetched
+ * before the gate.
  */
 class MmsPushReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -87,18 +88,28 @@ class MmsPushReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val app = context.applicationContext
         SmsRuntime.receiveExecutor.execute {
+            var kept = false
             try {
                 // An oversize push, or one past the cap, is counted as blocked `malformed` (QA L4).
                 val pdu = intent.getByteArrayExtra("data") ?: ByteArray(0)
                 val subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, -1).takeIf { it >= 0 }
-                if (!SmsRuntime.keepPush(app, PendingPushRow(RandomIds.hex(), pdu, subId, System.currentTimeMillis()))) {
-                    Log.w(LOG_TAG, "An MMS push that can't be kept (${pdu.size} bytes)")
-                }
+                kept = commitPush(app, pdu, subId)
             } catch (t: Throwable) {
                 SmsRuntime.recordError(app, "push: ${t.javaClass.simpleName}")
             } finally {
                 pending.finish()
             }
+            if (kept) com.kidslauncher.mdm.sms.mms.MmsRuntime.kick(app)
+        }
+    }
+
+    companion object {
+        /** D7's commit of a raw push (also the debug build's emulator hook's way in). On the receive executor. Returns
+         * whether it was kept. */
+        fun commitPush(app: Context, pdu: ByteArray, subId: Int?): Boolean {
+            val kept = SmsRuntime.keepPush(app, PendingPushRow(RandomIds.hex(), pdu, subId, System.currentTimeMillis()))
+            if (!kept) Log.w(LOG_TAG, "An MMS push that can't be kept (${pdu.size} bytes)")
+            return kept
         }
     }
 }

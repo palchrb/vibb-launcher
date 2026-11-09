@@ -29,7 +29,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "push_hex")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -39,7 +39,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver")
+        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "sms" to "MmsDebugReceiver")
         // No other hook (no other component of any kind): a new one is listed here (and in checkReleaseHasNoDebugHook) first.
         assertEquals(receivers.size, Regex("<(receiver|activity|activity-alias|service|provider)\\b").findAll(debug).count())
         for ((pkg, name) in receivers) {
@@ -58,6 +58,17 @@ class DebugHookAbsentTest {
         assertTrue(hook.contains("MusicListening.devicesAdded(listOf(out))"))
         assertTrue(hook.contains("AudioOut(id = -999 - n, type = AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, sink = true, address = \"debug-\$n\")"))
         assertTrue(hook.contains("val n = devices.incrementAndGet()"))
+    }
+
+    @Test
+    fun `release MmsDebug adds no MMS server, and the judge is its only caller`() {
+        // Design 77 step 3b: the emulator's fake MMSC exists only in the debug build.
+        val release = code(dir("release/java/com/kidslauncher/mdm/sms/MmsDebug.kt"))
+        assertEquals(1, Regex("\\bfun ").findAll(release).count())
+        assertTrue(release, release.contains("fun mmscRules(): List<MmscRule> = emptyList()\n"))
+        assertFalse(release.contains("var "))
+        val callers = sources("main").filter { code(it).contains("MmsDebug.") }.map { it.name }
+        assertEquals(listOf("SmsRuntime.kt"), callers)
     }
 
     @Test

@@ -100,3 +100,9 @@ is the `parseContentType` length check (H4); the 2026 CVEs in design 77 §2.3 na
   `MAX_SUBJECT_CHARS`, `MAX_CONTENT_LOCATION_CHARS`, `MAX_ID_CHARS`, `MAX_TEXT_CHARS`); over them a parse is `TOO_LONG`.
 - **Compose:** `composeNotifyResp` and `composeAcknowledge` return `MmsComposeResult` and refuse a transaction id
   outside `[\x21-\x7E]{1,64}`; a notification whose id fails that can't be answered, so treat it as malformed.
+
+**Done in step 3b** (branch `sms-mms`, `docs/notes/launcher/calls.md` "MMS pictures, step 3b"): D10's sender is
+`MmsGate.sender` on `plmnNumber`; the content location goes through `MmsGate.location` (printable ASCII without
+whitespace, `java.net.URI`, scheme, userinfo, port, the SIM's host); only `sms/parse/MmsParseService` calls the
+parsers (`MmsParseBoundaryTest`); a top-level `multipart/alternative` gives its first `text/plain` (the service's
+`texts`); a notification whose transaction id can't be answered is blocked as malformed (`MmsGate.answerableId`).

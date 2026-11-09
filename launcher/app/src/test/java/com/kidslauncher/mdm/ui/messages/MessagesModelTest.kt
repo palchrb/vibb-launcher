@@ -243,20 +243,68 @@ class MessagesModelTest {
     @Test
     fun `parts - our own picture, else a line for what isn't shown`() {
         fun part(index: Int, mime: String, state: PartState) = Part(index, mime, 1, null, null, null, state)
-        assertEquals(
-            listOf(PartView.Picture(1, null, null, null), PartView.Waiting, PartView.NotShown, PartView.Failed, PartView.Unsupported),
-            partViews(
-                listOf(
-                    part(5, "video/mp4", PartState.AVAILABLE),
-                    part(0, "text/plain", PartState.AVAILABLE),
-                    part(1, "image/jpeg", PartState.AVAILABLE),
-                    part(2, "image/jpeg", PartState.WAITING_DATA),
-                    part(3, "image/jpeg", PartState.NOT_SHOWN),
-                    part(4, "image/jpeg", PartState.TOO_LARGE),
-                ),
-            ),
+        val parts = listOf(
+            part(5, "video/mp4", PartState.AVAILABLE),
+            part(0, "text/plain", PartState.AVAILABLE),
+            part(1, "image/jpeg", PartState.AVAILABLE),
+            part(2, "image/jpeg", PartState.WAITING_DATA),
+            part(3, "image/jpeg", PartState.NOT_SHOWN),
+            part(4, "image/jpeg", PartState.TOO_LARGE),
+            part(6, "image/jpeg", PartState.PENDING),
+            part(7, "image/jpeg", PartState.GONE),
+            part(8, "image/jpeg", PartState.FAILED),
         )
+        assertEquals(
+            listOf(
+                PartView.Picture(1, null, null, null), PartView.WaitingData, PartView.NotShown, PartView.Failed(), PartView.Unsupported,
+                PartView.Waiting, PartView.Gone, PartView.Failed(),
+            ),
+            partViews(parts),
+        )
+        // D14: five tries ran out - only a failed fetch offers the tap, never a picture too large.
+        assertEquals(listOf(PartView.Failed(retry = false), PartView.Failed(retry = true)), partViews(parts, retry = true).filterIsInstance<PartView.Failed>())
         assertTrue(partViews(emptyList()).isEmpty())
+        val failed = message("f", 1, 0, parts = listOf(part(0, "image/jpeg", PartState.FAILED))).copy(failure = com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_RETRY)
+        assertTrue(fetchRetryOffered(failed))
+        assertFalse(fetchRetryOffered(failed.copy(failure = null)))
+        assertFalse(fetchRetryOffered(failed.copy(direction = Direction.OUT)))
+    }
+
+    @Test
+    fun `a picture's thumbnail takes its shape from its size, within bounds`() {
+        assertEquals(0.75f, pictureRatio(1600, 1200), 0.001f)
+        assertEquals(1.6f, pictureRatio(100, 1000), 0.001f)
+        assertEquals(0.4f, pictureRatio(1000, 100), 0.001f)
+        assertEquals(0.75f, pictureRatio(null, 300), 0.001f)
+        assertEquals(0.75f, pictureRatio(0, 300), 0.001f)
+    }
+
+    @Test
+    fun `the plus shows only while every recipient may get pictures (D11)`() {
+        val pictures = mamma.copy(mms = true)
+        val noPictures = RuleContact(6, "Onkel", "+4790000006", smsIn = true, smsOut = true, mms = false)
+        val withPictures = rules(contacts = listOf(pictures, noPictures, bestemor.copy(mms = true)))
+        assertTrue(picturesAllowed(judge(withPictures), listOf(pictures.number)))
+        assertFalse(picturesAllowed(judge(withPictures), listOf(noPictures.number)))
+        assertFalse("a group with one who has pictures off", picturesAllowed(judge(withPictures), listOf(pictures.number, noPictures.number)))
+        assertTrue(picturesAllowed(judge(withPictures), listOf(pictures.number, bestemor.number)))
+        assertFalse("under a time rule", picturesAllowed(judge(withPictures, timeBlocked = true), listOf(pictures.number)))
+        assertFalse("read-only history", picturesAllowed(judge(rules(ChannelMode.UNMANAGED, listOf(pictures))), listOf(pictures.number)))
+        assertFalse("a stranger", picturesAllowed(judge(withPictures), listOf("+4790000099")))
+        assertFalse(picturesAllowed(judge(withPictures), emptyList()))
+    }
+
+    @Test
+    fun `a group may be answered only when every member may be texted (D12)`() {
+        val j = judge()
+        assertEquals(ComposeState.OPEN, composeState(j, listOf(mamma.number, bestemor.number)))
+        assertEquals(ComposeState.GROUP_NOT_ALLOWED, composeState(j, listOf(mamma.number, trener.number)))
+        assertEquals(ComposeState.NOT_NOW, composeState(judge(timeBlocked = true), listOf(mamma.number, bestemor.number)))
+        assertEquals(ComposeState.READ_ONLY, composeState(judge(rules(ChannelMode.OFF)), listOf(mamma.number, bestemor.number)))
+        // One participant is the one-to-one rule.
+        assertEquals(composeState(j, trener.number), composeState(j, listOf(trener.number)))
+        val group = Conversation(ConversationId("g"), listOf(Participant(mamma.number, 1), Participant("+4790000077", null)), null, null, 1, 0, 0, false)
+        assertEquals(Who.Group(listOf(Who.Name("Mamma"), Who.Number("+4790000077"))), whoOf(group, rules()))
     }
 
     // ---- the deletes and the retry, through the engine ----

@@ -39,10 +39,17 @@ enum class Direction { IN, OUT }
 
 enum class Delivery { RECEIVED, QUEUED, SENDING, SENT, DELIVERED, FAILED, UNCERTAIN }
 
-enum class PartState { PENDING, WAITING_DATA, AVAILABLE, FAILED, TOO_LARGE, NOT_SHOWN }
+/**
+ * An MMS part's state (§6.2, step 3b): [PENDING] not fetched yet, [WAITING_DATA] waiting for MMS data (D14),
+ * [AVAILABLE] our own JPEG is there, [FAILED] it couldn't be fetched or decoded, [TOO_LARGE] over the carrier's maximum,
+ * [NOT_SHOWN] pictures are off with this contact (D11), [GONE] the carrier's server no longer has it (D16: an allow that
+ * came late, or its expiry passed).
+ */
+enum class PartState { PENDING, WAITING_DATA, AVAILABLE, FAILED, TOO_LARGE, NOT_SHOWN, GONE }
 
-/** An MMS part (step 3b): [mime] is `image/jpeg` (our own encode) or `text/plain`; [sha256] of the bytes the main
- * process encoded. Empty for SMS. */
+/** An MMS part (step 3b): [mime] is `image/jpeg` (our own encode), or the received type of a part that isn't shown
+ * (video, audio - its bytes aren't kept); [sha256] of the bytes the main process encoded. The text parts are the
+ * message's body. Empty for SMS. */
 data class Part(
     val index: Int,
     val mime: String,
@@ -92,8 +99,9 @@ sealed interface EngineEvent {
     data class MessageDeleted(override val seq: Long, val id: MessageId, val origin: Origin) : EngineEvent
 }
 
-/** A picture to send (D11, step 3b): the hash of a part the engine already holds. */
-data class PictureRef(val sha256: String)
+/** A picture to send (D11, step 3b): the hash of a picture the engine already holds ([SmsEngine.putPicture] - our own
+ * re-encoded JPEG), with its size in pixels for the bubble's shape. */
+data class PictureRef(val sha256: String, val width: Int? = null, val height: Int? = null)
 
 data class SendCommand(
     /** A UUID from the front end. */
@@ -135,9 +143,11 @@ interface MessageEngine {
 
     fun deleteConversation(id: ConversationId, origin: Origin)
 
-    /** Step 3b: MMS parts. */
+    /** A picture part's bytes: always the main process's own JPEG (D8), never a received part; `null` when the part
+     * isn't an available picture. */
     fun openPart(messageId: MessageId, index: Int): java.io.InputStream?
 
+    /** The same by its hash (the bridge's "parts by hash"), for a picture some message holds. */
     fun openPartByHash(sha256: String): java.io.InputStream?
 }
 

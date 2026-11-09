@@ -32,6 +32,17 @@ class KidScreensEscapeTest {
         // The system's sound picker: its "add a sound" opens a file browser (the kid's ringtone picker is our own).
         "ACTION_RINGTONE_PICKER",
         "\"android.intent.action.RINGTONE_PICKER",
+        // Design 77 D11: the photo picker and a camera - from PicturePick.kt alone; no document or file picker anywhere.
+        "ACTION_PICK_IMAGES",
+        "ACTION_IMAGE_CAPTURE",
+        "ACTION_GET_CONTENT",
+        "ACTION_OPEN_DOCUMENT",
+        "PickVisualMedia",
+        "TakePicture",
+        "\"android.provider.action.PICK_IMAGES",
+        "\"android.media.action.IMAGE_CAPTURE",
+        "\"android.intent.action.GET_CONTENT",
+        "\"android.intent.action.OPEN_DOCUMENT",
     )
 
     private fun src(path: String) =
@@ -49,7 +60,11 @@ class KidScreensEscapeTest {
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
      * helper; only allowed apps resolve), from this file alone. */
-    private val shareSheet = mapOf("PictureShare.kt" to setOf("Intent.createChooser"))
+    private val shareSheet = mapOf(
+        "PictureShare.kt" to setOf("Intent.createChooser"),
+        // D11: the compose bar's "+" - the system photo picker (a kiosk helper) and the camera app the parent allows.
+        "PicturePick.kt" to setOf("ACTION_PICK_IMAGES", "ACTION_IMAGE_CAPTURE"),
+    )
 
     @Test
     fun `kid screens reference no system settings, picker or chooser`() {
@@ -58,7 +73,7 @@ class KidScreensEscapeTest {
                 .firstOrNull { it.exists() }
         }.flatMap { f -> if (f.isDirectory) f.walk().filter { it.isFile && it.name.endsWith(".kt") }.toList() else listOf(f) }
         assertTrue("guarded sources found", files.size >= 10)
-        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "KidSoundPickerActivity.kt", "KidSounds.kt", "HomeGridAdapter.kt", "AppAction.kt", "BluetoothAudio.kt", "MessagesActivity.kt", "ThreadActivity.kt", "PictureActivity.kt", "PictureShare.kt")) {
+        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "KidSoundPickerActivity.kt", "KidSounds.kt", "HomeGridAdapter.kt", "AppAction.kt", "BluetoothAudio.kt", "MessagesActivity.kt", "ThreadActivity.kt", "PictureActivity.kt", "PictureShare.kt", "PicturePick.kt")) {
             assertTrue(name, files.any { it.name == name })
         }
         for (file in files) {
@@ -89,6 +104,14 @@ class KidScreensEscapeTest {
         val share = src("ui/messages/PictureShare.kt").readText()
         assertTrue(share.contains("Intent(Intent.ACTION_SEND)") && share.contains("setType(\"image/jpeg\")"))
         assertTrue(share.contains("FLAG_GRANT_READ_URI_PERMISSION") && !share.contains("FLAG_GRANT_WRITE_URI_PERMISSION"))
+        // D11's "+": the camera is only ever the one app the parent allows, writing one file of ours; the picker is
+        // the system's photo picker, one image.
+        val pick = src("ui/messages/PicturePick.kt").readText()
+        assertTrue(pick.contains("Intent(MediaStore.ACTION_IMAGE_CAPTURE)\n            .setPackage(pkg)"))
+        assertTrue(pick.contains("usable(it.packageName)"))
+        assertTrue(pick.contains("FileProvider.getUriForFile(context, PictureShare.authority(context), file)"))
+        assertTrue(pick.contains("Intent(MediaStore.ACTION_PICK_IMAGES).setType(\"image/*\")"))
+        assertTrue(!pick.contains("EXTRA_PICK_IMAGES_MAX") && !pick.contains("EXTRA_ALLOW_MULTIPLE"))
     }
 
     @Test

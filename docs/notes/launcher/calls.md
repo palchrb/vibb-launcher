@@ -104,7 +104,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the event log with one `seq` counter, `ConversationChanged` on a rule change.
 - **The store (`sms/store/SqliteMessageStore`):** our own SQLite (`messages.db`, CE, `secure_delete`, WAL checkpointed
   after every expiry, drop or delete pass); nothing is written to the Telephony provider. §6.6's tables (the `part`
-  and `pending_push` tables and the MMS columns wait for step 3b).
+  table, `pending_push` and the `mms` state machine are step 3b's - version 2 of the database, below).
 - **The glue (`sms/`):** `SmsRuntime` - the engine opened at its first use after the first unlock, the receive executor
   (receivers only, D7) and the engine thread (everything else), the rules from memory, `sms_state`, the `sms-held` post
   (50 rows a post; a 2xx marks them, `capped` too; a 400 gives up the named row); `SmsDeliverReceiver` (classify, judge,
@@ -182,10 +182,10 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the other modes keep `resolveMessageButton`); `ComposeActivity` (`smsto:` from another app). Under a time rule each
   screen checks at resume and watches the lock (`LockWatch` with its own check) - a rule without calls brings the
   time-rule screen.
-- **Pictures (step 3b plugs in):** a bubble shows `partViews(message.parts)` - a picture's rounded place (70 % of the
+- **Pictures (step 3b plugged in, below):** a bubble shows `partViews(message.parts)` - a picture's rounded place (70 % of the
   width, the picture glyph) until `engine.openPart` gives its bytes, then the thumbnail (`SmsPictures`, our own JPEG,
-  decoded off the main thread); a tap opens `PictureActivity`. Today `Message.parts` is always empty and `openPart` is
-  `null`, so no picture shows anywhere yet.
+  decoded off the main thread); a tap opens `PictureActivity`. Since step 3b `Message.parts` comes from the `part`
+  table and `openPart` gives the main process's own JPEG.
 - **Fix round after the code QA (`docs/review/qa-sms-screens.md`):** "Prøv igjen" sends under `retry:<failed id>` (two
   taps send once) and only while the compose bar is open; the contact avatars' badge is missed calls plus unread
   messages (`ContactBadge`, `SmsHome.unreadFrom`, Home, the phone book, the sheet); the notification lets the system add
@@ -194,3 +194,90 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
   parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
   history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").
+
+## MMS pictures, step 3b (design 77 D8, D10-D12, D14, D16; branch `sms-mms`)
+
+- **The isolated parse (D8, `sms/parse/`):** `MmsParseService` is an `isolatedProcess` service (`:mmsparse`, not
+  exported, no permissions); `Application.onCreate` and `KidAppComponentFactory` return at once there
+  (`Process.isIsolated()`). It is the only caller of `MmsCodec.parseNotification`/`parseRetrieveConf`/`parseSendConf`
+  (they catch every `Throwable`, right there alone). Its wire is a hand-written Binder protocol (`MmsParseProtocol`):
+  the input through a pipe, the answer field by field - every string's length and every count read and checked
+  before the value (`readString`, `readCount`) - and pictures as RGBA_8888 pixels in a read-only `SharedMemory` with
+  width and height (at most 1,600 px a side). `MmsParser` (the main process's side) checks `width * height * 4 ==
+  size`, builds the bitmap with `copyPixelsFromBuffer`, and `PictureEncoder` encodes our own JPEG (quality 85; no EXIF).
+  The service decodes with `ImageDecoder` (the header's size first: over 8,192 px a side or 40 MP is refused before
+  decoding; the target size within the cap; software memory; EXIF orientation applied). A call that hangs 30 s, an
+  answer out of protocol or a dead process is `Crashed`: three deaths on one push block it as malformed, on one fetched
+  message fail it (`parse_failures`). `MmsParseBoundaryTest` pins the manifest entry, the two guards, the only caller,
+  the length-first reads, and that the main process runs no decoder on what it didn't encode (none in `sms/mms`,
+  `sms/engine`, `sms/store`, `PicturePick`; `MmsParser` builds bitmaps only from the checked pixels).
+- **The state machine (§6.4, `sms/engine/MmsFlow.kt`, pure, `MmsEngineTest`):** the push committed (step 1's
+  `pending_push`) -> `judgePush` with the isolated parse's notification: the transaction id answerable, D10's sender
+  (`MmsGate.sender`: `+`/ASCII digits with `/TYPE=PLMN`; a hidden or missing `From` blocks `empty`, anything else
+  `malformed`), D4 on the number (`SmsRules.decideIncoming`), then for an allowed sender alone the host
+  (`MmsGate.location`: printable ASCII without whitespace, `http`/`https`, no userinfo, port absent/80/443/8080, the host
+  - without case - on this SIM's MCC/MNC row; any other host blocks `bad_location`; an MCC/MNC with no row fails
+  closed: shown at once as "Bildet kunne ikke hentes", never fetched) and the size (`MMS_CONFIG_MAX_MESSAGE_SIZE`,
+  `MmsCodec.capOf`). Then the message with one placeholder part (PENDING) in the sender's conversation, `mms` row
+  `NOTIFIED` -> `drainDownloads` (the host again, the expiry, `DOWNLOADING` and its try committed before the platform
+  has it) -> `downloadMultimediaMessage` into `MmsFileProvider` -> `MmsResultReceiver` -> `DOWNLOADED` (committed, so a
+  process death resumes at the parse) -> the isolated parse (pictures decoded only with the sender's `mms` on, D11) ->
+  `onRetrieved`: the retrieve status (transient waits, 0xE2 is gone), D10's From again (equal, normalised, PLMN), D12,
+  then the text (every `text/plain`, a top-level `multipart/alternative`'s first only) and the parts (our JPEGs
+  `AVAILABLE` with their size, `NOT_SHOWN` with pictures off, `FAILED` for an undecodable picture, other types `FAILED`
+  with their cleaned mime - their bytes never kept) and `MessageUpdated` with the parts. The MMSC gets its
+  m-acknowledge-ind (through `sendMultimediaMessage`, AM's `MmsSender`). A push the rules can't judge stays in
+  `pending_push` (D15) and is judged at the next rule change. A repeated push is known by its (transaction id,
+  location) hash in `received_key` (QA L5).
+- **Held pushes (D16):** a stranger's push is held unfetched (`held.push`, the number pool and caps); at an allow,
+  `releasePass` puts it back into `pending_push` with its first receipt (`held_id`), and `judgePush` runs every D10
+  check again before anything is fetched (`MmsEngineTest`: a released push whose host is no longer the SIM's is blocked).
+- **The group rule (D12, `MmsGate.group`):** the own numbers are the parent's per slot, else the SIM's
+  (`MmsGate.ownNumbers`); with none, a message to more than one address is blocked as `group` (one recipient is us).
+  Every other address must be a contact with a text switch, and the sender must be let in by rule 5 (not the callback
+  window). An accepted group's message moves to the group's conversation (keyed by its sorted participants;
+  `MessageDeleted` from the sender's, `MessageAdded` in the group's). A reply goes to the stored participants as one
+  MMS, only when the gate lets every one of them be texted (`ComposeState.GROUP_NOT_ALLOWED`: "Du kan bare svare når
+  alle i samtalen er i telefonboka di"); a picture to a group needs every one's `mms`. In a group each received bubble
+  names its writer; the notification is a group `MessagingStyle`.
+- **D14:** the platform's "no MMS data"/"no data network"/"can't reach the MMS network" (and a throw) is `WAITING_DATA`
+  ("Bilde venter - trenger mobildata"), tried again at each sync, at start, and when mobile data comes back (the public
+  `UserMobileDataStateListener` and `DataConnectionStateListener` stand in for the design's `DataEnabledListener`, a
+  system API); after five tries `FAILED` with "Bildet kunne ikke hentes - trykk for å prøve igjen" (the message's
+  `failure` = `mms_retry`; the tap is `engine.mms.retryDownload`). A 404/410 or "message not found" is `GONE` ("Bildet
+  er ikke lenger tilgjengelig", a new `PartState`). A download the platform never answered is given up after 15
+  minutes. `sms_state.mms_waiting` counts the waiting ones; `mms_data_allowed` stays mobile data on (the per-SIM
+  "MMS-meldinger" setting can't be read by an app - step 0).
+- **`MmsFileProvider` (D10, QA L3):** `${applicationId}.mms`, not exported, `grantUriPermissions`. `in/<message id>` is
+  write-only: a pipe whose reader thread stops at the request's cap (deleting the file) and renames the finished file;
+  `out/<token>` is read-only (a send-req or an answer). The telephony broker grants the URI for the request; the result
+  revokes it. Downloads and sends a process death left behind go after a day.
+- **Pictures in the store (§6.4, `FilePartFiles`):** `files/sms/pictures/<sha256>` - every file our own JPEG, named by
+  its hash, written to a temporary name and renamed; a name that isn't 64 hex is never opened. `openPart`/
+  `openPartByHash` hand out only an `AVAILABLE` part's file. A delete (D18) or a dropped message deletes the files no
+  part holds any more; an unsent pick goes after a day (`prune`).
+- **Sending a picture (D11):** the compose bar's "+" (left of the field, the approved mockup; a tonal disc, quieter
+  than the peach send) shows only while the bar is open and every recipient is a contact with `mms` and `sms_out`
+  (`picturesAllowed`). With a usable camera it asks "Ta bilde" / "Velg bilde" in the screen (like the delete confirm),
+  else it opens the photo picker at once. `PicturePick` is the one file that may name `ACTION_PICK_IMAGES` and
+  `ACTION_IMAGE_CAPTURE` (`KidScreensEscapeTest`). **The camera is the camera app the parent allows**, not an in-app
+  capture: `ACTION_IMAGE_CAPTURE` sent to a handler that is usable now (installed, not suspended, on the allowlist -
+  `ContactSheet.usablePackages`, system first), writing one file of ours through the share provider's `capture/` path -
+  no new dependency, no camera code in the Device Owner's process, and the parent's choices hold (an app they didn't
+  allow isn't offered; design 68's camera switch stops it). The picked file's bytes (at most 30 MB) go to the isolated
+  process (`DECODE_IMAGE`, at most 1,280 px), its pixels come back, and `PictureEncoder.forSending` encodes our JPEG
+  under the limit (the carrier's maximum less room, never above 200 KB - FM #815; the quality steps down, then the
+  size); `engine.putPicture` keeps it by hash and the preview shows above the field with a cross. `send` checks D11
+  again (every recipient's `mms`, the picture held by the engine, the carrier's maximum) and stores an OUT message
+  with its parts; the outbox (`drainMms`) gates every recipient again, composes the m-send-req with the vendored
+  `PduComposer` from our files and hands it to `sendMultimediaMessage`; the result's m-send-conf is read in the isolated
+  parse (a refusal there is `FAILED`).
+- **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
+  `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
+  one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory (`MmsDebug`; the release twin has none).
+  `docs/testing/emulator.md` §6v, step 3b.
+- **Left for step 0 (the real phone):** the MMSC host table (`server/src/mmsc_hosts.rs`, empty: every MMS fails closed
+  until then; `tests::the_table_is_well_formed` checks a new row's shape), each carrier's `From` and `X-Mms-Expiry`,
+  the MMS maximum, whether the acknowledgement needs the content location as its URL (`MMS_CONFIG_NOTIFY_WAP_MMSC_ENABLED`),
+  a real round trip, HEIF/AVIF in the isolated process, the "MMS-meldinger" toggle, and the "Del" checks
+  (`docs/review/qa-sms-screens.md`, "Step 3b").

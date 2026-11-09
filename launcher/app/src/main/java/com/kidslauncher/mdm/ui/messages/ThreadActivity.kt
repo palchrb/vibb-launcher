@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.lifecycleScope
@@ -47,6 +48,7 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.ZoneId
+import java.io.File
 import java.util.UUID
 
 /**
@@ -84,6 +86,24 @@ class ThreadActivity : UIObjectActivity() {
     /** The message whose delete confirm is up. */
     private var selected: String? = null
 
+    /** D11: the picture picked for this draft (our own JPEG, held by the engine), and whether one is being made ready. */
+    private var picture: PicturePick.Prepared? = null
+    private var preparing = false
+
+    /** The camera's output file while the camera is open (kept across a rebuild: a cache path, nothing more). */
+    private var captureFile: java.io.File? = null
+
+    private val pickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = result.data?.data
+        if (result.resultCode == RESULT_OK && uri != null) usePicture(uri, null)
+    }
+
+    private val captureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val file = captureFile
+        captureFile = null
+        if (result.resultCode == RESULT_OK && file != null && file.length() > 0) usePicture(android.net.Uri.fromFile(file), file) else file?.delete()
+    }
+
     /** Failed messages whose "Prøv igjen" was tapped, until the next read shows what became of them (code QA M1: the
      * link answers once; the retry's own id makes a second tap the engine's repeat anyway). */
     private val retrying = mutableSetOf<String>()
@@ -98,7 +118,9 @@ class ThreadActivity : UIObjectActivity() {
     private val lockWatch = LockWatch(this) { if (!MessagesScreens.redirectIfLocked(it)) renderCompose() }
 
     private val back = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() = cancelDelete()
+        override fun handleOnBackPressed() {
+            if (choosing()) hideChoice() else cancelDelete()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,7 +149,16 @@ class ThreadActivity : UIObjectActivity() {
             override fun afterTextChanged(s: Editable?) = renderCounter()
         })
         binding.threadSend.setOnClickListener { send() }
+        binding.threadPicture.setOnClickListener { addPicture() }
+        binding.threadAttachmentRemove.setOnClickListener { removePicture() }
+        captureFile = savedInstanceState?.getString(STATE_CAPTURE)?.let(::File)?.takeIf { it.parentFile?.name == "capture" }
         take(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Only where the camera writes (a cache path): the draft's text and picture stay in memory (code QA N4).
+        captureFile?.let { outState.putString(STATE_CAPTURE, it.path) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -157,8 +188,11 @@ class ThreadActivity : UIObjectActivity() {
         binding.threadField.setText(draft ?: kept?.first.orEmpty())
         // Read once: a draft is never sent again by a recreation.
         intent.removeExtra(EXTRA_DRAFT)
+        picture = conversationId?.let { pictureDrafts[it] } ?: pictureDrafts[draftKeyOf(null, number)]
+        hideChoice()
         renderHeader()
         renderCompose()
+        renderAttachment()
         adapter.submitList(emptyList())
     }
 
@@ -245,6 +279,7 @@ class ThreadActivity : UIObjectActivity() {
         if (found != null) {
             if (conversationId != found.id.value) {
                 drafts.remove(draftKey())?.let { drafts[found.id.value] = it }
+                pictureDrafts.remove(draftKey())?.let { pictureDrafts[found.id.value] = it }
                 conversationId = found.id.value
                 // A rebuild of this screen finds the thread, and its draft, by the id now (verification L8).
                 intent.putExtra(EXTRA_CONVERSATION, found.id.value)
@@ -293,16 +328,134 @@ class ThreadActivity : UIObjectActivity() {
      * redraws the bubbles: "trykk for å prøve igjen" follows it ([retryOffered]). */
     @android.annotation.SuppressLint("NotifyDataSetChanged")
     private fun renderCompose() {
-        val target = conversation?.participants?.let { if (it.size == 1) it.single().address else null } ?: number?.let(::normalised)
+        val targets = targets()
+        val judge = SmsRuntime.judge(this)
         val before = compose
-        compose = composeState(SmsRuntime.judge(this), target)
+        compose = composeState(judge, targets)
         if (before != compose && adapter.itemCount > 0) adapter.notifyDataSetChanged()
-        val confirming = selected != null
+        // D11: the "+" only while every recipient's "Bilder i meldinger" is on; a picture picked before a rule took that
+        // away goes (the engine would refuse it anyway).
+        val pictures = picturesAllowed(judge, targets)
+        if (!pictures && compose == ComposeState.OPEN && picture != null) removePicture()
+        if (!pictures && choosing()) hideChoice()
+        binding.threadPicture.visibility = if (pictures) View.VISIBLE else View.GONE
+        val covered = selected != null || choosing()
         val line = MessagesScreens.composeLine(compose)
-        binding.threadCompose.visibility = if (!confirming && line == null) View.VISIBLE else View.GONE
-        binding.threadLine.visibility = if (!confirming && line != null) View.VISIBLE else View.GONE
+        binding.threadCompose.visibility = if (!covered && line == null) View.VISIBLE else View.GONE
+        binding.threadLine.visibility = if (selected == null && !choosing() && line != null) View.VISIBLE else View.GONE
         if (line != null) binding.threadLine.setText(line)
         renderCounter()
+    }
+
+    /** Whom a send goes to: the conversation's participants (a group's, D12), else the number a new thread is for. */
+    private fun targets(): List<String> =
+        conversation?.participants?.map { it.address }?.takeIf { it.isNotEmpty() } ?: listOfNotNull(number?.let(::normalised))
+
+    // ---- D11: a picture ----
+
+    private fun choiceView(): View = binding.root.findViewById(R.id.messages_picture_choice)
+
+    private fun choosing(): Boolean = ::binding.isInitialized && choiceView().visibility == View.VISIBLE
+
+    /** "+": with a camera the parent allows, "Ta bilde" or "Velg bilde" in the screen; else the photo picker at once. */
+    private fun addPicture() {
+        if (compose != ComposeState.OPEN || preparing) return
+        val camera = PicturePick.cameraPackage(this)
+        if (camera == null) {
+            openPicker()
+            return
+        }
+        val panel = choiceView()
+        panel.findViewById<View>(R.id.messages_picture_camera).setOnClickListener {
+            hideChoice()
+            openCamera(camera)
+        }
+        panel.findViewById<View>(R.id.messages_picture_library).setOnClickListener {
+            hideChoice()
+            openPicker()
+        }
+        panel.findViewById<View>(R.id.messages_picture_cancel).setOnClickListener { hideChoice() }
+        panel.visibility = View.VISIBLE
+        back.isEnabled = true
+        renderCompose()
+        val title = panel.findViewById<View>(R.id.messages_picture_choice_title)
+        title.post { title.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
+    }
+
+    private fun hideChoice() {
+        if (!::binding.isInitialized || !choosing()) return
+        choiceView().visibility = View.GONE
+        back.isEnabled = selected != null
+        renderCompose()
+    }
+
+    private fun openPicker() {
+        try {
+            pickLauncher.launch(PicturePick.pickIntent())
+        } catch (e: android.content.ActivityNotFoundException) {
+            Toast.makeText(this, R.string.messages_picture_not_now, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openCamera(pkg: String) {
+        val (intent, file) = PicturePick.captureIntent(this, pkg)
+        captureFile = file
+        try {
+            captureLauncher.launch(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            captureFile = null
+            file.delete()
+            Toast.makeText(this, R.string.messages_picture_not_now, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** The picked file to a picture the engine holds - off the main and the engine thread ([PicturePick.prepare]). */
+    private fun usePicture(uri: android.net.Uri, file: File?) {
+        val app = applicationContext
+        val key = draftKey()
+        preparing = true
+        renderAttachment()
+        preparer.execute {
+            val (prepared, problem) = try {
+                PicturePick.prepare(app, uri)
+            } finally {
+                file?.delete()
+            }
+            if (prepared != null) pictureDrafts[key] = prepared
+            runOnUiThread {
+                preparing = false
+                if (isDestroyed) return@runOnUiThread
+                if (prepared != null && key == draftKey()) {
+                    picture = prepared
+                } else if (problem != null) {
+                    val words = when (problem) {
+                        PicturePick.Problem.TOO_LARGE -> R.string.messages_picture_too_large
+                        PicturePick.Problem.UNAVAILABLE -> R.string.messages_picture_not_now
+                        PicturePick.Problem.UNREADABLE -> R.string.messages_picture_unusable
+                    }
+                    Toast.makeText(this, words, Toast.LENGTH_LONG).show()
+                }
+                renderAttachment()
+                renderCompose()
+            }
+        }
+    }
+
+    private fun removePicture() {
+        picture = null
+        pictureDrafts.remove(draftKey())
+        renderAttachment()
+    }
+
+    /** The picked picture's place above the field: its preview, or "Gjør klar bildet …". */
+    private fun renderAttachment() {
+        val shown = picture
+        binding.threadAttachment.visibility = if (shown != null || preparing) View.VISIBLE else View.GONE
+        binding.threadAttachmentText.visibility = if (preparing) View.VISIBLE else View.GONE
+        binding.threadAttachmentText.setText(R.string.messages_picture_preparing)
+        binding.threadAttachmentRemove.visibility = if (shown != null && !preparing) View.VISIBLE else View.GONE
+        binding.threadAttachmentImage.setImageBitmap(if (preparing) null else shown?.preview)
+        binding.threadAttachmentImage.contentDescription = if (shown != null) getString(R.string.messages_picture) else null
     }
 
     /** "2 SMS" only past one message (§6.5: 160 GSM-7 or 70 UCS-2 characters). */
@@ -320,7 +473,8 @@ class ThreadActivity : UIObjectActivity() {
      */
     private fun send(again: Boolean = false) {
         val text = binding.threadField.text?.toString()?.trim().orEmpty()
-        if (text.isEmpty() || compose != ComposeState.OPEN) return
+        val sentPicture = picture
+        if ((text.isEmpty() && sentPicture == null) || preparing || compose != ComposeState.OPEN) return
         val app = applicationContext
         val key = draftKey()
         val command = SendCommand(
@@ -328,15 +482,21 @@ class ThreadActivity : UIObjectActivity() {
             conversationId = conversationId?.let(::ConversationId),
             to = if (conversationId == null) number else null,
             body = text,
+            pictures = listOfNotNull(sentPicture?.ref),
             origin = Origin.KID_SCREEN,
         )
         SmsRuntime.ask(this, { SmsRuntime.send(app, command) }) { result ->
             when (result) {
                 is SendResult.Accepted -> {
                     drafts.remove(key)
+                    if (sentPicture != null) pictureDrafts.remove(key)
                     if (isDestroyed) return@ask
                     if (command.clientId == clientId) clientId = UUID.randomUUID().toString()
                     if (binding.threadField.text?.toString()?.trim() == text) binding.threadField.text = null
+                    if (picture === sentPicture) {
+                        picture = null
+                        renderAttachment()
+                    }
                     if (conversationId == null) conversationId = result.message.conversationId.value
                     load()
                 }
@@ -386,6 +546,7 @@ class ThreadActivity : UIObjectActivity() {
     // ---- D18: delete a message ----
 
     private fun askDelete(message: Message) {
+        hideChoice()
         selected = message.id.value
         back.isEnabled = true
         adapter.notifyDataSetChanged()
@@ -402,7 +563,7 @@ class ThreadActivity : UIObjectActivity() {
         if (!::binding.isInitialized) return
         val was = selected
         selected = null
-        back.isEnabled = false
+        back.isEnabled = choosing()
         MessagesScreens.hideConfirm(binding.root.findViewById(R.id.messages_confirm))
         if (was != null) adapter.notifyDataSetChanged()
         renderCompose()
@@ -413,6 +574,7 @@ class ThreadActivity : UIObjectActivity() {
     private inner class BubbleAdapter : ListAdapter<ThreadItem, RecyclerView.ViewHolder>(DIFF) {
         inner class Bubble(view: View) : RecyclerView.ViewHolder(view) {
             val bubble: LinearLayout = view.findViewById(R.id.bubble)
+            val from: TextView = view.findViewById(R.id.bubble_from)
             val unknown: TextView = view.findViewById(R.id.bubble_unknown)
             val parts: LinearLayout = view.findViewById(R.id.bubble_parts)
             val text: TextView = view.findViewById(R.id.bubble_text)
@@ -455,6 +617,11 @@ class ThreadActivity : UIObjectActivity() {
             val maxWidth = (bubbleRoom(context) * 0.8f).toInt()
             holder.text.maxWidth = maxWidth - KidAvatars.dp(context, 28f)
             holder.unknown.visibility = if (m.unknownSender) View.VISIBLE else View.GONE
+            // D12: in a group each received message says who in it wrote it.
+            val groupSender = m.sender?.takeIf { !mine && (conversation?.participants?.size ?: 0) > 1 }
+                ?.let { MessagesScreens.name(context, whoOfAddress(it, MessagesScreens.rules())) }
+            holder.from.visibility = if (groupSender != null) View.VISIBLE else View.GONE
+            holder.from.text = groupSender
             val body = m.body.orEmpty()
             holder.text.visibility = if (body.isEmpty()) View.GONE else View.VISIBLE
             holder.text.text = body
@@ -471,7 +638,7 @@ class ThreadActivity : UIObjectActivity() {
             holder.delivery.isClickable = retry
             holder.delivery.isFocusable = retry
             holder.delivery.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
-            val whoText = if (mine) getString(R.string.messages_you) else MessagesScreens.name(context, who())
+            val whoText = if (mine) getString(R.string.messages_you) else groupSender ?: MessagesScreens.name(context, who())
             holder.bubble.contentDescription = listOfNotNull(
                 getString(R.string.messages_bubble_description, whoText, time),
                 getString(R.string.messages_unknown).takeIf { m.unknownSender },
@@ -494,7 +661,7 @@ class ThreadActivity : UIObjectActivity() {
         private fun bindParts(holder: Bubble, m: Message): String? {
             val context = holder.itemView.context
             holder.parts.removeAllViews()
-            val views = partViews(m.parts)
+            val views = partViews(m.parts, retry = fetchRetryOffered(m) && m.id.value !in retrying)
             holder.parts.visibility = if (views.isEmpty()) View.GONE else View.VISIBLE
             val words = mutableListOf<String>()
             for (view in views) {
@@ -506,12 +673,19 @@ class ThreadActivity : UIObjectActivity() {
                     else -> {
                         val text = getString(partLine(view))
                         words += text
+                        val retry = view is PartView.Failed && view.retry
                         holder.parts.addView(
                             TextView(context).apply {
                                 this.text = text
-                                setTextColor(context.getColor(dimOf(m)))
+                                setTextColor(context.getColor(if (retry) R.color.kid_missed_text else dimOf(m)))
                                 textSize = 14f
                                 typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_semibold)
+                                // D14: after five tries the kid may fetch it again; the tap answers once until the next read.
+                                if (retry) {
+                                    minHeight = KidAvatars.dp(context, 32f)
+                                    gravity = Gravity.CENTER_VERTICAL
+                                    setOnClickListener { retryFetch(m) }
+                                }
                             },
                         )
                     }
@@ -522,9 +696,9 @@ class ThreadActivity : UIObjectActivity() {
 
         private fun pictureView(context: Context, m: Message, part: PartView.Picture): View {
             val width = (bubbleRoom(context) * 0.7f).toInt()
-            val ratio = if (part.width != null && part.height != null && part.width > 0) part.height.toFloat() / part.width else 0.75f
+            val ratio = pictureRatio(part.width, part.height)
             val image = ImageView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(width, (width * ratio.coerceIn(0.4f, 1.6f)).toInt()).apply {
+                layoutParams = LinearLayout.LayoutParams(width, (width * ratio).toInt()).apply {
                     bottomMargin = KidAvatars.dp(context, 6f)
                 }
                 setBackgroundResource(R.drawable.bg_message_picture)
@@ -573,10 +747,24 @@ class ThreadActivity : UIObjectActivity() {
 
     private fun partLine(view: PartView): Int = when (view) {
         PartView.Waiting -> R.string.messages_picture_waiting
+        PartView.WaitingData -> R.string.messages_picture_waiting_data
         PartView.NotShown -> R.string.messages_picture_not_shown
-        PartView.Failed -> R.string.messages_picture_failed
+        is PartView.Failed -> if (view.retry) R.string.messages_picture_retry else R.string.messages_picture_failed
+        PartView.Gone -> R.string.messages_picture_gone
         PartView.Unsupported -> R.string.messages_attachment_unsupported
         is PartView.Picture -> R.string.messages_picture
+    }
+
+    /** D14's "Trykk for å prøve igjen": the fetch starts again (the engine's `retryDownload`, then an MMS pass). */
+    @android.annotation.SuppressLint("NotifyDataSetChanged")
+    private fun retryFetch(m: Message) {
+        if (!retrying.add(m.id.value)) return
+        adapter.notifyDataSetChanged()
+        val app = applicationContext
+        SmsRuntime.ask(this, { engine -> engine.mms.retryDownload(m.id.value) }) { started ->
+            if (started == true) com.kidslauncher.mdm.sms.mms.MmsRuntime.kick(app)
+            load()
+        }
     }
 
     companion object {
@@ -591,6 +779,14 @@ class ThreadActivity : UIObjectActivity() {
 
         /** Unsent drafts by conversation (or number): text and `clientId`, in memory only. */
         private val drafts = HashMap<String, Pair<String, String>>()
+
+        /** D11: the picture picked for a draft, by the same key; in memory only (the JPEG itself is the engine's). */
+        private val pictureDrafts = java.util.concurrent.ConcurrentHashMap<String, PicturePick.Prepared>()
+
+        /** Pictures are made ready here: never on the main thread, never on the engine's (a parse can take seconds). */
+        private val preparer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "sms-picture") }
+
+        private const val STATE_CAPTURE = "capture"
 
         private val DIFF = object : DiffUtil.ItemCallback<ThreadItem>() {
             override fun areItemsTheSame(oldItem: ThreadItem, newItem: ThreadItem): Boolean = when {

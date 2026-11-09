@@ -63,8 +63,8 @@ data class HeldPost(
     val state: String,
 )
 
-/** The counters and the pools for `sms_state` (§7). */
-data class EngineCounts(val counters: Map<String, Long>, val numbersFull: Boolean, val namesFull: Boolean)
+/** The counters and the pools for `sms_state` (§7); [mmsWaiting]: MMS waiting for data (D14). */
+data class EngineCounts(val counters: Map<String, Long>, val numbersFull: Boolean, val namesFull: Boolean, val mmsWaiting: Int = 0)
 
 class SmsEngine(
     private val store: MessageStore,
@@ -73,7 +73,12 @@ class SmsEngine(
     private val judge: () -> SmsJudge,
     private val radio: SmsRadio,
     private val ids: IdSource = RandomIds,
+    mmsRadio: MmsRadio = MmsRadio.None,
+    files: PartFiles = PartFiles.None,
 ) : MessageEngine {
+    /** Step 3b: the MMS half (§6.4, D10-D12, D14) over the same store, events and conversations. */
+    val mms = MmsFlow(this, store, clock, judge, ids, mmsRadio, files)
+
     /**
      * The live events: a "something changed" signal for the front ends on the phone, never the record (that is
      * [events]'s replayable log). A burst larger than the buffer - a long conversation deleted, a rule change over many
@@ -110,7 +115,7 @@ class SmsEngine(
     }
 
     /** Inside a transaction: the conversation found or made, the message and its `MessageAdded`. */
-    private fun show(sms: IncomingSms, clean: CleanSender, verdict: IncomingVerdict.Allow, at: Long, origin: Origin = Origin.ENGINE): Received.Shown {
+    internal fun show(sms: IncomingSms, clean: CleanSender, verdict: IncomingVerdict.Allow, at: Long, origin: Origin = Origin.ENGINE): Received.Shown {
         // A sender without a usable address reaches here only unfiltered (QA L3): its own conversation, never a number's.
         val address = addressOf(clean).ifEmpty { UNKNOWN_PREFIX + com.kidslauncher.mdm.day.TitleRules.clean(sms.address, 20) }
         val conversation = conversationFor(address, verdict.contact?.id, verdict.contact?.name ?: nameOf(clean), sms.subId)
@@ -171,7 +176,7 @@ class SmsEngine(
 
     /** A blocked row (kind, class, sender, time - never a body) and its count; past [HoldPolicy.BLOCKED_MAX] rows
      * only the count. */
-    private fun block(at: Long, kind: String, clean: CleanSender, reason: String): BlockedRow? {
+    internal fun block(at: Long, kind: String, clean: CleanSender, reason: String): BlockedRow? {
         store.addCounter(if (reason == REASON_OVER_CAP) "$COUNT_BLOCKED.$REASON_OVER_CAP" else "$COUNT_BLOCKED.${clean.senderClass.wire}")
         if (store.blockedRows().size >= HoldPolicy.BLOCKED_MAX) return null
         val row = BlockedRow(ids.hex(), at, kind, clean.senderClass, clean.sender, reason, reported = false)
@@ -186,7 +191,7 @@ class SmsEngine(
 
     /** The one-to-one conversation of [address], made if new; a known one takes the newest SIM and the contact's
      * current name (a removed contact's conversation keeps the name it had, D18). */
-    private fun conversationFor(address: String, contactId: Long?, name: String?, subId: Int?): ConversationRow {
+    internal fun conversationFor(address: String, contactId: Long?, name: String?, subId: Int?): ConversationRow {
         val existing = store.conversationByKey(address)
         if (existing != null) {
             val updated = existing.copy(
@@ -202,6 +207,27 @@ class SmsEngine(
             participants = listOf(Participant(address, contactId)), canSend = false,
         )
         val made = row.copy(canSend = canSend(row, judge()))
+        store.putConversation(made)
+        return made
+    }
+
+    /** D12: a group's conversation, keyed by its sorted participant set (normalised numbers), made if new; each
+     * participant's contact as of now. */
+    internal fun groupConversationFor(addresses: List<String>, subId: Int?): ConversationRow {
+        val sorted = addresses.distinct().sorted()
+        val key = MmsGate.groupKey(sorted)
+        val judge = judge()
+        val participants = sorted.map { a -> Participant(a, judge.rules?.contacts?.firstOrNull { it.number == a }?.id) }
+        val existing = store.conversationByKey(key)
+        if (existing != null) {
+            val updated = existing.copy(subId = subId ?: existing.subId, participants = participants)
+            if (updated != existing) store.putConversation(updated)
+            return updated
+        }
+        val row = ConversationRow(
+            id = ids.ulid(clock()), key = key, displayName = null, subId = subId, createdAt = clock(), participants = participants, canSend = false,
+        )
+        val made = row.copy(canSend = canSend(row, judge))
         store.putConversation(made)
         return made
     }
@@ -258,6 +284,16 @@ class SmsEngine(
         expire()
         val released = mutableListOf<Received.Shown>()
         val judge = judge()
+        for (row in store.heldRows().filter { it.state == HeldState.HELD && it.mms }.sortedBy { it.at }) {
+            if (!SmsRules.releases(row.kind, row.sender, judge)) continue
+            // A held MMS push (D16): back to the pushes with its first receipt, judged again there (MmsFlow.judgePush) -
+            // every D10 check (From, the SIM's MMS server, the size) runs again before anything is fetched.
+            store.transaction {
+                store.insertPendingPush(PendingPushRow(ids.hex(), row.push ?: ByteArray(0), row.subId, row.at, heldId = row.id))
+                store.updateHeld(row.copy(state = HeldState.RELEASED, body = null, push = null, reported = false))
+                store.addCounter(COUNT_RELEASED)
+            }
+        }
         for (row in store.heldRows().filter { it.state == HeldState.HELD && !it.mms }.sortedBy { it.at }) {
             if (!SmsRules.releases(row.kind, row.sender, judge)) continue
             val shown = store.transaction {
@@ -326,9 +362,10 @@ class SmsEngine(
             store.blockedRows().filter { now - it.at > HoldPolicy.BLOCKED_KEEP_MS }.forEach { store.deleteBlocked(it.id) }
             store.pruneEvents(now - EVENT_KEEP_MS)
             store.pruneReceived(now - RECEIVED_KEEP_MS)
-            // QA L4: nothing parses the pushes before step 3b; they don't wait for it longer than a week.
+            // QA L4: a push the rules couldn't judge yet (D15) waits at most a week.
             store.prunePendingPush(now - PUSH_KEEP_MS)
         }
+        mms.prune()
     }
 
     /**
@@ -352,7 +389,7 @@ class SmsEngine(
 
     fun counts(): EngineCounts {
         val (numbers, names) = HoldPolicy.full(store.heldRows().filter { it.state == HeldState.HELD })
-        return EngineCounts(store.counters(), numbers, names)
+        return EngineCounts(store.counters(), numbers, names, mms.waiting())
     }
 
     // ---- Send (D5), the outbox and delivery ----
@@ -362,46 +399,70 @@ class SmsEngine(
         if (command.body.isBlank() && command.pictures.isEmpty()) return SendResult.Refused(Refusal.EMPTY)
         if (command.body.length > SEND_MAX) return SendResult.Refused(Refusal.TOO_LARGE)
         val judge = judge()
-        val target = targetOf(command) ?: return SendResult.Refused(Refusal.NOT_ALLOWED)
-        val verdict = SmsRules.decideSend(target, judge)
-        if (verdict is SmsRules.SendVerdict.Refused) return SendResult.Refused(verdict.reason)
-        verdict as SmsRules.SendVerdict.Allow
+        val targets = targetsOf(command) ?: return SendResult.Refused(Refusal.NOT_ALLOWED)
+        // D5 for every recipient: one refusal refuses the whole message (D12: a group reply only when everyone in it may
+        // be texted).
+        val allows = targets.map { target ->
+            when (val verdict = SmsRules.decideSend(target, judge)) {
+                is SmsRules.SendVerdict.Refused -> return SendResult.Refused(verdict.reason)
+                is SmsRules.SendVerdict.Allow -> verdict
+            }
+        }
+        if (command.pictures.isNotEmpty()) {
+            // D11: a picture only when every recipient is a contact with "Bilder i meldinger" on, only our own re-encoded
+            // JPEGs the engine holds, within the carrier's maximum.
+            if (command.pictures.size > SEND_PICTURES_MAX || allows.any { it.contact?.mms != true }) return SendResult.Refused(Refusal.NOT_ALLOWED)
+            val sizes = command.pictures.map { mms.pictureSize(it) ?: return SendResult.Refused(Refusal.NOT_ALLOWED) }
+            val cap = com.kidslauncher.mdm.sms.mms.MmsCodec.capOf(judge.carrier(null).maxMessageBytes)
+            if (sizes.sum() + command.body.length * 4L + MMS_OVERHEAD > cap) return SendResult.Refused(Refusal.TOO_LARGE)
+        }
+        val isMms = command.pictures.isNotEmpty() || targets.size > 1
+        val parts = if (isMms) mms.outgoingParts(command.pictures) else emptyList()
+        val single = allows.singleOrNull()
         val inserted = store.transaction {
             val existing = command.conversationId?.let { store.conversation(it.value) }
-            val conversation = existing ?: conversationFor(verdict.number, verdict.contact?.id, verdict.contact?.name, null)
+            val conversation = existing ?: conversationFor(single!!.number, single.contact?.id, single.contact?.name, null)
             val seq = store.nextSeq()
             val row = MessageRow(
                 id = ids.ulid(clock()), conversationId = conversation.id, seq = seq, direction = Direction.OUT,
-                sender = verdict.number, senderKind = SenderKind.NUMBER, unknownSender = false, at = clock(), sentAt = null,
+                sender = single?.number, senderKind = SenderKind.NUMBER, unknownSender = false, at = clock(), sentAt = null,
                 body = command.body, delivery = Delivery.QUEUED, failure = null, read = true, clientId = command.clientId,
-                origin = command.origin, verdict = MessageVerdict.SHOWN, subId = conversation.subId,
+                origin = command.origin, verdict = MessageVerdict.SHOWN, subId = conversation.subId, mms = isMms,
             )
             val result = store.insertOutgoing(row)
             if (result is InsertOutgoing.Inserted) {
+                if (parts.isNotEmpty()) store.putParts(row.id, parts)
                 store.insertEvent(EventRow(seq, EventType.MESSAGE_ADDED, row.id, conversation.id, command.origin, null, clock()))
             }
             result
         }
         return when (inserted) {
             is InsertOutgoing.Inserted -> {
-                emit(EngineEvent.MessageAdded(inserted.m.seq, inserted.m.toMessage()))
-                SendResult.Accepted(inserted.m.toMessage())
+                val message = inserted.m.toMessage(parts)
+                emit(EngineEvent.MessageAdded(inserted.m.seq, message))
+                SendResult.Accepted(message)
             }
             is InsertOutgoing.Existing -> repeated(inserted.m, command)
         }
     }
 
-    /** A repeated `clientId` (QA M5): the same body is the same message, sent once; another body is refused. */
-    private fun repeated(row: MessageRow, command: SendCommand): SendResult =
-        if (row.body == command.body) SendResult.Accepted(row.toMessage()) else SendResult.Refused(Refusal.DUPLICATE_CLIENT_ID)
+    /** A repeated `clientId` (QA M5): the same body and pictures are the same message, sent once; anything else is
+     * refused. */
+    private fun repeated(row: MessageRow, command: SendCommand): SendResult {
+        val parts = partsOf(row)
+        val same = row.body == command.body && parts.mapNotNull { it.sha256 } == command.pictures.map { it.sha256 }
+        return if (same) SendResult.Accepted(row.toMessage(parts)) else SendResult.Refused(Refusal.DUPLICATE_CLIENT_ID)
+    }
 
-    /** The number a send goes to: the conversation's one participant (a name can't be texted, D17; a group reply is
-     * step 3b's), else the raw [SendCommand.to]. */
-    private fun targetOf(command: SendCommand): String? {
-        val id = command.conversationId ?: return command.to
+    /** The numbers a send goes to: the conversation's participants - a group's reply goes to the stored participants,
+     * never re-derived from the last message (D12; FM #595, #709, #744); a name or an unknown sender can't be texted
+     * (D17) - else the raw [SendCommand.to]. */
+    private fun targetsOf(command: SendCommand): List<String>? {
+        val id = command.conversationId ?: return command.to?.let(::listOf)
         val conversation = store.conversation(id.value) ?: return null
-        val only = conversation.participants.singleOrNull() ?: return null
-        return only.address.takeUnless { it.startsWith(NAME_PREFIX) }
+        val addresses = conversation.participants.map { it.address }
+        if (addresses.isEmpty() || addresses.size > com.kidslauncher.mdm.sms.mms.MmsCodec.MAX_RECIPIENTS) return null
+        return addresses.takeUnless { list -> list.any { it.startsWith(NAME_PREFIX) || it.startsWith(UNKNOWN_PREFIX) } }
     }
 
     /**
@@ -411,6 +472,10 @@ class SmsEngine(
      */
     fun drainOutbox() {
         for (row in store.messagesInDelivery(setOf(Delivery.QUEUED)).sortedBy { it.seq }) {
+            if (row.mms) {
+                drainMms(row)
+                continue
+            }
             val verdict = SmsRules.decideSend(row.sender, judge())
             if (verdict is SmsRules.SendVerdict.Refused) {
                 setDelivery(row, Delivery.FAILED, "refused:${verdict.reason.name.lowercase()}")
@@ -423,6 +488,54 @@ class SmsEngine(
             } catch (e: Exception) {
                 setDelivery(sending, Delivery.FAILED, "radio:${e.javaClass.simpleName}")
             }
+        }
+    }
+
+    /** An MMS from the outbox (D11, D12): every recipient through the gate again, a picture's "Bilder i meldinger"
+     * again, composed from our own files, `SENDING` committed before the platform has it. A refusal or a throw is
+     * `FAILED`. */
+    private fun drainMms(row: MessageRow) {
+        val judge = judge()
+        val conversation = row.conversationId?.let { store.conversation(it) }
+        val recipients = conversation?.participants?.map { it.address }?.takeIf { it.size > 1 } ?: listOfNotNull(row.sender)
+        val pictures = partsOf(row).any { it.sha256 != null }
+        for (recipient in recipients.ifEmpty { listOf("") }) {
+            when (val verdict = SmsRules.decideSend(recipient, judge)) {
+                is SmsRules.SendVerdict.Refused -> {
+                    setDelivery(row, Delivery.FAILED, "refused:${verdict.reason.name.lowercase()}")
+                    return
+                }
+                is SmsRules.SendVerdict.Allow -> if (pictures && verdict.contact?.mms != true) {
+                    setDelivery(row, Delivery.FAILED, "refused:${Refusal.NOT_ALLOWED.name.lowercase()}")
+                    return
+                }
+            }
+        }
+        val (pdu, failure) = mms.compose(row, recipients)
+        if (pdu == null) {
+            setDelivery(row, Delivery.FAILED, failure)
+            return
+        }
+        val sending = setDelivery(row, Delivery.SENDING, null, sendingAt = clock()) ?: return
+        try {
+            mms.sendPdu(row, pdu)
+        } catch (e: Exception) {
+            setDelivery(sending, Delivery.FAILED, "radio:${e.javaClass.simpleName}")
+        }
+    }
+
+    /** An MMS send's result from the platform (with the MMSC's m-send-conf read in the isolated parse): `SENT`, or
+     * `FAILED` with its code. A late result after `UNCERTAIN` still applies. */
+    fun onMmsSent(messageId: String, ok: Boolean, code: String?) {
+        val row = store.message(messageId) ?: return
+        if (row.direction != Direction.OUT || !row.mms || row.delivery !in setOf(Delivery.SENDING, Delivery.UNCERTAIN)) return
+        if (ok) {
+            store.transaction {
+                store.addCounter(COUNT_SENT)
+                setDelivery(row, Delivery.SENT, null)
+            }
+        } else {
+            setDelivery(row, Delivery.FAILED, "mms:${code ?: "error"}")
         }
     }
 
@@ -466,7 +579,7 @@ class SmsEngine(
     }
 
     /** Writes a new delivery state and its `MessageUpdated` in one transaction; `null` if the row is gone. */
-    private fun setDelivery(row: MessageRow, delivery: Delivery, failure: String?, sendingAt: Long? = row.sendingAt): MessageRow? {
+    internal fun setDelivery(row: MessageRow, delivery: Delivery, failure: String?, sendingAt: Long? = row.sendingAt): MessageRow? {
         val updated = store.transaction {
             val current = store.message(row.id) ?: return@transaction null
             val next = current.copy(
@@ -478,7 +591,7 @@ class SmsEngine(
             store.insertEvent(EventRow(seq, EventType.MESSAGE_UPDATED, row.id, row.conversationId, Origin.ENGINE, null, clock()))
             next to seq
         } ?: return null
-        emit(EngineEvent.MessageUpdated(updated.second, MessageId(row.id), delivery, emptyList()))
+        emit(EngineEvent.MessageUpdated(updated.second, MessageId(row.id), delivery, partsOf(updated.first)))
         return updated.first
     }
 
@@ -511,7 +624,7 @@ class SmsEngine(
     }
 
     /** D5/D12 as of now: every participant a number the gate lets the kid text (a name never). */
-    private fun canSend(row: ConversationRow, judge: SmsJudge): Boolean =
+    internal fun canSend(row: ConversationRow, judge: SmsJudge): Boolean =
         row.participants.isNotEmpty() && row.participants.all {
             !it.address.startsWith(NAME_PREFIX) && SmsRules.decideSend(it.address, judge) is SmsRules.SendVerdict.Allow
         }
@@ -539,12 +652,15 @@ class SmsEngine(
     }
 
     override fun messages(id: ConversationId, beforeSeq: Long?, limit: Int): List<Message> =
-        store.messages(id.value, beforeSeq, limit).map { it.toMessage() }
+        store.messages(id.value, beforeSeq, limit).map { it.toMessage(partsOf(it)) }
+
+    /** A message's parts (§6.6): an SMS has none, so only an MMS asks the store. */
+    internal fun partsOf(row: MessageRow): List<Part> = if (row.mms) store.parts(row.id) else emptyList()
 
     override fun events(afterSeq: Long): List<EngineEvent> = store.events(afterSeq, EVENTS_PAGE).mapNotNull { e ->
         when (e.type) {
-            EventType.MESSAGE_ADDED -> e.messageId?.let(store::message)?.let { EngineEvent.MessageAdded(e.seq, it.toMessage()) }
-            EventType.MESSAGE_UPDATED -> e.messageId?.let(store::message)?.let { EngineEvent.MessageUpdated(e.seq, MessageId(it.id), it.delivery, emptyList()) }
+            EventType.MESSAGE_ADDED -> e.messageId?.let(store::message)?.let { EngineEvent.MessageAdded(e.seq, it.toMessage(partsOf(it))) }
+            EventType.MESSAGE_UPDATED -> e.messageId?.let(store::message)?.let { EngineEvent.MessageUpdated(e.seq, MessageId(it.id), it.delivery, partsOf(it)) }
             EventType.READ -> EngineEvent.Read(e.seq, ConversationId(e.conversationId.orEmpty()), e.upToSeq ?: 0, e.origin)
             EventType.CONVERSATION_CHANGED -> EngineEvent.ConversationChanged(e.seq, ConversationId(e.conversationId.orEmpty()))
             EventType.MESSAGE_DELETED -> EngineEvent.MessageDeleted(e.seq, MessageId(e.messageId.orEmpty()), e.origin)
@@ -564,12 +680,16 @@ class SmsEngine(
     }
 
     override fun delete(id: MessageId, origin: Origin) {
+        var pictures = emptyList<String>()
         val seq = store.transaction {
-            store.message(id.value)?.takeIf { it.verdict == MessageVerdict.SHOWN } ?: return@transaction null
+            val row = store.message(id.value)?.takeIf { it.verdict == MessageVerdict.SHOWN } ?: return@transaction null
+            pictures = partsOf(row).mapNotNull { it.sha256 }
             store.deleteMessageRow(id.value)
             store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_DELETED, id.value, null, origin, null, clock())) }
         } ?: return
         store.afterDeletes()
+        // D18: a picture file no message holds any more goes with it.
+        mms.dropUnheld(pictures)
         emit(EngineEvent.MessageDeleted(seq, id, origin))
     }
 
@@ -578,11 +698,21 @@ class SmsEngine(
         store.transaction { store.deleteConversationRow(id.value) }
     }
 
-    override fun openPart(messageId: MessageId, index: Int): java.io.InputStream? = null
+    /** Only an available picture of a shown message - by construction the main process's own JPEG (D8): nothing else
+     * is ever in the picture files. */
+    override fun openPart(messageId: MessageId, index: Int): java.io.InputStream? {
+        val row = store.message(messageId.value)?.takeIf { it.verdict == MessageVerdict.SHOWN && it.mms } ?: return null
+        val part = store.parts(row.id).firstOrNull { it.index == index && it.state == PartState.AVAILABLE } ?: return null
+        return part.sha256?.let(mms::open)
+    }
 
-    override fun openPartByHash(sha256: String): java.io.InputStream? = null
+    override fun openPartByHash(sha256: String): java.io.InputStream? =
+        if (sha256 in store.partHashes()) mms.open(sha256) else null
 
-    private fun emit(event: EngineEvent) {
+    /** D11: a picture the kid picked, re-encoded by the main process (our own JPEG, no EXIF), held for a send. */
+    fun putPicture(jpeg: ByteArray, width: Int, height: Int): PictureRef = mms.putPicture(jpeg, width, height)
+
+    internal fun emit(event: EngineEvent) {
         events.tryEmit(event)
     }
 
@@ -623,6 +753,12 @@ class SmsEngine(
 
         /** A text longer than this (about ten UCS-2 parts, twenty GSM-7) is refused, never auto-converted to MMS. */
         const val SEND_MAX = 1600
+
+        /** D11: pictures in one message the kid sends. */
+        const val SEND_PICTURES_MAX = 1
+
+        /** An m-send-req's headers and SMIL around its parts, kept free under the carrier's maximum. */
+        const val MMS_OVERHEAD = 2048L
 
         // Step 0 check: Norwegian operators don't bill delivery reports (design 77 §6.2). Until then they are requested.
         const val REQUEST_DELIVERY_REPORTS = true

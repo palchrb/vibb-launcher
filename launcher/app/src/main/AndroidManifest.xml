@@ -562,6 +562,24 @@
         <receiver
             android:name=".sms.SmsSentReceiver"
             android:exported="false" />
+        <!-- Design 77 step 3b. The platform's MMS download and send results - our own PendingIntents only. -->
+        <receiver
+            android:name=".sms.mms.MmsResultReceiver"
+            android:exported="false" />
+        <!-- D10, QA L3: where the platform's MMS service writes a download (a byte-capped pipe) and reads a send - not
+             exported; one URI per request, granted for it by the telephony broker and revoked on its result. -->
+        <provider
+            android:name=".sms.mms.MmsFileProvider"
+            android:authorities="${applicationId}.mms"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <!-- D8, §8.2: MMS bytes are parsed, and pictures decoded, only here - an isolated process with no permissions, no
+             network, no provider and none of our files, handing back strings and raw pixels (MmsParseManifestTest). -->
+        <service
+            android:name=".sms.parse.MmsParseService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":mmsparse" />
         <receiver
             android:name=".sms.SmsReplyReceiver"
             android:exported="false" />

@@ -59,6 +59,34 @@ enum class ComposeState {
 
     /** "Styrt av Vibb" but the rules can't be read or the role isn't ours yet: nothing can be sent right now. */
     UNAVAILABLE,
+
+    /** A group with someone the kid may not text (D12): "Du kan bare svare når alle i samtalen er i telefonboka di". */
+    GROUP_NOT_ALLOWED,
+}
+
+/**
+ * The compose bar for a conversation with [targets] - its participants' addresses (a group has more than one, D12).
+ * One participant is [composeState]'s; a group may be answered only when the gate lets every one of them be texted.
+ */
+fun composeState(judge: SmsJudge, targets: List<String>): ComposeState {
+    if (targets.size <= 1) return composeState(judge, targets.singleOrNull())
+    val each = targets.map { composeState(judge, it) }
+    return when {
+        each.all { it == ComposeState.OPEN } -> ComposeState.OPEN
+        // The channel's or the time rule's answer is the same for all; only the people differ.
+        each.any { it == ComposeState.NOT_ALLOWED } -> ComposeState.GROUP_NOT_ALLOWED
+        else -> each.first { it != ComposeState.OPEN }
+    }
+}
+
+/**
+ * D11: the compose bar's "+" (a picture) - only while the bar is open and every recipient is a contact with "Bilder i
+ * meldinger" on. The engine's `send` checks the same again; this only shows its answer.
+ */
+fun picturesAllowed(judge: SmsJudge, targets: List<String>): Boolean {
+    if (targets.isEmpty() || composeState(judge, targets) != ComposeState.OPEN) return false
+    val contacts = judge.rules?.contacts.orEmpty()
+    return targets.all { target -> contacts.any { it.number == target && it.mms && it.smsOut } }
 }
 
 /**
@@ -163,11 +191,19 @@ sealed interface Who {
 
     /** No usable sender (QA L3's `unknown:` conversation). */
     data object Unknown : Who
+
+    /** A group (D12): each participant as the kid reads them, in the conversation's order. */
+    data class Group(val members: List<Who>) : Who
 }
 
+/** One address as the kid reads it: the contact's name now, else the number (a group's member, a bubble's sender). */
+fun whoOfAddress(address: String, rules: CallRules?): Who =
+    rules?.contacts?.firstOrNull { it.number == address }?.name?.takeIf { it.isNotBlank() }?.let { Who.Name(it) } ?: Who.Number(address)
+
 /** [conversation]'s name: the policy contact's current name, else the stored one (a removed contact keeps it, D18),
- * else the sender name or the number. */
+ * else the sender name or the number; a group lists its members. */
 fun whoOf(conversation: Conversation, rules: CallRules?): Who {
+    if (conversation.participants.size > 1) return Who.Group(conversation.participants.map { whoOfAddress(it.address, rules) })
     val one = conversation.participants.singleOrNull()
     val contact = contactOf(conversation, rules)
     contact?.name?.takeIf { it.isNotBlank() }?.let { return Who.Name(it) }
@@ -318,34 +354,54 @@ fun threadItems(messages: List<Message>, now: Long, zone: ZoneId): List<ThreadIt
     return items
 }
 
-/** How a part shows in its bubble (§6.7, D11; the parts come with step 3b - an SMS has none). */
+/** How a part shows in its bubble (§6.7, D11, D14; an SMS has none). */
 sealed interface PartView {
-    /** Our own JPEG, ready: a rounded thumbnail, a tap opens it. */
+    /** Our own JPEG, ready: a rounded thumbnail (its shape from [width] and [height]), a tap opens it. */
     data class Picture(val index: Int, val sha256: String?, val width: Int?, val height: Int?) : PartView
 
-    /** Not fetched yet (or waiting for mobile data, D14). */
+    /** Not fetched yet: "Et bilde er på vei". */
     data object Waiting : PartView
+
+    /** D14: waiting for MMS data - "Bilde venter - trenger mobildata". */
+    data object WaitingData : PartView
 
     /** Pictures are off with this contact: "Et bilde ble ikke vist". */
     data object NotShown : PartView
 
-    /** Couldn't be fetched or decoded, or too large. */
-    data object Failed : PartView
+    /** Couldn't be fetched or decoded, or too large: "Bildet kunne ikke hentes" - with [retry] (D14: five tries ran out)
+     * "- trykk for å prøve igjen", and a tap fetches it again. */
+    data class Failed(val retry: Boolean = false) : PartView
+
+    /** The carrier's server no longer has it (D16): "Bildet er ikke lenger tilgjengelig". */
+    data object Gone : PartView
 
     /** Video, audio, anything else: "Vedlegg som ikke kan vises"; its bytes aren't kept. */
     data object Unsupported : PartView
 }
 
-fun partViews(parts: List<Part>): List<PartView> = parts.sortedBy { it.index }.mapNotNull { part ->
+/** [retry]: the message's fetch offers the kid's tap ([MmsFlow.FAILURE_RETRY] on the message). */
+fun partViews(parts: List<Part>, retry: Boolean = false): List<PartView> = parts.sortedBy { it.index }.mapNotNull { part ->
     when {
         part.mime == "text/plain" -> null
         part.state == PartState.NOT_SHOWN -> PartView.NotShown
         !part.mime.startsWith("image/") -> PartView.Unsupported
         part.state == PartState.AVAILABLE -> PartView.Picture(part.index, part.sha256, part.width, part.height)
-        part.state == PartState.PENDING || part.state == PartState.WAITING_DATA -> PartView.Waiting
-        else -> PartView.Failed
+        part.state == PartState.PENDING -> PartView.Waiting
+        part.state == PartState.WAITING_DATA -> PartView.WaitingData
+        part.state == PartState.GONE -> PartView.Gone
+        part.state == PartState.FAILED -> PartView.Failed(retry)
+        else -> PartView.Failed()
     }
 }
+
+/** Whether a message's failed fetch offers "Trykk for å prøve igjen" (D14). */
+fun fetchRetryOffered(message: Message): Boolean =
+    message.direction == Direction.IN && message.failure == com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_RETRY
+
+/** A picture's thumbnail shape (height over width) from its stored size, kept between a wide and a tall bound; 3:4
+ * when the size isn't known. */
+fun pictureRatio(width: Int?, height: Int?): Float =
+    if (width != null && height != null && width > 0 && height > 0) (height.toFloat() / width).coerceIn(0.4f, 1.6f) else 0.75f
 
 /** An unsent draft's key: the conversation's id, else the number a new thread is for. */
 fun draftKeyOf(conversationId: String?, number: String?): String = conversationId ?: "number:${number.orEmpty()}"

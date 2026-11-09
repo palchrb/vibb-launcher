@@ -49,8 +49,11 @@ data class MessageRow(
     val partsSent: Long = 0,
     /** OUT: when it was handed to the platform ([Delivery.SENDING]). */
     val sendingAt: Long? = null,
+    /** An MMS (step 3b): IN, its fetch is in the `mms` table; OUT, it goes as an m-send-req (a picture, or a group). */
+    val mms: Boolean = false,
 ) {
-    fun toMessage(): Message = Message(
+    /** The seam's message, with its [parts] from the `part` table (empty for SMS). */
+    fun toMessage(parts: List<Part> = emptyList()): Message = Message(
         id = MessageId(id),
         conversationId = ConversationId(conversationId.orEmpty()),
         seq = seq,
@@ -60,7 +63,7 @@ data class MessageRow(
         at = at,
         sentAt = sentAt,
         body = body,
-        parts = emptyList(),
+        parts = parts.sortedBy { it.index },
         delivery = delivery,
         failure = failure,
         read = read,
@@ -128,8 +131,72 @@ data class EventRow(
     val at: Long,
 )
 
-/** The raw m-notification-ind of an MMS (D7; parsed and fetched in step 3b), at most 2 KB. */
-class PendingPushRow(val id: String, val pdu: ByteArray, val subId: Int?, val at: Long)
+/**
+ * The raw m-notification-ind of an MMS (D7), at most 2 KB, until it is judged (D10). [at] is the phone's receipt - a
+ * held push released by the parent (D16) comes back here with its first receipt and [heldId]. [tries]: the isolated
+ * parse died on it (three times blocks it as malformed, §6.10).
+ */
+class PendingPushRow(val id: String, val pdu: ByteArray, val subId: Int?, val at: Long, val heldId: String? = null, val tries: Int = 0)
+
+/** An incoming MMS's place in §6.4's machine (the `mms` table, one row per IN MMS message). */
+enum class MmsState {
+    /** Allowed and checked (D10): to be fetched. */
+    NOTIFIED,
+
+    /** Handed to the platform's download; its result comes to `MmsResultReceiver`. */
+    DOWNLOADING,
+
+    /** D14: the fetch couldn't run (no MMS data, no network); tried again when data comes back and at each sync. */
+    WAITING_DATA,
+
+    /** Fetched into our file; the isolated parse is next (a process death resumes here). */
+    DOWNLOADED,
+
+    /** Parsed: its parts are in `part`, its text in the body. */
+    DONE,
+
+    /** Couldn't be fetched or parsed ([MmsRow.failure] says why; [MmsRow.RETRY] offers the kid's tap, D14). */
+    FAILED,
+
+    /** The carrier's server no longer has it, or its expiry passed. */
+    GONE,
+
+    /** Larger than the carrier's maximum (D10 check 3). */
+    TOO_LARGE,
+}
+
+/** An incoming MMS's fetch (§6.4). [from] is the notification's sender, normalised; the retrieve-conf's must equal it. */
+data class MmsRow(
+    val messageId: String,
+    val state: MmsState,
+    val transactionId: String,
+    val contentLocation: String,
+    val from: String,
+    /** X-Mms-Message-Size as the notification said. */
+    val size: Long,
+    /** X-Mms-Expiry in ms (`null`: none); past it the carrier's server has dropped it. */
+    val expiresAt: Long?,
+    val mmsVersion: Int,
+    val subId: Int?,
+    /** Download tries since the last reset (D14: five, then the kid's tap). */
+    val tries: Int = 0,
+    /** When the last download was handed to the platform. */
+    val requestedAt: Long? = null,
+    /** Times the isolated parse died on it (§6.10: three marks it failed). */
+    val crashes: Int = 0,
+    /** Why it failed or waits: [RETRY], [MMSC_UNKNOWN], a parse or platform reason. */
+    val failure: String? = null,
+    /** The kid was told of it (one notification per MMS). */
+    val notified: Boolean = false,
+) {
+    companion object {
+        /** D14: five tries gave up - the bubble offers "Trykk for å prøve igjen". */
+        const val RETRY = "retry"
+
+        /** D10: this SIM's MCC/MNC isn't on the MMSC list - nothing is fetched (fail closed). */
+        const val MMSC_UNKNOWN = "mmsc_unknown"
+    }
+}
 
 interface MessageStore {
     /** Runs [block] in one transaction: everything or nothing is written. */
@@ -152,6 +219,8 @@ interface MessageStore {
     fun messageByClientId(clientId: String): MessageRow?
     fun message(id: String): MessageRow?
     fun updateMessage(row: MessageRow)
+
+    /** The message with its parts and its `mms` row. */
     fun deleteMessageRow(id: String)
 
     /** Shown messages of a conversation with `seq < beforeSeq` (all when `null`), newest first. */
@@ -193,6 +262,23 @@ interface MessageStore {
     fun insertPendingPush(row: PendingPushRow)
     fun pendingPushCount(): Int
     fun prunePendingPush(before: Long)
+
+    /** The committed pushes not judged yet, oldest first (step 3b). */
+    fun pendingPushes(): List<PendingPushRow>
+    fun deletePendingPush(id: String)
+    fun countPushTry(id: String)
+
+    /** The parts of a message by index (§6.6); [putParts] replaces them all. */
+    fun parts(messageId: String): List<Part>
+    fun putParts(messageId: String, parts: List<Part>)
+
+    /** Every picture hash a part of any message holds (a file nobody holds is deleted, §6.4). */
+    fun partHashes(): Set<String>
+
+    fun insertMms(row: MmsRow)
+    fun mms(messageId: String): MmsRow?
+    fun updateMms(row: MmsRow)
+    fun mmsIn(states: Set<MmsState>): List<MmsRow>
 
     fun addCounter(key: String, by: Long = 1)
     fun counters(): Map<String, Long>
