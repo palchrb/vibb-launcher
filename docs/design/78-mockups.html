@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Vibb dag og natt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap">
+<style>
+  /* Design 78 (docs/design/78-kid-light-mode.md): the kid's page screens in Mørk and Lys side by side, and the kid
+     Settings row. Phones are 320x569 dp (the Jelly Star), 1 CSS px = 1 dp. Every colour on a phone is a token of
+     §4.1 (night = res/values/colors_kid.xml today; day = the proposed values-notnight/colors_kid_page.xml). The page
+     around the phones is a neutral dark by choice, so neither look is favoured. */
+  :root {
+    --page: #18181e; --page-card: #22222a; --label: #a3a3ae; --fg: #ececf1; --hair: #34343f; --peach: #F0A884;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--fg); font-family: Nunito, system-ui, sans-serif;
+         padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px));
+         padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 44px; }
+  header.top { display: grid; gap: 8px; max-width: 68ch; }
+  .kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 800; color: var(--peach); }
+  h1 { margin: 0; font-size: clamp(28px, 4vw, 38px); font-weight: 800; line-height: 1.1; text-wrap: balance; }
+  h2 { margin: 0; font-size: 20px; font-weight: 800; text-wrap: balance; }
+  p { margin: 0; }
+  .lead, .note { color: var(--label); font-size: 15px; line-height: 1.5; max-width: 68ch; }
+  section { display: grid; gap: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 28px 24px; align-items: flex-start; }
+  figure { margin: 0; width: 320px; max-width: 100%; display: grid; gap: 10px; }
+  figcaption { font-size: 13px; color: var(--label); line-height: 1.45; }
+  figcaption b { color: var(--fg); font-weight: 800; }
+
+  /* ---- the two looks: every phone colour is one of these tokens ---- */
+  .night {
+    --ground: #0C0C14; --tile: #1B1B28; --lift: #1C1A2A; --control: #2A2A3A; --ink: #FFFFFF; --core: #FBE4DC;
+    --dim: rgba(251, 228, 220, .78); --accent: #F0A884; --fill: #F0A884; --on-accent: #0C0C14;
+    --button: rgba(255, 255, 255, .08); --back: rgba(255, 255, 255, .12); --handle: rgba(255, 255, 255, .22);
+    --divider: rgba(255, 255, 255, .10); --in: #34324A; --in-ink: #FFFFFF; --in-dim: #A6A0B4; --mine: #9FD3A8;
+    --alert: #FF8A8A; --danger: #3A1E24; --danger-text: #FF8A8A; --bars: #FFFFFF;
+    --sky: #6FA8DC; --forest: #7FC28F; --sun: #E8B86D; --own: #F0A884;
+  }
+  .day {
+    --ground: #F6F2EF; --tile: #FFFFFF; --lift: #FFFFFF; --control: #EAE5E1; --ink: #1B1B1F; --core: #1B1B1F;
+    --dim: #5E5752; --accent: #A64B25; --fill: #E8895E; --on-accent: #0C0C14;
+    --button: rgba(0, 0, 0, .07); --back: rgba(0, 0, 0, .06); --handle: rgba(0, 0, 0, .20);
+    --divider: rgba(0, 0, 0, .10); --in: #E8E4EE; --in-ink: #1B1B1F; --in-dim: #5E5870; --mine: #2E7D46;
+    --alert: #B3261E; --danger: #FBE3E1; --danger-text: #A1241C; --bars: #1B1B1F;
+    --sky: #3A76B0; --forest: #3C8650; --sun: #A87414; --own: #C2622C;
+  }
+  /* the own bubble: the same in both looks */
+  .phone { --out: #F0A884; --out-ink: #1B1B1F; --out-dim: #5E4034; }
+
+  /* ---- the phone ---- */
+  .phone { position: relative; width: 320px; height: 569px; max-width: 100%; background: var(--ground);
+           color: var(--ink); overflow: hidden; border-radius: 18px; box-shadow: 0 0 0 1px var(--hair); }
+  .bar { position: absolute; left: 0; right: 0; top: 0; height: 24px; display: flex; align-items: center;
+         justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 700; color: var(--bars); }
+  .bar .icons { display: flex; gap: 5px; align-items: center; }
+  .bar .icons i { display: block; width: 10px; height: 10px; background: var(--bars); border-radius: 2px; opacity: .9; }
+  .handle-bar { position: absolute; left: 112px; right: 112px; bottom: 8px; height: 4px; border-radius: 2px;
+                background: var(--bars); opacity: .55; }
+
+  /* the shared header (include_kid_header): 44 dp disc in a 48 dp target, 24 sp title */
+  .hd { position: absolute; left: 14px; right: 16px; top: 28px; min-height: 56px; display: flex; align-items: center; gap: 8px; }
+  .hd .bk { width: 48px; height: 48px; flex: none; display: grid; place-items: center; }
+  .hd .bk span { width: 44px; height: 44px; border-radius: 50%; background: var(--back); display: grid; place-items: center; }
+  .hd .bk svg { width: 18px; height: 18px; }
+  .hd .tt { flex: 1; min-width: 0; }
+  .hd .tt b { display: block; font-size: 24px; font-weight: 800; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hd .tt small { display: block; font-size: 14px; font-weight: 700; color: var(--dim); line-height: 1.2; }
+  .hd .act { font-size: 14px; font-weight: 700; color: var(--accent); padding: 0 6px; white-space: nowrap; }
+
+  .body { position: absolute; left: 16px; right: 16px; top: 92px; bottom: 0; }
+
+  /* Meldinger: list rows (item_messages_row) */
+  .mrow { display: flex; align-items: center; gap: 12px; background: var(--tile); border-radius: 18px;
+          padding: 10px 14px 10px 12px; min-height: 64px; margin-bottom: 10px; }
+  .av { width: 48px; height: 48px; border-radius: 50%; flex: none; display: grid; place-items: center;
+        font-size: 20px; font-weight: 800; color: #1B1B28; }
+  .av.sm { width: 40px; height: 40px; font-size: 17px; }
+  .mrow .tx { flex: 1; min-width: 0; }
+  .mrow .nm { font-size: 16px; font-weight: 800; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mrow .ls { font-size: 14px; font-weight: 600; color: var(--dim); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mrow .rt { display: grid; justify-items: end; gap: 6px; }
+  .mrow .tm { font-size: 12px; font-weight: 700; color: var(--dim); }
+  .mrow .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .mrow .dot.off { visibility: hidden; }
+
+  /* Meldinger: a thread (item_message_bubble, activity_thread) */
+  .thread { position: absolute; left: 16px; right: 16px; top: 92px; bottom: 86px; display: flex; flex-direction: column;
+            justify-content: flex-end; gap: 6px; }
+  .sep { text-align: center; font-size: 13px; font-weight: 700; color: var(--dim); padding: 6px 0 2px; }
+  .bb { max-width: 78%; padding: 9px 14px 8px; display: grid; gap: 2px; }
+  .bb p { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.3; }
+  .bb .t { justify-self: end; font-size: 11px; font-weight: 700; }
+  .bb.in { align-self: flex-start; background: var(--in); color: var(--in-ink); border-radius: 18px 18px 18px 6px; }
+  .bb.in .t { color: var(--in-dim); }
+  .bb.out { align-self: flex-end; background: var(--out); color: var(--out-ink); border-radius: 18px 18px 6px 18px; }
+  .bb.out .t { color: var(--out-dim); }
+  .dl { align-self: flex-end; font-size: 12px; font-weight: 700; color: var(--dim); padding: 0 4px; }
+  .dl.warn { color: var(--alert); }
+  .compose { position: absolute; left: 16px; right: 16px; bottom: 28px; display: flex; align-items: flex-end; gap: 8px; }
+  .compose .fld { flex: 1; background: var(--tile); border-radius: 24px; min-height: 52px; padding: 14px 16px;
+                  font-size: 16px; font-weight: 600; color: var(--dim); }
+  .compose .send { width: 48px; height: 48px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; flex: none; }
+  .compose .send svg { width: 22px; height: 22px; }
+
+  /* Kalender: the day (item_day_event, item_day_legend) */
+  .ev { position: relative; display: flex; align-items: flex-start; background: var(--tile); border-radius: 18px;
+        padding: 12px 12px 12px 14px; margin-bottom: 10px; }
+  .ev .cd { width: 8px; height: 8px; border-radius: 50%; margin: 6px 6px 0 0; flex: none; }
+  .ev .tm { width: 56px; flex: none; font-size: 14px; font-weight: 800; color: var(--accent); line-height: 20px; font-variant-numeric: tabular-nums; }
+  .ev .tm small { display: block; font-size: 12px; font-weight: 700; color: var(--dim); line-height: 16px; }
+  .ev .tx { flex: 1; min-width: 0; margin-left: 12px; }
+  .ev .ti { font-size: 15px; font-weight: 800; line-height: 20px; }
+  .ev .wh { font-size: 13px; font-weight: 600; color: var(--dim); line-height: 18px; }
+  .ev.now { box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .ev.all .tm { color: var(--dim); }
+  .ev.mine .tm { color: var(--mine); }
+  .legend { font-size: 13px; font-weight: 700; color: var(--dim); padding: 2px 14px 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .peek { position: absolute; top: 92px; width: 6px; height: 260px; border-radius: 0 18px 18px 0; background: var(--tile); }
+  .peek.l { left: 0; } .peek.r { right: 0; border-radius: 18px 0 0 18px; }
+  .fab { position: absolute; right: 16px; bottom: 28px; width: 56px; height: 56px; border-radius: 50%; background: var(--fill);
+         display: grid; place-items: center; box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+  .fab svg { width: 28px; height: 28px; }
+
+  /* Kalender: an event (activity_event) */
+  .card { background: var(--tile); border-radius: 18px; padding: 16px; }
+  .card .ti { font-size: 18px; font-weight: 800; line-height: 24px; }
+  .card .tm { font-size: 14px; font-weight: 800; color: var(--accent); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .pl { font-size: 14px; font-weight: 700; color: var(--core); margin-top: 2px; }
+  .card .cl { font-size: 13px; font-weight: 700; color: var(--dim); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+  .card .cl i { width: 8px; height: 8px; border-radius: 50%; background: var(--own); }
+  .card .ds { font-size: 14px; font-weight: 600; color: var(--core); line-height: 21px; margin-top: 14px; }
+  .acts { display: flex; gap: 10px; margin-top: 14px; }
+  .pill { flex: 1; height: 48px; border-radius: 24px; background: var(--button); display: grid; place-items: center;
+          font-size: 16px; font-weight: 800; color: var(--ink); }
+  .pill.del { color: var(--alert); }
+
+  /* the contact card (sheet_contact) over a dimmed Home */
+  .home { position: absolute; inset: 0; background: linear-gradient(160deg, #2a2440 0%, #141a2e 60%, #0f1424 100%); }
+  .home .grid { position: absolute; left: 20px; right: 20px; top: 70px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px 14px; }
+  .home .grid i { display: block; aspect-ratio: 1; border-radius: 50%; background: #496C9C; opacity: .9; }
+  .home .grid i:nth-child(3n) { background: #347470; } .home .grid i:nth-child(4n) { background: #805B9A; }
+  .onhome { --bars: #FFFFFF; }
+  .dim { position: absolute; inset: 0; background: rgba(0, 0, 0, .5); }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--lift); border-radius: 24px 24px 0 0;
+           padding: 10px 16px 30px; display: grid; justify-items: center; gap: 10px; color: var(--core); }
+  .sheet .hdl { width: 36px; height: 4px; border-radius: 2px; background: var(--handle); }
+  .sheet .av { width: 84px; height: 84px; font-size: 34px; margin-top: 6px; }
+  .sheet .nm { font-size: 22px; font-weight: 800; color: var(--core); }
+  .sheet .hn { font-size: 14px; font-weight: 700; color: var(--dim); margin-top: -6px; }
+  .sheet .btns { display: flex; gap: 10px; width: 100%; margin-top: 6px; }
+  .sheet .btns span { flex: 1; height: 64px; border-radius: 20px; display: grid; place-items: center; font-size: 17px; font-weight: 800; }
+  .sheet .ring { background: #29833B; color: #FFFFFF; }
+  .sheet .msg { background: var(--button); color: var(--ink); }
+  .sheet .msg em { font-style: normal; color: var(--accent); margin-right: 6px; }
+  .sheet .cls { font-size: 15px; font-weight: 800; color: var(--dim); padding: 8px; }
+
+  /* kid Settings on the wallpaper (out of scope: it keeps the wallpaper and its ink) */
+  .ks { background: linear-gradient(160deg, #3a2f4f 0%, #1d2440 55%, #121a30 100%); color: #fff; --bars: #fff; }
+  .ks .hd .bk span { background: rgba(255, 255, 255, .12); }
+  .ks .stack { position: absolute; left: 16px; right: 16px; top: 92px; display: flex; flex-direction: column; gap: 16px; }
+  .ks .krow { display: flex; align-items: center; justify-content: space-between; min-height: 44px; font-size: 16px; font-weight: 700; }
+  .ks .krow span { width: 40px; height: 22px; border-radius: 11px; background: rgba(255, 255, 255, .25); position: relative; }
+  .ks .krow span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+  .ks .krow .sw-on { background: #F0A884; } .ks .krow .sw-on::after { left: 21px; background: #0C0C14; }
+  .ks h4 { margin: 0; font-size: 15px; font-weight: 800; opacity: .85; }
+  .ks .thumbs { display: flex; gap: 10px; margin-top: 8px; }
+  .ks .thumbs i { width: 52px; height: 52px; border-radius: 14px; display: block; }
+  .ks .thumbs i.on { box-shadow: 0 0 0 2px #fff; }
+  .ks .cap { font-size: 12px; font-weight: 700; opacity: .7; margin-top: 8px; line-height: 1.4; }
+  .ks .kcard { margin-top: 8px; background: rgba(255, 255, 255, .08); border-radius: 16px; padding: 10px 14px 12px; }
+  .seg { display: flex; background: rgba(255, 255, 255, .08); border-radius: 14px; padding: 3px; }
+  .seg span { flex: 1; min-height: 48px; border-radius: 11px; display: grid; place-items: center; font-size: 14px;
+              font-weight: 800; color: #fff; text-align: center; padding: 6px 4px; }
+  .seg span.on { background: #F0A884; color: #0C0C14; }
+  .pv { margin-top: 10px; height: 56px; border-radius: 12px; background: var(--ground); padding: 8px 10px; display: flex;
+        flex-direction: column; justify-content: center; gap: 4px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
+  .pv .bb { max-width: 70%; padding: 3px 9px; }
+  .pv .bb p { font-size: 11px; line-height: 1.25; }
+  .pv .bb.in { border-radius: 10px 10px 10px 4px; } .pv .bb.out { border-radius: 10px 10px 4px 10px; }
+  .ks .when { font-size: 12px; font-weight: 800; margin-top: 8px; opacity: .85; }
+
+  /* the token table */
+  .tbl-wrap { overflow-x: auto; max-width: 100%; background: var(--page-card); border-radius: 14px; }
+  table { border-collapse: collapse; font-size: 13px; min-width: 640px; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  th { font-weight: 800; color: var(--label); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  td code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .sw { display: inline-flex; align-items: center; gap: 8px; }
+  .sw i { width: 22px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18); }
+  .callout { border-left: 3px solid var(--peach); padding: 4px 0 4px 14px; max-width: 68ch; display: grid; gap: 6px; }
+  .callout p { color: var(--label); font-size: 14px; line-height: 1.5; }
+  .callout strong { color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <span class="kicker">Design 78 · mockup</span>
+  <h1>Mørk, Lys og Automatisk</h1>
+  <p class="lead">Barnet velger utseende i Innstillinger. Det gjelder skjermene som har sin egen bakgrunn: Meldinger, Kalender, kontaktkortet og listene i Innstillinger. Hjem, telefonboka og Innstillinger beholder bakgrunnsbildet, og låseskjermen og samtaleskjermen er alltid mørke. Venstre telefon er slik det er i dag (Mørk), høyre er Lys.</p>
+</header>
+
+<section>
+  <header><h2>Meldinger: lista</h2></header>
+  <div class="row" id="list"></div>
+</section>
+
+<section>
+  <header><h2>Meldinger: en samtale</h2><p class="note">Barnets egne bobler er fersken i begge (brukerens valg D). De mottatte er lilla-grå D2 om natta og en lys lilla-grå om dagen.</p></header>
+  <div class="row" id="thread"></div>
+</section>
+
+<section>
+  <header><h2>Kalender: dagen</h2><p class="note">Kalendernes prikker får en dypere utgave om dagen, så de står med minst 3:1 mot det hvite kortet. «Pågår nå» har ringen i aksentfargen.</p></header>
+  <div class="row" id="day"></div>
+</section>
+
+<section>
+  <header><h2>Kalender: en avtale</h2></header>
+  <div class="row" id="event"></div>
+</section>
+
+<section>
+  <header><h2>Kontaktkortet</h2><p class="note">Kortet er en egen flate over Hjem, så det følger valget. Hjem under er som før.</p></header>
+  <div class="row" id="sheet"></div>
+</section>
+
+<section>
+  <header><h2>Raden i Innstillinger</h2><p class="note">Ny seksjon «Utseende» under «Bakgrunn»: den samme delte knappen som «Lyd på telefonen», med tre valg, og en liten forhåndsvisning, fordi Innstillinger selv ikke skifter. Under «Automatisk» står det når det skifter i dag.</p></header>
+  <div class="row" id="settings"></div>
+</section>
+
+<section>
+  <header><h2>Fargene</h2><p class="note">Natt er dagens farger, uendret. Dag er de nye. Kontrasten er tekstens mot det den står på (WCAG, minst 4,5:1), regnet slik KidPaletteTest gjør.</p></header>
+  <div class="tbl-wrap"><table id="tokens"></table></div>
+</section>
+
+<div class="callout">
+  <p><strong>Spørsmål til deg:</strong> varm papirbakgrunn (#F6F2EF, her) eller PWA-ens kjøligere grå (#F2F2F7)? Samme fersken på egne bobler i lys modus? Kontaktkortet lyst over et mørkt Hjem, eller alltid mørkt?</p>
+</div>
+</main>
+
+<script>
+  // The screens are drawn twice from one template, once per look.
+  const BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="#0C0C14" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg>';
+  const PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="#0C0C14" stroke-width="2.6" stroke-linecap="round"><path d="M12 4.5v15M4.5 12h15"/></svg>';
+  const bar = '<div class="bar"><span>14:32</span><span class="icons"><i></i><i></i><i></i></span></div><div class="handle-bar"></div>';
+  const hd = (title, sub, act) => `<div class="hd"><span class="bk"><span>${BACK}</span></span><span class="tt"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</span>${act ? `<span class="act">${act}</span>` : ''}</div>`;
+  const phone = (look, inner, extra = '') => `<div class="phone ${look} ${extra}">${bar}${inner}</div>`;
+  const fig = (html, cap) => `<figure>${html}<figcaption>${cap}</figcaption></figure>`;
+  const AV = { peach: '#E8B49A', sky: '#9FC3E3', sage: '#A9CDB0', lilac: '#C9B3DE', sand: '#E3CF9A' };
+
+  const list = look => phone(look, hd('Meldinger', '', 'Ny melding') + `<div class="body">
+    ${[['Mamma', 'M', AV.peach, 'Husk fotballen!', '12:55', true],
+       ['Pappa', 'P', AV.sky, 'Du: Kommer om ti', '11:02', false],
+       ['Bestemor', 'B', AV.sage, 'Bilde', 'I går', true],
+       ['Ola', 'O', AV.lilac, 'Skal vi gå sammen i morgen?', 'Man.', false]]
+      .map(([n, i, c, l, t, u]) => `<div class="mrow"><span class="av" style="background:${c}">${i}</span><span class="tx"><div class="nm">${n}</div><div class="ls">${l}</div></span><span class="rt"><span class="tm">${t}</span><span class="dot${u ? '' : ' off'}"></span></span></div>`).join('')}
+  </div>`);
+
+  const thread = look => phone(look, hd('Mamma') + `<div class="thread">
+    <div class="sep">I dag</div>
+    <div class="bb in"><p>Hei! Er du ferdig på skolen?</p><span class="t">12:52</span></div>
+    <div class="bb out"><p>Ja, kommer hjem nå</p><span class="t">12:54</span></div>
+    <div class="bb in"><p>Så bra. Husk fotballen!</p><span class="t">12:55</span></div>
+    <div class="bb out"><p>Den ligger i sekken</p><span class="t">12:56</span></div>
+    <div class="dl">Levert</div>
+    <div class="bb out"><p>Kan jeg gå til Ola etterpå?</p><span class="t">12:58</span></div>
+    <div class="dl warn">Ikke sendt - trykk for å prøve igjen</div>
+  </div><div class="compose"><span class="fld">Melding</span><span class="send">${SEND}</span></div>`);
+
+  const day = look => phone(look, hd('Mandag', '9. november') + `<span class="peek l"></span><span class="peek r"></span><div class="body">
+    <div class="ev all"><span class="cd" style="background:var(--sky)"></span><span class="tm">Hele<small>dagen</small></span><span class="tx"><div class="ti">Turdag</div><div class="wh">Ta med matpakke og drikke</div></span></div>
+    <div class="ev now"><span class="cd" style="background:var(--sky)"></span><span class="tm">14:00<small>15:30</small></span><span class="tx"><div class="ti">SFO: Leksehjelp</div><div class="wh">Pågår nå · Gymsalen</div></span></div>
+    <div class="ev"><span class="cd" style="background:var(--forest)"></span><span class="tm">17:30<small>19:00</small></span><span class="tx"><div class="ti">Fotballtrening</div><div class="wh">Kunstgresset ved skolen</div></span></div>
+    <div class="ev mine"><span class="cd" style="background:var(--own)"></span><span class="tm">19:30<small>20:00</small></span><span class="tx"><div class="ti">Ringe bestemor</div><div class="wh">Min kalender</div></span></div>
+    <div class="legend"><span><i style="background:var(--sky)"></i>Skolen</span><span><i style="background:var(--forest)"></i>Fotball</span><span><i style="background:var(--own)"></i>Mine</span></div>
+  </div><span class="fab">${PLUS}</span>`);
+
+  const event = look => phone(look, hd('Mandag', '9. november') + `<div class="body">
+    <div class="card"><div class="ti">Ringe bestemor</div><div class="tm">19:30 - 20:00</div><div class="pl">Hjemme</div>
+      <div class="cl"><i></i>Min kalender</div>
+      <div class="ds">Hun har bursdag på torsdag. Spør hva hun ønsker seg, og fortell om fotballkampen.</div></div>
+    <div class="acts"><span class="pill">Endre</span><span class="pill del">Slett</span></div>
+  </div>`);
+
+  const sheet = look => phone(look + ' onhome', `<div class="home"><div class="grid">${'<i></i>'.repeat(12)}</div></div>${bar}<div class="dim"></div>
+    <div class="sheet"><span class="hdl"></span><span class="av" style="background:${AV.peach}">M</span><span class="nm">Mamma</span><span class="hn">Mobil</span>
+    <div class="btns"><span class="ring">Ring</span><span class="msg"><em>✉</em>Melding</span></div><span class="cls">Lukk</span></div>`);
+
+  const settings = (on, look, when) => `<div class="phone ks">${bar}${hd('Innstillinger')}
+    <div class="stack"><div><h4>Bakgrunn</h4><div class="thumbs">
+      <i class="on" style="background:linear-gradient(160deg,#3a2f4f,#121a30)"></i><i style="background:#0C0C14"></i>
+      <i style="background:linear-gradient(160deg,#e9a37f,#6d5a8c)"></i><i style="background:linear-gradient(160deg,#7fb3c9,#2b4a63)"></i></div>
+      <div class="cap">Bildene er valgt ut av mamma og pappa</div></div>
+    <div><h4>Utseende</h4><div class="kcard">
+      <div class="seg">${['Mørk', 'Lys', 'Automatisk'].map((l, i) => `<span class="${i === on ? 'on' : ''}">${l}</span>`).join('')}</div>
+      <div class="pv ${look}"><div class="bb in"><p>Hei! Kommer du?</p></div><div class="bb out"><p>Ja, nå!</p></div></div>
+      ${when ? `<div class="when">${when}</div>` : ''}</div>
+      <div class="cap">Gjelder Meldinger, Kalender, kontaktkortet og listene her i Innstillinger. Hjem beholder bakgrunnen din.</div></div>
+    <div><h4>Tilkobling, skjerm og lyd</h4><div class="kcard"><div class="krow">Wi-Fi<span class="sw-on"></span></div><div class="krow">Bluetooth<span class="sw-off"></span></div></div></div></div></div>`;
+
+  const pair = (id, make, capN, capD) => {
+    document.getElementById(id).innerHTML = fig(make('night'), `<b>Mørk</b> · ${capN}`) + fig(make('day'), `<b>Lys</b> · ${capD}`);
+  };
+  pair('list', list, 'som i dag.', 'papirbakgrunn, hvite rader, aksenten i mørk fersken (#A64B25).');
+  pair('thread', thread, 'D og D2, som i fiksrunden.', 'egne bobler like, mottatte #E8E4EE. Send-knappen i den lysere ferskenen med mørk pil.');
+  pair('day', day, 'som i dag.', 'prikkene dypere, «Mine» i mørk grønn (#2E7D46).');
+  pair('event', event, 'som i dag.', '«Slett» i mørk rød (#B3261E).');
+  pair('sheet', sheet, 'som i dag.', 'hvitt kort, «Ring» like grønn.');
+  document.getElementById('settings').innerHTML =
+    fig(settings(0, 'night'), '<b>Mørk</b> valgt (standard). Forhåndsvisningen viser Meldinger slik det blir.') +
+    fig(settings(1, 'day'), '<b>Lys</b> valgt. Innstillinger selv er uendret; forhåndsvisningen skifter.') +
+    fig(settings(2, 'day', 'Lys nå · mørk fra kl. 17:02'), '<b>Automatisk</b>: lyst mens sola er over -6° der telefonen er, samme tid som «Mørkt kl. 17:02» på låseskjermen.');
+
+  const T = [
+    ['kid_page_ground', 'siden', '#0C0C14', '#F6F2EF', '-'],
+    ['kid_page_tile', 'rader, kort, skrivefelt', '#1B1B28', '#FFFFFF', '-'],
+    ['kid_page_lift', 'kontaktkort, dialoger', '#1C1A2A', '#FFFFFF', '-'],
+    ['kid_page_ink', 'tekst', '#FFFFFF', '#1B1B1F', '15,4 / 17,2'],
+    ['kid_page_dim', 'andre linjer, tider', '#C7FBE4DC', '#5E5752', '6,4 / 7,1'],
+    ['kid_page_accent', 'starttid, lenker, prikk, ring', '#F0A884', '#A64B25', '5,2 / 5,8'],
+    ['kid_page_accent_fill', '+, send, valgt', '#F0A884', '#E8895E', '7,6 (mørk tegning)'],
+    ['kid_page_message_in', 'mottatt boble', '#34324A', '#E8E4EE', 'tekst 13,9'],
+    ['kid_page_message_in_dim', 'mottatt tid', '#A6A0B4', '#5E5870', '5,4'],
+    ['kid_message_out', 'egen boble (lik i begge)', '#F0A884', '#F0A884', 'tekst 8,7, tid 4,7'],
+    ['kid_page_day_mine', 'egne avtaler', '#9FD3A8', '#2E7D46', '5,1'],
+    ['kid_page_alert', '«Ikke sendt», «Slett»', '#FF8A8A', '#B3261E', '5,9 / 6,5'],
+    ['kid_page_danger', 'slett-pille', '#3A1E24', '#FBE3E1', 'tekst 6,2'],
+  ];
+  const sw = hex => `<span class="sw"><i style="background:${hex.length === 9 ? '#' + hex.slice(3) : hex};${hex.length === 9 ? 'opacity:.78' : ''}"></i><code>${hex}</code></span>`;
+  document.getElementById('tokens').innerHTML = '<tr><th>Token</th><th>Brukes til</th><th>Natt (i dag)</th><th>Dag</th><th>Kontrast dag (bakgrunn / kort)</th></tr>' +
+    T.map(([n, u, a, b, c]) => `<tr><td><code>${n}</code></td><td>${u}</td><td>${sw(a)}</td><td>${sw(b)}</td><td>${c}</td></tr>`).join('');
+</script>
+</body>
+</html>
