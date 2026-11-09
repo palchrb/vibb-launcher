@@ -203,7 +203,7 @@
 <main>
 <header class="top">
   <span class="kicker">Design 78 · mockup</span>
-  <h1>Mørk, Lys og Automatisk</h1>
+  <h1>Mørk eller Lys</h1>
   <p class="lead">Barnet velger utseende i Innstillinger. Det gjelder sidene som har sin egen bakgrunn: Meldinger, Kalender og listene i Innstillinger. Hjem, telefonboka og Innstillinger beholder bakgrunnsbildet, og kontaktkortet, låseskjermen og samtaleskjermen er alltid mørke. Venstre telefon er slik det er i dag (Mørk), høyre er Lys.</p>
 </header>
 
@@ -233,7 +233,7 @@
 </section>
 
 <section>
-  <header><h2>Raden i Innstillinger</h2><p class="note">Ny seksjon «Utseende» under «Bakgrunn»: den samme delte knappen som «Lyd på telefonen», med tre valg, og en liten forhåndsvisning, fordi Innstillinger selv ikke skifter. Under «Automatisk» står det når det skifter i dag.</p></header>
+  <header><h2>Raden i Innstillinger</h2><p class="note">Ny seksjon «Utseende» under «Bakgrunn»: den samme delte knappen som «Lyd på telefonen», med to valg, Mørk og Lys, og en liten forhåndsvisning, fordi Innstillinger selv ikke skifter. Ingen automatisk skifting: barnet velger selv.</p></header>
   <div class="row" id="settings"></div>
 </section>
 
@@ -243,7 +243,7 @@
 </section>
 
 <div class="callout">
-  <p><strong>Dine svar er tatt inn:</strong> varm papirbakgrunn (#F6F2EF), samme fersken på egne bobler i begge, kontaktkortet alltid mørkt.</p><p><strong>Spørsmål til deg:</strong> «Automatisk» uten en fersk posisjon (under 14 dager) bruker sola i tidssonens hovedby (Oslo for Norge), og 07-19 bare for en ukjent sone. OK?</p>
+  <p><strong>Dine svar er tatt inn:</strong> varm papirbakgrunn (#F6F2EF), samme fersken på egne bobler i begge, kontaktkortet alltid mørkt.</p><p><strong>Ingen åpne spørsmål.</strong> Steg 0 trenger deg: et testbygg på Jelly Star-testtelefonen (aldri barnets) for ett opptak i hvert utseende.</p>
 </div>
 </main>
 
@@ -302,7 +302,7 @@
       <i style="background:linear-gradient(160deg,#e9a37f,#6d5a8c)"></i><i style="background:linear-gradient(160deg,#7fb3c9,#2b4a63)"></i></div>
       <div class="cap">Bildene er valgt ut av mamma og pappa</div></div>
     <div><h4>Utseende</h4><div class="kcard">
-      <div class="seg">${['Mørk', 'Lys', 'Automatisk'].map((l, i) => `<span class="${i === on ? 'on' : ''}">${l}</span>`).join('')}</div>
+      <div class="seg">${['Mørk', 'Lys'].map((l, i) => `<span class="${i === on ? 'on' : ''}">${l}</span>`).join('')}</div>
       <div class="pv ${look}"><div class="bb in"><p>Hei! Kommer du?</p></div><div class="bb out"><p>Ja, nå!</p></div></div>
       ${when ? `<div class="when">${when}</div>` : ''}</div>
       <div class="cap">Gjelder Meldinger, Kalender og listene her i Innstillinger. Hjem og kontaktkortet er alltid som før.</div></div>
@@ -318,8 +318,7 @@
   pair('sheet', sheet, 'som i dag.', 'det samme: kortet er alltid mørkt.');
   document.getElementById('settings').innerHTML =
     fig(settings(0, 'night'), '<b>Mørk</b> valgt (standard). Forhåndsvisningen viser Meldinger slik det blir.') +
-    fig(settings(1, 'day'), '<b>Lys</b> valgt. Innstillinger selv er uendret; forhåndsvisningen skifter.') +
-    fig(settings(2, 'day', 'Lys nå · mørk fra kl. 17:02'), '<b>Automatisk</b>: lyst mens sola er over -6° der telefonen er, samme tid som «Mørkt kl. 17:02» på låseskjermen.');
+    fig(settings(1, 'day'), '<b>Lys</b> valgt. Innstillinger selv er uendret; forhåndsvisningen skifter.');
 
   const T = [
     ['kid_page_ground', 'siden', '#0C0C14', '#F6F2EF', '-'],
