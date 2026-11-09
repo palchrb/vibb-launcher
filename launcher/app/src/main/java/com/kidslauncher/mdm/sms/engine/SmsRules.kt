@@ -46,7 +46,14 @@ class SmsJudge(
     val callbackWindowOpen: () -> Boolean = { false },
     /** The platform's emergency verdict (or `null` when it threw) for a dialable number, ORed with the static set. */
     val platformEmergency: (String) -> Boolean? = { null },
+    /** Step 3b: a subscription's SIM operator and MMS maximum (`null` = the default SMS subscription). */
+    val carrier: (Int?) -> Carrier = { Carrier(null, 0) },
+    /** D12: each SIM slot's own number as the SIM knows it (normalised; `null` when it doesn't). */
+    val simNumbers: () -> List<Pair<Int, String?>> = { emptyList() },
 ) {
+    /** D12: the phone's own numbers - the parent's, else the SIM's ([MmsGate.ownNumbers]). */
+    fun ownNumbers(): Set<String> = MmsGate.ownNumbers(rules?.ownNumbers.orEmpty(), simNumbers())
+
     val rules: CallRules? get() = (state as? CallPolicyState.Managed)?.rules
 
     val defaultCc: String get() = rules?.defaultCc ?: "47"
@@ -55,6 +62,10 @@ class SmsJudge(
     fun isEmergency(number: String): Boolean =
         com.kidslauncher.mdm.calls.Emergency.isEmergencyOutgoing(number, defaultCc, platformEmergency)
 }
+
+/** A SIM's MCC/MNC ([operator], `null` when unknown) and the carrier's MMS maximum in bytes (0 = none given: the codec's
+ * default, `MmsCodec.capOf`). */
+data class Carrier(val operator: String?, val maxMessageBytes: Int)
 
 object SmsRules {
     /**

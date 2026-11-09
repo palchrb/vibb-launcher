@@ -1128,6 +1128,22 @@ man er inne på en device". Branch `pwa-fixes-b`.
   every page (Android's status bar and Safari's top bar night too, the same decision), the manifest's `theme_color`
   with it; Devices' `night_top` is gone. The shell test pins the strip's rule, `black-translucent` and the one
   `theme-color` on every tab page. The real iPhone check (white text on night on every tab, the bounce) is the user's.
+- **An opaque black status bar since iOS 27** (2026-11-09, the user on iOS 27.2, with a screenshot: "pwa en rar
+  overgangsfarge på toppen" - a grey-to-dark gradient over the status bar above the night header): iOS 27 draws its own
+  blur over a `black-translucent` home-screen app's status bar (developer reports; the fix they use is an opaque bar).
+  `head.html`'s `apple-mobile-web-app-status-bar-style` is now `black`: iOS paints an opaque black bar with white text
+  and the page starts below it, so the top inset is 0 there. Black `#000` beside the night `#0C0C14` is the nearest
+  opaque bar iOS offers (`default` is the grey one of 2026-10-22). Kept, harmless: `viewport-fit=cover` (the home
+  indicator and the landscape insets), `body::before` (0 px with no inset; it still paints night for an app added
+  with the old bar), every `env(safe-area-inset-top)` padding (0 on iOS now, 0 on Android and desktop as before), and
+  the standalone 100vh shell (the screen below the bar now). The start-up PNGs are unchanged (flat night with the mark
+  on the screen's centre; nothing in them assumed a translucent bar; `--selftest` passes); `/lock`'s mark is centred
+  on the page, which now starts below the bar, so it may sit half the bar's height lower than the splash's at the
+  handover. `style.css?v=85` (comments only). The shell test pins `black` and that no page carries `black-translucent`.
+  **iOS stores the style when the app is added to the Home Screen**: an app added before may keep the translucent bar
+  until it is relaunched (swiped away and opened) or, if that is not enough, removed and added again. Not checked on
+  an iPhone here: the user checks the top on every tab in both schemes, the pull-down bounce, the tab bar's place at
+  the bottom, and the splash-to-lock handover.
 - **The brand mark is the app icon** (2026-10-22, the user: the lifted tile read as a lighter square on the band, and
   the hand-drawn rings were "not the right icon"): Devices' `.vibb-mark` is `<img src="/static/icons/icon-192.png"
   width="34" height="34" alt="" decoding="async">` - the PWA's own icon, its night ground baked in, straight on the night
@@ -1173,7 +1189,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The lock screen takes over from it** (2026-11-03, the user: "en fin overgang"): `/lock`'s mark
   (`partials/vibb_breath.html`) sits at the splash's size and the screen's centre (style.css's `--vibb-mark-size`,
   `min(51.30vmin, 240px)` - written by this script from `mark_share` between the `Vibb mark's size` markers; the
-  middle of the body, which is the screen in the installed app: 100vh, black-translucent, `viewport-fit=cover`), and
+  middle of the body, which is the screen in the installed app: 100vh, black-translucent, `viewport-fit=cover` - since
+  2026-11-09 the screen below the opaque black bar, see "An opaque black status bar since iOS 27"), and
   its first frame is the mark at rest: the breath's delays are positive (outer ring 0 s, then 0.28/0.56/0.84 s, the
   core 0.84 s - the pust SVG's stagger) with the 0 % keyframe held during them. The mark is in the flow (the space
   above it puts its centre on the screen's), so the title and the foot always come after it; below 540 px of height

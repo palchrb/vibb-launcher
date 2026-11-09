@@ -18,7 +18,11 @@ import com.kidslauncher.mdm.sms.engine.InsertOutgoing
 import com.kidslauncher.mdm.sms.engine.MessageRow
 import com.kidslauncher.mdm.sms.engine.MessageStore
 import com.kidslauncher.mdm.sms.engine.MessageVerdict
+import com.kidslauncher.mdm.sms.engine.MmsRow
+import com.kidslauncher.mdm.sms.engine.MmsState
 import com.kidslauncher.mdm.sms.engine.Origin
+import com.kidslauncher.mdm.sms.engine.Part
+import com.kidslauncher.mdm.sms.engine.PartState
 import com.kidslauncher.mdm.sms.engine.Participant
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
 import com.kidslauncher.mdm.sms.engine.SenderClass
@@ -139,7 +143,11 @@ class SqliteMessageStore(context: Context) : MessageStore {
     }
 
     override fun deleteMessageRow(id: String) {
-        db.delete("message", "id = ?", arrayOf(id))
+        transaction {
+            db.delete("part", "message_id = ?", arrayOf(id))
+            db.delete("mms", "message_id = ?", arrayOf(id))
+            db.delete("message", "id = ?", arrayOf(id))
+        }
     }
 
     override fun messages(conversationId: String, beforeSeq: Long?, limit: Int): List<MessageRow> {
@@ -206,6 +214,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
         put("parts_total", row.partsTotal)
         put("parts_sent", row.partsSent)
         put("sending_at", row.sendingAt)
+        put("is_mms", if (row.mms) 1 else 0)
     }
 
     private fun messageOf(c: Cursor) = MessageRow(
@@ -229,6 +238,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
         partsTotal = c.long("parts_total").toInt(),
         partsSent = c.long("parts_sent"),
         sendingAt = c.longOrNull("sending_at"),
+        mms = c.long("is_mms") != 0L,
     )
 
     // ---- event ----
@@ -359,6 +369,8 @@ class SqliteMessageStore(context: Context) : MessageStore {
                 put("pdu", row.pdu)
                 put("sub_id", row.subId)
                 put("at", row.at)
+                put("held_id", row.heldId)
+                put("tries", row.tries)
             },
         )
     }
@@ -367,8 +379,121 @@ class SqliteMessageStore(context: Context) : MessageStore {
         db.rawQuery("SELECT COUNT(*) FROM pending_push", null).use { it.moveToFirst(); it.getInt(0) }
 
     override fun prunePendingPush(before: Long) {
-        db.delete("pending_push", "at < ?", arrayOf(before.toString()))
+        // A released push (held_id) is the parent's allow - it goes only once judged.
+        db.delete("pending_push", "at < ? AND held_id IS NULL", arrayOf(before.toString()))
     }
+
+    override fun pendingPushes(): List<PendingPushRow> =
+        db.query("pending_push", null, null, null, null, null, "at, id").use { c ->
+            generateSequence {
+                if (!c.moveToNext()) null else PendingPushRow(
+                    c.str("id")!!, c.getBlob(c.getColumnIndexOrThrow("pdu")), c.intOrNull("sub_id"), c.long("at"),
+                    c.str("held_id"), c.long("tries").toInt(),
+                )
+            }.toList()
+        }
+
+    override fun deletePendingPush(id: String) {
+        db.delete("pending_push", "id = ?", arrayOf(id))
+    }
+
+    override fun countPushTry(id: String) {
+        db.execSQL("UPDATE pending_push SET tries = tries + 1 WHERE id = ?", arrayOf<Any>(id))
+    }
+
+    // ---- part, mms (step 3b) ----
+
+    override fun parts(messageId: String): List<Part> =
+        db.query("part", null, "message_id = ?", arrayOf(messageId), null, null, "idx").use { c ->
+            generateSequence {
+                if (!c.moveToNext()) null else Part(
+                    index = c.long("idx").toInt(), mime = c.str("mime")!!, size = c.long("size"), sha256 = c.str("sha256"),
+                    width = c.intOrNull("width"), height = c.intOrNull("height"),
+                    state = runCatching { PartState.valueOf(c.str("state")!!) }.getOrDefault(PartState.FAILED),
+                )
+            }.toList()
+        }
+
+    override fun putParts(messageId: String, parts: List<Part>) {
+        transaction {
+            db.delete("part", "message_id = ?", arrayOf(messageId))
+            for (p in parts) {
+                db.insertOrThrow(
+                    "part", null,
+                    ContentValues().apply {
+                        put("message_id", messageId)
+                        put("idx", p.index)
+                        put("mime", p.mime)
+                        put("size", p.size)
+                        put("sha256", p.sha256)
+                        put("width", p.width)
+                        put("height", p.height)
+                        put("state", p.state.name)
+                    },
+                )
+            }
+        }
+    }
+
+    override fun partHashes(): Set<String> =
+        db.rawQuery("SELECT DISTINCT sha256 FROM part WHERE sha256 IS NOT NULL", null).use { c ->
+            generateSequence { if (c.moveToNext()) c.getString(0) else null }.toSet()
+        }
+
+    override fun insertMms(row: MmsRow) {
+        db.insertOrThrow("mms", null, valuesOf(row))
+    }
+
+    override fun mms(messageId: String): MmsRow? =
+        db.query("mms", null, "message_id = ?", arrayOf(messageId), null, null, null).use { c -> if (c.moveToFirst()) mmsOf(c) else null }
+
+    override fun updateMms(row: MmsRow) {
+        db.update("mms", valuesOf(row), "message_id = ?", arrayOf(row.messageId))
+    }
+
+    override fun mmsIn(states: Set<MmsState>): List<MmsRow> {
+        if (states.isEmpty()) return emptyList()
+        val marks = states.joinToString(",") { "?" }
+        return db.query("mms", null, "state IN ($marks)", states.map { it.name }.toTypedArray(), null, null, "message_id").use { c ->
+            generateSequence { if (c.moveToNext()) mmsOf(c) else null }.toList()
+        }
+    }
+
+    private fun valuesOf(row: MmsRow) = ContentValues().apply {
+        put("message_id", row.messageId)
+        put("state", row.state.name)
+        put("transaction_id", row.transactionId)
+        put("content_location", row.contentLocation)
+        put("from_number", row.from)
+        put("size", row.size)
+        put("expires_at", row.expiresAt)
+        put("mms_version", row.mmsVersion)
+        put("sub_id", row.subId)
+        put("tries", row.tries)
+        put("requested_at", row.requestedAt)
+        put("crashes", row.crashes)
+        put("failure", row.failure)
+        put("notified", if (row.notified) 1 else 0)
+        put("deferred", if (row.deferred) 1 else 0)
+    }
+
+    private fun mmsOf(c: Cursor) = MmsRow(
+        messageId = c.str("message_id")!!,
+        state = runCatching { MmsState.valueOf(c.str("state")!!) }.getOrDefault(MmsState.FAILED),
+        transactionId = c.str("transaction_id").orEmpty(),
+        contentLocation = c.str("content_location").orEmpty(),
+        from = c.str("from_number").orEmpty(),
+        size = c.long("size"),
+        expiresAt = c.longOrNull("expires_at"),
+        mmsVersion = c.long("mms_version").toInt(),
+        subId = c.intOrNull("sub_id"),
+        tries = c.long("tries").toInt(),
+        requestedAt = c.longOrNull("requested_at"),
+        crashes = c.long("crashes").toInt(),
+        failure = c.str("failure"),
+        notified = c.long("notified") != 0L,
+        deferred = c.long("deferred") != 0L,
+    )
 
     override fun addCounter(key: String, by: Long) {
         db.execSQL("INSERT INTO counter (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = value + ?", arrayOf<Any>(key, by, by))
@@ -404,17 +529,39 @@ class SqliteMessageStore(context: Context) : MessageStore {
 
         override fun onCreate(db: SQLiteDatabase) {
             for (statement in SCHEMA) db.execSQL(statement)
+            onUpgrade(db, 1, DB_VERSION)
         }
 
+        /** Each version adds its own steps, never drops the history. */
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            // Version 1 is the first; a later one adds its own steps here, never drops the history.
+            if (oldVersion < 2) for (statement in VERSION_2) db.execSQL(statement)
+            if (oldVersion < 3) for (statement in VERSION_3) db.execSQL(statement)
         }
     }
 
     companion object {
         private const val LOG_TAG = "SmsStore"
         const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 3
+
+        /** Step 3b's code QA fix round (L2): whether an MMS was fetched deferred. Its own step (verification N-V1), so a
+         * development install of the first step 3b build, already at version 2, gains it too. */
+        private val VERSION_3 = listOf(
+            "ALTER TABLE mms ADD COLUMN deferred INTEGER NOT NULL DEFAULT 0",
+        )
+
+        /** Step 3b: the MMS fetch's state machine (§6.4), whether a message is an MMS, the push's release and tries. */
+        private val VERSION_2 = listOf(
+            "ALTER TABLE message ADD COLUMN is_mms INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE pending_push ADD COLUMN held_id TEXT",
+            "ALTER TABLE pending_push ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
+            "CREATE TABLE mms (message_id TEXT PRIMARY KEY, state TEXT NOT NULL, transaction_id TEXT NOT NULL, " +
+                "content_location TEXT NOT NULL, from_number TEXT NOT NULL, size INTEGER NOT NULL, expires_at INTEGER, " +
+                "mms_version INTEGER NOT NULL, sub_id INTEGER, tries INTEGER NOT NULL, requested_at INTEGER, " +
+                "crashes INTEGER NOT NULL, failure TEXT, notified INTEGER NOT NULL)",
+            "CREATE INDEX mms_state ON mms (state)",
+            "CREATE INDEX part_sha256 ON part (sha256)",
+        )
 
         /** §6.6's tables. */
         private val SCHEMA = listOf(

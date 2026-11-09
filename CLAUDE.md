@@ -36,7 +36,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Storytel - the login, the asset call's 302, a CDN of silent books - answering from the music app's Storytel test
   fixtures; §6i), `fake-spotify.py` (a fake Spotify - the accounts service with PKCE, the Web API the server and the
   phone use, a stub Web Playback SDK playing a tone - answering from `server/testdata/spotify/` and the music app's
-  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-audio.py` (a fake podcast host of
+  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-mmsc.py` (a fake MMS server for the emulator, design 77 step 3b: an
+  m-notification-ind as hex for the debug launcher's `MmsDebugReceiver`, m-retrieve-confs with a small JPEG, an m-send-conf
+  for every send; standard library only, `--selftest`; `docs/testing/emulator.md` §6v "step 3b"), `fake-audio.py` (a fake podcast host of
   silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f;
   `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
   39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs and head.html's

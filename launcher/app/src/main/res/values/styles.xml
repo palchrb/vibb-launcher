@@ -155,12 +155,15 @@
          breathing once on its night ground (drawable/splash_vibb_breathe, under 1000 ms - the
          SplashScreen API caps an animated icon at 1000 ms and sizes it 288 dp, the mark within the
          192 dp circle). Every other screen keeps the plain navy, icon-less splash of the base
-         theme. -->
+         theme. One definition only: a values-v29 copy without the splash items replaced this whole
+         style on every phone (minSdk 34) until 2026-11-09 (design 78 QA N6); SplashThemeTest keeps
+         any qualified copy from dropping an item again. -->
     <style name="launcherHomeTheme" parent="launcherBaseTheme">
         <item name="android:windowSplashScreenBackground">@color/vibb_night</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_vibb_breathe</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
         <!--<item name="android:windowDrawsSystemBarBackgrounds">true</item>-->
     </style>
 

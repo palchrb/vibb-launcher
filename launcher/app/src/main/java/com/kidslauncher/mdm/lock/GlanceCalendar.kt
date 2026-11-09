@@ -56,10 +56,15 @@ internal class GlanceCalendar(private val activity: Activity, private val change
 
     private class Loaded(val today: TodayCalendar?, val day: LocalDate)
 
-    fun load() {
+    /** The reminder row tapped (2026-11-09): today and tomorrow read from the provider again, not the kept days, so a
+     * removed or moved event leaves the row while the keypad or Android's pad is up. The tap's target (the day) stays. */
+    fun refresh() = load(fresh = true)
+
+    fun load(fresh: Boolean = false) {
         val app = activity.applicationContext
         CalendarStore.run({
             LocalDate.now().let { day ->
+                if (fresh) CalendarStore.forgetDays(day, day.plusDays(1))
                 val today = CalendarStore.todayBlocking(app, day)
                 // Tomorrow only for the line, and only while the parent wants the line.
                 val withTomorrow = if (today != null && CalendarStore.policy().glanceNext) today.copy(tomorrow = CalendarStore.dayBlocking(app, day.plusDays(1))) else today

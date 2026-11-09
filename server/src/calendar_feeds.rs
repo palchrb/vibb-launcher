@@ -42,8 +42,8 @@ pub const MAX_SOURCES: i64 = 50;
 pub const MAX_URL_CHARS: usize = 2000;
 /// A link's name, in code points after `calendar::clean`.
 pub const NAME_MAX: usize = 60;
-/// Each source is fetched this often (decision 2).
-pub const INTERVAL: TimeDelta = TimeDelta::minutes(60);
+/// Each source is fetched this often (decision 2's 30, since 2026-11-09: a removed event leaves the phone sooner).
+pub const INTERVAL: TimeDelta = TimeDelta::minutes(30);
 /// ... and this often while its UIDs churn (QA L8).
 pub const CHURN_INTERVAL: TimeDelta = TimeDelta::hours(6);
 /// Fetches in a row whose every series is new before [CHURN_INTERVAL].

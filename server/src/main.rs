@@ -564,7 +564,7 @@ async fn main() {
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
     tokio::task::spawn(music_sweep::run(state.clone()));
-    // Calendar links (design 72): each linked calendar fetched every hour, its first pass 30 s from now.
+    // Calendar links (design 72): each linked calendar fetched every half hour (`calendar_feeds::INTERVAL`), its first pass 30 s from now.
     tokio::task::spawn(calendar_feeds::run(state.clone()));
     // Design 72b: the kid's events written to the marked CalDAV calendars - woken by a phone's set, else every minute.
     tokio::task::spawn(calendar_kid_events::run(state.clone()));

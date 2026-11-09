@@ -39,7 +39,10 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   `docs/notes/server/calendar.md`; `KidEventTest`).
 - **`calendar/CalendarStore`** (one worker thread; every provider call): the calendars that sync events, a day's
   instances (`Instances.CONTENT_BY_DAY_URI` for the day and its neighbours, filtered by the model), an LRU of 9 days, the
-  events' own reminders, an event by id; the provider's change notification debounced to one reload a second; the
+  events' own reminders, an event by id; the provider's change notification debounced to one reload a second - the
+  LRU is pure `day/DayRowsCache` with a generation (2026-11-09, branch `calendar-fresh`): every drop moves it on, and a
+  day's read stores its rows only under the generation it took before asking the provider, so a read begun before a
+  change can't put stale rows back after the drop (`DayRowsCacheTest`); `forgetDays` drops given days (the glance's tap); the
   report; `tileShown`; `dagenOn` (a usable policy with Dagen on Home: else `dayBlocking` is an empty day and an open
   Dagen, event page or form closes on resume or the next change); the kid's calendar (`kidCalendar`: the parent's
   writable pick, else the local "Min kalender" it
@@ -63,7 +66,9 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   invisible, never gone, without one, so every row's start and end time share one left edge (the user's one change to
   mockup §6 B); two lines of title and second line - the kid's own event's second
   line is its place, else the calendar's name -; the time column 56 dp, widened per page to its widest one-line time
-  by `timeColumnPx`, an all-day row "Hele" over "dagen"; times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
+  by `timeColumnPx`, an all-day row "Hele" over "dagen"; every timed start peach (`kid_accent`), the kid's own too, an
+  all-day row's `kid_core_dim` (2026-11-09, the user: the dot and the key already say the calendar - "Fjern grønn
+  start-tid takk"; the kid's own start was green `kid_day_mine` #9FD3A8 since §1b, now gone); times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
   L4 -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
   "Åpne hendelsen" - the calendar's name last on a day with a key; the key under the list, `item_day_legend`
@@ -86,7 +91,12 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   becomes the provider's display name; blank = the time alone; the time first, so a long name is what is cut; TalkBack
   `glance_reminder_spoken_calendar`); never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
   tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, under a time rule only when every rule
-  in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`).
+  in force allows Kalender - `calendar_allowed`, PLAN 2026-11-02, `docs/notes/launcher/time-rules.md`; since 2026-11-09
+  the tap also reads today and tomorrow afresh - `GlanceCalendar.refresh`, the kept days forgotten -, so an event removed
+  since leaves the row while the keypad or Android's pad is up; the target stays the day, which opens as before even
+  when the event is gone). The first frame at screen-on stays the last read, updated quietly when a read differs (the
+  user, 2026-11-09: "vil heller ha en sjelden misfire ved at noe fjernes, enn at vi legger inn lag på hver eneste power
+  on"). The "Neste" line has no tap.
   A: `lock_glance_next` ("Neste 17:30: Trening", 2026-11-09: the time before the title, so the one-line ellipsis cuts only the
   title; no horizon, all day) under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
   row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out. Since the calmer glance

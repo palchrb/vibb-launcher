@@ -21,6 +21,8 @@ import com.kidslauncher.mdm.calls.DirectBootComponents
 class KidAppComponentFactory : CoreComponentFactory() {
 
     private fun beforeCreating(className: String) {
+        // Design 77 D8 (QA L1): in the isolated MMS parse process nothing is set up - it returns at once.
+        if (android.os.Process.isIsolated()) return
         if (DirectBootComponents.needsUnlockedSetup(className)) Application.instance?.ensureUnlockedInit()
     }
 

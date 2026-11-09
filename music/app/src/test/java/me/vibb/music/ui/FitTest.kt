@@ -1,6 +1,8 @@
 package me.vibb.music.ui
 
 import me.vibb.music.Fixtures.moduleFile
+import me.vibb.music.R
+import me.vibb.music.playback.RendererState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -231,6 +233,8 @@ class FitTest {
         val longest = mapOf(
             "Får ikke kontakt med høyttaleren" to 184.8f, "Noen andre bruker høyttaleren" to 172.2f,
             "Someone else is using the speaker" to 191.8f, "Can't reach the speaker" to 131.4f, "Spilles i en annen gruppe" to 141.4f,
+            // the notice's help line when a small cover drops it (qa-music-cant-play-2 N4)
+            "Spør en voksen om hjelp" to 136.8f, "Ask a grown-up for help" to 136.3f,
         ) + spotifyLines
         for (screen in widths) {
             val room = available(screen) - 44 - 44
@@ -238,7 +242,7 @@ class FitTest {
         }
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {"))
-        assertTrue(player.contains("rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
+        assertTrue(player.contains("headerLineText(rendererState, notice, noticeFit)?.let { Line(stringResource(it), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
     }
 
     /**
@@ -254,6 +258,99 @@ class FitTest {
         "Ask a grown-up" to 89.8f, "Doesn't work on this phone" to 153.4f, "Playing somewhere else" to 135.8f,
         "Stopped - press play" to 116.2f, "The book needs listening time" to 167.4f,
     )
+
+    /**
+     * The cover's notice (qa-music-cant-play M1, M2, L5): Nunito ExtraBold 15 dp titles and Bold 12 dp help lines, word by
+     * word from the font's advances (PIL, as the tables above; a space 4.18 and 3.25 dp), wrapped greedily at the cover
+     * less [NOTICE_PAD_X_DP] twice, a line 1.364 em high (the font's ascent + descent). The text is dp, so the font scale
+     * changes nothing here; only the cover's size does - 224 (the most), 150 (a shuffle row on the Jelly Star), 120 and
+     * 96 dp (the carousel's least; a large font shrinks the single cover too).
+     */
+    private val noticeTitles = mapOf(
+        "Kan ikke spilles nå" to listOf(27.6f, 28.9f, 46.1f, 17.3f), "Lydboka trenger lyttetid" to listOf(59.5f, 52.9f, 52.2f),
+        "Virker ikke på telefonen" to listOf(44.5f, 28.9f, 17.5f, 67.8f), "Trenger Wi-Fi" to listOf(55.1f, 41.3f),
+        "Trenger internett" to listOf(55.1f, 62.0f), "Ikke tilgjengelig nå" to listOf(29.3f, 81.4f, 17.3f),
+        "Can't play now" to listOf(37.2f, 30.4f, 30.5f), "The book needs listening time" to listOf(27.4f, 35.2f, 41.9f, 61.6f, 31.9f),
+        "Doesn't work on this phone" to listOf(54.9f, 36.1f, 17.8f, 26.6f, 44.1f), "Needs Wi-Fi" to listOf(44.3f, 41.3f),
+        "Needs the internet" to listOf(44.3f, 23.4f, 56.5f), "Not available right now" to listOf(26.1f, 64.2f, 34.4f, 30.5f),
+    )
+    private val noticeHelps = mapOf(
+        "Spør en voksen om hjelp" to listOf(26.4f, 13.5f, 38.8f, 17.4f, 27.7f),
+        "Ask a grown-up for help" to listOf(21.1f, 6.6f, 55.3f, 15.8f, 24.6f),
+    )
+
+    /** Greedy word wrap: the lines [words] take in [width] (a word wider than the width never fits). */
+    private fun wrap(words: List<Float>, space: Float, width: Float): Int {
+        var lines = 1
+        var line = 0f
+        for (w in words) {
+            if (w > width) return Int.MAX_VALUE
+            line = if (line == 0f) {
+                w
+            } else if (line + space + w <= width) {
+                line + space + w
+            } else {
+                lines++
+                w
+            }
+        }
+        return lines
+    }
+
+    private fun height(words: List<Float>, space: Float, sizeDp: Float, width: Float, maxLines: Int): Float =
+        wrap(words, space, width).let { if (it > maxLines) Float.POSITIVE_INFINITY else it * sizeDp * 1.364f }
+
+    @Test
+    fun `the cover's notice fits - all of it from 150 dp, its title from 120, else the line under the name says it`() {
+        // the measured words are the strings' (both languages)
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            val text = moduleFile(path).readText()
+            fun string(name: String) = Regex("""<string name="$name"[^>]*>([^<]*)</string>""").find(text)!!.groupValues[1].replace("\\'", "'")
+            assertTrue(path, string("cant_play_now") in noticeTitles)
+            assertTrue(path, string("cant_play_ask_adult") in noticeHelps)
+        }
+        val states = RendererState.entries.mapNotNull { s -> cantPlayNotice(s)?.let { s to it } }
+        val nb = mapOf(
+            R.string.cant_play_now to "Kan ikke spilles nå", R.string.renderer_spotify_no_listening_time to "Lydboka trenger lyttetid",
+            R.string.renderer_spotify_not_on_phone to "Virker ikke på telefonen", R.string.renderer_spotify_needs_wifi to "Trenger Wi-Fi",
+            R.string.renderer_spotify_needs_internet to "Trenger internett", R.string.renderer_spotify_unavailable to "Ikke tilgjengelig nå",
+            R.string.cant_play_ask_adult to "Spør en voksen om hjelp",
+        )
+        val en = mapOf(
+            R.string.cant_play_now to "Can't play now", R.string.renderer_spotify_no_listening_time to "The book needs listening time",
+            R.string.renderer_spotify_not_on_phone to "Doesn't work on this phone", R.string.renderer_spotify_needs_wifi to "Needs Wi-Fi",
+            R.string.renderer_spotify_needs_internet to "Needs the internet", R.string.renderer_spotify_unavailable to "Not available right now",
+            R.string.cant_play_ask_adult to "Ask a grown-up for help",
+        )
+        for (words in listOf(nb, en)) {
+            for (cover in listOf(224f, 150f, 120f, 96f)) {
+                val width = cover - 2 * NOTICE_PAD_X_DP
+                for ((state, notice) in states) {
+                    val title = words.getValue(notice.title)
+                    val help = notice.help?.let { words.getValue(it) }
+                    val fit = noticeFit(
+                        cover - 2 * NOTICE_PAD_Y_DP,
+                        height(noticeTitles.getValue(title), 4.18f, NOTICE_TITLE_DP, width, NOTICE_TITLE_LINES),
+                        help?.let { height(noticeHelps.getValue(it), 3.25f, NOTICE_HELP_DP, width, NOTICE_HELP_LINES) },
+                    )
+                    val at = "$cover dp: $title"
+                    if (cover >= 150f) assertEquals(at, NoticeFit(disc = true, title = true, help = help != null), fit)
+                    if (cover >= 120f) assertTrue(at, fit.complete(help != null))
+                    // whatever the notice can't say, the line under the entry name says (N4: the help too)
+                    if (!fit.complete(help != null)) assertTrue(at, headerLineText(state, notice, fit) != null)
+                }
+            }
+        }
+        // a 96 dp page: "Kan ikke spilles nå" keeps its title, the help goes, and "Spør en voksen" comes back above
+        val ask = cantPlayNotice(RendererState.SPOTIFY_ASK_ADULT)!!
+        val small = noticeFit(
+            96f - 2 * NOTICE_PAD_Y_DP,
+            height(noticeTitles.getValue("Kan ikke spilles nå"), 4.18f, NOTICE_TITLE_DP, 96f - 2 * NOTICE_PAD_X_DP, NOTICE_TITLE_LINES),
+            height(noticeHelps.getValue("Spør en voksen om hjelp"), 3.25f, NOTICE_HELP_DP, 96f - 2 * NOTICE_PAD_X_DP, NOTICE_HELP_LINES),
+        )
+        assertEquals(NoticeFit(disc = true, title = true, help = false), small)
+        assertEquals(R.string.renderer_spotify_ask_adult, headerLineText(RendererState.SPOTIFY_ASK_ADULT, ask, small))
+    }
 
     @Test
     fun `every web player line is measured - the strings are the map's, and each fits the tile too`() {
@@ -322,7 +419,7 @@ class FitTest {
     @Test
     fun `the player's art replaces only the cover box`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue(player.contains("PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        assertTrue(player.contains("PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
         assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
         assertTrue("no cover of its own", !player.contains("Cover("))
     }

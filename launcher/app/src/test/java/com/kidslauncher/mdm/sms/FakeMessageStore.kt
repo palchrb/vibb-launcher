@@ -10,6 +10,9 @@ import com.kidslauncher.mdm.sms.engine.InsertOutgoing
 import com.kidslauncher.mdm.sms.engine.MessageRow
 import com.kidslauncher.mdm.sms.engine.MessageStore
 import com.kidslauncher.mdm.sms.engine.MessageVerdict
+import com.kidslauncher.mdm.sms.engine.MmsRow
+import com.kidslauncher.mdm.sms.engine.MmsState
+import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
 
 /** The engine's store in memory, with SQLite's contract: a transaction is all or nothing, `client_id` is unique
@@ -45,11 +48,18 @@ class FakeMessageStore : MessageStore {
     private class Snapshot(
         val seq: Long, val c: Map<String, ConversationRow>, val m: Map<String, MessageRow>, val e: List<EventRow>,
         val h: Map<String, HeldRow>, val b: Map<String, BlockedRow>, val n: Map<String, Long>,
+        val p: Map<String, List<Part>>, val mm: Map<String, MmsRow>, val pu: List<PendingPushRow>,
     )
 
-    private fun snapshot() = Snapshot(seq, LinkedHashMap(conversations), LinkedHashMap(messages), events.toList(), LinkedHashMap(held), LinkedHashMap(blocked), counters.toMap())
+    private fun snapshot() = Snapshot(
+        seq, LinkedHashMap(conversations), LinkedHashMap(messages), events.toList(), LinkedHashMap(held), LinkedHashMap(blocked), counters.toMap(),
+        LinkedHashMap(parts), LinkedHashMap(mms), pushes.toList(),
+    )
 
     private fun restore(s: Snapshot) {
+        parts.clear(); parts.putAll(s.p)
+        mms.clear(); mms.putAll(s.mm)
+        pushes.clear(); pushes.addAll(s.pu)
         seq = s.seq
         conversations.clear(); conversations.putAll(s.c)
         messages.clear(); messages.putAll(s.m)
@@ -89,6 +99,8 @@ class FakeMessageStore : MessageStore {
     }
     override fun deleteMessageRow(id: String) {
         messages.remove(id)
+        parts.remove(id)
+        mms.remove(id)
     }
 
     private fun shown() = messages.values.filter { it.verdict == MessageVerdict.SHOWN }
@@ -153,8 +165,33 @@ class FakeMessageStore : MessageStore {
     }
     override fun pendingPushCount() = pushes.size
     override fun prunePendingPush(before: Long) {
-        pushes.removeAll { it.at < before }
+        pushes.removeAll { it.at < before && it.heldId == null }
     }
+    override fun pendingPushes() = pushes.sortedBy { it.at }
+    override fun deletePendingPush(id: String) {
+        pushes.removeAll { it.id == id }
+    }
+    override fun countPushTry(id: String) {
+        val i = pushes.indexOfFirst { it.id == id }
+        if (i >= 0) pushes[i].let { pushes[i] = PendingPushRow(it.id, it.pdu, it.subId, it.at, it.heldId, it.tries + 1) }
+    }
+
+    val parts = linkedMapOf<String, List<Part>>()
+    val mms = linkedMapOf<String, MmsRow>()
+    override fun parts(messageId: String) = parts[messageId].orEmpty().sortedBy { it.index }
+    override fun putParts(messageId: String, parts: List<Part>) {
+        this.parts[messageId] = parts
+    }
+    override fun partHashes() = parts.values.flatten().mapNotNull { it.sha256 }.toSet()
+    override fun insertMms(row: MmsRow) {
+        check(row.messageId !in mms)
+        mms[row.messageId] = row
+    }
+    override fun mms(messageId: String) = mms[messageId]
+    override fun updateMms(row: MmsRow) {
+        if (row.messageId in mms) mms[row.messageId] = row
+    }
+    override fun mmsIn(states: Set<MmsState>) = mms.values.filter { it.state in states }
 
     override fun addCounter(key: String, by: Long) {
         counters[key] = (counters[key] ?: 0) + by

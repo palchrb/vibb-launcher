@@ -453,7 +453,7 @@ async fn the_fetch_cycle() {
         }
     };
 
-    // 304: the set kept, the hour's interval.
+    // 304: the set kept, the half hour's interval.
     assert_eq!(
         calendar_feeds::refresh(state, id, t0).await.unwrap(),
         Outcome::Unchanged
@@ -461,7 +461,7 @@ async fn the_fetch_cycle() {
     let (next, _, rev) = next_at(&app).await;
     assert_eq!(
         next - t0.with_nanosecond(0).unwrap(),
-        TimeDelta::minutes(60)
+        TimeDelta::minutes(30)
     );
 
     // A new set nudges exactly the phones with the link.
