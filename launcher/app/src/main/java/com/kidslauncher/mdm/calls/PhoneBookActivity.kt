@@ -78,6 +78,9 @@ class PhoneBookActivity : UIObjectActivity() {
     private var visitTop: Map<String, Long>? = null
     private var sightings = TopSightings()
 
+    /** The search's text changed: the next list starts at its top. */
+    private var toTop = false
+
     /** The visit came through a rotation: [onStart] keeps its top and sightings. */
     private var visitRestored = false
     private var resumed = false
@@ -100,6 +103,12 @@ class PhoneBookActivity : UIObjectActivity() {
     private val requestsListener: () -> Unit = { render() }
     /** Round L5: a missed Element X call came or went. */
     private val elementMissedListener: () -> Unit = { loadMissedCalls() }
+
+    /** Design 79 §3.2: a missed call that comes while the phone book is in front joins the visit's top (as Home's
+     * badges follow the call log). */
+    private val callLogObserver = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = loadMissedCalls()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,7 +137,11 @@ class PhoneBookActivity : UIObjectActivity() {
         // The keyboard (the request form): the page's bottom takes it (design 79 §3.5, QA L3).
         KidInsets.apply(binding.root, ime = true)
         binding.phoneBookPlus.setOnClickListener { requestForm.open() }
-        search = KidSearchField(binding.phoneBookSearch.root, R.string.phone_book_search) { render() }
+        search = KidSearchField(binding.phoneBookSearch.root, R.string.phone_book_search) {
+            // A new query shows its best hits from the top, once the list has them.
+            toTop = true
+            render()
+        }
         requestForm = ContactRequestForm(this, binding, onModeChanged = { render() }, onSent = { search.clear() }, onPicture = ::requestPicture)
         // Design 79 §5.5: a draft older than a day goes.
         ContactRequests.sweepDrafts(this)
@@ -150,6 +163,11 @@ class PhoneBookActivity : UIObjectActivity() {
         ElementMissedCallStore.addListener(elementMissedListener)
         SmsHome.addListener(messagesListener)
         ContactRequests.addListener(requestsListener)
+        try {
+            contentResolver.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI, true, callLogObserver)
+        } catch (e: Exception) {
+            // No call-log access (unmanaged): the list follows the visit's own loads.
+        }
         SmsHome.refresh(this)
         // A new visit: its top is fixed by the first missed calls loaded (design 79 §3.2).
         if (!visitRestored) {
@@ -188,6 +206,7 @@ class PhoneBookActivity : UIObjectActivity() {
         ElementMissedCallStore.removeListener(elementMissedListener)
         SmsHome.removeListener(messagesListener)
         ContactRequests.removeListener(requestsListener)
+        contentResolver.unregisterContentObserver(callLogObserver)
         if (!isChangingConfigurations && ::requestForm.isInitialized) {
             // The visit ends: the top rows it showed are seen (design 79 §3.2 rule 1) - Home's badge goes now too.
             for ((number, upToMs) in sightings.seen(SystemClock.elapsedRealtime())) MissedCallsRepo.markSeen(this, number, upToMs)
@@ -276,7 +295,9 @@ class PhoneBookActivity : UIObjectActivity() {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@PhoneBookActivity, state) }
             if (!isDestroyed) {
                 missed = result
-                // The visit's top: fixed by its first load, joined by later ones (design 79 §3.2).
+                // The visit's top: fixed by its first load, joined by later ones (design 79 §3.2). A new visit starts at
+                // the list's top - never wherever the last visit's rows took the scroll (emulator run: a call in between).
+                if (visitTop == null) toTop = true
                 visitTop = visitTopAfter(visitTop, result)
                 render()
                 openPendingSheet()
@@ -335,7 +356,11 @@ class PhoneBookActivity : UIObjectActivity() {
         bindEmpty(list, ink)
         binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
         back.isEnabled = phoneBookBack(requestForm.isOpen, query) != PhoneBookBack.LEAVE
-        adapter.submitList(itemsOf(list.rows, rules, emergency)) { noteSightings() }
+        adapter.submitList(itemsOf(list.rows, rules, emergency)) {
+            if (toTop) binding.phoneBookList.scrollToPosition(0)
+            toTop = false
+            noteSightings()
+        }
         // Design 77 §14: an answer shows once - this visit has shown it.
         if (list.rows.any { it is PhoneBookRow.Answer }) requestForm.answersShown()
     }
@@ -393,7 +418,10 @@ class PhoneBookActivity : UIObjectActivity() {
         } else {
             KidHeader.bind(this, header, R.string.calls_phone_book, back = R.string.kid_back)
         }
-        binding.phoneBookPlus.visibility = if (canAsk && !requestForm.isOpen) View.VISIBLE else View.GONE
+        val plus = canAsk && !requestForm.isOpen
+        binding.phoneBookPlus.visibility = if (plus) View.VISIBLE else View.GONE
+        // The title never runs under the "+" (font scale 2.0).
+        header.root.setPaddingRelative(0, 0, if (plus) resources.getDimensionPixelSize(R.dimen.phone_book_plus_room) else 0, 0)
     }
 
     /** The rows on screen now (at least half of each), the top ones with a red line, for the seen rule (§3.2): only

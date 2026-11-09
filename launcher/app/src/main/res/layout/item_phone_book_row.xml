@@ -52,14 +52,15 @@
                 android:maxLines="1"
                 android:textSize="18sp" />
 
-            <!-- The badge at the avatar's top end, lifted 2 dp, past the avatar's edge (its parents don't clip). -->
+            <!-- The badge at the avatar's top end, lifted, reaching past the avatar's edge into the gap (moved, not laid
+                 out there: a wider badge never pushes itself back over the avatar; its parents don't clip). -->
             <TextView
                 android:id="@+id/contact_badge"
                 style="@style/KidBadge"
                 android:layout_height="20dp"
                 android:layout_gravity="top|end"
-                android:layout_marginTop="-6dp"
-                android:layout_marginEnd="-10dp"
+                android:translationX="10dp"
+                android:translationY="-6dp"
                 android:drawablePadding="2dp"
                 android:importantForAccessibility="no"
                 android:minWidth="20dp"

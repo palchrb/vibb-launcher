@@ -196,6 +196,9 @@ class PhoneBookAdapter(
             val contact = row.contact
             val badgeCounts = ContactBadge(row.missed?.count ?: 0, row.unread)
             KidAvatars.bindContactBadge(badge, badgeCounts)
+            // On a 44 dp avatar the count alone: the red line beside it already says it is a missed call (the glyph
+            // made the badge as wide as the avatar, emulator run).
+            badge.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
             name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
             val text = rowLine(context, row)
             line.visibility = if (text == null) View.GONE else View.VISIBLE
