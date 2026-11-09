@@ -3,7 +3,7 @@
 {#- The lock screen (design 74 §6.5) has no title of its own: the head says only "Vibb". #}
 <title>{% if title.is_empty() %}Vibb{% else %}{{ title }} · Vibb Phone{% endif %}</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=84">
+<link rel="stylesheet" href="/static/style.css?v=85">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -28,12 +28,14 @@
 <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1320x2868.png?v=1">
 {#- End of the start-up images. -#}
 {#- Night behind the status bar on every page, in both schemes (the user, 2026-10-22): theme-color for the
-    browsers and Android, black-translucent for the installed iPhone app - its page runs under the status bar,
-    where style.css's body::before paints the top inset night, and iOS draws the bar's text white. #}
+    browsers and Android, black for the installed iPhone app - an opaque black bar with white text, the page below
+    it. It was black-translucent (the page under the bar, style.css's body::before painting the top inset night)
+    until iOS 27 drew its own grey blur over a translucent bar (the user, 2026-11-09, iOS 27.2). iOS keeps the style
+    an app was added with: an app added before may need a relaunch or to be added again. #}
 <meta name="theme-color" content="#0C0C14">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Vibb Phone">
 {#- The app lock (design 74 §3): on a page of a lock-on session (the server marks its html tag), the last input in
     sessionStorage, html.locked and the way to /lock once it is due, the veil while hidden, the input beacon, and

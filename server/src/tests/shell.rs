@@ -574,8 +574,8 @@ async fn the_tab_pages_open_on_their_large_title() {
         );
         // Devices' top is vibb's night (artboard E, 2026-10-22): its title bar is the night band;
         // every other tab keeps the grey title bar. The status bar is night on every page, in both
-        // schemes (the user, 2026-10-22): one theme-color, and the installed iPhone app's page runs
-        // under a black-translucent status bar onto style.css's night strip (body::before).
+        // schemes (the user, 2026-10-22): one theme-color, and the installed iPhone app's status bar
+        // is opaque black - never black-translucent, which iOS 27 blurs grey (the user, 2026-11-09).
         let night = page == "/devices";
         assert_eq!(
             before
@@ -601,8 +601,8 @@ async fn the_tab_pages_open_on_their_large_title() {
         );
         assert!(
             html.contains(
-                "<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black-translucent\">"
-            ),
+                "<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black\">"
+            ) && !html.contains("black-translucent"),
             "{page}: the status bar"
         );
         if let Some(href) = add {
@@ -1126,8 +1126,9 @@ fn the_app_shell_scrolls_main_not_the_document() {
         block(".title-bar-night"),
         "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0;"
     );
-    // Night behind the status bar on every page (the user, 2026-10-22; head.html's black-translucent
-    // status bar): a strip of exactly the top inset - nothing without one - absolute in the body,
+    // Night behind the status bar on every page (the user, 2026-10-22): a strip of exactly the top
+    // inset - nothing without one, as under today's opaque bar; it serves an app added with the old
+    // black-translucent bar until it is added again - absolute in the body,
     // which never scrolls, so main scrolls under it; over the editor bar's z-index 5.
     assert_eq!(
         block("body::before"),

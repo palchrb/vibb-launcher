@@ -69,7 +69,8 @@ The user's words (2026-11-09):
   app **is** HOME, so Dagen and Meldinger (new tasks started from Home) open behind a `kid_ground` starting window
   today, invisible only because the page has the same ground. (Found by the QA in passing: `values-v29/styles.xml`
   redefines `launcherHomeTheme` without the `windowSplashScreen*` items, so on minSdk 34 Home's breathing splash is
-  never used. Pre-existing, outside this design; for the main session.)
+  never used. Pre-existing, outside this design; for the main session. Fixed 2026-11-09: the copy was folded into
+  `values/`, `SplashThemeTest` guards it.)
 - **Theme references on pages**: `item_wifi_network.xml` and `item_bluetooth_device.xml` colour text and icons with
   `?android:attr/textColorSecondary` and their rows with `?attr/selectableItemBackground(Borderless)`.
 - **No activity but `PinLockActivity` declares `uiMode`** in `configChanges`: Battery Saver's dark theme relaunches
@@ -181,10 +182,11 @@ and text on a peach fill; today's `kid_ground` in that role) and the own-bubble 
 | `kid_page_message_in` | a received bubble | `kid_message_in` #34324A | **#E8E4EE** | ink 13.7 |
 | `kid_page_message_in_ink` | its text | `kid_ink` #FFFFFF | **#1B1B1F** | 13.7 |
 | `kid_page_message_in_dim` | its time | `kid_message_in_dim` #A6A0B4 | **#5E5870** | 5.4 |
-| `kid_page_day_mine` | the kid's own events' start | `kid_day_mine` #9FD3A8 | **#2E7D46** | 5.1 tile |
 | `kid_page_alert` | "Ikke sendt - trykk ...", "Slett" in Dagen | `kid_missed_text` #FF8A8A | **#B3261E** | 5.9 ground, 6.5 tile |
 | `kid_page_danger` / `_text` | the "Slett" pill | `kid_emergency_tonal` #3A1E24 / #FF8A8A | **#FBE3E1 / #A1241C** | 6.2 |
 | (unqualified) `kid_message_out`, `_ink`, `_dim` | the kid's own bubble | #F0A884, #1B1B1F, #5E4034 | **the same** | 8.7, 4.7 |
+
+`kid_page_day_mine` (the kid's own events' green start) removed 2026-11-09, the user: every start time is the accent.
 
 The own bubble stays peach in both looks: "my messages are peach" is the one thing the kid learns, and the peach reads
 on paper as well as on night (1.8:1 to the day ground as a shape; its text 8.7:1). The received bubble's day value
@@ -193,7 +195,7 @@ lists); only the compose field, an input, gets the hairline.
 
 ### 4.2 Kalender's colours
 
-- Start times `kid_page_accent`; the kid's own `kid_page_day_mine`; all-day `kid_page_dim`; "Pågår nå"'s 1.5 dp ring
+- Start times `kid_page_accent`, the kid's own too; all-day `kid_page_dim`; "Pågår nå"'s 1.5 dp ring
   `kid_page_accent` (5.8:1 to the white tile; it repeats the words, so colour isn't the only signal).
 - **The calendar dots** get a day table beside the night one: `CalendarColor` gains `dayArgb`, each the same hue made
   deep enough for **>= 3:1 on the white tile and the ground** (WCAG 1.4.11 for a graphic): sky #3A76B0 (4.8),

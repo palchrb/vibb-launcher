@@ -135,15 +135,8 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             dot.visibility = if (color != null) View.VISIBLE else View.INVISIBLE
             if (color != null) dot.backgroundTintList = ColorStateList.valueOf(color.argb)
             start.text = from
-            start.setTextColor(
-                context.getColor(
-                    when {
-                        row.kind == RowKind.ALL_DAY -> R.color.kid_core_dim
-                        row.ownedByVibb -> R.color.kid_day_mine
-                        else -> R.color.kid_accent
-                    },
-                ),
-            )
+            // Every timed start peach, the kid's own too: the dot and the key say the calendar (the user, 2026-11-09).
+            start.setTextColor(context.getColor(if (row.kind == RowKind.ALL_DAY) R.color.kid_core_dim else R.color.kid_accent))
             end.text = until
             end.visibility = if (until.isEmpty()) View.GONE else View.VISIBLE
             title.text = row.title

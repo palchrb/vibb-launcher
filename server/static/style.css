@@ -238,16 +238,21 @@ body {
    app with the black-translucent status bar): in standalone mode there is no toolbar, and iOS 26
    reports the dynamic viewport (100dvh, innerHeight) short by exactly the top inset with that
    status bar (WebKit 301108), while 100vh is the screen. So the shell is 100vh there, which is
-   right by construction - no toolbar can change it - whether or not WebKit fixes the bug. */
+   right by construction - no toolbar can change it - whether or not WebKit fixes the bug. With
+   today's opaque black bar (head.html, 2026-11-09) 100vh is the screen below the bar, as right; an
+   app added before keeps its translucent bar until it is added again, and this still serves it. */
 @media (display-mode: standalone) {
     body {
         height: 100vh;
     }
 }
 
-/* Night behind the status bar on every page (the user, 2026-10-22): the installed iPhone app's
-   status bar is black-translucent (head.html) - the page runs under it and iOS draws white text on
-   whatever is there - so the top inset is vibb's night in both schemes. Absolute in the body, which
+/* Night behind the status bar on every page (the user, 2026-10-22). Since 2026-11-09 the installed
+   iPhone app's bar is opaque black (head.html: iOS 27 blurs a black-translucent one grey), the page
+   below it, so the top inset is 0 there and this strip is nothing; it stays for an app added before
+   that change (iOS keeps its translucent bar until it is added again) and any other bar the page runs
+   under. Under a translucent bar the page runs beneath it and iOS draws white text on whatever is
+   there - so the top inset is vibb's night in both schemes. Absolute in the body, which
    is the screen and never scrolls (design 43), so main scrolls under it and the strip never moves;
    exactly the inset's height, so with no inset (a desktop, Android's Chrome) it is nothing. On
    Devices the night band runs on through it. Over main's sticky editor bar (z-index 5), under the
@@ -2877,8 +2882,9 @@ html.veiled body > * { visibility: hidden !important; }
    alone; the words show through it. On night: cream 16.2:1, the hint and Sign Out 8.4:1, the red line pale red 11.4:1.
    It takes over from the iPhone start-up splash with no jump (the user: "en fin overgang"): the mark at the splash's
    size (--vibb-mark-size, from the splash's MARK_SHARE) on the screen's centre - the middle of the visible height,
-   the screen itself in the installed app (100vh there, under the black-translucent status bar, viewport-fit=cover)
-   -, its first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
+   the screen itself in the installed app (100vh there; under the black-translucent status bar before 2026-11-09, the
+   screen below the opaque black bar since, so the centre may sit half the bar's height lower than the splash's - the
+   user's iPhone check) -, its first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
    in. */
 /* The Vibb mark's size: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. */
 :root { --vibb-mark-size: min(51.30vmin, 240px); }
