@@ -191,3 +191,21 @@ test("the app lock: no reload once it is due - the lock instead (design 74 D3.3)
     win.advance();
     assert.deepStrictEqual(locks, ["lock"], "once");
 });
+
+// Design 80 D11 (M1): a contact's row (a <details>) holding its Avansert, drawn open; `rowOpen` the row's state.
+function nestedOpen(rowOpen) {
+    const row = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" && rowOpen, parentNode: { nodeName: "MAIN" } };
+    const adv = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: row } };
+    return rowOpen ? [row, adv] : [adv];
+}
+
+test("a closed contact holding an open Avansert doesn't stop the reload; an opened one does (design 80 D11)", () => {
+    for (const rowOpen of [false, true]) {
+        const win = fakeWindow();
+        const open = nestedOpen(rowOpen);
+        win.document.querySelectorAll = (selector) => (selector === "details[open]" ? open : []);
+        install(win);
+        win.advance();
+        assert.strictEqual(win.reloads, rowOpen ? 0 : 1, `row open: ${rowOpen}`);
+    }
+});

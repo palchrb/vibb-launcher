@@ -269,6 +269,10 @@ async fn nb_pages_have_no_english() {
     pages.push(format!(
         "/devices/{anna}/calls?request=10112233445566778899aabbccddeeff"
     ));
+    // Design 80: the page's Avansert open, and Add Contact from a held number ("Tilpasset", its Avansert open); the
+    // seeded Mormor is split, her own Avansert drawn open.
+    pages.push(format!("/devices/{anna}/calls?advanced=1"));
+    pages.push(format!("/devices/{anna}/calls?add_number=%2B4798765432"));
     // Every one-shot flash, on the page that shows it (qa-s-i18n-4-code M2), each checked to be there.
     let mut flashes: Vec<(String, &str)> = Vec::new();
     for code in ["extra", "pause", "gone", "ended", "over"] {

@@ -1124,43 +1124,14 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         Vec<(&'a str, &'a str)>,
         Option<(&'a str, Option<&'a str>)>,
     );
+    // Design 80 D9: every form in the page's Avansert returns with `?advanced=1`, which draws it open.
+    let adv = format!("{calls}?advanced=1");
     let table: Vec<Row> = vec![
-        // Design 73: the emergency menu at the top - Add Number and the two suggestions (112 alone has no buttons),
-        // each back to its new row ("E:<number>").
-        (
-            format!("/devices/{id}/calls/emergency#add-emergency"),
-            vec![("number", "90000003"), ("name", "Mormor")],
-            Some((calls.as_str(), Some("E:+4790000003"))),
-        ),
-        (
-            format!("/devices/{id}/calls/emergency#emergency"),
-            vec![],
-            Some((calls.as_str(), Some("E:113"))),
-        ),
-        (
-            format!("/devices/{id}/calls/emergency#emergency"),
-            vec![],
-            Some((calls.as_str(), Some("E:110"))),
-        ),
+        // Design 80 D8: the channels' own form (`section=channels`), back to its group.
         (
             format!("/devices/{id}/calls/settings#settings"),
-            vec![
-                ("calls_mode", "managed"),
-                ("sms_mode", "unmanaged"),
-                ("default_message_app", "sms"),
-            ],
+            vec![("calls_mode", "managed"), ("sms_mode", "unmanaged")],
             Some((calls.as_str(), Some("settings"))),
-        ),
-        // Design 77 step 4: the SMS settings and Add Name, each back to its own group.
-        (
-            format!("/devices/{id}/calls/sms#sms-settings"),
-            vec![("sms_lock_text", "on"), ("own_number_1", "")],
-            Some((calls.as_str(), Some("sms-settings"))),
-        ),
-        (
-            format!("/devices/{id}/calls/names#sms-names"),
-            vec![("name", "Posten")],
-            Some((calls.as_str(), Some("sms-names"))),
         ),
         (
             format!("/devices/{id}/contacts/{c}#{row}"),
@@ -1186,6 +1157,40 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
             format!("/devices/{id}/contacts#add-contact"),
             vec![("name", "Pappa"), ("number", "90000002")],
             Some((calls.as_str(), Some("NEW"))),
+        ),
+        // Design 73, in the page's Avansert since design 80: Add Number and the two suggestions (112 alone has no
+        // buttons), each back to its new row ("E:<number>").
+        (
+            format!("/devices/{id}/calls/emergency#add-emergency"),
+            vec![("number", "90000003"), ("name", "Mormor")],
+            Some((adv.as_str(), Some("E:+4790000003"))),
+        ),
+        (
+            format!("/devices/{id}/calls/emergency#emergency"),
+            vec![],
+            Some((adv.as_str(), Some("E:113"))),
+        ),
+        (
+            format!("/devices/{id}/calls/emergency#emergency"),
+            vec![],
+            Some((adv.as_str(), Some("E:110"))),
+        ),
+        // Design 80 D8: the phone's default Message button (`section=button`), the SMS settings and Add Name, each back
+        // to its own group in Avansert.
+        (
+            format!("/devices/{id}/calls/settings#message-button"),
+            vec![("default_message_app", "sms")],
+            Some((adv.as_str(), Some("message-button"))),
+        ),
+        (
+            format!("/devices/{id}/calls/sms#sms-settings"),
+            vec![("sms_lock_text", "on"), ("own_number_1", "")],
+            Some((adv.as_str(), Some("sms-settings"))),
+        ),
+        (
+            format!("/devices/{id}/calls/names#sms-names"),
+            vec![("name", "Posten")],
+            Some((adv.as_str(), Some("sms-names"))),
         ),
     ];
     let found = super::settings_pages::forms(&html);
@@ -1323,7 +1328,7 @@ async fn the_calls_page_escapes_what_it_shows() {
     assert!(html.contains("&#60;b&#62;Mor&#60;/b&#62;"), "{html}");
     assert!(!html.contains("<script>x") && !html.contains("<img src=x"));
     // The row's value: which way calls go.
-    assert!(part(&html, &format!("id=\"contact-{c}\""), "</summary>").contains(">Calls in only<"));
+    assert!(part(&html, &format!("id=\"contact-{c}\""), "</summary>").contains(">Calls in<"));
 }
 
 /// A read the page needs fails as a 500, never as an empty list (its saves would read as off).

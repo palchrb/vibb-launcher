@@ -69,7 +69,7 @@ async fn adding_keeps_112_first_and_normalises_the_number() {
     let e113 = entry(&app, id, "113").await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}/calls"),
+        &format!("/devices/{id}/calls?advanced=1"),
         Some(&format!("emergency-{e113}")),
     );
     add(&app, &cookie, id, "900 00 001", "Mamma").await;
@@ -157,7 +157,7 @@ async fn moving_swaps_with_the_neighbour_and_returns_to_the_row() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}/calls"),
+        &format!("/devices/{id}/calls?advanced=1"),
         Some(&format!("emergency-{e110}")),
     );
     let e112 = entry(&app, id, "112").await;
@@ -188,7 +188,7 @@ async fn moving_swaps_with_the_neighbour_and_returns_to_the_row() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{other}/calls?notice=emergency_gone"),
+        &format!("/devices/{other}/calls?advanced=1&notice=emergency_gone"),
         Some("emergency"),
     );
     let res = app
@@ -218,7 +218,7 @@ async fn the_menu_keeps_an_emergency_number() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}/calls?notice=emergency_kept"),
+        &format!("/devices/{id}/calls?advanced=1&notice=emergency_kept"),
         Some("emergency"),
     );
     assert!(
@@ -232,7 +232,11 @@ async fn the_menu_keeps_an_emergency_number() {
     let res = app
         .request_form(Method::POST, &remove(e112), Some(&cookie), &[])
         .await;
-    assert_redirect(&res, &format!("/devices/{id}/calls"), Some("emergency"));
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?advanced=1"),
+        Some("emergency"),
+    );
     let mamma = entry(&app, id, "+4790000001").await;
     app.request_form(Method::POST, &remove(mamma), Some(&cookie), &[])
         .await;
@@ -246,7 +250,7 @@ async fn the_menu_keeps_an_emergency_number() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}/calls?notice=emergency_gone"),
+        &format!("/devices/{id}/calls?advanced=1&notice=emergency_gone"),
         Some("emergency"),
     );
 }

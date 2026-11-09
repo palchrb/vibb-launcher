@@ -409,6 +409,28 @@
     }
 
     /**
+     * Design 80 D11 (M1): an open <details> the reader can see - one with no closed <details> around it. A contact's
+     * Avansert drawn open inside its closed row holds nothing a reload would lose. No layout read.
+     */
+    function shownOpen(doc) {
+        if (!doc.querySelectorAll) return !!(doc.querySelector && doc.querySelector("details[open]"));
+        var open = doc.querySelectorAll("details[open]");
+        for (var i = 0; i < open.length; i++) {
+            var node = open[i].parentNode;
+            var shown = true;
+            while (node && node !== doc) {
+                if (String(node.nodeName).toUpperCase() === "DETAILS" && node.hasAttribute && !node.hasAttribute("open")) {
+                    shown = false;
+                    break;
+                }
+                node = node.parentNode;
+            }
+            if (shown) return true;
+        }
+        return false;
+    }
+
+    /**
      * A form control that differs from what the page came with: text typed, a box ticked, an
      * option picked - a reload in place would lose it (qa-srv-sweep-resume-code L4).
      */
@@ -646,7 +668,7 @@
                     // The server is there: the page fresh, in place - unless a save started, a
                     // <details> is open, something was typed or picked (it would be lost), or the
                     // page is a POST's answer.
-                    if (saving || postAnswer() || (doc.querySelector && doc.querySelector("details[open]")) || edited(doc)) {
+                    if (saving || postAnswer() || shownOpen(doc) || edited(doc)) {
                         end();
                         return;
                     }
@@ -803,7 +825,7 @@
         // the entry a GET first, so nothing is sent again.
         win.handyReconnect = {
             mayReload: function () {
-                return !saving && !(doc.querySelector && doc.querySelector("details[open]")) && !edited(doc);
+                return !saving && !shownOpen(doc) && !edited(doc);
             },
             reload: function () {
                 if (!this.mayReload()) return false;
@@ -826,6 +848,7 @@
         linkOf: linkOf,
         placeRecord: placeRecord,
         edited: edited,
+        shownOpen: shownOpen,
         reloadUrl: reloadUrl,
         appPath: appPath,
         loginReturn: loginReturn,

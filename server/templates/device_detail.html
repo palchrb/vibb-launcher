@@ -393,10 +393,10 @@
     {#- Lock again or Unlock 2 h… waits for the phone: reload every 3 s until the newest report
         shows it, at most 2 minutes after the press (window_relock::waiting_for_phone). -#}
     {% if relock.wait_for_phone %}
-    <script src="/static/auto-reload.js?v=5" defer></script>
+    <script src="/static/auto-reload.js?v=6" defer></script>
     {% endif %}
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}
-<script src="/static/pull-refresh.js?v=2" defer></script>
+<script src="/static/pull-refresh.js?v=3" defer></script>
 </body>
 </html>

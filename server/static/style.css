@@ -3038,3 +3038,87 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 .add-switches { margin: 0 -16px 16px; }
 /* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
 details.confirm > summary.row.held-allow { color: var(--tint); font-weight: 400; }
+
+/* Design 80: a contact's "Avansert" inside its form, under the four plain choices - a tinted row that opens the
+   one-way switches, the Message button and the Matrix ID on the page's grey, with small group words. Add Contact's
+   form has the same. A two-way switch and its "Tilpasset" row swap with [hidden] (static/contact-form.js); .row's
+   display would beat the attribute. */
+details.adv > summary {
+    list-style: none;
+    cursor: pointer;
+}
+details.adv > summary::-webkit-details-marker {
+    display: none;
+}
+details.adv > summary > .row-label {
+    color: var(--tint);
+}
+details.adv > summary .chev {
+    transition: transform 0.2s;
+}
+details.adv[open] > summary .chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+.adv-body {
+    margin: 0 0 6px 16px;
+    border-radius: 12px;
+    background: var(--bg);
+}
+.adv-mini {
+    margin: 0;
+    padding: 10px 16px 0;
+    color: var(--label-2);
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+[data-two-way][hidden],
+[data-custom][hidden],
+[data-adv-value][hidden] {
+    display: none;
+}
+
+/* Design 80 §4.5: the phone's own number as a row with its source, then "Bruk dette nummeret" and "Endre…" as two
+   tinted words; "Endre…" opens the field on a line of its own. The quiet line under SMS while it is missing. */
+.own-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 18px;
+    padding: 0 16px 12px;
+    margin-top: -4px;
+}
+.link-button {
+    -webkit-appearance: none;
+    appearance: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--tint);
+    font: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+    list-style: none;
+}
+details.own-edit > summary::-webkit-details-marker {
+    display: none;
+}
+details.own-edit[open] {
+    flex-basis: 100%;
+}
+.own-field {
+    padding: 8px 0 0;
+}
+.own-value {
+    white-space: nowrap;
+}
+.number-line {
+    display: block;
+    color: var(--label-2);
+    text-decoration: none;
+}
+.number-line-link {
+    color: var(--tint);
+    white-space: nowrap;
+}
