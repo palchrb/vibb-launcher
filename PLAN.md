@@ -30,7 +30,7 @@ findings, merge to `main`, full suite once.
 
 ### Approved, not built - the queue (kept current; checked against the code 2026-11-07)
 
-Last tags: server-v0.70.0 + music-v0.6.0-rc.3 (2026-11-09, on 76edb9ba: Spotify audiobooks for real, the SMS engine's server side behind `sms_engine_v1`; launcher held until design 77 step 2 merges), server-v0.69.2 (2026-11-09, audiobook chapters under the spike), server-v0.69.1 (2026-11-09, the Spotify show diagnostic) after server-v0.69.0 + launcher-v0.38.0-rc.8 (2026-11-08, on d80fac83; music unchanged at music-v0.6.0-rc.2); every entry in "Done since the last release" up to the MET floor ships in those, the Spotify diagnostic in 0.69.1.
+Last tags: server-v0.71.0 + launcher-v0.39.0-rc.1 (2026-11-09, on a11cc107: design 77 steps 1, 2, 3a and 4 - the SMS engine, the kid's message screens, the PWA side; SMS stays "Ikke styrt" on the kid's phone until 3b and step 0; also the contact-sheet edge fix and the glance calendar lines; 0.38.0's RCs were used up, so a new minor), server-v0.70.0 + music-v0.6.0-rc.3 (2026-11-09, on 76edb9ba: Spotify audiobooks for real, the SMS engine's server side behind `sms_engine_v1`), server-v0.69.2 (2026-11-09, audiobook chapters under the spike), server-v0.69.1 (2026-11-09, the Spotify show diagnostic) after server-v0.69.0 + launcher-v0.38.0-rc.8 (2026-11-08, on d80fac83; music unchanged at music-v0.6.0-rc.2); every entry in "Done since the last release" up to the MET floor ships in those, the Spotify diagnostic in 0.69.1.
 
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
