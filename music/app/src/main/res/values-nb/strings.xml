@@ -116,6 +116,8 @@
     <string name="renderer_spotify_elsewhere">Spilles et annet sted</string>
     <string name="renderer_spotify_stopped">Stoppet - trykk spill</string>
     <string name="renderer_spotify_no_listening_time">Lydboka trenger lyttetid</string>
+    <string name="cant_play_now">Kan ikke spilles nå</string>
+    <string name="cant_play_ask_adult">Spør en voksen om hjelp</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>
