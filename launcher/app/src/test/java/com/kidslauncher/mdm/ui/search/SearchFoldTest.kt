@@ -17,7 +17,7 @@ class SearchFoldTest {
             "Straße" to "strasse", "Đorđe" to "dorde", "Łukasz" to "lukasz", "Þór" to "thor", "Iıİ" to "iii",
             "Anne-Marie" to "anne-marie", "O'Neil" to "o'neil", "Mamma Mia" to "mamma mia",
         )
-        for ((source, folded) in table) assertEquals(source, folded, searchFold(source).text)
+        for ((source, folded) in table) assertEquals(source, folded, searchFold(source))
     }
 
     @Test
@@ -47,7 +47,7 @@ class SearchFoldTest {
     @Test
     fun `the span is on the shown string, over a decomposed letter and a letter that grows`() {
         val decomposed = "Björn" // "Björn" with a combining diaeresis
-        assertEquals("bjorn", searchFold(decomposed).text)
+        assertEquals("bjorn", searchFold(decomposed))
         // "jö" covers the o and its mark: the span ends after the mark.
         assertEquals(SearchMatch(MatchRank.INSIDE, 1, 4), searchMatch(decomposed, "jo"))
         assertEquals(SearchMatch(MatchRank.PREFIX, 0, decomposed.length), searchMatch(decomposed, "björn"))
@@ -59,14 +59,10 @@ class SearchFoldTest {
     }
 
     @Test
-    fun `İ, a surrogate pair and the clamp`() {
+    fun `İ and a surrogate pair - the span on whole letters of the shown string`() {
         assertEquals(SearchMatch(MatchRank.PREFIX, 0, 1), searchMatch("İda", "i"))
         val emoji = "😀 Ola" // an emoji (two chars) before the name
         assertEquals(SearchMatch(MatchRank.WORD, 3, 6), searchMatch(emoji, "ola"))
-        // Indices past the end are clamped: to the last char, and to the source's length.
-        assertEquals(2 to 3, searchFold("abc").sourceSpan(5, 9, 3))
-        assertEquals(0 to 2, searchFold("abc").sourceSpan(0, 3, 2))
-        assertEquals(0 to 0, searchFold("").sourceSpan(0, 1, 0))
     }
 
     @Test

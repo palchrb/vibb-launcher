@@ -20,47 +20,19 @@ import java.util.Locale
 const val SEARCH_QUERY_MAX = 40
 
 /**
- * [text] folded, and for each of its chars the source range it came from: [start] the index in the source string of the
- * code point it came from, [end] the index after that code point and any code point after it that folded to nothing (a
- * combining mark belongs to the letter before it).
- */
-class Folded(val text: String, private val start: IntArray, private val end: IntArray) {
-    /** The source range of the folded range [from, to), clamped to [0, [sourceLength]]. */
-    fun sourceSpan(from: Int, to: Int, sourceLength: Int): Pair<Int, Int> {
-        if (text.isEmpty() || from >= to) return 0 to 0
-        val a = start[from.coerceIn(0, text.length - 1)].coerceIn(0, sourceLength)
-        val b = end[(to - 1).coerceIn(0, text.length - 1)].coerceIn(a, sourceLength)
-        return a to b
-    }
-}
-
-/**
- * The search fold (QA L11): built from the shown string itself, code point by code point - `lowercase(Locale.ROOT)`,
+ * The search fold (QA L11): the shown string folded code point by code point - `lowercase(Locale.ROOT)`,
  * NFD, the combining marks dropped, then the letters NFD can't split (ø o, æ ae, œ oe, ß ss, đ d, ł l, þ th, ı i). So
  * "o" finds "Ørjan", "a" finds "Åse", "e" finds "Hélène", and a decomposed "Björn" folds like a composed one.
  */
-fun searchFold(source: String): Folded {
+fun searchFold(source: String): String {
     val out = StringBuilder(source.length)
-    val starts = ArrayList<Int>(source.length)
-    val ends = ArrayList<Int>(source.length)
     var i = 0
     while (i < source.length) {
         val cp = source.codePointAt(i)
-        val next = i + Character.charCount(cp)
-        val piece = foldCodePoint(cp)
-        if (piece.isEmpty()) {
-            // Folded to nothing (a combining mark): it belongs to the char before it.
-            if (ends.isNotEmpty()) ends[ends.size - 1] = next
-        } else {
-            for (c in piece) {
-                out.append(c)
-                starts += i
-                ends += next
-            }
-        }
-        i = next
+        out.append(foldCodePoint(cp))
+        i += Character.charCount(cp)
     }
-    return Folded(out.toString(), starts.toIntArray(), ends.toIntArray())
+    return out.toString()
 }
 
 private fun foldCodePoint(cp: Int): String {
@@ -105,7 +77,7 @@ fun searchQuery(raw: String): String {
 }
 
 /** Whether [query] (as the kid typed it) searches anything: it holds more than spaces. */
-fun searching(query: String): Boolean = searchFold(searchQuery(query)).text.isNotEmpty()
+fun searching(query: String): Boolean = searchFold(searchQuery(query)).isNotEmpty()
 
 /**
  * One letter of a name or a query: a code point with the combining marks after it, [lower] (lowercase ROOT, NFC) and
@@ -123,7 +95,7 @@ private fun letters(source: String): List<Letter> {
         var end = i + Character.charCount(source.codePointAt(i))
         while (end < source.length && isMark(source.codePointAt(end))) end += Character.charCount(source.codePointAt(end))
         val unit = source.substring(i, end)
-        out += Letter(Normalizer.normalize(unit.lowercase(Locale.ROOT), Normalizer.Form.NFC), searchFold(unit).text, i, end)
+        out += Letter(Normalizer.normalize(unit.lowercase(Locale.ROOT), Normalizer.Form.NFC), searchFold(unit), i, end)
         i = end
     }
     return out

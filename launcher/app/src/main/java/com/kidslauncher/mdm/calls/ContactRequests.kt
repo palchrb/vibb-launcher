@@ -354,10 +354,11 @@ object ContactRequests {
         return ok
     }
 
-    /** When the phone book is made (code QA L3): every draft but the one its restored form owns ([keep]) goes - no
-     * other form can own one then. */
-    fun sweepDrafts(context: Context, keep: String?) {
-        draftDir(context).listFiles()?.forEach { if (it.name != keep) it.delete() }
+    /** At the phone book's first resume (code QA L3, second pass): the drafts [draftsToSweep] lets go. */
+    fun sweepDrafts(context: Context, keep: String?, nowMs: Long = System.currentTimeMillis()) {
+        val dir = draftDir(context)
+        val files = dir.listFiles().orEmpty().associate { it.name to it.lastModified() }
+        for (name in draftsToSweep(files, keep, nowMs)) File(dir, name).delete()
     }
 
     /** A draft no form took (the form closed while the picture was framed). */

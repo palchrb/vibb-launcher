@@ -81,6 +81,20 @@ class KidPhotosTest {
         assertEquals(setOf("aa.jpg", "dd.jpg"), requestPhotosToKeep(listOf(open, noPhoto, declined, pending)))
     }
 
+    /** Code QA L3, second pass: a sweep never takes the form's draft nor one written within the floor (a framing
+     * screen recreated after a process death, another phone book's); an old stray goes. */
+    @Test
+    fun `the draft sweep - the form's kept, a young one kept, an old stray deleted`() {
+        val now = 10 * REQUEST_DRAFT_SWEEP_FLOOR_MS
+        val drafts = mapOf(
+            "dform.jpg" to 0L,
+            "dyoung.jpg" to now - REQUEST_DRAFT_SWEEP_FLOOR_MS + 1,
+            "dold.jpg" to now - REQUEST_DRAFT_SWEEP_FLOOR_MS,
+        )
+        assertEquals(setOf("dold.jpg"), draftsToSweep(drafts, keep = "dform.jpg", nowMs = now))
+        assertEquals(setOf("dform.jpg", "dold.jpg"), draftsToSweep(drafts, keep = null, nowMs = now))
+    }
+
     @Test
     fun `the request's picture - handed only to a contact that arrives in the phone book`() {
         val now = 1_000_000L

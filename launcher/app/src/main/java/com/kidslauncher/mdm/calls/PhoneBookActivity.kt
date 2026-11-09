@@ -78,6 +78,15 @@ class PhoneBookActivity : UIObjectActivity() {
         }
     }
 
+    /** The stray drafts' sweep waits for the first resume (code QA L3, second pass). */
+    private var draftSweepDue = false
+
+    /** The request answers this visit has counted as shown (code QA L9): no prefs read per scroll. */
+    private val answersCounted = mutableSetOf<String>()
+
+    /** A sync or a time rule changed the call rules while the phone book is started (code QA M2, second pass). */
+    private val policyListener: (CallPolicyState) -> Unit = { runOnUiThread { if (!isDestroyed) render() } }
+
     /** Code QA L2: only the latest missed-call load is applied. */
     private val loads = LatestOnly()
 
@@ -163,8 +172,9 @@ class PhoneBookActivity : UIObjectActivity() {
         onBackPressedDispatcher.addCallback(this, back)
         restoreVisit(savedInstanceState)
         requestForm.restore(savedInstanceState)
-        // Design 79 §5.5, code QA L3: no form can own a draft but the one it just restored - every other goes.
-        ContactRequests.sweepDrafts(this, keep = requestForm.draft)
+        // Design 79 §5.5, code QA L3: the stray drafts go at the first resume - after a draft pick's result is
+        // delivered (a framing screen recreated after a process death writes its draft before this one exists).
+        draftSweepDue = true
         // Once: not again after a recreation.
         if (savedInstanceState == null) takeMissedContact(intent)
         handleNumber(intent)
@@ -180,6 +190,7 @@ class PhoneBookActivity : UIObjectActivity() {
         ElementMissedCallStore.addListener(elementMissedListener)
         SmsHome.addListener(messagesListener)
         ContactRequests.addListener(requestsListener)
+        CallPolicyStore.addListener(policyListener)
         try {
             contentResolver.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI, true, callLogObserver)
         } catch (e: Exception) {
@@ -197,6 +208,10 @@ class PhoneBookActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        if (draftSweepDue) {
+            draftSweepDue = false
+            ContactRequests.sweepDrafts(this, keep = requestForm.draft)
+        }
         // Also refreshes whether the system wallpaper is still ours (in the background).
         WallpaperStore.refreshAsync(this)
         render()
@@ -223,6 +238,7 @@ class PhoneBookActivity : UIObjectActivity() {
         ElementMissedCallStore.removeListener(elementMissedListener)
         SmsHome.removeListener(messagesListener)
         ContactRequests.removeListener(requestsListener)
+        CallPolicyStore.removeListener(policyListener)
         contentResolver.unregisterContentObserver(callLogObserver)
         if (!isChangingConfigurations && ::requestForm.isInitialized) {
             // The visit ends: the top rows it showed are seen (design 79 §3.2 rule 1) - Home's badge goes now too, with
@@ -230,6 +246,7 @@ class PhoneBookActivity : UIObjectActivity() {
             MissedCallsRepo.markSeen(this, sightings.seen(SystemClock.elapsedRealtime()))
             sightings = TopSightings()
             visitTop = null
+            answersCounted.clear()
             // Code QA L1: the next visit starts empty and fills once - no row of this visit can take a tap meanwhile.
             adapter.submitList(null)
             // Code QA N3: the query is kept across a rotation only.
@@ -420,6 +437,8 @@ class PhoneBookActivity : UIObjectActivity() {
     /** The rows from the cached [inputs], the missed calls, the visit's top and the query - the search's keystroke,
      * a missed-call load. */
     private fun filter() {
+        // Back follows the form and the query at once, also while the visit's first load is pending (code QA L10).
+        back.isEnabled = requestForm.isOpen || search.query.isNotEmpty()
         val inputs = inputs ?: return
         // The list waits for the visit's first missed calls (its top), so it never reorders under the kid's finger.
         val top = visitTop ?: return
@@ -435,7 +454,6 @@ class PhoneBookActivity : UIObjectActivity() {
         search.announce(if (searching(query) && list.search) hits else null)
         bindEmpty(list, inputs.ink)
         binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
-        back.isEnabled = requestForm.isOpen || query.isNotEmpty()
         val items = list.rows.map { row ->
             if (row !is PhoneBookRow.Contact) return@map PhoneBookItem(row)
             val key = rowKey(row.contact)
@@ -510,8 +528,8 @@ class PhoneBookActivity : UIObjectActivity() {
                 if (child.height > 0 && shown * 2 >= child.height) visible[row.contact.number] = at
             }
             // Design 77 §14, code QA L9: an answer counts as shown only once its row was laid out on the visible list.
-            val answer = (0 until list.childCount).any { rows.getOrNull(list.getChildAdapterPosition(list.getChildAt(it)))?.row is PhoneBookRow.Answer }
-            if (answer) requestForm.answersShown()
+            val answers = (0 until list.childCount).mapNotNull { rows.getOrNull(list.getChildAdapterPosition(list.getChildAt(it)))?.row as? PhoneBookRow.Answer }
+            if (answers.any { answersCounted.add(it.request.id) }) requestForm.answersShown()
         }
         sightings.update(visible, active, SystemClock.elapsedRealtime())
     }

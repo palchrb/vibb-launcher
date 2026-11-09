@@ -83,6 +83,9 @@ class KidPhotoActivity : UIObjectActivity() {
         captureFile = savedInstanceState?.getString(STATE_CAPTURE)?.let { File(it) }
         // Code QA L4: the time rule before anything opens - never the picker under a rule without calls.
         if (MessagesScreens.redirectIfLocked(this) || !stillOffered()) {
+            // A capture restored with the screen goes too (code QA L4, second pass): nothing will read it.
+            captureFile?.delete()
+            captureFile = null
             finish()
             return
         }

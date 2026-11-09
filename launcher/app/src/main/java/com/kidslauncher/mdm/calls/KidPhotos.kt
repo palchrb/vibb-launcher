@@ -63,6 +63,18 @@ fun kidPhotosAfterRefresh(records: Map<Long, KidPhotoRecord>, state: CallPolicyS
     return records.filter { (id, record) -> byId[id]?.number == record.number }
 }
 
+/** A request picture draft younger than this is never swept (the second pass of code QA L3): it may be one a framing
+ * screen has just written for a phone book that is being made again, or another phone book's. */
+const val REQUEST_DRAFT_SWEEP_FLOOR_MS = 60 * 60_000L
+
+/**
+ * Which request picture drafts a sweep may delete ([drafts]: file name -> last modified): every one but the form's own
+ * ([keep]) and any younger than [REQUEST_DRAFT_SWEEP_FLOOR_MS]. The phone book runs it at its first resume - after a
+ * draft pick's result was delivered, never between a draft being written and the form taking it.
+ */
+fun draftsToSweep(drafts: Map<String, Long>, keep: String?, nowMs: Long): Set<String> =
+    drafts.filter { (name, modified) -> name != keep && nowMs - modified >= REQUEST_DRAFT_SWEEP_FLOOR_MS }.keys
+
 /** The files in the pictures' directory no record names (swept at the same pass). */
 fun kidPhotoOrphans(records: Collection<KidPhotoRecord>, files: Collection<String>): Set<String> =
     files.toSet() - records.mapTo(mutableSetOf()) { it.file }
