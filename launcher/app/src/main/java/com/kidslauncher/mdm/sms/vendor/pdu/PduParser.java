@@ -532,7 +532,7 @@ public class PduParser {
                 case PduHeaders.EXPIRY:
                 case PduHeaders.REPLY_CHARGING_DEADLINE: {
                     /* parse Value-length */
-                    parseValueLength(pduDataStream);
+                    int valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
                     /* Absolute-token or Relative-token */
                     int token = extractByteValue(pduDataStream);
@@ -547,6 +547,7 @@ public class PduParser {
                         log(headerField + "is not Long-Integer header field!");
                         return null;
                     }
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
                     if (PduHeaders.VALUE_RELATIVE_TOKEN == token) {
                         /* need to convert the Delta-seconds-value
                          * into Date-value */
@@ -575,7 +576,7 @@ public class PduParser {
                      * (Address-present-token Encoded-string-value | Insert-address-token)
                      */
                     EncodedStringValue from = null;
-                    parseValueLength(pduDataStream); /* parse value-length */
+                    int valueEnd = valueEnd(pduDataStream); /* parse value-length */ // Vibb One (L8)
 
                     /* Address-present-token or Insert-address-token */
                     int fromToken = extractByteValue(pduDataStream);
@@ -594,6 +595,7 @@ public class PduParser {
                             return null;
                         }
                     }
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
 
                     try {
                         if (LOCAL_LOGV) {
@@ -690,7 +692,7 @@ public class PduParser {
                     /* Previously-sent-by-value =
                      * Value-length Forwarded-count-value Encoded-string-value */
                     /* parse value-length */
-                    parseValueLength(pduDataStream);
+                    int valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
                     /* parse Forwarded-count-value */
                     try {
@@ -705,6 +707,7 @@ public class PduParser {
                     /* parse Encoded-string-value */
                     EncodedStringValue previouslySentBy =
                             parseEncodedStringValue(pduDataStream);
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
                     if (null != previouslySentBy) {
                         try {
                             if (LOCAL_LOGV) {
@@ -728,7 +731,7 @@ public class PduParser {
                     /* Previously-sent-date-value =
                      * Value-length Forwarded-count-value Date-value */
                     /* parse value-length */
-                    parseValueLength(pduDataStream);
+                    int valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
                     /* parse Forwarded-count-value */
                     try {
@@ -756,6 +759,7 @@ public class PduParser {
                         log(headerField + "is not Long-Integer header field!");
                         return null;
                     }
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
                     break;
                 }
 
@@ -772,13 +776,14 @@ public class PduParser {
                     }
 
                     /* parse Value-length */
-                    parseValueLength(pduDataStream);
+                    int valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
                     /* Add-token | Remove-token | Filter-token */
                     extractByteValue(pduDataStream);
 
                     /* Encoded-string-value */
                     parseEncodedStringValue(pduDataStream);
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
 
                     /* not store this header filed in "headers",
                      * because now PduHeaders doesn't support it */
@@ -794,7 +799,7 @@ public class PduParser {
                                 " (" + Integer.toHexString(headerField) + ") MBOX_");
                     }
                     /* Value-length */
-                    parseValueLength(pduDataStream);
+                    int valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
                     /* Message-total-token | Size-total-token */
                     extractByteValue(pduDataStream);
@@ -808,6 +813,7 @@ public class PduParser {
                         log(headerField + " is not Integer-Value");
                         return null;
                     }
+                    endValue(pduDataStream, valueEnd); // Vibb One (L8)
 
                     /* not store these headers filed in "headers",
                     because now PduHeaders doesn't support them */
@@ -906,8 +912,9 @@ public class PduParser {
             PduPart part = new PduPart();
             int startPos = pduDataStream.available();
             if (startPos <= 0) {
-                // Invalid part.
-                return null;
+                // Invalid part. Vibb One (L1): malformed, not merely unaccepted.
+                throw new MalformedPduException(MalformedPduException.Reason.BAD_STRUCTURE,
+                        "a part with no bytes");
             }
 
             /* parse part's content-type */
@@ -936,12 +943,14 @@ public class PduParser {
             int partHeaderLen = headerLength - (startPos - endPos);
             if (partHeaderLen > 0) {
                 if (false == parsePartHeaders(pduDataStream, part, partHeaderLen)) {
-                    // Parse part header faild.
-                    return null;
+                    // Parse part header faild. Vibb One (L1): BAD_STRUCTURE, not REJECTED.
+                    throw new MalformedPduException(MalformedPduException.Reason.BAD_STRUCTURE,
+                            "part headers overrun their length");
                 }
             } else if (partHeaderLen < 0) {
-                // Invalid length of content-type.
-                return null;
+                // Invalid length of content-type. Vibb One (L1)
+                throw new MalformedPduException(MalformedPduException.Reason.BAD_STRUCTURE,
+                        "content-type overruns the part header length");
             }
 
             /* TODO: check content-id, name, filename and content location,
@@ -1084,6 +1093,33 @@ public class PduParser {
         return length;
     }
 
+    /**
+     * Vibb One (L8): reads a Value-length and returns where its value ends, as the
+     * available() count at that point.
+     */
+    private static int valueEnd(ByteArrayInputStream pduDataStream) {
+        int length = parseValueLength(pduDataStream);
+        return pduDataStream.available() - length;
+    }
+
+    /**
+     * Vibb One (L8): a value with a Value-length ends where the length says. Octets the
+     * parse left inside it are passed over, never read as the next header (an octet after
+     * a NUL inside a value can't become a header of its own); a parse that ran past it is
+     * a BAD_LENGTH.
+     */
+    private static void endValue(ByteArrayInputStream pduDataStream, int valueEnd) {
+        int left = pduDataStream.available();
+        if (left < valueEnd) {
+            throw new MalformedPduException(MalformedPduException.Reason.BAD_LENGTH,
+                    "value ran past its Value-length");
+        }
+        if (skipWapValue(pduDataStream, left - valueEnd) == -1) {
+            throw new MalformedPduException(MalformedPduException.Reason.BAD_LENGTH,
+                    "value end beyond the input");
+        }
+    }
+
     /** Vibb One (H9): one more header field, within the cap. */
     private void countHeaderField() {
         mHeaderCount++;
@@ -1146,13 +1182,17 @@ public class PduParser {
         }
 
         pduDataStream.reset();
+        int valueEnd = -1;
         if (first < TEXT_MIN) {
-            parseValueLength(pduDataStream);
+            valueEnd = valueEnd(pduDataStream); // Vibb One (L8)
 
             charset = parseShortInteger(pduDataStream); //get the "Charset"
         }
 
         byte[] textString = parseWapString(pduDataStream, TYPE_TEXT_STRING);
+        if (valueEnd >= 0) {
+            endValue(pduDataStream, valueEnd); // Vibb One (L8)
+        }
 
         try {
             if (0 != charset) {
@@ -1422,16 +1462,10 @@ public class PduParser {
      */
     protected static int skipWapValue(ByteArrayInputStream pduDataStream, int length) {
         assert (null != pduDataStream);
-        // Vibb One (H6): skip without allocating (upstream allocated new byte[length]).
-        if ((length < 0) || (length > pduDataStream.available())) {
-            return -1;
-        }
-        long skipped = pduDataStream.skip(length);
-        if (skipped < length) { //The actually skipped length is lower than the length
-            return -1;
-        } else {
-            return (int) skipped;
-        }
+        // Vibb One (H6): passed over, never copied (upstream read it into new byte[length]).
+        // A length outside 0..available() is refused before anything moves.
+        boolean fits = (length >= 0) && (length <= pduDataStream.available());
+        return (fits && (pduDataStream.skip(length) == length)) ? length : -1;
     }
 
     /**

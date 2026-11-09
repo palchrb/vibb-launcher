@@ -245,3 +245,23 @@ that the consumed octets equal the Value-length, else `BAD_LENGTH`. Re-run the f
 - **`PduQaTest.kt` (added on this branch):**
   - the H14 rows: From, To and Cc in the charset form, and an insert-address-token on a retrieve-conf. They pass.
   - the two M1 rows. They fail until M1 is fixed.
+
+## Fix round (branch `sms-mms-codec`, after the merge of `qa-sms-mms-codec`)
+
+| Finding | Fix |
+|---|---|
+| M1 | `composeSendReq` refuses a subject with any C0/C1 control character or DEL, or over 40 characters (`BAD_SUBJECT`), and a transaction id outside `[\x21-\x7E]{1,64}` (`BAD_TRANSACTION_ID`). `composeNotifyResp` and `composeAcknowledge` now return `MmsComposeResult` and refuse the same ids. Both `PduQaTest` M1 rows pass. New tests: `MmsCodecTest` "M1 …" (two). |
+| L1 | `parseParts` throws `BAD_STRUCTURE` for a content type that overruns the part header length, part headers that overrun theirs, and a part with no bytes. `REJECTED`'s KDoc now says "a header value out of its range" too. Test: `PduHardeningTest` "L1 …". |
+| L2 | `MmsCodec` caps what leaves it: each address 128 chars, To+Cc 40 addresses (counted before decoding), received subject 1,000, content location 1,024, ids, message class and a part's content type, name, location and id 256 each, text via `text()` 5,000. Over a cap is the new `MmsParseFailure.TOO_LONG`. Test: "L2 …". |
+| L3 | Clamped, not refused: `MmsCodec.capOf` reads 0 or below as `DEFAULT_MAX_PDU_BYTES` (1 MB) and clamps above at the 4 MB ceiling, for both parse and compose. A carrier config without a value is the common case, so refusing would break every MMS. Test: "L3 …". |
+| L4 | Three new seeds: a retrieve-conf with From, To, Cc and Subject in the charset form, a second Cc, a Content-Disposition with a filename and an extra parameter, and a charset given by name; a retrieve-conf with an error status and no body; a notification with a charset-form subject and an Element-Descriptor. The fuzz run is now 5,000 mutations per seed, 40,000 in all. |
+| L5 | `skipWapValue` rewritten as one bounds check and one `skip` (`fits && skip == length ? length : -1`), its comment our own; the README says so. |
+| L6 | The licence screen lists "AOSP Messaging" (`legal_info_aosp_messaging` in `donottranslate.xml`, shown in `legal_info.xml` before the Apache-2.0 text): the mmslib/pdu source, its copyright and "modified". |
+| L7 | The no-Android check strips comments and then refuses `\b(android|androidx|com\.android)\.[a-z]` anywhere: fully qualified names and static imports included. |
+| L8 | Done, as it closes the parser's half of M1: From, the time headers, Previously-sent-by/-date, MM-flags, the Mbox totals and a charset-form Encoded-string-value end where their Value-length says. Octets left inside the value are passed over (carriers that pad keep working); a parse that runs past it is `BAD_LENGTH`. A plain Text-string has no length, so the composer-side checks of M1 remain the guard there. Test: "L8 …" (a Cc smuggled after a NUL inside a subject is not read; a From that runs past its length is `BAD_LENGTH`). The fuzz run stays clean. |
+| N1 | The seed check asserts each seed's own type (notification, retrieve-conf, send-conf, send-req). |
+| N2 | The three `printStackTrace` calls are gone. |
+| N3 | Sendable part types are an allow-list: `text/plain`, `image/jpeg`, `image/png`, `image/gif`. Test: "N3 …". |
+| N4 | Left as upstream; written into the package README's "For step 3b" (show the first `text/plain` of a top-level alternative). |
+| N5 | `MmsPart.text(maxChars = 5,000)` decodes at most `maxChars * 4` octets and drops a half character at the cut. Test: "N5 …". |
+| 3b notes | In the package README under "For step 3b". The ASCII-only digit helper is `MmsAddress.plmnNumber` (non-null only for `+`/ASCII digits with `TYPE=PLMN`); test "the PLMN number …". |

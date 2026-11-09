@@ -247,12 +247,47 @@ class PduHardeningTest {
         assertTrue(sources.size > 10)
         for (file in sources) {
             val text = file.readText()
-            assertFalse(file.name, Regex("""^import (android|androidx|com\.android)\.""", RegexOption.MULTILINE).containsMatchIn(text))
             assertTrue(file.name, text.contains("Vibb One"))
+            // QA L7: any reference, not only an import line - fully qualified names and static imports too - once the
+            // comments (which name the Android classes the stand-ins replace) are gone.
+            val code = text.replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""//[^\n]*"""), "")
+            assertFalse(file.name, Regex("""\b(android|androidx|com\.android)\.[a-z]""").containsMatchIn(code))
         }
         for (mit in listOf("ui/list", "apps")) {
             val names = File(main, "java/com/kidslauncher/mdm/$mit").walk().map { it.name }.toList()
             assertFalse(mit, names.any { it.startsWith("Pdu") || it.startsWith("Mms") })
         }
+    }
+
+    // The fix round of docs/review/qa-sms-mms-codec.md.
+
+    @Test
+    fun `L1 malformed part structure is BAD_STRUCTURE, not REJECTED`() {
+        // The content type runs past the part's header length (1).
+        val overrun = PduBytes().uintvar(1).uintvar(1).uintvar(1)
+            .withLength(PduBytes().byte(CT_TEXT_PLAIN, PARAM_CHARSET, PduVectors.UTF_8)).byte(0x41)
+        assertEquals(failed(MmsParseFailure.BAD_STRUCTURE), retrieve(withBody(overrun)))
+        // Part headers that overrun their length: a Content-Location string runs on into the data.
+        val headers = PduBytes().uintvar(1).uintvar(3).uintvar(2).byte(CT_TEXT_PLAIN, PART_CONTENT_LOCATION, 0x41).raw("xy".toByteArray())
+        assertEquals(failed(MmsParseFailure.BAD_STRUCTURE), retrieve(withBody(headers)))
+        // A part announced with no bytes left for it.
+        assertEquals(failed(MmsParseFailure.BAD_STRUCTURE), retrieve(withBody(PduBytes().uintvar(1).uintvar(0).uintvar(0))))
+    }
+
+    @Test
+    fun `L8 a value ends where its Value-length says, so octets after a NUL inside it never read as a header`() {
+        // A subject in the charset form that stops at a NUL, with 0x82 (Cc) and a number after it inside its length.
+        val subject = PduBytes().byte(PduVectors.SUBJECT)
+            .withLength(PduBytes().byte(PduVectors.UTF_8).text("Hei").byte(PduVectors.CC).text("+4700000099/TYPE=PLMN"))
+        val m = message(PduBytes().raw(subject.build()).raw(PduVectors.retrieveHeaders().build()).uintvar(0).build())
+        assertEquals(emptyList<MmsAddress>(), m.cc)
+        // The same inside From: the sender stays the sender.
+        val from = PduBytes().byte(PduVectors.FROM)
+            .withLength(PduBytes().byte(0x80).text("${PduVectors.SENDER}/TYPE=PLMN").byte(TO).text("+4700000099/TYPE=PLMN"))
+        val n = (MmsCodec.parseNotification(PduVectors.notification(from)) as MmsParseResult.Ok).value
+        assertEquals(PduVectors.SENDER, n.from!!.plmnNumber)
+        // A value whose parse runs past its declared length is a bad length.
+        val short = PduBytes().byte(PduVectors.FROM).byte(0x02).byte(0x80).text(PduVectors.SENDER)
+        assertEquals(failed(MmsParseFailure.BAD_LENGTH), MmsCodec.parseNotification(PduVectors.notification(short)))
     }
 }

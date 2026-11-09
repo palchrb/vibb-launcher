@@ -16,7 +16,7 @@
  *
  * Modified for Vibb One (palchrb/vibb-launcher), 2026: vendored from AOSP Messaging
  * (de315b762312dd1a5d2bbd16e62ef2bd123f61e5) into com.kidslauncher.mdm.sms.vendor.pdu;
- * android.util.Log swapped for the package's silent Log.
+ * android.util.Log swapped for the package's silent Log; printStackTrace removed.
  * See README.md in this package.
  */
 
@@ -191,7 +191,7 @@ public class EncodedStringValue implements Cloneable {
                 newTextString.write(mData);
                 newTextString.write(textString);
             } catch (IOException e) {
-                e.printStackTrace();
+                // Vibb One (N2): no printStackTrace (System.err is logcat on Android).
                 throw new NullPointerException(
                         "appendTextString: failed when write a new Text-string");
             }
@@ -214,7 +214,6 @@ public class EncodedStringValue implements Cloneable {
             return new EncodedStringValue(mCharacterSet, dstBytes);
         } catch (Exception e) {
             Log.e(TAG, "failed to clone an EncodedStringValue: " + this);
-            e.printStackTrace();
             throw new CloneNotSupportedException(e.getMessage());
         }
     }

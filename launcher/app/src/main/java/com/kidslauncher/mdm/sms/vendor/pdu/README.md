@@ -37,8 +37,9 @@ stand-ins with the Android names, so the vendored files keep their lines; `Log` 
   and skip is bounded. Covers the platform's 2026 `parseContentType` length check.
 - **H5** A part's header and data lengths are checked against the remaining bytes before `new byte[dataLength]`
   (the review's AM `PduParser.java:931`), and the data is read in full or `TRUNCATED`.
-- **H6** `skipWapValue` skips without allocating (it allocated `new byte[length]`), and so does the
-  Content-Disposition's "skip other parameters" (`new byte[last]` of an attacker's length).
+- **H6** `skipWapValue` passes over the bytes without copying them (upstream read them into `new byte[length]`), and so
+  does the Content-Disposition's "skip other parameters" (`new byte[last]` of an attacker's length). Rewritten here as
+  a bounds check and one `skip` (QA L5).
 - **H7** The well-known content-type index is bounded; an unknown one is `*/*` (the review's `:1594`).
 - **H8** `multipart/alternative` nests at most `MAX_DEPTH` = 1 level, and a child body that fails or is empty ends the
   parse (`BAD_STRUCTURE`) instead of dereferencing null (the review's `:936-938`).
@@ -61,6 +62,18 @@ stand-ins with the Android names, so the vendored files keep their lines; `Log` 
 - **H17** `parse()` keeps upstream's null contract; `parseOrThrow()` gives the reason. Any other exception out of the
   parser is a bug: `PduFuzzTest` (a fixed seed, 20,000 mutations of the golden PDUs) fails on it.
 
+### Fix round (docs/review/qa-sms-mms-codec.md)
+
+- **L1** Malformed part structure throws `BAD_STRUCTURE`: a content type that overruns the part's header length, part
+  headers that overrun theirs, a part with no bytes left. Upstream returned null, which read as "not accepted".
+- **L8** A value with a Value-length ends where its length says (`valueEnd`/`endValue`): From, the time headers,
+  Previously-sent-by/-date, MM-flags, the Mbox totals and an Encoded-string-value in the charset form. Octets the parse
+  left inside the value are passed over, never read as the next header; a parse that ran past the length is
+  `BAD_LENGTH`. This closes the parser's half of M1 (a NUL inside a subject or address can no longer smuggle a header);
+  a plain Text-string has no length to bound it, so `MmsCodec` refuses a NUL in what it composes (M1).
+- **N2** No `printStackTrace` (on Android `System.err` is logcat).
+- M1, L2, L3, N3 and N5 are in `MmsCodec`; L4, L7 and N1 in the tests.
+
 GrapheneOS Messaging (51c07da3, 2026-06 commits a6e2daee, 4a938177, 674301e3) fixed H5, H6, H7 and H11 in its copy and
 added tests for them. Its repository has no top-level licence, so none of its code is copied: the fixes above are our
 own, and its tests' inputs are re-run in `PduHardeningTest` as a checklist.
@@ -71,3 +84,19 @@ When this package is touched, check the bulletin's telephony and Messaging entri
 vendoring (2026-11-09): the platform's `frameworks/base` `PduParser.java` on main, whose one parser change since AM's copy
 is the `parseContentType` length check (H4); the 2026 CVEs in design 77 §2.3 name `parseParts` (H5), `parseContentType`
 (H4, H7) and denial of service in the parser (H2-H11).
+
+## For step 3b
+
+- **D10 on `MmsAddress`:** use `plmnNumber` (non-null only for exactly `+`/ASCII digits with `type == "PLMN"`), not
+  `type` and `value` with `Char.isDigit()`, which also takes Arabic-Indic and fullwidth digits an address in the
+  charset form can carry.
+- **`contentLocation`** can hold CR, LF, TAB (the parser's `isText` keeps them) and latin-1 octets 0x80-0xFF. Parse it
+  with `java.net.URI` and refuse any whitespace before D10's host check.
+- **`MmsCodec.parse*` catches `Throwable`, OutOfMemoryError included.** Right in the isolated process (D8), wrong
+  anywhere else: add a test or lint that only `sms/parse/` calls `parseNotification` and `parseRetrieveConf`.
+- **A top-level `multipart/alternative`** returns every alternative (upstream's dead branch, QA N4): show the first
+  `text/plain` only.
+- **Caps that matter to the Binder hand-over** are in `MmsCodec` (`MAX_ADDRESS_CHARS`, `MAX_ADDRESSES`,
+  `MAX_SUBJECT_CHARS`, `MAX_CONTENT_LOCATION_CHARS`, `MAX_ID_CHARS`, `MAX_TEXT_CHARS`); over them a parse is `TOO_LONG`.
+- **Compose:** `composeNotifyResp` and `composeAcknowledge` return `MmsComposeResult` and refuse a transaction id
+  outside `[\x21-\x7E]{1,64}`; a notification whose id fails that can't be answered, so treat it as malformed.

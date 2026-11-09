@@ -6,6 +6,7 @@ import com.kidslauncher.mdm.sms.vendor.pdu.PduHeaders
 import com.kidslauncher.mdm.sms.vendor.pdu.PduParser
 import com.kidslauncher.mdm.sms.vendor.pdu.SendReq
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -149,11 +150,90 @@ class MmsCodecTest {
 
     @Test
     fun `the notify-resp and the acknowledge round-trip`() {
-        val resp = PduParser(MmsCodec.composeNotifyResp("T-fake-0001", MmsNotifyStatus.RETRIEVED)!!, true).parseOrThrow() as NotifyRespInd
+        val resp = PduParser((MmsCodec.composeNotifyResp("T-fake-0001", MmsNotifyStatus.RETRIEVED) as MmsComposeResult.Ok).bytes, true).parseOrThrow() as NotifyRespInd
         assertEquals("T-fake-0001", String(resp.transactionId))
         assertEquals(PduHeaders.STATUS_RETRIEVED, resp.status)
 
-        val ack = PduParser(MmsCodec.composeAcknowledge("T-fake-0001")!!, true).parseOrThrow() as AcknowledgeInd
+        val ack = PduParser((MmsCodec.composeAcknowledge("T-fake-0001") as MmsComposeResult.Ok).bytes, true).parseOrThrow() as AcknowledgeInd
         assertEquals("T-fake-0001", String(ack.transactionId))
+    }
+
+    // The fix round of docs/review/qa-sms-mms-codec.md.
+
+    private fun composeFailure(result: MmsComposeResult) = (result as MmsComposeResult.Failed).reason
+
+    private val oneText = listOf(MmsOutgoingPart.text("hei"))
+
+    @Test
+    fun `M1 a subject with a control character or over 40 characters is refused`() {
+        for (subject in listOf("Hei\u0000\u0081+4700000099", "a\nb", "\u007F", "x\u0085y", "x".repeat(41))) {
+            assertEquals(subject, MmsComposeFailure.BAD_SUBJECT, composeFailure(MmsCodec.composeSendReq(listOf(PduVectors.SENDER), oneText, subject = subject)))
+        }
+        assertTrue(MmsCodec.composeSendReq(listOf(PduVectors.SENDER), oneText, subject = "Hei på deg ✓ ".padEnd(40, 'x')) is MmsComposeResult.Ok)
+    }
+
+    @Test
+    fun `M1 every compose call refuses a transaction id outside printable ASCII, 1 to 64`() {
+        for (id in listOf("", "T\u0000\u0081+4700000099", "T fake", "T-æ", "T".repeat(65))) {
+            assertEquals(id, MmsComposeFailure.BAD_TRANSACTION_ID, composeFailure(MmsCodec.composeSendReq(listOf(PduVectors.SENDER), oneText, transactionId = id)))
+            assertEquals(id, MmsComposeFailure.BAD_TRANSACTION_ID, composeFailure(MmsCodec.composeNotifyResp(id, MmsNotifyStatus.RETRIEVED)))
+            assertEquals(id, MmsComposeFailure.BAD_TRANSACTION_ID, composeFailure(MmsCodec.composeAcknowledge(id)))
+        }
+        assertTrue(MmsCodec.composeAcknowledge("T".repeat(64)) is MmsComposeResult.Ok)
+    }
+
+    @Test
+    fun `N3 only text, JPEG, PNG and GIF parts can be sent`() {
+        for (type in listOf("application/smil", "application/vnd.wap.multipart.mixed", "text/html", "image/jpeg; x=y")) {
+            assertEquals(type, MmsComposeFailure.BAD_PART, composeFailure(MmsCodec.composeSendReq(listOf(PduVectors.SENDER), listOf(MmsOutgoingPart(type, byteArrayOf(1))))))
+        }
+    }
+
+    @Test
+    fun `L3 a carrier maximum of 0 or below is the default cap, not a 1-byte one`() {
+        assertEquals(MmsCodec.DEFAULT_MAX_PDU_BYTES, MmsCodec.capOf(0))
+        assertEquals(MmsCodec.DEFAULT_MAX_PDU_BYTES, MmsCodec.capOf(-1))
+        assertEquals(MmsCodec.MAX_PDU_BYTES_CEILING, MmsCodec.capOf(Int.MAX_VALUE))
+        assertEquals(300_000, MmsCodec.capOf(300_000))
+        assertTrue(MmsCodec.parseRetrieveConf(PduVectors.retrieveConf(), maxBytes = 0) is MmsParseResult.Ok)
+        assertTrue(MmsCodec.composeSendReq(listOf(PduVectors.SENDER), oneText, maxBytes = -1) is MmsComposeResult.Ok)
+    }
+
+    @Test
+    fun `L2 header strings over their caps fail as too long`() {
+        val longAddress = PduVectors.notification(PduVectors.from("+" + "0".repeat(MmsCodec.MAX_ADDRESS_CHARS) + "/TYPE=PLMN"))
+        assertEquals(MmsParseResult.Failed(MmsParseFailure.TOO_LONG), MmsCodec.parseNotification(longAddress))
+
+        val subject = PduBytes().byte(PduVectors.SUBJECT).text("s".repeat(MmsCodec.MAX_SUBJECT_CHARS + 1))
+        // On a notification: the retrieve-conf's own Subject would replace it.
+        val push = PduBytes().raw(subject.build()).raw(PduVectors.notification()).build()
+        assertEquals(MmsParseResult.Failed(MmsParseFailure.TOO_LONG), MmsCodec.parseNotification(push))
+
+        val many = PduBytes()
+        repeat(MmsCodec.MAX_ADDRESSES) { many.byte(PduVectors.CC).text("+4700000001/TYPE=PLMN") }
+        val crowded = PduBytes().raw(many.build()).raw(PduVectors.retrieveHeaders().build()).uintvar(0).build()
+        assertEquals(MmsParseResult.Failed(MmsParseFailure.TOO_LONG), MmsCodec.parseRetrieveConf(crowded))
+        val fits = PduBytes().raw(PduBytes().apply { repeat(MmsCodec.MAX_ADDRESSES - 1) { byte(PduVectors.CC).text("+4700000001/TYPE=PLMN") } }.build())
+            .raw(PduVectors.retrieveHeaders().build()).uintvar(0).build()
+        assertTrue(MmsCodec.parseRetrieveConf(fits) is MmsParseResult.Ok)
+    }
+
+    @Test
+    fun `N5 a text part decodes at most its cap`() {
+        val part = MmsPart("text/plain", 0x6A, null, null, null, "æ".repeat(10_000).toByteArray(Charsets.UTF_8))
+        assertEquals("æ".repeat(MmsCodec.MAX_TEXT_CHARS), part.text())
+        assertEquals("ææ", part.text(2))
+        // A multi-octet character cut at the octet limit leaves no replacement character behind.
+        val cut = MmsPart("text/plain", 0x6A, null, null, null, "✓✓✓✓✓".toByteArray(Charsets.UTF_8))
+        assertFalse(cut.text(1).contains('\uFFFD'))
+    }
+
+    @Test
+    fun `the PLMN number takes ASCII digits after an optional plus and nothing else`() {
+        assertEquals("+4700000000", MmsAddress("+4700000000/TYPE=PLMN").plmnNumber)
+        assertEquals("4700000000", MmsAddress("4700000000/TYPE=PLMN").plmnNumber)
+        for (raw in listOf("+4700000000", "+4700000000/TYPE=IPV4", "+47٠٠٠٠٠٠٠٠/TYPE=PLMN", "+47００００００００/TYPE=PLMN", "+47 00000000/TYPE=PLMN", "DNB/TYPE=PLMN", "/TYPE=PLMN")) {
+            assertNull(raw, MmsAddress(raw).plmnNumber)
+        }
     }
 }

@@ -17,7 +17,7 @@
  * Modified for Vibb One (palchrb/vibb-launcher), 2026: vendored from AOSP Messaging
  * (de315b762312dd1a5d2bbd16e62ef2bd123f61e5) into com.kidslauncher.mdm.sms.vendor.pdu;
  * pure JVM (no Context/ContentResolver; parts carry bytes, no Uri; TextUtils from this package);
- * an empty Text-string no longer throws.
+ * an empty Text-string no longer throws; printStackTrace removed.
  * See README.md in this package.
  */
 
@@ -935,7 +935,7 @@ public class PduComposer {
             appendOctet(PduPart.P_CT_MR_TYPE);
             appendTextString(part.getContentType());
         } catch (final ArrayIndexOutOfBoundsException e) {
-            e.printStackTrace();
+            // Vibb One (N2): no printStackTrace (System.err is logcat on Android).
         }
 
         final int ctLength = ctStart.getLength();
