@@ -103,7 +103,10 @@ val PLAY_OFF_FG = Color(0x73FFFFFF)
 
 /**
  * The notice over a greyed cover: the "!" disc in peach at low alpha, [notice]'s bold title, its smaller help line.
- * TalkBack reads the two lines as the cover's description and, as a live region, says them when they appear.
+ * TalkBack reads the two lines as the cover's description and, as a live region, says them when they appear. Sized for
+ * the 150 dp cover of a player with a shuffle row (emulator check, 2026-11-09): 6 dp at the sides leave 138 dp, where
+ * "Kan ikke spilles nå" (15 sp, ~132 dp) and "Spør en voksen om hjelp" (12 sp, ~137 dp) fit one line each; a longer
+ * line wraps to two.
  */
 @Composable
 fun CantPlayOverlay(notice: CantPlayNotice, modifier: Modifier = Modifier) {
@@ -111,7 +114,7 @@ fun CantPlayOverlay(notice: CantPlayNotice, modifier: Modifier = Modifier) {
     val help = notice.help?.let { stringResource(it) }
     val spoken = listOfNotNull(title, help).joinToString(". ")
     Column(
-        modifier.fillMaxSize().padding(12.dp).clearAndSetSemantics {
+        modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 8.dp).clearAndSetSemantics {
             contentDescription = spoken
             liveRegion = LiveRegionMode.Polite
         },
@@ -123,6 +126,6 @@ fun CantPlayOverlay(notice: CantPlayNotice, modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.height(2.dp))
         Line(title, 15, 800, Palette.white, maxLines = 2, center = true)
-        help?.let { Line(it, 13, 700, Palette.tileFg, maxLines = 2, center = true) }
+        help?.let { Line(it, 12, 700, Palette.tileFg, maxLines = 2, center = true) }
     }
 }
