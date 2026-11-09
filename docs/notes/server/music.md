@@ -377,6 +377,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Spotify show with unplayable episodes"), and a show whose every episode is unplayable fails with its own code
   `audiobook` (`spotify::AUDIOBOOK_CODE`, the catalogs' `music.spotify.audiobook`: "This is a Spotify audiobook -
   Spotify lets only its own apps play them.") instead of `no_items`, which stays a really empty show's.
+  A show that lists nothing (either outcome) logs one more line, "a Spotify show listed nothing" (2026-11-09), with
+  what Spotify sent in the items' place (`spotify::Tally`/`Shape`, summed over the pages read): `total`, `items`,
+  `nulls` (JSON null), `other` and `other_type` (objects that aren't `type: episode`), `unplayable` and `reason`,
+  `playable` (a usable episode that is not marked unplayable), `next` (the last page read had one) and `market`.
+  `items > 0` with `nulls == items` = Spotify nulled every episode for this account or app; `items == 0` = none sent.
   `SPOTIFY_AUDIOBOOK_SPIKE=1` (off by default; the user's go-librespot plays these, so the refusal may be the Web
   API's view only) lists the chapters whose reason is audiobook-shaped (`audiobook_shaped`: anything but `market` and
   `explicit`, or none) as the show's episodes (`parse_show_episodes_spike`), so one can be tried on the phone; the

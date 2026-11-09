@@ -1988,24 +1988,24 @@ impl Accounts {
                     ("limit", limit),
                     ("offset", offset.to_string()),
                     ("additional_types", "track,episode".to_string()),
-                    ("market", "from_token".to_string()),
+                    ("market", MARKET.to_string()),
                 ],
             ),
             Read::Album(id) => (
                 format!("/v1/albums/{id}"),
-                vec![("market", "from_token".to_string())],
+                vec![("market", MARKET.to_string())],
             ),
             Read::AlbumTracks(id, offset) => (
                 format!("/v1/albums/{id}/tracks"),
                 vec![
                     ("limit", limit),
                     ("offset", offset.to_string()),
-                    ("market", "from_token".to_string()),
+                    ("market", MARKET.to_string()),
                 ],
             ),
             Read::Track(id) => (
                 format!("/v1/tracks/{id}"),
-                vec![("market", "from_token".to_string())],
+                vec![("market", MARKET.to_string())],
             ),
             Read::Artist(id) => (format!("/v1/artists/{id}"), Vec::new()),
             Read::ArtistAlbums(id, offset) => (
@@ -2014,19 +2014,19 @@ impl Accounts {
                     ("include_groups", "album,single".to_string()),
                     ("limit", ARTIST_ALBUMS_LIMIT.to_string()),
                     ("offset", offset.to_string()),
-                    ("market", "from_token".to_string()),
+                    ("market", MARKET.to_string()),
                 ],
             ),
             Read::Show(id) => (
                 format!("/v1/shows/{id}"),
-                vec![("market", "from_token".to_string())],
+                vec![("market", MARKET.to_string())],
             ),
             Read::ShowEpisodes(id, offset) => (
                 format!("/v1/shows/{id}/episodes"),
                 vec![
                     ("limit", limit),
                     ("offset", offset.to_string()),
-                    ("market", "from_token".to_string()),
+                    ("market", MARKET.to_string()),
                 ],
             ),
             Read::ShowNewest(id) => (
@@ -2034,12 +2034,12 @@ impl Accounts {
                 vec![
                     ("limit", "1".to_string()),
                     ("offset", "0".to_string()),
-                    ("market", "from_token".to_string()),
+                    ("market", MARKET.to_string()),
                 ],
             ),
             Read::Episode(id) => (
                 format!("/v1/episodes/{id}"),
-                vec![("market", "from_token".to_string())],
+                vec![("market", MARKET.to_string())],
             ),
         };
         let mut url = self.api_url(&path);
@@ -2278,6 +2278,59 @@ pub struct Listed {
     pub disc_track: Option<(i64, i64)>,
 }
 
+/// The `market` every read sends: the token's own country.
+pub const MARKET: &str = "from_token";
+
+/// What a page's items were, as Spotify sent them (counts and a type word, for the log of a show that lists nothing,
+/// 2026-11-09): `items` in all, `nulls` JSON null, `other` objects of another `type` than `episode` (the first
+/// `other_type`), `playable` episodes that are not marked unplayable and have a usable id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Shape {
+    pub items: usize,
+    pub nulls: usize,
+    pub other: usize,
+    pub other_type: Option<String>,
+    pub playable: usize,
+}
+
+impl Shape {
+    fn add(&mut self, page: Shape) {
+        self.items += page.items;
+        self.nulls += page.nulls;
+        self.other += page.other;
+        self.playable += page.playable;
+        if self.other_type.is_none() {
+            self.other_type = page.other_type;
+        }
+    }
+}
+
+/// A show read's pages in all, for the log of a show that lists nothing: the unplayable count and first restriction,
+/// the [Shape], the first page's `total` and whether the last page read had a `next`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub unplayable: usize,
+    pub restriction: Option<String>,
+    pub shape: Shape,
+    pub total: Option<usize>,
+    pub next: bool,
+}
+
+impl Tally {
+    /// The next page read; `first` = the show's first page (it has the `total`).
+    pub fn add(&mut self, page: &mut Page, first: bool) {
+        self.unplayable += page.unplayable;
+        if self.restriction.is_none() {
+            self.restriction = page.restriction.take();
+        }
+        self.shape.add(std::mem::take(&mut page.shape));
+        if first {
+            self.total = page.total;
+        }
+        self.next = page.next;
+    }
+}
+
 /// One page of tracks or episodes as read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Page {
@@ -2296,6 +2349,8 @@ pub struct Page {
     /// The first unplayable episode's `restrictions.reason` (a Spotify word such as `payment_required`), for the log
     /// and the spike's rule ([audiobook_shaped]).
     pub restriction: Option<String>,
+    /// What the items were (a show's only; [Shape]).
+    pub shape: Shape,
 }
 
 /// What a metadata read says (§3.4's listing row, §3.2's entry name).
@@ -2483,6 +2538,7 @@ fn paging_with(
             .map(|total| total as usize),
         ..Page::default()
     };
+    page.shape.items = items.len();
     for item in items {
         match one(item, &mut page) {
             Some(listed) => page.listed.push(listed),
@@ -2592,9 +2648,22 @@ pub fn parse_show_episodes_spike(body: &[u8]) -> Option<Page> {
 fn show_episodes(body: &[u8], spike: bool) -> Option<Page> {
     paging_with(&object(body)?, |item, page| {
         if !item.is_object() {
+            page.shape.nulls += usize::from(item.is_null());
             return None;
         }
-        if is_episode(item) && unplayable(item) {
+        if !is_episode(item) {
+            page.shape.other += 1;
+            if page.shape.other_type.is_none() {
+                page.shape.other_type = item
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .filter(|kind| {
+                        (1..=32).contains(&kind.len())
+                            && kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                    })
+                    .map(str::to_string);
+            }
+        } else if unplayable(item) {
             let reason = restriction_reason(item);
             page.unplayable += 1;
             if page.restriction.is_none() {
@@ -2604,7 +2673,9 @@ fn show_episodes(body: &[u8], spike: bool) -> Option<Page> {
                 .then(|| episode_fields(item))
                 .flatten();
         }
-        episode(item)
+        let listed = episode(item);
+        page.shape.playable += usize::from(listed.is_some());
+        listed
     })
 }
 
@@ -4389,6 +4460,60 @@ pub(crate) mod tests {
         assert_eq!(mark(serde_json::json!({"items": [], "total": 0})), None);
         assert_eq!(mark(serde_json::json!({"total": 3})), None);
         assert_eq!(show_mark(b"not json"), None);
+    }
+
+    /// 2026-11-09: what a show's items were, for the log of a show that lists nothing - null entries, objects of
+    /// another `type`, unplayable and playable episodes counted apart, summed over the pages.
+    #[test]
+    fn a_shows_items_are_counted_by_what_they_were() {
+        let body = |items: serde_json::Value, next: serde_json::Value| {
+            serde_json::json!({"items": items, "total": 6, "next": next}).to_string()
+        };
+        let mut first = parse_show_episodes(
+            body(
+                serde_json::json!([
+                    null,
+                    {"id": "6FakeChapter0000000001", "type": "chapter", "name": "K1"},
+                    {"id": "6FakeChapter0000000002", "type": "chapter", "name": "K2"},
+                    {"id": "5FakeEpisode00000000001", "type": "episode", "is_playable": false,
+                     "restrictions": {"reason": "payment_required"}},
+                    {"id": "5FakeEpisode00000000002", "type": "episode", "name": "E2"}
+                ]),
+                serde_json::json!("https://api.spotify.com/v1/fake?offset=50"),
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let shape = Shape {
+            items: 5,
+            nulls: 1,
+            other: 2,
+            other_type: Some("chapter".to_string()),
+            playable: 1,
+        };
+        assert_eq!(first.shape, shape);
+        assert_eq!((first.listed.len(), first.skipped), (1, 4));
+        let mut last = parse_show_episodes(
+            body(serde_json::json!([null]), serde_json::Value::Null).as_bytes(),
+        )
+        .unwrap();
+        let mut tally = Tally::default();
+        tally.add(&mut first, true);
+        tally.add(&mut last, false);
+        assert_eq!(
+            tally,
+            Tally {
+                unplayable: 1,
+                restriction: Some("payment_required".to_string()),
+                shape: Shape {
+                    items: 6,
+                    nulls: 2,
+                    ..shape
+                },
+                total: Some(6),
+                next: false,
+            }
+        );
     }
 
     /// §3.3: the readers - no `needs_login`, the last reader first, a removed one counts for
