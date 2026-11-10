@@ -74,6 +74,26 @@
         };
     }
 
+    // Design 80 D11 (M1): only an open <details> the reader can see counts - one with no closed <details> around it.
+    // A contact's Avansert drawn open inside its closed row holds nothing that would be lost. No layout read.
+    function shownOpen(doc) {
+        if (!doc.querySelectorAll) return !!(doc.querySelector && doc.querySelector("details[open]"));
+        var open = doc.querySelectorAll("details[open]");
+        for (var i = 0; i < open.length; i++) {
+            var node = open[i].parentNode;
+            var shown = true;
+            while (node && node !== doc) {
+                if (String(node.nodeName).toUpperCase() === "DETAILS" && node.hasAttribute && !node.hasAttribute("open")) {
+                    shown = false;
+                    break;
+                }
+                node = node.parentNode;
+            }
+            if (shown) return true;
+        }
+        return false;
+    }
+
     function install(win, opts) {
         opts = opts || {};
         var view = opts.view || domView(win);
@@ -95,7 +115,7 @@
             if (saving) return false;
             var shared = win.handyReconnect;
             if (shared && typeof shared.mayReload === "function") return shared.mayReload();
-            return !(doc.querySelector && doc.querySelector("details[open]"));
+            return !shownOpen(doc);
         }
 
         function reload() {
@@ -181,7 +201,8 @@
         domView: domView,
         THRESHOLD: THRESHOLD,
         START_AFTER: START_AFTER,
-        MAX_SHIFT: MAX_SHIFT
+        MAX_SHIFT: MAX_SHIFT,
+        shownOpen: shownOpen
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

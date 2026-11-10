@@ -244,3 +244,18 @@ test("the app lock: a release once it is due goes to the lock instead of the rel
     assert.strictEqual(win.asked, 0, "no reload asked for");
     assert.strictEqual(win.reloads, 0);
 });
+
+// Design 80 D11 (M1): only a shown open <details> refuses the pull - a contact's Avansert drawn open inside its
+// closed row doesn't (pull-refresh.js's own rule without reconnect.js; reconnect.js's is the same function).
+test("a closed contact holding an open Avansert doesn't refuse the pull; an opened one does (design 80 D11)", () => {
+    const doc = (rowOpen) => {
+        const row = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" && rowOpen, parentNode: null };
+        const adv = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: row } };
+        const open = rowOpen ? [row, adv] : [adv];
+        return { querySelectorAll: (selector) => (selector === "details[open]" ? open : []) };
+    };
+    assert.strictEqual(pr.shownOpen(doc(false)), false);
+    assert.strictEqual(pr.shownOpen(doc(true)), true);
+    // Without querySelectorAll (an old fake), any open <details> counts.
+    assert.strictEqual(pr.shownOpen({ querySelector: () => ({}) }), true);
+});

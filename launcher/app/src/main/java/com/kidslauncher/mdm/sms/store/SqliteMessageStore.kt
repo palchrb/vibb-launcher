@@ -502,6 +502,17 @@ class SqliteMessageStore(context: Context) : MessageStore {
     override fun counters(): Map<String, Long> =
         db.rawQuery("SELECT key, value FROM counter", null).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) to c.getLong(1) else null }.toMap() }
 
+    override fun ownLearned(): String? =
+        db.rawQuery("SELECT json FROM own_learned WHERE id = 1", null).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+    override fun putOwnLearned(json: String?) {
+        if (json == null) {
+            db.execSQL("DELETE FROM own_learned")
+        } else {
+            db.execSQL("INSERT INTO own_learned (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json", arrayOf<Any>(json))
+        }
+    }
+
     override fun afterDeletes() {
         try {
             db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
@@ -536,13 +547,19 @@ class SqliteMessageStore(context: Context) : MessageStore {
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) for (statement in VERSION_2) db.execSQL(statement)
             if (oldVersion < 3) for (statement in VERSION_3) db.execSQL(statement)
+            if (oldVersion < 4) for (statement in VERSION_4) db.execSQL(statement)
         }
     }
 
     companion object {
         private const val LOG_TAG = "SmsStore"
         const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 3
+        private const val DB_VERSION = 4
+
+        /** Design 80 §4.4: the own number learned from a message, one row. */
+        private val VERSION_4 = listOf(
+            "CREATE TABLE own_learned (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)",
+        )
 
         /** Step 3b's code QA fix round (L2): whether an MMS was fetched deferred. Its own step (verification N-V1), so a
          * development install of the first step 3b build, already at version 2, gains it too. */

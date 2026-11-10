@@ -412,6 +412,7 @@ async fn policy_json_keys_snapshot() {
             "mmsc_hosts",
             "own_numbers",
             "sms_enabled",
+            "sms_groups",
             "sms_held_drop",
             "sms_lock_text",
             "sms_mode",

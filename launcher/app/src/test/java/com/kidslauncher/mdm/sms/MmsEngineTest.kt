@@ -69,12 +69,19 @@ class MmsEngineTest {
 
     private var callbackWindow = false
 
+    /** Design 80: "Gruppemeldinger", the SIMs' own numbers and the active SIMs' key. */
+    private var groups = true
+    private var simNumbers = emptyList<Pair<Int, String?>>()
+    private var sims = "1"
+
     private fun judge() = SmsJudge(
-        state = rules?.copy(mmscHosts = table, ownNumbers = own)?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,
+        state = rules?.copy(mmscHosts = table, ownNumbers = own, smsGroups = groups)?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,
         roleHeld = true,
         callbackWindowOpen = { callbackWindow },
         platformEmergency = { false },
         carrier = { Carrier(operator, carrierMax) },
+        simNumbers = { simNumbers },
+        simSet = { sims },
     )
 
     private val store = FakeMessageStore()
@@ -786,5 +793,79 @@ class MmsEngineTest {
         engine.expire()
         assertEquals(HeldState.EXPIRED, store.held(held.id)!!.state)
         assertTrue(store.pushes.isEmpty())
+    }
+
+    // ---- Design 80: "Gruppemeldinger" (D13) and the own number learned from a message (§4.4) ----
+
+    @Test
+    fun `group texts off - a group of contacts is blocked, a one-to-one MMS isn't, and a group reply is refused`() {
+        val group = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(group)
+        val conversation = mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number)))!!.conversation
+        val queued = engine.send(SendCommand("q", ConversationId(conversation.id), null, "Ja", origin = Origin.KID_SCREEN)) as SendResult.Accepted
+        groups = false
+        // The queued group reply isn't sent; a new one is refused.
+        engine.drainOutbox()
+        assertTrue(sends.isEmpty())
+        assertEquals(Delivery.FAILED, store.message(queued.message.id.value)!!.delivery)
+        assertEquals(SendResult.Refused(Refusal.GROUPS_OFF), engine.send(SendCommand("r", ConversationId(conversation.id), null, "Ja", origin = Origin.KID_SCREEN)))
+        val blocked = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(blocked)
+        assertNull(mms.onRetrieved(blocked, retrieved(to = listOf(kid, bestemor.number))))
+        assertEquals(SenderClass.GROUP, store.blockedRows().last().senderClass)
+        val alone = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(alone)
+        assertNotNull(mms.onRetrieved(alone, retrieved(to = listOf(kid))))
+    }
+
+    @Test
+    fun `the own number is learned from a contact's MMS to the kid alone, and a group is then judged with it`() {
+        own = emptyList()
+        simNumbers = listOf(1 to null)
+        val first = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(first)
+        assertNotNull(mms.onRetrieved(first, retrieved(to = listOf(kid))))
+        assertEquals(kid, mms.ownLearned()!!.number)
+        assertEquals(mamma.number, mms.ownLearned()!!.from)
+        val group = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(group)
+        assertNotNull("the learned number is us", mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number))))
+        // A second message naming another number: the conflict - no number, both reported, groups dropped.
+        val other = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(other)
+        mms.onRetrieved(other, retrieved(to = listOf("+4790000020")))
+        assertNull(mms.ownLearned()!!.number)
+        assertEquals(listOf(kid, "+4790000020"), mms.ownLearned()!!.conflict)
+        val dropped = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(dropped)
+        assertNull(mms.onRetrieved(dropped, retrieved(to = listOf(kid, bestemor.number))))
+        // A change of the active SIMs clears it.
+        sims = "2"
+        assertNull(mms.ownLearned())
+        assertNull(store.ownLearnedJson)
+    }
+
+    @Test
+    fun `nothing is learned from a stranger the callback window let in, nor while a number is known, and a contact clears it`() {
+        own = emptyList()
+        callbackWindow = true
+        val stranger = (arrive(notification(from = "+4790000077/TYPE=PLMN")) as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(stranger)
+        mms.onRetrieved(stranger, retrieved(from = "+4790000077/TYPE=PLMN", to = listOf(kid)))
+        assertNull(mms.ownLearned())
+        callbackWindow = false
+        simNumbers = listOf(1 to "+4790000012")
+        val known = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(known)
+        mms.onRetrieved(known, retrieved(to = listOf(kid)))
+        assertNull(mms.ownLearned())
+        simNumbers = emptyList()
+        val first = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(first)
+        mms.onRetrieved(first, retrieved(to = listOf(kid)))
+        assertEquals(kid, mms.ownLearned()!!.number)
+        // A contact added with the learned number clears it.
+        rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Meg", kid))
+        assertNull(mms.ownLearned())
     }
 }

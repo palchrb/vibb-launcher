@@ -71,6 +71,269 @@ pub(super) struct BlockedView {
     pub label: String,
     pub kind: &'static str,
     pub when: String,
+    /// Design 80 D7 (M5): on a group row, the condition that blocks every group now, if one does.
+    pub reason: Option<&'static str>,
+}
+
+/// One of the phone's own numbers on the page (design 80 §4.5): a slot of an active SIM in the last report, or a
+/// stored slot.
+pub(super) struct OwnRow {
+    pub slot: i64,
+    /// The field's name, `own_number_<slot>`.
+    pub field: String,
+    /// "Telefonens nummer" (one SIM), "Telefonens nummer, SIM 2", or "SIM 2 - ikke i telefonen nå" (L5).
+    pub label: String,
+    /// The field's value: the stored number (or what a refused form sent), empty for none.
+    pub value: String,
+    /// The number is known: drawn as a row with its source and "Endre…" around the field, instead of the field.
+    pub known: Option<KnownOwn>,
+    /// The field's hint (no number known, a conflict).
+    pub hint: Option<String>,
+    /// A refused save's why, under the field (its "Endre…" then open).
+    pub error: Option<String>,
+    /// Design 80 §4.4: a conflict's two numbers, each with its "Bruk" form: `(form id, source, number)`.
+    pub uses: Vec<(String, String, String)>,
+}
+
+/// What the phone's newest report says about its own numbers (design 77 D12, design 80 §4.4): each active SIM's slot and
+/// number (`None` while the SIM doesn't know; empty when the report has none - an older launcher, a new phone), and the
+/// number it learned from a message.
+pub(crate) struct ReportedOwn {
+    pub sims: Vec<(i64, Option<String>)>,
+    pub learned: Option<LearnedOwn>,
+}
+
+/// `sms_state.own_learned` (kept by `sms::sanitize_state`): the number in use (`None` during a conflict), its teacher
+/// and the two numbers of a conflict.
+pub(crate) struct LearnedOwn {
+    pub number: Option<String>,
+    pub from: String,
+    pub conflict: Vec<String>,
+}
+
+/// A known own number: the number, where it is from ("Fra SIM-kortet", "Lagret"), and the "Bruk dette nummeret"
+/// source when the parent can store it (`sim:<slot>`).
+pub(super) struct KnownOwn {
+    pub number: String,
+    pub source: String,
+    pub use_source: Option<String>,
+}
+
+/// [ReportedOwn] from the phone's newest status report.
+pub(crate) async fn reported_own(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<ReportedOwn, sqlx::Error> {
+    let latest: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT sms_state_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    let state: serde_json::Value = latest
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    let mut sims: Vec<(i64, Option<String>)> = state
+        .get("own_numbers")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let slot = row.get("slot")?.as_i64().filter(|s| (1..=2).contains(s))?;
+            let number = row
+                .get("number")
+                .and_then(serde_json::Value::as_str)
+                .filter(|n| sms::sender_ok("number", n))
+                .map(str::to_string);
+            Some((slot, number))
+        })
+        .collect();
+    sims.sort();
+    sims.dedup_by_key(|(slot, _)| *slot);
+    let number = |v: &serde_json::Value| {
+        v.as_str()
+            .filter(|n| sms::sender_ok("number", n))
+            .map(str::to_string)
+    };
+    let learned = state
+        .get("own_learned")
+        .filter(|l| l.is_object())
+        .and_then(|l| {
+            Some(LearnedOwn {
+                number: l.get("number").and_then(number),
+                from: l.get("from").and_then(number)?,
+                conflict: l
+                    .get("conflict")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(number)
+                    .take(2)
+                    .collect(),
+            })
+        })
+        .filter(|l| l.number.is_some() || l.conflict.len() == 2);
+    Ok(ReportedOwn { sims, learned })
+}
+
+/// The phone's own numbers by every source (design 80 L6): the parent's, what its SIMs reported and the number it
+/// learned. Never a contact.
+pub(crate) async fn phone_numbers(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut numbers: Vec<String> =
+        sqlx::query_scalar("SELECT number FROM device_own_numbers WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_all(db)
+            .await?;
+    let reported = reported_own(db, device_id).await?;
+    numbers.extend(reported.sims.into_iter().filter_map(|(_, number)| number));
+    numbers.extend(reported.learned.and_then(|l| l.number));
+    Ok(numbers)
+}
+
+/// §4.5's rows for the stored numbers (`stored`, by slot) and the last report's SIMs (`sims`): one per slot in
+/// question - an active SIM's or a stored one - and one field for SIM 1 while there is neither. "SIM 1" / "SIM 2" is
+/// said only on a phone that reports two, or for a stored slot 2. Also whether the number is missing (no source at
+/// all).
+fn own_rows(
+    lang: Lang,
+    stored: &[(i64, String)],
+    reported: &ReportedOwn,
+    names: &HashMap<String, (String, bool)>,
+) -> (Vec<OwnRow>, bool) {
+    let sims = &reported.sims;
+    let mut slots: Vec<i64> = sims
+        .iter()
+        .map(|(slot, _)| *slot)
+        .chain(stored.iter().map(|(slot, _)| *slot))
+        .collect();
+    slots.sort();
+    slots.dedup();
+    if slots.is_empty() {
+        slots.push(1);
+    }
+    let two = sims.len() > 1 || slots.contains(&2);
+    let rows = slots
+        .into_iter()
+        .map(|slot| {
+            let stored = stored
+                .iter()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, n)| n.clone());
+            let sim = sims.iter().find(|(s, _)| *s == slot);
+            let label = match sim {
+                None if !sims.is_empty() => t_params(
+                    lang,
+                    "device.sms.settings.own_number_absent",
+                    &[("slot", &slot.to_string())],
+                ),
+                _ if two => t_params(
+                    lang,
+                    "device.sms.settings.own_number",
+                    &[("slot", &slot.to_string())],
+                ),
+                _ => t(lang, "device.sms.settings.own_number_one").to_string(),
+            };
+            let reported = sim.and_then(|(_, number)| number.clone());
+            let (known, hint) = match (&stored, &reported) {
+                // The SIM knows it and nothing is stored: the row, "Bruk dette nummeret" stores it (M3).
+                (None, Some(number)) => (
+                    Some(KnownOwn {
+                        number: number.clone(),
+                        source: t(lang, "device.sms.own.from_sim").to_string(),
+                        use_source: Some(format!("sim:{slot}")),
+                    }),
+                    None,
+                ),
+                // Stored, and the SIM agrees or doesn't know.
+                (Some(number), Some(sim)) if number == sim => (
+                    Some(KnownOwn {
+                        number: number.clone(),
+                        source: t(lang, "device.sms.own.saved").to_string(),
+                        use_source: None,
+                    }),
+                    None,
+                ),
+                (Some(number), None) if sim.is_some() => (
+                    Some(KnownOwn {
+                        number: number.clone(),
+                        source: t(lang, "device.sms.own.saved").to_string(),
+                        use_source: None,
+                    }),
+                    None,
+                ),
+                // Stored and the SIM says another (the mismatch finding above the groups), or a stored slot no
+                // longer in the phone (L5): the field, so it can be corrected or cleared.
+                (Some(_), _) => (None, None),
+                // Nothing known: the field, saying what it costs.
+                (None, None) if sim.is_some() => (
+                    None,
+                    Some(t(lang, "device.sms.own.unknown_hint").to_string()),
+                ),
+                // No report (an older launcher, a new phone).
+                (None, None) => (
+                    None,
+                    Some(t(lang, "device.sms.settings.own_number_hint").to_string()),
+                ),
+            };
+            OwnRow {
+                slot,
+                field: format!("own_number_{slot}"),
+                label,
+                value: stored.unwrap_or_default(),
+                known,
+                hint,
+                error: None,
+                uses: Vec::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut rows = rows;
+    let unknown = stored.is_empty() && !sims.iter().any(|(_, number)| number.is_some());
+    // §4.4/§4.5: nothing stored and no SIM knows it - what the phone learned from a message, on the first slot's row:
+    // the number with its teacher named by the contact, or a conflict's two numbers to choose from.
+    let learned = reported.learned.as_ref().filter(|_| unknown);
+    if let (Some(learned), Some(row)) = (learned, rows.first_mut()) {
+        let teacher = names
+            .get(&learned.from)
+            .map_or(learned.from.as_str(), |(name, _)| name.as_str());
+        match (&learned.number, learned.conflict.as_slice()) {
+            (Some(number), _) => {
+                row.known = Some(KnownOwn {
+                    number: number.clone(),
+                    source: t_params(lang, "device.sms.own.learned", &[("contact", teacher)]),
+                    use_source: Some("learned".to_string()),
+                });
+                row.hint = None;
+            }
+            (None, [a, b]) => {
+                row.hint = Some(t_params(
+                    lang,
+                    "device.sms.own.conflict",
+                    &[("a", a.as_str()), ("b", b.as_str())],
+                ));
+                row.uses = vec![
+                    (
+                        format!("own-use-{}-0", row.slot),
+                        "conflict:0".to_string(),
+                        a.clone(),
+                    ),
+                    (
+                        format!("own-use-{}-1", row.slot),
+                        "conflict:1".to_string(),
+                        b.clone(),
+                    ),
+                ];
+            }
+            _ => {}
+        }
+    }
+    let missing = unknown && learned.is_none_or(|l| l.number.is_none());
+    (rows, missing)
 }
 
 /// One listed sender name and its fold (the remove form's key).
@@ -87,8 +350,13 @@ pub(super) struct SmsPage {
     pub blocked: Vec<BlockedView>,
     pub names: Vec<NameView>,
     pub lock_text: bool,
-    /// The parent's own numbers, slot 1 and 2 (empty: none).
-    pub own: [String; 2],
+    /// Design 80 §4.5: the phone's own numbers, a row per slot in question.
+    pub own_rows: Vec<OwnRow>,
+    /// No number from any source: every group text is blocked (said on view while SMS is managed, D7/D8).
+    pub number_missing: bool,
+    /// Design 80 D13: "Gruppemeldinger" is on, and the phone claims `sms_groups_v1` (else the switch is disabled).
+    pub groups: bool,
+    pub groups_capable: bool,
 }
 
 /// A stored row as the card reads it.
@@ -250,9 +518,33 @@ pub(super) async fn load(
     .bind(ROWS_MAX)
     .fetch_all(db)
     .await?;
+    let (lock_text, sms_mode, groups): (bool, String, bool) = sqlx::query_as(
+        "SELECT sms_lock_text, sms_mode, sms_groups FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or((false, String::new(), true));
+    let stored: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
+    let reported = reported_own(db, device_id).await?;
+    let (own_rows, number_missing) = own_rows(lang, &stored, &reported, &contacts);
+    // M5: a group row says what blocks every group now - it can't tell a stranger's group from the others: the switch
+    // off (D13), else a missing number while SMS is managed.
+    let group_reason = if !groups {
+        Some(t(lang, "device.sms.blocked.groups_off"))
+    } else {
+        (sms_mode == "managed" && number_missing)
+            .then(|| t(lang, "device.sms.blocked.group_no_number"))
+    };
     let blocked = blocked_rows
         .into_iter()
         .map(|row| BlockedView {
+            reason: group_reason.filter(|_| row.sender_class == "group"),
             label: sender_label(lang, &row.sender_class, &row.sender),
             kind: kind_word(lang, &row.kind),
             when: zone.when(instant_of(row.at), now),
@@ -267,34 +559,16 @@ pub(super) async fn load(
     .into_iter()
     .map(|(name, fold)| NameView { name, fold })
     .collect();
-    let lock_text: bool =
-        sqlx::query_scalar("SELECT sms_lock_text FROM device_policy WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_optional(db)
-            .await?
-            .unwrap_or(false);
-    let mut own = [String::new(), String::new()];
-    for number in sqlx::query_as::<_, sms::OwnNumber>(
-        "SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot",
-    )
-    .bind(device_id)
-    .fetch_all(db)
-    .await?
-    {
-        if let Some(cell) = usize::try_from(number.slot - 1)
-            .ok()
-            .and_then(|i| own.get_mut(i))
-        {
-            *cell = number.number;
-        }
-    }
     Ok(SmsPage {
         held,
         waiting,
         blocked,
         names,
         lock_text,
-        own,
+        own_rows,
+        number_missing,
+        groups,
+        groups_capable: sms::has_capability(db, device_id, sms::SMS_GROUPS_CAPABILITY).await?,
     })
 }
 
@@ -377,6 +651,14 @@ pub(super) fn notice(lang: Lang, code: &str) -> Option<&'static str> {
         "held_gone" => Some(t(lang, "device.sms.held.gone")),
         "held_no_contact" => Some(t(lang, "device.sms.held.no_contact")),
         "names_full" => Some(t(lang, "device.sms.names.full")),
+        _ => None,
+    }
+}
+
+/// `?notice=` codes for the "Meldinger" settings in the page's Avansert (design 80 §4.5).
+pub(super) fn settings_notice(lang: Lang, code: &str) -> Option<&'static str> {
+    match code {
+        "own_number_gone" => Some(t(lang, "device.sms.own.gone")),
         _ => None,
     }
 }
@@ -644,18 +926,20 @@ pub async fn save_sms(
             Ok(cc) => cc,
             Err(err) => return db_error(lang, id, err),
         };
-    let mut own: Vec<(i64, String)> = Vec::new();
+    // Design 80 §4.5: only the slots the form sent - an absent field keeps its slot, an empty one removes it.
+    let mut own: Vec<(i64, Option<String>)> = Vec::new();
     for (slot, field) in [(1, "own_number_1"), (2, "own_number_2")] {
-        let raw = form.get(field).map(|s| s.trim()).unwrap_or("");
+        let Some(raw) = form.get(field).map(|s| s.trim()) else {
+            continue;
+        };
         if raw.is_empty() {
+            own.push((slot, None));
             continue;
         }
         // Code QA L7: a SIM's own number is a full number with its country code - never a short code or an
         // emergency number, which D12's group rule would then take for "us".
         match phone::normalize(raw, &cc) {
-            Ok(number) if sms::sender_ok("number", &number) && number.starts_with('+') => {
-                own.push((slot, number))
-            }
+            Ok(number) if own_number_ok(&number, &cc) => own.push((slot, Some(number))),
             outcome => {
                 let why = match outcome {
                     Err(err) => t(lang, err.key()),
@@ -674,12 +958,25 @@ pub async fn save_sms(
         }
     }
     let lock_text = form.contains_key("sms_lock_text");
+    // Design 80 D13: only a post from a page with the switch (`groups_shown`) writes "Gruppemeldinger" - an older page
+    // keeps it - and only for a phone claiming `sms_groups_v1` (the switch is disabled before: it isn't sent).
+    let groups = if form.contains_key("groups_shown") {
+        match sms::has_capability(&state.db, id, sms::SMS_GROUPS_CAPABILITY).await {
+            Ok(true) => Some(form.contains_key("sms_groups")),
+            Ok(false) => None,
+            Err(err) => return db_error(lang, id, err),
+        }
+    } else {
+        None
+    };
     let result = async {
         let mut tx = state.db.begin().await?;
         let updated = sqlx::query(
-            "UPDATE device_policy SET sms_lock_text = ?, updated_at = datetime('now') WHERE device_id = ?",
+            "UPDATE device_policy SET sms_lock_text = ?, sms_groups = COALESCE(?, sms_groups), \
+             updated_at = datetime('now') WHERE device_id = ?",
         )
         .bind(lock_text)
+        .bind(groups)
         .bind(id)
         .execute(&mut *tx)
         .await?
@@ -687,17 +984,8 @@ pub async fn save_sms(
         if updated == 0 {
             return Ok::<_, sqlx::Error>(false);
         }
-        sqlx::query("DELETE FROM device_own_numbers WHERE device_id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
         for (slot, number) in &own {
-            sqlx::query("INSERT INTO device_own_numbers (device_id, slot, number) VALUES (?, ?, ?)")
-                .bind(id)
-                .bind(slot)
-                .bind(number)
-                .execute(&mut *tx)
-                .await?;
+            store_own(&mut tx, id, *slot, number.as_deref()).await?;
         }
         tx.commit().await?;
         Ok(true)
@@ -705,7 +993,126 @@ pub async fn save_sms(
     .await;
     match result {
         Ok(false) => not_found(lang),
-        Ok(true) => saved(&state, id, format!("/devices/{id}/calls#sms-settings")),
+        Ok(true) => saved(&state, id, sms_settings(id)),
+        Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// Where the page's "Meldinger" settings return (design 80 D9): the group inside the page's Avansert, drawn open.
+fn sms_settings(id: i64) -> String {
+    format!("/devices/{id}/calls?advanced=1#sms-settings")
+}
+
+/// D12 and code QA L7: a phone's own number is a full `+` number - never a short code or an emergency number, which
+/// the group rule would then take for "us".
+fn own_number_ok(number: &str, cc: &str) -> bool {
+    sms::sender_ok("number", number)
+        && number.starts_with('+')
+        && !emergency::is_emergency(number, cc)
+}
+
+/// Stores (or with `None` removes) the parent's number for a SIM slot.
+async fn store_own(
+    tx: &mut sqlx::SqliteConnection,
+    id: i64,
+    slot: i64,
+    number: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    match number {
+        Some(number) => {
+            sqlx::query(
+                "INSERT INTO device_own_numbers (device_id, slot, number) VALUES (?, ?, ?) \
+                 ON CONFLICT(device_id, slot) DO UPDATE SET number = excluded.number",
+            )
+            .bind(id)
+            .bind(slot)
+            .bind(number)
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM device_own_numbers WHERE device_id = ? AND slot = ?")
+                .bind(id)
+                .bind(slot)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// "Bruk dette nummeret" (design 80 §4.5, M3): stores the number the phone's last report gave for `source` -
+/// `sim:<slot>` into that slot, `learned` or `conflict:<0|1>` (§4.4) into the first active slot with no stored number -
+/// never a number from the form, with [save_sms]'s checks. The policy then carries it
+/// whatever the SIM says later (a momentary IMS reading). Back to `?advanced=1#sms-settings`; a source whose report
+/// changed meanwhile lands on `?notice=own_number_gone`, nothing stored.
+pub async fn use_own_number(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let source = form.get("source").map(String::as_str).unwrap_or("");
+    let result = async {
+        let cc: Option<String> = sqlx::query_scalar(
+            "SELECT s.default_country_code FROM device_policy p, call_settings s \
+             WHERE p.device_id = ? AND s.id = 1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some(cc) = cc else {
+            return Ok::<_, sqlx::Error>(None);
+        };
+        let reported = reported_own(&state.db, id).await?;
+        let found = match source.strip_prefix("sim:") {
+            Some(slot) => slot.parse::<i64>().ok().and_then(|slot| {
+                reported
+                    .sims
+                    .iter()
+                    .find(|(s, _)| *s == slot)
+                    .and_then(|(_, number)| number.clone())
+                    .map(|number| (slot, number))
+            }),
+            // Design 80 §4.4: a learned number, or one of a conflict's two, into the first active slot with no stored
+            // number (slot 1 on a phone with one SIM).
+            None => {
+                let learned = reported.learned.as_ref();
+                let number = match source {
+                    "learned" => learned.and_then(|l| l.number.clone()),
+                    "conflict:0" => learned.and_then(|l| l.conflict.first().cloned()),
+                    "conflict:1" => learned.and_then(|l| l.conflict.get(1).cloned()),
+                    _ => None,
+                };
+                let stored: Vec<i64> =
+                    sqlx::query_scalar("SELECT slot FROM device_own_numbers WHERE device_id = ?")
+                        .bind(id)
+                        .fetch_all(&state.db)
+                        .await?;
+                let mut active: Vec<i64> = reported.sims.iter().map(|(slot, _)| *slot).collect();
+                if active.is_empty() {
+                    active.push(1);
+                }
+                let free = active.into_iter().find(|slot| !stored.contains(slot));
+                number.zip(free).map(|(number, slot)| (slot, number))
+            }
+        }
+        .filter(|(_, number)| own_number_ok(number, &cc));
+        let Some((slot, number)) = found else {
+            return Ok(Some(false));
+        };
+        let mut tx = state.db.begin().await?;
+        store_own(&mut tx, id, slot, Some(&number)).await?;
+        tx.commit().await?;
+        Ok(Some(true))
+    }
+    .await;
+    match result {
+        Ok(None) => not_found(lang),
+        Ok(Some(true)) => saved(&state, id, sms_settings(id)),
+        Ok(Some(false)) => crate::settings_log::refused(Redirect::to(&format!(
+            "/devices/{id}/calls?advanced=1&notice=own_number_gone#sms-settings"
+        ))),
         Err(err) => db_error(lang, id, err),
     }
 }
@@ -765,7 +1172,11 @@ pub async fn add_name(
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some("")) => saved(&state, id, format!("/devices/{id}/calls#sms-names")),
+        Ok(Some("")) => saved(
+            &state,
+            id,
+            format!("/devices/{id}/calls?advanced=1#sms-names"),
+        ),
         Ok(Some(why)) => refuse(why).await,
         Err(err) => db_error(lang, id, err),
     }
@@ -799,7 +1210,11 @@ pub async fn remove_name(
     .await;
     match result {
         Ok(false) => not_found(lang),
-        Ok(true) => saved(&state, id, format!("/devices/{id}/calls#sms-names")),
+        Ok(true) => saved(
+            &state,
+            id,
+            format!("/devices/{id}/calls?advanced=1#sms-names"),
+        ),
         Err(err) => db_error(lang, id, err),
     }
 }

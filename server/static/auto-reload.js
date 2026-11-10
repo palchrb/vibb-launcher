@@ -28,6 +28,26 @@
         return overflow === "auto" || overflow === "scroll" ? main.scrollTop : win.scrollY;
     }
 
+    // Design 80 D11 (M1): only an open <details> the reader can see counts - one with no closed <details> around it.
+    // A contact's Avansert drawn open inside its closed row holds nothing that would be lost. No layout read.
+    function shownOpen(doc) {
+        if (!doc.querySelectorAll) return !!(doc.querySelector && doc.querySelector("details[open]"));
+        var open = doc.querySelectorAll("details[open]");
+        for (var i = 0; i < open.length; i++) {
+            var node = open[i].parentNode;
+            var shown = true;
+            while (node && node !== doc) {
+                if (String(node.nodeName).toUpperCase() === "DETAILS" && node.hasAttribute && !node.hasAttribute("open")) {
+                    shown = false;
+                    break;
+                }
+                node = node.parentNode;
+            }
+            if (shown) return true;
+        }
+        return false;
+    }
+
     function install(win) {
         var doc = win.document;
         var leaving = false;
@@ -63,7 +83,7 @@
                 lock.lock();
                 return;
             }
-            if (doc.querySelector("details[open]")) {
+            if (shownOpen(doc)) {
                 win.setTimeout(tick, DELAY);
                 return;
             }
@@ -93,7 +113,7 @@
         win.setTimeout(tick, DELAY);
     }
 
-    var api = { install: install, DELAY: DELAY };
+    var api = { install: install, DELAY: DELAY, shownOpen: shownOpen };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

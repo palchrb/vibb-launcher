@@ -96,6 +96,9 @@ data class CallRules(
     /** Design 77 D10: the carriers' MMS servers by the SIM's MCC/MNC; empty until step 0 fills the server's table, and
      * then every MMS fails closed ("Bildet kunne ikke hentes"). */
     val mmscHosts: List<MmscRule> = emptyList(),
+    /** Design 80 D13: group texts allowed at all ("Gruppemeldinger"). Rules stored before it have none: `true`, as the
+     * policy's absent key (D12's members rule under it still fails closed). */
+    val smsGroups: Boolean = true,
 ) {
     @Transient
     val inbound: Set<String> = contacts.filter { it.inbound }.mapTo(mutableSetOf()) { it.number }

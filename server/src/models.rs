@@ -133,6 +133,8 @@ pub struct DevicePolicy {
     pub sms_mode: String,
     /// §6.8: the message text on the lock glance's row (default off), sent as `call_policy.sms_lock_text`.
     pub sms_lock_text: bool,
+    /// Design 80 D13 (migrations/0134_sms_groups.sql): group texts allowed at all, `call_policy.sms_groups`.
+    pub sms_groups: bool,
     /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
     pub default_message_app: String,
     /// When `calls_mode` or `sms_mode` last changed (UTC, SQLite `datetime('now')`) - status reports older
@@ -1336,6 +1338,8 @@ pub struct CallPolicy {
     pub sms_held_drop: Vec<String>,
     /// §14: the kid's requests for a new contact of the last 7 days, `[{id, state}]` (`open`, `declined`, `added`).
     pub contact_requests: Vec<crate::handlers::contact_requests::PolicyRow>,
+    /// Design 80 D13: "Gruppemeldinger" - group texts allowed at all (migration 0134, default on).
+    pub sms_groups: bool,
 }
 
 /// One contact as the launcher sees it. `number` is normalised (src/phone.rs) - the launcher

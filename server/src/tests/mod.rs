@@ -15,6 +15,7 @@ mod caldav;
 mod calendar;
 mod calendar_feeds;
 mod calls;
+mod calls_simpler;
 mod catalog_pins;
 mod cleanup;
 mod command_expiry;

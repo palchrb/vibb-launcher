@@ -152,7 +152,8 @@ function fakeWindow({ openForm = false, postAnswer = false, href = "https://pi.e
                 return null;
             },
             getElementById: (id) => (id === "apps" ? { getBoundingClientRect: () => ({ top: 88 }) } : null),
-            querySelectorAll: () => win.controls,
+            querySelectorAll: (selector) =>
+                selector === "details[open]" ? (win.openForm ? [{ parentNode: null }] : []) : win.controls,
             body: { hasAttribute: (name) => name === "data-post-answer" && postAnswer },
         },
     };
@@ -1132,4 +1133,19 @@ test("the lock: from the lock screen itself, the way to the lock keeps its own n
     rc.toLock(win, "/lock?next=%2Fapps%3Fx%3D1#top");
     rc.toLock(win, "/lockers");
     assert.deepStrictEqual(win.locks, ["/apps?x=1", "/lockers"]);
+});
+
+// Design 80 D11 (M1): reconnect's reload in place (the return's and pull-refresh's `mayReload`) counts only a shown
+// open <details>: a contact's Avansert drawn open inside its closed row doesn't block it; an opened row does.
+test("a closed contact holding an open Avansert doesn't block the reload in place; an opened one does", () => {
+    const nested = (rowOpen) => {
+        const row = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" && rowOpen, parentNode: null };
+        const adv = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: row } };
+        return rowOpen ? [row, adv] : [adv];
+    };
+    for (const rowOpen of [false, true]) {
+        const open = nested(rowOpen);
+        const doc = { querySelectorAll: (selector) => (selector === "details[open]" ? open : []) };
+        assert.strictEqual(rc.shownOpen(doc), rowOpen, `row open: ${rowOpen}`);
+    }
 });

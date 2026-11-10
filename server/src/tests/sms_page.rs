@@ -399,7 +399,11 @@ async fn the_sender_names_follow_the_rule() {
         }
     };
     let res = add(" Posten\u{202e} ").await;
-    super::assert_redirect(&res, &format!("/devices/{id}/calls"), Some("sms-names"));
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?advanced=1"),
+        Some("sms-names"),
+    );
     app.assert_lands(&res, &cookie).await;
     for (name, why) in [
         ("POSTEN", "That name is on the list already."),
@@ -477,7 +481,11 @@ async fn the_sms_settings_save_in_place() {
         ("own_number_2", ""),
     ])
     .await;
-    super::assert_redirect(&res, &format!("/devices/{id}/calls"), Some("sms-settings"));
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?advanced=1"),
+        Some("sms-settings"),
+    );
     app.assert_lands(&res, &cookie).await;
     let policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(policy["sms_lock_text"], json!(true));
@@ -540,7 +548,7 @@ async fn the_contacts_messages_group() {
         .await
         .text();
     assert!(
-        page.contains(r#"Calls in only<span class="row-sub">Texts in</span>"#),
+        page.contains(r#"Calls in<span class="row-sub">Texts in</span>"#),
         "{page}"
     );
     let ambulance_row = &page[page.find(&format!("id=\"contact-{ambulance}\"")).unwrap()..];
@@ -785,9 +793,12 @@ async fn the_rcs_step_shows_before_and_under_managed() {
             "off",
             "Before you choose Managed by Vibb: turn off chat features in Messages.",
         ),
-        ("managed", "Turn off chat features in Messages first."),
+        (
+            "managed",
+            "Turn off chat features in Messages if you haven&#39;t.",
+        ),
     ] {
-        sqlx::query("UPDATE device_policy SET sms_mode = ? WHERE device_id = ?")
+        sqlx::query("UPDATE device_policy SET sms_mode = ?, roles_changed_at = datetime('now') WHERE device_id = ?")
             .bind(mode)
             .bind(id)
             .execute(&app.db)

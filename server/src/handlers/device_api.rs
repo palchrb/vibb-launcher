@@ -692,6 +692,7 @@ async fn build_call_policy(
         calls_mode: policy.calls_mode.clone(),
         sms_mode: policy.sms_mode.clone(),
         sms_lock_text: policy.sms_lock_text,
+        sms_groups: policy.sms_groups,
         sms_names,
         own_numbers,
         mmsc_hosts: crate::mmsc_hosts::policy(),
