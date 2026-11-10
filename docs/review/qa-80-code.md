@@ -283,3 +283,129 @@ its fix (L4's, L2's and L7's were run against the mutation: killed).
 
 Suites after the round: see the implementer's report (server `cargo test`, fmt, clippy; jstests; the launcher's unit
 tests). Browser pass (Playwright, a throwaway server): 390 px light and dark, 320 px, JS off for L5.
+
+## Verification (2026-11-10, `calls-simpler` at 7bcfefd3)
+
+Read `git diff 5ea0850b..7bcfefd3` (d804b07d server, 276e33b4 launcher, 7bcfefd3 docs) and the fix-round table above.
+
+Run: only the tests that touch the fixes.
+- `cargo test calls_simpler contact_requests calls_form`: 35 passed, 0 failed.
+- The changed jstests (`reconnect`, `auto-reload`, `pull-refresh`, `contact-form`): 78 passed, 0 failed.
+- The launcher's `OwnLearningTest` and `MmsEngineTest`: 47 tests, 0 failed.
+- One measurement of the "Tilpasset" row in Chromium (Playwright): a bare `.group` with today's `style.css`, at
+  320 and 390 px, root font 100-200 %.
+
+**Verdict: mergeable after V1**, a one-line revert in `auto-reload.js`. V2 and V3 can go in the same round or follow.
+
+### Finding by finding
+
+| Finding | Verdict |
+|---|---|
+| M1 | **Fixed.** `groups_shown` is drawn only with `sms.groups_capable` (`device_calls.html:546`). A page drawn without the capability never posts it, by autosave or by the noscript Save (the same form). The reverse: a page drawn with the capability posts the marker, and the switch turns groups off and on (`the_group_switch_needs_the_capability_and_its_marker`, unchanged). If the phone loses the capability between draw and post, the handler's own check keeps the stored value. The new test dies without the guard. |
+| L1 | **Fixed, with a remark (V2).** `phone_numbers` holds only the stored and SIM-reported numbers, so a learned number never blocks Add Contact or the family list. A learned number that is a contact is no longer offered. A learned number is only ever offered: it is stored only by a POST to `/calls/own-number/use` with `source=learned`, which only a signed-in parent can send (CSRF-guarded). Nothing stores it by itself. |
+| L2 | **Fixed.** `simSet == ""` returns early from `ownLearnedFor`: nothing is deleted and nothing is used, because `own` is computed with `learned == null`. `OwnLearning.learn` returns null for `""`. `ownLearned()` for the report goes through the same function, so the report shows none for that moment. No path uses the stored number while the SIM list is unknown: `ownLearnedFor` is its only reader. The new guard dies to its mutation. |
+| L3 | **Fixed in `save_sms`, but the `data-reopens` half opens V1.** A slot is skipped only when `own_number_<n>_shown` equals the posted value, so `_shown` can only suppress a write, never cause one. A forged or inconsistent `_shown` writes nothing. An older page without it writes as before. Two slots swapped in one post are each compared to their own `_shown`, so both are written. A refused field is skipped only if unchanged, and is otherwise validated as before. The guard dies to its mutation. |
+| L4 | **Fixed.** `usable_own` (`phone::normalize` leaves the number unchanged, and `own_number_ok`) filters every SIM and learned number inside `reported_own`. The route reads only `reported_own(db, id, cc)` for the URL's device, picks by `source` and never reads a number from the form. A number the page didn't keep can't be stored. S6 (`usable_own` made a no-op) dies. |
+| L5 | **Fixed.** The emergency branch returns `(false, both_ways(…, (out, out), stored (out, out)).1)`, so `sms_in` is `false` on every path. Without JS, Add Contact's switch turned off now turns `sms_out` off. A contact's own emergency row (no `texts_shown`) still takes `sms_out` as posted. The refusal redraw judges the sent number. |
+| L6 | **Fixed.** S4b dies. |
+| L7 | **Fixed for the emergency half.** LM3 (both guards removed) dies. The SMS-mode half alone still survives (V4). The implementer's claim holds: `Emergency.isEmergencyOutgoing` returns `false` for any `+` number (`dialableDigits` gives null), so only a short number such as `113` reaches the check. That is not a gap of this branch. The server's `emergency::is_emergency` is the same exact-match rule, `phone::normalize` keeps `113` short (`phone_vectors.json`), and the policy never carries `+47113` as an emergency number on either side. Whether `+47113` should count as an emergency number is a design 73/77 question, and it is consistent today. |
+| N1 | **Fixed.** A comment in each of the three copies. |
+| N2 | **Fixed.** An unknown `section` returns 400 before any query (`calls.rs:2006-2009`). Nothing is written. |
+| N3 | **Fixed, with a remark (V3).** |
+| N4 | **Fixed.** `own_number_no_slot` has its own words. |
+| N5 | **Fixed.** `{name}` in both languages. |
+
+### V1. The fix's `data-reopens` lets `auto-reload.js` reload away a phone number being typed - Medium, confirmed by reading
+
+`static/auto-reload.js:41` (and its two copies) skip a `details[data-reopens]`. `templates/device_calls.html:446` sets
+it whenever the page's Avansert is drawn open.
+
+**What happens:**
+1. The parent sets SMS to "Styrt av Vibb". For two minutes the page carries `auto-reload.js`
+   (`ROLES_REFRESH_SECS`, a reload every 3 s).
+2. The page's own quiet line "Telefonens nummer mangler - gruppemeldinger blokkeres" links to
+   `?advanced=1#sms-settings` (`device_calls.html:172`), so Avansert is drawn open with `data-reopens`.
+3. The parent starts typing in the "Telefonens nummer" field. While the phone knows nothing it is a plain
+   `div.field`, not inside a nested `<details>`.
+4. Before the fix, the open Avansert held the reload. Now nothing visible-open counts, so the tick reloads in place
+   every 3 s and the typed digits are lost.
+
+`auto-reload.js` has no typing guard of its own: it stops only on a submit or an autosave `change`, and a text field's
+`change` fires on blur.
+
+`reconnect.js` is safe, because `edited(doc)` still guards typed text. `pull-refresh.js` isn't loaded on the Calls
+page (only on the Devices list and the summary). No other template sets `data-reopens`, so every other page that
+loads these scripts (`device_apps`, `device_detail`, `devices_list`, every page's `reconnect.js`) behaves as before.
+
+**Smallest fix:** drop the `data-reopens` skip from `auto-reload.js` only (v8). Reconnect's reload-in-place, which L3
+was about, keeps it. Or give `auto-reload.js` the same `edited(doc)` check reconnect has. Add a jstest: an open
+`data-reopens` Avansert with a changed text field holds the tick.
+
+### V2. "Bruk dette nummeret" for a learned number doesn't re-check what the page checked before offering it - Low, confirmed by reading
+
+`handlers/calls_sms.rs:1117-1137`, the `learned`/`conflict` branch. The page offers the learned row only while nothing
+is stored, no SIM knows a number, and the learned number isn't a contact (`own_rows`). The route checks none of these:
+it stores into the first active slot with no stored number.
+
+**What happens:** a stale page (Back, or a second tab, drawn while the learned row showed) and the parent's tap store
+the learned number over:
+- a SIM number reported since, as the parent's number, which then wins over the SIM;
+- or a number the parent has since added as a contact.
+
+It needs the parent's own tap, so it is never automatic. But the learned number is the attacker-influenced one, and
+the reason for offering it has gone.
+
+**Fix:** in that branch, refuse (`own_number_gone`) unless the stored slots are empty, no reported SIM number is
+`Some`, and the number isn't a contact on this phone. That is the same `unknown` and contact test `own_rows` uses;
+lift it into one helper.
+
+### V3. "Tilpasset" is clipped at 150 % text and wider than the switch it replaces - Low, measured
+
+`static/style.css:3089-3097`: `flex: 0 0 51px`, `margin-left: 12px`, 13 px type, `overflow: visible`, inside
+`.group { overflow: hidden }`.
+
+Measured in a bare group (Chromium, nb):
+
+| Width | Root font | "Tilpasset" | Edge of the group | Row heights (Tilpasset/switch) |
+|---|---|---|---|---|
+| 390 px | 100 % | 52 px wide | 15 px clear | 53/53 |
+| 390 px | 125 % | 64 px wide | 3 px clear | 53/53 |
+| 390 px | 150 % | 77 px wide | **clipped by 10 px** | 86/86 |
+| 390 px | 200 % | 103 px wide | **clipped by 36 px** | 107/107 |
+| 320 px | 100 % | 52 px wide | 15 px clear | **65/53** |
+| 320 px | 150 % | 77 px wide | **clipped by 10 px** | 86/86 |
+
+So at 150 % (Chrome's text scaling on Android) the word runs past the row's padding and is cut by the group's rounded
+edge. That is a clipped word, not just a tight fit.
+
+The 12 px margin also gives the label 12 px less than beside the switch (193 vs 205 px at 320 px; the switch has
+`margin: 0`). At some widths the label wraps beside "Tilpasset" and not beside the switch, which is L8's shift again:
+in this bare group, at 320 px and 100 %, the row is 65 px against 53. The real contact form may sit at another width,
+and the implementer's pass saw 0 px there, but the 12 px difference remains at some width.
+
+**Fix:** `margin-left: 0` (the switch's own box), and `flex: 0 0 auto; min-width: 51px` instead of a fixed 51 px.
+The label then has exactly the switch row's room at the default size, and the word pushes the label rather than
+being clipped at large text.
+
+### V4. Nit: the learning's SMS-mode guard is still untested (mutation LM3b survives)
+
+`MmsFlow.kt:460`. Dropping only `rules?.smsMode == MANAGED` passes `OwnLearningTest` and `MmsEngineTest`. It is hardly
+reachable: a fetched MMS is judged with the role held and the sender let in by `senderNow`. But a one-line
+`MmsEngineTest` row (SMS "Av", a contact's one-to-one MMS, nothing learned) would pin it.
+
+### Mutations (verification)
+
+Each mutation was rerun only against its targeted tests, then reverted (`git checkout --`).
+
+| # | Mutation | Tests rerun | Result |
+|---|---|---|---|
+| S4b | the short-number request with Home and Pictures on | `contact_requests` | killed (`the_prefill_and_retry_rules`) |
+| S6 | `usable_own` made a no-op (`reported_own` without it) | `calls_simpler`, `sms` | killed (`bruk_dette_nummeret_only_for_a_number_the_tap_stores`) |
+| LM3 | `senderAllowed` without the SMS-mode and emergency checks | `OwnLearningTest`, `MmsEngineTest` | killed (the L7 test) |
+| M1-new | `groups_shown` drawn always again | `calls_simpler` | killed (`a_page_drawn_before_the_capability_never_turns_groups_off`) |
+| L3-new | `save_sms` writes a slot even when its field equals `_shown` | `calls_simpler`, `sms` | killed (`a_stale_sms_form_keeps_a_number_stored_meanwhile`) |
+| L2-new | `ownLearnedFor` judges `""` as a SIM set (no early return) | `OwnLearningTest`, `MmsEngineTest` | killed (the learning test's `""` moment) |
+| LM3b | `senderAllowed` without the SMS-mode check alone | same | **survived** (V4, Nit) |
+
+Not checked in this verification: the full suites (the implementer reports server 1845/0, jstests 333, launcher
+2393/0), clippy, the real contact form in a browser (V3 is measured on a bare group), and a device.
