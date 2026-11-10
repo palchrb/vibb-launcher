@@ -37,6 +37,22 @@ fun glanceAlerts(facts: GlanceAlertFacts): Boolean =
 fun glanceWakes(alerts: Boolean, suspended: Boolean, before: Set<GlanceConversation>, after: Set<GlanceConversation>): Boolean =
     alerts && !suspended && (after - before).isNotEmpty()
 
+/**
+ * A kept post that gains no row buzzes the locked phone all the same (design 82 W3, the user on 2026-11-10: one buzz
+ * for every new message; `PinLockRuntime.noticeUpdated` - the buzz alone, never the wake): it [alerts], its app is
+ * not [suspended], and a visible row counts more in [after] than it did in [before] ([glanceRowCounts]). The count is
+ * the notification's own word that a message more is in it ([glanceCount]: a `MessagingStyle`'s messages from others,
+ * else `Notification.number`). A post that counts the same - an edit, the same notification posted again, an app that
+ * counts nothing, a `MessagingStyle` that has dropped its oldest line for the new one - is no buzz: a new message is
+ * never guessed.
+ */
+fun glanceRowGrew(alerts: Boolean, suspended: Boolean, before: Map<GlanceConversation, Int>, after: Map<GlanceConversation, Int>): Boolean =
+    alerts && !suspended && after.any { (conversation, count) -> before[conversation]?.let { count > it } == true }
+
+/** The visible message rows' counts, by conversation ([glanceRows] without the missed calls). */
+fun glanceRowCounts(rows: List<GlanceRow>): Map<GlanceConversation, Int> =
+    rows.filterIsInstance<GlanceMessageRow>().associate { it.conversation to it.count }
+
 /** The visible message rows' conversations ([glanceRows] without the missed calls). */
 fun glanceRowConversations(rows: List<GlanceRow>): Set<GlanceConversation> =
     rows.mapNotNullTo(mutableSetOf()) { (it as? GlanceMessageRow)?.conversation }

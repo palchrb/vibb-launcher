@@ -651,7 +651,7 @@ Meldinger rows". What was decided (the design left it open):
   callPolicyState)` (`sms/SmsGlance.kt`): the word as it is, whatever the call rules say; `LEGACY` is the rule before
   design 82 - the text only with managed rules whose `call_policy.sms_lock_text` says so, otherwise the name. **Off:
   no row** (pure `smsGlanceRows`: none, and no message read) **and no wake** (`smsGainsRow` takes the level: nothing
-  to gain); the system notification, the badge and the thread are untouched, as for an app set to Off. A read of
+  to gain) **and no notice buzz** (`smsPostBuzzes` takes it too); the system notification, the badge and the thread are untouched, as for an app set to Off. A read of
   the engine that fails drops the lock's rows (`SmsHome.refresh`: they were built at the last good read's level) and
   keeps Home's tile and badges. The reading fails closed
   (`glanceSms`): another word or value is Off, a `lock_glance` that is no object is Off, a cache without the key or

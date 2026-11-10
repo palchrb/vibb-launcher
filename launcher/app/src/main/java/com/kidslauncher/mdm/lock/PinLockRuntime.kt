@@ -1491,7 +1491,8 @@ object PinLockRuntime {
      * and there the screen never lights). `USAGE_NOTIFICATION`, so Android's own vibration settings apply. Carries
      * nothing about the notice. Never throws. Main thread.
      * Code QA L3: what is in memory answers first - the switch, the lock's mode, the gap - before anything is read
-     * from the system (the ringer, the filter); [busy] is [noticeCame]'s one read, shared with the wake's gate.
+     * from the system (the ringer, the filter); [busy] is [noticeCame]'s one read, shared with the wake's gate
+     * ([noticeUpdated] reads its own: it has no wake).
      */
     private fun noticeBuzz(app: Context, now: Long, busy: NoticeBusy) {
         if (!noticeBuzzOn) return
@@ -1516,6 +1517,24 @@ object PinLockRuntime {
                 android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_NOTIFICATION),
             )
             Log.i(LOG_TAG, "Notice buzz")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Notice buzz failed", e)
+        }
+    }
+
+    /**
+     * A message more came in a row the lock already shows - our own thread's (`SmsNotifier`, `smsPostBuzzes`) or an
+     * app's (`GlanceStore.putPosted`, `glanceRowGrew`): the buzz alone (design 82 W3, the user on 2026-11-10: one buzz
+     * for every new message). Never the wake, which stays a gained row's ([noticeCame]) - nothing of the wake is
+     * read or written here. What is in memory answers before Telecom and the alarm are read for [NoticeBusy] (code QA
+     * L3); [noticeBuzz] asks it again with the rest. Carries nothing about the notice. Main thread.
+     */
+    fun noticeUpdated() {
+        val app = appContext ?: return
+        try {
+            val now = SystemClock.elapsedRealtime()
+            if (!noticeBuzzOn || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return
+            noticeBuzz(app, now, noticeBusy(app, now))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Notice buzz failed", e)
         }

@@ -2893,7 +2893,8 @@ built-in one is renamed.
   `mVibrationEnabled=false`) - one per message.
 - **What the buzz doesn't do:** a message in a thread whose row is already on the lock (the second unread, the row not
   swiped away) gave no buzz - only a gained row does (`smsGainsRow`, the wake's rule too), so the rows were swiped
-  away between the steps above. Under Do Not Disturb and a rule's silence an SMS never gets as far as `noticeCame()`
+  away between the steps above. (Changed after this pass, 2026-11-10: every new message the lock shows buzzes, the
+  10 s gap kept - design 82 §14, "The buzz for every new message"; seen in §6af.) Under Do Not Disturb and a rule's silence an SMS never gets as far as `noticeCame()`
   (`smsPostAlerts`), so the buzz's own filter and silence gates were not seen working apart from that.
 - **Recents and TalkBack, by dump:** Meldinger's task has `taskDescription label="Beskjeder"` and the overview reads
   "Vibb One (debug) Beskjeder" (L4). Content descriptions: the tile "Beskjeder, 3 uleste" and "Beskjeder"; the lock's
@@ -2901,7 +2902,7 @@ built-in one is renamed.
   teksten, "3 nye meldinger fra Pappa, ...".
 - **Main's mark in this build:** scrolled up in Mamma's thread, an SMS in: `thread_new` "Ny melding"
   `[161,647][318,719]`; the tap goes to the end and reads it.
-- **Found, not design 82's, not fixed:** the first pause of all restrictions (the Parent PIN in Settings; Home and
+- **Found, not design 82's** (reproduced on main, explained and fixed since: §6af)**:** the first pause of all restrictions (the Parent PIN in Settings; Home and
   Meldinger the locked tasks, a call screen and the lock's tasks earlier in the log) left the phone on Android's "App
   is not available" for Vibb One: the system's Home start was caught by the lock-task interceptor (`startActivity ...
   BlockedAppActivity`, then `Attempted Lock Task Mode violation ... HomeActivity` three times), with
@@ -2995,6 +2996,102 @@ What it showed:
   report coming minutes later, and a real MMS; what TalkBack speaks (§6ac: an injected tap isn't touch exploration);
   the thumb's feel of the 26 dp move on the cut row; how the spacing reads on the phone's own panel.
 - Screenshots of the run are in the session's `scratchpad/bubble-shots/`.
+
+## 6af. The buzz for a second message, and the pause that hung on "App is not available" (2026-11-10)
+
+Run on `handy36` on its kept data (no `-wipe-data`, `wm density 240`, `install -r`; the AVD's data copied first and put
+back after) on 2026-11-10: part A and part B's count on `main` (92530147, with design 82's buzz for every message and
+§6ae), the fix on branch `pause-hang`. Main's server ran on the host (port 3111) on §6ad's database copy, the PWA
+through headless Chromium. The phone is in the kiosk (Home roots lock task, the app block on), managed SMS, Mamma
+(`+4790000001`) and Pappa (`+4790000002`); new messages by `adb emu sms send`. Lock task is read from the system's own
+protolog - `wm logging enable-text WM_DEBUG_LOCKTASK`, again after every boot: `Allowlisting`, `Allowing features`,
+`removeLockedTask`, `setLockTaskMode`, `startLockTaskMode` - and from `dumpsys activity activities`
+(`mLockTaskModeState`, `mLockTaskModeTasks`, `mLockTaskPackages`). After `install -r` on a fresh boot SystemUI may
+answer "isn't responding" in a loop (load 20); a reboot and a wait for the load to fall under 3 ends it.
+
+### A. The buzz for every new message (design 82 §14)
+
+Meldinger's level "Bare navn", "Buzz for a notification" on, the wake switch on (set in the PWA for the pass), the
+phone locked and dark. The emulator has no motor: a buzz is the launcher's `I/PinLock: Notice buzz` line and the
+vibrator service's record of it (`dumpsys vibrator_manager`, "Recent vibrations": `me.vibb.launcher.debug`, `usage:
+NOTIFICATION`, `played: Step=40ms(amplitude=1.00)`); a wake is `Notice wake` and `mWakefulness`.
+
+- **A gained row, as before:** the first SMS from Mamma: `Notice buzz` 18:07:21.892, `Notice wake (proximity=false)`
+  18:07:21.906, Asleep to Awake, the row on the glance.
+- **A second message in the same thread, more than 10 s later:** 27 s after the first: `Notice buzz` 18:07:48.974 and
+  no `Notice wake`. Again with the screen off first (off at 18:08:06, the SMS at 18:08:14): `Notice buzz`
+  18:08:14.479, `mWakefulness=Asleep` before it and 4 s after it - the buzz alone, nothing woken.
+- **Two more within 10 s** (after each of the two above): no line, no vibration.
+- **The level Off** (saved in the PWA, the policy on the phone at 18:08:33), an SMS at 18:08:43: no buzz, no wake.
+- **The vibrator service's whole record for the pass:** four NOTIFICATION entries, all the launcher's, 40 ms each, at
+  18:06:16.006 (a gained row from Pappa while the wake switch was still off), 18:07:21.892, 18:07:48.974 and
+  18:08:14.479 - one for one with the log lines, none for the messages inside the gap or at Off.
+- **Seen beside it:** a message 116 s after the launcher's process started got no buzz and no wake - the first two
+  minutes of a process are silent for both (`NoticeBusy`), so wait them out after an `install -r`. After a notice
+  wake the emulator's screen stayed on, so "not woken" is the second case above, with the screen put out first.
+- **What `handy36` can't show:** the buzz in the hand, whether the notification and the buzz feel like one, Android's
+  own vibration settings on the phone, another app's second message (Element X's).
+
+### B. "Pause all restrictions" and "App is not available"
+
+One start: from Home in the kiosk (`mLockTaskModeState=LOCKED`), the drawer, Settings behind the Parent PIN, "Sett alle
+begrensninger på pause", the Parent PIN again, 7 s, then the logcat and `dumpsys activity activities` kept. Ended the
+way a parent would, with Home's "Lås igjen".
+
+- **On main: 1 stuck of 10** (the second; an eleventh went through). The stuck one sat on Android's "App is not
+  available" for Vibb One, `mLockTaskModeState=LOCKED`, `mLockTaskPackages` empty, the only locked task
+  BlockedAppActivity's own (`type=home A=1000:android`) - §6ad's picture, on a quiet emulator this time.
+- **The cause, from the protolog.** `setLockTaskPackages(admin, [])` is one call on one system thread: `Allowlisting
+  0:[]`, then Home's task is taken out of lock task (`removeLockedTask ... last task, reverting locktask mode`) and
+  cleared, and the system starts Home again inside the same call - and only after that the features are reset
+  (`Allowing features 0:0x10`). The end of lock-task mode is only posted to a handler. If Home's start is checked
+  before that handler ran, lock task still reads LOCKED with the app block (bit 64 of the kiosk's `0x7f`) and an empty
+  list: the start is swapped for `com.android.internal.app.BlockedAppActivity`, whose own start then locks the phone
+  to its task. The stuck start: `Allowlisting 0:[]` 18:12:58.406, the revert .407, Home's start .408, the
+  BlockedAppActivity intent .410, `Allowing features 0:0x10` .414, `setLockTaskMode: Locking to Task{... type=home
+  A=1000:android}` .620. In the ten clean starts the revert and Home's start were 2 to 31 ms apart - a race between
+  two system threads, not something the load decides alone. (§6ad's `Attempted Lock Task Mode violation` lines are
+  the launcher's own Home starts refused afterwards; none was tried in this start.)
+- **What was guessed and what it is:** the guess - the launcher's `reapply` empties the list while lock task is
+  LOCKED, Home's restart is refused as a violation, and only Home's `reconcileKioskMode()` would stop lock task - is
+  right about the list emptied under LOCKED and about the blocked screen ending up the only locked task. It is not a
+  refused start of the launcher's and it does not wait for `reconcileKioskMode()`: it is the system's own Home
+  restart inside `setLockTaskPackages`, swapped by the app block before the posted end ran. `AppEnforcer` can't end
+  lock task first itself (`stopLockTask()` is an activity's, and Settings is on top).
+- **Out of it without a reboot:** the screen stays until its OK is tapped. OK finished BlockedAppActivity, lock task
+  went to NONE, the system started Home, the pause was running, and "Lås igjen" put the kiosk back (LOCKED). The Home
+  key does nothing while it is up (§6ad). Seen once, on the emulator.
+- **Unlocking the PIN lock with the kiosk off** has no such race: the lock's task finishes and ends lock task before
+  the list is emptied.
+- **The fix, part 1** (`LockTaskChrome.writeLockTask`, pure `unpinFeatures`): before the list is emptied the features
+  are written without the app block, in a write of their own; a failed emptying writes them back. Twelve starts on
+  that build: none stuck, `Allowing features 0:0x3f` before `Allowlisting 0:[]` in every one, no BlockedAppActivity
+  line.
+- **A second race, seen at the twelfth of those:** the Home the system restarted resumed while the emptying call was
+  still running, read the stored kiosk switch - still on, it was written after the call - and asked for lock task
+  with nothing allow-listed: `startLockTaskMode: Task{... type=home ...}`, `Mode default, asking user` - Android's
+  screen-pinning request, in the middle of a pause (the emptying 18:45:37.341, Home's start .353, the request .399).
+  The pass's next tap accepted it: `mLockTaskModeState=PINNED`, the list empty, the pause still running. Back and
+  "Lås igjen" from there put the kiosk back (LOCKED, `0x7f`, the list). This path is main's too; it was 1 of 23
+  starts in this pass.
+- **The fix, part 2:** the stored switch goes off before the list is emptied too (and back on if the emptying
+  fails). Home, still alive under Settings, hears the switch change and stops lock task itself when it gets there
+  first - then nothing is cleared and Settings stays in front; when the emptying gets there first Home is restarted
+  as before, and reads the switch off.
+- **Twenty starts on the fixed build: none stuck, no pinning request.** `Allowing features 0:0x3f` before
+  `Allowlisting 0:[]` in all twenty, no BlockedAppActivity, no `startLockTaskMode`, `mLockTaskModeState=NONE` after
+  each. Twelve went Home's way (`stopLockTaskMode` first, Settings left on top, Back to Home), eight the emptying's
+  (Home restarted in a new task). Every end: `Allowing features 0:0x7f` before the list, `startLockTaskMode ...
+  Locking fully`, LOCKED on Home's task, the launcher in the list. Three more started and ended from the PWA ("Unlock
+  for 2 h", "Lock again") with Home in front: the same, Home's way each time.
+- **The count is not the proof:** at 1 in 10 before, twenty clean starts alone would happen by luck about one time in
+  eight. The proof is the order in the protolog - without the block bit a start is never swapped, and with the switch
+  off Home never asks for lock task.
+- **Seen beside it:** after a pause's end the allow-list is written three times within about two seconds (15, 14,
+  then 13 packages): `com.google.android.documentsui` and `android` are in the first writes and leave as the apps
+  are suspended again and the helper intents resolve to one handler. The same before the fix.
+- **What `handy36` can't show:** how often either race comes on the Jelly Star, whether its build resets the
+  features after the packages the same way, and whether OK gets a real phone out of the blocked screen.
 
 ## 7. Reporting back
 

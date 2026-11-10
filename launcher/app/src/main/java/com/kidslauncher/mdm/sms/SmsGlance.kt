@@ -120,9 +120,31 @@ fun smsPostAlerts(
     channelImportance: Int?,
     passesFilter: Boolean,
     gainsRow: Boolean,
-): Boolean =
-    posted && !silent && passesFilter && enabled && channelImportance != null && channelImportance >= SMS_ALERT_IMPORTANCE &&
-        gainsRow
+): Boolean = smsPostHeard(posted, silent, enabled, channelImportance, passesFilter) && gainsRow
+
+/**
+ * Whether our message notification's post buzzes the locked phone without being a notice that came (design 82 W3,
+ * the user on 2026-11-10: one buzz for every new message, not only for a new row; `PinLockRuntime.noticeUpdated`,
+ * whose switch, gap and gates decide the rest). [smsPostAlerts]'s rules but the gained row: every accepted message's
+ * alerting post that the lock shows in a row - the parent's [level] is not Off and the thread is unread after it
+ * ([unreadAfter]: the row is its unread messages) - whether that row was there already or not. The wake stays
+ * [smsPostAlerts]'s: a newer message in a row already there never lights the screen. A reaction never comes here
+ * (design 81 D12: its post is no notice, it is never counted unread and the lock's row doesn't show it).
+ */
+fun smsPostBuzzes(
+    posted: Boolean,
+    silent: Boolean,
+    enabled: Boolean,
+    channelImportance: Int?,
+    passesFilter: Boolean,
+    level: SmsLockLevel,
+    unreadAfter: Int,
+): Boolean = smsPostHeard(posted, silent, enabled, channelImportance, passesFilter) && level != SmsLockLevel.OFF && unreadAfter > 0
+
+/** [smsPostAlerts]'s first four rules: a post that went through, not silent, through Do Not Disturb, on a channel that
+ * alerts. */
+private fun smsPostHeard(posted: Boolean, silent: Boolean, enabled: Boolean, channelImportance: Int?, passesFilter: Boolean): Boolean =
+    posted && !silent && passesFilter && enabled && channelImportance != null && channelImportance >= SMS_ALERT_IMPORTANCE
 
 /** Whether a message ([messageSeq]) brings its conversation's row onto the lock: it is the conversation's only unread
  * message ([unreadAfter] counts it), or the row was swiped away before it ([hiddenMark], the swipe's `upToSeq`) -

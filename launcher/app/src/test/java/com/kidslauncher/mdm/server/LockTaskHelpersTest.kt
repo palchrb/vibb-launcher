@@ -166,6 +166,27 @@ class LockTaskHelpersTest {
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD or 1 or 64, lockTaskFeatures(1, blockActivityStart = true))
     }
 
+    @Test
+    fun `the unpin lifts the app block alone, and writes nothing without it`() {
+        // 127 (0x7f): the unlocked kiosk's features in the pass of §6af, written as 63 (0x3f) before the
+        // list was emptied; 113: the same kiosk while LOCKED.
+        assertEquals(63, unpinFeatures(127))
+        assertEquals(49, unpinFeatures(113))
+        assertEquals(LOCK_TASK_FEATURE_KEYGUARD or 1, unpinFeatures(lockTaskFeatures(1, blockActivityStart = true)))
+        assertEquals(null, unpinFeatures(lockTaskFeatures(1, blockActivityStart = false)))
+        assertEquals(null, unpinFeatures(LOCK_TASK_FEATURE_GLOBAL_ACTIONS))
+        assertEquals(null, unpinFeatures(0))
+        // The order in the one writer: the block is lifted, then the stored switch goes off (Home, restarted
+        // inside the emptying call, reads it when it resumes), and only then the list is emptied.
+        val chrome = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/lock/LockTaskChrome.kt") }
+            .first { it.exists() }.readText()
+        val lift = chrome.indexOf("val blockLifted = liftAppBlock(dpm, admin)")
+        val off = chrome.indexOf("mdm.kioskEnabled(false)")
+        val emptied = chrome.indexOf("dpm.setLockTaskPackages(admin, emptyArray())")
+        assertTrue(lift > 0 && lift < off && off < emptied)
+        assertEquals(off, chrome.lastIndexOf("mdm.kioskEnabled(false)"))
+    }
+
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true))
     private val controllable = listOf("me.vibb.launcher", dialer, "org.example.game")
     private val helpers = lockTaskHelpers(resolved, forbidden)

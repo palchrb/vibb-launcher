@@ -356,6 +356,11 @@ control on every row). Tests: `policy_json_keys_snapshot` / `PolicyResponseCompa
 test beside `NoticeWakePlan`. Size **S-M**, server S + launcher S-M. **The core without it:** unchanged - a new
 message lights the screen if the wake switch is on, and makes no sound or buzz while locked.
 
+**As built, changed on 2026-11-10** (§14, "The buzz for every new message"): the buzz is not only for what brings a
+row to the lock. After the emulator pass showed that a second message in a thread already on the lock gave no buzz,
+the owner asked for **one buzz for every new message, the 10 s gap kept**. The switch, its default, the length, the
+silence and every gate above are as written; the wake is untouched and still needs a gained row.
+
 ## 10. What does not change
 
 The message engine, the receive and send rules, what is held for the parent, the system notification and its
@@ -506,13 +511,51 @@ with these choices:
   the silence the time lock asks for counts where our Do Not Disturb rule could not be switched on, and while Find
   My Device's ring holds it off.
 - **"Never for a row set to Off"** needs no code of its own: `noticeCame()` is reached only for a notice that gains
-  a row on the lock (`GlanceStore.putPosted`, `SmsNotifier.wakeIfAlerts`) or a missed call's alerting post.
+  a row on the lock (`GlanceStore.putPosted`, `SmsNotifier.wakeIfAlerts`) or a missed call's alerting post. (Since
+  the same day's change below, `noticeUpdated()` too is reached only for a row the lock shows.)
 - **The buzz** is one 40 ms shot (`NOTICE_BUZZ_MS`, the reaction buzz's length) at the default amplitude with
   `USAGE_NOTIFICATION` attributes; the log says "Notice buzz" and nothing of the notice.
 - **Not seen on a phone**: step 0's look at the Jelly Star was not part of this round, and no emulator ran. Open for
   the device pass: that Android plays the buzz from the background while the lock is up, that Android's own
   vibration settings switch it off, and that nothing else vibrates for the same notice (a phone outside lock task,
   or with Android's own lock screen as the gate, may let the notification itself vibrate).
+
+**The buzz for every new message** (2026-11-10, after the emulator pass below; launcher only, no key, no server
+change - the switch's help text never said "a new row"). The owner's word on the pass's observation that the buzz
+came with a gained row only: one buzz for every new message, the 10 s gap kept; everything else of W3 as it was.
+
+- **The buzz and the wake had one trigger** (`noticeCame()`, reached only for a gained row or a missed call). They
+  are split: `PinLockRuntime.noticeUpdated()` is the buzz alone - the same `noticeBuzz`, so the same switch, the
+  same gates and the same 10 s stamp - and reads or writes nothing of the wake (no proximity read, no wake count, not
+  design 59d's "a notice this recent" mark). `noticeCame()` is as it was, and so is the wake: **a second message in
+  a row already on the lock does not light the screen**, before this change and after it. Whether it should is the
+  owner's to say; it was not asked.
+- **Meldinger**: an accepted message's alerting post that gains no row calls `noticeUpdated()` when the lock shows
+  it - Meldinger's level is Name only or Full text and the thread is unread after it (pure `smsPostBuzzes`, beside
+  `smsPostAlerts`, whose rules it shares: posted, not silent, no Do Not Disturb, an alerting channel). At Off:
+  nothing. A message for the thread in front is never notified, so it never buzzes.
+- **A reaction** (design 81 D12) is as it was: its post is no notice (`wake = false`), it is never counted unread and
+  the lock's row is built from unread messages alone, so it changes nothing on the lock and gets no notice buzz. It
+  keeps its own short buzz from its notification channel where Android plays it.
+- **The other apps on the lock**: a kept post that gains no row calls `noticeUpdated()` when a visible row counts
+  more after it than before (pure `glanceRowGrew` over `glanceRowCounts`, in `GlanceStore.putPosted`). The count is
+  the notification's own word - a `MessagingStyle`'s messages from others, else `Notification.number`
+  (`glanceCount`) - added up over the conversation's notifications, so one more notification in the conversation
+  counts too. The post must alert as for the wake (`glanceAlerts`: importance from Default up, through Do Not
+  Disturb, not an only-alert-once update of a notification already there) and its app must not be suspended. **Not
+  guessed**: a post with the same count - an edit, the same notification posted again, an app that counts nothing, a
+  `MessagingStyle` that dropped its oldest line for the new one - is no buzz. Ongoing, non-clearable, media and
+  group-summary posts were never rows.
+- **Missed calls** already came through `noticeCame()` for every new call, whether "Tapt anrop" was on the lock or
+  not; unchanged.
+- **A burst** is one buzz: both triggers end in the one `noticeBuzz` and its one stamp, and `noticeUpdated()` asks
+  the switch, the lock's mode and the gap from memory before it reads what the phone is busy with (code QA L3).
+- **Tests**: `SmsGlanceTest` (the second message: a buzz and no wake; none at Off, read, silent or under Do Not
+  Disturb), `GlanceWakeTest` (a count that grew; the same count, a quiet post, a suspended app; the wake unchanged;
+  the store's two triggers by source), `LockWakeTest` (a burst is one buzz; `noticeUpdated` by source has nothing of
+  the wake).
+- **Not seen**: no emulator ran for this change. What Element X and the other apps really post for a second
+  message (whether the update alerts again, whether the count grows) is the device pass's to show.
 
 **The code QA's round** (two reviewers, one per side: no High, no Medium; every Low fixed in one commit on top of
 the three). No wire change, no contract change, no migration.
@@ -571,8 +614,9 @@ the pass adds to it:
   `#allowed` included (that state was staged in the pass's database, the phone's kept threads can't go).
 - **One vibration per message.** The notification's channel has its vibration off, so the dump shows the buzz alone.
   Whether Android adds anything on the Jelly Star is the phone's to show.
-- **The buzz comes with a gained row only** (§9: "everything that brings a row to the lock"): a second message in a
-  thread whose row is already on the lock gave no buzz (the wake has the same rule, `smsGainsRow`). Under Do Not
+- **The buzz came with a gained row only** (§9: "everything that brings a row to the lock"; changed the same day,
+  "The buzz for every new message" above): a second message in a thread whose row is already on the lock gave no
+  buzz (the wake has the same rule, `smsGainsRow`). Under Do Not
   Disturb and a rule's silence an SMS stops in `smsPostAlerts` before `noticeCame()`, so the pass didn't exercise
   `noticeBuzz`'s own filter and silence gates; another app's row (Element X's) wasn't staged.
 - **The display form is the shared one:** it closes after a save, and a refused save comes back open at the row's top
@@ -580,6 +624,7 @@ the pass adds to it:
 - **Two rows named "Meldinger"** in nb while Google Messages is allowed too (Apps and the Lock Screen group); the sub
   "En del av Vibb One" and the icon tell them apart, and W1's rename removes it.
 - **Outside this design:** one of three pauses of all restrictions left the kiosk on Android's "App is not available"
-  screen for Vibb One, lock task still on with an empty allow-list (§6ad, "Found"). Not fixed here.
+  screen for Vibb One, lock task still on with an empty allow-list (§6ad, "Found"). Not fixed here; reproduced on
+  main (1 of 10), explained and fixed on 2026-11-10 (`docs/testing/emulator.md` §6af).
 - **Not run:** L1 (no cheap way to make the engine's read fail, and no unit test holds it - it stands on the code,
   `SmsHome.refresh`), the Recents label after a reset, TalkBack by touch.
