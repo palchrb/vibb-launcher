@@ -16,14 +16,44 @@
         android:id="@+id/thread_header"
         layout="@layout/include_kid_header" />
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/thread_list"
+    <FrameLayout
+        android:id="@+id/thread_list_frame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:clipToPadding="false"
-        android:paddingTop="4dp"
-        android:paddingBottom="8dp" />
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/thread_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingTop="4dp"
+            android:paddingBottom="8dp" />
+
+        <!-- "Ny melding" / "Nye meldinger" (2026-11-10): over the list's lower edge while the kid reads older messages
+             and one came in; a tap goes to the thread's end. A 32 dp pill in a 48 dp touch target, above the compose
+             bar and so above the keyboard; TalkBack hears it as it comes (a live region). -->
+        <Button
+            android:id="@+id/thread_new"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:accessibilityLiveRegion="polite"
+            android:background="@drawable/bg_message_new"
+            android:fontFamily="@font/nunito_bold"
+            android:includeFontPadding="false"
+            android:minWidth="0dp"
+            android:minHeight="48dp"
+            android:paddingStart="16dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="14dp"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/kid_core"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <!-- Design 81 D13: every emoji, in the thread's place while it shows. -->
     <include layout="@layout/view_messages_picker" />

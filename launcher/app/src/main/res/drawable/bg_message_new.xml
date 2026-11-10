@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A thread's "Ny melding" mark: a pill 8 dp inside its touch target's top and bottom (32 dp in 48 dp) - a received
+     bubble's surface with the reaction chip's 1 dp night outline, which sets it off from a bubble it lies over. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+    <item android:bottom="8dp" android:top="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_message_in" />
+            <stroke android:width="1dp" android:color="@color/kid_ground" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+</ripple>

@@ -313,6 +313,30 @@ class MessagesModelTest {
         assertTrue(screen.contains("if (turnedOn) load()"))
         assertTrue(screen.contains("if (follows && !following) binding.threadList.stopScroll()\n        follow(follows)"))
         assertEquals("set at its declaration, in take() and in follow() only", 3, Regex("\\bfollowing = ").findAll(screen).count())
+        // The "new message" mark: the end counts as shown with every list a following thread shows and the moment
+        // following turns on, nowhere else - and the mark's tap turns it on by follow() itself, which reads.
+        assertTrue(screen.contains("if (following) seenSeq = newestSeq\n        renderMark()"))
+        assertTrue(screen.contains("if (turnedOn) seenSeq = newestSeq\n        renderMark()\n        if (turnedOn) load()"))
+        assertTrue(screen.contains("val now = threadNewMark(following, seenSeq, messages)\n        if (now == mark) return"))
+        assertTrue(screen.contains("follow(true)\n        if (adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)"))
+        assertEquals("set at its declaration, in take(), in show() and in follow() only", 4, Regex("\\bseenSeq = ").findAll(screen).count())
+    }
+
+    @Test
+    fun `the new message mark tells of what came in while the kid reads older messages`() {
+        val shown = listOf(message("a", 1, 0), message("b", 2, 0, Direction.OUT, Delivery.SENT))
+        val one = shown + message("c", 3, 0)
+        // Scrolled up: one came in after the end was last shown, then more - one word for any number of them.
+        assertEquals(NewMark.ONE, threadNewMark(following = false, seenSeq = 2, messages = one))
+        assertEquals(NewMark.MANY, threadNewMark(following = false, seenSeq = 2, messages = one + message("d", 4, 0)))
+        assertEquals(NewMark.MANY, threadNewMark(following = false, seenSeq = 2, messages = one + message("d", 4, 0) + message("e", 5, 0)))
+        // Nothing came in: only scrolled up, an older page, a reaction on a shown bubble, the kid's own message.
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = listOf(message("o", 0, 0)) + shown))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown.map { it.copy(reactions = listOf(reaction("👍", "+4790000001"))) }))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown + message("d", 3, 0, Direction.OUT, Delivery.QUEUED)))
+        // At the end the new one is shown.
+        assertEquals(NewMark.NONE, threadNewMark(following = true, seenSeq = 2, messages = one))
     }
 
     @Test

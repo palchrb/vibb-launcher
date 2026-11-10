@@ -399,6 +399,24 @@ fun threadFollows(following: Boolean, newestBefore: Long, messages: List<Message
  * kid reads older ones is not shown, so it stays unread - Home's badge, the list's dot - until the end is reached. */
 fun threadReads(resumed: Boolean, following: Boolean): Boolean = resumed && following
 
+/** What the thread's "new message" mark says ([threadNewMark]): nothing, "Ny melding" or "Nye meldinger". */
+enum class NewMark { NONE, ONE, MANY }
+
+/**
+ * The thread's "new message" mark (the user, 2026-11-10): while the kid reads older messages - the thread doesn't
+ * follow - it tells of the messages that came in after [seenSeq], the newest `seq` the list's end was last shown with;
+ * one, or more than one (no count). Never the kid's own message (a send goes to the end, [threadFollows]) and never a
+ * reaction alone: it has no bubble, so no `seq` among [messages], and changes none.
+ */
+fun threadNewMark(following: Boolean, seenSeq: Long, messages: List<Message>): NewMark = when {
+    following -> NewMark.NONE
+    else -> when (messages.count { it.direction == Direction.IN && it.seq > seenSeq }) {
+        0 -> NewMark.NONE
+        1 -> NewMark.ONE
+        else -> NewMark.MANY
+    }
+}
+
 /** Whether the thread's list is at its end: the last bubble's bottom ([lastBottom], `null` while that bubble isn't laid
  * out) is at most [slop] below the list's visible end [listEnd]. A tall bubble (a picture) counts as shown only when its
  * bottom is. */

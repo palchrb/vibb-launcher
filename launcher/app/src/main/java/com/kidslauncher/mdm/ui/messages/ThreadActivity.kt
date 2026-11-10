@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui.messages
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -19,6 +20,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
@@ -59,7 +61,9 @@ import java.util.UUID
  * One conversation (design 77 §6.7): bubbles - received ones on the tile surface, the kid's in the peach tint - with
  * day separators and times in the one clock format (P12), "Ukjent avsender" over a message the callback window let
  * in, and under the kid's messages "Sendt", "Levert" or "Ikke sendt - trykk for å prøve igjen" (a new `clientId`).
- * A long-press on a message (or TalkBack's action) asks "Slette meldingen?" in the screen (D18).
+ * A long-press on a message (or TalkBack's action) asks "Slette meldingen?" in the screen (D18). The list follows its
+ * newest message while its end is shown; scrolled up, "Ny melding" over its lower edge tells of one that came in
+ * ([threadNewMark]), and a tap goes to the end.
  *
  * The compose bar shows only while the gate would send ([composeState]); otherwise a line says why ("Du kan ikke sende
  * meldinger nå" under a time rule, the read-only history in "Av"/"Ikke styrt"). It sends through the engine's command
@@ -84,6 +88,11 @@ class ThreadActivity : UIObjectActivity() {
 
     /** Whether the list follows its newest message ([threadFollows]): at its end, until the kid scrolls up. */
     private var following = true
+
+    /** The newest `seq` the list's end has been shown with, and the "new message" mark that tells of what came in
+     * after it while the kid reads older messages ([threadNewMark]). */
+    private var seenSeq = 0L
+    private var mark = NewMark.NONE
     private var compose = ComposeState.UNAVAILABLE
     private var resumed = false
 
@@ -174,6 +183,8 @@ class ThreadActivity : UIObjectActivity() {
             }
         })
         binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }
+        binding.threadNew.setOnClickListener { toEnd() }
+        ViewCompat.replaceAccessibilityAction(binding.threadNew, AccessibilityActionCompat.ACTION_CLICK, getString(R.string.messages_arrived_go), null)
         // Design 81 D7: a tap on the thread closes the reaction panel (and is spent on that).
         binding.threadList.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
             override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
@@ -228,6 +239,7 @@ class ThreadActivity : UIObjectActivity() {
         messages = emptyList()
         newestSeq = 0L
         following = true
+        seenSeq = 0L
         limit = PAGE
         cancelDelete()
         hideReact()
@@ -244,6 +256,7 @@ class ThreadActivity : UIObjectActivity() {
         renderHeader()
         renderCompose()
         renderAttachment()
+        renderMark()
         adapter.submitList(emptyList())
     }
 
@@ -366,6 +379,9 @@ class ThreadActivity : UIObjectActivity() {
         if (follows && !following) binding.threadList.stopScroll()
         follow(follows)
         newestSeq = messages.maxOfOrNull { it.seq } ?: 0L
+        // A list that follows shows its end; scrolled up, what came in after the last such list is the mark's.
+        if (following) seenSeq = newestSeq
+        renderMark()
         // Asked by every list, not only the one that brought the message: a list overtaken by the next read (the read
         // that marked it read, a delivery update) never gets its callback. A bubble taller than the list shows its
         // bottom after the layout ([afterLayout]).
@@ -374,12 +390,47 @@ class ThreadActivity : UIObjectActivity() {
         }
     }
 
-    /** [following] from now on. Turning on - the end reached, the kid's own send - reads once more: what came in while
-     * the kid read older messages is read now ([threadReads]), and its notification goes. */
+    /** [following] from now on. Turning on - the end reached, the kid's own send, the mark's tap - reads once more: what
+     * came in while the kid read older messages is seen ([seenSeq]) and read now ([threadReads]), its notification
+     * goes, and so does the mark. */
     private fun follow(now: Boolean) {
         val turnedOn = now && !following
         following = now
+        if (turnedOn) seenSeq = newestSeq
+        renderMark()
         if (turnedOn) load()
+    }
+
+    /** The "new message" mark over the list's lower edge ([threadNewMark]). Touched only when it changes: TalkBack hears
+     * it as it comes (a polite live region), not at every read. A short fade - none with the system's animations off,
+     * and none under TalkBack, which would be told of a mark still at alpha 0; no sound of its own. */
+    private fun renderMark() {
+        val now = threadNewMark(following, seenSeq, messages)
+        if (now == mark) return
+        mark = now
+        val view = binding.threadNew
+        val fade = ValueAnimator.areAnimatorsEnabled() &&
+            getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled != true
+        view.animate().cancel()
+        if (now == NewMark.NONE) {
+            if (fade) view.animate().alpha(0f).setDuration(MARK_FADE_MS).withEndAction { view.visibility = View.GONE } else view.visibility = View.GONE
+            return
+        }
+        view.setText(if (now == NewMark.ONE) R.string.messages_arrived_one else R.string.messages_arrived_many)
+        if (view.visibility != View.VISIBLE) {
+            view.alpha = if (fade) 0f else 1f
+            view.visibility = View.VISIBLE
+        }
+        if (fade) view.animate().alpha(1f).setDuration(MARK_FADE_MS) else view.alpha = 1f
+    }
+
+    /** The mark's tap: to the thread's end, as the kid's own scroll there - following turns on ([follow]), and every
+     * layout then goes on to the last bubble's bottom ([afterLayout]). A list that coasts stops first. */
+    private fun toEnd() {
+        hideReact()
+        binding.threadList.stopScroll()
+        follow(true)
+        if (adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
     }
 
     /** The last bubble's bottom in the list, `null` while that bubble isn't laid out. */
@@ -755,7 +806,7 @@ class ThreadActivity : UIObjectActivity() {
         picking = false
         reactView().visibility = View.GONE
         pickerView().visibility = View.GONE
-        binding.threadList.visibility = View.VISIBLE
+        binding.threadListFrame.visibility = View.VISIBLE
         updateBack()
         adapter.notifyDataSetChanged()
     }
@@ -815,7 +866,7 @@ class ThreadActivity : UIObjectActivity() {
         if (reacting == null || picking) return
         picking = true
         reactView().visibility = View.GONE
-        binding.threadList.visibility = View.GONE
+        binding.threadListFrame.visibility = View.GONE
         pickerView().visibility = View.VISIBLE
         updateBack()
         val app = applicationContext
@@ -1192,6 +1243,9 @@ class ThreadActivity : UIObjectActivity() {
 
         /** How near its end the list counts as at it ([threadAtEnd]). */
         private const val END_SLOP_DP = 8f
+
+        /** The "new message" mark's fade in and out. */
+        private const val MARK_FADE_MS = 150L
 
         /** D13: the picker's columns (48 dp each at 288 dp), and its two kinds of line. */
         private const val PICKER_COLUMNS = 5
