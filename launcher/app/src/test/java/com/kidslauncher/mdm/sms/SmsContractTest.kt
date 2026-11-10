@@ -1,7 +1,15 @@
 package com.kidslauncher.mdm.sms
 
+import com.kidslauncher.mdm.appdisplay.AppDisplayEntry
+import com.kidslauncher.mdm.appdisplay.AppGlyphs
 import com.kidslauncher.mdm.appdisplay.BUILTIN_MESSAGES
 import com.kidslauncher.mdm.appdisplay.BUILTIN_PREFIX
+import com.kidslauncher.mdm.appdisplay.MessagesLook
+import com.kidslauncher.mdm.appdisplay.appDisplayMap
+import com.kidslauncher.mdm.appdisplay.appEntry
+import com.kidslauncher.mdm.appdisplay.builtinEntry
+import com.kidslauncher.mdm.appdisplay.messagesLook
+import com.kidslauncher.mdm.appdisplay.onHomeListable
 import com.kidslauncher.mdm.badges.lockGlancePolicy
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
@@ -26,6 +34,7 @@ import com.kidslauncher.mdm.sms.engine.SenderClean
 import com.kidslauncher.mdm.sms.engine.SenderKind
 import com.kidslauncher.mdm.sms.engine.SmsNames
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -34,6 +43,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -136,6 +146,7 @@ class SmsContractTest {
             held = 3, released = 1, expired = 1, parseFailures = 0, mmsWaiting = 0, mmsDataAllowed = true, mmscKnown = false,
             lastError = null, ownNumbers = listOf(SmsOwnNumber(1, "+4790000001"), SmsOwnNumber(2, null)), holdFull = SmsHoldFull(numbers = false, names = true),
             ownLearned = SmsOwnLearned("+4790000002", "+4791234567", 1762700000000, emptyList()),
+            hasHistory = true,
         )
         assertEquals(
             contract["report"]!!.jsonObject["sms_state"],
@@ -187,6 +198,23 @@ class SmsContractTest {
         val sent = app["lock"]!!.jsonArray.map { it.jsonObject }
         assertEquals(setOf("off", "name", "text"), sent.map { it.str("sms") }.toSet())
         for (row in sent) assertEquals(row.toString(), row.str("sms") == "text", row.bool("sms_lock_text"))
+    }
+
+    /** Design 82 D9, W1, W2: the capability is claimed, and `app.display` - the key's `launcher_ui.app_display` entry
+     * as the server sends it - is Meldinger's alone: read only as a built-in's, never as an installed app's, and it
+     * gives the glyph on its colour, the name, and the tile off Home outside a window. */
+    @Test
+    fun `Meldinger's capability is claimed and its display entry is read as its look`() {
+        val app = contract["app"]!!.jsonObject
+        assertEquals(app.str("capability"), MESSAGES_APP_CAPABILITY)
+        assertTrue(MESSAGES_APP_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
+        val map = appDisplayMap(JsonArray(listOf(app["display"]!!)))
+        val entry = builtinEntry(map, BUILTIN_MESSAGES)
+        assertEquals(AppDisplayEntry("Tekst", "mail", "plum", onHome = false), entry)
+        assertNull(appEntry(map, BUILTIN_MESSAGES))
+        assertEquals(MessagesLook(AppGlyphs.ICONS["mail"]!!, AppGlyphs.COLORS["plum"]!!.tile, "Tekst"), messagesLook(entry))
+        assertFalse(onHomeListable(entry, windowOpen = false))
+        assertTrue(onHomeListable(entry, windowOpen = true))
     }
 
     @Test

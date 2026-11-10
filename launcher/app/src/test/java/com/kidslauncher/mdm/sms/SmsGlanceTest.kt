@@ -27,6 +27,7 @@ import com.kidslauncher.mdm.sms.engine.SmsJudge
 import com.kidslauncher.mdm.sms.engine.SmsRadio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -193,6 +194,8 @@ class SmsGlanceTest {
         assertEquals(7, row.upToSeq)
         assertEquals("Hei", row.text)
         assertNull(smsGlanceRow(conversation("+4791234567", unread = 0), listOf(message(7, "Hei")), true))
+        // Design 82 D9: the row carries Meldinger's look - a changed one is a changed row, so the lock renders.
+        assertNotEquals(row, row.copy(look = com.kidslauncher.mdm.appdisplay.MessagesLook(name = "Tekst")))
     }
 
     // ---- the notice wake (launcher round 7 §3) ----

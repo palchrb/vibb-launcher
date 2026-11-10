@@ -188,7 +188,26 @@ const SMS_STATE_FIELDS: &[(&str, Field)] = &[
     ("mmsc_known", Field::Bool),
     // The launcher keeps 300, as `call_state.last_error`.
     ("last_error", Field::Text(300)),
+    // Design 82 W2: the phone has threads to read - its Meldinger tile shows even while SMS is not managed.
+    ("has_history", Field::Bool),
 ];
+
+/// The last report's `sms_state.has_history` (design 82 W2): `false` without a report or from a launcher that
+/// doesn't say.
+pub async fn reported_history(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    let state: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT sms_state_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(state
+        .flatten()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|state| state.get("has_history")?.as_bool())
+        .unwrap_or(false))
+}
 
 /// `sms_state.blocked`'s keys: the blocked messages counted by sender class, and those past a hold cap.
 const BLOCKED_KEYS: [&str; 8] = [
@@ -655,6 +674,10 @@ mod tests {
         use crate::lock_glance::{LockGlancePolicy, SMS_NAME, SMS_OFF, SMS_TEXT, sms_level};
         let app = &contract()["app"];
         assert_eq!(app["key"], crate::builtin::MESSAGES);
+        assert_eq!(
+            app["capability"],
+            crate::lock_glance::MESSAGES_APP_CAPABILITY
+        );
         for row in app["lock"].as_array().unwrap() {
             let sms = sms_level(row["stored"].as_bool(), row["sms_mode"].as_str().unwrap());
             assert_eq!(row["sms"], sms, "{row}");

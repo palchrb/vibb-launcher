@@ -250,7 +250,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   **Since design 82 the same select is Meldinger's too** (the launcher's built-in SMS app, key
   `me.vibb.builtin.messages`): the group's first row while SMS is managed, saved by the same handler to its own
   anchor, and Calls & Contacts' old switch is one link row to it (`docs/notes/server/hardening-and-pins.md`,
-  "Meldinger's row").
+  "Meldinger's row"). The row is labelled with the parent's name for Meldinger when one is set (W1).
 - **Wake the screen for a notification** (launcher round 7 §3, `docs/design/r7-launcher-small-items.md`): its own
   cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps on the lock below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
@@ -353,7 +353,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Element X · Installed", when the shown one differs - `own_label`, as the Apps tab's Katalog does) and a switch, its
   own form; an allowed app with a package has its `app_display_form` in a `<details>` under the row ("Name and icon:
   …"; its name field's placeholder stays the app's own; "On Home"'s explanation behind an ⓘ left of its switch,
-  `.on-home`). The footer's ⓘ holds the keyboard and
+  `.on-home`). Directly under Vibb One's row sits **Meldinger's** (design 82 D10: "Messages", "Part of Vibb One", no
+  switch - only its Name and icon, saved to `#app-me.vibb.builtin.messages` like every row's;
+  `docs/notes/server/launcher-ui.md`, "Meldinger, a part of Vibb One"). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
   `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`

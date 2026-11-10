@@ -480,7 +480,8 @@ data class GlanceMissedRow(
  * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only while the parent's
  * `call_policy.sms_lock_text` is on (cleaned, [GLANCE_TEXT_MAX]); [picture] the newest is a picture without text (shown
  * as "Bilde" only with the text on); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
- * the callback window (D4 rule 2).
+ * the callback window (D4 rule 2). [look] is Meldinger's glyph, tile colour and name as the parent chose them (design 82
+ * D9, set in `SmsHome.refresh`): the row's badge and fallback icon draw it, and a changed look is a changed row.
  */
 data class GlanceSmsRow(
     val conversation: com.kidslauncher.mdm.sms.engine.Conversation,
@@ -491,6 +492,7 @@ data class GlanceSmsRow(
     val picture: Boolean = false,
     val sender: String? = null,
     val unknownSender: Boolean = false,
+    val look: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook(),
 ) : GlanceRow {
     val conversationId: String get() = conversation.id.value
 

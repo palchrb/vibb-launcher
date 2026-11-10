@@ -447,3 +447,41 @@ show is listed in the build report for the emulator pass.
 - **The launcher's policy log line does not name the level**: `LockGlanceGuardTest` allows only the counts there.
 - **`GlanceStore.refreshPolicy`** calls the hook before it decides whether the apps changed; a change of the level
   alone returns without the clear and the resweep (D5).
+
+**Step 2, the icon, with W1 and W2** - as D9, D10, §7 and §8, with these choices:
+
+- **The row is listed** while `sms_mode` is `managed`, while a row is stored for the key (a name, an icon or On Home
+  off), or - W2 - while the phone's last report says `sms_state.has_history`. The sub adds "SMS is not managed by
+  Vibb" whenever SMS is not managed (D10 names only the stored-row case; with W2 the history case reads the same).
+- **The update note** shows only when the phone has reported and that report lacks `messages_app_v1` - never for a
+  phone that has not reported yet.
+- **The Apps row is a synthetic `UnifiedAppRow`** with `AppView.builtin`; `partials/device_app_row.html` draws its
+  own short branch for it (the tile, the name, the sub, the form) - no switch, no permissions, no update line.
+- **The preview** of a built-in's Automatic is the form's `data-auto-glyph` / `data-auto-tile` (`MESSAGES_LOOK`:
+  `chat` on `#347470`), which `static/app-display.js` reads (`?v=5`); a chosen glyph with colour Automatic keeps that
+  tile. The colours are not disabled at Automatic: a colour posted without a glyph is dropped by the save, as for
+  every app.
+- **A posted `own`** for the key is refused at the icon field with its own words, `apps.display.error.icon_builtin`
+  ("Pick one of the icons or Automatic."); every other name under the prefix stays refused as no app's name.
+- **W1's name in the PWA**: the Apps row (with "Messages" before the sub when a name is set, as an app's own name) and
+  the Lock Screen row. Calls & Contacts' headings and the security log keep "Messages" / "Meldinger". A failed read of
+  the name on the lock card is logged and the page's word is shown.
+- **`sms_state.has_history`** is read from the last report by `sms::reported_history`; a failed read is the Apps
+  page's ordinary read failure, as its other reads.
+- **The launcher's `MessagesLook` carries the name too** (`glyph`, `tile`, `name`), so a renamed Meldinger rebinds
+  the Home tile and re-renders the lock's rows by the same two paths as a changed icon. `AppDisplay.entry` and
+  `builtin` sit on two pure functions, `appEntry` and `builtinEntry`, which the tests read.
+- **`AppDisplay.refresh` refreshes `SmsHome`** on a changed entry whether or not it reloads the apps (the start-up
+  call passes `reload = false`).
+- **The lock row's badge**: only the fill of `bg_glance_sms_badge` is recoloured (`GradientDrawable.setColor` on a
+  mutated copy), so its ring stays; D9 says "tinted", which would have coloured the ring too.
+- **The report's `has_history`** is the engine's own read at report time (`conversations().isNotEmpty()`), with
+  `SmsHome.summary.hasHistory` only when the engine does not answer: the summary is empty in a new process until
+  Home's first refresh, and the report must not say "no history" for that.
+- **W1's six places** are §7's; Meldinger's header keeps `KidHeader.bind`'s string id and sets the name on the title
+  after it. The notification channels' names and the notification's small icon are unchanged.
+- **W2 on the phone**: `SmsHome.tileShown()` is the one place (`onHomeListable(entry, windowOpen) &&
+  messagesTileShown(...)`, the window being the pause or the offline override, as `AppFilter`'s); Home's tile and the
+  time-rule row both read it. Nothing in the MIT directories changed.
+- **The contract**: `app.capability`, `app.display` (the entry exactly as the policy sends it, with `on_home:
+  false`) and `report.sms_state.has_history`.

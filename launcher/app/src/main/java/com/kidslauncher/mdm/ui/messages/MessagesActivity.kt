@@ -105,7 +105,7 @@ class MessagesActivity : UIObjectActivity() {
         super.onCreate(savedInstanceState)
         setTaskDescription(
             ActivityManager.TaskDescription.Builder()
-                .setLabel(getString(R.string.messages_title))
+                .setLabel(com.kidslauncher.mdm.appdisplay.AppDisplay.messagesName(this))
                 .setIcon(R.mipmap.ic_launcher)
                 .build(),
         )
@@ -188,6 +188,8 @@ class MessagesActivity : UIObjectActivity() {
         KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
             setPicking(true)
         }
+        // Design 82 W1: under the parent's name for Meldinger, where there is one.
+        binding.messagesHeader.kidHeaderTitle.text = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesName(this)
         info(
             when {
                 readOnly -> getString(R.string.messages_read_only)

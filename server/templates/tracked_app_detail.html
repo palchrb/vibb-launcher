@@ -47,7 +47,7 @@
         {% include "partials/app_display_form.html" %}
     </div>
     <p class="group-footer">{% if app.package_name.is_empty() %}{{ self.t("apps.app.display_no_package") }}{% else %}{{ self.t("apps.app.display_footer") }}{% endif %}</p>
-    <script src="/static/app-display.js?v=4" defer></script>
+    <script src="/static/app-display.js?v=5" defer></script>
 
     <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
     {#- The group is always rendered with its id: Install Now's answers land on `#phone-{id}` or,

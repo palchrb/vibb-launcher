@@ -209,6 +209,15 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
   parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
   history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").
+- **Meldinger as an app, step 2 (design 82 D9, W1, W2):** the parent can give Meldinger a name, a glyph on a colour
+  and keep it off Home - `docs/notes/launcher/home-and-photos.md`, "Meldinger's entry". The name
+  (`AppDisplay.messagesName`) is spelled on Home's tile and its TalkBack text, the time-rule row, the lock keypad's
+  prompt, the lock row's action (`glance_sms_action`, now `%1$s`), Meldinger's header and its task name; the
+  notification channels' names and the notification's small icon stay. The launcher claims **`messages_app_v1`**
+  (`MESSAGES_APP_CAPABILITY`, in `STATUS_CAPABILITIES`): it honours Off on the lock and reads the key's entry.
+  **`sms_state.has_history`** (`SmsState.hasHistory`) tells the server the phone has threads to read - the engine's
+  own read at report time, `SmsHome.summary.hasHistory` only when the engine does not answer - so the PWA lists
+  Meldinger's row while the tile can linger outside "Styrt av Vibb".
 
 ## MMS pictures, step 3b (design 77 D8, D10-D12, D14, D16; branch `sms-mms`)
 

@@ -4,6 +4,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.kidslauncher.mdm.appdisplay.AppDisplay
+import com.kidslauncher.mdm.appdisplay.BUILTIN_MESSAGES
+import com.kidslauncher.mdm.appdisplay.onHomeListable
 import com.kidslauncher.mdm.badges.GlanceSmsRow
 import com.kidslauncher.mdm.badges.GlanceStore
 import com.kidslauncher.mdm.calls.CallPolicyStore
@@ -45,9 +48,14 @@ object SmsHome {
 
     fun removeListener(listener: () -> Unit) = main.post { listeners -= listener }
 
-    /** Home's Meldinger tile ([messagesTileShown]). */
-    fun tileShown(): Boolean = messagesTileShown(CallPolicyStore.state.smsMode, summary.roleHeld, summary.hasHistory)
-
+    /** Home's Meldinger tile ([messagesTileShown]), and the time-rule screen's row with it. Design 82 W2: not while the
+     * parent keeps Meldinger off Home ([onHomeListable], as every app: back during a pause or an override) - messages
+     * still arrive and notify, and a thread still opens from the notification, the lock's row and the phone book. */
+    fun tileShown(): Boolean {
+        val windowOpen = com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive()
+        return onHomeListable(AppDisplay.builtin(BUILTIN_MESSAGES), windowOpen) &&
+            messagesTileShown(CallPolicyStore.state.smsMode, summary.roleHeld, summary.hasHistory)
+    }
 
     /** A contact's unread messages (its avatar's badge, §6.7). */
     fun unreadFrom(number: String): Int = summary.unreadByNumber[number] ?: 0
@@ -64,11 +72,13 @@ object SmsHome {
             val conversations = engine.conversations()
             // Design 82 D4: the parent's level for Meldinger on the lock - no rows at Off, the text only at Full text.
             val level = smsLockLevel(GlanceStore.policy.sms, CallPolicyStore.state)
+            // Design 82 D9: each row carries Meldinger's look, so a changed icon makes the rows differ and the lock renders.
+            val look = AppDisplay.messagesLook()
             val glance = if (level == SmsLockLevel.OFF) {
                 emptyList()
             } else {
                 conversations.filter { it.unread > 0 }
-                    .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText = level == SmsLockLevel.TEXT) }
+                    .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText = level == SmsLockLevel.TEXT)?.copy(look = look) }
                     .sortedByDescending { it.timeMs }
             }
             Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations), glance)

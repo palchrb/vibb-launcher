@@ -97,8 +97,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   failed read's fallback is `LockGlancePolicy::unreadable()`: `{"apps": [], "sms": "off"}` and `sms_lock_text` false -
   never an absent `sms`, which a new launcher would read as the older rule. **The page**: `lock_screen_card` lists the
   row first in the group, with or without an allowlist, **only while `sms_mode` is `managed`** (`messages_row`; the
-  same select, the same route and anchor `#lock-screen-app-me.vibb.builtin.messages`, so it saves in place). With Off
-  stored on a phone that has reported without `messages_app_v1` (`MESSAGES_APP_CAPABILITY`) the row says "This phone
+  same select, the same route and anchor `#lock-screen-app-me.vibb.builtin.messages`, so it saves in place; labelled with the parent's
+  name for Meldinger when one is set - design 82 W1, `app_display::device_label`, a failed read is the page's word).
+  With Off stored on a phone that has reported without `messages_app_v1` (`MESSAGES_APP_CAPABILITY`) the row says "This phone
   still shows the name and how many - update Vibb One" in its own field `LockScreenApp.hint` - never `note`, which
   would make the form post `unlisted=1` and return to the group. With no notification access while the row is listed
   and not Off the note is `Note::NoNotificationAccessButMessages` ("Missed calls and Messages only"). The security log

@@ -462,6 +462,14 @@ class PolicyResponseCompatTest {
             com.kidslauncher.mdm.appdisplay.AppDisplayEntry("Chat", null),
             com.kidslauncher.mdm.appdisplay.appDisplayMap(unknownIcon.launcherUi!!.appDisplay)["io.element.android.x"],
         )
+        // Design 82 D9: Meldinger's entry rides the same list under its reserved key - a built-in's, no app's.
+        val builtin = (decodeCached(withDisplay("""[{"package_name": "me.vibb.builtin.messages", "label": null, "icon": "mail", "color": "auto", "on_home": false}]""")) as CachedPolicy.Ok).policy
+        val builtinMap = com.kidslauncher.mdm.appdisplay.appDisplayMap(builtin.launcherUi!!.appDisplay)
+        assertEquals(
+            com.kidslauncher.mdm.appdisplay.AppDisplayEntry(null, "mail", onHome = false),
+            com.kidslauncher.mdm.appdisplay.builtinEntry(builtinMap, com.kidslauncher.mdm.appdisplay.BUILTIN_MESSAGES),
+        )
+        assertNull(com.kidslauncher.mdm.appdisplay.appEntry(builtinMap, com.kidslauncher.mdm.appdisplay.BUILTIN_MESSAGES))
         // An older server: no app_display.
         assertNull((decodeCached(withDisplay("[]").replace(", \"app_display\": []", "")) as CachedPolicy.Ok).policy.launcherUi!!.appDisplay)
     }

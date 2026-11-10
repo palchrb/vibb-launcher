@@ -1,14 +1,14 @@
-{# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. #}
+{# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. A part of Vibb One (design 82 D9, `form.builtin`: Meldinger) has no "App logo", and its "Automatic" previews as its own glyph on its own tile (`data-auto-glyph`, `data-auto-tile`). #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
     <summary class="row"><span class="row-label">{{ self.t("apps.display.title") }}<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
-    <form method="post" action="{{ form.action }}" class="app-display-form">
+    <form method="post" action="{{ form.action }}" class="app-display-form"{% if let Some(look) = form.builtin %} data-auto-glyph="{{ look.glyph }}" data-auto-tile="{{ look.tile }}"{% endif %}>
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
         {% endif %}
         {% if let Some(from) = form.from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
         <div class="app-preview">
             <span class="app-tile" data-preview-tile style="background: {{ form.preview_tile }}">
-                {% if let Some(glyph) = form.glyph() %}
+                {% if let Some(glyph) = form.preview_glyph() %}
                 <img data-preview-glyph alt="" src="/static/app-icons/{{ glyph }}.svg">
                 <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}" hidden>{{ self.t(form.preview_text()) }}</span>
                 {% else %}
@@ -21,6 +21,9 @@
         {% if let Some(default) = form.catalog_default %}
         <p class="hint">{{ self.tp("apps.display.catalog_default", [("default", default.as_str())]) }}</p>
         {% endif %}
+        {% if let Some(note) = form.note %}
+        <p class="hint" data-display-note>{{ note }}</p>
+        {% endif %}
         {% if let Some(error) = form.error %}
         <div class="error">{{ error }}</div>
         {% endif %}
@@ -29,14 +32,16 @@
         <fieldset class="glyph-grid">
             <legend>{{ self.t("apps.display.icon") }}</legend>
             <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">{{ self.t("apps.display.vibb_style") }}</span></label>
+            {% if form.builtin.is_none() %}
             <label class="glyph-choice"><input type="radio" name="icon" value="own"{% if form.own_checked() %} checked{% endif %}><span class="choice-text">{{ self.t("apps.display.own_logo") }}</span></label>
+            {% endif %}
             {% for choice in form.icons %}
             <label class="glyph-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.checked %} checked{% endif %}><span class="app-tile app-tile-small"><img src="/static/app-icons/{{ choice.key }}.svg" alt="{{ choice.label }}"></span></label>
             {% endfor %}
         </fieldset>
         <fieldset class="color-grid" data-colors>
             <legend>{{ self.t("apps.display.colour") }}</legend>
-            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="{{ crate::app_display::AUTO_PREVIEW }}"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">{{ self.t("apps.display.color.auto") }}</span></label>
+            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="{{ form.auto_tile() }}"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">{{ self.t("apps.display.color.auto") }}</span></label>
             {% for choice in form.colors %}
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.label }}</label>
             {% endfor %}

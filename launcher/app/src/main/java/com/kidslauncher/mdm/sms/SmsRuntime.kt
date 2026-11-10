@@ -473,6 +473,9 @@ object SmsRuntime {
             ownNumbers = ownNumbers(app, (state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47"),
             holdFull = SmsHoldFull(counts?.numbersFull == true, counts?.namesFull == true),
             ownLearned = awaitResult(app) { it.mms.ownLearned() }?.let { SmsOwnLearned(it.number, it.from, it.at, it.conflict) },
+            // Design 82 W2: the engine's own answer (the summary's read; the summary itself is empty until Home's first
+            // refresh in a new process), the summary when the engine doesn't answer.
+            hasHistory = awaitResult(app) { it.conversations().isNotEmpty() } ?: SmsHome.summary.hasHistory,
         )
     }
 

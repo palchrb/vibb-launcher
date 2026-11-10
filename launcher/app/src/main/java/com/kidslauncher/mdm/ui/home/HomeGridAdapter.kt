@@ -208,13 +208,18 @@ class HomeGridAdapter(
         holder.itemView.stateDescription = null
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
-            // Design 77 §6.7: the chat glyph on the teal tone, the unread total as its badge.
+            // Design 77 §6.7: the chat glyph on the teal tone, the unread total as its badge. Design 82 D9, W1: the
+            // parent's glyph, colour and name where chosen.
             is GridTile.Messages -> {
-                glyphTile(holder, R.color.kid_messages_tile, R.drawable.app_glyph_chat, R.string.messages_title)
+                val name = tile.look.shownName(context)
+                glyphTile(holder, R.color.kid_messages_tile, tile.look.glyph, R.string.messages_title)
+                holder.icon.backgroundTintList = ColorStateList.valueOf(tile.look.tileColor(context))
+                holder.label.text = name
                 KidAvatars.bindBadge(holder.badge, tile.badge)
-                if (tile.badge > 0) {
-                    holder.itemView.contentDescription =
-                        context.resources.getQuantityString(R.plurals.app_unread, tile.badge, context.getString(R.string.messages_title), tile.badge)
+                holder.itemView.contentDescription = if (tile.badge > 0) {
+                    context.resources.getQuantityString(R.plurals.app_unread, tile.badge, name, tile.badge)
+                } else {
+                    name
                 }
             }
             GridTile.Day -> glyphTile(holder, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month, R.string.day_title)

@@ -1122,9 +1122,24 @@ pub(crate) async fn lock_screen_card(
             };
         }
     };
+    // Design 82 W1: the parent's name for Meldinger, else the page's word (a failed read is the word).
+    let messages_name = match crate::app_display::device_label(
+        &state.db,
+        policy.device_id,
+        crate::builtin::MESSAGES,
+    )
+    .await
+    {
+        Ok(name) => name,
+        Err(err) => {
+            tracing::error!(device_id = policy.device_id, %err, "couldn't read Meldinger's name");
+            None
+        }
+    };
     let messages = (policy.sms_mode == "managed").then(|| {
         lock_glance::messages_row(
-            crate::i18n::t(lang, "device.sms.messages").to_string(),
+            messages_name
+                .unwrap_or_else(|| crate::i18n::t(lang, "device.sms.messages").to_string()),
             ticked.get(crate::builtin::MESSAGES).copied(),
             latest_status.is_some(),
             claims(lock_glance::MESSAGES_APP_CAPABILITY),
@@ -1176,10 +1191,11 @@ pub async fn save_app_display(
         .get("from")
         .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     let package = field("package_name").trim().to_string();
-    // Design 82 D1: no installed app has a name under the reserved prefix.
+    // Design 82 D1, D9: no installed app has a name under the reserved prefix - the one known key is Meldinger's.
+    let builtin = package == crate::builtin::MESSAGES;
     if !crate::app_display::valid_package_name(&package)
         || crate::play::is_play_core(&package)
-        || crate::builtin::is_reserved(&package)
+        || (crate::builtin::is_reserved(&package) && !builtin)
     {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app_name");
     }
@@ -1235,6 +1251,13 @@ pub async fn save_app_display(
     let reset = matches!(action, "reset" | "catalog");
     let values = if reset || action == "own" {
         DisplayValues::empty()
+    } else if builtin && field("icon").trim() == crate::app_display::OWN {
+        // Design 82 D9: a part of Vibb One has no app logo to show.
+        return refuse(FieldError {
+            field: "icon",
+            key: "apps.display.error.icon_builtin",
+        })
+        .await;
     } else {
         match crate::app_display::validate(field("label"), field("icon"), field("color")) {
             Ok(values) => values,

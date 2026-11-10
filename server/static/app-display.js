@@ -3,7 +3,9 @@
 // app's tone" previews as slate), the glyph or the state's words (the page's, "Automatic", "Logo") and
 // the name follow the fields as they change, and the colours are off while "App logo" is
 // chosen (the logo has no tile; a disabled fieldset posts nothing, which the server reads as auto).
-// The form works without this.
+// A part of Vibb One (design 82 D9: Meldinger) says its own look on the form (`data-auto-glyph`,
+// `data-auto-tile`): "Automatic" previews as that glyph on that tile, and a chosen glyph keeps the tile
+// until a colour is chosen (the colour's own `data-tile`). The form works without this.
 (function () {
     "use strict";
 
@@ -29,10 +31,16 @@
         if (!tile || !glyph || !own || !label) return;
         var key = icon ? icon.value : "";
         var logo = key === "own";
+        var autoGlyph = form.getAttribute("data-auto-glyph");
         if (colors) colors.disabled = logo;
         if (key && !logo) {
             tile.style.background = (color && color.getAttribute("data-tile")) || AUTO_PREVIEW;
             glyph.src = "/static/app-icons/" + key + ".svg";
+            glyph.hidden = false;
+            own.hidden = true;
+        } else if (autoGlyph && !logo) {
+            tile.style.background = form.getAttribute("data-auto-tile") || AUTO_PREVIEW;
+            glyph.src = "/static/app-icons/" + autoGlyph + ".svg";
             glyph.hidden = false;
             own.hidden = true;
         } else {

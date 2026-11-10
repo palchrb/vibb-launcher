@@ -71,6 +71,10 @@ class HomeModelTest {
         assertTrue(homeGrid(listOf(app("a")), true, emptyMap()).none { it is GridTile.Messages })
         assertEquals("messages", gridTileId(GridTile.Messages(5)))
         assertEquals(TileChange.FULL, tileChange(GridTile.Messages(1), GridTile.Messages(2), sameIcon = true))
+        // Design 82 D9, W1: the tile carries its look, so the parent's new icon or name rebinds it.
+        val look = com.kidslauncher.mdm.appdisplay.MessagesLook(name = "Tekst")
+        assertEquals(listOf(GridTile.Messages(1, look), GridTile.Settings), homeGrid(emptyList(), false, emptyMap(), messages = 1, messagesLook = look))
+        assertEquals(TileChange.FULL, tileChange(GridTile.Messages(1), GridTile.Messages(1, look), sameIcon = true))
     }
 
     /** Design 77 §6.7 (code QA M2): a contact avatar's badge is missed calls plus unread messages; the missed-call
