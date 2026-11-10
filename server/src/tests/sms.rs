@@ -153,6 +153,15 @@ async fn the_policy_is_the_contracts() {
         Some(serde_json::json!([]))
     );
     assert_eq!(call_policy, contract()["policy"]["call_policy"]);
+    // Design 80 D13: "Gruppemeldinger" off - the contract's `groups_off`.
+    sqlx::query("UPDATE device_policy SET sms_groups = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.policy(&token).await["call_policy"]["sms_groups"],
+        contract()["policy"]["groups_off"]["sms_groups"]
+    );
 }
 
 /// D2's wire: each of the nine combinations sends its modes and the old keys derived from them
@@ -731,7 +740,7 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
         .await
         .text();
     assert!(page.contains(r#"Managed by Vibb<span class="segment-note">recommended</span>"#));
-    assert!(!page.contains("Update Vibb One first"));
+    assert!(!page.contains("- Update Vibb One first"));
     assert!(
         super::tags(&page, "input")
             .iter()

@@ -23,6 +23,7 @@ use chrono::{DateTime, Utc};
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::emergency;
+use crate::handlers::calls_form::{self, Subs, Way};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
@@ -92,6 +93,8 @@ fn message_app_options(
     options
 }
 
+/// One contact's row and form (design 80): the four plain choices, the contact's "Avansert" with the one-way
+/// switches, the Message button and the Matrix ID, the photo and Remove.
 struct ContactView {
     id: i64,
     name: String,
@@ -99,24 +102,38 @@ struct ContactView {
     inbound: bool,
     outbound: bool,
     show_on_home: bool,
-    /// Design 77 D3: the "Meldinger" group's switches, independent of the call ones.
+    /// Design 77 D3: the texts' switches, independent of the call ones.
     sms_in: bool,
     sms_out: bool,
     mms: bool,
-    /// An emergency number: "Kan sende melding til" shows disabled, with why (QA R2-H1).
+    /// Design 80 D3/D4: each channel's main row - a two-way switch, or "Tilpasset" while its directions differ.
+    calls: Way,
+    texts: Way,
+    /// An emergency number: its texts row is "{kid} kan sende melding til {contact}" (`sms_out` alone), and
+    /// "Kan sende melding til" in Avansert shows disabled, with why (QA R2-H1).
     texts_in_refused: bool,
+    /// D1: what a switch doesn't do in the phone's present channel modes.
+    subs: Subs,
+    /// D2: `[contact calls kid, kid calls contact, contact texts kid, kid texts contact]`.
+    one_way: [String; 4],
     message_options: Vec<SelectOption>,
     message_address: String,
+    /// D2 (M6): the Matrix ID shows while the button opens Element X or one is stored, with its note: "Mangler
+    /// Matrix-ID" (orange) or "Brukes når knappen åpner Element X".
+    show_matrix: bool,
+    matrix_note: Option<(&'static str, bool)>,
+    /// D2: the contact's Avansert is drawn open, and what its row says while closed.
+    adv_open: bool,
+    adv_value: Option<String>,
     /// SHA-256 of the contact's photo (shown via `/contact-photos/{hash}`).
     photo: Option<String>,
     /// Its kept original's SHA-256 and the view the square was cut at (migration 0123): "Adjust crop" opens
     /// `/contact-photos/original/{hash}` there. `None` for a photo stored before it (the square is refined).
     original: Option<(String, String)>,
     initial: String,
-    /// The row's value: "Both ways · Home".
+    /// D6: the row's value ("Anrop og meldinger", "Anrop inn") and its second line ("Melding inn · Hjem").
     summary: String,
-    /// Under it, which way texts go: "Texts both ways" (design 77 D3).
-    texts: Option<&'static str>,
+    second: Option<String>,
     /// The row's form is open (`?open=`, or a refusal in it).
     open: bool,
     /// A refusal under a field: `message_address` or `photo`, and why.
@@ -132,48 +149,127 @@ fn initial_of(name: &str) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
-/// A contact row's value: which way calls go, and the home-screen button - only for a contact in
-/// the phone book, as the launcher shows it (`CallRules.kt`: `outbound && showOnHome`;
-/// qa-31-s8-code L2). The switch keeps its value for when the contact goes back in the book. Design 77 D3: then
-/// which way texts go (`texts`: in as the phone gets it - never for an emergency number -, out), when either does.
-fn contact_summary(
-    lang: Lang,
+/// What a contact's form shows besides its switches: the closed row, the sub-lines, the Avansert row (design 80 D1,
+/// D2, D6). Called again when a refusal redraws the form from what was sent.
+impl ContactView {
+    fn derive(
+        &mut self,
+        lang: Lang,
+        policy: &DevicePolicy,
+        kid: &str,
+        app: Option<&str>,
+        more: bool,
+    ) {
+        // N6: an emergency number's texts are `sms_out` alone.
+        let texts_pair = if self.texts_in_refused {
+            (self.sms_out, self.sms_out)
+        } else {
+            (self.sms_in, self.sms_out)
+        };
+        self.calls = Way::of((self.inbound, self.outbound));
+        self.texts = Way::of(texts_pair);
+        let (summary, second) = calls_form::contact_row(
+            lang,
+            (self.inbound, self.outbound),
+            texts_pair,
+            self.show_on_home,
+            self.mms,
+        );
+        self.summary = summary;
+        self.second = second;
+        self.subs = calls_form::subs(
+            lang,
+            &policy.calls_mode,
+            &policy.sms_mode,
+            kid,
+            (self.name.as_str(), self.name.as_str()),
+            self.outbound,
+            texts_pair.0 || texts_pair.1,
+        );
+        self.one_way =
+            calls_form::one_way_labels(lang, kid, (self.name.as_str(), self.name.as_str()));
+        let element = app.unwrap_or(&policy.default_message_app) == "element";
+        let stored = !self.message_address.is_empty();
+        self.show_matrix = element || stored;
+        self.matrix_note = if element && !stored {
+            Some(("device.calls.matrix_missing", true))
+        } else if stored && !element {
+            Some(("device.calls.matrix_unused", false))
+        } else {
+            None
+        };
+        let custom = self.calls.is_custom() || self.texts.is_custom();
+        self.adv_value = if custom {
+            Some(t(lang, "device.calls.custom").to_string())
+        } else if let Some(app) = app {
+            MESSAGE_APPS
+                .iter()
+                .position(|known| *known == app)
+                .map(|i| match i {
+                    0 => t(lang, "device.calls.no_message_button").to_string(),
+                    _ => MESSAGE_APP_LABELS[i].to_string(),
+                })
+        } else if stored {
+            Some(t(lang, "device.calls.matrix_stored").to_string())
+        } else {
+            None
+        };
+        let refused_here = self
+            .error
+            .as_ref()
+            .is_some_and(|(field, _)| *field == "message_address");
+        self.adv_open = custom || (element && !stored) || more || refused_here;
+    }
+}
+
+/// Design 80 D5: Add Contact's switches - the four plain choices and its Avansert's one-way switches, "Kontakten" in
+/// the words until the contact has a name.
+struct AddView {
     inbound: bool,
     outbound: bool,
     home: bool,
-    texts: (bool, bool),
-) -> String {
-    let calls = t(
-        lang,
-        match (inbound, outbound) {
-            (true, true) => "device.calls.both_ways",
-            (true, false) => "device.calls.in_only",
-            (false, true) => "device.calls.out_only",
-            (false, false) => "device.calls.no_calls",
-        },
-    );
-    let mut summary = if home && outbound {
-        format!("{calls} · {}", t(lang, "device.calls.home"))
-    } else {
-        calls.to_string()
-    };
-    if let Some(texts) = texts_line(lang, texts) {
-        summary.push_str(" · ");
-        summary.push_str(texts);
-    }
-    summary
+    sms_in: bool,
+    sms_out: bool,
+    mms: bool,
+    calls: Way,
+    texts: Way,
+    subs: Subs,
+    one_way: [String; 4],
+    /// Its Avansert is drawn open: a channel is "Tilpasset", or a refused form had it open (`more`).
+    adv_open: bool,
 }
 
-/// Design 77 D3: which way a contact's texts go (`texts`: in, out), `None` when neither. The row shows it on a line
-/// of its own under the call summary, so a long summary never squeezes the name.
-fn texts_line(lang: Lang, texts: (bool, bool)) -> Option<&'static str> {
-    let key = match texts {
-        (true, true) => "device.calls.texts_both_ways",
-        (true, false) => "device.calls.texts_in",
-        (false, true) => "device.calls.texts_out",
-        (false, false) => return None,
-    };
-    Some(t(lang, key))
+impl AddView {
+    /// `switches`: `[inbound, outbound, show_on_home, sms_in, sms_out, mms]`.
+    fn new(lang: Lang, policy: &DevicePolicy, kid: &str, switches: [bool; 6], more: bool) -> Self {
+        let [inbound, outbound, home, sms_in, sms_out, mms] = switches;
+        let contact = (
+            t(lang, "device.calls.the_contact"),
+            t(lang, "device.calls.the_contact_inner"),
+        );
+        let (calls, texts) = (Way::of((inbound, outbound)), Way::of((sms_in, sms_out)));
+        AddView {
+            inbound,
+            outbound,
+            home,
+            sms_in,
+            sms_out,
+            mms,
+            calls,
+            texts,
+            subs: calls_form::subs(
+                lang,
+                &policy.calls_mode,
+                &policy.sms_mode,
+                kid,
+                contact,
+                outbound,
+                sms_in || sms_out,
+            ),
+            one_way: calls_form::one_way_labels(lang, kid, contact),
+            adv_open: calls.is_custom() || texts.is_custom() || more,
+        }
+    }
 }
 
 #[derive(Template)]
@@ -200,9 +296,9 @@ struct DeviceCallsTemplate {
     add_name: String,
     add_number: String,
     add_error: Option<(&'static str, String)>,
-    /// Add Contact's switches (design 77 R2-M1): `inbound`, `outbound`, `show_on_home`, `sms_in`, `sms_out`, `mms` -
-    /// all on for a new contact, only `sms_in` for "Opprett kontakt…" from a held message.
-    add_switches: [bool; 6],
+    /// Add Contact's switches (design 77 R2-M1, design 80 D5): all on for a new contact, only "Kontakten kan sende
+    /// melding til" for "Opprett kontakt…" from a held message, §14's from a kid's request.
+    add: AddView,
     /// Design 77 §14: Add Contact came from the kid's request - its id (sent back as `request`) and the Matrix ID the
     /// kid suggested, shown with its own "Bruk Matrix-ID-en" ([Self::use_matrix], unticked until the parent ticks it);
     /// a family contact's kept name (QA M1) and a short number's cost warning (QA L3).
@@ -226,8 +322,6 @@ struct DeviceCallsTemplate {
     name_add_open: bool,
     name_add_value: String,
     name_add_error: Option<&'static str>,
-    /// A refused SMS settings save: the field and why (the form shows what was sent).
-    sms_error: Option<(&'static str, String)>,
     /// The family's contacts not on this phone (`id`, "name · number"), for "Add from the family".
     family: Vec<(i64, String)>,
     /// Design 73: the emergency menu's rows, in order.
@@ -248,6 +342,20 @@ struct DeviceCallsTemplate {
     /// Design 77 §8.5's path 2: Google's form that turns a number's chat features off, the RCS line's ⓘ link.
     rcs_form_url: &'static str,
     rcs_form_label: &'static str,
+    /// Design 80 D8: the page's Avansert is drawn open (`?advanced=1`, or a refusal or notice inside it).
+    advanced_open: bool,
+    /// Its row's lines: "Nødmeny: 112, 113", the orange count of menu numbers that follow the call rules,
+    /// "Meldingsknapp: SMS · 1 avsendernavn · …".
+    adv_emergency: String,
+    adv_emergency_warn: Option<String>,
+    adv_messages: String,
+    /// D7/D8 (M5): SMS is managed, group texts are on and the phone's number is missing - a quiet line under SMS and
+    /// an orange one on Avansert's row.
+    number_line: bool,
+    /// D7 (M4): the RCS step's time under SMS is over - its row "Chatfunksjoner (RCS)" is in Avansert.
+    rcs_in_advanced: bool,
+    /// The "Meldinger" settings' line (`?notice=`).
+    sms_notice: Option<&'static str>,
 }
 crate::i18n::words!(DeviceCallsTemplate);
 
@@ -257,49 +365,6 @@ impl DeviceCallsTemplate {
         self.add_error
             .as_ref()
             .is_some_and(|(field, _)| *field == "name")
-    }
-
-    /// Add Contact's switches (design 77 R2-M1), in [ADD_SWITCHES]' order: the form name, the label, on.
-    fn add_switch_rows(&self) -> Vec<(&'static str, String, bool)> {
-        let kid = [("name", self.device.name.as_str())];
-        let labels = [
-            t_params(self.lang, "device.calls.can_call", &kid),
-            t(self.lang, "device.calls.phone_book").to_string(),
-            t(self.lang, "device.calls.on_home").to_string(),
-            t_params(self.lang, "device.sms.texts_in", &kid),
-            t_params(self.lang, "device.sms.texts_out", &kid),
-            t(self.lang, "device.sms.pictures").to_string(),
-        ];
-        ADD_SWITCHES
-            .into_iter()
-            .zip(labels)
-            .zip(self.add_switches)
-            .map(|((name, label), on)| (name, label, on))
-            .collect()
-    }
-
-    /// Design 77 D12: the own-number fields, SIM 1 and 2 - the form name, the label, the value and a refusal's why.
-    fn own_fields(&self) -> Vec<(&'static str, String, String, Option<String>)> {
-        ["own_number_1", "own_number_2"]
-            .into_iter()
-            .zip(self.sms.own.iter())
-            .enumerate()
-            .map(|(i, (field, value))| {
-                (
-                    field,
-                    t_params(
-                        self.lang,
-                        "device.sms.settings.own_number",
-                        &[("slot", &(i + 1).to_string())],
-                    ),
-                    value.clone(),
-                    self.sms_error
-                        .as_ref()
-                        .filter(|(bad, _)| *bad == field)
-                        .map(|(_, why)| why.clone()),
-                )
-            })
-            .collect()
     }
 }
 
@@ -311,8 +376,11 @@ struct ChannelRow {
     options: Vec<Segment>,
     sub: &'static str,
     /// SMS's RCS step (§8.5): "Før du velger Styrt av Vibb: slå av chatfunksjoner i Meldinger" before it is chosen,
-    /// "Slå av chatfunksjoner i Meldinger først" under it; with an ⓘ that links Google's form.
+    /// "Slå av chatfunksjoner i Meldinger hvis du ikke har gjort det" under it for 14 days (design 80 D7); with an ⓘ
+    /// that links Google's form.
     extra: Option<&'static str>,
+    /// SMS is managed: the ⓘ leads with Google's form (Messages is hidden then).
+    extra_managed: bool,
     /// "<choice> - Oppdater Vibb One først", one line per choice the phone can't do yet (code QA M2).
     update_first: Vec<String>,
 }
@@ -333,7 +401,14 @@ struct Segment {
 /// Without it (code QA M2, the capability gate) a choice that would make the pair one an older launcher can't do
 /// ([sms::older_launcher_expresses]) shows disabled, with "<choice> - Oppdater Vibb One først" under the row - never
 /// the stored one.
-fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> ChannelRow {
+fn channel_row(
+    lang: Lang,
+    sms: bool,
+    mode: &str,
+    other: &str,
+    engine: bool,
+    rcs_recent: bool,
+) -> ChannelRow {
     let mut update_first = Vec::new();
     let options = CHANNEL_MODES
         .iter()
@@ -404,16 +479,31 @@ fn channel_row(lang: Lang, sms: bool, mode: &str, other: &str, engine: bool) -> 
         label: t(lang, label),
         options,
         sub: t(lang, sub),
-        // §8.5 (code QA M1): "først" - the step is shown before the switch, while Messages is still visible (SMS
-        // "Ikke styrt" or "Av" on a phone that can take "Styrt av Vibb"), and stays under it.
+        // §8.5 (code QA M1): the step is shown before the switch, while Messages is still visible (SMS "Ikke styrt"
+        // or "Av" on a phone that can take "Styrt av Vibb"); design 80 D7 (M4): under it for 14 days after the last
+        // channel change ("… hvis du ikke har gjort det", its ⓘ leading with Google's form), then in Avansert.
         extra: match (sms, mode) {
             (false, _) => None,
-            (true, "managed") => Some(t(lang, "device.calls.channel.sms_rcs")),
+            (true, "managed") if rcs_recent => Some(t(lang, "device.calls.channel.sms_rcs")),
+            (true, "managed") => None,
             (true, _) if engine => Some(t(lang, "device.calls.channel.sms_rcs_before")),
             (true, _) => None,
         },
+        extra_managed: sms && mode == "managed",
         update_first,
     }
+}
+
+/// Design 80 D7 (M4): how long after the last channel change (`roles_changed_at`) the RCS step stays under SMS.
+const RCS_ON_VIEW_DAYS: i64 = 14;
+
+/// Whether the RCS step is still on view under SMS: the last channel change is under [RCS_ON_VIEW_DAYS] old.
+fn rcs_recent(policy: &DevicePolicy, now: DateTime<Utc>) -> bool {
+    policy
+        .roles_changed_at
+        .as_deref()
+        .and_then(parse_db_utc)
+        .is_some_and(|changed| now - changed < chrono::Duration::days(RCS_ON_VIEW_DAYS))
 }
 
 /// One row of the emergency menu (design 73).
@@ -489,6 +579,12 @@ fn emergency_rows(
 pub(super) struct Shown<'a> {
     /// `?open=<contact id>`: that contact's form is open.
     pub(super) open: Option<i64>,
+    /// `&more=<contact id>` (design 80 D9): that contact's Avansert was open when its form was saved.
+    pub(super) more: Option<i64>,
+    /// `?advanced=1` (design 80 D9): the page's Avansert is drawn open - its forms return there.
+    pub(super) advanced: bool,
+    /// `?notice=` for the "Meldinger" settings in the page's Avansert ("Bruk dette nummeret" on a changed report).
+    pub(super) sms_notice: Option<&'static str>,
     /// `?notice=` for the Contacts group.
     pub(super) notice: Option<&'static str>,
     /// A refused Add Contact: the name and number typed, the field and why.
@@ -535,6 +631,8 @@ pub(super) struct ContactRefusal<'a> {
     field: &'static str,
     why: String,
     sent: Option<&'a HashMap<String, String>>,
+    /// The two channels resolved from what was sent (design 80 D3, L2): the redraw shows them, never the raw pairs.
+    pairs: Option<((bool, bool), (bool, bool))>,
 }
 
 /// `?notice=` codes for the Contacts group.
@@ -553,6 +651,11 @@ pub async fn show_calls(
 ) -> Response {
     let shown = Shown {
         open: query.get("open").and_then(|v| v.parse().ok()),
+        more: query.get("more").and_then(|v| v.parse().ok()),
+        advanced: query.get("advanced").is_some_and(|v| v == "1"),
+        sms_notice: query
+            .get("notice")
+            .and_then(|code| crate::handlers::calls_sms::settings_notice(lang, code)),
         notice: query
             .get("notice")
             .and_then(|code| contacts_notice(lang, code)),
@@ -660,14 +763,8 @@ async fn load_page(
             let mut view = ContactView {
                 initial: initial_of(&c.name),
                 id: c.contact_id,
-                summary: contact_summary(
-                    lang,
-                    c.allow_inbound,
-                    c.allow_outbound,
-                    c.show_on_home,
-                    (false, false),
-                ),
-                texts: texts_line(lang, (c.sms_in && !texts_in_refused, c.sms_out)),
+                summary: String::new(),
+                second: None,
                 name: c.name,
                 number: c.phone_number,
                 inbound: c.allow_inbound,
@@ -676,43 +773,58 @@ async fn load_page(
                 sms_in: c.sms_in && !texts_in_refused,
                 sms_out: c.sms_out,
                 mms: c.mms,
+                calls: Way::Off,
+                texts: Way::Off,
                 texts_in_refused,
+                subs: Subs::default(),
+                one_way: Default::default(),
                 message_options: message_app_options(
                     lang,
                     c.message_app.as_deref(),
                     Some(&policy.default_message_app),
                 ),
                 message_address: c.message_address.unwrap_or_default(),
+                show_matrix: false,
+                matrix_note: None,
+                adv_open: false,
+                adv_value: None,
                 photo: c.photo_hash,
                 original: originals.get(&c.contact_id).cloned(),
                 open: shown.open == Some(c.contact_id),
                 error: None,
             };
+            let mut app = c.message_app;
+            let mut more = shown.more == Some(c.contact_id);
             if let Some(refusal) = &shown.contact
                 && refusal.id == view.id
             {
                 view.open = true;
                 view.error = Some((refusal.field, refusal.why.clone()));
-                // What the refused form sent, so nothing typed is lost.
+                // What the refused form sent, so nothing typed is lost - its channels as the save would resolve
+                // them (design 80 L2), never the raw pairs.
                 if let Some(sent) = refusal.sent {
-                    view.inbound = sent.contains_key("inbound");
-                    view.outbound = sent.contains_key("outbound");
+                    if let Some(((inbound, outbound), (sms_in, sms_out))) = refusal.pairs {
+                        (view.inbound, view.outbound) = (inbound, outbound);
+                        (view.sms_in, view.sms_out) = (sms_in && !view.texts_in_refused, sms_out);
+                    }
                     view.show_on_home = sent.contains_key("show_on_home");
-                    view.sms_in = sent.contains_key("sms_in") && !view.texts_in_refused;
-                    view.sms_out = sent.contains_key("sms_out");
                     view.mms = sent.contains_key("mms");
-                    let app = sent.get("message_app").map(String::as_str);
+                    app = sent
+                        .get("message_app")
+                        .filter(|a| MESSAGE_APPS.contains(&a.as_str()))
+                        .cloned();
                     view.message_options = message_app_options(
                         lang,
-                        app.filter(|a| MESSAGE_APPS.contains(a)),
+                        app.as_deref(),
                         Some(&policy.default_message_app),
                     );
-                    view.message_address = sent
-                        .get("message_address")
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_default();
+                    if let Some(address) = sent.get("message_address") {
+                        view.message_address = address.trim().to_string();
+                    }
+                    more = more || sent.get("more").is_some_and(|m| m == "1");
                 }
             }
+            view.derive(lang, &policy, &device.name, app.as_deref(), more);
             view
         })
         .collect();
@@ -723,8 +835,11 @@ async fn load_page(
     .bind(id)
     .fetch_all(&state.db)
     .await?;
+    // Design 80 L6: the phone's own number is never offered as a contact.
+    let own_numbers = crate::handlers::calls_sms::phone_numbers(&state.db, id).await?;
     let family = family
         .into_iter()
+        .filter(|(_, _, number)| !own_numbers.contains(number))
         .map(|(id, name, number)| (id, format!("{name} · {number}")))
         .collect();
     let report = call_report(state, &policy).await?;
@@ -769,14 +884,29 @@ async fn load_page(
     // R2-M1: a new contact gets every switch on, an allow from a held message "Kan sende melding til" alone, the kid's
     // request §14's; a refusal shows what was sent.
     let add_switches = match (shown.add_sent, shown.add_held, add_request.is_some()) {
-        (Some(sent), _, _) => ADD_SWITCHES.map(|name| sent.contains_key(name)),
-        (None, Some(_), _) => HELD_ADD_SWITCHES,
-        // QA L3: a short number may cost money - the kid can't text it until the parent says so.
-        (None, None, true) if add_request.as_ref().is_some_and(|r| r.short) => {
-            let mut switches = REQUEST_ADD_SWITCHES;
-            switches[4] = false;
-            switches
+        // Design 80 L2: a refusal shows the channels as the save would resolve them.
+        (Some(sent), _, _) => {
+            // Code QA L5: resolved as the save does - an emergency number by the number sent.
+            let emergency = sent
+                .get("number")
+                .and_then(|raw| phone::normalize(raw, &default_country_code).ok())
+                .is_some_and(|number| emergency::is_emergency(&number, &default_country_code));
+            let ((inbound, outbound), (sms_in, sms_out)) =
+                calls_form::resolve(sent, None, emergency);
+            [
+                inbound,
+                outbound,
+                sent.contains_key("show_on_home"),
+                sms_in,
+                sms_out,
+                sent.contains_key("mms"),
+            ]
         }
+        (None, Some(_), _) => HELD_ADD_SWITCHES,
+        // QA L3, the user (2026-11-09, design 80): a short number may cost money - calls and texts both start off,
+        // and the line under the number says the parent chooses ("Barnet kommer ikke til å be om kortnr, men man
+        // burde vel bare gjøre det klart at man må velge").
+        (None, None, true) if add_request.as_ref().is_some_and(|r| r.short) => [false; 6],
         (None, None, true) => REQUEST_ADD_SWITCHES,
         (None, None, false) => [true; 6],
     };
@@ -808,12 +938,44 @@ async fn load_page(
     if let Some(refusal) = &shown.sms {
         // What the refused form sent, so nothing typed is lost.
         sms_page.lock_text = refusal.sent.contains_key("sms_lock_text");
-        for (slot, field) in ["own_number_1", "own_number_2"].iter().enumerate() {
-            sms_page.own[slot] = refusal
-                .sent
-                .get(*field)
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
+        for row in &mut sms_page.own_rows {
+            if let Some(sent) = refusal.sent.get(&row.field) {
+                row.value = sent.trim().to_string();
+            }
+            if row.field == refusal.field {
+                row.error = Some(refusal.why.clone());
+            }
+        }
+        // A refused slot the page didn't draw (a forged or an older page's field): its own field, so the reason shows.
+        if !sms_page
+            .own_rows
+            .iter()
+            .any(|row| row.field == refusal.field)
+        {
+            let slot = if refusal.field == "own_number_2" {
+                2
+            } else {
+                1
+            };
+            sms_page.own_rows.push(crate::handlers::calls_sms::OwnRow {
+                slot,
+                field: refusal.field.to_string(),
+                label: t_params(
+                    lang,
+                    "device.sms.settings.own_number",
+                    &[("slot", &slot.to_string())],
+                ),
+                value: refusal
+                    .sent
+                    .get(refusal.field)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default(),
+                known: None,
+                hint: None,
+                error: Some(refusal.why.clone()),
+                uses: Vec::new(),
+                shown: String::new(),
+            });
         }
     }
     let names_full = sms_page.names.len() as i64 >= crate::handlers::calls_sms::NAMES_MAX;
@@ -848,13 +1010,86 @@ async fn load_page(
         &default_country_code,
         policy.calls_managed().then_some(phone_book.as_slice()),
     );
+    // Design 80 D8: the page's Avansert row names what it holds - the emergency menu always, its numbers that follow
+    // the call rules in orange, then the Message button and every value that isn't the default.
+    let adv_emergency = t_params(
+        lang,
+        "device.calls.adv.emergency",
+        &[(
+            "numbers",
+            &menu
+                .iter()
+                .map(|e| e.number.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )],
+    );
+    let not_emergency = emergency_view.iter().filter(|row| row.warn).count() as i64;
+    let adv_emergency_warn = (not_emergency > 0).then(|| {
+        crate::i18n::t_count(lang, "device.calls.adv.emergency_rules", not_emergency, &[])
+    });
+    let mut adv_messages = vec![t_params(
+        lang,
+        "device.calls.adv.message_button",
+        &[(
+            "app",
+            message_app_options(lang, Some(&policy.default_message_app), None)
+                .iter()
+                .find(|option| option.selected)
+                .map_or("", |option| option.label.as_str()),
+        )],
+    )];
+    if !sms_page.names.is_empty() {
+        adv_messages.push(crate::i18n::t_count(
+            lang,
+            "device.calls.adv.names",
+            sms_page.names.len() as i64,
+            &[],
+        ));
+    }
+    if sms_page.lock_text {
+        adv_messages.push(t(lang, "device.calls.adv.lock_text").to_string());
+    }
+    if !sms_page.groups {
+        adv_messages.push(t(lang, "device.calls.adv.groups_off").to_string());
+    }
+    // With group texts off nothing is lost for want of the number, so nothing is said (D7).
+    let number_line = policy.sms_mode == "managed" && sms_page.groups && sms_page.number_missing;
+    let rcs_recent = rcs_recent(&policy, now);
+    let advanced_open = shown.advanced
+        || emergency_add_error.is_some()
+        || shown.emergency_notice.is_some()
+        || sms_error.is_some()
+        || name_add_error.is_some()
+        || shown.sms_notice.is_some();
     Ok(Some(DeviceCallsTemplate {
         lang,
         title: format!("{} - {}", device.name, t(lang, "device.page.calls")),
         channels: vec![
-            channel_row(lang, false, &policy.calls_mode, &policy.sms_mode, engine),
-            channel_row(lang, true, &policy.sms_mode, &policy.calls_mode, engine),
+            channel_row(
+                lang,
+                false,
+                &policy.calls_mode,
+                &policy.sms_mode,
+                engine,
+                rcs_recent,
+            ),
+            channel_row(
+                lang,
+                true,
+                &policy.sms_mode,
+                &policy.calls_mode,
+                engine,
+                rcs_recent,
+            ),
         ],
+        advanced_open,
+        adv_emergency,
+        adv_emergency_warn,
+        adv_messages: adv_messages.join(" · "),
+        number_line,
+        rcs_in_advanced: policy.sms_mode == "managed" && !rcs_recent,
+        sms_notice: shown.sms_notice,
         settings_error: shown.settings_error,
         rcs_form_url: RCS_FORM_URL,
         rcs_form_label: RCS_FORM_LABEL,
@@ -869,7 +1104,15 @@ async fn load_page(
         add_name,
         add_number,
         add_error,
-        add_switches,
+        add: AddView::new(
+            lang,
+            &policy,
+            &device.name,
+            add_switches,
+            shown
+                .add_sent
+                .is_some_and(|sent| sent.get("more").is_some_and(|m| m == "1")),
+        ),
         add_request,
         add_kept,
         add_short,
@@ -882,7 +1125,6 @@ async fn load_page(
         name_add_open,
         name_add_value,
         name_add_error,
-        sms_error,
         family,
         emergency: emergency_view,
         emergency_can_add: menu.len() < emergency::MAX_ENTRIES,
@@ -1757,13 +1999,42 @@ pub async fn save_settings(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
+    // Design 80 D8 (design 31 §5.6): the page splits this form in two, each with its section marker, and a marked
+    // post writes only its section - `button` the phone's default Message button (in the page's Avansert),
+    // `channels` the two modes. No marker (an older page) is the write-all of before.
+    let section = form.get("section").map(String::as_str);
+    // Code QA N2: an unknown marker is refused, never the write-all (it would reset the default Message button).
+    if section.is_some_and(|s| s != "button" && s != "channels") {
+        return bad_request(lang, "error.unknown_section");
+    }
     let default_message_app = form
         .get("default_message_app")
         .map(String::as_str)
-        .unwrap_or("sms");
-    if !MESSAGE_APPS.contains(&default_message_app) {
+        .or((section != Some("button")).then_some("sms"));
+    let Some(default_message_app) = default_message_app.filter(|app| MESSAGE_APPS.contains(app))
+    else {
         return bad_request(lang, "error.unknown_message_app");
+    };
+    if section == Some("button") {
+        let result = sqlx::query(
+            "UPDATE device_policy SET default_message_app = ?, updated_at = datetime('now') \
+             WHERE device_id = ?",
+        )
+        .bind(default_message_app)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+        return match result {
+            Ok(done) if done.rows_affected() == 0 => not_found(lang),
+            Ok(_) => saved(
+                &state,
+                id,
+                format!("/devices/{id}/calls?advanced=1#message-button"),
+            ),
+            Err(err) => db_error(lang, id, err),
+        };
     }
+    let channels_only = section == Some("channels");
     // Design 77 D2: each channel's state; a missing or unknown one is refused, never guessed.
     let mode = |key: &str| {
         form.get(key)
@@ -1811,13 +2082,15 @@ pub async fn save_settings(
              roles_changed_at = CASE WHEN calls_mode != ?1 OR sms_mode != ?2 THEN datetime('now') \
                                      ELSE roles_changed_at END, \
              calls_mode = ?1, sms_mode = ?2, calls_managed = ?3, calls_enabled = ?4, sms_enabled = ?5, \
-             default_message_app = ?6, updated_at = datetime('now') WHERE device_id = ?7",
+             default_message_app = CASE WHEN ?6 THEN default_message_app ELSE ?7 END, \
+             updated_at = datetime('now') WHERE device_id = ?8",
         )
         .bind(calls_mode)
         .bind(sms_mode)
         .bind(managed)
         .bind(calls_enabled)
         .bind(sms_enabled)
+        .bind(channels_only)
         .bind(default_message_app)
         .bind(id)
         .execute(&mut *tx)
@@ -1834,15 +2107,7 @@ pub async fn save_settings(
     }
 }
 
-/// Add Contact's switches, in the form's order (design 77 R2-M1).
-const ADD_SWITCHES: [&str; 6] = [
-    "inbound",
-    "outbound",
-    "show_on_home",
-    "sms_in",
-    "sms_out",
-    "mms",
-];
+/// Add Contact's switches are `[inbound, outbound, show_on_home, sms_in, sms_out, mms]` (design 77 R2-M1).
 /// "Opprett kontakt…" from a held message (D16, R2-M1): an allow grants exactly one thing, this sender's texts.
 const HELD_ADD_SWITCHES: [bool; 6] = [false, false, false, true, false, false];
 /// "Legg til…" from the kid's request (§14, R2-M1's named defaults): the kid asked to call and text this person - "Kan
@@ -1870,11 +2135,6 @@ pub async fn add_contact(
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
     let with_switches = form.contains_key("switches");
-    let switches = if with_switches {
-        ADD_SWITCHES.map(|switch| form.contains_key(switch))
-    } else {
-        [true; 6]
-    };
     let state = &state;
     let form = &form;
     let refuse = |field: &'static str, why: String| async move {
@@ -1911,6 +2171,31 @@ pub async fn add_contact(
             )
             .await;
         }
+    };
+    // Design 80 L6: the phone's own number (stored, reported by a SIM or learned) is never a contact - D12's group
+    // rule would then never tell "us" from it.
+    match crate::handlers::calls_sms::phone_numbers(&state.db, id).await {
+        Ok(own) if own.contains(&number) => {
+            return refuse("number", t(lang, "device.calls.own_number_refused").into()).await;
+        }
+        Ok(_) => {}
+        Err(err) => return db_error(lang, id, err),
+    }
+    // Design 80 D3/D5: the form's two-way switches and Avansert resolved to the pairs (a post without `switches`,
+    // an older page, gets every flag on, as before).
+    let switches = if with_switches {
+        let ((inbound, outbound), (sms_in, sms_out)) =
+            calls_form::resolve(form, None, emergency::is_emergency(&number, &cc));
+        [
+            inbound,
+            outbound,
+            form.contains_key("show_on_home"),
+            sms_in,
+            sms_out,
+            form.contains_key("mms"),
+        ]
+    } else {
+        [true; 6]
     };
     // Design 77 §14 (QA M1): from a kid's live request, a number the family already has keeps its contact's name -
     // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
@@ -2026,14 +2311,21 @@ pub async fn add_contact(
 /// on this phone → its row, nothing written (both refusals, [crate::settings_log::refused]).
 async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &str) -> Response {
     let contact_id: i64 = contact_id.trim().parse().unwrap_or(0);
+    // Design 80 L6: the list leaves the phone's own number out; a post naming it anyway is refused.
+    let own = match crate::handlers::calls_sms::phone_numbers(&state.db, id).await {
+        Ok(own) => own,
+        Err(err) => return db_error(lang, id, err),
+    };
     let result = async {
         let mut tx = state.db.begin().await?;
         let (device, contact): (bool, bool) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?1), \
-             EXISTS(SELECT 1 FROM contacts WHERE id = ?2)",
+             EXISTS(SELECT 1 FROM contacts WHERE id = ?2 AND phone_number NOT IN \
+                    (SELECT value FROM json_each(?3)))",
         )
         .bind(id)
         .bind(contact_id)
+        .bind(serde_json::to_string(&own).expect("strings serialize"))
         .fetch_one(&mut *tx)
         .await?;
         if !device || !contact {
@@ -2142,24 +2434,32 @@ pub async fn update_contact(
         Some(app) if MESSAGE_APPS.contains(&app) => Some(app),
         Some(_) => return bad_request(lang, "error.unknown_message_app"),
     };
+    // Design 80 D2: the Matrix ID field is drawn only while it is used or stored, so a post without it keeps the
+    // stored one (`None`); an empty one removes it.
     let message_address = match form.get("message_address").map(|s| s.trim()) {
-        None | Some("") => None,
-        Some(mxid) if valid_matrix_id(mxid) => Some(mxid),
+        None => None,
+        Some("") => Some(None),
+        Some(mxid) if valid_matrix_id(mxid) => Some(Some(mxid)),
         Some(_) => {
             // A contact removed meanwhile (another tab) has no row to open: back to the list,
             // saying nothing was saved (qa-31-s8-code N2).
-            match contact_on_device(&state, id, contact_id).await {
-                Ok(Some(true)) => {}
-                Ok(Some(false)) => return contacts_group(id, true),
-                Ok(None) => return not_found(lang),
+            let stored = match stored_channels(&state.db, id, contact_id).await {
+                Ok(Some(stored)) => stored,
+                Ok(None) => return gone(&state, id, contact_id, true, lang).await,
                 Err(err) => return db_error(lang, id, err),
-            }
+            };
             let shown = Shown {
                 contact: Some(ContactRefusal {
                     id: contact_id,
                     field: "message_address",
                     why: t(lang, "device.calls.matrix_refused").to_string(),
                     sent: Some(&form),
+                    // Design 80 L2: the redraw shows the channels as the save would have stored them.
+                    pairs: Some(calls_form::resolve(
+                        &form,
+                        Some(stored.pairs),
+                        stored.emergency,
+                    )),
                 }),
                 ..Default::default()
             };
@@ -2169,30 +2469,29 @@ pub async fn update_contact(
 
     let result = async {
         let mut tx = state.db.begin().await?;
-        // Design 77 D3: the "Meldinger" group's three switches with the call ones; "Kan sende melding til" is never
-        // stored for an emergency number (R2-H1: its switch is disabled, and the policy never sends it).
-        let number: Option<(String, String)> = sqlx::query_as(
-            "SELECT c.phone_number, s.default_country_code FROM contacts c, call_settings s \
-             WHERE c.id = ? AND s.id = 1",
-        )
-        .bind(contact_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let emergency_number =
-            number.is_some_and(|(number, cc)| emergency::is_emergency(&number, &cc));
+        let Some(stored) = stored_channels(&mut *tx, id, contact_id).await? else {
+            return Ok(0);
+        };
+        // Design 80 D3: each channel's pair from its two-way switch, its one-way switches and what the page showed
+        // (the stale-page guard keeps a split made meanwhile); "Kan sende melding til" is never stored for an
+        // emergency number (design 77 R2-H1: its switch is disabled, and the policy never sends it).
+        let ((inbound, outbound), (sms_in, sms_out)) =
+            calls_form::resolve(&form, Some(stored.pairs), stored.emergency);
         let updated = sqlx::query(
             "UPDATE device_contacts SET allow_inbound = ?, allow_outbound = ?, show_on_home = ?, \
-             sms_in = ?, sms_out = ?, mms = ?, \
-             message_app = ?, message_address = ? WHERE device_id = ? AND contact_id = ?",
+             sms_in = ?, sms_out = ?, mms = ?, message_app = ?, \
+             message_address = CASE WHEN ? THEN ? ELSE message_address END \
+             WHERE device_id = ? AND contact_id = ?",
         )
-        .bind(form.contains_key("inbound"))
-        .bind(form.contains_key("outbound"))
+        .bind(inbound)
+        .bind(outbound)
         .bind(form.contains_key("show_on_home"))
-        .bind(form.contains_key("sms_in") && !emergency_number)
-        .bind(form.contains_key("sms_out"))
+        .bind(sms_in)
+        .bind(sms_out)
         .bind(form.contains_key("mms"))
         .bind(message_app)
-        .bind(message_address)
+        .bind(message_address.is_some())
+        .bind(message_address.flatten())
         .bind(id)
         .bind(contact_id)
         .execute(&mut *tx)
@@ -2204,8 +2503,50 @@ pub async fn update_contact(
     .await;
     match result {
         Ok(0) => gone(&state, id, contact_id, true, lang).await,
-        Ok(_) => saved(&state, id, contact_row(id, contact_id)),
+        // D9: back to the row, its Avansert as it was (`more`, kept in step by static/contact-form.js).
+        Ok(_) => {
+            let more = form.get("more").is_some_and(|m| m == "1");
+            saved(&state, id, contact_return(id, contact_id, more))
+        }
         Err(err) => db_error(lang, id, err),
+    }
+}
+
+/// A contact's stored channels on this phone (design 80 D3) and whether its number is an emergency number.
+struct StoredContact {
+    pairs: ((bool, bool), (bool, bool)),
+    emergency: bool,
+}
+
+/// [StoredContact] for a contact of this phone, `None` when it isn't on it.
+async fn stored_channels(
+    db: impl sqlx::SqliteExecutor<'_>,
+    id: i64,
+    contact_id: i64,
+) -> Result<Option<StoredContact>, sqlx::Error> {
+    let row: Option<(bool, bool, bool, bool, String, String)> = sqlx::query_as(
+        "SELECT dc.allow_inbound, dc.allow_outbound, dc.sms_in, dc.sms_out, c.phone_number, s.default_country_code \
+         FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id, call_settings s \
+         WHERE dc.device_id = ? AND dc.contact_id = ? AND s.id = 1",
+    )
+    .bind(id)
+    .bind(contact_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(
+        |(inbound, outbound, sms_in, sms_out, number, cc)| StoredContact {
+            pairs: ((inbound, outbound), (sms_in, sms_out)),
+            emergency: emergency::is_emergency(&number, &cc),
+        },
+    ))
+}
+
+/// Where a contact's save returns (D9): its row, open, and its Avansert open again when it was.
+fn contact_return(id: i64, contact_id: i64, more: bool) -> String {
+    if more {
+        format!("/devices/{id}/calls?open={contact_id}&more={contact_id}#contact-{contact_id}")
+    } else {
+        contact_row(id, contact_id)
     }
 }
 
@@ -2360,6 +2701,7 @@ pub async fn upload_photo(
                     field: "photo",
                     why: message,
                     sent: None,
+                    pairs: None,
                 }),
                 ..Default::default()
             };
@@ -2588,7 +2930,7 @@ async fn jpeg_file(path: &std::path::Path, cache: &'static str) -> Response {
 /// The emergency menu's group, with a line (`?notice=`): a refusal for [crate::settings_log].
 fn emergency_group(id: i64, notice: &str) -> Response {
     crate::settings_log::refused(Redirect::to(&format!(
-        "/devices/{id}/calls?notice={notice}#emergency"
+        "/devices/{id}/calls?advanced=1&notice={notice}#emergency"
     )))
 }
 
@@ -2686,7 +3028,11 @@ pub async fn add_emergency(
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some(Ok(entry))) => saved(state, id, format!("/devices/{id}/calls#emergency-{entry}")),
+        Ok(Some(Ok(entry))) => saved(
+            state,
+            id,
+            format!("/devices/{id}/calls?advanced=1#emergency-{entry}"),
+        ),
         Ok(Some(Err(AddRefusal::Duplicate))) => {
             refuse(
                 "emergency_number",
@@ -2769,7 +3115,11 @@ pub async fn move_emergency(
     }
     .await;
     match result {
-        Ok(true) => saved(&state, id, format!("/devices/{id}/calls#emergency-{entry}")),
+        Ok(true) => saved(
+            &state,
+            id,
+            format!("/devices/{id}/calls?advanced=1#emergency-{entry}"),
+        ),
         Ok(false) => emergency_group(id, "emergency_gone"),
         Err(err) => db_error(lang, id, err),
     }
@@ -2809,7 +3159,11 @@ pub async fn remove_emergency(
     }
     .await;
     match result {
-        Ok(None) => saved(&state, id, format!("/devices/{id}/calls#emergency")),
+        Ok(None) => saved(
+            &state,
+            id,
+            format!("/devices/{id}/calls?advanced=1#emergency"),
+        ),
         Ok(Some(notice)) => emergency_group(id, notice),
         Err(err) => db_error(lang, id, err),
     }
@@ -2817,7 +3171,7 @@ pub async fn remove_emergency(
 
 #[cfg(test)]
 mod tests {
-    use super::{Finding, RoleReport, contact_summary, role_report, valid_matrix_id};
+    use super::{Finding, RoleReport, role_report, valid_matrix_id};
     use crate::display_time::Zone;
     use chrono::{DateTime, TimeZone, Utc};
 
@@ -2878,45 +3232,62 @@ mod tests {
         }
     }
 
+    /// Design 80 D6 (H1, rewritten from design 31's): the closed row names every state in two lines - both channels
+    /// alike in one value, a split one by its direction from the kid's side, then the extras.
     #[test]
     fn a_contact_row_says_which_way_calls_go() {
+        use crate::handlers::calls_form::contact_row;
+        use crate::i18n::Lang;
+        let row = |calls, texts, home, mms| contact_row(Lang::En, calls, texts, home, mms);
+        let s = |v: &str| v.to_string();
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, true, true, (false, false)),
-            "Both ways · Home"
+            row((true, true), (true, true), true, true),
+            (s("Calls and texts"), Some(s("Home")))
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, false, false, (false, false)),
-            "Calls in only"
+            row((true, true), (true, true), true, false),
+            (s("Calls and texts"), Some(s("Home · no pictures")))
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, true, true, (false, false)),
-            "Calls out only · Home"
+            row((true, true), (false, false), false, false),
+            (s("Calls only"), None)
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, false, false, (false, false)),
-            "No calls"
+            row((false, false), (true, true), true, true),
+            (s("Texts only"), None)
+        );
+        assert_eq!(
+            row((false, false), (false, false), true, true),
+            (s("No calls or texts"), None)
         );
         // Home only for a contact in the phone book, as the launcher shows it (qa-31-s8-code L2).
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, false, true, (false, false)),
-            "Calls in only"
+            row((true, false), (false, false), true, true),
+            (s("Calls in"), Some(s("No texts")))
+        );
+        // Mormor, migrated from "Bare innkommende": both directions named, "in" from the kid's side.
+        assert_eq!(
+            row((true, false), (true, false), true, true),
+            (s("Calls in"), Some(s("Texts in")))
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, false, true, (false, false)),
-            "No calls"
-        );
-        // Design 77 D3: then which way texts go, when either does.
-        assert_eq!(
-            contact_summary(crate::i18n::Lang::En, true, true, true, (true, true)),
-            "Both ways · Home · Texts both ways"
+            row((false, true), (true, true), true, false),
+            (
+                s("Calls out"),
+                Some(s("Texts both ways · Home · no pictures"))
+            )
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::En, false, false, false, (true, false)),
-            "No calls · Texts in"
+            row((true, true), (false, true), false, true),
+            (s("Calls both ways"), Some(s("Texts out")))
         );
         assert_eq!(
-            contact_summary(crate::i18n::Lang::Nb, false, false, false, (false, true)),
-            "Ingen anrop · Melding ut"
+            row((false, false), (true, false), false, true),
+            (s("No calls"), Some(s("Texts in")))
+        );
+        assert_eq!(
+            contact_row(Lang::Nb, (true, false), (true, false), false, true),
+            (s("Anrop inn"), Some(s("Melding inn")))
         );
     }
 

@@ -10,10 +10,12 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">{{ self.t("device.page.calls") }}</h1>
 
-    {#- Where the forms return (§5.1): the switches to their group (#settings; scroll-restore
-        keeps the place with JS); a contact's forms to its
-        row, open (?open=<id>#contact-<id>), with or without JS; Add Contact to the new row;
-        Remove Contact… to #contacts. A refusal renders here (400) with its form open. -#}
+    {#- Where the forms return (§5.1, design 80 D9): the channels to their group (#settings; scroll-restore keeps the
+        place with JS); a contact's forms to its row, open (?open=<id>#contact-<id>), its Avansert open again when it
+        was (&more=<id>), with or without JS; Add Contact to the new row; Remove Contact… to #contacts; every form in the
+        page's Avansert to its group with ?advanced=1 (the Avansert drawn open). A refusal renders here (400) with its
+        form open. The order (design 80 D7): what needs a decision or an action, the channels, the contacts, then one
+        Avansert for the rest. -#}
     {% for note in warnings %}
     {% include "partials/note_warning.html" %}
     {% endfor %}
@@ -21,8 +23,8 @@
     {#- Design 77 D16: "Meldinger som venter" at the top while it has rows - who and when, never what; each row
         anchored #held-<id> (its forms return there; a row no longer waiting lands on #held's notice). The sender is
         labelled by its type; "Opprett kontakt…" is a link to Add Contact with the number (encoded by the server,
-        escaped here), only "Kan sende melding til" on. "Tillat avsendernavnet" sits behind its confirm, which says
-        D17's warning. The section is always there (an empty #held to land on), its words only with rows. -#}
+        escaped here), only "Kontakten kan sende melding til" on. "Tillat avsendernavnet" sits behind its confirm,
+        which says D17's warning. The section is always there (an empty #held to land on), its words only with rows. -#}
     <section id="held"{% if !sms.held.is_empty() || held_notice.is_some() %} aria-labelledby="held-title"{% endif %}>
         {% if !sms.held.is_empty() || held_notice.is_some() %}
         <h2 class="group-header" id="held-title">{{ self.t("device.sms.held.title") }}</h2>
@@ -83,14 +85,15 @@
         <p class="group-footer">{{ self.t("device.sms.held.footer") }}</p>
         {% endif %}
         {% endif %}
-        {#- Design 77 §7: the blocked senders of the last 30 days, folded - nothing to allow. -#}
+        {#- Design 77 §7: the blocked senders of the last 30 days, folded - nothing to allow. Design 80 D7 (M5): a group
+            row says what blocks every group now, if anything does. -#}
         {% if !sms.blocked.is_empty() %}
         <details class="section" id="blocked">
             <summary class="row section-toggle"><span class="row-label">{{ self.t("device.sms.blocked.title") }}</span><span class="row-value">{{ sms.blocked.len() }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
             <div class="group">
                 {% for row in sms.blocked %}
                 <div class="row" data-blocked>
-                    <span class="row-label">{{ row.label }}<span class="row-sub">{{ row.kind }} · {{ row.when }}</span></span>
+                    <span class="row-label">{{ row.label }}<span class="row-sub">{{ row.kind }} · {{ row.when }}</span>{% if let Some(reason) = row.reason %}<span class="row-sub" data-blocked-reason>{{ reason }}</span>{% endif %}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -135,70 +138,12 @@
         {% endif %}
     </section>
 
-    {#- Design 73: the emergency menu, at the top. A row's up/down returns to the row (#emergency-<id>), Remove and a
-        refusal's line to #emergency, Add Number and a suggestion to the new row; a refused Add Number renders here
-        (400) with its form open. The default 112 nothing has stored yet is alone, so it has no buttons. -#}
-    <section id="emergency" aria-labelledby="emergency-title">
-        <h2 class="group-header" id="emergency-title">{{ self.t("device.emergency.title") }}</h2>
-        {% if let Some(text) = emergency_notice %}
-        <div class="group"><p class="flash flash-error" role="status" data-flash="emergency">{{ text }}</p></div>
-        {% endif %}
-        <div class="group">
-            {% for row in emergency %}
-            <div class="row emergency-row" id="{{ row.anchor() }}" data-emergency="{{ row.number }}">
-                <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span>{% if let Some(extra) = row.extra %}<span class="row-sub">{{ self.t(extra) }}</span>{% endif %}</span>
-                {% if let Some(entry) = row.id %}
-                {% if !(row.first && row.last) %}
-                <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/move#emergency-{{ entry }}" class="emergency-move">
-                    {% if !row.first %}<button type="submit" class="row-action" name="dir" value="up" aria-label="{{ self.t("device.emergency.up") }}">&uarr;</button>{% endif %}
-                    {% if !row.last %}<button type="submit" class="row-action" name="dir" value="down" aria-label="{{ self.t("device.emergency.down") }}">&darr;</button>{% endif %}
-                </form>
-                {% endif %}
-                {% if row.removable %}
-                <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/remove#emergency" class="row-end">
-                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.emergency.remove_label", [("number", row.number.as_str())]) }}">{{ self.t("device.emergency.remove") }}</button>
-                </form>
-                {% endif %}
-                {% endif %}
-            </div>
-            {% endfor %}
-            {% if emergency_can_add || emergency_add_open %}
-            <details class="edit cell" id="add-emergency"{% if emergency_add_open %} open{% endif %}>
-                <summary class="row row-button">{{ self.t("device.emergency.add") }}&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/calls/emergency#add-emergency" class="edit-body">
-                    <label class="field-label" for="emergency_number">{{ self.t("device.emergency.number") }}</label>
-                    <input type="tel" id="emergency_number" name="number" value="{{ emergency_add_number }}" required{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_number" %} aria-invalid="true" aria-describedby="emergency_number-error" autofocus{% endif %}{% endif %}>
-                    {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_number" %}<p class="field-error" id="emergency_number-error">{{ why }}</p>{% endif %}{% endif %}
-                    <label class="field-label" for="emergency_name">{{ self.t("device.emergency.name") }}</label>
-                    <input type="text" id="emergency_name" name="name" value="{{ emergency_add_name }}" maxlength="40"{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_name" %} aria-invalid="true" aria-describedby="emergency_name-error" autofocus{% endif %}{% endif %}>
-                    {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_name" %}<p class="field-error" id="emergency_name-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.t("device.emergency.name_hint") }}</p>{% endif %}
-                    <button type="submit" class="button-wide">{{ self.t("device.emergency.add") }}</button>
-                </form>
-            </details>
-            {% endif %}
-        </div>
-        <p class="group-footer">{{ self.t("device.emergency.footer") }}</p>
-        {% if !emergency_suggestions.is_empty() %}
-        <h3 class="group-header" id="emergency-suggestions">{{ self.t("device.emergency.suggestions") }}</h3>
-        <div class="group">
-            {% for (number, name) in emergency_suggestions %}
-            <div class="row emergency-row" data-suggestion="{{ number }}">
-                <span class="row-label"><span class="emergency-number">{{ number }}</span> {{ name }}<span class="row-sub">{{ self.t("device.emergency.always") }}</span></span>
-                <form method="post" action="/devices/{{ device.id }}/calls/emergency#emergency" class="row-end">
-                    <input type="hidden" name="number" value="{{ number }}">
-                    <input type="hidden" name="name" value="{{ name }}">
-                    <button type="submit" class="row-action" aria-label="{{ self.tp("device.emergency.add_label", [("name", name), ("number", number)]) }}">{{ self.t("common.add") }}</button>
-                </form>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </section>
-
-    {#- One form (§5.6, H1): the handler writes every field; a missing or unknown channel mode is refused (400), never
-        read as off. A choice the phone's launcher can't do yet is disabled, and refused in place if sent anyway. -#}
+    {#- The channels (design 77 D2, design 80 D8): their own form with the section marker - the handler writes only the
+        two modes; a missing or unknown one is refused (400), never read as off. A choice the phone's launcher can't do
+        yet is disabled, and refused in place if sent anyway. -#}
     <section id="settings" aria-label="{{ self.t("device.calls.settings_label") }}">
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
+            <input type="hidden" name="section" value="channels">
             {#- Design 77 D2: one three-way choice per channel (off / managed by Vibb / not managed) as a segmented
                 control - three radios that save on change -, the chosen state's sub-line under it. A choice the
                 phone can't do yet is disabled, with "<choice> - Oppdater Vibb One først" under the row. -#}
@@ -211,28 +156,25 @@
                     {% endfor %}
                 </div>
                 <span class="row-sub segmented-sub">{{ channel.sub }}</span>
-                {#- Design 77 §8.5 (code QA M1): the RCS step before "Styrt av Vibb" is chosen (Messages is visible
-                    then) and under it; the ⓘ has Google's form for a phone already locked down. -#}
+                {#- Design 77 §8.5 (code QA M1), design 80 D7 (M4): the RCS step before "Styrt av Vibb" is chosen
+                    (Messages is visible then) and under it for 14 days after the change; the ⓘ has Google's form for a
+                    phone already locked down. -#}
                 {% if let Some(extra) = channel.extra %}
                 <div class="row-sub segmented-sub rcs-line" data-rcs>{{ extra }}
                     <details class="info">
                         <summary aria-label="{{ self.t("device.calls.channel.sms_rcs_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                        <div class="info-panel"><p>{{ self.t("device.calls.channel.sms_rcs_info_before") }} <a href="{{ rcs_form_url }}" rel="noopener noreferrer" target="_blank">{{ rcs_form_label }}</a>{{ self.t("device.calls.channel.sms_rcs_info_after") }}</p></div>
+                        <div class="info-panel"><p>{% if channel.extra_managed %}{{ self.t("device.calls.channel.sms_rcs_info_managed") }}{% else %}{{ self.t("device.calls.channel.sms_rcs_info_before") }}{% endif %} <a href="{{ rcs_form_url }}" rel="noopener noreferrer" target="_blank">{{ rcs_form_label }}</a>{{ self.t("device.calls.channel.sms_rcs_info_after") }}</p></div>
                     </details>
                 </div>
+                {% endif %}
+                {#- D7 (M5): the phone's number is missing while groups are on - a quiet line, not an alarm. -#}
+                {% if channel.name == "sms_mode" && number_line %}
+                <a class="row-sub segmented-sub number-line" href="/devices/{{ device.id }}/calls?advanced=1#sms-settings" data-number-line>{{ self.t("device.calls.number_missing") }} <span class="number-line-link">{{ self.t("device.calls.advanced") }} &rsaquo;</span></a>
                 {% endif %}
                 {% for line in channel.update_first %}<span class="row-sub segmented-sub tone-orange">{{ line }}</span>{% endfor %}
             </div>
             {% endfor %}
             {% if let Some(why) = settings_error %}<p class="field-error" id="channels-error" role="alert">{{ why }}</p>{% endif %}
-            <label class="row">
-                <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
-                <select class="pick" name="default_message_app" data-autosave>
-                    {% for option in default_message_options %}
-                    <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
-                    {% endfor %}
-                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </label>
             {% for note in notes %}
             {% include "partials/note_row.html" %}
             {% endfor %}
@@ -248,59 +190,6 @@
         </div>
     </section>
 
-    {#- Design 77 D12, §6.8: one form, every field written (a missing switch is off, an empty number none); the switch
-        saves on change, a number on Enter or when it loses focus. A refused number renders here (400) with what was
-        sent and why under its field. -#}
-    <section id="sms-settings" aria-labelledby="sms-settings-title">
-        <h2 class="group-header" id="sms-settings-title">{{ self.t("device.sms.settings.title") }}</h2>
-        <form method="post" action="/devices/{{ device.id }}/calls/sms#sms-settings" class="group">
-            <label class="row">
-                <span class="row-label">{{ self.t("device.sms.settings.lock_text") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="sms_lock_text" value="on"{% if sms.lock_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            {% for (field, label, value, error) in self.own_fields() %}
-            <div class="field contact-field">
-                <label class="field-label" for="{{ field }}">{{ label }}</label>
-                <input type="tel" id="{{ field }}" name="{{ field }}" value="{{ value }}" maxlength="32" autocomplete="off" data-autosave{% if error.is_some() %} aria-invalid="true" aria-describedby="{{ field }}-error" autofocus{% endif %}>
-                {% if let Some(why) = error %}<p class="field-error" id="{{ field }}-error">{{ why }}</p>{% else %}<p class="field-hint">{{ self.t("device.sms.settings.own_number_hint") }}</p>{% endif %}
-            </div>
-            {% endfor %}
-            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
-        </form>
-        <p class="group-footer">{{ self.t("device.sms.settings.footer") }}</p>
-    </section>
-
-    {#- Design 77 D17: the sender names let through, Add Name (a refusal renders here, 400, with what was typed) and
-        Remove; the honest warning under them. -#}
-    <section id="sms-names" aria-labelledby="sms-names-title">
-        <h2 class="group-header" id="sms-names-title">{{ self.t("device.sms.names.title") }}</h2>
-        <div class="group">
-            {% for name in sms.names %}
-            <div class="row" data-sms-name="{{ name.fold }}">
-                <span class="row-label">{{ name.name }}</span>
-                <form method="post" action="/devices/{{ device.id }}/calls/names/remove#sms-names" class="row-end">
-                    <input type="hidden" name="fold" value="{{ name.fold }}">
-                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.sms.names.remove_label", [("name", name.name.as_str())]) }}">{{ self.t("device.sms.names.remove") }}</button>
-                </form>
-            </div>
-            {% else %}
-            <p class="row row-note">{{ self.t("device.sms.names.none") }}</p>
-            {% endfor %}
-            {% if !names_full || name_add_open %}
-            <details class="edit cell" id="add-sms-name"{% if name_add_open %} open{% endif %}>
-                <summary class="row row-button">{{ self.t("device.sms.names.add") }}&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/calls/names#sms-names" class="edit-body">
-                    <label class="field-label" for="sms_name">{{ self.t("device.sms.names.name") }}</label>
-                    <input type="text" id="sms_name" name="name" value="{{ name_add_value }}" maxlength="40" required autocomplete="off" spellcheck="false"{% if name_add_error.is_some() %} aria-invalid="true" aria-describedby="sms_name-error" autofocus{% endif %}>
-                    {% if let Some(why) = name_add_error %}<p class="field-error" id="sms_name-error">{{ why }}</p>{% else %}<p class="field-hint">{{ self.t("device.sms.names.hint") }}</p>{% endif %}
-                    <button type="submit" class="button-wide">{{ self.t("device.sms.names.add") }}</button>
-                </form>
-            </details>
-            {% endif %}
-        </div>
-        <p class="group-footer">{{ self.t("device.sms.names.warning") }}</p>
-    </section>
-
     <section id="contacts" aria-labelledby="contacts-title">
         <h2 class="group-header" id="contacts-title">{{ self.t("device.calls.contacts") }}</h2>
         {#- At the group's top: #contacts lands here, a long list would hide a line under it. -#}
@@ -309,8 +198,11 @@
         {% endif %}
         <div class="group group-avatars group-small">
             {% for contact in contacts %}
-            {#- One form per contact (§5.6): the row opens it; the switches and the picker save on
-                change, the Matrix ID on Enter or when it loses focus. -#}
+            {#- One form per contact (§5.6): the row opens it; the switches and the picker save on change, the
+                Matrix ID on Enter or when it loses focus. Design 80: four plain choices (a channel whose directions
+                differ is the one-line "Tilpasset", never a half-true switch), then the contact's own Avansert with
+                the one-way switches, the Message button and the Matrix ID - inside the same form, so every field is
+                written (D3 resolves the pairs). `more` keeps the Avansert's state across a save (D9). -#}
             <div class="cell" id="contact-{{ contact.id }}" data-contact="{{ contact.id }}">
                 <details class="edit"{% if contact.open %} open{% endif %}>
                     <summary class="row">
@@ -320,51 +212,89 @@
                         <span class="avatar avatar-small" aria-hidden="true">{{ contact.initial }}</span>
                         {% endif %}
                         <span class="row-label">{{ contact.name }}<span class="row-sub">{{ contact.number }}</span></span>
-                        <span class="row-value" data-value="contact">{{ contact.summary }}{% if let Some(texts) = contact.texts %}<span class="row-sub">{{ texts }}</span>{% endif %}</span>
+                        <span class="row-value" data-value="contact">{{ contact.summary }}{% if let Some(second) = contact.second %}<span class="row-sub">{{ second }}</span>{% endif %}</span>
                         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </summary>
                     <div class="contact-body">
-                        <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}#contact-{{ contact.id }}">
-                            <label class="row">
-                                <span class="row-label">{{ self.tp("device.calls.can_call", [("name", device.name.as_str())]) }}</span>
-                                <input type="checkbox" role="switch" class="sw" name="inbound" value="on"{% if contact.inbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                        <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}#contact-{{ contact.id }}" data-contact-form>
+                            <input type="hidden" name="more" value="{% if contact.adv_open %}1{% endif %}" data-more>
+                            <input type="hidden" name="calls_shown" value="{{ contact.calls.shown() }}">
+                            {% if contact.calls.is_custom() %}
+                            <div class="row" data-way="calls"><span class="row-label">{{ self.t("device.calls.calls_both") }}</span><span class="row-value">{{ self.t("device.calls.custom") }}</span></div>
+                            {% else %}
+                            <label class="row" data-way="calls">
+                                <span class="row-label">{{ self.t("device.calls.calls_both") }}{% if let Some(sub) = contact.subs.calls %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                                <input type="checkbox" role="switch" class="sw" name="calls" value="on"{% if contact.calls.is_on() %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                             </label>
-                            <label class="row">
-                                <span class="row-label">{{ self.t("device.calls.phone_book") }}</span>
-                                <input type="checkbox" role="switch" class="sw" name="outbound" value="on"{% if contact.outbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-                            </label>
-                            <label class="row">
-                                <span class="row-label">{{ self.t("device.calls.on_home") }}</span>
-                                <input type="checkbox" role="switch" class="sw" name="show_on_home" value="on"{% if contact.show_on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-                            </label>
-                            {#- Design 77 D3: the "Meldinger" group, independent of the call switches. "Kan sende melding til"
-                                is disabled for an emergency number, with why (QA R2-H1). -#}
-                            <div class="row" data-group="messages"><span class="row-label row-label-quiet">{{ self.t("device.sms.messages") }}</span></div>
-                            <label class="row">
-                                <span class="row-label">{{ self.tp("device.sms.texts_in", [("name", device.name.as_str())]) }}{% if contact.texts_in_refused %}<span class="row-sub">{{ self.t("device.sms.emergency_reason") }}</span>{% endif %}</span>
-                                <input type="checkbox" role="switch" class="sw" name="sms_in" value="on"{% if contact.sms_in %} checked{% endif %}{% if contact.texts_in_refused %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-                            </label>
-                            <label class="row">
-                                <span class="row-label">{{ self.tp("device.sms.texts_out", [("name", device.name.as_str())]) }}</span>
+                            {% endif %}
+                            {% if contact.texts_in_refused %}
+                            {#- Design 77 R2-H1, design 80 D1: an emergency number never texts in - its texts row is the
+                                kid's way alone (`sms_out`). -#}
+                            <label class="row" data-way="texts">
+                                <span class="row-label">{{ contact.one_way[3] }}<span class="row-sub">{{ self.t("device.sms.emergency_reason") }}</span>{% if let Some(sub) = contact.subs.texts %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
                                 <input type="checkbox" role="switch" class="sw" name="sms_out" value="on"{% if contact.sms_out %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                             </label>
+                            {% else %}
+                            <input type="hidden" name="texts_shown" value="{{ contact.texts.shown() }}">
+                            {% if contact.texts.is_custom() %}
+                            <div class="row" data-way="texts"><span class="row-label">{{ self.t("device.calls.texts_both") }}</span><span class="row-value">{{ self.t("device.calls.custom") }}</span></div>
+                            {% else %}
+                            <label class="row" data-way="texts">
+                                <span class="row-label">{{ self.t("device.calls.texts_both") }}{% if let Some(sub) = contact.subs.texts %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                                <input type="checkbox" role="switch" class="sw" name="texts" value="on"{% if contact.texts.is_on() %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                            </label>
+                            {% endif %}
+                            {% endif %}
                             <label class="row">
-                                <span class="row-label">{{ self.t("device.sms.pictures") }}</span>
+                                <span class="row-label">{{ self.t("device.sms.pictures") }}{% if let Some(sub) = contact.subs.pictures %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
                                 <input type="checkbox" role="switch" class="sw" name="mms" value="on"{% if contact.mms %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                             </label>
                             <label class="row">
-                                <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
-                                <select class="pick" name="message_app" data-autosave>
-                                    {% for option in contact.message_options %}
-                                    <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
-                                    {% endfor %}
-                                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <span class="row-label">{{ self.t("device.calls.on_home") }}{% if let Some(sub) = contact.subs.home %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                                <input type="checkbox" role="switch" class="sw" name="show_on_home" value="on"{% if contact.show_on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                             </label>
-                            <div class="field contact-field">
-                                <label class="field-label" for="matrix-{{ contact.id }}">{{ self.t("device.calls.matrix") }}</label>
-                                <input type="text" id="matrix-{{ contact.id }}" name="message_address" value="{{ contact.message_address }}" placeholder="{{ self.t("device.calls.matrix_example") }}" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="matrix-{{ contact.id }}-error" autofocus{% endif %}{% endif %}>
-                                {% if let Some((field, why)) = contact.error %}{% if *field == "message_address" %}<p class="field-error" id="matrix-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% endif %}
-                            </div>
+                            <details class="adv" data-adv{% if contact.adv_open %} open{% endif %}>
+                                <summary class="row"><span class="row-label">{{ self.t("device.calls.advanced") }}</span>{% if let Some(value) = contact.adv_value %}<span class="row-value" data-adv-value>{{ value }}</span>{% endif %}<svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                                <div class="adv-body">
+                                    <p class="adv-mini">{{ self.t("device.calls.channel.calls") }}</p>
+                                    <label class="row">
+                                        <span class="row-label">{{ contact.one_way[0] }}</span>
+                                        <input type="checkbox" role="switch" class="sw" name="inbound" value="on"{% if contact.inbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                                    </label>
+                                    <label class="row">
+                                        <span class="row-label">{{ contact.one_way[1] }}<span class="row-sub">{{ self.t("device.calls.phone_book") }}</span></span>
+                                        <input type="checkbox" role="switch" class="sw" name="outbound" value="on"{% if contact.outbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                                    </label>
+                                    <p class="adv-mini">{{ self.t("device.sms.messages") }}</p>
+                                    <label class="row">
+                                        <span class="row-label">{{ contact.one_way[2] }}{% if contact.texts_in_refused %}<span class="row-sub">{{ self.t("device.sms.emergency_reason") }}</span>{% endif %}</span>
+                                        <input type="checkbox" role="switch" class="sw" name="sms_in" value="on"{% if contact.sms_in %} checked{% endif %}{% if contact.texts_in_refused %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                                    </label>
+                                    {% if !contact.texts_in_refused %}
+                                    <label class="row">
+                                        <span class="row-label">{{ contact.one_way[3] }}</span>
+                                        <input type="checkbox" role="switch" class="sw" name="sms_out" value="on"{% if contact.sms_out %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                                    </label>
+                                    {% endif %}
+                                    <label class="row row-stacked">
+                                        <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
+                                        <select class="pick" name="message_app" data-autosave>
+                                            {% for option in contact.message_options %}
+                                            <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+                                            {% endfor %}
+                                        </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </label>
+                                    {#- D2 (M6): the Matrix ID while the button opens Element X or one is stored. Without
+                                        the field the save keeps what is stored. -#}
+                                    {% if contact.show_matrix %}
+                                    <div class="field contact-field">
+                                        <label class="field-label" for="matrix-{{ contact.id }}">{{ self.t("device.calls.matrix") }}</label>
+                                        <input type="text" id="matrix-{{ contact.id }}" name="message_address" value="{{ contact.message_address }}" placeholder="{{ self.t("device.calls.matrix_example") }}" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="matrix-{{ contact.id }}-error" autofocus{% endif %}{% endif %}>
+                                        {% if let Some((field, why)) = contact.error %}{% if *field == "message_address" %}<p class="field-error" id="matrix-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% else if let Some((note, warn)) = contact.matrix_note %}<p class="field-hint{% if *warn %} tone-orange{% endif %}" data-matrix-note>{{ self.t(note) }}</p>{% endif %}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </details>
                             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                         </form>
                         <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo#contact-{{ contact.id }}" enctype="multipart/form-data">
@@ -409,7 +339,7 @@
             {% endfor %}
             <details class="edit cell" id="add-contact"{% if add_open %} open{% endif %}>
                 <summary class="row row-button">{{ self.t("device.calls.add") }}</summary>
-                <form method="post" action="/devices/{{ device.id }}/contacts#add-contact" class="edit-body">
+                <form method="post" action="/devices/{{ device.id }}/contacts#add-contact" class="edit-body" data-add-contact>
                     <label class="field-label" for="contact_name">{{ self.t("devices.add.name") }}</label>
                     <input type="text" id="contact_name" name="name" value="{{ add_name }}" maxlength="60" required{% if self.name_refused() %} aria-invalid="true" aria-describedby="contact_name-error" autofocus{% else if add_kept.is_some() %} aria-describedby="contact_name-kept"{% endif %}>
                     {% if let Some((field, why)) = add_error %}{% if *field == "name" %}<p class="field-error" id="contact_name-error">{{ why }}</p>{% endif %}{% endif %}
@@ -418,21 +348,40 @@
                     <label class="field-label" for="contact_number">{{ self.t("device.calls.number") }}</label>
                     <input type="tel" id="contact_number" name="number" value="{{ add_number }}" required{% if let Some((field, _)) = add_error %}{% if *field == "number" %} aria-invalid="true" aria-describedby="contact_number-error" autofocus{% endif %}{% endif %}>
                     {% if let Some((field, why)) = add_error %}{% if *field == "number" %}<p class="field-error" id="contact_number-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.tp("device.calls.number_hint", [("code", default_country_code.as_str())]) }}</p>{% endif %}
-                    {#- QA L3: a kid's request for a short number repeats the card's cost warning here. -#}
-                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.t("device.requests.short") }}</p>{% endif %}
-                    {#- Design 77 R2-M1: every switch shows - all on for a new contact; "Opprett kontakt…" from a
-                        held message has "Kan sende melding til" alone on. `switches` says the form has them. -#}
+                    {#- QA L3 (the user, 2026-11-09): a kid's request for a short number says it may cost money and that the parent
+                        chooses - calls and texts start off. Follows the number in the field, as the save judges it. -#}
+                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.tp("device.requests.short_choose", [("name", device.name.as_str())]) }}</p>{% endif %}
+                    {#- Design 80 D5: the same four choices as a contact, its Avansert with the one-way switches -
+                        "Kontakten" in the words until it has a name. `switches` says the form has them; `*_shown`
+                        what each main row shows (static/contact-form.js keeps them equal to the pair's class, and
+                        swaps a two-way switch for "Tilpasset" - only hidden, never removed). -#}
                     <input type="hidden" name="switches" value="on">
+                    <input type="hidden" name="more" value="{% if add.adv_open %}1{% endif %}" data-more>
                     <div class="add-switches">
-                        {% for (name, label, on) in self.add_switch_rows() %}
-                        <label class="row">
-                            <span class="row-label">{{ label }}</span>
-                            <input type="checkbox" role="switch" class="sw" name="{{ name }}" value="on"{% if on %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        <input type="hidden" name="calls_shown" value="{{ add.calls.shown() }}" data-shown="calls">
+                        <label class="row" data-two-way="calls"{% if add.calls.is_custom() %} hidden{% endif %}>
+                            <span class="row-label">{{ self.t("device.calls.calls_both") }}{% if let Some(sub) = add.subs.calls %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                            <input type="checkbox" role="switch" class="sw" name="calls" value="on"{% if add.calls.is_on() %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                         </label>
-                        {% endfor %}
+                        <div class="row" data-custom="calls"{% if !add.calls.is_custom() %} hidden{% endif %}><span class="row-label">{{ self.t("device.calls.calls_both") }}</span><span class="row-value">{{ self.t("device.calls.custom") }}</span></div>
+                        <input type="hidden" name="texts_shown" value="{{ add.texts.shown() }}" data-shown="texts">
+                        <label class="row" data-two-way="texts"{% if add.texts.is_custom() %} hidden{% endif %}>
+                            <span class="row-label">{{ self.t("device.calls.texts_both") }}{% if let Some(sub) = add.subs.texts %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                            <input type="checkbox" role="switch" class="sw" name="texts" value="on"{% if add.texts.is_on() %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        </label>
+                        <div class="row" data-custom="texts"{% if !add.texts.is_custom() %} hidden{% endif %}><span class="row-label">{{ self.t("device.calls.texts_both") }}</span><span class="row-value">{{ self.t("device.calls.custom") }}</span></div>
+                        <label class="row">
+                            <span class="row-label">{{ self.t("device.sms.pictures") }}{% if let Some(sub) = add.subs.pictures %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                            <input type="checkbox" role="switch" class="sw" name="mms" value="on"{% if add.mms %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        </label>
+                        <label class="row">
+                            <span class="row-label">{{ self.t("device.calls.on_home") }}{% if let Some(sub) = add.subs.home %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                            <input type="checkbox" role="switch" class="sw" name="show_on_home" value="on"{% if add.home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        </label>
                         {#- Design 77 §14: from the kid's request ("Legg til…"): its id goes back with the form (the save
                             answers it), and the kid's Matrix ID is a suggestion behind its own switch, unticked until the
-                            parent ticks it (R2-M1) - the server takes the ID from the stored request, never the form. -#}
+                            parent ticks it (R2-M1) - the server takes the ID from the stored request, never the form; ticked,
+                            the Message button opens Element X with it (design 80 M6). -#}
                         {% if let Some(request) = add_request %}
                         <input type="hidden" name="request" value="{{ request.id }}">
                         {% if let Some(matrix) = request.matrix_id %}
@@ -442,12 +391,35 @@
                         </label>
                         {% endif %}
                         {% endif %}
+                        <details class="adv" data-adv{% if add.adv_open %} open{% endif %}>
+                            <summary class="row"><span class="row-label">{{ self.t("device.calls.advanced") }}</span><span class="row-value" data-adv-value{% if !add.calls.is_custom() && !add.texts.is_custom() %} hidden{% endif %}>{{ self.t("device.calls.custom") }}</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                            <div class="adv-body">
+                                <p class="adv-mini">{{ self.t("device.calls.channel.calls") }}</p>
+                                <label class="row">
+                                    <span class="row-label">{{ add.one_way[0] }}</span>
+                                    <input type="checkbox" role="switch" class="sw" name="inbound" value="on"{% if add.inbound %} checked{% endif %} data-pair="calls"><span class="knob" aria-hidden="true"></span>
+                                </label>
+                                <label class="row">
+                                    <span class="row-label">{{ add.one_way[1] }}<span class="row-sub">{{ self.t("device.calls.phone_book") }}</span></span>
+                                    <input type="checkbox" role="switch" class="sw" name="outbound" value="on"{% if add.outbound %} checked{% endif %} data-pair="calls"><span class="knob" aria-hidden="true"></span>
+                                </label>
+                                <p class="adv-mini">{{ self.t("device.sms.messages") }}</p>
+                                <label class="row">
+                                    <span class="row-label">{{ add.one_way[2] }}</span>
+                                    <input type="checkbox" role="switch" class="sw" name="sms_in" value="on"{% if add.sms_in %} checked{% endif %} data-pair="texts"><span class="knob" aria-hidden="true"></span>
+                                </label>
+                                <label class="row">
+                                    <span class="row-label">{{ add.one_way[3] }}</span>
+                                    <input type="checkbox" role="switch" class="sw" name="sms_out" value="on"{% if add.sms_out %} checked{% endif %} data-pair="texts"><span class="knob" aria-hidden="true"></span>
+                                </label>
+                            </div>
+                        </details>
                     </div>
                     <button type="submit" class="button-wide">{{ self.t("device.calls.add") }}</button>
                 </form>
             </details>
             {#- A family contact another phone has (the user, 2026-11-03): its name, number and photo come with it; back
-                to its new row. Only while there is one. -#}
+                to its new row. Only while there is one; never the phone's own number (design 80 L6). -#}
             {% if !family.is_empty() %}
             <details class="edit cell" id="add-family">
                 <summary class="row row-button">{{ self.t("device.calls.add_family") }}</summary>
@@ -466,9 +438,206 @@
         </div>
         <p class="group-footer">{{ self.t("device.calls.contacts_footer") }} {{ self.t("device.calls.photo_privacy") }}</p>
     </section>
+
+    {#- Design 80 D8: one Avansert at the foot for the rest - the emergency menu, the default Message button, the
+        lock-screen text, the phone's own number, the RCS help once its time under SMS is over, and the sender names.
+        Its row says what it holds and every value that isn't the default, so nothing hides. Its forms return with
+        ?advanced=1, which draws it open (so do a refusal and a notice inside it); they sit only inside it. -#}
+    <details class="section" id="advanced"{% if advanced_open %} open data-reopens{% endif %}>
+        <summary class="row section-toggle">
+            <span class="row-label">{{ self.t("device.calls.advanced") }}<span class="row-sub" data-adv-line="emergency">{{ adv_emergency }}</span>{% if let Some(warn) = adv_emergency_warn %}<span class="row-sub tone-orange" data-adv-line="emergency-rules">{{ warn }}</span>{% endif %}<span class="row-sub" data-adv-line="messages">{{ adv_messages }}</span>{% if number_line %}<span class="row-sub tone-orange" data-adv-line="number">{{ self.t("device.calls.number_missing") }}</span>{% endif %}</span>
+            <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+
+        {#- Design 73: the emergency menu (in Avansert since design 80, its numbers on Avansert's row). A row's up/down
+            returns to the row (#emergency-<id>), Remove and a refusal's line to #emergency, Add Number and a
+            suggestion to the new row; a refused Add Number renders here (400) with its form open. The default 112
+            nothing has stored yet is alone, so it has no buttons. -#}
+        <section id="emergency" aria-labelledby="emergency-title">
+            <h2 class="group-header" id="emergency-title">{{ self.t("device.emergency.title") }}</h2>
+            {% if let Some(text) = emergency_notice %}
+            <div class="group"><p class="flash flash-error" role="status" data-flash="emergency">{{ text }}</p></div>
+            {% endif %}
+            <div class="group">
+                {% for row in emergency %}
+                <div class="row emergency-row" id="{{ row.anchor() }}" data-emergency="{{ row.number }}">
+                    <span class="row-label"><span class="emergency-number">{{ row.number }}</span> {{ row.name }}<span class="row-sub{% if row.warn %} tone-orange{% endif %}">{{ self.t(row.sub) }}</span>{% if let Some(extra) = row.extra %}<span class="row-sub">{{ self.t(extra) }}</span>{% endif %}</span>
+                    {% if let Some(entry) = row.id %}
+                    {% if !(row.first && row.last) %}
+                    <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/move#emergency-{{ entry }}" class="emergency-move">
+                        {% if !row.first %}<button type="submit" class="row-action" name="dir" value="up" aria-label="{{ self.t("device.emergency.up") }}">&uarr;</button>{% endif %}
+                        {% if !row.last %}<button type="submit" class="row-action" name="dir" value="down" aria-label="{{ self.t("device.emergency.down") }}">&darr;</button>{% endif %}
+                    </form>
+                    {% endif %}
+                    {% if row.removable %}
+                    <form method="post" action="/devices/{{ device.id }}/calls/emergency/{{ entry }}/remove#emergency" class="row-end">
+                        <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.emergency.remove_label", [("number", row.number.as_str())]) }}">{{ self.t("device.emergency.remove") }}</button>
+                    </form>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endfor %}
+                {% if emergency_can_add || emergency_add_open %}
+                <details class="edit cell" id="add-emergency"{% if emergency_add_open %} open{% endif %}>
+                    <summary class="row row-button">{{ self.t("device.emergency.add") }}&hellip;</summary>
+                    <form method="post" action="/devices/{{ device.id }}/calls/emergency#add-emergency" class="edit-body">
+                        <label class="field-label" for="emergency_number">{{ self.t("device.emergency.number") }}</label>
+                        <input type="tel" id="emergency_number" name="number" value="{{ emergency_add_number }}" required{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_number" %} aria-invalid="true" aria-describedby="emergency_number-error" autofocus{% endif %}{% endif %}>
+                        {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_number" %}<p class="field-error" id="emergency_number-error">{{ why }}</p>{% endif %}{% endif %}
+                        <label class="field-label" for="emergency_name">{{ self.t("device.emergency.name") }}</label>
+                        <input type="text" id="emergency_name" name="name" value="{{ emergency_add_name }}" maxlength="40"{% if let Some((field, _)) = emergency_add_error %}{% if *field == "emergency_name" %} aria-invalid="true" aria-describedby="emergency_name-error" autofocus{% endif %}{% endif %}>
+                        {% if let Some((field, why)) = emergency_add_error %}{% if *field == "emergency_name" %}<p class="field-error" id="emergency_name-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.t("device.emergency.name_hint") }}</p>{% endif %}
+                        <button type="submit" class="button-wide">{{ self.t("device.emergency.add") }}</button>
+                    </form>
+                </details>
+                {% endif %}
+            </div>
+            <p class="group-footer">{{ self.t("device.emergency.footer") }}</p>
+            {% if !emergency_suggestions.is_empty() %}
+            <h3 class="group-header" id="emergency-suggestions">{{ self.t("device.emergency.suggestions") }}</h3>
+            <div class="group">
+                {% for (number, name) in emergency_suggestions %}
+                <div class="row emergency-row" data-suggestion="{{ number }}">
+                    <span class="row-label"><span class="emergency-number">{{ number }}</span> {{ name }}<span class="row-sub">{{ self.t("device.emergency.always") }}</span></span>
+                    <form method="post" action="/devices/{{ device.id }}/calls/emergency#emergency" class="row-end">
+                        <input type="hidden" name="number" value="{{ number }}">
+                        <input type="hidden" name="name" value="{{ name }}">
+                        <button type="submit" class="row-action" aria-label="{{ self.tp("device.emergency.add_label", [("name", name), ("number", number)]) }}">{{ self.t("common.add") }}</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </section>
+
+        {#- Design 80 D8: "Meldinger" - the phone's default Message button (its own form, `section=button`), then the
+            SMS settings' one form (design 77 D12, §6.8: every field written - a missing switch is off; design 80 §4.5:
+            only the own-number slots it sends, an empty one removes it). The switch saves on change, a number on Enter
+            or when it loses focus. A refused number renders here (400) with what was sent and why under its field.
+            "Bruk dette nummeret" posts its own small form (after the SMS form, `form=`), storing the number the phone
+            reported - never one from the page. -#}
+        <section id="sms-settings" aria-labelledby="sms-settings-title">
+            <h2 class="group-header" id="sms-settings-title">{{ self.t("device.sms.messages") }}</h2>
+            {% if let Some(text) = sms_notice %}
+            <div class="group"><p class="flash flash-error" role="status" data-flash="sms-settings">{{ text }}</p></div>
+            {% endif %}
+            <div class="group group-lines">
+                <div id="message-button">
+                    <form method="post" action="/devices/{{ device.id }}/calls/settings#message-button">
+                        <input type="hidden" name="section" value="button">
+                        <label class="row">
+                            <span class="row-label">{{ self.t("device.calls.message_button") }}</span>
+                            <select class="pick" name="default_message_app" data-autosave>
+                                {% for option in default_message_options %}
+                                <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+                                {% endfor %}
+                            </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </label>
+                        <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+                    </form>
+                </div>
+                <form method="post" action="/devices/{{ device.id }}/calls/sms#sms-settings">
+                    <label class="row">
+                        <span class="row-label">{{ self.t("device.sms.settings.lock_text") }}</span>
+                        <input type="checkbox" role="switch" class="sw" name="sms_lock_text" value="on"{% if sms.lock_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                    </label>
+                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has the switch (an older page
+                        leaves the stored value); disabled until the phone claims `sms_groups_v1`, and then without the
+                        marker, so a page drawn before the capability never turns groups off (code QA M1). -#}
+                    {% if sms.groups_capable %}<input type="hidden" name="groups_shown" value="1">{% endif %}
+                    <label class="row" data-groups>
+                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}<span class="row-sub">{{ self.t("device.sms.settings.groups_sub") }}</span>{% if !sms.groups_capable %}<span class="row-sub tone-orange">{{ self.t("device.sms.settings.groups_update_first") }}</span>{% endif %}</span>
+                        <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %}{% if !sms.groups_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                    </label>
+                    {% for own in sms.own_rows %}
+                    {% if let Some(known) = own.known %}
+                    {#- §4.5: the number the phone has, with where it is from; "Endre…" opens the field (a plain
+                        <details> without JS). The field holds the stored number (empty for none), so a save of the
+                        switch above never stores the SIM's by itself. -#}
+                    <div class="cell" data-own="{{ own.slot }}">
+                        <div class="row"><span class="row-label">{{ own.label }}<span class="row-sub">{{ known.source }}</span></span><span class="row-value own-value">{{ known.number }}</span></div>
+                        <div class="own-actions">
+                            {% if known.use_source.is_some() %}<button type="submit" form="own-use-{{ own.slot }}" class="link-button" data-own-use>{{ self.t("device.sms.own.use") }}</button>{% endif %}
+                            <details class="own-edit"{% if own.error.is_some() %} open{% endif %}>
+                                <summary class="link-button">{{ self.t("device.sms.own.change") }}&hellip;</summary>
+                                <div class="field own-field">
+                                    <label class="field-label" for="{{ own.field }}">{{ own.label }}</label>
+                                    <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}><input type="hidden" name="{{ own.field }}_shown" value="{{ own.shown }}">
+                                    {% if let Some(why) = own.error %}<p class="field-error" id="{{ own.field }}-error">{{ why }}</p>{% endif %}
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="field contact-field" data-own="{{ own.slot }}">
+                        <label class="field-label" for="{{ own.field }}">{{ own.label }}</label>
+                        <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}><input type="hidden" name="{{ own.field }}_shown" value="{{ own.shown }}">
+                        {% if let Some(why) = own.error %}<p class="field-error" id="{{ own.field }}-error">{{ why }}</p>{% else if let Some(hint) = own.hint %}<p class="field-hint">{{ hint }}</p>{% endif %}
+                    </div>
+                    {#- Design 80 §4.4: a conflict - "Bruk" beside each of the two numbers the phone saw. -#}
+                    {% if !own.uses.is_empty() %}
+                    <div class="own-actions" data-own-conflict>
+                        {% for (form_id, _, number) in own.uses %}<button type="submit" form="{{ form_id }}" class="link-button">{{ self.tp("device.sms.own.use_number", [("number", number.as_str())]) }}</button>{% endfor %}
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                    {% endfor %}
+                    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+                </form>
+                {% for own in sms.own_rows %}{% if let Some(known) = own.known %}{% if let Some(source) = known.use_source %}
+                <form method="post" action="/devices/{{ device.id }}/calls/own-number/use#sms-settings" id="own-use-{{ own.slot }}"><input type="hidden" name="source" value="{{ source }}"></form>
+                {% endif %}{% endif %}{% for (form_id, source, _) in own.uses %}
+                <form method="post" action="/devices/{{ device.id }}/calls/own-number/use#sms-settings" id="{{ form_id }}"><input type="hidden" name="source" value="{{ source }}"></form>
+                {% endfor %}{% endfor %}
+                {#- D7 (M4): the RCS step, once its 14 days under SMS are over. -#}
+                {% if rcs_in_advanced %}
+                <details class="info cell" data-rcs-row>
+                    <summary class="row" aria-label="{{ self.t("device.calls.channel.sms_rcs_info_label") }}">
+                        <span class="row-label">{{ self.t("device.calls.rcs_title") }}<span class="row-sub">{{ self.t("device.calls.channel.sms_rcs") }}</span></span>
+                        <svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                    </summary>
+                    <div class="info-panel"><p>{{ self.t("device.calls.channel.sms_rcs_info_managed") }} <a href="{{ rcs_form_url }}" rel="noopener noreferrer" target="_blank">{{ rcs_form_label }}</a>{{ self.t("device.calls.channel.sms_rcs_info_after") }}</p></div>
+                </details>
+                {% endif %}
+            </div>
+            <p class="group-footer">{{ self.t("device.sms.settings.footer") }}</p>
+        </section>
+
+        {#- Design 77 D17: the sender names let through, Add Name (a refusal renders here, 400, with what was typed) and
+            Remove; the honest warning under them. -#}
+        <section id="sms-names" aria-labelledby="sms-names-title">
+            <h2 class="group-header" id="sms-names-title">{{ self.t("device.sms.names.title") }}</h2>
+            <div class="group">
+                {% for name in sms.names %}
+                <div class="row" data-sms-name="{{ name.fold }}">
+                    <span class="row-label">{{ name.name }}</span>
+                    <form method="post" action="/devices/{{ device.id }}/calls/names/remove#sms-names" class="row-end">
+                        <input type="hidden" name="fold" value="{{ name.fold }}">
+                        <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("device.sms.names.remove_label", [("name", name.name.as_str())]) }}">{{ self.t("device.sms.names.remove") }}</button>
+                    </form>
+                </div>
+                {% else %}
+                <p class="row row-note">{{ self.t("device.sms.names.none") }}</p>
+                {% endfor %}
+                {% if !names_full || name_add_open %}
+                <details class="edit cell" id="add-sms-name"{% if name_add_open %} open{% endif %}>
+                    <summary class="row row-button">{{ self.t("device.sms.names.add") }}&hellip;</summary>
+                    <form method="post" action="/devices/{{ device.id }}/calls/names#sms-names" class="edit-body">
+                        <label class="field-label" for="sms_name">{{ self.t("device.sms.names.name") }}</label>
+                        <input type="text" id="sms_name" name="name" value="{{ name_add_value }}" maxlength="40" required autocomplete="off" spellcheck="false"{% if name_add_error.is_some() %} aria-invalid="true" aria-describedby="sms_name-error" autofocus{% endif %}>
+                        {% if let Some(why) = name_add_error %}<p class="field-error" id="sms_name-error">{{ why }}</p>{% else %}<p class="field-hint">{{ self.t("device.sms.names.hint") }}</p>{% endif %}
+                        <button type="submit" class="button-wide">{{ self.t("device.sms.names.add") }}</button>
+                    </form>
+                </details>
+                {% endif %}
+            </div>
+            <p class="group-footer">{{ self.t("device.sms.names.warning") }}</p>
+        </section>
+    </details>
     {% if auto_refresh %}
-    <script src="/static/auto-reload.js?v=5" defer></script>
+    <script src="/static/auto-reload.js?v=8" defer></script>
     {% endif %}
+    <script src="/static/contact-form.js?v=1" defer></script>
     {% if !contacts.is_empty() %}
     <script src="/static/photo-crop.js?v=3" defer></script>
     {% endif %}

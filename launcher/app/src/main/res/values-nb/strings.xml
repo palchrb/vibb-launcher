@@ -216,6 +216,7 @@
     <string name="messages_picture_too_large">Bildet er for stort til å sendes</string>
     <string name="messages_picture_not_now">Bilder kan ikke sendes akkurat nå</string>
     <string name="messages_group_not_allowed">Du kan bare svare når alle i samtalen er i telefonboka di</string>
+    <string name="messages_groups_off">Gruppemeldinger er slått av</string>
     <string name="picture_title">Bilde</string>
     <string name="picture_save">Lagre</string>
     <string name="picture_share">Del</string>

@@ -38,8 +38,22 @@ pub fn older_launcher_loses(calls_mode: &str, sms_mode: &str) -> Option<(bool, b
         .then(|| (sms_mode == "managed", calls_mode == "unmanaged"))
 }
 
+/// Design 80 D13: the launcher honours `call_policy.sms_groups` ("Gruppemeldinger") and reports
+/// `sms_state.own_learned`. Until a phone claims it the Calls page draws the switch disabled - an older engine would
+/// ignore an "off".
+pub const SMS_GROUPS_CAPABILITY: &str = "sms_groups_v1";
+
 /// Whether the phone's newest status report claims the engine (no report: no).
 pub async fn has_engine(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+    has_capability(db, device_id, SMS_ENGINE_CAPABILITY).await
+}
+
+/// Whether the phone's newest status report claims `capability` (no report: no).
+pub async fn has_capability(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    capability: &str,
+) -> Result<bool, sqlx::Error> {
     let latest: Option<Option<String>> = sqlx::query_scalar(
         "SELECT capabilities_json FROM device_status WHERE device_id = ? \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -50,7 +64,7 @@ pub async fn has_engine(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, s
     Ok(latest
         .flatten()
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == SMS_ENGINE_CAPABILITY)))
+        .is_some_and(|caps| caps.iter().any(|c| c == capability)))
 }
 
 /// D17: a sender name is at most 11 characters (an alphanumeric TP-OA holds 11 GSM-7 characters).
@@ -231,7 +245,45 @@ pub fn sanitize_state(value: &serde_json::Value) -> Option<String> {
             .collect();
         kept.insert("hold_full".into(), Value::Object(flags));
     }
+    // Design 80 §4.4: the own number learned from a message - `null` for none, else every number by [sender_ok]'s
+    // rule (`number` may be `null` during a conflict), `at` a non-negative integer, at most two in `conflict`. Anything
+    // else drops the key.
+    match object.get("own_learned") {
+        Some(Value::Null) => {
+            kept.insert("own_learned".into(), Value::Null);
+        }
+        Some(learned) => {
+            if let Some(clean) = own_learned(learned) {
+                kept.insert("own_learned".into(), clean);
+            }
+        }
+        None => {}
+    }
     (!kept.is_empty()).then(|| Value::Object(kept).to_string())
+}
+
+/// [sanitize_state]'s `own_learned` (design 80 §4.4), `None` when it isn't the shape.
+fn own_learned(value: &serde_json::Value) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    let number_ok = |n: &str| sender_ok("number", n) && n.starts_with('+');
+    let number = match value.get("number")? {
+        Value::Null => Value::Null,
+        Value::String(n) if number_ok(n) => Value::from(n.as_str()),
+        _ => return None,
+    };
+    let from = value
+        .get("from")?
+        .as_str()
+        .filter(|n| sender_ok("number", n))?;
+    let at = value.get("at")?.as_i64().filter(|at| *at >= 0)?;
+    let conflict: Vec<Value> = value
+        .get("conflict")?
+        .as_array()?
+        .iter()
+        .take(2)
+        .map(|n| n.as_str().filter(|n| number_ok(n)).map(Value::from))
+        .collect::<Option<_>>()?;
+    Some(serde_json::json!({ "number": number, "from": from, "at": at, "conflict": conflict }))
 }
 
 /// `POST /api/devices/sms-held`'s body limit (§7).
@@ -559,6 +611,7 @@ mod tests {
     #[test]
     fn the_older_launcher_expresses_what_the_old_keys_say() {
         assert_eq!(contract()["capability"], SMS_ENGINE_CAPABILITY);
+        assert_eq!(contract()["groups_capability"], SMS_GROUPS_CAPABILITY);
         for row in contract()["modes"].as_array().unwrap() {
             let (calls, sms) = (
                 row["calls_mode"].as_str().unwrap(),
@@ -667,6 +720,34 @@ mod tests {
         assert!(kept.get("body").is_none());
         assert!(kept["blocked"].get("texts").is_none());
         assert_eq!(kept["own_numbers"].as_array().unwrap().len(), 1);
+        // Design 80 §4.4: `own_learned` - the conflict row and `null` kept exactly; a bad number drops the key; at most
+        // two in the conflict.
+        let mut conflict = state.clone();
+        conflict["own_learned"] = contract["report"]["own_learned_conflict"].clone();
+        let kept: serde_json::Value =
+            serde_json::from_str(&sanitize_state(&conflict).unwrap()).unwrap();
+        assert_eq!(kept, conflict);
+        conflict["own_learned"] = serde_json::Value::Null;
+        let kept: serde_json::Value =
+            serde_json::from_str(&sanitize_state(&conflict).unwrap()).unwrap();
+        assert!(kept["own_learned"].is_null());
+        for bad in [
+            serde_json::json!({"number": "<b>", "from": "+4791234567", "at": 1, "conflict": []}),
+            serde_json::json!({"number": "1881", "from": "+4791234567", "at": 1, "conflict": []}),
+            serde_json::json!({"number": "+4790000002", "from": "x", "at": 1, "conflict": []}),
+            serde_json::json!({"number": "+4790000002", "from": "+4791234567", "at": -1, "conflict": []}),
+            serde_json::json!({"number": null, "from": "+4791234567", "at": 1, "conflict": ["<b>"]}),
+        ] {
+            conflict["own_learned"] = bad.clone();
+            let kept: serde_json::Value =
+                serde_json::from_str(&sanitize_state(&conflict).unwrap()).unwrap();
+            assert!(kept.get("own_learned").is_none(), "{bad}");
+        }
+        conflict["own_learned"] = serde_json::json!({"number": null, "from": "+4791234567", "at": 1,
+            "conflict": ["+4790000002", "+4790000003", "+4790000004"]});
+        let kept: serde_json::Value =
+            serde_json::from_str(&sanitize_state(&conflict).unwrap()).unwrap();
+        assert_eq!(kept["own_learned"]["conflict"].as_array().unwrap().len(), 2);
     }
 
     #[test]

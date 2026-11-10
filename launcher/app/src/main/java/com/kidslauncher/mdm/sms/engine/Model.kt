@@ -121,7 +121,8 @@ sealed interface SendResult {
     data class Refused(val reason: Refusal) : SendResult
 }
 
-enum class Refusal { NOT_ALLOWED, TIME_RULE, SMS_OFF, RULES_UNKNOWN, TOO_LARGE, EMPTY, DUPLICATE_CLIENT_ID }
+/** [GROUPS_OFF]: design 80 D13 - "Gruppemeldinger" is off, so nothing goes to a group. */
+enum class Refusal { NOT_ALLOWED, TIME_RULE, SMS_OFF, RULES_UNKNOWN, TOO_LARGE, EMPTY, DUPLICATE_CLIENT_ID, GROUPS_OFF }
 
 interface MessageEngine {
     fun conversations(): List<Conversation>

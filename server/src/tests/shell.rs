@@ -1430,7 +1430,7 @@ fn every_class_a_template_uses_is_in_style_css() {
 /// summary only - no template with a Leaflet map loads it, nor any other tab page.
 #[tokio::test]
 async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
-    const SCRIPT: &str = "<script src=\"/static/pull-refresh.js?v=2\" defer></script>";
+    const SCRIPT: &str = "<script src=\"/static/pull-refresh.js?v=4\" defer></script>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1465,7 +1465,7 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=10\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=12\" defer></script>"));
     // The tab-switch timing (Q28), off until `?timing=1`: on every page too, deferred.
     assert!(head.contains("<script src=\"/static/nav-timing.js?v=3\" defer></script>"));
     let app = TestApp::new().await;
@@ -1479,10 +1479,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=10"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=12"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=10"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=12"));
     // About's Page timing row turns the timing on in this browser (code QA M2: the installed
     // iPhone app has no address bar), back to its own group.
     let about = app.get_page("/updates", &cookie).await.text();

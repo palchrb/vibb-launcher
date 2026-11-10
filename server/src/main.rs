@@ -1179,6 +1179,11 @@ pub fn build_admin_router(
             "/devices/{id}/calls/sms",
             post(handlers::calls_sms::save_sms),
         )
+        // Design 80 §4.5: "Bruk dette nummeret" stores the number the phone reported.
+        .route(
+            "/devices/{id}/calls/own-number/use",
+            post(handlers::calls_sms::use_own_number),
+        )
         .route(
             "/devices/{id}/calls/names",
             post(handlers::calls_sms::add_name),

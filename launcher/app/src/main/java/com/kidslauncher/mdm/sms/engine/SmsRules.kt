@@ -50,6 +50,9 @@ class SmsJudge(
     val carrier: (Int?) -> Carrier = { Carrier(null, 0) },
     /** D12: each SIM slot's own number as the SIM knows it (normalised; `null` when it doesn't). */
     val simNumbers: () -> List<Pair<Int, String?>> = { emptyList() },
+    /** Design 80 §4.4: the active SIMs as one key (their subscription ids, sorted) - a change clears a learned own
+     * number ([OwnLearning.current]). */
+    val simSet: () -> String = { "" },
 ) {
     /** D12: the phone's own numbers - the parent's, else the SIM's ([MmsGate.ownNumbers]). */
     fun ownNumbers(): Set<String> = MmsGate.ownNumbers(rules?.ownNumbers.orEmpty(), simNumbers())

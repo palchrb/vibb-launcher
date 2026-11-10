@@ -14,6 +14,7 @@ import com.kidslauncher.mdm.server.dto.SmsHeldAnswer
 import com.kidslauncher.mdm.server.dto.SmsHeldBody
 import com.kidslauncher.mdm.server.dto.SmsHeldRefusal
 import com.kidslauncher.mdm.server.dto.SmsHoldFull
+import com.kidslauncher.mdm.server.dto.SmsOwnLearned
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
 import com.kidslauncher.mdm.server.dto.SmsState
 import com.kidslauncher.mdm.server.smsRestricted
@@ -129,11 +130,34 @@ class SmsContractTest {
             blocked = SmsBlockedCounts(number = 0, short = 1, alphanumeric = 2, malformed = 0, empty = 0, group = 0, badLocation = 0, overCap = 1),
             held = 3, released = 1, expired = 1, parseFailures = 0, mmsWaiting = 0, mmsDataAllowed = true, mmscKnown = false,
             lastError = null, ownNumbers = listOf(SmsOwnNumber(1, "+4790000001"), SmsOwnNumber(2, null)), holdFull = SmsHoldFull(numbers = false, names = true),
+            ownLearned = SmsOwnLearned("+4790000002", "+4791234567", 1762700000000, emptyList()),
         )
         assertEquals(
             contract["report"]!!.jsonObject["sms_state"],
             Json.parseToJsonElement(ServerJson.encodeToString(SmsState.serializer(), state)),
         )
+        // Design 80 §4.4: a conflict - no number in use, both seen.
+        val conflict = SmsOwnLearned(null, "+4791234567", 1762700400000, listOf("+4790000002", "+4790000003"))
+        assertEquals(
+            contract["report"]!!.jsonObject["own_learned_conflict"],
+            Json.parseToJsonElement(ServerJson.encodeToString(SmsOwnLearned.serializer(), conflict)),
+        )
+    }
+
+    /** Design 80 D13: the group switch's capability, and `call_policy.sms_groups` - sent true and false, absent from an
+     * older server read as true (today's behaviour). */
+    @Test
+    fun `the group switch is claimed and decodes, absent as on`() {
+        assertEquals(contract.str("groups_capability"), SMS_GROUPS_CAPABILITY)
+        assertTrue(SMS_GROUPS_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
+        val policy = contract["policy"]!!.jsonObject
+        val on = ServerJson.decodeFromString(CallPolicy.serializer(), policy["call_policy"].toString())
+        assertTrue(on.smsGroups && on.toRules().smsGroups)
+        val off = ServerJson.decodeFromString(CallPolicy.serializer(), policy["groups_off"].toString())
+        assertFalse(off.smsGroups || off.toRules().smsGroups)
+        assertTrue(ServerJson.decodeFromString(CallPolicy.serializer(), """{"managed": true}""").smsGroups)
+        // Rules stored before it read as on.
+        assertTrue(com.kidslauncher.mdm.calls.decodeCallRules("""{"calls_enabled": true}""")!!.smsGroups)
     }
 
     @Test

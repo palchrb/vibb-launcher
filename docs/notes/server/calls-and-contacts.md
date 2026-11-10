@@ -286,3 +286,138 @@ parent decides on the Calls page. It follows design r13's time request.
   contact's kept name across two phones and Element X, the prefill and retry rules, decisions on their own phone and
   "Add from the family", escaping and the push budget's digest), `handlers::contact_requests::tests` (the shared
   vectors), `parent_events::tests` (the words and target), `i18n_pages` (the card and "Legg til…" in Norwegian).
+- **A short number from a request** (the user, 2026-11-09, built with design 80 step 1; replaces QA L3's "texting
+  off"): "Legg til…" for a short number starts with **every** switch off - calls and texts both ways, Home, pictures -
+  and the line under the number field says the parent chooses: "Kortnummer - kan koste penger. Velg selv om barnet
+  skal kunne ringe og sende melding til det." (`device.requests.short_choose`; it follows the number in the field, as
+  before). The card keeps "Kortnummer - kan koste penger".
+
+## A simpler Calls & Contacts page (design 80, `docs/design/80-calls-contacts-simpler.md`)
+
+Steps 1 and 2: server and template only - no policy key, contract file, migration or launcher change.
+- **A contact's four plain choices** (`handlers::calls_form`, D1-D4): "Kan ringe og ringes" (`calls`: `allow_inbound`
+  + `allow_outbound`), "Kan sende og få meldinger" (`texts`: `sms_in` + `sms_out`), "Bilder i meldinger", "På
+  Hjem-skjermen". A channel whose two directions differ is the one-line "Tilpasset" row (no switch, no sub-line, the
+  second-label colour), and the contact's Avansert is drawn open. **`calls_form::both_ways`** (D3) resolves each
+  channel from `calls_shown`/`texts_shown` (what the main row showed: `on`, `off`, `custom`), the two-way switch and
+  the one-way pair (always posted - Avansert is in the same form): a changed two-way switch sets both; otherwise the
+  pair as posted, except that a post leaving the switch alone with the pair exactly as shown implies keeps the
+  **stored** pair (L1: a stale tab never undoes a split made meanwhile); `custom`, absent or any other value (an older
+  page, N4) is the pair as posted. Without JS a post that changed both the switch and its pair takes the switch.
+  `calls_form::resolve` applies it to a form; an emergency number's texts row is `sms_out` alone ("{kid} kan sende
+  melding til {contact}") and `sms_in` is never stored (R2-H1). A refusal (a bad Matrix ID, Add Contact's name or
+  number) is redrawn from the resolved pairs (L2).
+- **Sub-lines by the channel modes** (`calls_form::subs`, D1, M2): the calls row while calls aren't "Styrt av Vibb"
+  ("Samtaler er av - bare nødnumre kan ringes"; "Samtaler er ikke styrt - alle kan ringe. {contact} står (ikke) i
+  telefonboken"; with both "Ikke styrt" "Gjelder når samtaler eller SMS er styrt av Vibb"), texts and pictures while SMS
+  isn't ("Gjelder når SMS er styrt av Vibb"), pictures with no text either way, Home while `outbound` is off.
+- **The contact's Avansert** (`details.adv`, D2): "{contact} kan ringe {kid}", "{kid} kan ringe {contact}" (sub "I
+  telefonboken"), the two text directions (the incoming one disabled with why for an emergency number), the Message
+  button (stacked), and the Matrix ID only while the button opens Element X (the contact's or the phone's default) or
+  one is stored - "Mangler Matrix-ID" (orange) or "Brukes når knappen åpner Element X" under it. **A post without the
+  field keeps the stored ID** (it isn't drawn while unused; an empty field removes it). Its row says what it hides:
+  "Tilpasset", else the contact's own Message button, else "Matrix-ID lagret". Drawn open for a split, Element X
+  without an ID, a refused Matrix ID, or `&more=<id>`.
+- **The closed row** (`calls_form::contact_row`, D6, H1): "Anrop og meldinger" / "Bare anrop" / "Bare meldinger" /
+  "Ingen anrop eller meldinger" while both channels are alike, else the calls part ("Anrop begge veier", "Anrop inn",
+  "Anrop ut", "Ingen anrop") with the texts part on the second line; the extras "Hjem" and "uten bilder".
+- **`more` and the returns** (D9): a hidden `more` in each contact form, kept in step with its Avansert by
+  `static/contact-form.js` (`toggle`); a save with `more=1` returns to `?open=<id>&more=<id>#contact-<id>` and comes
+  back with the Avansert open. Without JS `more` keeps its drawn value.
+- **Add Contact** (D5): the same four choices and an Avansert with the one-way switches, "Kontakten"/"kontakten" in the
+  words; posts `switches=on`, `calls_shown`/`texts_shown` and `more`. `static/contact-form.js` keeps it agreeing with
+  itself (a two-way flip sets its pair; `*_shown` is the pair's class; the switch and "Tilpasset" swap by `hidden`,
+  never removed - H2). The three ways in: plain (all on), "Opprett kontakt…" (calls off, texts "Tilpasset" with only
+  "Kontakten kan sende melding til", Avansert open), "Legg til…" (§14's). **The phone's own number is refused** ("Det
+  er telefonens eget nummer", L6): the stored own numbers and the SIMs' last reported ones
+  (`calls_sms::phone_numbers`); "Legg til fra familien" leaves such a contact out, and a forged post of one is refused
+  (`?notice=contact_gone`).
+- **D11:** `auto-reload.js` (v6), `pull-refresh.js` (v3) and `reconnect.js` (v11) count only a shown open `<details>`
+  (`shownOpen`: none of its `<details>` ancestors closed), so a contact's Avansert drawn open inside its closed row
+  stops no reload, pull or reconnect.
+- **The page's order** (D7): the warnings, "Meldinger som venter" (a blocked group row says "Mens telefonens nummer
+  mangler, blokkeres alle gruppemeldinger" while SMS is managed and no number is known - M5), "Forespørsler", the
+  channels (their own form, `section=channels`), Kontakter, then **Avansert** (`details.section#advanced`, D8).
+  Under SMS: the RCS step before "Styrt av Vibb" as before, and for 14 days after `roles_changed_at` while managed
+  ("Slå av chatfunksjoner i Meldinger hvis du ikke har gjort det.", its ⓘ leading with Google's form; M4), after that
+  the row "Chatfunksjoner (RCS)" in Avansert; and the quiet line "Telefonens nummer mangler - gruppemeldinger
+  blokkeres" (to `?advanced=1#sms-settings`) while SMS is managed and no number is known.
+- **The page's Avansert** (D8): its row names the emergency menu ("Nødmeny: 112, 113"), in orange the count that
+  follows the call rules, "Meldingsknapp: {app}" with " · {n} avsendernavn" and " · Meldingstekst på låseskjermen", and
+  in orange the missing number. Opened: the emergency menu (design 73's routes), "Meldinger" (`#sms-settings`: the
+  phone's default Message button - `/calls/settings` with `section=button`, `#message-button` -, the SMS form, the RCS
+  row), the sender names. Every return there carries `?advanced=1` (also a notice's), which draws it open; a refusal
+  inside it draws it open too.
+- **`/calls/settings` split** (design 31 §5.6): `section=channels` writes only the modes, `section=button` only
+  `default_message_app` (back to `?advanced=1#message-button`), no marker is the old write-all.
+- **The phone's own number** (§4.5, `calls_sms::own_rows`): a row per active SIM in the last report
+  (`calls_sms::reported_own`) and per stored slot. The SIM knows it and nothing is stored: "Telefonens nummer · {n}",
+  "Fra SIM-kortet", **"Bruk dette nummeret"** (`POST /devices/{id}/calls/own-number/use`, `source=sim:<slot>`: stores
+  the number of the phone's last report, never one from the form, by `save_sms`'s checks; a source the report no
+  longer has lands on `?advanced=1&notice=own_number_gone`, nothing stored) and **"Endre…"** (a plain `<details>`
+  holding the field with the stored number, empty for none - so a save of the switch never stores the SIM's number).
+  Stored and agreeing (or the SIM doesn't know): "· Lagret" with "Endre…". Stored and the SIM says another: the field
+  (and the mismatch finding, now "Sjekk Telefonens nummer under Avansert"). A stored slot for a SIM not in the phone:
+  its field, "SIM 2 - ikke i telefonen nå" (L5). Nothing known: the field, "Telefonen vet ikke nummeret sitt ennå. Uten
+  det blokkeres gruppemeldinger." "SIM 1"/"SIM 2" only on a phone reporting two or a stored slot 2. **`/calls/sms`
+  writes only the slots it is sent** (an absent field keeps its slot, an empty one removes it); `sms_lock_text` as
+  before. "Bruk dette nummeret" is a `<button form="own-use-<slot>">` of a small form after the SMS form, so Enter in
+  a field never posts it.
+- **Step 3, "Gruppemeldinger" and the learned number** (D13, §4.4; one commit with the launcher):
+  `device_policy.sms_groups` (migration 0134, default on), sent as `call_policy.sms_groups` always
+  (`policy_json_keys_snapshot`, `sms_contract.json`'s `policy` and `groups_off`). The switch sits in the SMS form
+  (Avansert › Meldinger) with a hidden `groups_shown`: only a post with it writes `sms_groups` (an older page keeps
+  it), and only for a phone whose last report claims `sms_groups_v1` (`sms::SMS_GROUPS_CAPABILITY`,
+  `sms::has_capability`) - before, the switch is drawn disabled with "Oppdater Vibb One først". Off: Avansert's row adds
+  "Gruppemeldinger av", a blocked group row says "Gruppemeldinger er slått av", and the missing-number lines are silent
+  (nothing is lost for want of the number). `sms_state.own_learned` (`sms::sanitize_state`: `null`, or every number by
+  `sender_ok` and a full `+` number, `at` >= 0, at most two in `conflict`; anything else drops the key) gives the
+  learned rows of §4.5 on the first slot while nothing is stored and no SIM knows the number: "Lært fra en melding fra
+  {contact}" (the teacher named by the contact, else the number) with "Bruk dette nummeret" (`source=learned`) and
+  "Endre…"; a conflict is the field with "To meldinger viste ulike numre: {a} og {b}. Skriv inn det riktige." and "Bruk
+  {number}" beside each (`source=conflict:<0|1>`). Those store the reported number into the first active slot with no
+  stored number. A learned number counts for "number missing" only while it is in use, and is refused as a contact
+  (`calls_sms::phone_numbers`). Tests: `tests::calls_simpler::the_group_switch_needs_the_capability_and_its_marker`,
+  `the_learned_number_and_a_conflict`, `tests::sms` (the policy with `sms_groups` both ways), `sms::tests` (the report's
+  `own_learned`, its conflict row and the hostile ones).
+- **The code QA's fix round** (`docs/review/qa-80-code.md`; these replace what the bullets above say):
+  - `groups_shown` is drawn only with an enabled switch (`sms_groups_v1` claimed), so a page drawn before the
+    capability never turns groups off (M1).
+  - **A learned number is no bar to a contact** (L1): `phone_numbers` (Add Contact's refusal, the family list) holds
+    only the stored and the SIM-reported numbers - anyone can send the message that taught the phone. Added as a
+    contact, it reaches the phone, which drops the learned number; the page no longer offers a learned number that
+    is a contact.
+  - **A stale SMS form never writes a slot it didn't change** (L3): every own-number field posts
+    `own_number_<n>_shown` (what the page drew), and `save_sms` writes a slot only when its field differs; an older
+    page without it is as before. The Avansert drawn open from `?advanced=1` carries `data-reopens`, which
+    `auto-reload.js` (v7), `pull-refresh.js` (v4) and `reconnect.js` (v12) skip in `shownOpen` - it comes back open -
+    so the page reloads in place again; a `<details>` opened inside it still blocks. Second pass (V1):
+    `auto-reload.js` (v8) also waits while a text field has the focus or any field differs from what the page came
+    with (reconnect's `edited` rule, its `typing`) and reloads once the edit is saved or undone, so a number typed into
+    that Avansert during the 3 s refresh is never lost and the refresh never stops for good.
+  - **One rule for "Bruk dette nummeret"** (L4): `usable_own` (`phone::normalize` leaves the number as it is, and a full
+    `+` number that isn't short or an emergency number) filters every SIM and learned number in `reported_own`; the
+    row is offered by it and the route stores only what it kept. A SIM reporting `113`, `90000009` or `+4712` reads as
+    unknown. Second pass (V2): one helper, `learned_offer`, decides both whether the page offers the learned number
+    and whether the tap stores it (nothing stored, no SIM reporting a number, not a contact); a stale tap lands on
+    `?notice=own_number_gone` and stores nothing.
+  - **Add Contact of an emergency number without JS** follows the two-way texts switch (`resolve` runs `both_ways` on
+    `(sms_out, sms_out)`), and the refusal redraw judges the sent number (L5).
+  - An unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`), never the write-all (N2). No free
+    slot for a learned or conflict number lands on `?notice=own_number_no_slot` with its own words (N4). The short-number
+    line names the kid (N5). "Tilpasset" takes the switch's box as its minimum (`flex: 0 0 auto; min-width: 51px`, no
+    gap of its own; second pass V3): at the default size its label wraps as beside the switch, so a save moves nothing;
+    at a larger font the word takes room from the label and is never clipped (N3). Avansert › Meldinger has hairlines between its rows (`.group-lines`).
+  - Tests: `tests::calls_simpler::a_page_drawn_before_the_capability_never_turns_groups_off`,
+    `a_learned_number_can_be_added_as_a_contact`, `a_stale_sms_form_keeps_a_number_stored_meanwhile`,
+    `bruk_dette_nummeret_only_for_a_number_the_tap_stores`, `an_emergency_number_added_without_js_follows_the_texts_switch`,
+    `an_unknown_settings_section_is_refused`; `contact_requests::the_prefill_and_retry_rules` (every switch, the name);
+    the reconnect jstest for `data-reopens`; second pass: `a_stale_learned_offer_stores_nothing` and the auto-reload
+    jstest "a typed or focused field in an open data-reopens Avansert holds the reload until it is undone".
+- Tests: `tests::calls_simpler` (D3 through the form, L1, H2, N4, `more`, L2, the Avansert row and the Matrix ID, the
+  sub-lines, Add Contact's ways in and the own-number refusal, the split settings form, the own number by its source,
+  the page's order and Avansert row, the RCS line's 14 days), `calls_form::tests` (`both_ways`' table, the emergency
+  number, the sub-lines), `calls::tests::a_contact_row_says_which_way_calls_go` (rewritten for D6), the rewritten form
+  table in `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, `i18n_pages` (Avansert open, a held
+  prefill, the seeded split Mormor), and the jstests `contact-form.test.js` and the D11 cases in `auto-reload`,
+  `pull-refresh` and `reconnect`.

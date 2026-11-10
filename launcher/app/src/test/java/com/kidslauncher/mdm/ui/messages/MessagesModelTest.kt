@@ -352,6 +352,11 @@ class MessagesModelTest {
         assertEquals(ComposeState.GROUP_NOT_ALLOWED, composeState(j, listOf(mamma.number, trener.number)))
         assertEquals(ComposeState.NOT_NOW, composeState(judge(timeBlocked = true), listOf(mamma.number, bestemor.number)))
         assertEquals(ComposeState.READ_ONLY, composeState(judge(rules(ChannelMode.OFF)), listOf(mamma.number, bestemor.number)))
+        // Design 80 D13: "Gruppemeldinger" off - every group says so, a one-to-one thread stays open.
+        val off = judge(rules().copy(smsGroups = false))
+        assertEquals(ComposeState.GROUPS_OFF, composeState(off, listOf(mamma.number, bestemor.number)))
+        assertEquals(ComposeState.OPEN, composeState(off, listOf(mamma.number)))
+        assertEquals(AfterRefusal.GROUPS_OFF, afterRefusal(Refusal.GROUPS_OFF))
         // One participant is the one-to-one rule.
         assertEquals(composeState(j, trener.number), composeState(j, listOf(trener.number)))
         val group = Conversation(ConversationId("g"), listOf(Participant(mamma.number, 1), Participant("+4790000077", null)), null, null, 1, 0, 0, false)

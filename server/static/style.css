@@ -3038,3 +3038,126 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 .add-switches { margin: 0 -16px 16px; }
 /* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
 details.confirm > summary.row.held-allow { color: var(--tint); font-weight: 400; }
+
+/* Design 80: a contact's "Avansert" inside its form, under the four plain choices - a tinted row that opens the
+   one-way switches, the Message button and the Matrix ID on the page's grey, with small group words. Add Contact's
+   form has the same. A two-way switch and its "Tilpasset" row swap with [hidden] (static/contact-form.js); .row's
+   display would beat the attribute. */
+details.adv > summary {
+    list-style: none;
+    cursor: pointer;
+}
+details.adv > summary::-webkit-details-marker {
+    display: none;
+}
+details.adv > summary > .row-label {
+    color: var(--tint);
+}
+details.adv > summary .chev {
+    transition: transform 0.2s;
+}
+details.adv[open] > summary .chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+.adv-body {
+    margin: 0 0 6px 16px;
+    border-radius: 12px;
+    background: var(--bg);
+}
+.adv-mini {
+    margin: 0;
+    padding: 10px 16px 0;
+    color: var(--label-2);
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+[data-two-way][hidden],
+[data-custom][hidden],
+[data-adv-value][hidden] {
+    display: none;
+}
+/* D4/L8: "Tilpasset" is one line and as tall as the switch it replaces (11 + 31 + 11 px), so a save that splits a
+   channel moves nothing under it. */
+div.row[data-way],
+div.row[data-custom] {
+    min-height: 53px;
+}
+/* Code QA N3, V3: the value takes the switch's box - no gap of its own (the switch has none: `.sw`'s margin is 0) and
+   at least its 51 px - so at the default size the label beside "Tilpasset" has the switch row's room and wraps with
+   it; at a larger font the word grows into the label's room instead of being clipped. */
+div.row[data-way] > .row-value,
+div.row[data-custom] > .row-value {
+    flex: 0 0 auto;
+    min-width: 51px;
+    margin-left: 0;
+    text-align: right;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+}
+
+/* The page's Avansert › Meldinger: its rows sit in more than one form, so the group's own sibling rule can't draw the
+   hairlines between them. */
+.group-lines .row ~ .row::before,
+.group-lines form + form .row:first-child::before,
+.group-lines div + form .row:first-child::before,
+.group-lines form > .cell::before,
+.group-lines form > .contact-field::before,
+.group-lines > details.cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+.group-lines .cell,
+.group-lines .contact-field {
+    position: relative;
+}
+
+/* Design 80 §4.5: the phone's own number as a row with its source, then "Bruk dette nummeret" and "Endre…" as two
+   tinted words; "Endre…" opens the field on a line of its own. The quiet line under SMS while it is missing. */
+.own-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 18px;
+    padding: 0 16px 12px;
+    margin-top: -4px;
+}
+.link-button {
+    -webkit-appearance: none;
+    appearance: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--tint);
+    font: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+    list-style: none;
+}
+details.own-edit > summary::-webkit-details-marker {
+    display: none;
+}
+details.own-edit[open] {
+    flex-basis: 100%;
+}
+.own-field {
+    padding: 8px 0 0;
+}
+.own-value {
+    white-space: nowrap;
+}
+.number-line {
+    display: block;
+    color: var(--label-2);
+    text-decoration: none;
+}
+.number-line-link {
+    color: var(--tint);
+    white-space: nowrap;
+}

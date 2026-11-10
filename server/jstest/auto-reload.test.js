@@ -191,3 +191,41 @@ test("the app lock: no reload once it is due - the lock instead (design 74 D3.3)
     win.advance();
     assert.deepStrictEqual(locks, ["lock"], "once");
 });
+
+// Design 80 D11 (M1): a contact's row (a <details>) holding its Avansert, drawn open; `rowOpen` the row's state.
+function nestedOpen(rowOpen) {
+    const row = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" && rowOpen, parentNode: { nodeName: "MAIN" } };
+    const adv = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: row } };
+    return rowOpen ? [row, adv] : [adv];
+}
+
+// Design 80, code QA V1: the Calls page's Avansert drawn open from ?advanced=1 (`data-reopens`) doesn't hold the
+// reload, but a phone number typed in it does - only while it differs from what the page came with, or has the focus.
+test("a typed or focused field in an open data-reopens Avansert holds the reload until it is undone", () => {
+    const win = fakeWindow();
+    const advanced = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" || n === "data-reopens", parentNode: null };
+    const field = { tagName: "INPUT", type: "tel", value: "", defaultValue: "" };
+    win.document.querySelectorAll = (selector) => (selector === "details[open]" ? [advanced] : [field]);
+    install(win);
+    field.value = "9000";
+    win.advance();
+    assert.strictEqual(win.reloads, 0, "typed digits hold it");
+    field.value = "";
+    win.document.activeElement = field;
+    win.advance();
+    assert.strictEqual(win.reloads, 0, "a focused text field holds it");
+    win.document.activeElement = { tagName: "BODY" };
+    win.advance();
+    assert.strictEqual(win.reloads, 1, "undone and left: the reload goes on");
+});
+
+test("a closed contact holding an open Avansert doesn't stop the reload; an opened one does (design 80 D11)", () => {
+    for (const rowOpen of [false, true]) {
+        const win = fakeWindow();
+        const open = nestedOpen(rowOpen);
+        win.document.querySelectorAll = (selector) => (selector === "details[open]" ? open : []);
+        install(win);
+        win.advance();
+        assert.strictEqual(win.reloads, rowOpen ? 0 : 1, `row open: ${rowOpen}`);
+    }
+});

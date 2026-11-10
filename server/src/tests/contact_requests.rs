@@ -866,7 +866,7 @@ async fn a_request_never_renames_a_family_contact() {
 }
 
 /// QA L1-L3 and the L4 gaps on the form: one prefill source wins; a retry is `accepted` before any check; a short
-/// number starts with texting off and repeats the cost warning; a decided request doesn't open Add Contact; a refused
+/// number starts with calls and texts off and says the parent chooses; a decided request doesn't open Add Contact; a refused
 /// Add Contact from a request keeps the request and the tick.
 #[tokio::test]
 async fn the_prefill_and_retry_rules() {
@@ -902,9 +902,23 @@ async fn the_prefill_and_retry_rules() {
         .get_page(&format!("/devices/{id}/calls?request={:032x}", 2), &cookie)
         .await
         .text();
-    assert_eq!(input_checked(&short, "sms_out", "on"), Some(false));
-    assert_eq!(input_checked(&short, "outbound", "on"), Some(true));
+    // The user (2026-11-09, design 80): the parent chooses - calls and texts both start off, and the line says so.
+    for (switch, on) in [
+        ("calls", false),
+        ("texts", false),
+        ("inbound", false),
+        ("outbound", false),
+        ("sms_in", false),
+        ("sms_out", false),
+        // Code QA L6: Home and pictures off too - every switch.
+        ("mms", false),
+        ("show_on_home", false),
+    ] {
+        assert_eq!(input_checked(&short, switch, "on"), Some(on), "{switch}");
+    }
     assert!(short.contains("data-request-short"));
+    // Code QA N5: the kid by name, as the rest of the page.
+    assert!(short.contains("Choose whether Anna may call and text it."));
     // A refused save from the request keeps it and the tick.
     let request = format!("{:032x}", 1);
     let refused = app

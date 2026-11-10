@@ -62,6 +62,9 @@ enum class ComposeState {
 
     /** A group with someone the kid may not text (D12): "Du kan bare svare når alle i samtalen er i telefonboka di". */
     GROUP_NOT_ALLOWED,
+
+    /** Design 80 D13: "Gruppemeldinger" is off - a group conversation is read-only: "Gruppemeldinger er slått av". */
+    GROUPS_OFF,
 }
 
 /**
@@ -71,6 +74,10 @@ enum class ComposeState {
 fun composeState(judge: SmsJudge, targets: List<String>): ComposeState {
     if (targets.size <= 1) return composeState(judge, targets.singleOrNull())
     val each = targets.map { composeState(judge, it) }
+    // Design 80 D13: with group texts off, a group says so - unless the channel itself is closed or unreadable.
+    if (judge.rules?.smsGroups == false && each.none { it == ComposeState.READ_ONLY || it == ComposeState.UNAVAILABLE }) {
+        return ComposeState.GROUPS_OFF
+    }
     return when {
         each.all { it == ComposeState.OPEN } -> ComposeState.OPEN
         // The channel's or the time rule's answer is the same for all; only the people differ.
@@ -131,6 +138,9 @@ enum class AfterRefusal {
 
     /** An empty text: nothing to say. */
     NOTHING,
+
+    /** Design 80 D13: "Gruppemeldinger er slått av". */
+    GROUPS_OFF,
 }
 
 fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
@@ -141,6 +151,7 @@ fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
     Refusal.TOO_LARGE -> AfterRefusal.TOO_LONG
     Refusal.DUPLICATE_CLIENT_ID -> AfterRefusal.SEND_AGAIN
     Refusal.EMPTY -> AfterRefusal.NOTHING
+    Refusal.GROUPS_OFF -> AfterRefusal.GROUPS_OFF
 }
 
 /**

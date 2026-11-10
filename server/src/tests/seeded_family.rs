@@ -387,6 +387,23 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     .execute(&app.db)
     .await
     .unwrap();
+    // Design 80: Mormor, a contact whose directions differ ("Tilpasset", her Avansert drawn open) and whose Message
+    // button opens Element X without a Matrix ID ("Mangler Matrix-ID").
+    let mormor: i64 = sqlx::query_scalar(
+        "INSERT INTO contacts (name, phone_number) VALUES ('Mormor', '+4790000055') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_contacts (device_id, contact_id, allow_inbound, allow_outbound, sms_in, sms_out, mms, \
+         message_app) VALUES (?, ?, 1, 0, 1, 0, 0, 'element')",
+    )
+    .bind(anna)
+    .bind(mormor)
+    .execute(&app.db)
+    .await
+    .unwrap();
 
     // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
     // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.

@@ -414,6 +414,8 @@ class SmsEngine(
         if (command.body.length > SEND_MAX) return SendResult.Refused(Refusal.TOO_LARGE)
         val judge = judge()
         val targets = targetsOf(command) ?: return SendResult.Refused(Refusal.NOT_ALLOWED)
+        // Design 80 D13: "Gruppemeldinger" off - nothing goes to a group, whoever is in it.
+        if (targets.size > 1 && judge.rules?.smsGroups == false) return SendResult.Refused(Refusal.GROUPS_OFF)
         // D5 for every recipient: one refusal refuses the whole message (D12: a group reply only when everyone in it may
         // be texted).
         val allows = targets.map { target ->
@@ -515,6 +517,11 @@ class SmsEngine(
         val conversation = row.conversationId?.let { store.conversation(it) }
         val recipients = conversation?.participants?.map { it.address }?.takeIf { it.size > 1 } ?: listOfNotNull(row.sender)
         val pictures = partsOf(row).any { it.sha256 != null }
+        // Design 80 D13: a group message queued before "Gruppemeldinger" went off isn't sent.
+        if (recipients.size > 1 && judge.rules?.smsGroups == false) {
+            setDelivery(row, Delivery.FAILED, "refused:${Refusal.GROUPS_OFF.name.lowercase()}")
+            return
+        }
         for (recipient in recipients.ifEmpty { listOf("") }) {
             when (val verdict = SmsRules.decideSend(recipient, judge)) {
                 is SmsRules.SendVerdict.Refused -> {
