@@ -60,6 +60,7 @@ mod sms;
 mod sound_mode;
 mod spotify;
 mod startup;
+mod status_bar;
 mod storytel;
 mod streams;
 #[cfg(test)]
@@ -1794,6 +1795,8 @@ pub fn build_admin_router(
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
         .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
+        // Every page's iPhone status bar style by Safari's version (`status_bar`, 2026-11-10).
+        .layer(axum::middleware::from_fn(status_bar::old_safari_bar))
         .layer(axum::middleware::from_fn(admin_auth::admin_headers))
         // Text answers gzip'd, never a page with a secret (`admin_auth::Compressible`).
         .layer(
