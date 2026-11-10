@@ -175,10 +175,68 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   marks the thread read only while it is in front and follows (`threadReads`), so a message that comes in while the kid
   reads older ones stays unread - Home's badge and the list's dot show it if the kid leaves without going down - until
   the end is reached: turning following on (`follow`) reads once more, which marks it read and cancels its
-  notification. Nothing tells the kid meanwhile: no notification while the thread is in front (`SmsRuntime`), no "new
-  message" mark, no sound - the user's to ask for. The cause of the missed follows: the scroll hung on one
+  notification. Meanwhile the thread's "Ny melding" mark tells the kid (below); still no notification while the thread
+  is in front (`SmsRuntime`) and no sound. The cause of the missed follows: the scroll hung on one
   `submitList`'s commit callback, which `AsyncListDiffer` never runs for a list overtaken by the next one - and a new
   message's read is followed at once by another (its own `markRead`, a delivery update), which didn't ask to scroll.
+- **The "Ny melding" mark (2026-11-10, the user; branch `thread-new-mark`):** pure `threadNewMark(following, seenSeq,
+  messages)` -> `NewMark` (`MessagesModelTest`, with the wiring's source pin). While the thread doesn't follow and a
+  message has come in that the list's end hasn't been shown for, a small pill says "Ny melding" - "Nye meldinger" for
+  more than one, no count - over the list's lower edge, centred, above the compose bar and so above the keyboard
+  (`thread_new` in `thread_list_frame`, which now wraps the list and is what the emoji picker hides). Never for the
+  kid's own message (a send goes to the end) and never for a reaction alone (no bubble, no `seq` among the messages).
+  **What counts as shown:** `ThreadActivity.seenSeq`, the newest `seq` the end was shown with - set in one place, the
+  latest list's commit callback in `show`, with the scroll to the end of a thread that follows (code QA L2: set by
+  `show` itself, a message whose list the kid scrolled away from before it was in counted as seen, unshown), and reset
+  by `take`; the mark counts the IN messages after it. Turning following on (`follow`) doesn't set it - `newestSeq` may
+  tell of a list that isn't in yet - but takes the mark away at once (a thread that follows has none) and reads, and
+  that read's list sets it; a kid who reaches the end by hand and leaves it before that read is in gets the mark once
+  more for what was there, never a miss. In memory only: a rebuilt screen opens following, at its end, so nothing is
+  owed; a screen that was only paused or stopped keeps it, and the first read after the return shows the mark for what
+  came meanwhile. `take` stops a coasting list first (code QA L5): the old thread's fling would turn following off
+  before the new thread's first list, and the mark would tell of its whole page. **A tap** closes "Slette meldingen?"
+  and the reaction panel (their bubble leaves the screen; code QA L1), stops a coasting list, turns following on
+  through `follow` (which reads the thread and cancels its notification, as reaching the end by hand does) and goes to
+  the last position; `afterLayout` goes on to a tall bubble's bottom. The mark leaves whenever following turns on,
+  however that came about. **The tap's focus (code QA L4; the emulator pass saw the keyboard's fall to the header's
+  back button):** the mark goes, and a focus on a view that went falls to the window's first element - so `toEnd`
+  takes along the focus the mark had, and only that. The keyboard's (`isFocused`: Enter on the mark) goes to the
+  compose field while the bar shows, asked before the mark goes - the kid came for the newest message, and the answer
+  is written there; the field takes focus without a layout to wait for -, else (the read-only line, a time rule) to
+  the last bubble.
+  TalkBack's (`isAccessibilityFocused`: the double-tap) goes to the last bubble, the message the tap was for
+  (`ACTION_ACCESSIBILITY_FOCUS` on `bubble`, the row's one node). The last bubble gets it in `afterLayout`, at the
+  first layout that has it (`endFocus`, `endSpoken`; reset by `take`). A finger's tap moves no focus (no keyboard
+  opens), and neither does a mark that leaves because the kid scrolled to the end. Known: with the fade off (the
+  system's animations off) and no compose bar, the keyboard's focus is on the header for the one frame until that
+  layout; and a last bubble taller than the list is scrolled to its top by the keyboard's focus, as by a Tab onto it.
+  **A drag that begins on the mark (the emulator pass's F1)** scrolls the list as one that begins beside it - before,
+  the button over the list took the whole gesture, a dead strip of 105-158 dp where a thumb starts its way down.
+  `dragsThroughMark`: the mark's touch listener hands every event of the gesture on to the list's own `onTouchEvent`,
+  moved to the list's coordinates - what a list gets for a touch none of its rows takes; never its `dispatchTouchEvent`,
+  which would press and long-press the bubble under the mark. Until the list drags (its own touch slop) the mark keeps
+  its press and its tap; then the mark's press is cancelled (an `ACTION_CANCEL` to its own `onTouchEvent`) and the
+  listener keeps the rest, so the lift taps nothing, and the list scrolls, flings and turns the mark off at the end
+  through its scroll listener as for any scroll. A gesture that never dragged ends as a cancel for the list (no fling
+  from a sloppy tap). A touch on the mark stops a coasting list, as one on a row. While the reaction panel is open
+  the mark hands nothing on: a touch in the list is spent on closing the panel, and the mark's tap closes it too.
+  `thread_list_frame` has `splitMotionEvents="false"`: a second finger is never the list's own gesture next to the one
+  handed on. TalkBack's click and a keyboard's Enter don't pass the listener. Run on the emulator
+  (`docs/testing/emulator.md` §6ac, the "Re-check" points); TalkBack's own click with accessibility focus alone on the
+  mark, a second finger and the focus where there is no compose bar are the phone's to show.
+  **`take()` keeps `submitList(emptyList())`** (code QA L5's question, decided 2026-11-10 after the emulator pass):
+  `submitList(null)` would empty the list at once, where a finger still dragging the old thread's rows could turn
+  following off before the new thread's first list - but no way in hands a new intent to a thread that was scrolled
+  (the list, the notification and `smsto:` all build a new activity; only two row taps 30 ms apart reach `onNewIntent`,
+  with a thread 0.1 s old). It becomes worth doing, with a check that the first list after `null` lands at the end,
+  the day a way in starts a plain `threadIntent` over a living thread (design 82). **Look:** a 32 dp pill
+  in a 48 dp touch target (`bg_message_new`: a received bubble's `kid_message_in` with the reaction chip's 1 dp
+  `kid_ground` outline, 8 dp inside the target's top and bottom), Nunito bold 14 sp in `kid_core`, flat (no state
+  animator); a 150 ms fade in and out, none with the system's animations off (`ValueAnimator.areAnimatorsEnabled`). No
+  sound and no buzz of its own. **TalkBack:** a button, a polite live region touched only when the mark changes (it is
+  heard as it comes, and once more if "Ny melding" becomes "Nye meldinger"), its action "gå til den nyeste meldingen";
+  no fade under touch exploration, so the live region's event never finds the mark at alpha 0. The emulator pass, with
+  what it found and what it could not show (TalkBack by touch among it), is `docs/testing/emulator.md` §6ac.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
