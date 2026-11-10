@@ -485,3 +485,30 @@ show is listed in the build report for the emulator pass.
   time-rule row both read it. Nothing in the MIT directories changed.
 - **The contract**: `app.capability`, `app.display` (the entry exactly as the policy sends it, with `on_home:
   false`) and `report.sms_state.has_history`.
+
+**Step 3, W3: the buzz** - as §9 (the owner's yes of 2026-11-10: one switch, default off, one short buzz, no sound),
+with these choices:
+
+- **The switch** is the cell `#lock-buzz` right under the wake's: its own form and route (`POST
+  /devices/{id}/lock-buzz`, `lock_glance::save_buzz`, `device_policy.lock_buzz_on_notification`, migration 0136),
+  saved, nudged and logged exactly as the wake's (`lock_buzz_changed`, "phone 3: buzz for a notification: on").
+- **The plan** is `lock/NoticeBuzzPlan.kt` `noticeBuzzAllowed`; `PinLockRuntime.noticeBuzz` is the first thing
+  `noticeCame()` does once it has a context, so none of the wake's returns is before it.
+- **The gap** is `BUZZ_GAP_MS`, 10 s, in memory - §9 names no number. Rows that come together are one buzz; a notice
+  a little later has its own. There is no hourly cap.
+- **"Not during a call or ringing"** is the wake's whole `NoticeBusy`: our call, the system's, a VoIP ring or call,
+  the emergency flow - and also a ringing alarm, the boot's mark and the first 2 minutes of a process (a new process
+  reads the notifications that are already there, and has forgotten its last buzz).
+- **The ringer**: Silent is no buzz; Vibrate and Normal buzz. **Do Not Disturb** is any interruption filter but
+  "all". A ringer mode or a filter that can't be read is no buzz.
+- **A time rule's silence** is asked of the rule itself too (`ZenRuleRuntime.ruleSilent()`), not only of the filter:
+  the silence the time lock asks for counts where our Do Not Disturb rule could not be switched on, and while Find
+  My Device's ring holds it off.
+- **"Never for a row set to Off"** needs no code of its own: `noticeCame()` is reached only for a notice that gains
+  a row on the lock (`GlanceStore.putPosted`, `SmsNotifier.wakeIfAlerts`) or a missed call's alerting post.
+- **The buzz** is one 40 ms shot (`NOTICE_BUZZ_MS`, the reaction buzz's length) at the default amplitude with
+  `USAGE_NOTIFICATION` attributes; the log says "Notice buzz" and nothing of the notice.
+- **Not seen on a phone**: step 0's look at the Jelly Star was not part of this round, and no emulator ran. Open for
+  the device pass: that Android plays the buzz from the background while the lock is up, that Android's own
+  vibration settings switch it off, and that nothing else vibrates for the same notice (a phone outside lock task,
+  or with Android's own lock screen as the gate, may let the notification itself vibrate).

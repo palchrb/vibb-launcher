@@ -637,7 +637,7 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 10] = [
+    let table: [Row; 11] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
@@ -686,6 +686,12 @@ async fn lock_forms_return_to_the_page() {
             &[("on", "on")],
             (lock.clone(), Some("lock-wake")),
         ),
+        // Design 82 W3: the buzz switch, back to its cell.
+        (
+            "lock-buzz#lock-buzz",
+            &[("on", "on")],
+            (lock.clone(), Some("lock-buzz")),
+        ),
         // Design 75 §6: the weather's switch, in the page's Weather group, back to its row.
         (
             "weather/lock#weather-lock",
@@ -729,17 +735,20 @@ async fn lock_forms_return_to_the_page() {
         app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says.
-    let (kid, timeout, text, wake): (Option<String>, i64, bool, bool) = sqlx::query_as(
+    let (kid, timeout, text, wake, buzz): (Option<String>, i64, bool, bool, bool) = sqlx::query_as(
         "SELECT kid_pin_hash, screen_timeout_seconds, \
          (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id \
           AND g.package_name = 'io.element.android.x'), \
-         lock_wake_on_notification FROM device_policy p WHERE device_id = ?",
+         lock_wake_on_notification, lock_buzz_on_notification FROM device_policy p WHERE device_id = ?",
     )
     .bind(id)
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!((kid, timeout, text, wake), (None, 120, true, true));
+    assert_eq!(
+        (kid, timeout, text, wake, buzz),
+        (None, 120, true, true, true)
+    );
 }
 
 /// Without JS: every auto-saving control has a `<noscript>` Save in its form; the PIN forms save

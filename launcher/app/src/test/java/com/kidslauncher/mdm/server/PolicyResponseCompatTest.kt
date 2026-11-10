@@ -507,14 +507,15 @@ class PolicyResponseCompatTest {
         assertTrue("clock_format_applied" !in follow)
     }
 
-    /** Launcher round 7 §3's `launcher_ui.lock_wake_on_notification` and design 75 D17's `launcher_ui.lock_weather`
-     * (the server's `policy_json_keys_snapshot` pins both, always sent): true, false and missing (an older server =
-     * off), each through the cache round trip. */
+    /** Launcher round 7 §3's `launcher_ui.lock_wake_on_notification`, design 75 D17's `launcher_ui.lock_weather` and
+     * design 82 W3's `launcher_ui.lock_buzz_on_notification` (the server's `policy_json_keys_snapshot` pins them,
+     * always sent): true, false and missing (an older server = off), each through the cache round trip. */
     @Test
     fun `launcher_ui's lock switches decode, missing is off`() {
         val switches = listOf<Pair<String, (LauncherUi) -> Boolean>>(
             "lock_wake_on_notification" to { it.lockWakeOnNotification },
             "lock_weather" to { it.lockWeather },
+            "lock_buzz_on_notification" to { it.lockBuzzOnNotification },
         )
         for ((key, read) in switches) {
             fun policyWith(value: String?) = serverResponse.replaceFirst(

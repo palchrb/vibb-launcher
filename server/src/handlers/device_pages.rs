@@ -990,6 +990,8 @@ struct LockTemplate {
     background_same_as_home: bool,
     /// "Wake the screen for a notification" (launcher round 7 §3, `/lock-wake`).
     lock_wake: bool,
+    /// "Buzz for a notification" (design 82 W3, `/lock-buzz`).
+    lock_buzz: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -1409,6 +1411,7 @@ async fn render_lock(
         background_same_as_home: !backgrounds.iter().any(|w| w.lock),
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
+        lock_buzz: policy.lock_buzz_on_notification,
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,

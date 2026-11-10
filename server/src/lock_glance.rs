@@ -272,6 +272,19 @@ pub fn wake_log_line(device_id: i64, on: bool) -> crate::security::Detail {
     )
 }
 
+/// The same for the buzz switch (design 82 W3): "phone 3: buzz for a notification: on".
+pub fn buzz_log_line(device_id: i64, on: bool) -> crate::security::Detail {
+    switch_line(
+        device_id,
+        if on {
+            "security.detail.lock_buzz.on"
+        } else {
+            "security.detail.lock_buzz.off"
+        },
+        &[],
+    )
+}
+
 fn switch_line(device_id: i64, key: &str, params: &[(&str, &str)]) -> crate::security::Detail {
     let device = device_id.to_string();
     let mut all = vec![("device", device.as_str())];
@@ -523,6 +536,10 @@ mod tests {
         assert_eq!(
             crate::security::worded_in(&wake_log_line(3, true), crate::i18n::Lang::Nb),
             "telefon 3: vekk skjermen ved varsel: på"
+        );
+        assert_eq!(
+            crate::security::worded_in(&buzz_log_line(3, false), crate::i18n::Lang::Nb),
+            "telefon 3: vibrer ved varsel: av"
         );
         assert_eq!(
             log_line(3, ELEMENT_X, true).columns().0.as_deref(),

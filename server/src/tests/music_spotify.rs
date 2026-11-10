@@ -275,7 +275,8 @@ fn migrations_from_73_in_order() {
             (132, "push budget".to_string()),
             (133, "contact requests".to_string()),
             (134, "sms groups".to_string()),
-            (135, "messages lock level".to_string())
+            (135, "messages lock level".to_string()),
+            (136, "lock buzz on notification".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

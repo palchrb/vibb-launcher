@@ -1305,3 +1305,65 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     assert_eq!(events(&app, "lock_wake_changed").await.len(), 3);
 }
+
+/// Design 82 W3: "Buzz for a notification" - the cell under the wake switch, off for a new phone; a save lands on
+/// `#lock-buzz`, nudges the phone, logs a line only for a change, reaches the policy's `launcher_ui` and leaves the
+/// wake switch alone; an unknown phone is a 404 with nothing written.
+#[tokio::test]
+async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    let group = &html[html.find(r#"<section id="lock-screen""#).unwrap()..];
+    let group = &group[..group.find("</section>").unwrap()];
+    assert!(
+        group.find(r#"id="lock-wake""#) < group.find(r#"id="lock-buzz""#),
+        "{group}"
+    );
+    let cell = &group[group.find(r#"id="lock-buzz""#).expect("the cell")..];
+    let cell = &cell[..cell.find("</form>").unwrap()];
+    assert!(cell.contains("Buzz for a notification"), "{cell}");
+    assert!(
+        cell.contains("One short buzz, no sound, for the apps on the lock below and missed calls"),
+        "{cell}"
+    );
+    assert!(!cell.contains(" checked"), "off by default: {cell}");
+
+    let mut nudges = app.state.command_notify.subscribe();
+    for on in [true, true, false] {
+        let fields: &[(&str, &str)] = if on { &[("on", "on")] } else { &[] };
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lock-buzz"),
+                Some(&cookie),
+                fields,
+            )
+            .await;
+        super::assert_redirect(&res, &lock_page(id), Some("lock-buzz"));
+        app.assert_lands(&res, &cookie).await;
+        assert_eq!(nudges.try_recv().ok(), Some(id));
+        let ui = &app.policy(&token).await["launcher_ui"];
+        assert_eq!(ui["lock_buzz_on_notification"], json!(on));
+        assert_eq!(ui["lock_wake_on_notification"], json!(false));
+    }
+    assert_eq!(
+        events(&app, "lock_buzz_changed").await,
+        ["on", "off"].map(|s| (
+            format!("phone {id}: buzz for a notification: {s}"),
+            Some("parent".to_string())
+        ))
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/999/lock-buzz",
+            Some(&cookie),
+            &[("on", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(events(&app, "lock_buzz_changed").await.len(), 2);
+}

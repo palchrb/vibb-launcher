@@ -145,6 +145,10 @@ object ZenRuleRuntime {
      * policy it reads is the manual one and doesn't fold our rule in. */
     fun letsCallsRing(): Boolean = applied?.on == true
 
+    /** A silent time rule is in force - asked for by the time lock, or our rule on: the lock's notice buzz keeps quiet
+     * under it, also where Do Not Disturb couldn't be switched on or Find My Device's ring holds it off (design 82 W3). */
+    fun ruleSilent(): Boolean = wanted.on || applied?.on == true
+
     /** Our rule is on and silences alarms ([silencesAlarms]): the lock's "an alarm rings" is false then (code QA H1). */
     fun silencesAlarms(): Boolean = silencesAlarms(applied)
 

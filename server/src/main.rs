@@ -1436,6 +1436,11 @@ pub fn build_admin_router(
             "/devices/{id}/lock-wake",
             post(handlers::lock_glance::save_wake),
         )
+        // Design 82 W3: "Buzz for a notification".
+        .route(
+            "/devices/{id}/lock-buzz",
+            post(handlers::lock_glance::save_buzz),
+        )
         .route(
             "/apps/tracked/{id}/display",
             post(handlers::tracked_apps::save_display),

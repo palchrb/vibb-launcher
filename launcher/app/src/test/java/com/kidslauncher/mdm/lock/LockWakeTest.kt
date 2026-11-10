@@ -141,6 +141,39 @@ class LockWakeTest {
         assertEquals("the one trigger in the notifier", 1, Regex("""noticeCame\(""").findAll(notifier).count())
     }
 
+    /** Design 82 W3: the notice buzz's gate ([noticeBuzzAllowed]) - its own switch and gap, the lock LOCKED, nothing
+     * busy, and quiet whenever the phone is; a ringer mode or a filter that can't be read is no buzz. The wake's
+     * switch, the lit screen and the proximity read are no part of it, and by source it comes before the wake's gate. */
+    @Test
+    fun `the buzz - its own switch and gap, LOCKED, never busy, silent or under Do Not Disturb`() {
+        fun buzz(
+            switchOn: Boolean = true,
+            mode: LockMode = LockMode.LOCKED,
+            busy: NoticeBusy = NoticeBusy(),
+            ringerMode: Int? = RINGER_MODE_NORMAL,
+            interruptionFilter: Int? = INTERRUPTION_FILTER_ALL,
+            ruleSilent: Boolean = false,
+            sinceLastBuzzMs: Long? = null,
+        ) = noticeBuzzAllowed(switchOn, mode, busy, ringerMode, interruptionFilter, ruleSilent, sinceLastBuzzMs)
+        assertTrue(buzz())
+        assertTrue(buzz(ringerMode = RINGER_MODE_VIBRATE))
+        assertFalse("the switch off", buzz(switchOn = false))
+        assertFalse(buzz(mode = LockMode.UNLOCKED))
+        assertFalse(buzz(mode = LockMode.DISABLED))
+        assertFalse("a call", buzz(busy = NoticeBusy(systemCall = true)))
+        assertFalse("a ring", buzz(busy = NoticeBusy(voip = true)))
+        assertFalse(buzz(ringerMode = RINGER_MODE_SILENT))
+        assertFalse("not read", buzz(ringerMode = null))
+        for (filter in listOf(INTERRUPTION_FILTER_PRIORITY, INTERRUPTION_FILTER_NONE, INTERRUPTION_FILTER_ALARMS, 0, null)) {
+            assertFalse("$filter", buzz(interruptionFilter = filter))
+        }
+        assertFalse("a silent time rule", buzz(ruleSilent = true))
+        assertFalse(buzz(sinceLastBuzzMs = BUZZ_GAP_MS - 1))
+        assertTrue(buzz(sinceLastBuzzMs = BUZZ_GAP_MS))
+        val came = code("lock/PinLockRuntime.kt").substringAfter("fun noticeCame() {").substringBefore("\n    }\n")
+        assertTrue(came, came.indexOf("noticeBuzz(app, ") in 0 until came.indexOf("noticeAllowed(app, "))
+    }
+
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }
     private fun code(path: String) = File(main, "java/com/kidslauncher/mdm/$path").readText()
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
