@@ -253,6 +253,36 @@ class MessagesModelTest {
     }
 
     @Test
+    fun `a message's time stands under the last bubble of its run - one side, each within five minutes of the one before`() {
+        fun timed(vararg messages: Message) = threadItems(messages.toList(), at(9, 23), zone)
+            .filterIsInstance<ThreadItem.Bubble>().filter { it.timed }.map { it.message.id.value }
+        val t = at(9, 10)
+        assertEquals(listOf("a"), timed(message("a", 1, t)))
+        // The edge: five minutes after the one before goes on the run - counted from that one, not the run's first -,
+        // a millisecond more begins the next.
+        assertEquals(listOf("c"), timed(message("a", 1, t), message("b", 2, t + RUN_GAP_MS), message("c", 3, t + 2 * RUN_GAP_MS)))
+        assertEquals(listOf("a", "b"), timed(message("a", 1, t), message("b", 2, t + RUN_GAP_MS + 1)))
+        // The other side ends a run; so does a new day (its separator stands between them) and a clock set back.
+        assertEquals(listOf("a", "b"), timed(message("a", 1, t), message("b", 2, t + 1_000, Direction.OUT, Delivery.SENT)))
+        assertEquals(listOf("a", "b"), timed(message("a", 1, at(8, 23, 59)), message("b", 2, at(9, 0, 1))))
+        assertEquals(listOf("a", "b"), timed(message("a", 1, t), message("b", 2, t - 1_000)))
+    }
+
+    @Test
+    fun `the time joins the delivery line under the kid's last message, a failed send's line stays its own`() {
+        val t = at(9, 10)
+        val bubbles = threadItems(
+            listOf(message("a", 1, t, Direction.OUT, Delivery.FAILED), message("b", 2, t + 1_000, Direction.OUT, Delivery.DELIVERED)),
+            t, zone,
+        ).filterIsInstance<ThreadItem.Bubble>()
+        assertEquals(listOf(DeliveryLine.NOT_SENT to false, DeliveryLine.DELIVERED to true), bubbles.map { it.delivery to it.timed })
+        // At a run's end too, a failed or uncertain send's line is the tap to try again and nothing more.
+        assertFalse(bubbleTimed(endsRun = true, DeliveryLine.NOT_SENT))
+        assertFalse(bubbleTimed(endsRun = true, DeliveryLine.MAYBE_NOT_SENT))
+        assertTrue(bubbleTimed(endsRun = true, DeliveryLine.SENDING))
+    }
+
+    @Test
     fun `a failed or uncertain message says so wherever it is, the others only when last`() {
         val failed = message("f", 1, 0, Direction.OUT, Delivery.FAILED)
         assertEquals(DeliveryLine.NOT_SENT, deliveryLine(failed, lastOut = false))

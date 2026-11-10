@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- One message in a thread (design 77 §6.7): the bubble - the tile surface for a received one, the peach tint for the
      kid's own, on its side (ThreadAdapter sets the gravity and the background) - with "Ukjent avsender" over a message
-     the callback window let in, its pictures, the text and the time; under the kid's own the delivery line ("Sendt",
-     "Levert", "Ikke sendt - trykk for å prøve igjen"). The text is never selectable and never linked: nothing in a
-     bubble opens another app. One TalkBack node per message: the bubble. -->
+     the callback window let in, its pictures and the text; under it, on its side, one small line: the clock time under
+     the last bubble of a run, the delivery state under the kid's own ("Ikke sendt - trykk for å prøve igjen"), or both
+     ("Levert · 10:47"). The text is never selectable and never linked: nothing in a bubble opens another app. TalkBack
+     hears a message as its bubble, the time in its description; the line is a node only for its delivery state. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -12,7 +13,7 @@
     android:paddingBottom="3dp">
 
     <!-- Design 81 D6: the bubble and, on its bottom edge at the corner facing the middle, the reactions' chip (the
-         bubble gets a bottom margin then, so the chip never covers the next bubble or the delivery line). -->
+         bubble gets a bottom margin then, so the chip never covers the next bubble or the line under this one). -->
     <FrameLayout
         android:id="@+id/bubble_frame"
         android:layout_width="wrap_content"
@@ -70,18 +71,6 @@
                 android:textColor="@color/kid_ink"
                 android:textIsSelectable="false"
                 android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/bubble_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="end"
-                android:layout_marginTop="2dp"
-                android:fontFamily="@font/nunito_bold"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="11sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -102,8 +91,9 @@
             android:visibility="gone" />
     </FrameLayout>
 
+    <!-- Never wider than the row: a long line (a failed send's, a large font) wraps, towards the bubble's side. -->
     <TextView
-        android:id="@+id/bubble_delivery"
+        android:id="@+id/bubble_line"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="end"

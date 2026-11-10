@@ -364,24 +364,44 @@ fun deliveryLine(message: Message, lastOut: Boolean): DeliveryLine? {
 sealed interface ThreadItem {
     data class Day(val label: DayLabel, val date: LocalDate) : ThreadItem
 
-    data class Bubble(val message: Message, val delivery: DeliveryLine?) : ThreadItem
+    /** [timed]: the message's clock time stands under the bubble ([bubbleTimed]) - after [delivery] when it has one
+     * ("Levert · 10:47"). */
+    data class Bubble(val message: Message, val delivery: DeliveryLine?, val timed: Boolean) : ThreadItem
 }
 
+/** The longest a message may come after the one before it and still go on its run. */
+const val RUN_GAP_MS = 5 * 60_000L
+
+/** Whether [next] goes on [message]'s run (2026-11-10, the user: the time once per run, under its last bubble): the same
+ * side, the same day of the engine's time in [zone] (a day separator ends a run), and at most [RUN_GAP_MS] after it -
+ * a message timed before the one it follows (the clock was set back) begins a new run, so both times show. */
+fun sameRun(message: Message, next: Message, zone: ZoneId): Boolean {
+    fun day(m: Message) = Instant.ofEpochMilli(m.at).atZone(zone).toLocalDate()
+    return message.direction == next.direction && next.at - message.at in 0..RUN_GAP_MS && day(message) == day(next)
+}
+
+/** Whether a bubble's time stands under it: the last of its run ([endsRun]). A failed or uncertain send's line stays
+ * its own, wherever the bubble is - it is the tap to try again, and nothing was sent at that time. */
+fun bubbleTimed(endsRun: Boolean, delivery: DeliveryLine?): Boolean =
+    endsRun && delivery != DeliveryLine.NOT_SENT && delivery != DeliveryLine.MAYBE_NOT_SENT
+
 /** The thread from [messages] (any order): oldest first by `seq`, a separator before each new day of the engine's time
- * in [zone], the delivery line by [deliveryLine]. */
+ * in [zone], the delivery line by [deliveryLine], the time under each run's last bubble ([sameRun], [bubbleTimed]). */
 fun threadItems(messages: List<Message>, now: Long, zone: ZoneId): List<ThreadItem> {
     val sorted = messages.sortedBy { it.seq }
     val lastOut = sorted.lastOrNull { it.direction == Direction.OUT }?.id
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val items = mutableListOf<ThreadItem>()
     var shownDay: LocalDate? = null
-    for (m in sorted) {
+    for ((index, m) in sorted.withIndex()) {
         val day = Instant.ofEpochMilli(m.at).atZone(zone).toLocalDate()
         if (day != shownDay) {
             items += ThreadItem.Day(dayLabel(day, today), day)
             shownDay = day
         }
-        items += ThreadItem.Bubble(m, deliveryLine(m, m.id == lastOut))
+        val delivery = deliveryLine(m, m.id == lastOut)
+        val endsRun = sorted.getOrNull(index + 1)?.let { !sameRun(m, it, zone) } ?: true
+        items += ThreadItem.Bubble(m, delivery, bubbleTimed(endsRun, delivery))
     }
     return items
 }

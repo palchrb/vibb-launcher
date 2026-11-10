@@ -1049,8 +1049,7 @@ class ThreadActivity : UIObjectActivity() {
             val unknown: TextView = view.findViewById(R.id.bubble_unknown)
             val parts: LinearLayout = view.findViewById(R.id.bubble_parts)
             val text: TextView = view.findViewById(R.id.bubble_text)
-            val time: TextView = view.findViewById(R.id.bubble_time)
-            val delivery: TextView = view.findViewById(R.id.bubble_delivery)
+            val line: TextView = view.findViewById(R.id.bubble_line)
             /** TalkBack's actions on the bubble ("Slett", and design 81's reactions), removed at the next bind. */
             val actions = mutableListOf<Int>()
         }
@@ -1081,9 +1080,8 @@ class ThreadActivity : UIObjectActivity() {
             val mine = m.direction == Direction.OUT
             (holder.frame.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
             holder.bubble.setBackgroundResource(if (mine) R.drawable.bg_message_out else R.drawable.bg_message_in)
-            // The user's colours (2026-11-09): dark ink on the peach bubble, white on the lilac-grey; each time in its dim.
+            // The user's colours (2026-11-09): dark ink on the peach bubble, white on the lilac-grey.
             holder.text.setTextColor(context.getColor(if (mine) R.color.kid_message_out_ink else R.color.kid_ink))
-            holder.time.setTextColor(context.getColor(if (mine) R.color.kid_message_out_dim else R.color.kid_message_in_dim))
             val ring = if (mine) R.drawable.bg_message_selected_out else R.drawable.bg_message_selected_in
             val marked = m.id.value == selected || m.id == reacting?.id
             holder.bubble.foreground = if (marked) ContextCompat.getDrawable(context, ring) else null
@@ -1099,18 +1097,31 @@ class ThreadActivity : UIObjectActivity() {
             holder.text.visibility = if (body.isEmpty()) View.GONE else View.VISIBLE
             holder.text.text = body
             val time = ClockFormat.formatClock(context, m.at)
-            holder.time.text = time
             val partWords = bindParts(holder, m)
             // Code QA L5: the tap is offered only where the kid could send now, and once until the next read.
             val retry = retryOffered(item.delivery, compose) && m.id.value !in retrying
             val delivery = item.delivery?.let { deliveryText(it, retry) }
-            holder.delivery.visibility = if (delivery == null) View.GONE else View.VISIBLE
-            holder.delivery.text = delivery
+            // The line under the bubble, on its side: the time of a run's last bubble, after the delivery state where
+            // there is one ("Levert · 10:47"). TalkBack hears the time in the bubble's description, so the line is a
+            // node only for its delivery state, which it speaks alone.
+            val line = when {
+                !item.timed -> delivery
+                delivery == null -> time
+                else -> getString(R.string.messages_delivery_time, delivery, time)
+            }
+            holder.line.visibility = if (line == null) View.GONE else View.VISIBLE
+            holder.line.text = line
+            holder.line.contentDescription = delivery
+            holder.line.importantForAccessibility =
+                if (delivery == null) View.IMPORTANT_FOR_ACCESSIBILITY_NO else View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            (holder.line.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
+            holder.line.gravity = if (mine) Gravity.END else Gravity.START
             val failed = item.delivery == DeliveryLine.NOT_SENT || item.delivery == DeliveryLine.MAYBE_NOT_SENT
-            holder.delivery.setTextColor(context.getColor(if (failed) R.color.kid_missed_text else R.color.kid_core_dim))
-            holder.delivery.isClickable = retry
-            holder.delivery.isFocusable = retry
-            holder.delivery.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
+            holder.line.setTextColor(context.getColor(if (failed) R.color.kid_missed_text else R.color.kid_core_dim))
+            // The listener first: setOnClickListener makes a view clickable, also with null.
+            holder.line.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
+            holder.line.isClickable = retry
+            holder.line.isFocusable = retry
             val whoText = if (mine) getString(R.string.messages_you) else groupSender ?: MessagesScreens.name(context, who())
             bindChip(holder, m, mine)
             // Design 81 D6 (N2): the reactions are part of the bubble's description; the chip itself isn't read.
@@ -1172,7 +1183,7 @@ class ThreadActivity : UIObjectActivity() {
             holder.chip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
             holder.bubble.minimumWidth = holder.chip.measuredWidth + 2 * KidAvatars.dp(context, 10f)
             // Code QA L3: the chip gets its own room under the bubble, its measured height (so at any text size) less a
-            // little overlap that stays inside the bubble's bottom padding - never over the time or the delivery line.
+            // little overlap that stays inside the bubble's bottom padding - never over the text or the line under it.
             bubbleParams.bottomMargin = (holder.chip.measuredHeight - KidAvatars.dp(context, CHIP_OVERLAP_DP)).coerceAtLeast(0)
         }
 
@@ -1237,6 +1248,10 @@ class ThreadActivity : UIObjectActivity() {
                     }
                 }
             }
+            // A picture keeps its distance to what comes under it; with no text it is the bubble's last line.
+            if (m.body.isNullOrEmpty()) {
+                (holder.parts.getChildAt(holder.parts.childCount - 1)?.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = 0
+            }
             return words.takeIf { it.isNotEmpty() }?.joinToString(", ")
         }
 
@@ -1275,7 +1290,7 @@ class ThreadActivity : UIObjectActivity() {
         }
     }
 
-    /** A bubble's second tone (its time, a part's line, a picture's place): legible on its own surface. */
+    /** A bubble's second tone (a part's line, a picture's place): legible on its own surface. */
     private fun dimOf(m: Message): Int = if (m.direction == Direction.OUT) R.color.kid_message_out_dim else R.color.kid_message_in_dim
 
     private fun bubbleRoom(context: Context): Int =

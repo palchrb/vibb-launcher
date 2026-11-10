@@ -226,6 +226,8 @@
     <!-- Code QA L5: a failed message where the kid can't send now - no invitation to tap. -->
     <string name="messages_not_sent_plain">Not sent</string>
     <string name="messages_maybe_not_sent_plain">Maybe not sent</string>
+    <!-- Under the last bubble of a run of the kid's own messages: %1$s = how it went ("Delivered"), %2$s = the clock time. -->
+    <string name="messages_delivery_time">%1$s · %2$s</string>
     <string name="messages_too_long">This message is too long</string>
     <string name="messages_delete">Delete</string>
     <string name="messages_delete_conversation">Delete conversation</string>

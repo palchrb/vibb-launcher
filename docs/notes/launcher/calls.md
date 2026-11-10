@@ -149,15 +149,15 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   (`SmsRules.decideSend`) shown before the kid types; the engine still decides every send. `newMessageContacts` ("Ny
   melding": only `sms_out` contacts, the parent's order, no free number), `listRows` (newest first by `seq`; the
   contact's name now, else the name the conversation last had, D18), `listTimeLabel` (the clock today, "I går", the
-  weekday this week, else the date), `threadItems` (by `seq`, a day separator per day), `deliveryLine` ("Sendt"/"Levert"/
+  weekday this week, else the date), `threadItems` (by `seq`, a day separator per day, the time under each run's last bubble - below), `deliveryLine` ("Sendt"/"Levert"/
   "Sender …" under the kid's last message; "Ikke sendt"/"Kanskje ikke sendt - trykk for å prøve igjen" wherever a
   failed or `UNCERTAIN` one is), `partViews` (step 3b's parts), `MessageActions` (D18's deletes; "Prøv igjen" sends the
   text again with a new `clientId` and deletes the failed message once accepted - refused, it stays).
 - **Screens (`ui/messages/`, XML views, Dagen's ground and header):** `MessagesActivity` (the list; "Ny melding" as the
   header's action while `composeState` would send; long-press or TalkBack's "Slett samtale" asks in the screen),
   `ThreadActivity` (bubbles - received in `kid_message_in` (#34324A, the user's D2), the kid's in `kid_message_out`
-  (the accent peach, dark ink), each time in its bubble's dim tone - with day separators and times in the one clock
-  format, "Ukjent avsender" over a callback-window message, the delivery line;
+  (the accent peach, dark ink) - with day separators, "Ukjent avsender" over a callback-window message and, under a
+  bubble, the one small line of its time and its delivery state (below; the one clock format);
   long-press or TalkBack's "Slett" asks "Slette meldingen?"; the compose bar or its line), `PictureActivity` (fit to
   screen, "Lagre" into `Pictures/Vibb One/` through MediaStore with a name that says nothing, "Del" through
   `PictureShare`: a copy in `cacheDir/share/` behind the not-exported `FileProvider` `${applicationId}.share`, deleted
@@ -237,6 +237,34 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   heard as it comes, and once more if "Ny melding" becomes "Nye meldinger"), its action "gå til den nyeste meldingen";
   no fade under touch exploration, so the live region's event never finds the mark at alpha 0. The emulator pass, with
   what it found and what it could not show (TalkBack by touch among it), is `docs/testing/emulator.md` §6ac.
+- **A message's time under its bubble, once per run (2026-11-10, the user; branch `bubble-time`):** no bubble carries its
+  time inside any more. A **run** is consecutive messages of one side where each came at most 5 minutes (`RUN_GAP_MS`;
+  exactly 5 minutes still goes on, counted from the message before, not the run's first) after the one before it, by the
+  engine's time (`Message.at`, the instant the day separators use); the other side, a new day (its separator stands
+  between) and a message timed before the one it follows (a clock set back) end it - pure `sameRun`, `bubbleTimed`,
+  `ThreadItem.Bubble.timed` from `threadItems` (`MessagesModelTest`). Under the last bubble of every run, on the
+  bubble's side, one small line in the delivery line's look (`bubble_line`: Nunito bold 12 sp in `kid_core_dim`, no
+  colour of its own) says its clock time (`ClockFormat.formatClock`, the phone's 12/24 h). The kid's newest message
+  always ends a run, so its delivery state and the time are one line, state first: "Sender … · 10:47", "Sendt · 10:47",
+  "Levert · 10:47" (`messages_delivery_time`, two arguments). **A failed or uncertain send's line stays as it was,
+  without a time, wherever the bubble is** - it is red, the tap to try again and already long ("Kanskje ikke sendt -
+  trykk for å prøve igjen"), and nothing was sent at that time; a run that ends in one shows no time. A reaction's chip
+  stays on its bubble, the line comes under it. **TalkBack as before:** every bubble's description keeps its time; the
+  line is no node when it is a time alone, and with a delivery state it is the node it was and speaks the state alone
+  (the time isn't heard twice). **What moves:** a bubble's line depends on the message after it alone, so an older page
+  changes no row that is there; a message that goes on a run takes the line from the bubble before it, whose row gets
+  one line lower (2 dp + the line's 24 dp at the standard text size). A thread that follows goes on to the last row's
+  bottom, the line in it (`threadEndGap` measures the row). Scrolled up, a row that isn't laid out moves nothing; **the
+  one case that moves what the kid looks at:** the last bubble is cut by the list's lower edge (the end more than 8 dp
+  away, so the thread doesn't follow) and a message comes in on its run - that row is the layout's anchor by its bottom
+  (`stackFromEnd`), so what stands over it comes down by the line's height. Measured on the emulator: 26 dp for each
+  such message; the same kind of move as a reaction chip coming onto that row (the open Low), and no anchor was built
+  for it. A long line (a large text size) wraps towards the bubble's side and never widens the row (`wrap_content` in
+  the row's width, no `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. The
+  line is clickable only as the tap to try again (the listener is set before `isClickable`: `setOnClickListener` makes
+  a view clickable, with null too). The emulator pass, with its measures, the two faults it saw beside this (a failed
+  picture's retry sends its text alone; the compose bar with a picture under the keyboard) and what it could not show
+  ("Sender …" on screen among it), is `docs/testing/emulator.md` §6ae.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
@@ -670,7 +698,8 @@ on the wire but nb's heart.
 - **The thread (`ThreadActivity`, models in `MessagesModel`):** the chip (`reactionChip`: three different emoji then
   "+N", the kid's own in a peach ring and dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)
   on the bubble's bottom edge at the corner facing the middle, with its own room below the bubble (its measured height
-  less 5 dp, inside the bubble's padding - never over the time) and the bubble never narrower than it; `hasGlyph` kept
+  less 5 dp, inside the bubble's padding - never over the text, and the bubble's time line comes under the chip) and
+  the bubble never narrower than it; `hasGlyph` kept
   for the process;
   TalkBack reads "Reaksjoner: ❤️ fra Mamma, 👍 fra deg" in the bubble's description. A long press opens the panel
   (`reactPanel`: the 4 x 2 grid only where the compose bar is open and on a received bubble with text or an available
