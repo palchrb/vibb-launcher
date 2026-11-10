@@ -94,8 +94,7 @@ class ThreadActivity : UIObjectActivity() {
     private var reacting: Message? = null
     private var picking = false
 
-    /** D6: whether the phone's font draws an emoji (`Paint.hasGlyph`), remembered - main thread only. */
-    private val glyphs = HashMap<String, Boolean>()
+    /** D6: this screen's paint for [drawable] on the main thread (a `Paint` isn't shared between threads). */
     private val glyphPaint = android.graphics.Paint()
     private val pickerAdapter = PickerAdapter()
 
@@ -640,7 +639,7 @@ class ThreadActivity : UIObjectActivity() {
     // ---- Design 81: reactions ----
 
     /** D6: whether the phone's font draws [emoji] - never an empty box; main thread. */
-    private fun drawable(emoji: String): Boolean = glyphs.getOrPut(emoji) { glyphPaint.hasGlyph(emoji) }
+    private fun drawable(emoji: String): Boolean = drawable(emoji, glyphPaint)
 
     /** A reactor as TalkBack names them: "deg" for the kid, else the contact's name now, else the number. */
     private fun reactorName(address: String?): String =
@@ -741,7 +740,7 @@ class ThreadActivity : UIObjectActivity() {
      * language. The panel closes first; a refusal (a time rule began meanwhile, say) stores nothing and says why, as a
      * send's (L5). The badge shows from the engine's event, pending until sent.
      */
-    private fun react(m: Message, emoji: String, op: ReactionOp) {
+    private fun react(m: Message, emoji: String, op: ReactionOp, fromPicker: Boolean = false) {
         hideReact()
         val app = applicationContext
         val command = SendCommand(
@@ -753,6 +752,12 @@ class ThreadActivity : UIObjectActivity() {
             reaction = ReactionCommand(m.id, emoji, op, getString(R.string.messages_reaction_language)),
         )
         SmsRuntime.ask(this, { SmsRuntime.send(app, command) }) { result ->
+            // D13 (code QA N6): "Nylig brukt" learns only an emoji that went - an add the engine took.
+            if (fromPicker) {
+                val recent = ReactionRecents.read(app)
+                val next = recentAfterSend(recent, emoji, op, accepted = result is SendResult.Accepted)
+                if (next != recent) ReactionRecents.write(app, next)
+            }
             if (isDestroyed) return@ask
             val refusal = when (result) {
                 is SendResult.Accepted -> null
@@ -787,7 +792,7 @@ class ThreadActivity : UIObjectActivity() {
                 val list = SmsRuntime.emoji(app)
                 val paint = android.graphics.Paint()
                 val recent = ReactionRecents.read(app).filter { list.canonical(it) == it }
-                pickerItems(list.groups, recent) { paint.hasGlyph(it) }
+                pickerItems(list.groups, recent) { drawable(it, paint) }
             }
             if (isDestroyed || !picking) return@launch
             pickerAdapter.submitList(items)
@@ -816,24 +821,24 @@ class ThreadActivity : UIObjectActivity() {
         }
     }
 
-    /** D13: an emoji chosen in the picker is sent at once (the kid's own one now is taken away, as in the grid) and
-     * goes into "Nylig brukt". */
+    /** D13: an emoji chosen in the picker is sent at once (the kid's own one now is taken away, as in the grid); once
+     * sent it goes into "Nylig brukt". */
     private fun pick(emoji: String) {
         val m = reacting ?: return
         val mine = m.reactions.firstOrNull { it.by == null }
-        ReactionRecents.write(applicationContext, recentAfter(ReactionRecents.read(applicationContext), emoji))
-        react(m, emoji, if (mine?.key == com.kidslauncher.mdm.sms.engine.EmojiList.key(emoji)) ReactionOp.REMOVE else ReactionOp.ADD)
+        val op = if (mine?.key == com.kidslauncher.mdm.sms.engine.EmojiList.key(emoji)) ReactionOp.REMOVE else ReactionOp.ADD
+        react(m, emoji, op, fromPicker = true)
     }
 
     /** The picker's grid: a heading (a TalkBack heading) per group, then its emoji at 28 sp in 48 dp cells - each read
      * by TalkBack as Android names it. */
     private inner class PickerAdapter : ListAdapter<PickerItem, RecyclerView.ViewHolder>(PICKER_DIFF) {
-        override fun getItemViewType(position: Int) = if (getItem(position) is PickerItem.Heading) TYPE_DAY else TYPE_BUBBLE
+        override fun getItemViewType(position: Int) = if (getItem(position) is PickerItem.Heading) TYPE_HEADING else TYPE_EMOJI
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val context = parent.context
             val view = TextView(context).apply {
-                if (viewType == TYPE_DAY) {
+                if (viewType == TYPE_HEADING) {
                     layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     setPadding(KidAvatars.dp(context, 8f), KidAvatars.dp(context, 12f), KidAvatars.dp(context, 8f), KidAvatars.dp(context, 4f))
                     textSize = 14f
@@ -965,8 +970,9 @@ class ThreadActivity : UIObjectActivity() {
             val chip = reactionChip(m.reactions, ::drawable)
             holder.chip.removeAllViews()
             holder.chip.visibility = if (chip == null) View.GONE else View.VISIBLE
-            (holder.bubble.layoutParams as android.widget.FrameLayout.LayoutParams).bottomMargin = if (chip == null) 0 else KidAvatars.dp(context, 10f)
+            val bubbleParams = holder.bubble.layoutParams as android.widget.FrameLayout.LayoutParams
             if (chip == null) {
+                bubbleParams.bottomMargin = 0
                 holder.bubble.minimumWidth = 0
                 return
             }
@@ -997,6 +1003,9 @@ class ThreadActivity : UIObjectActivity() {
             }
             holder.chip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
             holder.bubble.minimumWidth = holder.chip.measuredWidth + 2 * KidAvatars.dp(context, 10f)
+            // Code QA L3: the chip gets its own room under the bubble, its measured height (so at any text size) less a
+            // little overlap that stays inside the bubble's bottom padding - never over the time or the delivery line.
+            bubbleParams.bottomMargin = (holder.chip.measuredHeight - KidAvatars.dp(context, CHIP_OVERLAP_DP)).coerceAtLeast(0)
         }
 
         /** TalkBack's actions (D7): one per emoji of the grid, "Flere emojier", "Fjern reaksjonene" - as the panel would
@@ -1145,8 +1154,19 @@ class ThreadActivity : UIObjectActivity() {
         /** Messages read at a time; scrolling to the top reads the next page. */
         private const val PAGE = 100
 
-        /** D13: the picker's columns (48 dp each at 288 dp). */
+        /** D13: the picker's columns (48 dp each at 288 dp), and its two kinds of line. */
         private const val PICKER_COLUMNS = 5
+        private const val TYPE_HEADING = 0
+        private const val TYPE_EMOJI = 1
+
+        /** D6 (code QA L3): how far the chip reaches up into its bubble - less than the bubble's 8 dp bottom padding. */
+        private const val CHIP_OVERLAP_DP = 5f
+
+        /** D6, D13 (code QA N5): whether the font draws an emoji, kept for the process - the font doesn't change while
+         * it runs, so the picker's ~1,900 checks run once, off the main thread. */
+        private val GLYPHS = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+        private fun drawable(emoji: String, paint: android.graphics.Paint): Boolean = GLYPHS.getOrPut(emoji) { paint.hasGlyph(emoji) }
         private const val TYPE_DAY = 0
         private const val TYPE_BUBBLE = 1
 

@@ -8,6 +8,7 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.sms.engine.Conversation
 import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
+import com.kidslauncher.mdm.sms.engine.Notifiable
 
 /*
  * The lock glance's "Meldinger" rows (design 77 §6.8, step 5): one per conversation with unread messages, read from the
@@ -44,6 +45,21 @@ fun smsGlanceRow(conversation: Conversation, newestFirst: List<Message>, showTex
         unknownSender = newest?.unknownSender == true,
     )
 }
+
+/**
+ * The channel of a conversation notification's post: silent under a time rule without calls ([silent], as before), and
+ * design 81 D12's reaction from someone else ([reaction]) on its own short-buzz channel - silent too under any Do Not
+ * Disturb ([passesFilter] false: the filter isn't `ALL`, or unknown), whatever the mode lets through.
+ */
+fun smsChannel(silent: Boolean, reaction: Boolean, passesFilter: Boolean): String = when {
+    silent || (reaction && !passesFilter) -> NOTIFICATION_CHANNEL_MESSAGES_SILENT
+    reaction -> NOTIFICATION_CHANNEL_REACTIONS
+    else -> NOTIFICATION_CHANNEL_MESSAGES
+}
+
+/** Design 81 D12 (code QA N2): the lock screen's public text follows what the notification holds - "Ny reaksjon" only
+ * when every line is a reaction, "Ny melding" as soon as one unread message is on it. */
+fun smsPublicIsReaction(lines: List<Notifiable>): Boolean = lines.isNotEmpty() && lines.all { it.target != null }
 
 /** `NotificationManager.IMPORTANCE_DEFAULT`: the lowest importance that makes a sound (pure here). */
 private const val SMS_ALERT_IMPORTANCE = 3

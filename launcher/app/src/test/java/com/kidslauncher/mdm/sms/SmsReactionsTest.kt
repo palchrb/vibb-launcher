@@ -53,6 +53,8 @@ class SmsReactionsTest {
 
     private fun op(text: String) = ReactionOp.valueOf(text.uppercase())
 
+    private val likeHei = ParsedReaction("👍", "👍", ReactionOp.ADD, ReactionTarget.Quote("Hei", false))
+
     @Test
     fun `the emoji list is the pinned one, and the six are its own fully-qualified forms`() {
         val sha = MessageDigest.getInstance("SHA-256").digest(EmojiAsset.file.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
@@ -93,6 +95,15 @@ class SmsReactionsTest {
     }
 
     @Test
+    fun `without the emoji list the six are still read, nothing else (code QA N1)`() {
+        for (emoji in Reactions.SIX) assertEquals(emoji, Reactions.emoji(emoji, EmojiList.EMPTY))
+        assertEquals("❤️", Reactions.emoji("❤", EmojiList.EMPTY))
+        assertNull(Reactions.emoji("🎉", EmojiList.EMPTY))
+        assertEquals(likeHei, Reactions.parse("Reacted 👍 to “Hei”", EmojiList.EMPTY))
+        assertNull(Reactions.parse("Reacted 🎉 to “Hei”", EmojiList.EMPTY))
+    }
+
+    @Test
     fun `every parse vector`() {
         for (row in rows("parse")) assertEquals(row.str("case"), expected(row["result"]), Reactions.parse(row.str("body")!!, list))
     }
@@ -100,7 +111,7 @@ class SmsReactionsTest {
     @Test
     fun `every candidate vector (H1)`() {
         for (row in rows("candidate")) {
-            val got = Reactions.candidate(row["mms"]!!.jsonPrimitive.boolean, row["texts"]!!.jsonPrimitive.int, row["other"]!!.jsonPrimitive.int)
+            val got = Reactions.candidate(row["texts"]!!.jsonPrimitive.int, row["other"]!!.jsonPrimitive.int)
             assertEquals(row.str("case"), row["candidate"]!!.jsonPrimitive.boolean, got)
         }
     }

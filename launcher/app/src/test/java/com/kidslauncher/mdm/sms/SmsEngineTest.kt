@@ -474,6 +474,30 @@ class SmsEngineTest {
     }
 
     @Test
+    fun `reactions never push an unread message's line out of the notification (code QA L1)`() {
+        val mine = (1..5).map { kidSays("Spørsmål $it") }
+        val id = mine.first().conversationId
+        engine.receiveSms(sms(mammaNumber, "Kan du ringe meg?"))
+        for (bubble in mine) engine.receiveSms(sms(mammaNumber, "Likte «${bubble.body}»"))
+        val lines = engine.notifiable(id, 5)
+        assertEquals(5, lines.size)
+        assertEquals("Kan du ringe meg?", lines.single { it.target == null }.message.body)
+        // The reactions fill the rest, the newest of them.
+        assertEquals((2..5).map { "Likte «Spørsmål $it»" }, lines.filter { it.target != null }.map { it.message.body })
+    }
+
+    @Test
+    fun `without the emoji list the six are still received and sent, no other emoji (code QA N1)`() {
+        val bare = SmsEngine(store, { now }, { judge() }, radio, ids)
+        val hei = (bare.receiveSms(sms(mammaNumber, "Hei")) as Received.Shown).message
+        assertTrue(bare.receiveSms(sms(mammaNumber, "Reacted 👍 to “Hei”")) is Received.Attached)
+        assertTrue(bare.receiveSms(sms(mammaNumber, "Reacted 🎉 to “Hei”")) is Received.Shown)
+        val send = { emoji: String -> bare.send(SendCommand(java.util.UUID.randomUUID().toString(), hei.conversationId, null, "", origin = Origin.KID_SCREEN, reaction = ReactionCommand(hei.id, emoji, ReactionOp.ADD, "nb"))) }
+        assertEquals("Likte «Hei»", (send("👍") as SendResult.Accepted).message.body)
+        assertEquals(SendResult.Refused(Refusal.NOT_ALLOWED), send("🎉"))
+    }
+
+    @Test
     fun `Fjern reaksjonene takes only others' reactions, a deleted bubble takes all of them, each told (D5, L8)`() {
         val hei = (engine.receiveSms(sms(mammaNumber, "Hei")) as Received.Shown).message
         val id = hei.conversationId

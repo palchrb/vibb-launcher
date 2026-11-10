@@ -540,6 +540,11 @@ fun pickerItems(groups: List<EmojiGroup>, recent: List<String>, drawable: (Strin
     return items
 }
 
+/** "Nylig brukt" after the picker's [picked] was sent with [op] (code QA N6): only an add the engine [accepted] moves
+ * it to the front - a refused send or a removal leaves the row as it was. */
+fun recentAfterSend(recent: List<String>, picked: String, op: com.kidslauncher.mdm.sms.engine.ReactionOp, accepted: Boolean): List<String> =
+    if (accepted && op == com.kidslauncher.mdm.sms.engine.ReactionOp.ADD) recentAfter(recent, picked) else recent
+
 /** "Nylig brukt" after [picked] from the picker: newest first, at most [RECENT_MAX], never one of the six (the panel
  * always has them). */
 fun recentAfter(recent: List<String>, picked: String): List<String> {

@@ -79,8 +79,13 @@ object Reactions {
     /** The quote pairs accepted with every form (D2): carriers and old clients may change quotes. */
     private val QUOTES = mapOf('“' to '”', '"' to '"', '«' to '»', '”' to '”')
 
-    /** D3 (L2): a picture reaction attaches only to a picture that is there or on its way. */
-    private val PICTURE_TARGET = setOf(PartState.AVAILABLE, PartState.PENDING, PartState.WAITING_DATA)
+    /**
+     * D3 (L2; code QA M1): a picture reaction attaches only to a picture that is there. An MMS still being fetched has
+     * a placeholder picture whatever it turns out to be - a text, a reaction itself, or dropped - so a reaction on it
+     * could end on the wrong bubble or hidden with it; it stays a plain message instead. A placeholder never carries a
+     * reaction, so nothing moves, drops or turns into a reaction with one on it.
+     */
+    private val PICTURE_TARGET = setOf(PartState.AVAILABLE)
 
     /** The kid's rows that count but aren't sent yet (D4). */
     private val PENDING = setOf(Delivery.QUEUED, Delivery.SENDING, Delivery.UNCERTAIN)
@@ -157,9 +162,20 @@ object Reactions {
         ReactionForm("nb", REMOVE, null, "Fjernet {e} fra et bilde"),
     )
 
-    /** D2 (H1): only a message that holds nothing but its text may be a reaction - an SMS, or an MMS with exactly one
-     * text part and no other part. */
-    fun candidate(mms: Boolean, textParts: Int, otherParts: Int): Boolean = !mms || (textParts == 1 && otherParts == 0)
+    /** D2 (H1): only a message that holds nothing but its text may be a reaction - an SMS always (it is one text), an
+     * MMS only with exactly one text part and no other part. */
+    fun candidate(textParts: Int, otherParts: Int): Boolean = textParts == 1 && otherParts == 0
+
+    /**
+     * D2's emoji rule over [list] - and the six (D7) whatever the list holds: they are constants, so an unreadable asset
+     * ([EmojiList.EMPTY]) still lets them be received and sent (code QA N1). Within [EmojiList.MAX_UNITS] either way.
+     */
+    fun emoji(raw: String, list: EmojiList): String? {
+        list.canonical(raw)?.let { return it }
+        if (raw.isEmpty() || raw.length > EmojiList.MAX_UNITS) return null
+        val key = EmojiList.key(raw)
+        return SIX.firstOrNull { EmojiList.key(it) == key }
+    }
 
     /** D2 (L3): what both sides of a comparison get - CRLF to LF, the outer whitespace trimmed, nothing else. */
     fun normalise(text: String): String = text.replace("\r\n", "\n").trim()
@@ -179,7 +195,7 @@ object Reactions {
             if (end - at !in 1..EmojiList.MAX_UNITS || !body.startsWith(form.tail, end)) return null
             val raw = body.substring(at, end)
             at = end + form.tail.length
-            list.canonical(raw) ?: return null
+            emoji(raw, list) ?: return null
         }
         val target = if (form.image) {
             if (at != body.length) return null
@@ -203,7 +219,7 @@ object Reactions {
     fun resolve(parsed: ParsedReaction, reactor: String, candidates: List<ReactionCandidate>): String? {
         val pool = when (val target = parsed.target) {
             ReactionTarget.Image -> {
-                // L2: every image part among the newest few, in any state - exactly one, there or on its way.
+                // L2: every image part among the newest few, in any state - exactly one, and there (M1).
                 val pictures = candidates.take(PICTURE_WINDOW).filter { it.pictures.isNotEmpty() }
                 if (pictures.size != 1 || pictures.single().pictures.singleOrNull() !in PICTURE_TARGET) return null
                 pictures

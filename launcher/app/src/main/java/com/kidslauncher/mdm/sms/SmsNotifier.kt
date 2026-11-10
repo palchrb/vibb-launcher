@@ -38,7 +38,9 @@ const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
  */
 const val NOTIFICATION_CHANNEL_REACTIONS = "launcher:messages_reactions"
 
-/** One pulse of 80 ms - a message's default is 350 + 250 + 350 ms. */
+/** One pulse of 80 ms - a message's default is 350 + 250 + 350 ms. Frozen with the channel above at its first creation
+ * on a phone: a changed pattern needs a new channel id too (the length waits for the user's word on the Jelly Star,
+ * code QA's open point). */
 private val REACTION_VIBRATION = longArrayOf(0, 80)
 
 /** One notification per conversation: this id, tagged with the conversation's id. */
@@ -106,7 +108,8 @@ object SmsNotifier {
             val sender = senderPerson(context, conversation)
             val style = NotificationCompat.MessagingStyle(me)
             val group = conversation.participants.size > 1
-            for (line in lines.ifEmpty { listOf(Notifiable(message)) }) {
+            val shown = lines.ifEmpty { listOf(Notifiable(message)) }
+            for (line in shown) {
                 val m = line.message
                 // Step 3b: a picture without text says "Bilde" - never its pixels (the large icon stays the contact's).
                 val body = line.target?.let { reactionLine(context, m, it) }
@@ -120,15 +123,11 @@ object SmsNotifier {
             val now = engine.conversation(id)
             val canSend = now?.canSend == true
             // Design 81 D12: a reaction is quiet under any Do Not Disturb, whatever the mode lets through.
-            val quiet = silent || (reaction && !passesFilter(context))
-            val channel = when {
-                quiet -> NOTIFICATION_CHANNEL_MESSAGES_SILENT
-                reaction -> NOTIFICATION_CHANNEL_REACTIONS
-                else -> NOTIFICATION_CHANNEL_MESSAGES
-            }
+            val channel = smsChannel(silent, reaction, passesFilter(context))
+            val quiet = channel == NOTIFICATION_CHANNEL_MESSAGES_SILENT
             val public = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle(context.getString(if (reaction) R.string.sms_notification_public_reaction else R.string.sms_notification_public))
+                .setContentTitle(context.getString(if (smsPublicIsReaction(shown)) R.string.sms_notification_public_reaction else R.string.sms_notification_public))
                 .build()
             val builder = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)

@@ -14,6 +14,10 @@ import com.kidslauncher.mdm.sms.engine.DownloadError
 import com.kidslauncher.mdm.sms.engine.EngineEvent
 import com.kidslauncher.mdm.sms.engine.HeldState
 import com.kidslauncher.mdm.sms.engine.IdSource
+import com.kidslauncher.mdm.sms.engine.IncomingSms
+import com.kidslauncher.mdm.sms.engine.ReactionCommand
+import com.kidslauncher.mdm.sms.engine.ReactionOp
+import com.kidslauncher.mdm.sms.engine.SenderKind
 import com.kidslauncher.mdm.sms.engine.MessageId
 import com.kidslauncher.mdm.sms.engine.MmsFlow
 import com.kidslauncher.mdm.sms.engine.MmsRadio
@@ -886,6 +890,80 @@ class MmsEngineTest {
         val picture = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(picture)
         assertTrue(mms.onRetrieved(picture, retrieved(to = listOf(kid, bestemor.number), texts = listOf("Likte «Se her!»"))) is Received.Shown)
+    }
+
+    private var smsc = 0L
+
+    private fun smsFromMamma(body: String) = engine.receiveSms(IncomingSms(SenderKind.NUMBER, mamma.number, body, now - 1000 + ++smsc, 1, now))
+
+    private fun waitingMms(): String = (arrive() as PushOutcome.Shown).shown.message.id.value
+
+    @Test
+    fun `a picture reaction never attaches to an MMS still being fetched, whatever it turns out to be (design 81, code QA M1)`() {
+        val ok = (engine.send(SendCommand("ok", null, mamma.number, "Ok", origin = Origin.KID_SCREEN)) as SendResult.Accepted).message
+        // A text: the "Likte et bilde" that came while it waited stays a message.
+        val text = waitingMms()
+        val first = smsFromMamma("Likte et bilde") as Received.Shown
+        mms.onDownloaded(text)
+        assertTrue(mms.onRetrieved(text, retrieved(texts = listOf("Hei"), parts = emptyList())) is Received.Shown)
+        // A reaction itself: it attaches to "Ok", and the SMS beside it stays a message.
+        val reaction = waitingMms()
+        val second = smsFromMamma("Loved an image") as Received.Shown
+        mms.onDownloaded(reaction)
+        assertTrue(mms.onRetrieved(reaction, retrieved(texts = listOf("Likte «Ok»"), parts = emptyList())) is Received.Attached)
+        // Dropped (its From isn't the push's): the SMS stays.
+        val dropped = waitingMms()
+        val third = smsFromMamma("Likte et bilde") as Received.Shown
+        mms.onDownloaded(dropped)
+        assertNull(mms.onRetrieved(dropped, retrieved(from = "${pappa.number}/TYPE=PLMN")))
+        val bubbles = engine.messages(ok.conversationId, null, 20)
+        assertTrue(bubbles.map { it.id }.containsAll(listOf(first.message.id, second.message.id, third.message.id)))
+        assertEquals(listOf(ok.id), bubbles.filter { it.reactions.isNotEmpty() }.map { it.id })
+        // Once a picture is really there, the same words attach to it.
+        val picture = waitingMms()
+        mms.onDownloaded(picture)
+        mms.onRetrieved(picture, retrieved(texts = emptyList()))
+        assertEquals(picture, (smsFromMamma("Likte et bilde") as Received.Attached).reaction.reaction!!.target.value)
+    }
+
+    @Test
+    fun `the conversation deleted while an MMS waits leaves nothing behind (design 81, code QA M1)`() {
+        val waiting = (arrive() as PushOutcome.Shown).shown
+        val liked = smsFromMamma("Likte et bilde") as Received.Shown
+        engine.deleteConversation(ConversationId(waiting.conversation.id), Origin.KID_SCREEN)
+        assertNull(store.message(liked.message.id.value))
+        assertNull(store.message(waiting.message.id.value))
+        // The fetch's late answer finds nothing to fill in.
+        assertFalse(mms.onDownloaded(waiting.message.id.value))
+        assertNull(mms.onRetrieved(waiting.message.id.value, retrieved(texts = listOf("Likte «Ok»"), parts = emptyList())))
+        assertTrue(store.reactions(listOf(waiting.message.id.value, liked.message.id.value)).isEmpty())
+    }
+
+    @Test
+    fun `a reaction into a group is refused while group texts are off, as a text is (design 80 D13, design 81 code QA L2)`() {
+        val first = waitingMms()
+        mms.onDownloaded(first)
+        val group = (mms.onRetrieved(first, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown).message
+        val react = {
+            SendCommand(java.util.UUID.randomUUID().toString(), group.conversationId, null, "", origin = Origin.KID_SCREEN, reaction = ReactionCommand(group.id, "👍", ReactionOp.ADD, "nb"))
+        }
+        groups = false
+        assertEquals(SendResult.Refused(Refusal.GROUPS_OFF), engine.send(react()))
+        groups = true
+        assertTrue(engine.send(react()) is SendResult.Accepted)
+    }
+
+    @Test
+    fun `an MMS told of as a waiting picture only rebuilds when it turns out to be a reaction (design 81 D12, code QA L2)`() {
+        engine.send(SendCommand("ok", null, mamma.number, "Ok", origin = Origin.KID_SCREEN))
+        downloadThrows = true
+        val id = waitingMms()
+        assertTrue("told as waiting for data", store.mms(id)!!.notified)
+        downloadThrows = false
+        mms.retryWaiting(dataOn = true)
+        mms.drainDownloads()
+        mms.onDownloaded(id)
+        assertFalse((mms.onRetrieved(id, retrieved(texts = listOf("Likte «Ok»"), parts = emptyList())) as Received.Attached).notify)
     }
 
     @Test

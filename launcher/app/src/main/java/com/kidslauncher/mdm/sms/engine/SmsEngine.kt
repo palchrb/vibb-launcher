@@ -225,17 +225,6 @@ class SmsEngine(
             EngineEvent.MessageDeleted(seq, MessageId(row.id), origin)
         }
 
-    /** Inside a transaction: the reactions on [targetId] become plain messages again - their bubble left this
-     * conversation (a group MMS's move, D12 of design 77), and a reaction never hides a message unless it names a
-     * bubble beside it. */
-    internal fun detachReactionsOn(targetId: String): List<EngineEvent> =
-        store.reactions(listOf(targetId)).map { row ->
-            store.updateMessage(row.copy(reactionTo = null, reactionEmoji = null, reactionKey = null, reactionOp = null))
-            val seq = store.nextSeq()
-            store.insertEvent(EventRow(seq, EventType.MESSAGE_UPDATED, row.id, row.conversationId, Origin.ENGINE, null, clock()))
-            EngineEvent.MessageUpdated(seq, MessageId(row.id), row.delivery, emptyList())
-        }
-
     override fun removeReactions(target: MessageId, origin: Origin) {
         val events = store.transaction { deleteReactionsOn(target.value, origin) { it.direction == Direction.IN } }
         if (events.isEmpty()) return
@@ -244,13 +233,15 @@ class SmsEngine(
     }
 
     /**
-     * D12: what [id]'s notification shows - its unread incoming messages and its unread incoming reactions still in
-     * effect (a removed or replaced one drops out), the newest [limit] by `seq`, oldest first. Empty when nothing is
-     * unread: then it has no notification.
+     * D12: what [id]'s notification shows - its newest unread incoming messages, then, in the lines left of [limit], its
+     * unread incoming reactions still in effect (a removed or replaced one drops out): a reaction never pushes a
+     * message's line out (code QA L1). Oldest first; empty when nothing is unread (then it has no notification).
      */
     fun notifiable(id: ConversationId, limit: Int): List<Notifiable> {
         val messages = store.messages(id.value, null, limit * 2).filter { it.direction == Direction.IN && !it.read }
-            .map { Notifiable(it.toMessage(partsOf(it))) }
+            .take(limit).map { Notifiable(it.toMessage(partsOf(it))) }
+        val room = limit - messages.size
+        if (room == 0) return messages.reversed()
         val unread = store.unreadReactions(id.value, limit * 2)
         val rows = store.reactions(unread.mapNotNull { it.reactionTo }.distinct()).groupBy { it.reactionTo }
         val reactions = unread.mapNotNull { row ->
@@ -258,7 +249,7 @@ class SmsEngine(
             val inEffect = Reactions.state(rows[target.id].orEmpty()).any { it.id.value == row.id }
             if (inEffect) Notifiable(row.toMessage(), target.toMessage(partsOf(target))) else null
         }
-        return (messages + reactions).sortedByDescending { it.message.seq }.take(limit).reversed()
+        return (messages + reactions.take(room)).sortedBy { it.message.seq }
     }
 
     /**
@@ -271,7 +262,7 @@ class SmsEngine(
         val target = store.message(reaction.target.value)?.takeIf {
             it.conversationId == command.conversationId?.value && it.direction == Direction.IN && it.verdict == MessageVerdict.SHOWN && it.reactionTo == null
         } ?: return null
-        val emoji = emojiList().canonical(reaction.emoji) ?: return null
+        val emoji = Reactions.emoji(reaction.emoji, emojiList()) ?: return null
         val key = EmojiList.key(emoji)
         val text = target.body?.let(Reactions::normalise)?.takeIf { it.isNotEmpty() }
         if (text == null && partsOf(target).none { it.mime.startsWith("image/") && it.state == PartState.AVAILABLE }) return null

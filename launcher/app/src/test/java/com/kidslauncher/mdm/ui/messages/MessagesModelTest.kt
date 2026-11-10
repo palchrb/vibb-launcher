@@ -605,4 +605,13 @@ class MessagesModelTest {
         assertEquals(listOf("🍕", "🎉", "🐶", "⚽", "💡"), recentAfter(recent, "🍕"))
         assertEquals(recent, recentAfter(recent, "❤️"))
     }
+
+    @Test
+    fun `Nylig brukt learns only an emoji that was sent - not a refused send, not a removal (code QA N6)`() {
+        val recent = listOf("🎉", "🐶")
+        val add = com.kidslauncher.mdm.sms.engine.ReactionOp.ADD
+        assertEquals(listOf("🌈", "🎉", "🐶"), recentAfterSend(recent, "🌈", add, accepted = true))
+        assertEquals(recent, recentAfterSend(recent, "🌈", add, accepted = false))
+        assertEquals(recent, recentAfterSend(recent, "🐶", com.kidslauncher.mdm.sms.engine.ReactionOp.REMOVE, accepted = true))
+    }
 }

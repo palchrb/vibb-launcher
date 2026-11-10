@@ -487,8 +487,9 @@ class MmsFlow internal constructor(
         val now = clock()
         val events = mutableListOf<EngineEvent>()
         var movedFrom: String? = null
-        // Design 81 D9 (H1): only an MMS that holds nothing but one text may be a reaction.
-        val mayReact = body != null && Reactions.candidate(mms = true, textParts = content.texts.size, otherParts = content.parts.size)
+        // Design 81 D9 (H1): only an MMS that holds nothing but one text may be a reaction. Until now this row was a
+        // placeholder, which no reaction attaches to (code QA M1): whatever it turns out to be, nothing hangs on it.
+        val mayReact = body != null && Reactions.candidate(textParts = content.texts.size, otherParts = content.parts.size)
         val result = store.transaction {
             var updated = row.copy(body = body, failure = null)
             var conversation = store.conversation(row.conversationId.orEmpty())
@@ -500,7 +501,6 @@ class MmsFlow internal constructor(
                     val deleted = store.nextSeq()
                     store.insertEvent(EventRow(deleted, EventType.MESSAGE_DELETED, row.id, row.conversationId, Origin.ENGINE, null, now))
                     events += EngineEvent.MessageDeleted(deleted, MessageId(row.id), Origin.ENGINE)
-                    events += engine.detachReactionsOn(row.id)
                     updated = updated.copy(conversationId = target.id, seq = store.nextSeq())
                     store.insertEvent(EventRow(updated.seq, EventType.MESSAGE_ADDED, row.id, target.id, Origin.ENGINE, null, now))
                     conversation = target
@@ -625,14 +625,13 @@ class MmsFlow internal constructor(
         val row = store.message(m.messageId)
         val held = store.parts(m.messageId).mapNotNull { it.sha256 }
         if (m.state == MmsState.DOWNLOADED || m.state == MmsState.DOWNLOADING) radio.discardDownload(m.messageId)
-        val events = store.transaction {
+        // Design 81 (code QA M1): a message still being fetched never carries a reaction, so none goes with it.
+        val seq = store.transaction {
             store.deleteMessageRow(m.messageId)
             engine.block(row?.at ?: clock(), KIND_MMS, clean, SmsEngine.REASON_RULE)
-            val seq = store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_DELETED, m.messageId, row?.conversationId, Origin.ENGINE, null, clock())) }
-            // Design 81 D5: a reaction to its waiting picture goes with it.
-            listOf(EngineEvent.MessageDeleted(seq, MessageId(m.messageId), Origin.ENGINE)) + engine.deleteReactionsOn(m.messageId, Origin.ENGINE)
+            store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_DELETED, m.messageId, row?.conversationId, Origin.ENGINE, null, clock())) }
         }
-        events.forEach(engine::emit)
+        engine.emit(EngineEvent.MessageDeleted(seq, MessageId(m.messageId), Origin.ENGINE))
         store.afterDeletes()
         dropUnheld(held + fetched)
     }
