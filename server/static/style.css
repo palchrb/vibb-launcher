@@ -2123,14 +2123,15 @@ details.edit[open] > summary .chev {
 .vibb-mark { flex: none; display: block; width: 34px; height: 34px; }
 .vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
 /* Devices' night band (artboard E, 2026-10-22; the home page alone): its title bar on vibb's night
-   from the screen's very top - main's 8 px and the status bar's inset - to flat right under the
-   bar, across main's whole width. border-image's outset paints it past the bar's box without taking
+   from the screen's very top - main's 8 px and the status bar's inset - to 6 px under the bar
+   (the user, 2026-11-10: the mark has 5 px of the bar under it, too close to the band's edge),
+   across main's whole width. border-image's outset paints it past the bar's box without taking
    room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
    bell, and the large title under it sit exactly where every other tab has them. The band is main's
    content like the bar, so it scrolls away with it, under the status bar's night strip
    (.top-strip), which it meets without a seam; its 100vh above the top is what an iOS pull-down
    bounce shows (night, not the grey ground). */
-.title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0; }
+.title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 6px; }
 .title-bar-night .title-action { color: var(--night-action); }
 .title-bar-night .title-action:hover { color: var(--night-action-hover); }
 .title-bar-night .title-action:focus { outline-color: var(--night-action); }

@@ -1255,12 +1255,13 @@ fn the_app_shell_scrolls_main_not_the_document() {
         "flex: none; display: block; width: 34px; height: 34px;"
     );
     assert!(!css.contains("--brand-tile"));
-    // Devices' night band paints past the bar's box with border-image's outset alone (ink
+    // Devices' night band paints past the bar's box - 6 px under it, so the mark has air below
+    // (the user, 2026-11-10) - with border-image's outset alone (ink
     // overflow: no room taken, no scrollable overflow), so the bar stays at y 8-52 and the title
     // at 56 as on every other tab - nothing that moves a box goes on the band.
     assert_eq!(
         block(".title-bar-night"),
-        "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0;"
+        "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 6px;"
     );
     // Night behind the status bar on every page (the user, 2026-10-22; 2026-11-10): a real fixed
     // element - iOS takes the status area's colour and hides its top fade only from a fixed or

@@ -1091,9 +1091,10 @@ man er inne på en device". Branch `pwa-fixes-b`.
   every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules).
 - **Devices' night band** (artboard E, 2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`, "Night band"):
   the home page alone ("it should feel more like a front page") has its title bar on vibb's night `#0C0C14`, from the
-  screen's very top - main's 8 px and the status bar's inset - to flat right under the 44 px bar, across main's whole
-  width; every other tab keeps the grey top. `.title-bar-night` paints it with `border-image`'s outset alone (`fill 0 / 0
-  / 100vh 100vw 0`): ink overflow, so it takes no room and adds no scrollable overflow (clipped at main's edges), and
+  screen's very top - main's 8 px and the status bar's inset - to 6 px under the 44 px bar (flat right under it until
+  2026-11-10; the user on the iOS lab: the band's edge was too close under the mark, with much air down to the title),
+  across main's whole width; every other tab keeps the grey top. `.title-bar-night` paints it with `border-image`'s outset alone (`fill 0 / 0
+  / 100vh 100vw 6px`): ink overflow, so it takes no room and adds no scrollable overflow (clipped at main's edges), and
   the bar (y 8-52 plus the inset), + and the bell, and the `<h1>` (56) stay where Apps has them; the shell test pins
   the rule to exactly that one declaration. The band is main's content like the bar, so it scrolls away with it (design
   43 keeps the title bar in the scroller); the 100vh above the top is what an iOS pull-down bounce shows. On it, in both
