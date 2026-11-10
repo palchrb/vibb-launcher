@@ -223,9 +223,11 @@ All [A]. Which noun iOS picks for a picture that came by MMS is [C]. AirMessage 
   - **Otherwise** there is no target.
 - **A picture target** (`an image` / `et bilde`, L2):
   - Count every image part, in any state, among the newest 10 candidates.
-  - Exactly one picture message, whose picture is `AVAILABLE`, `PENDING` or `WAITING_DATA`: that bubble. An iPhone
-    often reacts before our fetch is done, and the badge then sits on the placeholder.
-  - None, more than one, or one that is `NOT_SHOWN`, `FAILED`, `TOO_LARGE` or `GONE`: no target.
+  - Exactly one picture message, whose picture is `AVAILABLE`: that bubble.
+  - None, more than one, or one that is `PENDING`, `WAITING_DATA`, `NOT_SHOWN`, `FAILED`, `TOO_LARGE` or `GONE`: no
+    target. (Code QA M1, the fix round: every incoming MMS shows a placeholder picture until it is fetched, text-only
+    ones too, so a reaction on it could land on what turns out to be a text, a reaction, or a dropped message. An
+    iPhone's reaction before our fetch is done stays the text "Likte et bilde" instead - never hidden, never misfiled.)
 - **A bubble with a picture and text** is one bubble here. An iPhone shows it as two, so either form names it.
 - **No target, or an ambiguous one:** the message stays a plain text bubble, exactly as today. A reaction is never
   hidden unless it attached to something.
@@ -548,7 +550,7 @@ None. The user agreed there is no parent switch (Q5).
   - `match`:
     - equal texts, for an add (not the reactor's) and for a removal (the bubble carrying it);
     - a cut quote, an ambiguous cut, a bubble newer than the reaction (L1);
-    - one picture, two pictures, a `NOT_SHOWN` picture, a `PENDING` picture;
+    - one picture, two pictures, a `NOT_SHOWN` picture, a `PENDING` picture (no target since the code QA's M1);
     - a removal with nothing to remove;
     - a natural nb sentence with no matching bubble (N3);
   - `state` (D4): add, replace, remove, a `FAILED` change, an `UNCERTAIN` row, `❤` then `Removed a heart`;
@@ -648,7 +650,7 @@ is open for the user but the capture itself.
 | M3 unbounded or invisible emoji | D2: a pinned Unicode 16.0 list, 16 UTF-16 units, U+FE0E dropped, stored fully-qualified, compared by a key without selectors |
 | M4 removal on repeated texts, failed rows, emoji variants | D3: a removal names the equal bubble carrying the sender's reaction, an add prefers a bubble not by the reactor; D4: `FAILED` ignored, `UNCERTAIN` pending; keys compared |
 | L1 window past the reaction's own seq | D3: candidates have `seq` lower than the reaction's |
-| L2 "a message with a picture" undefined | D3: every image part in any state counts; it attaches only to an `AVAILABLE`/`PENDING`/`WAITING_DATA` one; D7: the grid only on an `AVAILABLE` picture |
+| L2 "a message with a picture" undefined | D3: every image part in any state counts; it attaches only to an `AVAILABLE` one (until the code QA's M1 also `PENDING`/`WAITING_DATA`); D7: the grid only on an `AVAILABLE` picture |
 | L3 normalise both sides, cut marker, units | D2: the same normalisation on both sides, `…` only (unless step 0), 10 code points |
 | L4 200-character cut | D8: 200 UTF-16 units, a grapheme-boundary cut, one part if step 0 allows; cost in Q3 |
 | L5 `ReactionCommand` edges | D8: compose before `EMPTY`, `repeated()` compares the reaction fields, the target checks; D7: a refused send closes the panel |
@@ -670,16 +672,23 @@ is open for the user but the capture itself.
 - **The emoji list** is `assets/sms/emoji-16.0.txt`, about 104 KB (not 80): every listed sequence's code points and
   status (`f`/`m`/`u`; components and the Component group left out, no names) and the group lines, made by
   `scripts/emoji-list.py` from Unicode's file with its SHA-256 pinned; the vectors file pins the asset's SHA-256. If the
-  asset can't be read the engine records it and only the classic six are recognised (their emoji are fixed).
+  asset can't be read the engine records it, and the classic six are still received and sent (`Reactions.emoji`: they
+  are constants; code QA N1), no other emoji. The licence's text is `LICENSE-UNICODE` (code QA N7).
 - **The picker's group icons** are the ones listed in D13 (😀 👋 🐶 🍎 ✈️ ⚽ 💡 ❤️ 🏁), not each group's first emoji
   (which would be 🐵, 🍇, 🌍, 🎃, 👓, 🏧 for six of them).
 - **The picker takes the thread list's place** while it shows (the screen is a vertical column; an overlay would mean a
   new root layout). Back or ✕ closes the picker and the panel together. Choosing the kid's own current emoji in the
   picker takes it away, as its cell in the grid does.
-- **A group MMS's move** (design 77 D12): a reaction that had attached to the moving message's waiting picture in the
-  one-to-one conversation becomes a plain message again there (`detachReactionsOn`) - a reaction never hides a
-  message unless it names a bubble beside it. A waiting MMS that is dropped (its sender no longer allowed) takes its
-  reactions with it, as a delete does.
+- **An MMS still being fetched is never a picture target** (code QA M1, the fix round; D3 above). So a placeholder
+  never carries a reaction: a group MMS's move, a drop, a retrieve that turns it into a text or a reaction, and a
+  conversation deleted meanwhile have nothing to give back. (The first build let a reaction sit on the placeholder,
+  detached it on the move and deleted it with a drop - the review showed a real SMS could end hidden or deleted that
+  way; both paths are gone.)
+- **The notification's lines** (code QA L1, N2): unread messages first, reactions only in the lines left; the lock
+  screen's public text says "Ny reaksjon" only when every line is a reaction. The channel choice is the pure
+  `smsChannel(silent, reaction, passesFilter)`. The vibration `0, 80` waits for the user's word on the Jelly Star.
+- **The chip** has its own room below the bubble (its measured height less 5 dp, code QA L3), and "Nylig brukt" learns
+  only an emoji that was sent as an add (N6).
 - **The panel** closes when the compose bar's state changes under it (a time rule began, group texts went off), and
   follows its bubble when a reaction comes or goes while it is open. TalkBack's label for the kid's current reaction
   is "Fjern din ❤️" ("Remove your ❤️"); the others "Reager med ❤️".

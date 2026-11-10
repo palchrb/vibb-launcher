@@ -230,7 +230,9 @@ Each targeted class rerun, then `git checkout -- <file>`; a surviving mutant is 
    - an attached reaction leaves Home's badge, the list's unread dot, the last line and the order alone;
    - opening the thread marks a reaction on an older bubble read, and its notification goes (`markReadUpTo`'s
      subquery);
-   - a delete of a bubble takes its reaction rows.
+   - a delete of a bubble takes its reaction rows;
+   - (m12, added in the fix round) SQLite's `unread()` and `lastMessage()` with reaction rows present: the count and
+     the list's last line ignore them.
 3. **The chip at 288 dp** (`jelly36`, or `wm density 240`):
    - on an incoming bubble against its time (L3), on a picture bubble, and on a narrow "Ok" bubble;
    - three emoji and "+N";
@@ -261,7 +263,8 @@ Each targeted class rerun, then `git checkout -- <file>`; a surviving mutant is 
    - a group reaction attaches in the group's thread;
    - a picture with the same text stays a message;
    - after the fix, M1's sequence (an MMS waiting, then `Likte et bilde` by SMS, then the MMS retrieved as text,
-     as a reaction, and dropped) leaves the SMS as a visible message in every case.
+     as a reaction, and dropped) leaves the SMS as a visible message in every case - since the fix round it never
+     attaches to the waiting MMS at all; once a picture is fetched, the same words attach to it.
 8. **The sent bytes:** the stored `OUT` body for nb and en, and a 300-character quote sent in at most three UCS-2
    parts.
 9. **The buzz:** whether it is felt can only be judged on the Jelly Star itself (open point).
@@ -278,3 +281,33 @@ Each targeted class rerun, then `git checkout -- <file>`; a surviving mutant is 
 - Design 80's own changes, `PLAN.md` and every note but the "SMS" sections of `calls.md`.
 - A cost measurement of the asset's load (about 104 KB and ~3,800 lines, read once on the engine thread or the
   picker's background thread).
+
+## Fix round (2026-11-10, branch `sms-reactions`)
+
+Code in 9d258a04; the design note, the SMS note, the emulator list and this section in the docs commit after it. Every
+finding was checked against the code first; none was refuted. The coordinator's decisions: every finding fixed now,
+the buzz stays `0, 80` until the user answers (pattern and channel id side by side, one comment on the freeze), m12 goes
+to the emulator pass.
+
+| Finding | Commit | Fixed | Test |
+|---|---|---|---|
+| M1 | 9d258a04 | Confirmed (the probe's sequence). **Rule chosen: a picture reaction attaches only to a picture that is there (`AVAILABLE`)** - `PICTURE_TARGET` is `{AVAILABLE}`; every image part in any state still counts among the newest ten, so a picture beside one being fetched is ambiguous. Chosen over "detach when it turns out otherwise" because it can never hide a real message and is less code: a placeholder never carries a reaction, so the retrieve (a text, a reaction itself), the move, the drop and a conversation delete have nothing to give back, and the move's `detachReactionsOn` and the drop's `deleteReactionsOn` are gone (departure 8 is withdrawn: nothing to take or give back). The cost: an iPhone's reaction to a picture we haven't fetched yet stays the text "Likte et bilde" - visible, never lost. | `MmsEngineTest`: "a picture reaction never attaches to an MMS still being fetched, whatever it turns out to be" (text, a reaction itself, dropped; then a real picture takes it), "the conversation deleted while an MMS waits leaves nothing behind"; the vectors' match rows for `PENDING`, `WAITING_DATA` and a picture beside a placeholder. Re-allowing the placeholder states fails three tests. |
+| L1 | 9d258a04 | `notifiable` takes the newest unread messages (up to five) first; reactions in effect fill only the lines left. | `SmsEngineTest` "reactions never push an unread message's line out of the notification" |
+| L2 | 9d258a04 | m7: the channel is the pure `smsChannel(silent, reaction, passesFilter)` in `SmsGlance.kt`, which `SmsNotifier` calls. m6, m10: tests. m11, m16: their code is gone (M1); M1's tests cover the outcome. m12: on the emulator list below (no JVM test opens SQLite). | `SmsGlanceTest` "a reaction's channel - its own, silent under a time rule or Do Not Disturb - and the lock's text"; `MmsEngineTest` "a reaction into a group is refused while group texts are off, as a text is", "an MMS told of as a waiting picture only rebuilds when it turns out to be a reaction" |
+| L3 | 9d258a04 | The bubble's bottom margin is the chip's measured height less 5 dp (`CHIP_OVERLAP_DP`, inside the bubble's 8 dp bottom padding), so the chip has its own room at any text size and never reaches the time or the delivery line. | The emulator pass (item 3) |
+| N1 | 9d258a04 | `Reactions.emoji(raw, list)`: the list's rule, else the six by key - the parse and `reactionToSend` both use it, so the six are received and sent with the asset unreadable. | `SmsReactionsTest` "without the emoji list the six are still read, nothing else"; `SmsEngineTest` "without the emoji list the six are still received and sent, no other emoji" |
+| N2 | 9d258a04 | The public text from the lines: `smsPublicIsReaction(lines)` - "Ny reaksjon" only when every line is a reaction. | `SmsGlanceTest` (as L2's) |
+| N3 | 9d258a04 | `candidate(textParts, otherParts)`; the vectors' rows lost `mms`. | `SmsReactionsTest` "every candidate vector (H1)" |
+| N4 | 9d258a04 | The picker's `TYPE_HEADING` / `TYPE_EMOJI`. | - |
+| N5 | 9d258a04 | `hasGlyph` answers kept for the process (`GLYPHS`, a `ConcurrentHashMap` in the thread's companion, each thread with its own `Paint`); the picker's first pass stays off the main thread. | The emulator pass (item 5) |
+| N6 | 9d258a04 | "Nylig brukt" is written after the send's answer, only for an accepted add (`recentAfterSend`). | `MessagesModelTest` "Nylig brukt learns only an emoji that was sent - not a refused send, not a removal" |
+| N7 | 9d258a04 | `LICENSE-UNICODE` holds the Unicode License v3 text; both Unicode entries in `NOTICE.md` (CLDR's and the emoji list's) name it. | - |
+| Open point | - | Unchanged: `0, 80` with the channel id, frozen at first creation (a new pattern needs a new id), until the user decides. | - |
+
+**The suite after the fix round:** 2,421 tests, 0 failures, 0 errors, 0 skipped (the JUnit XML reports of one full
+`assembleDebug testDebugUnitTest lintDebug -PwarningsAsErrors=true` run on 9d258a04; lint passes). Nine new:
+`MmsEngineTest` 4, `SmsEngineTest` 2, `SmsReactionsTest` 1, `SmsGlanceTest` 1, `MessagesModelTest` 1.
+
+Added to "What the emulator pass must check": item 2 also runs SQLite's `unread()` and `lastMessage()` with reaction
+rows present (m12), and item 7's M1 sequence now expects the SMS as a plain message from the start (it never attaches
+to a placeholder).

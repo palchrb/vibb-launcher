@@ -514,10 +514,11 @@ on the wire but nb's heart.
 - **The forms and the rules (`sms/engine/Reactions.kt`, pure):** `FORMS` is §1's table - en (US, with the en_GB
   `Emphasised` / `exclamation mark` read only) and nb, the six classic Tapbacks and the iOS 18 `{e}` form, a quoted text
   or `an image` / `et bilde`, adding and removing. `parse` is strict and whole-message: a known head, one of four quote
-  pairs closed by the very last character, a body of at most 2,000 units; `candidate` is H1 (an SMS, or an MMS of
-  exactly one text part and nothing else); `resolve` is D3 over the conversation's newest 100 bubbles older than the
+  pairs closed by the very last character, a body of at most 2,000 units; `candidate` is H1 (an MMS of exactly one text
+  part and nothing else; an SMS always is); `resolve` is D3 over the conversation's newest 100 bubbles older than the
   reaction (equal texts: an add to the newest the reactor didn't write, a removal to the one carrying it; a cut quote
-  with ten code points; a picture only when exactly one image part is among the newest ten, there or on its way);
+  with ten code points; a picture only when exactly one image part is among the newest ten and it is there,
+  `AVAILABLE` - never an MMS still being fetched, whose placeholder could turn out to be anything: code QA M1);
   `state` is D4 (per person the newest add unless a later removal of the same key; the kid's failed rows ignored,
   queued/sending/uncertain pending); `format` is D8 (classic words for the six, the iOS 18 form otherwise, 200 units
   with a grapheme-safe cut). **The vectors** `launcher/app/src/test/resources/sms_reactions.json` (launcher only, as
@@ -527,7 +528,8 @@ on the wire but nb's heart.
 - **The emoji list (`sms/engine/Emoji.kt`, `assets/sms/emoji-16.0.txt`):** Unicode 16.0's `emoji-test.txt` stripped by
   `scripts/emoji-list.py` (the source's SHA-256 pinned there; the asset's in the vectors). `canonical`: at most 16 units,
   U+FE0E dropped, a listed sequence, returned fully-qualified; `key` drops the selectors. Its `groups` (fully-qualified,
-  no skin tones, no Component) are the picker's. `SmsRuntime.emoji` reads it once (at start, before a receive needs it).
+  no skin tones, no Component) are the picker's. `SmsRuntime.emoji` reads it once (at start, before a receive needs it);
+  unreadable, the six still work (`Reactions.emoji`: they are constants). Its licence text is `LICENSE-UNICODE`.
 - **The store (`messages.db` v5, on design 80's v4):** `reaction_to`, `reaction_emoji`, `reaction_key`, `reaction_op` and
   the `message_reaction` index. `messages()`, `lastMessage()` and `unread()` leave reaction rows out; `reactions(ids)`
   and `unreadReactions` read them; `markReadUpTo` marks the bubbles and the reactions on them that came later. The
@@ -535,27 +537,33 @@ on the wire but nb's heart.
 - **The engine:** `show(…, attach)` matches inside the receive's transaction (`attachment`) and returns
   `Received.Attached` - an incoming add stored unread, a removal read; never for a released held message (D10).
   `MmsFlow.onRetrieved` does the same once the text is in, in the conversation the message ended up in, after every
-  sender and group check (a group with texts off is dropped first, design 80 D13); a moved group MMS detaches reactions
-  that had named it in the one-to-one. `messages()` hangs `reactions` on each bubble; front ends never fold.
+  sender and group check (a group with texts off is dropped first, design 80 D13). A placeholder never carries a
+  reaction, so a move, a drop or a retrieve has nothing to give back. `messages()` hangs `reactions` on each bubble;
+  front ends never fold.
   `send` takes `SendCommand.reaction` (`ReactionCommand`): the body composed first, the target a shown received
   non-reaction bubble of the conversation with text or an available picture, the emoji listed, a removal only of the
   kid's own in effect - then the same gate, outbox and `UNCERTAIN` as any text (a group reaction is a group MMS, refused
   with `GROUPS_OFF` when group texts are off). `repeated` compares target, op and key. A delete takes the bubble's
   reactions with it, one `MessageDeleted` each; `removeReactions` ("Fjern reaksjonene") deletes the others' rows only.
-- **The notification (`SmsNotifier`):** lines from `engine.notifiable` (unread bubbles and unread reactions in effect,
-  "Reagerte med ❤️ på «…»" with the quote cut at 40, or "på et bilde"; public "Ny reaksjon"). A reaction from someone
-  else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 80 ms buzz, no heads-up) - or on
-  `launcher:messages_silent` under a time rule without calls or any Do Not Disturb (filter not `ALL`, fail closed) -
-  and never wakes the lock. A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
+- **The notification (`SmsNotifier`):** lines from `engine.notifiable` (the unread bubbles first, then unread reactions
+  in effect in the lines left - a reaction never pushes a message out; "Reagerte med ❤️ på «…»" with the quote cut at
+  40, or "på et bilde"; the public text "Ny reaksjon" only when every line is a reaction, `smsPublicIsReaction`). A
+  reaction from someone else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 80 ms buzz, no heads-up)
+  - or on `launcher:messages_silent` under a time rule without calls or any Do Not Disturb (filter not `ALL`, fail
+  closed); the pure `smsChannel` decides - and never wakes the lock. The pattern is frozen with the channel at its
+  first creation: a new length needs a new channel id (the user hasn't decided the length yet). A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
   only while it is up (`afterReaction`).
 - **The thread (`ThreadActivity`, models in `MessagesModel`):** the chip (`reactionChip`: three different emoji then
   "+N", the kid's own in a peach ring and dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)
-  on the bubble's bottom edge at the corner facing the middle, the bubble 10 dp higher and never narrower than its chip;
+  on the bubble's bottom edge at the corner facing the middle, with its own room below the bubble (its measured height
+  less 5 dp, inside the bubble's padding - never over the time) and the bubble never narrower than it; `hasGlyph` kept
+  for the process;
   TalkBack reads "Reaksjoner: ❤️ fra Mamma, 👍 fra deg" in the bubble's description. A long press opens the panel
   (`reactPanel`: the 4 x 2 grid only where the compose bar is open and on a received bubble with text or an available
   picture - the six, "+", the kid's other reaction; "Fjern reaksjonene" when others reacted; "Slett"), or the delete
   confirm as before when there is nothing else; TalkBack gets the same as custom actions. The picker (`pickerItems`)
   takes the list's place: "Nylig brukt" (five, the six excluded, `ReactionRecents` in the launcher's own CE
-  preferences), the nine groups' strip and headings, five columns, only what the font draws.
+  preferences, written only after an accepted add), the nine groups' strip and headings, five columns, only what the
+  font draws.
 - **Not checked on a device yet:** the whole emulator loop (`docs/testing/emulator.md` §6aa) - it needs a server with
   an SMS-managed policy.

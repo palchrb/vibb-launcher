@@ -2625,7 +2625,13 @@ takes the text after the number as it is, quotes and emoji included (quote the w
   launcher) or `Liked “Hei”` (en), `SENT` -> full colour. "+" -> the picker: "Velg en reaksjon", the group strip, five
   columns, no skin tones, no empty boxes; pick 🎉 -> `Reagerte med 🎉 på «Hei»`, and 🎉 leads "Nylig brukt" next time.
 - **MMS:** with `scripts/fake-mmsc.py` (§6v step 3b) a group text reaction (`Likte «…»` to the kid and Bestemor)
-  attaches in the group's thread when its text arrives; a picture plus the same text stays a picture message.
+  attaches in the group's thread when its text arrives; a picture plus the same text stays a picture message. While
+  an MMS waits (mobile data off), `'Likte et bilde'` by SMS stays a plain message, whatever the MMS turns out to be (a
+  text, a reaction, dropped); once a picture is fetched, the same words attach to it (code QA M1).
+- **The store's SQL** (no JVM test opens SQLite; `docs/review/qa-81-code.md`, "What the emulator pass must check"):
+  a v4 install (design 80's) with messages upgraded to v5, and a fresh one - `PRAGMA user_version` 5, the same
+  `.schema message`, `message_reaction` present; with reaction rows present, `unread()` and `lastMessage()` ignore
+  them (Home's badge, the list's dot and last line).
 
 Screenshots: the chip, the panel and the picker at 288 dp.
 
