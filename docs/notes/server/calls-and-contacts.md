@@ -380,6 +380,33 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   (`calls_sms::phone_numbers`). Tests: `tests::calls_simpler::the_group_switch_needs_the_capability_and_its_marker`,
   `the_learned_number_and_a_conflict`, `tests::sms` (the policy with `sms_groups` both ways), `sms::tests` (the report's
   `own_learned`, its conflict row and the hostile ones).
+- **The code QA's fix round** (`docs/review/qa-80-code.md`; these replace what the bullets above say):
+  - `groups_shown` is drawn only with an enabled switch (`sms_groups_v1` claimed), so a page drawn before the
+    capability never turns groups off (M1).
+  - **A learned number is no bar to a contact** (L1): `phone_numbers` (Add Contact's refusal, the family list) holds
+    only the stored and the SIM-reported numbers - anyone can send the message that taught the phone. Added as a
+    contact, it reaches the phone, which drops the learned number; the page no longer offers a learned number that
+    is a contact.
+  - **A stale SMS form never writes a slot it didn't change** (L3): every own-number field posts
+    `own_number_<n>_shown` (what the page drew), and `save_sms` writes a slot only when its field differs; an older
+    page without it is as before. The Avansert drawn open from `?advanced=1` carries `data-reopens`, which
+    `auto-reload.js` (v7), `pull-refresh.js` (v4) and `reconnect.js` (v12) skip in `shownOpen` - it comes back open -
+    so the page reloads in place again; a `<details>` opened inside it still blocks.
+  - **One rule for "Bruk dette nummeret"** (L4): `usable_own` (`phone::normalize` leaves the number as it is, and a full
+    `+` number that isn't short or an emergency number) filters every SIM and learned number in `reported_own`; the
+    row is offered by it and the route stores only what it kept. A SIM reporting `113`, `90000009` or `+4712` reads as
+    unknown.
+  - **Add Contact of an emergency number without JS** follows the two-way texts switch (`resolve` runs `both_ways` on
+    `(sms_out, sms_out)`), and the refusal redraw judges the sent number (L5).
+  - An unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`), never the write-all (N2). No free
+    slot for a learned or conflict number lands on `?notice=own_number_no_slot` with its own words (N4). The short-number
+    line names the kid (N5). "Tilpasset" takes exactly the switch's 51 px box, so its label wraps at the same width at
+    any font size (N3). Avansert › Meldinger has hairlines between its rows (`.group-lines`).
+  - Tests: `tests::calls_simpler::a_page_drawn_before_the_capability_never_turns_groups_off`,
+    `a_learned_number_can_be_added_as_a_contact`, `a_stale_sms_form_keeps_a_number_stored_meanwhile`,
+    `bruk_dette_nummeret_only_for_a_number_the_tap_stores`, `an_emergency_number_added_without_js_follows_the_texts_switch`,
+    `an_unknown_settings_section_is_refused`; `contact_requests::the_prefill_and_retry_rules` (every switch, the name);
+    the reconnect jstest for `data-reopens`.
 - Tests: `tests::calls_simpler` (D3 through the form, L1, H2, N4, `more`, L2, the Avansert row and the Matrix ID, the
   sub-lines, Add Contact's ways in and the own-number refusal, the split settings form, the own number by its source,
   the page's order and Avansert row, the RCS line's 14 days), `calls_form::tests` (`both_ways`' table, the emergency

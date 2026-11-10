@@ -257,3 +257,29 @@ Each mutation was rerun only against its targeted tests, then reverted (`git che
 - The mockups (`80-mockups.html`), and the design QA's table point by point (only where the code touched it).
 - Older launcher plus new server, and the reverse, were checked by reading only: the DTO defaults and
   `sanitize_state`'s known keys.
+
+## Fix round (2026-11-10, branch `calls-simpler`)
+
+Code in d804b07d (server) and 276e33b4 (launcher); this section, the notes and the design's "As built" in the docs
+commit after them. Every finding was checked against the code first; none was refuted. Each test below fails without
+its fix (L4's, L2's and L7's were run against the mutation: killed).
+
+| Finding | Commit | What changed | The test |
+|---|---|---|---|
+| M1 | d804b07d | `groups_shown` is drawn only with `sms.groups_capable`, so a page drawn before the capability (the switch disabled) never turns groups off; the noscript Save posts the same form. | `tests::calls_simpler::a_page_drawn_before_the_capability_never_turns_groups_off` |
+| L1 | d804b07d | `calls_sms::phone_numbers` (Add Contact's refusal, the family list) holds only the stored and the SIM-reported numbers; a learned one never blocks a contact. Added, the contact reaches the phone, whose `OwnLearning.current` drops the learned number, and the page stops offering a learned number that is a contact. | `tests::calls_simpler::a_learned_number_can_be_added_as_a_contact` |
+| L2 | 276e33b4 | `simSet` "" is "can't be read": `MmsFlow.ownLearnedFor` keeps the stored state and uses none of it, `OwnLearning.learn` learns nothing. Only a readable set that differs clears it. | `MmsEngineTest` "the own number is learned …" (the conflict kept across a "" moment), `OwnLearningTest` "it doesn't learn from anything else" |
+| L3 | d804b07d | Each own-number field posts `own_number_<n>_shown` (what the page drew); `save_sms` writes a slot only when its field differs (an older page without it: as before). The reviewer's reconnect point is real: the Avansert drawn open from `?advanced=1` is `data-reopens`, and the three scripts' `shownOpen` skip it (it comes back open after the reload); a `<details>` opened inside it still blocks. | `tests::calls_simpler::a_stale_sms_form_keeps_a_number_stored_meanwhile`; jstest `reconnect.test.js` "a <details> the server reopens after a reload doesn't block it…" |
+| L4 | d804b07d | One rule, `calls_sms::usable_own` (`phone::normalize` leaves the number as it is, and `own_number_ok`), applied in `reported_own` to every SIM and learned number - the row is offered by it and the route stores only what it kept. The route's separate filter is gone (one place), so S6's mutation is now "`reported_own` without `usable_own`": killed. | `tests::calls_simpler::bruk_dette_nummeret_only_for_a_number_the_tap_stores` (`113`, `90000009`, `+4712` refused and not offered; `+4790000009` stored) |
+| L5 | d804b07d | `calls_form::resolve`'s emergency branch runs `both_ways` on `(sms_out, sms_out)` and takes the kid's way, so Add Contact without JS follows the two-way switch; the refusal redraw passes `is_emergency` of the sent number. A contact's own emergency row (no `texts_shown`) is unchanged. | `tests::calls_simpler::an_emergency_number_added_without_js_follows_the_texts_switch`, `calls_form::tests::an_emergency_number_texts_by_sms_out_alone`; the browser pass with JS off |
+| L6 | d804b07d | The short-number request's Home and Pictures pinned off (S4b killed). | `tests::contact_requests::the_prefill_and_retry_rules` |
+| L7 | 276e33b4 | A contact with `sms_in` that is an emergency number (`113`, a rule set the server never sends), let in by the callback window, teaches nothing (LM3's emergency half killed). | `MmsEngineTest` "nothing is learned from a contact with sms_in that is an emergency number (code QA L7)" |
+| N1 | d804b07d | A comment in each copy of `shownOpen` naming the other two. Kept as three copies: each script stands alone and has its jstest. | - |
+| N2 | d804b07d | An unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`), nothing written. | `tests::calls_simpler::an_unknown_settings_section_is_refused` |
+| N3 | d804b07d | "Tilpasset" takes exactly the switch's box (`flex: 0 0 51px`, the 12 px gap, 13 px type), so its label wraps at the same width as beside the switch at any font size or width; at a larger font the word runs into the row's right padding. | the browser pass: a split save at 390 and at 320 px, 0 px shift |
+| N4 | d804b07d | No free slot is its own notice, `own_number_no_slot`: "Telefonen har allerede et lagret nummer, så ingenting ble lagret. Bruk «Endre» for å bytte det." | `tests::calls_simpler::the_learned_number_and_a_conflict` |
+| N5 | d804b07d | The short-number line names the kid: "Velg selv om {name} skal kunne ringe og sende melding til det." | `tests::contact_requests::the_prefill_and_retry_rules` |
+| Cosmetic | d804b07d | The hairlines between Avansert › Meldinger's rows (`.group-lines`). The RCS row keeps the note rows' ⓘ style (`partials/note_row.html`'s shape), as every other row with an ⓘ on the page. | the browser pass's screenshot |
+
+Suites after the round: see the implementer's report (server `cargo test`, fmt, clippy; jstests; the launcher's unit
+tests). Browser pass (Playwright, a throwaway server): 390 px light and dark, 320 px, JS off for L5.
