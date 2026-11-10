@@ -3084,17 +3084,17 @@ div.row[data-way],
 div.row[data-custom] {
     min-height: 53px;
 }
-/* Code QA N3: the value takes exactly the switch's box (12 px gap, 51 px), so the label beside "Tilpasset" wraps at the
-   same width as beside the switch, at any font size or phone width; at a larger font the word runs into the row's
-   right padding rather than taking the label's room. */
+/* Code QA N3, V3: the value takes the switch's box - no gap of its own (the switch has none: `.sw`'s margin is 0) and
+   at least its 51 px - so at the default size the label beside "Tilpasset" has the switch row's room and wraps with
+   it; at a larger font the word grows into the label's room instead of being clipped. */
 div.row[data-way] > .row-value,
 div.row[data-custom] > .row-value {
-    flex: 0 0 51px;
+    flex: 0 0 auto;
+    min-width: 51px;
+    margin-left: 0;
     text-align: right;
-    margin-left: 12px;
     font-size: 0.8125rem;
     white-space: nowrap;
-    overflow: visible;
 }
 
 /* The page's Avansert › Meldinger: its rows sit in more than one form, so the group's own sibling rule can't draw the
