@@ -104,7 +104,4 @@ class KidSearchField(private val root: View, hint: Int, private val onQuery: (St
             count.postDelayed(show, at - now)
         }
     }
-
-    /** The count line's ink on a wallpaper (the phone book). */
-    val countLine: TextView get() = count
 }

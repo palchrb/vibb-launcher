@@ -156,7 +156,9 @@ the kid's picture per contact (on the phone), the contact request's picture, whe
   end).
 - **A-Å:** `java.text.Collator` in Vibb's language (nb puts Æ, Ø and Å last), strength SECONDARY, ties by contact id;
   the `Collator` kept per locale.
-- **The ground:** the phone book keeps the wallpaper. Every row and the pill are solid `kid_music_tile` tiles, so they
+- **The ground:** (changed 2026-11-10, the user: the phone book is on Dagen's plain night ground, `kid_ground`, with
+  the layouts' inks - `docs/notes/launcher/calls.md`; what follows is the design as approved.) The phone book keeps the
+  wallpaper. Every row and the pill are solid `kid_music_tile` tiles, so they
   read on navy, a light photo and a busy one. Only the info line, the "Venter på svar" label and the live count are
   text on the wallpaper, in `KidInk` dim.
 

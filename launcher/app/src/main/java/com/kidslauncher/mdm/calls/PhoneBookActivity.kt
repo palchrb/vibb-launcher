@@ -22,9 +22,6 @@ import com.kidslauncher.mdm.ui.search.PhoneBookBack
 import com.kidslauncher.mdm.ui.search.listCollator
 import com.kidslauncher.mdm.ui.search.phoneBookBack
 import com.kidslauncher.mdm.ui.search.searching
-import com.kidslauncher.mdm.ui.wallpaper.KidInk
-import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
-import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,9 +29,10 @@ import kotlinx.coroutines.withContext
 
 /**
  * The phone book - the kid's place to call from, and the DIAL / `tel:` handler the dialer role requires. Since design
- * 79 one list of solid night rows on the kid's wallpaper ([phoneBookRows]): a request's answer once at the top, the
+ * 79 one list of night rows ([phoneBookRows]): a request's answer once at the top, the
  * contacts with an unseen missed call newest first, everyone else A-Å, the kid's open requests under "Venter på svar",
- * the emergency numbers last. Each row has Ring and Melding ([contactActions], the card's rule); a tap anywhere else
+ * the emergency numbers last. It is on Dagen's plain night ground (the user, 2026-11-10): `kid_ground` and the inks in
+ * the layouts, the bars the theme's - the kid's own picture stays behind Home and kid Settings. Each row has Ring and Melding ([contactActions], the card's rule); a tap anywhere else
  * opens [ContactSheet]. The header's "+" opens the contact request ([ContactRequestForm]). There is no free keypad;
  * emergency numbers still work, from here (their Ring asks first) and from the lock screen's Emergency button.
  *
@@ -125,7 +123,6 @@ class PhoneBookActivity : UIObjectActivity() {
     }
     /** Design 77 §6.7: the rows' unread messages follow the engine. */
     private val messagesListener: () -> Unit = { render() }
-    private val wallpaperListener: () -> Unit = { render() }
     private val requestsListener: () -> Unit = { render() }
     /** Round L5: a missed Element X call came or went. */
     private val elementMissedListener: () -> Unit = { loadMissedCalls() }
@@ -180,13 +177,9 @@ class PhoneBookActivity : UIObjectActivity() {
         handleNumber(intent)
     }
 
-    /** The kid's wallpaper behind the phone book, like Home (design 08 §3). */
-    override fun showsSystemWallpaper() = true
-
     override fun onStart() {
         super.onStart()
         ContactPhotos.addListener(photoListener)
-        WallpaperStore.addListener(wallpaperListener)
         ElementMissedCallStore.addListener(elementMissedListener)
         SmsHome.addListener(messagesListener)
         ContactRequests.addListener(requestsListener)
@@ -212,8 +205,6 @@ class PhoneBookActivity : UIObjectActivity() {
             draftSweepDue = false
             ContactRequests.sweepDrafts(this, keep = requestForm.draft)
         }
-        // Also refreshes whether the system wallpaper is still ours (in the background).
-        WallpaperStore.refreshAsync(this)
         render()
         loadMissedCalls()
         // Opening the phone book deals with the missed-call notification (design 12, QA #3).
@@ -234,7 +225,6 @@ class PhoneBookActivity : UIObjectActivity() {
 
     override fun onStop() {
         ContactPhotos.removeListener(photoListener)
-        WallpaperStore.removeListener(wallpaperListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
         SmsHome.removeListener(messagesListener)
         ContactRequests.removeListener(requestsListener)
@@ -368,7 +358,6 @@ class PhoneBookActivity : UIObjectActivity() {
      * [filter] over it - no binder call, prefs decode or label lookup per character.
      */
     private class Inputs(
-        val ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice,
         val view: PhoneBookView,
         val emergency: Set<String>,
         val unread: Map<String, Int>,
@@ -380,15 +369,10 @@ class PhoneBookActivity : UIObjectActivity() {
 
     private var inputs: Inputs? = null
 
-    /** The page and the list's inputs again: at resume, from every listener (policy, messages, requests, wallpaper) and
+    /** The page and the list's inputs again: at resume, from every listener (policy, messages, requests) and
      * when the form opens or closes - then [filter]. */
     private fun render() {
         if (!::requestForm.isInitialized) return
-        // The same copy of the wallpaper as Home draws (qa-launcher-small-a-code Q-1): no scale step between the two.
-        val ink = WallpaperGround.apply(this, binding.root, ownGround = true).ink
-        KidInk.label(binding.phoneBookHeader.kidHeaderTitle, ink)
-        KidInk.label(binding.phoneBookInfo, ink, dim = true)
-        adapter.ink = ink
         val state = CallPolicyStore.effectiveState()
         val rules = (state as? CallPolicyState.Managed)?.rules
         val canAsk = requestForm.canAsk()
@@ -424,7 +408,7 @@ class PhoneBookActivity : UIObjectActivity() {
             }
         }
         inputs = Inputs(
-            ink, view, emergency, view.contacts.associate { it.number to SmsHome.unreadFrom(it.number) },
+            view, emergency, view.contacts.associate { it.number to SmsHome.unreadFrom(it.number) },
             if (canAsk) contactRequestRows(ContactRequests.records(this)) else emptyList(), canAsk, actions, messageApps,
         )
         // The search: only while the kid can ask (calls managed and on); calls going off clears it.
@@ -449,10 +433,9 @@ class PhoneBookActivity : UIObjectActivity() {
         )
         // The pill hides while the form is up (QA N4).
         search.setShown(list.search && !requestForm.isOpen)
-        KidInk.label(search.countLine, inputs.ink, dim = true)
         val hits = list.rows.count { it is PhoneBookRow.Contact || it is PhoneBookRow.Waiting }
         search.announce(if (searching(query) && list.search) hits else null)
-        bindEmpty(list, inputs.ink)
+        bindEmpty(list)
         binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
         val items = list.rows.map { row ->
             if (row !is PhoneBookRow.Contact) return@map PhoneBookItem(row)
@@ -481,10 +464,9 @@ class PhoneBookActivity : UIObjectActivity() {
 
     /** "Fant ingenting" (design 79 §4.1), and "Be om å legge til «Lina»" while the kid can ask: the form with the
      * query as the name. */
-    private fun bindEmpty(list: PhoneBookList, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
+    private fun bindEmpty(list: PhoneBookList) {
         val empty = binding.phoneBookEmpty
         empty.root.visibility = if (list.nothingFound && !requestForm.isOpen) View.VISIBLE else View.GONE
-        KidInk.label(empty.kidSearchEmptyText, ink)
         val ask = list.askName
         empty.kidSearchAsk.visibility = if (ask == null) View.GONE else View.VISIBLE
         empty.kidSearchAsk.text = ask?.let { getString(R.string.phone_book_ask_named, it) }

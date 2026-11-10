@@ -81,6 +81,9 @@ class ThreadActivity : UIObjectActivity() {
     private var messages: List<Message> = emptyList()
     private var limit = PAGE
     private var newestSeq = 0L
+
+    /** Whether the list follows its newest message ([threadFollows]): at its end, until the kid scrolls up. */
+    private var following = true
     private var compose = ComposeState.UNAVAILABLE
     private var resumed = false
 
@@ -161,6 +164,8 @@ class ThreadActivity : UIObjectActivity() {
         (binding.threadList.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.threadList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                // Only a scroll says where the kid reads (a layout reports 0): at the end the thread follows.
+                if (dy != 0) following = atEnd()
                 // Older messages when the top is reached and the last page was full.
                 if (dy < 0 && layout.findFirstVisibleItemPosition() == 0 && messages.size >= limit) {
                     limit += PAGE
@@ -168,6 +173,7 @@ class ThreadActivity : UIObjectActivity() {
                 }
             }
         })
+        binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }
         // Design 81 D7: a tap on the thread closes the reaction panel (and is spent on that).
         binding.threadList.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
             override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
@@ -221,6 +227,7 @@ class ThreadActivity : UIObjectActivity() {
         conversation = null
         messages = emptyList()
         newestSeq = 0L
+        following = true
         limit = PAGE
         cancelDelete()
         hideReact()
@@ -354,16 +361,32 @@ class ThreadActivity : UIObjectActivity() {
         }
         renderHeader()
         renderCompose()
-        val newest = messages.maxOfOrNull { it.seq } ?: 0L
-        val scroll = newest > newestSeq
-        newestSeq = newest
+        following = threadFollows(following, newestSeq, messages)
+        newestSeq = messages.maxOfOrNull { it.seq } ?: 0L
+        // Asked by every list, not only the one that brought the message: a list overtaken by the next read (the read
+        // that marked it read, a delivery update) never gets its callback. A bubble taller than the list shows its
+        // bottom after the layout ([afterLayout]).
         adapter.submitList(threadItems(messages, System.currentTimeMillis(), ZoneId.systemDefault())) {
-            if (scroll && adapter.itemCount > 0) {
-                binding.threadList.scrollToPosition(adapter.itemCount - 1)
-                // A tall bubble (a picture) counts as shown once its top is: on to its bottom (step 3b's emulator run).
-                binding.threadList.post { if (!isDestroyed) binding.threadList.scrollBy(0, binding.threadList.computeVerticalScrollRange()) }
-            }
+            if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
         }
+    }
+
+    /** The last bubble's bottom in the list, `null` while that bubble isn't laid out. */
+    private fun lastBottom(): Int? = binding.threadList.layoutManager?.let { layout ->
+        layout.findViewByPosition(adapter.itemCount - 1)?.let(layout::getDecoratedBottom)
+    }
+
+    private fun listEnd(): Int = binding.threadList.height - binding.threadList.paddingBottom
+
+    private fun atEnd(): Boolean = threadAtEnd(lastBottom(), listEnd(), KidAvatars.dp(this, END_SLOP_DP))
+
+    /** Every layout of the list - a new bubble, one that grew or shrank, the keyboard, the compose bar's height: a
+     * thread that follows goes on to its end ([threadEndGap]); one that doesn't follows again once its end shows (a
+     * delete left less than a screen). */
+    private fun afterLayout() {
+        if (!following) following = atEnd()
+        val gap = threadEndGap(following, lastBottom(), listEnd())
+        if (gap > 0) binding.threadList.scrollBy(0, gap)
     }
 
     private fun normalised(raw: String): String =
@@ -1155,6 +1178,9 @@ class ThreadActivity : UIObjectActivity() {
 
         /** Messages read at a time; scrolling to the top reads the next page. */
         private const val PAGE = 100
+
+        /** How near its end the list counts as at it ([threadAtEnd]). */
+        private const val END_SLOP_DP = 8f
 
         /** D13: the picker's columns (48 dp each at 288 dp), and its two kinds of line. */
         private const val PICKER_COLUMNS = 5

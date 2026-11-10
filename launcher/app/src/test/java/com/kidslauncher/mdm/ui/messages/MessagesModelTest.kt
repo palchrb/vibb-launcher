@@ -263,6 +263,38 @@ class MessagesModelTest {
     }
 
     @Test
+    fun `the thread follows its newest message at its end and after the kid's own send, else nothing moves`() {
+        val shown = listOf(message("a", 1, 0), message("b", 2, 0, Direction.OUT, Delivery.SENT))
+        // At the end: whatever comes - a message in, a delivery update, an older page.
+        assertTrue(threadFollows(following = true, newestBefore = 2, messages = shown + message("c", 3, 0)))
+        assertTrue(threadFollows(following = true, newestBefore = 2, messages = shown))
+        // Scrolled up: a message in, a delivery update and an older page move nothing; the kid's own send does.
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = shown + message("c", 3, 0)))
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = shown.map { it.copy(delivery = Delivery.DELIVERED) }))
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = listOf(message("o", 0, 0, Direction.OUT, Delivery.SENT)) + shown))
+        val sent = message("d", 3, 0, Direction.OUT, Delivery.QUEUED)
+        assertTrue(threadFollows(following = false, newestBefore = 2, messages = shown + sent))
+        assertTrue(threadFollows(following = false, newestBefore = 2, messages = shown + sent + message("e", 4, 0)))
+    }
+
+    @Test
+    fun `the list is at its end when the last bubble's bottom shows, and a followed one goes on to it`() {
+        assertTrue(threadAtEnd(lastBottom = 800, listEnd = 800, slop = 16))
+        assertTrue(threadAtEnd(lastBottom = 816, listEnd = 800, slop = 16))
+        // A tall picture whose top shows isn't shown yet; a last bubble that isn't laid out is further down still.
+        assertFalse(threadAtEnd(lastBottom = 817, listEnd = 800, slop = 16))
+        assertFalse(threadAtEnd(lastBottom = null, listEnd = 800, slop = 16))
+        // Less than a screen of messages: at its end.
+        assertTrue(threadAtEnd(lastBottom = 300, listEnd = 800, slop = 0))
+
+        assertEquals(40, threadEndGap(following = true, lastBottom = 840, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = 800, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = 300, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = null, listEnd = 800))
+        assertEquals(0, threadEndGap(following = false, lastBottom = 840, listEnd = 800))
+    }
+
+    @Test
     fun `parts - our own picture, else a line for what isn't shown`() {
         fun part(index: Int, mime: String, state: PartState) = Part(index, mime, 1, null, null, null, state)
         val parts = listOf(

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The phone book as one list (design 79): the shared header (include_kid_header) with the contact request's "+" over
-     its end, an info line, then the list of solid night rows on the kid's wallpaper (PhoneBookAdapter). The contact
+     its end, an info line, then the list of night rows (PhoneBookAdapter) on Dagen's plain night ground (kid_ground,
+     2026-11-10; no wallpaper). The contact
      request form takes the list's place while it is open (view_contact_request_form). The page is edge to edge: the
      bottom padding takes the navigation bar or the keyboard, whichever is taller (PhoneBookActivity). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"

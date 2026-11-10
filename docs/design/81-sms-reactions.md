@@ -11,8 +11,9 @@ change (§6). Builds on design 77 (the message engine, steps 1-3b merged) and de
   `wire` for nb's heart), so the capture later changes rows, not code. Nothing is marked `capture`.
 - **How loud (replaces D12's "quiet" and §10's last line).** The user: "Jeg liker sånn som iMessage har, hvor du får en
   kortere vibrasjon ved reactions." A reaction from someone else gives **one short buzz and no sound** on a channel of
-  its own, `launcher:messages_reactions` (DEFAULT importance, no sound, vibration `0, 80` ms - a message's default is
-  350 + 250 + 350 ms; no heads-up, which is HIGH only). **Fully silent** - posted on `launcher:messages_silent` - where a
+  its own, `launcher:messages_reactions` (DEFAULT importance, no sound, vibration `0, 40` ms - one short tap, 80 ms
+  until the user's word of 2026-11-10, theirs to tune on the Jelly Star before the first release creates the channel;
+  a message's default is 350 + 250 + 350 ms; no heads-up, which is HIGH only). **Fully silent** - posted on `launcher:messages_silent` - where a
   message is posted silently today (a time rule without calls) and under **any** Do Not Disturb (the filter not
   `ALL`, fail closed, as the lock's wake rule). D12 below says it all.
 - **The store is version 5, not 4.** Design 80 (`calls-simpler`, merged into this branch at db4eae05) took v4 for its
@@ -406,7 +407,7 @@ How the rows behave:
 - **How loud: one short buzz, no sound** (revision 4, the user: "Jeg liker sånn som iMessage har, hvor du får en
   kortere vibrasjon ved reactions").
   - Its own channel, `launcher:messages_reactions` ("Reaksjoner"): DEFAULT importance (Android buzzes only from DEFAULT
-    up; LOW never does), no sound, vibration on with the pattern `0, 80` ms - one pulse, clearly shorter than a
+    up; LOW never does), no sound, vibration on with the pattern `0, 40` ms (2026-11-10; first 80) - one pulse, clearly shorter than a
     message's default 350 + 250 + 350 ms. No heads-up (that is HIGH only). It lands in the shade and the status bar. A
     channel's sound and vibration are the user's once it exists, so a later change of mind takes a new id.
   - **Silent** - posted on `launcher:messages_silent`, `setSilent` - wherever a message is posted silently today (a
@@ -686,7 +687,8 @@ is open for the user but the capture itself.
   way; both paths are gone.)
 - **The notification's lines** (code QA L1, N2): unread messages first, reactions only in the lines left; the lock
   screen's public text says "Ny reaksjon" only when every line is a reaction. The channel choice is the pure
-  `smsChannel(silent, reaction, passesFilter)`. The vibration `0, 80` waits for the user's word on the Jelly Star.
+  `smsChannel(silent, reaction, passesFilter)`. The vibration is `0, 40` since 2026-11-10 (the user: one short tap; it was `0, 80`), the user's to tune on the
+  Jelly Star - after the first release with the channel, only with a new channel id.
   A reaction buzzes only when its own line is on the notification (`smsReactionShown`, the verification's V1): with
   five unread messages there is no room for it, and D12's post becomes a quiet rebuild (`afterReaction`) - no buzz with
   nothing to show for it. A removal already rebuilds quietly.

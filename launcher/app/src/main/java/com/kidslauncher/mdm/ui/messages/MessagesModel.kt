@@ -386,6 +386,25 @@ fun threadItems(messages: List<Message>, now: Long, zone: ZoneId): List<ThreadIt
     return items
 }
 
+/**
+ * Whether the thread follows its newest message once [messages] are shown (the user, 2026-11-10): it did already - the
+ * list was at its end ([threadAtEnd]) and stays there through every change - or the kid just sent one of them, an OUT
+ * message newer than [newestBefore], the newest `seq` shown so far (a reaction is never among them). A message that
+ * comes in, or a delivery line that changes, while the kid reads older ones moves nothing.
+ */
+fun threadFollows(following: Boolean, newestBefore: Long, messages: List<Message>): Boolean =
+    following || messages.any { it.direction == Direction.OUT && it.seq > newestBefore }
+
+/** Whether the thread's list is at its end: the last bubble's bottom ([lastBottom], `null` while that bubble isn't laid
+ * out) is at most [slop] below the list's visible end [listEnd]. A tall bubble (a picture) counts as shown only when its
+ * bottom is. */
+fun threadAtEnd(lastBottom: Int?, listEnd: Int, slop: Int): Boolean = lastBottom != null && lastBottom - listEnd <= slop
+
+/** How far a thread that follows scrolls on after a layout - a new bubble, one that grew, the keyboard, the compose
+ * bar's height - to show the last bubble's bottom again; 0 for a thread the kid scrolled up in. */
+fun threadEndGap(following: Boolean, lastBottom: Int?, listEnd: Int): Int =
+    if (following && lastBottom != null) (lastBottom - listEnd).coerceAtLeast(0) else 0
+
 /** How a part shows in its bubble (§6.7, D11, D14; an SMS has none). */
 sealed interface PartView {
     /** Our own JPEG, ready: a rounded thumbnail (its shape from [width] and [height]), a tap opens it. */
