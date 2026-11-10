@@ -174,6 +174,9 @@ pub struct Pruned {
     pub sms_held: u64,
     /// The kid's requests for a new contact (design 77 §14), 30 days after the server got them.
     pub contact_requests: u64,
+    /// The unanswered questions about an MMS address (design 83 §4), `mmsc_hosts::OPEN_DAYS` after a report last
+    /// named them.
+    pub mmsc_hosts: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -227,7 +230,9 @@ fn rows(
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
 ///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s);
-/// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7).
+/// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7);
+/// - an unanswered question about an MMS address `mmsc_hosts::OPEN_DAYS` after a report last named it (design 83 §4;
+///   an answered one stays: it is the parent's setting).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
 /// rest of the pass goes on (security review L9).
@@ -522,6 +527,18 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 83 §4: a question nobody answered, 30 days after the phone last reported its picture.
+    let mmsc_hosts = rows(
+        failed,
+        "device_mmsc_hosts",
+        sqlx::query("DELETE FROM device_mmsc_hosts WHERE state = 'open' AND reported_at < ?")
+            .bind(
+                chrono::Utc::now().timestamp_millis()
+                    - crate::mmsc_hosts::OPEN_DAYS * 24 * 60 * 60 * 1000,
+            )
+            .execute(db)
+            .await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -540,6 +557,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         weather,
         sms_held,
         contact_requests,
+        mmsc_hosts,
         failed: std::mem::take(failed),
     }
 }

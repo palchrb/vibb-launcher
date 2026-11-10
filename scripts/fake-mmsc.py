@@ -13,8 +13,9 @@ library alone; run it with -I.
 
 GET variants: /mms/<n>?from=+4790000002 (the retrieve-conf's From; default +4790000001), ?to= (the kid; default
 +4790000010), /mms/<n>-group (To also +4790000005), /mms/<n>-stranger-group (To also +4790000099), /mms/<n>-gone (404).
-The launcher only fetches from a host on its MMSC list (D10) on port 80, 443 or 8080: serve on 8080 and put 10.0.2.2
-on the list with the debug hook's `--es mmsc_host`.
+The launcher only fetches from an entry of its SIM's MMSC list (D10, design 83): a host alone covers port 80, 443 and
+8080, any other port is its own `host:port` entry. Serve on 8080 and put 10.0.2.2 on the list with the debug hook's
+`--es mmsc_host` - or leave the hook out and allow the address as the parent, on Device > Calls.
 """
 import base64
 import hashlib

@@ -700,7 +700,7 @@ async fn build_call_policy(
         sms_groups: policy.sms_groups,
         sms_names,
         own_numbers,
-        mmsc_hosts: crate::mmsc_hosts::policy(),
+        mmsc_hosts: crate::mmsc_hosts::policy(&state.db, policy.device_id).await?,
         sms_held_drop,
         contact_requests: crate::handlers::contact_requests::policy_rows(
             &state.db,
@@ -1271,6 +1271,16 @@ pub async fn status(
         .sms_state
         .as_ref()
         .and_then(crate::sms::sanitize_state);
+    // Design 83 §3: the SIMs of the last report that had an `sms_state`, to see a changed SIM below.
+    let sims_before = match &sms_state_json {
+        Some(_) => crate::mmsc_hosts::Reported::load(&state.db, device.id)
+            .await
+            .map_err(
+                |err| tracing::error!(device_id = device.id, %err, "can't read the reported SIMs"),
+            )
+            .ok(),
+        None => None,
+    };
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
@@ -1441,6 +1451,15 @@ pub async fn status(
     crate::calendar::store_report(&state.db, device.id, report.calendar.as_ref()).await;
     // Design 76: the certificate check's sightings move this phone's state (receive time); an outside one is pushed.
     crate::server_tls::intake(&state, device.id, report.server_tls.as_ref()).await;
+    // Design 83: a contact's picture whose address the parent must allow becomes a question; and a phone with
+    // another SIM than last time fetches its policy again - it fetched before it reported, so it has the old SIM's
+    // row (this design's only nudge from a report).
+    crate::mmsc_hosts::intake(&state, device.id, sms_state_json.as_deref()).await;
+    if let (Some(before), Some(sms_state)) = (&sims_before, &sms_state_json)
+        && crate::mmsc_hosts::Reported::of(sms_state).operators() != before.operators()
+    {
+        let _ = state.command_notify.send(device.id);
+    }
     // The phone's storage budget (security review L4): past it, this report replaces the last.
     if let Some(previous) = &previous {
         crate::retention::replace_over_budget(&state.db, device.id, previous.id).await;

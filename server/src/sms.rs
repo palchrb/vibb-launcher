@@ -224,8 +224,9 @@ const BLOCKED_KEYS: [&str; 8] = [
 
 /// A phone's `sms_state` through its known keys (security review L10, as `call_state`): the flat ones by
 /// [SMS_STATE_FIELDS], `blocked` as counts by class, `own_numbers` at most two `{slot, number}` (a number by
-/// [sender_ok]'s rule, or `null` when the SIM doesn't know), `hold_full` two booleans. `None` when nothing is kept.
-/// No content: the phone sends none, and nothing else gets through.
+/// [sender_ok]'s rule, or `null` when the SIM doesn't know), `hold_full` two booleans, design 83's `sim_operators` (at
+/// most four `{mccmnc, name}`) and `mmsc_unlisted` (at most four `{mccmnc, host, from, at}`: an entry, never a URL).
+/// `None` when nothing is kept. No content: the phone sends none, and nothing else gets through.
 pub fn sanitize_state(value: &serde_json::Value) -> Option<String> {
     use serde_json::{Map, Value};
     let object = value.as_object()?;
@@ -264,6 +265,37 @@ pub fn sanitize_state(value: &serde_json::Value) -> Option<String> {
             .filter_map(|key| Some((key.to_string(), Value::from(full.get(*key)?.as_bool()?))))
             .collect();
         kept.insert("hold_full".into(), Value::Object(flags));
+    }
+    // Design 83 §6: the SIMs' operators (the name cleaned to 32 characters, may be empty) and the contacts' pictures
+    // whose address isn't in the phone's row. A row outside its bounds is left out, the key stays.
+    fn mccmnc(row: &Value) -> Option<&str> {
+        let mccmnc = row.get("mccmnc")?.as_str()?;
+        crate::mmsc_hosts::valid_mccmnc(mccmnc).then_some(mccmnc)
+    }
+    if let Some(Value::Array(operators)) = object.get("sim_operators") {
+        let rows: Vec<Value> = operators
+            .iter()
+            .take(4)
+            .filter_map(|row| {
+                let name = crate::calendar::clean(row.get("name")?.as_str()?, 32);
+                Some(serde_json::json!({ "mccmnc": mccmnc(row)?, "name": name }))
+            })
+            .collect();
+        kept.insert("sim_operators".into(), Value::Array(rows));
+    }
+    if let Some(Value::Array(unlisted)) = object.get("mmsc_unlisted") {
+        let rows: Vec<Value> = unlisted
+            .iter()
+            .take(4)
+            .filter_map(|row| {
+                let host = row.get("host")?.as_str()?;
+                let from = row.get("from")?.as_str()?;
+                let at = row.get("at")?.as_i64().filter(|at| *at >= 0)?;
+                (crate::mmsc_hosts::valid_entry(host) && sender_ok("number", from)).then_some(())?;
+                Some(serde_json::json!({ "mccmnc": mccmnc(row)?, "host": host, "from": from, "at": at }))
+            })
+            .collect();
+        kept.insert("mmsc_unlisted".into(), Value::Array(rows));
     }
     // Design 80 §4.4: the own number learned from a message - `null` for none, else every number by [sender_ok]'s
     // rule (`number` may be `null` during a conflict), `at` a non-negative integer, at most two in `conflict`. Anything

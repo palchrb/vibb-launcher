@@ -38,6 +38,7 @@ import com.kidslauncher.mdm.sms.engine.SendResult
 import com.kidslauncher.mdm.sms.engine.SenderClass
 import com.kidslauncher.mdm.sms.engine.SmsEngine
 import com.kidslauncher.mdm.sms.engine.SmsJudge
+import com.kidslauncher.mdm.sms.engine.UnlistedMmsc
 import com.kidslauncher.mdm.sms.engine.SmsRadio
 import com.kidslauncher.mdm.sms.mms.MmsAddress
 import com.kidslauncher.mdm.sms.mms.MmsNotification
@@ -246,24 +247,71 @@ class MmsEngineTest {
     }
 
     @Test
-    fun `a released push whose host is no longer the SIM's is blocked, not fetched`() {
+    fun `a released push whose host is no longer on the SIM's list is kept, not fetched`() {
         arrive(notification(from = "+4790000041/TYPE=PLMN"))
         rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Ny", "+4790000041", smsIn = true))
         engine.releasePass(emptyList())
         table = listOf(MmscRule(operator, listOf("other.carrier.invalid")))
-        assertTrue(mms.judgePush(store.pushes.single(), notification(from = "+4790000041/TYPE=PLMN")) is PushOutcome.Blocked)
+        val kept = mms.judgePush(store.pushes.single(), notification(from = "+4790000041/TYPE=PLMN")) as PushOutcome.Shown
+        mms.drainDownloads()
         assertTrue(downloads.isEmpty())
-        // Code QA L9: the parent sees "dropped", never "delivered", for what the kid never got.
-        assertEquals(HeldState.DROPPED, store.heldRows().first { it.mms }.state)
-        assertEquals(SenderClass.BAD_LOCATION, store.blockedRows().last().senderClass)
+        // Design 83 §4: the bubble says it can't be fetched, and the address is the parent's question.
+        assertFalse(kept.fetch)
+        assertTrue(kept.ask)
+        assertEquals(MmsRow.MMSC_UNKNOWN, store.mms(kept.shown.message.id.value)!!.failure)
     }
 
     @Test
-    fun `D10 blocks before any fetch - a hidden sender, a non-PLMN one, another host`() {
+    fun `a kept picture is fetched once its host is allowed and not before (design 83)`() {
+        val location = "http://mms.other.invalid:8002/x"
+        val kept = arrive(notification(location = location)) as PushOutcome.Shown
+        val id = kept.shown.message.id.value
+        assertFalse(kept.fetch)
+        assertTrue(kept.ask)
+        assertEquals(listOf(UnlistedMmsc(operator, "mms.other.invalid:8002", mamma.number, now)), mms.unlisted())
+        // The same host on the plain ports, or on another port, allowed: this picture's own address still isn't.
+        table = listOf(MmscRule(operator, listOf(host, "mms.other.invalid", "mms.other.invalid:8003")))
+        assertFalse(mms.retryWaiting(dataOn = true))
+        mms.drainDownloads()
+        assertTrue(downloads.isEmpty())
+        // The parent's allow puts the entry on the SIM's row.
+        table = listOf(MmscRule(operator, listOf(host, "mms.other.invalid:8002")))
+        assertTrue(mms.retryWaiting(dataOn = false))
+        mms.drainDownloads()
+        assertEquals(id to location, downloads.single())
+        assertTrue(mms.unlisted().isEmpty())
+    }
+
+    @Test
+    fun `the report names a contact's unlisted addresses - within 7 days, the newest four (design 83)`() {
+        fun kept(n: Int, from: String = mamma.number): PushOutcome.Shown {
+            now += 1000
+            tid++
+            return arrive(notification(from = "$from/TYPE=PLMN", location = "http://mms$n.other.invalid/x")) as PushOutcome.Shown
+        }
+        fun reported() = mms.unlisted().map { it.host.removePrefix("mms").removeSuffix(".other.invalid").toInt() }
+        for (n in listOf(1, 2, 3, 4, 5, 2)) kept(n)
+        // One row per address, by its newest arrival.
+        assertEquals(listOf(2, 5, 4, 3), reported())
+        assertEquals(UnlistedMmsc(operator, "mms2.other.invalid", mamma.number, now), mms.unlisted().first())
+        // A stranger the callback window let in gets the bubble and no question.
+        callbackWindow = true
+        assertFalse(kept(6, "+4790000066").ask)
+        assertEquals(listOf(2, 5, 4, 3), reported())
+        // Address 3's picture arrived 7 days and a millisecond ago.
+        now += MmsFlow.PUSH_KEY_KEEP_MS - 3999
+        assertEquals(listOf(2, 5, 4), reported())
+        // Mamma is no contact any more: the window lets her in, and nobody is asked.
+        rules = rules()!!.copy(contacts = listOf(pappa, bestemor))
+        assertTrue(mms.unlisted().isEmpty())
+    }
+
+    @Test
+    fun `D10 blocks before any fetch - a hidden sender, a non-PLMN one, a location that names no host`() {
         for ((n, cls) in listOf(
             notification(from = null) to SenderClass.EMPTY,
             notification(from = "x@example.invalid") to SenderClass.MALFORMED,
-            notification(location = "http://attacker.invalid/x") to SenderClass.BAD_LOCATION,
+            notification(location = "http://user@$host/x") to SenderClass.BAD_LOCATION,
         )) {
             assertTrue(arrive(n) is PushOutcome.Blocked)
             assertEquals(cls, store.blockedRows().last().senderClass)

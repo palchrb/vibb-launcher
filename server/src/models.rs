@@ -1338,7 +1338,8 @@ pub struct CallPolicy {
     pub sms_names: Vec<String>,
     /// D12: the phone's own numbers the parent typed, by SIM slot.
     pub own_numbers: Vec<crate::sms::OwnNumber>,
-    /// D10: the SIM's MMS servers by MCC/MNC (`mmsc_hosts::policy`).
+    /// D10 and design 83: the MMS servers of the SIMs the phone reports, by MCC/MNC - the list's unasked entries and
+    /// the parent's allowed ones (`mmsc_hosts::policy`).
     pub mmsc_hosts: Vec<crate::mmsc_hosts::MmscHosts>,
     /// D16: the held ids the parent deleted in the last 24 hours, newest first, at most 100.
     pub sms_held_drop: Vec<String>,

@@ -44,6 +44,7 @@ mod listeners;
 mod locate_page;
 mod locations;
 mod lock_glance;
+mod mmsc_hosts;
 pub(crate) mod music;
 mod music_art;
 pub(crate) mod music_spotify;

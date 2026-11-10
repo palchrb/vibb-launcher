@@ -82,6 +82,12 @@ pub enum Kind {
     /// keyed by the phone's request id. Pushed within its [PushBudget] (the day's cap of three keeps it under it but
     /// across midnight); told from its parameters ([ContactRequestParams]).
     ContactRequest,
+    /// Design 83 §4: a contact's picture waits for an MMS address the parent must allow (a status report's
+    /// `sms_state.mmsc_unlisted`, the first sight of the address - `mmsc_hosts::intake`), keyed by the
+    /// `device_mmsc_hosts` row's id. `sms_held`'s switch - to the parent the same thing, a message waiting for them -
+    /// and no [PushBudget]: at most four are open until a parent answers. Told from its parameters
+    /// ([MmscHostParams]).
+    MmscHost,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -95,7 +101,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 19] = [
+    pub const ALL: [Kind; 20] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -115,6 +121,7 @@ impl Kind {
         Kind::ServerTlsSeen,
         Kind::SmsHeld,
         Kind::ContactRequest,
+        Kind::MmscHost,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -138,6 +145,7 @@ impl Kind {
             Kind::ServerTlsSeen => "server_tls_seen",
             Kind::SmsHeld => "sms_held",
             Kind::ContactRequest => "contact_request",
+            Kind::MmscHost => "mmsc_host",
         }
     }
 
@@ -199,8 +207,10 @@ impl Kind {
             Kind::AppUpdateAvailable | Kind::AppUpdated => {
                 Some((APP_UPDATES_SWITCH, "App updates"))
             }
-            // Design 77 §7: on by default (migration 0130).
-            Kind::SmsHeld => Some(("push_sms_held", "A message is waiting for you to allow it")),
+            // Design 77 §7: on by default (migration 0130). Design 83's question shares it.
+            Kind::SmsHeld | Kind::MmscHost => {
+                Some(("push_sms_held", "A message is waiting for you to allow it"))
+            }
             // Design 77 §14: on by default (migration 0133).
             Kind::ContactRequest => Some(("push_contact_request", "Asks for a new contact")),
         }
@@ -1852,6 +1862,62 @@ fn contact_request_told(
     )
 }
 
+/// A picture waiting for its address' parameters (design 83 §4): the phone's name as it was when raised and the
+/// contact the picture came from. Never the address: the Calls page shows it, beside what the parent should know.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MmscHostParams {
+    pub phone: String,
+    pub contact: String,
+}
+
+/// A contact's picture the phone may not fetch until the parent allows its address (design 83 §4): key the
+/// `device_mmsc_hosts` row's id, so it is raised once per address; `at` the picture's arrival. Target: the Calls
+/// page's questions, whose anchor is always there.
+pub fn mmsc_host(
+    device_id: i64,
+    phone: &str,
+    row_id: i64,
+    contact: &str,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let params = MmscHostParams {
+        phone: phone.to_string(),
+        contact: contact.to_string(),
+    };
+    NewEvent {
+        device_id: Some(device_id),
+        kind: Kind::MmscHost,
+        dedup_key: row_id.to_string(),
+        title: String::new(),
+        summary: String::new(),
+        target: format!("/devices/{device_id}/calls#mmsc"),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
+        happened_at: at,
+        push: Push::Now,
+        budget_key: None,
+    }
+}
+
+/// The question's words, the same in the inbox and the push: "Anna: a picture from Mamma is waiting" / "Anna: et
+/// bilde fra Mamma venter" and the one sentence about the address.
+fn mmsc_host_told(p: &MmscHostParams, zone: &Zone) -> (String, String) {
+    let lang = zone.lang();
+    let title = fit_name(&p.phone, TITLE_MAX, |n| {
+        t_params(
+            lang,
+            "events.mmsc_host.title",
+            &[("name", n), ("contact", &p.contact)],
+        )
+    });
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        t(lang, "events.mmsc_host.summary").to_string(),
+    )
+}
+
 /// An app update notice's parameters (2026-10-25, migration 0099): the catalog app's id and name
 /// as they were when it was raised, the version before (none known: `None`) and the new one -
 /// the release's version as the Apps tab shows it -, when (RFC 3339), and for `app_updated` the
@@ -2329,6 +2395,9 @@ pub fn told_as(
         Kind::ContactRequest => params
             .and_then(|p| serde_json::from_str::<ContactRequestParams>(p).ok())
             .map(|p| contact_request_told(&p, zone, now)),
+        Kind::MmscHost => params
+            .and_then(|p| serde_json::from_str::<MmscHostParams>(p).ok())
+            .map(|p| mmsc_host_told(&p, zone)),
         Kind::ServerTlsOff | Kind::ServerTlsSeen => params
             .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
             .map(|p| server_tls_told(form, kind, &p, zone, now)),
@@ -3399,6 +3468,13 @@ mod tests {
                 "+4791234567 · 14:02",
                 "/devices/3/calls#request-ab13",
             ),
+            // Design 83: a picture waiting for its address, to the Calls page's questions.
+            (
+                mmsc_host(3, "Anna", 14, "Mamma", two),
+                "Anna: a picture from Mamma is waiting",
+                "The phone wants to fetch it from an address you need to approve.",
+                "/devices/3/calls#mmsc",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -4196,6 +4272,8 @@ mod tests {
                 Push::Now,
             ),
             contact_request(3, &phone.name, "ab17", "Bestemor Østby", "+4791234567", two),
+            // Design 83: a long contact name.
+            mmsc_host(3, &phone.name, 18, "Bestemor Østby på Hadeland", two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

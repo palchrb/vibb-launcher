@@ -116,9 +116,14 @@ sealed interface PushOutcome {
 
     data class Blocked(val row: BlockedRow?) : PushOutcome
 
-    /** Shown with its placeholder; [fetch]: it is to be downloaded (else it already says why not, and is notified). */
-    data class Shown(val shown: Received.Shown, val fetch: Boolean) : PushOutcome
+    /** Shown with its placeholder; [fetch]: it is to be downloaded (else it already says why not, and is notified).
+     * [ask]: a contact's picture kept unfetched for its address - the next report asks the parent (design 83 §4). */
+    data class Shown(val shown: Received.Shown, val fetch: Boolean, val ask: Boolean = false) : PushOutcome
 }
+
+/** One `sms_state.mmsc_unlisted` row (design 83 §4): a kept picture's address as the list's entry - never the URL -,
+ * the SIM's MCC/MNC, the contact's number and the notification's arrival. */
+data class UnlistedMmsc(val mccmnc: String, val host: String, val from: String, val at: Long)
 
 /** An MMS to parse ([MmsFlow.parseJobs]): its downloaded file, whether pictures are decoded (D11), its cap. */
 data class ParseJob(val messageId: String, val subId: Int?, val pictures: Boolean, val maxBytes: Int)
@@ -246,13 +251,15 @@ class MmsFlow internal constructor(
         val carrier = judge.carrier(push.subId)
         val location = MmsGate.location(parsed.contentLocation, carrier.operator, judge.rules?.mmscHosts.orEmpty())
         if (location == MmsGate.Location.Bad) {
-            // D10: any other host blocks, with no allow path - Enea's "MMS Fingerprint" (a push pointing elsewhere).
+            // D10: a location that isn't a plain URL to a host blocks, with no allow path. One naming a host that isn't
+            // on the SIM's list (Enea's "MMS Fingerprint": a push pointing elsewhere) is kept unfetched below, and a
+            // contact's is the parent's question (design 83 §4).
             return PushOutcome.Blocked(engine.block(push.at, KIND_MMS, CleanSender(SenderClass.BAD_LOCATION, ""), SmsEngine.REASON_RULE))
         }
         val now = clock()
         val expiresAt = parsed.expirySeconds.takeIf { it > 0 }?.let { it * 1000 }
         val (state, failure) = when {
-            location == MmsGate.Location.UnknownOperator -> MmsState.FAILED to MmsRow.MMSC_UNKNOWN
+            location is MmsGate.Location.Unlisted -> MmsState.FAILED to MmsRow.MMSC_UNKNOWN
             !MmsGate.sizeOk(parsed.messageSize, MmsCodec.capOf(carrier.maxMessageBytes)) -> MmsState.TOO_LARGE to null
             expiresAt != null && expiresAt <= now -> MmsState.GONE to null
             else -> MmsState.NOTIFIED to null
@@ -274,7 +281,10 @@ class MmsFlow internal constructor(
         val parts = listOf(placeholder(state))
         store.putParts(row.id, parts)
         store.insertEvent(EventRow(row.seq, EventType.MESSAGE_ADDED, row.id, conversation.id, Origin.ENGINE, null, now))
-        return PushOutcome.Shown(Received.Shown(row.toMessage(parts), conversation), fetch = state == MmsState.NOTIFIED)
+        return PushOutcome.Shown(
+            Received.Shown(row.toMessage(parts), conversation), fetch = state == MmsState.NOTIFIED,
+            ask = failure == MmsRow.MMSC_UNKNOWN && verdict.contact != null,
+        )
     }
 
     // ---- the sender, again (code QA M2) ----
@@ -565,8 +575,9 @@ class MmsFlow internal constructor(
     /**
      * D14's retry: every waiting MMS is notified again (the next [drainDownloads] judges the sender again and fetches
      * it). With [dataOn] (mobile data just came back) also those whose five tries ran out - their count starts again. A
-     * download the platform never answered (15 minutes) waits too. One that failed for an unknown MCC/MNC is tried again
-     * once the MMSC list knows this SIM (a policy after step 0's table, code QA L10). Returns whether anything moved.
+     * download the platform never answered (15 minutes) waits too. One kept for its address is tried again once that
+     * address is on the SIM's list (the parent's allow, design 83 §4; code QA L10) - a row whose own address is still
+     * unlisted stays. Returns whether anything moved.
      */
     fun retryWaiting(dataOn: Boolean): Boolean {
         val now = clock()
@@ -579,7 +590,8 @@ class MmsFlow internal constructor(
             val again = when {
                 m.state == MmsState.WAITING_DATA -> m.copy(tries = if (dataOn) 0 else m.tries)
                 dataOn && m.failure == MmsRow.RETRY -> m.copy(tries = 0)
-                m.failure == MmsRow.MMSC_UNKNOWN && MmsGate.known(judge.carrier(m.subId).operator, judge.rules?.mmscHosts.orEmpty()) -> m
+                m.failure == MmsRow.MMSC_UNKNOWN &&
+                    MmsGate.location(m.contentLocation, judge.carrier(m.subId).operator, judge.rules?.mmscHosts.orEmpty()) is MmsGate.Location.Ok -> m
                 else -> null
             } ?: continue
             move(again, MmsState.NOTIFIED)
@@ -600,6 +612,25 @@ class MmsFlow internal constructor(
 
     /** `sms_state.mms_waiting`: the MMS waiting for data. */
     fun waiting(): Int = store.mmsIn(setOf(MmsState.WAITING_DATA)).size
+
+    /**
+     * `sms_state.mmsc_unlisted` (design 83 §4): state, read from the store at every report - the pictures kept unfetched
+     * for their address ([MmsRow.MMSC_UNKNOWN]) whose sender passes as a contact now, whose location is still
+     * [MmsGate.Location.Unlisted] and which arrived within [PUSH_KEY_KEEP_MS] (the notification's own expiry is its
+     * sender's word). One row per MCC/MNC and entry, the [UNLISTED_MAX] with the newest arrival.
+     */
+    fun unlisted(): List<UnlistedMmsc> {
+        val judge = judge()
+        val now = clock()
+        return store.mmsIn(setOf(MmsState.FAILED)).filter { it.failure == MmsRow.MMSC_UNKNOWN }.mapNotNull { m ->
+            val at = store.message(m.messageId)?.at?.takeIf { now - it <= PUSH_KEY_KEEP_MS } ?: return@mapNotNull null
+            val contact = (SmsRules.decideIncoming(SenderKind.NUMBER, m.from, judge) as? IncomingVerdict.Allow)?.contact
+            val operator = judge.carrier(m.subId).operator
+            val location = MmsGate.location(m.contentLocation, operator, judge.rules?.mmscHosts.orEmpty())
+            if (contact == null || operator == null || location !is MmsGate.Location.Unlisted) return@mapNotNull null
+            UnlistedMmsc(operator, location.entry, contact.number, at)
+        }.sortedByDescending { it.at }.distinctBy { it.mccmnc to it.host }.take(UNLISTED_MAX)
+    }
 
     /** The message's state change: the `mms` row, its placeholder part and the message's failure, with `MessageUpdated`.
      * Returns the message to notify the first time it shows in a state the kid should hear of. A fetch that waits or
@@ -760,6 +791,9 @@ class MmsFlow internal constructor(
         /** Code QA L2: a push's identity is kept until its own expiry, at least a day and at most this long - an
          * unanswered push the MMSC repeats until then adds no second row. */
         const val PUSH_KEY_KEEP_MS = 7 * 24 * 60 * 60 * 1000L
+
+        /** Design 83 §4: a report names at most this many unlisted addresses. */
+        const val UNLISTED_MAX = 4
 
         /** X-Mms-Retrieve-Status (OMA MMS ENC 1.3 §7.3.50): ok, the transient range, "message not found". */
         const val RETRIEVE_OK = 0x80

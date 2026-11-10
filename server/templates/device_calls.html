@@ -103,6 +103,43 @@
         {% endif %}
     </section>
 
+    {#- Design 83 §4: the phone's questions about an MMS address a contact's picture names, right under the waiting
+        messages, each row #mmsc-<id>. Its forms return there: an answered row is in "Bildeadresser" at the foot by
+        then, drawn open (?mmsc=1), and one that is gone or answered already lands on #mmsc's notice. Eight allowed
+        addresses for the SIM: `full` in place of "Tillat". Always there (an empty #mmsc to land on), its words only
+        with rows. -#}
+    <section id="mmsc"{% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %} aria-labelledby="mmsc-title"{% endif %}>
+        {% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %}
+        <h2 class="group-header" id="mmsc-title">{{ self.t("device.calls.mmsc.title") }}</h2>
+        {% if !mmsc_open %}{% if let Some(text) = mmsc_notice %}
+        <div class="group"><p class="flash flash-error" role="status" data-flash="mmsc">{{ text }}</p></div>
+        {% endif %}{% endif %}
+        {% if !mmsc.open.is_empty() %}
+        <div class="group">
+            {% for row in mmsc.open %}
+            <div class="cell" id="mmsc-{{ row.id }}" data-mmsc="{{ row.id }}">
+                <div class="row">
+                    <span class="row-label">{{ row.ask }}<span class="row-sub">{{ row.about }}</span><span class="row-sub">{{ row.list }}</span>{% if let Some(warn) = row.warn %}<span class="row-sub tone-orange">{{ warn }}</span>{% endif %}<span class="row-sub">{{ self.t("device.calls.mmsc.lasts") }}</span>{% if row.gone %}<span class="row-sub" data-mmsc-gone>{{ self.t("device.calls.mmsc.gone") }}</span>{% endif %}</span>
+                </div>
+                <div class="held-body">
+                    {% if row.full %}
+                    <p class="row row-note" data-mmsc-full>{{ self.t("device.calls.mmsc.full") }}</p>
+                    {% else %}
+                    <form method="post" action="/devices/{{ device.id }}/calls/mmsc/{{ row.id }}/allow#mmsc-{{ row.id }}">
+                        <button type="submit" class="row row-button" data-mmsc-action="allow">{{ self.t("device.calls.mmsc.allow") }}</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/devices/{{ device.id }}/calls/mmsc/{{ row.id }}/decline#mmsc-{{ row.id }}">
+                        <button type="submit" class="row row-button row-danger" data-mmsc-action="decline">{{ self.t("device.calls.mmsc.decline") }}</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endif %}
+    </section>
+
     {#- Design 77 §14: the kid's requests for a new contact, each row #request-<id> (its forms return there; one no
         longer open lands on #requests' notice): the name and number the server checked, the number's kind, the kid's
         Matrix ID as a suggestion. "Legg til…" opens Add Contact prefilled from the stored request (§14's switches,
@@ -640,6 +677,36 @@
             <p class="group-footer">{{ self.t("device.sms.names.warning") }}</p>
         </section>
     </details>
+
+    {#- Design 83 §4: the answered MMS addresses, folded at the foot - "Fjern" on an allowed one, "Tillat likevel" on
+        a declined one (`full` in its place while the SIM's eight are taken). Its forms say where they are
+        (?decided=1) and return with ?mmsc=1, which draws it open; one that stored nothing lands on its notice. -#}
+    {% if !mmsc.decided.is_empty() || (mmsc_open && mmsc_notice.is_some()) %}
+    <details class="section" id="mmsc-decided"{% if mmsc_open %} open data-reopens{% endif %}>
+        <summary class="row section-toggle"><span class="row-label">{{ self.t("device.calls.mmsc.title") }}</span><span class="row-value">{{ mmsc.decided.len() }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+        {% if mmsc_open %}{% if let Some(text) = mmsc_notice %}
+        <div class="group"><p class="flash flash-error" role="status" data-flash="mmsc">{{ text }}</p></div>
+        {% endif %}{% endif %}
+        {% if !mmsc.decided.is_empty() %}
+        <div class="group">
+            {% for row in mmsc.decided %}
+            <div class="row" id="mmsc-{{ row.id }}" data-mmsc="{{ row.id }}">
+                <span class="row-label">{{ row.host }}<span class="row-sub">{{ row.sub }}</span>{% if row.full %}<span class="row-sub" data-mmsc-full>{{ self.t("device.calls.mmsc.full") }}</span>{% endif %}</span>
+                {% if row.allowed %}
+                <form method="post" action="/devices/{{ device.id }}/calls/mmsc/{{ row.id }}/decline?decided=1#mmsc-{{ row.id }}" class="row-end">
+                    <button type="submit" class="row-action row-danger" data-mmsc-action="remove">{{ self.t("device.calls.mmsc.remove") }}</button>
+                </form>
+                {% else if !row.full %}
+                <form method="post" action="/devices/{{ device.id }}/calls/mmsc/{{ row.id }}/allow?decided=1#mmsc-{{ row.id }}" class="row-end">
+                    <button type="submit" class="row-action" data-mmsc-action="allow-after">{{ self.t("device.calls.mmsc.allow_after") }}</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </details>
+    {% endif %}
     {% if auto_refresh %}
     <script src="/static/auto-reload.js?v=8" defer></script>
     {% endif %}

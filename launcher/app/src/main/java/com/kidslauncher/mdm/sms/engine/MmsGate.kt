@@ -13,8 +13,9 @@ import java.net.URISyntaxException
  * no Android imports, tested in MmsGateTest. The engine runs these on what the isolated parse handed back (D8): the
  * main process never parses a PDU, it judges the strings.
  *
- * The promise, as D10 states it: an MMS is never fetched for a blocked sender, nor for a held one before the parent's
- * allow, nor from a host that isn't the SIM's own MMS server.
+ * The promise, as D10 states it since design 83: an MMS is never fetched for a blocked sender, nor for a held one before
+ * the parent's allow, nor from a host that is neither unasked for the SIM nor allowed by the parent for it - the
+ * policy's row for the SIM's MCC/MNC holds exactly those (`docs/design/83-mmsc-hosts.md`).
  */
 object MmsGate {
     /** D10 check 1: `From` is `<+ and ASCII digits>/TYPE=PLMN`. */
@@ -36,23 +37,25 @@ object MmsGate {
     sealed interface Location {
         data class Ok(val host: String) : Location
 
-        /** This SIM's MCC/MNC isn't on the list (or has no hosts): fail closed - nothing is fetched, the bubble says
-         * the picture can't be fetched, and the report's `mmsc_known` is false. */
-        data object UnknownOperator : Location
+        /** A plain http(s) URL whose host and port make [entry], which isn't on this SIM's list - an unknown MCC/MNC
+         * is this with an empty list. Fail closed: nothing is fetched, the bubble says the picture can't be fetched,
+         * and a contact's is reported for the parent's allow (design 83 §4: the entry, never the URL). */
+        data class Unlisted(val entry: String) : Location
 
-        /** A host that isn't this SIM's MMS server, or a location that isn't a plain http(s) URL: blocked as
-         * `bad_location`. */
+        /** A location that isn't a plain http(s) URL to a host of the entry grammar: blocked as `bad_location`, with
+         * no allow path. */
         data object Bad : Location
     }
 
-    /** The ports an MMSC answers on (D10). */
-    private val PORTS = setOf(-1, 80, 443, 8080)
+    /** The ports a bare `host` entry covers; any other port is part of the entry (design 83 §1). */
+    private val PLAIN_PORTS = setOf(80, 443, 8080)
 
     /**
      * D10 check 2 on `X-Mms-Content-Location`: printable ASCII with no whitespace (the parser keeps CR, LF and TAB, and
-     * latin-1 octets - the codec's note for step 3b), a URI whose scheme is `http` or `https`, with no userinfo, its
-     * port absent or 80, 443 or 8080, and its host - compared without case - on [table]'s row for [operator] (the
-     * SIM's MCC/MNC). A location that fails the shape is [Location.Bad] before the operator is asked.
+     * latin-1 octets - the codec's note for step 3b), a URI whose scheme is `http` or `https`, with no userinfo, whose
+     * host - lower-cased, a trailing dot off - and port make a valid entry ([validEntry]: `host` with no port or 80, 443
+     * or 8080, else `host:port`). That entry is then looked up, exactly, on [table]'s row for [operator] (the SIM's
+     * MCC/MNC). A location that fails the shape is [Location.Bad] before the operator is asked.
      */
     fun location(contentLocation: String, operator: String?, table: List<MmscRule>): Location {
         if (contentLocation.isEmpty() || contentLocation.any { it.code !in 0x21..0x7E }) return Location.Bad
@@ -63,14 +66,41 @@ object MmsGate {
         }
         val scheme = uri.scheme?.lowercase()
         if (scheme != "http" && scheme != "https") return Location.Bad
-        if (uri.isOpaque || uri.rawUserInfo != null || uri.port !in PORTS) return Location.Bad
+        if (uri.isOpaque || uri.rawUserInfo != null) return Location.Bad
         // A host Java can't read as a server name (an underscore, a registry-based authority) has no `host`.
-        val host = uri.host?.lowercase()?.trimEnd('.')?.takeIf { it.isNotEmpty() } ?: return Location.Bad
+        val host = uri.host?.lowercase()?.trimEnd('.') ?: return Location.Bad
+        val entry = if (uri.port == -1 || uri.port in PLAIN_PORTS) host else "$host:${uri.port}"
+        if (!validEntry(entry)) return Location.Bad
         val hosts = table.firstOrNull { it.mccmnc == operator }?.hosts.orEmpty()
-            .map { it.trim().lowercase().trimEnd('.') }.filter { it.isNotEmpty() }
-        if (hosts.isEmpty()) return Location.UnknownOperator
-        return if (host in hosts) Location.Ok(host) else Location.Bad
+        return if (hosts.any { it.equals(entry, ignoreCase = true) }) Location.Ok(host) else Location.Unlisted(entry)
     }
+
+    /**
+     * Design 83 §1's entry, one grammar on both sides (`sms_contract.json`'s `mmsc_entries`; the server's
+     * `mmsc_hosts::valid_entry`): `host` or `host:port`. The host is 1-253 bytes of `[a-z0-9.-]` in non-empty labels,
+     * and either its last label starts with a letter or it is exactly four decimal octets - so nothing a resolver could
+     * read as another address (`010.0.0.1`, `2130706433`). The port is 1-65535 without a leading zero and never 80, 443
+     * or 8080: on those the bare host is the entry.
+     */
+    fun validEntry(entry: String): Boolean {
+        if (':' in entry) {
+            val port = entry.substringAfter(':')
+            if (port.length !in 1..5 || port[0] == '0' || port.any { it !in '0'..'9' }) return false
+            if (port.toInt() > 65535 || port.toInt() in PLAIN_PORTS) return false
+        }
+        val host = entry.substringBefore(':')
+        if (host.length !in 1..253 || host.any { it !in 'a'..'z' && it !in '0'..'9' && it != '.' && it != '-' }) return false
+        val labels = host.split('.')
+        return labels.none { it.isEmpty() } && (labels.last()[0] in 'a'..'z' || (labels.size == 4 && labels.all(::octet)))
+    }
+
+    private fun octet(label: String): Boolean =
+        label.length <= 3 && label.all { it in '0'..'9' } && (label == "0" || label[0] != '0') && label.toInt() <= 255
+
+    /** Design 83 §7: [extra]'s hosts (the debug build's fake MMSC) joined into [table]'s row for their MCC/MNC - a
+     * second row for it would never be read ([location] takes the first). */
+    fun merged(table: List<MmscRule>, extra: List<MmscRule>): List<MmscRule> =
+        (table + extra).groupBy { it.mccmnc }.map { (mccmnc, rows) -> MmscRule(mccmnc, rows.flatMap { it.hosts }.distinct()) }
 
     /** Whether this SIM's MCC/MNC has hosts on the list (`sms_state.mmsc_known`). */
     fun known(operator: String?, table: List<MmscRule>): Boolean =

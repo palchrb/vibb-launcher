@@ -41,7 +41,7 @@
       "sms_held_drop": ["00112233445566778899aabbccddeeff"],
       "sms_groups": true
     },
-    "mmsc_hosts_row": {"mccmnc": "24201", "hosts": ["mmsc.example.invalid"]},
+    "mmsc_hosts_row": {"mccmnc": "24299", "hosts": ["mmsc", "mmsc.example.invalid", "mmsc.example.invalid:8002"]},
     "groups_off": {"sms_groups": false}
   },
   "report": {
@@ -62,7 +62,9 @@
       "own_numbers": [{"slot": 1, "number": "+4790000001"}, {"slot": 2, "number": null}],
       "hold_full": {"numbers": false, "names": true},
       "own_learned": {"number": "+4790000002", "from": "+4791234567", "at": 1762700000000, "conflict": []},
-      "has_history": true
+      "has_history": true,
+      "sim_operators": [{"mccmnc": "24299", "name": "Eksempel Mobil"}],
+      "mmsc_unlisted": [{"mccmnc": "24299", "host": "mms.example.invalid:8002", "from": "+4791234567", "at": 1762700000000}]
     },
     "own_learned_conflict": {"number": null, "from": "+4791234567", "at": 1762700400000, "conflict": ["+4790000002", "+4790000003"]}
   },
@@ -137,6 +139,32 @@
     {"listed": "ΣΩ", "sender": "σω", "match": true},
     {"listed": "Posten", "sender": "P​osten", "match": true},
     {"listed": "Posten", "sender": "Poste", "match": false}
+  ],
+  "mmsc_entries": [
+    {"entry": "mmsc", "valid": true},
+    {"entry": "mmsc.example.invalid", "valid": true},
+    {"entry": "mmsc.example.invalid:8002", "valid": true},
+    {"entry": "xn--mms-5qa.example.invalid", "valid": true},
+    {"entry": "10.0.0.9", "valid": true},
+    {"entry": "10.0.0.9:8002", "valid": true},
+    {"entry": "", "valid": false},
+    {"entry": "mmsc.example.invalid.", "valid": false},
+    {"entry": "mmsc..example.invalid", "valid": false},
+    {"entry": "MMSC.example.invalid", "valid": false},
+    {"entry": "mmsc_1.example.invalid", "valid": false},
+    {"entry": "mmsc.example.invalid:80", "valid": false},
+    {"entry": "mmsc.example.invalid:443", "valid": false},
+    {"entry": "mmsc.example.invalid:8080", "valid": false},
+    {"entry": "mmsc.example.invalid:0", "valid": false},
+    {"entry": "mmsc.example.invalid:08002", "valid": false},
+    {"entry": "mmsc.example.invalid:65536", "valid": false},
+    {"entry": "mmsc.example.invalid:", "valid": false},
+    {"entry": "010.0.0.1", "valid": false},
+    {"entry": "10.0.0.256", "valid": false},
+    {"entry": "10.0.0.0.1", "valid": false},
+    {"entry": "mmsc.example.123", "valid": false},
+    {"entry": "2130706433", "valid": false},
+    {"entry": "0x7f000001", "valid": false}
   ],
   "app": {
     "key": "me.vibb.builtin.messages",

@@ -26,8 +26,10 @@ import com.kidslauncher.mdm.server.dto.SmsHeldBody
 import com.kidslauncher.mdm.server.dto.SmsHeldRefusal
 import com.kidslauncher.mdm.server.dto.SmsHeldRow
 import com.kidslauncher.mdm.server.dto.SmsHoldFull
+import com.kidslauncher.mdm.server.dto.SmsMmscUnlisted
 import com.kidslauncher.mdm.server.dto.SmsOwnLearned
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
+import com.kidslauncher.mdm.server.dto.SmsSimOperator
 import com.kidslauncher.mdm.server.dto.SmsState
 import com.kidslauncher.mdm.sms.engine.Carrier
 import com.kidslauncher.mdm.sms.engine.EmojiList
@@ -67,6 +69,10 @@ private const val ENGINE_WAIT_S = 20L
 /** Rows per `sms-held` post (the server's limit), and posts per sync. */
 private const val POST_ROWS = 50
 private const val POSTS_PER_SYNC = 10
+
+/** Design 83 §3: a SIM operator is its MCC/MNC, and a report names at most four. */
+private val SIM_OPERATOR = Regex("[0-9]{5,6}")
+private const val SIM_OPERATORS_MAX = 4
 
 /**
  * The message engine on the phone (design 77 §6.1): the engine over the SQLite store and the platform's SmsManager,
@@ -224,11 +230,12 @@ object SmsRuntime {
         ""
     }
 
-    /** The debug build's fake MMS server for the emulator ([MmsDebug]; the release build's list is always empty). */
+    /** The debug build's fake MMS server for the emulator ([MmsDebug]; the release build's list is always empty),
+     * joined into the SIM's own row (design 83 §7). */
     private fun withDebugMmsc(state: CallPolicyState): CallPolicyState {
         val extra = MmsDebug.mmscRules()
         if (extra.isEmpty() || state !is CallPolicyState.Managed) return state
-        return state.copy(rules = state.rules.copy(mmscHosts = state.rules.mmscHosts + extra))
+        return state.copy(rules = state.rules.copy(mmscHosts = MmsGate.merged(state.rules.mmscHosts, extra)))
     }
 
     /** Step 3b: a subscription's SIM operator (MCC/MNC, D10's table key) and the carrier's MMS maximum (D10 check 3);
@@ -327,7 +334,8 @@ object SmsRuntime {
         onEngine(app) { notifyReceived(app, it, received) }
     }
 
-    /** D16 for an MMS held or blocked on the MMS thread: the same coalesced sync request as an SMS's. */
+    /** D16 for an MMS held or blocked on the MMS thread, and design 83's for a contact's picture kept for its address:
+     * the same coalesced sync request as an SMS's. */
     fun requestHeldSyncSoon(context: Context) {
         val app = context.applicationContext
         onEngine(app) { requestHeldSync(app) }
@@ -476,7 +484,22 @@ object SmsRuntime {
             // Design 82 W2: the engine's own answer (the summary's read; the summary itself is empty until Home's first
             // refresh in a new process), the summary when the engine doesn't answer.
             hasHistory = awaitResult(app) { it.conversations().isNotEmpty() } ?: SmsHome.summary.hasHistory,
+            simOperators = simOperators(app),
+            mmscUnlisted = awaitResult(app) { it.mms.unlisted() }.orEmpty().map { SmsMmscUnlisted(it.mccmnc, it.host, it.from, it.at) },
         )
+    }
+
+    /** Design 83 §3: each active SIM's MCC/MNC and the operator name it gives (`[]` when they can't be read - then the
+     * policy has no `mmsc_hosts` row and nothing is fetched). */
+    private fun simOperators(context: Context): List<SmsSimOperator> = try {
+        val telephony = context.getSystemService(TelephonyManager::class.java)
+        context.getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty()
+            .map { telephony.createForSubscriptionId(it.subscriptionId) }
+            .filter { SIM_OPERATOR.matches(it.simOperator.orEmpty()) }
+            .distinctBy { it.simOperator }.take(SIM_OPERATORS_MAX)
+            .map { SmsSimOperator(it.simOperator, it.simOperatorName.orEmpty().filterNot(Char::isISOControl).take(32)) }
+    } catch (e: Exception) {
+        emptyList()
     }
 
     /**

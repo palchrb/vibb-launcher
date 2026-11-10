@@ -1207,6 +1207,14 @@ pub fn build_admin_router(
             post(handlers::calls_sms::drop_held),
         )
         .route(
+            "/devices/{id}/calls/mmsc/{row}/allow",
+            post(handlers::calls_mmsc::allow),
+        )
+        .route(
+            "/devices/{id}/calls/mmsc/{row}/decline",
+            post(handlers::calls_mmsc::decline),
+        )
+        .route(
             "/devices/{id}/calls/requests/{request}/decline",
             post(handlers::contact_requests::decline),
         )
