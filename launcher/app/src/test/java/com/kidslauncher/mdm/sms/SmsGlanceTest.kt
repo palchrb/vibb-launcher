@@ -266,6 +266,27 @@ class SmsGlanceTest {
         assertFalse(smsPublicIsReaction(emptyList()))
     }
 
+    /** Design 81 verification V1: a reaction buzzes only with its own line on the notification - five unread messages
+     * leave it no room, and then the notification is only rebuilt, quietly. */
+    @Test
+    fun `a reaction buzzes only when its line is on the notification`() {
+        val hei = receive("+4791234567", "Hei") as Received.Shown
+        val id = ConversationId(hei.conversation.id)
+        repeat(3) { receive("+4791234567", "m$it") }
+        val withRoom = receive("+4791234567", "Likte «Hei»") as Received.Attached
+        assertTrue("four unread messages and the reaction's line", smsReactionShown(engine.notifiable(id, 5), withRoom.reaction.id))
+        receive("+4791234567", "m3")
+        val noRoom = receive("+4791234567", "Lo av «Hei»") as Received.Attached
+        assertEquals(5, engine.notifiable(id, 5).count { it.target == null })
+        assertFalse("five unread messages: no room, a quiet rebuild", smsReactionShown(engine.notifiable(id, 5), noRoom.reaction.id))
+        // The notifier asks before it posts on the reactions channel; a removal never gets that far (afterReaction).
+        val root = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val notifier = root.walkTopDown().first { it.name == "SmsNotifier.kt" }.readText()
+        val notify = notifier.substringAfter("fun notify(").substringBefore("val me = Person.Builder()")
+        assertTrue(notify.contains("if (reaction && !smsReactionShown(lines, message.id))"))
+        assertTrue(notify.substringAfter("smsReactionShown(lines, message.id))").substringBefore("return").contains("afterReaction("))
+    }
+
     /** The one source check left: the wake's one trigger is our notification's own post - after it, never in "not
      * sent" or a group move's re-post. */
     @Test

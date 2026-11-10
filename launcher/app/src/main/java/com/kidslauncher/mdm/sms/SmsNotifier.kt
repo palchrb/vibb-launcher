@@ -88,7 +88,7 @@ object SmsNotifier {
      * this post may be a notice on the lock (a message's own post; not a group move's re-post, [afterMove]). Its lines
      * are what is unread there ([SmsEngine.notifiable]). With [reaction] (design 81 D12) [message] is a reaction from
      * someone else: its own channel's short buzz, silent under a time rule and under any Do Not Disturb (fail closed),
-     * nothing posted when the kid has read it meanwhile.
+     * and only while its own line is on the notification ([smsReactionShown]) - else a quiet rebuild ([afterReaction]).
      */
     fun notify(
         context: Context,
@@ -103,7 +103,11 @@ object SmsNotifier {
             createChannels(context)
             val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversation.id)
             val lines = engine.notifiable(id, SHOWN_MESSAGES)
-            if (lines.isEmpty() && reaction) return
+            if (reaction && !smsReactionShown(lines, message.id)) {
+                // Read meanwhile, or no room beside five unread messages (verification V1): no buzz without its line.
+                afterReaction(context, engine, conversation.id)
+                return
+            }
             val me = Person.Builder().setName(context.getString(R.string.sms_notification_me)).build()
             val sender = senderPerson(context, conversation)
             val style = NotificationCompat.MessagingStyle(me)

@@ -57,6 +57,12 @@ fun smsChannel(silent: Boolean, reaction: Boolean, passesFilter: Boolean): Strin
     else -> NOTIFICATION_CHANNEL_MESSAGES
 }
 
+/** Design 81 D12 (verification V1): a reaction buzzes only when its own line is on the notification - with five unread
+ * messages there is no room for it (they come first, code QA L1), and a buzz with nothing to show for it would mislead;
+ * then the notification is only rebuilt, quietly. A removal never posts at all ([SmsNotifier.afterReaction]). */
+fun smsReactionShown(lines: List<Notifiable>, reaction: com.kidslauncher.mdm.sms.engine.MessageId): Boolean =
+    lines.any { it.target != null && it.message.id == reaction }
+
 /** Design 81 D12 (code QA N2): the lock screen's public text follows what the notification holds - "Ny reaksjon" only
  * when every line is a reaction, "Ny melding" as soon as one unread message is on it. */
 fun smsPublicIsReaction(lines: List<Notifiable>): Boolean = lines.isNotEmpty() && lines.all { it.target != null }

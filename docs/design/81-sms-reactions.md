@@ -687,6 +687,9 @@ is open for the user but the capture itself.
 - **The notification's lines** (code QA L1, N2): unread messages first, reactions only in the lines left; the lock
   screen's public text says "Ny reaksjon" only when every line is a reaction. The channel choice is the pure
   `smsChannel(silent, reaction, passesFilter)`. The vibration `0, 80` waits for the user's word on the Jelly Star.
+  A reaction buzzes only when its own line is on the notification (`smsReactionShown`, the verification's V1): with
+  five unread messages there is no room for it, and D12's post becomes a quiet rebuild (`afterReaction`) - no buzz with
+  nothing to show for it. A removal already rebuilds quietly.
 - **The chip** has its own room below the bubble (its measured height less 5 dp, code QA L3), and "Nylig brukt" learns
   only an emoji that was sent as an add (N6).
 - **The panel** closes when the compose bar's state changes under it (a time rule began, group texts went off), and

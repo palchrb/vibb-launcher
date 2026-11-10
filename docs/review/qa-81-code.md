@@ -465,3 +465,9 @@ observation doesn't carry over to it.
 - **Nothing on a device:** L3's layout, the panel, the picker and TalkBack rest on the emulator pass as written.
 - **The full suite:** not re-run; only the three packages above.
 - **Design 80's merged changes:** their own merits are not judged here.
+
+### Second pass (V1)
+
+| Finding | Fixed | Test |
+|---|---|---|
+| V1 | Confirmed. `SmsNotifier.notify` with `reaction = true` now posts on `launcher:messages_reactions` only when the reaction's own line is among `notifiable`'s (`smsReactionShown(lines, reactionId)`, pure, beside `smsChannel` in `SmsGlance.kt`); otherwise - five unread messages leave no room, or the kid read it meanwhile - it hands over to `afterReaction`: a quiet rebuild of a notification that is up (silent channel, no wake), or nothing. A removal ("Fjernet …") never reaches the post: `notifyAttached` sends `notify = false` to `afterReaction`, the same quiet rebuild. Design 81 §12 says so. | `SmsGlanceTest` "a reaction buzzes only when its line is on the notification" (four unread messages and a reaction: its line, the reactions channel; five: no line, a quiet rebuild; and the notifier's guard before the post, read from the source) |
