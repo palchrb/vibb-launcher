@@ -910,11 +910,15 @@ async fn the_prefill_and_retry_rules() {
         ("outbound", false),
         ("sms_in", false),
         ("sms_out", false),
+        // Code QA L6: Home and pictures off too - every switch.
+        ("mms", false),
+        ("show_on_home", false),
     ] {
         assert_eq!(input_checked(&short, switch, "on"), Some(on), "{switch}");
     }
     assert!(short.contains("data-request-short"));
-    assert!(short.contains("Choose whether your child may call and text it."));
+    // Code QA N5: the kid by name, as the rest of the page.
+    assert!(short.contains("Choose whether Anna may call and text it."));
     // A refused save from the request keeps it and the tick.
     let request = format!("{:032x}", 1);
     let refused = app

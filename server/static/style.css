@@ -3084,12 +3084,38 @@ div.row[data-way],
 div.row[data-custom] {
     min-height: 53px;
 }
+/* Code QA N3: the value takes exactly the switch's box (12 px gap, 51 px), so the label beside "Tilpasset" wraps at the
+   same width as beside the switch, at any font size or phone width; at a larger font the word runs into the row's
+   right padding rather than taking the label's room. */
 div.row[data-way] > .row-value,
 div.row[data-custom] > .row-value {
-    flex: none;
-    margin-left: 8px;
-    font-size: 0.875rem;
+    flex: 0 0 51px;
+    text-align: right;
+    margin-left: 12px;
+    font-size: 0.8125rem;
     white-space: nowrap;
+    overflow: visible;
+}
+
+/* The page's Avansert › Meldinger: its rows sit in more than one form, so the group's own sibling rule can't draw the
+   hairlines between them. */
+.group-lines .row ~ .row::before,
+.group-lines form + form .row:first-child::before,
+.group-lines div + form .row:first-child::before,
+.group-lines form > .cell::before,
+.group-lines form > .contact-field::before,
+.group-lines > details.cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+.group-lines .cell,
+.group-lines .contact-field {
+    position: relative;
 }
 
 /* Design 80 §4.5: the phone's own number as a row with its source, then "Bruk dette nummeret" and "Endre…" as two

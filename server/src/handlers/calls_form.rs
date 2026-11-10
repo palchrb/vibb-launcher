@@ -96,7 +96,15 @@ pub(crate) fn resolve(
         stored.map(|(calls, _)| calls),
     );
     let texts = if emergency {
-        (false, on("sms_out"))
+        // Code QA L5: the texts row is `sms_out` alone, but Add Contact (the number typed, so not known as an emergency
+        // number when drawn) posts the two-way switch too: it resolves as the pair `(sms_out, sms_out)`, so turning it
+        // off without JS turns `sms_out` off. A contact's own emergency row posts no `texts_shown`: `sms_out` as posted.
+        let out = on("sms_out");
+        let stored = stored.map(|(_, (_, out))| (out, out));
+        (
+            false,
+            both_ways(shown("texts_shown"), on("texts"), (out, out), stored).1,
+        )
     } else {
         both_ways(
             shown("texts_shown"),
@@ -307,10 +315,17 @@ mod tests {
             "sms_out",
         ]);
         assert_eq!(resolve(&sent, None, true), ((true, true), (false, true)));
+        // Turned on: the kid's way on, never `sms_in`.
         let sent = form(&["texts_shown=off", "texts", "sms_in"]);
-        assert_eq!(resolve(&sent, None, true), ((false, false), (false, false)));
+        assert_eq!(resolve(&sent, None, true), ((false, false), (false, true)));
         // A plain number: the two-way switch turned on sets both.
         assert_eq!(resolve(&sent, None, false), ((false, false), (true, true)));
+        // Code QA L5: Add Contact without JS - "Kan sende og få meldinger" turned off, Avansert's `sms_out` still on: off.
+        let sent = form(&["texts_shown=on", "sms_out"]);
+        assert_eq!(resolve(&sent, None, true), ((false, false), (false, false)));
+        // A contact's own emergency row (no `texts_shown`): `sms_out` as posted.
+        let sent = form(&["sms_out"]);
+        assert_eq!(resolve(&sent, None, true), ((false, false), (false, true)));
     }
 
     /// D1's sub-lines for each mode pair (M2).

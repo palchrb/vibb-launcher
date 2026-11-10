@@ -886,7 +886,13 @@ async fn load_page(
     let add_switches = match (shown.add_sent, shown.add_held, add_request.is_some()) {
         // Design 80 L2: a refusal shows the channels as the save would resolve them.
         (Some(sent), _, _) => {
-            let ((inbound, outbound), (sms_in, sms_out)) = calls_form::resolve(sent, None, false);
+            // Code QA L5: resolved as the save does - an emergency number by the number sent.
+            let emergency = sent
+                .get("number")
+                .and_then(|raw| phone::normalize(raw, &default_country_code).ok())
+                .is_some_and(|number| emergency::is_emergency(&number, &default_country_code));
+            let ((inbound, outbound), (sms_in, sms_out)) =
+                calls_form::resolve(sent, None, emergency);
             [
                 inbound,
                 outbound,
@@ -968,6 +974,7 @@ async fn load_page(
                 hint: None,
                 error: Some(refusal.why.clone()),
                 uses: Vec::new(),
+                shown: String::new(),
             });
         }
     }
@@ -1996,6 +2003,10 @@ pub async fn save_settings(
     // post writes only its section - `button` the phone's default Message button (in the page's Avansert),
     // `channels` the two modes. No marker (an older page) is the write-all of before.
     let section = form.get("section").map(String::as_str);
+    // Code QA N2: an unknown marker is refused, never the write-all (it would reset the default Message button).
+    if section.is_some_and(|s| s != "button" && s != "channels") {
+        return bad_request(lang, "error.unknown_section");
+    }
     let default_message_app = form
         .get("default_message_app")
         .map(String::as_str)
