@@ -206,6 +206,11 @@
     </plurals>
     <!-- TalkBack on a bubble: %1$s = who ("You" or the name), %2$s = the time. -->
     <string name="messages_bubble_description">%1$s, %2$s</string>
+    <!-- A thread's mark over the list's lower edge while the kid reads older messages: one came in, or more (no count). -->
+    <string name="messages_arrived_one">New message</string>
+    <string name="messages_arrived_many">New messages</string>
+    <!-- TalkBack's action on the mark: "Double-tap to …". -->
+    <string name="messages_arrived_go">go to the newest message</string>
     <string name="messages_compose_hint">Message</string>
     <string name="messages_send">Send</string>
     <!-- Over the compose field once a text needs more than one SMS: %1$d = how many. -->

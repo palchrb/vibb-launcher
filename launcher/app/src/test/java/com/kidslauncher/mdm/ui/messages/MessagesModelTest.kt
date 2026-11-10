@@ -306,13 +306,72 @@ class MessagesModelTest {
         // the next never ran its callback. Every list asks the field, and every layout goes on to the end.
         val screen = listOf("src", "app/src").map { File("$it/main/java/com/kidslauncher/mdm/ui/messages/ThreadActivity.kt") }
             .first { it.exists() }.readText()
-        assertTrue(screen.contains("ZoneId.systemDefault())) {\n            if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)"))
+        assertTrue(
+            screen.contains(
+                "ZoneId.systemDefault())) {\n            if (following && adapter.itemCount > 0) {\n" +
+                    "                binding.threadList.scrollToPosition(adapter.itemCount - 1)\n                seenSeq = newestSeq\n            }\n        }",
+            ),
+        )
         assertTrue(screen.contains("binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }"))
         assertTrue(screen.contains("val markRead = threadReads(resumed, following)"))
         // Reaching the end reads what came in meanwhile; the kid's own send stops a coasting list first.
         assertTrue(screen.contains("if (turnedOn) load()"))
         assertTrue(screen.contains("if (follows && !following) binding.threadList.stopScroll()\n        follow(follows)"))
         assertEquals("set at its declaration, in take() and in follow() only", 3, Regex("\\bfollowing = ").findAll(screen).count())
+        // The "new message" mark: the end counts as shown only where the latest list's callback scrolls to it (above) -
+        // a list the kid scrolled away from before it was in has shown nothing. Every change of following judges the
+        // mark, a new thread starts without one, and the mark's tap turns following on by follow() itself, which reads.
+        assertTrue(screen.contains("following = now\n        renderMark()\n        if (turnedOn) load()"))
+        assertTrue(screen.contains("val now = threadNewMark(following, seenSeq, messages)\n        if (now == mark) return"))
+        assertTrue(screen.contains("binding.threadList.stopScroll()\n        following = true\n        seenSeq = 0L"))
+        assertTrue(screen.contains("renderAttachment()\n        renderMark()\n        adapter.submitList(emptyList())"))
+        assertTrue(screen.contains("binding.threadNew.setOnClickListener { toEnd() }"))
+        assertTrue(screen.contains("        cancelDelete()\n        hideReact()\n        binding.threadList.stopScroll()\n        val toField = "))
+        // The tap takes the focus it had along (code QA L4): the keyboard's to the compose field before the mark goes,
+        // else - and TalkBack's always - to the last bubble at its layout; a finger's tap and a scroll to the end move none.
+        assertTrue(
+            screen.contains(
+                "val toField = keys && binding.threadCompose.visibility == View.VISIBLE && binding.threadField.requestFocus()\n" +
+                    "        follow(true)\n        if (adapter.itemCount == 0) return\n" +
+                    "        binding.threadList.scrollToPosition(adapter.itemCount - 1)\n" +
+                    "        endFocus = keys && !toField\n        endSpoken = spoken\n    }",
+            ),
+        )
+        assertEquals("set at its declaration, in take(), in toEnd() and once handed on", 4, Regex("\\bendFocus = ").findAll(screen).count())
+        // A drag that begins on the mark is the list's (emulator pass F1): every event goes on to the list's own
+        // onTouchEvent - never its dispatch, which would press the bubble under the mark -, the mark's press is cancelled
+        // once the list drags, and a gesture that never dragged ends as a cancel for the list.
+        assertTrue(screen.contains("if (last && !dragging) passed.action = MotionEvent.ACTION_CANCEL\n            list.onTouchEvent(passed)"))
+        assertTrue(
+            screen.contains(
+                "if (!dragging && list.scrollState == RecyclerView.SCROLL_STATE_DRAGGING) {\n                dragging = true\n" +
+                    "                val cancel = MotionEvent.obtain(e)\n                cancel.action = MotionEvent.ACTION_CANCEL\n" +
+                    "                pill.onTouchEvent(cancel)",
+            ),
+        )
+        assertFalse(screen.contains("list.dispatchTouchEvent("))
+        val layout = listOf("src", "app/src").map { File("$it/main/res/layout/activity_thread.xml") }.first { it.exists() }.readText()
+        assertTrue(layout.contains("android:id=\"@+id/thread_list_frame\""))
+        assertTrue(layout.contains("android:splitMotionEvents=\"false\""))
+        assertEquals("set at its declaration, in take() and in the latest list's callback only", 3, Regex("\\bseenSeq = ").findAll(screen).count())
+    }
+
+    @Test
+    fun `the new message mark tells of what came in while the kid reads older messages`() {
+        val shown = listOf(message("a", 1, 0), message("b", 2, 0, Direction.OUT, Delivery.SENT))
+        val one = shown + message("c", 3, 0)
+        // Scrolled up: one came in after the end was last shown, then more - one word for any number of them.
+        assertEquals(NewMark.ONE, threadNewMark(following = false, seenSeq = 2, messages = one))
+        assertEquals(NewMark.MANY, threadNewMark(following = false, seenSeq = 2, messages = one + message("d", 4, 0)))
+        assertEquals(NewMark.MANY, threadNewMark(following = false, seenSeq = 2, messages = one + message("d", 4, 0) + message("e", 5, 0)))
+        // Nothing came in: only scrolled up, an older page, a reaction on a shown bubble, the kid's own message.
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown))
+        assertEquals("the one the end was shown with is not new", NewMark.NONE, threadNewMark(following = false, seenSeq = 3, messages = one))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = listOf(message("o", 0, 0)) + shown))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown.map { it.copy(reactions = listOf(reaction("👍", "+4790000001"))) }))
+        assertEquals(NewMark.NONE, threadNewMark(following = false, seenSeq = 2, messages = shown + message("d", 3, 0, Direction.OUT, Delivery.QUEUED)))
+        // At the end the new one is shown.
+        assertEquals(NewMark.NONE, threadNewMark(following = true, seenSeq = 2, messages = one))
     }
 
     @Test

@@ -182,6 +182,9 @@
         <item quantity="other">%1$d uleste</item>
     </plurals>
     <string name="messages_bubble_description">%1$s, %2$s</string>
+    <string name="messages_arrived_one">Ny melding</string>
+    <string name="messages_arrived_many">Nye meldinger</string>
+    <string name="messages_arrived_go">gå til den nyeste meldingen</string>
     <string name="messages_compose_hint">Melding</string>
     <string name="messages_send">Send</string>
     <string name="messages_counter">%1$d SMS</string>
