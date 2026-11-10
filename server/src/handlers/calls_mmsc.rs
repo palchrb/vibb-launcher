@@ -95,25 +95,19 @@ pub async fn load(
             let allowed = row.state == "allowed";
             let decided = row.decided_at.as_deref().and_then(parse_db_utc);
             let words = if allowed {
-                t_params(
-                    lang,
-                    "device.calls.mmsc.allowed",
-                    &[
-                        (
-                            "date",
-                            &zone.date_of(
-                                zone.local(decided.unwrap_or(now)).date_naive(),
-                                zone.today(now),
-                            ),
-                        ),
-                        (
-                            "parent",
-                            row.decided_by
-                                .and_then(|id| parents.of_id(id))
-                                .unwrap_or("-"),
-                        ),
-                    ],
-                )
+                let date = zone.date_of(
+                    zone.local(decided.unwrap_or(now)).date_naive(),
+                    zone.today(now),
+                );
+                // An account that is gone has no name to put after "by".
+                match row.decided_by.and_then(|id| parents.of_id(id)) {
+                    Some(parent) => t_params(
+                        lang,
+                        "device.calls.mmsc.allowed",
+                        &[("date", &date), ("parent", parent)],
+                    ),
+                    None => t_params(lang, "device.calls.mmsc.allowed_on", &[("date", &date)]),
+                }
             } else {
                 t(lang, "device.calls.mmsc.declined").to_string()
             };

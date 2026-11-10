@@ -174,8 +174,8 @@ async fn the_intake_keeps_a_contacts_picture_for_a_reported_sim() {
     assert_eq!(events(&app, id).await, 4);
 }
 
-/// "Tillat" on a question: the address is in the phone's row, the form lands on its row in "Bildeadresser" (drawn
-/// open), and the phone reporting the picture once more raises nothing. "Fjern" takes it out of the policy and it is
+/// The device page counts the questions and leads to them. "Tillat" on one: the address is in the phone's row, the
+/// form lands on its row in "Bildeadresser" (drawn open), and the phone reporting the picture once more raises nothing. "Fjern" takes it out of the policy and it is
 /// never asked about again; "Tillat likevel" puts it back. "Ikke tillat" on a question sends nothing.
 #[tokio::test]
 async fn allow_decline_and_take_back() {
@@ -195,6 +195,18 @@ async fn allow_decline_and_take_back() {
         .text();
     assert!(page.contains(&format!("id=\"mmsc-{row}\"")), "{page}");
     assert!(page.contains("mmsc.example.invalid. Allow?") && page.contains("from Mamma"));
+    // The device page counts the two questions and leads to them: no message is held.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("2 messages waiting"), "{summary}");
+    assert!(
+        summary.contains(&format!(
+            "href=\"/devices/{id}/calls#mmsc\" data-row=\"sms\""
+        )),
+        "{summary}"
+    );
     let action = |row: i64, to: &str| format!("/devices/{id}/calls/mmsc/{row}/{to}");
     let row_anchor = format!("/devices/{id}/calls?mmsc=1#mmsc-{row}");
     let sent = json!([{"mccmnc": SIM, "hosts": ["mmsc.example.invalid"]}]);
@@ -267,6 +279,11 @@ async fn the_ninth_allow_is_refused() {
         .await
         .text();
     assert_eq!(page.matches("data-mmsc-full").count(), 2, "{page}");
+    // No account answered these rows: "Allowed 10 Nov", with no "by" left hanging.
+    assert!(
+        page.contains("· Allowed ") && !page.contains(" by -"),
+        "{page}"
+    );
     assert!(!page.contains(&format!("/mmsc/{open}/allow")));
 
     let res = post(
@@ -303,4 +320,29 @@ async fn the_ninth_allow_is_refused() {
     );
     let states: Vec<String> = rows(&app, id).await.into_iter().map(|r| r.3).collect();
     assert_eq!(states[8..], ["open", "declined"]);
+}
+
+/// A phone keeps 32 declined addresses: one more decline drops the oldest of the others.
+#[tokio::test]
+async fn the_oldest_decline_goes_past_the_cap() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let mut kept = Vec::new();
+    for n in 0..crate::mmsc_hosts::DECLINED_MAX {
+        let host = format!("mms-{n}.example.invalid");
+        kept.push(stored(&app, id, SIM, &host, "declined").await);
+    }
+    let asked = stored(&app, id, SIM, "mmsc.example.invalid", "open").await;
+    let res = post(
+        &app,
+        &cookie,
+        &format!("/devices/{id}/calls/mmsc/{asked}/decline"),
+    )
+    .await;
+    app.assert_lands(&res, &cookie).await;
+    kept.remove(0);
+    kept.push(asked);
+    let left: Vec<i64> = rows(&app, id).await.into_iter().map(|r| r.0).collect();
+    assert_eq!(left, kept);
 }

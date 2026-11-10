@@ -990,8 +990,9 @@ struct DeviceDetailTemplate {
     access: AccessCard,
     /// The Sections rows' values.
     calls_value: String,
-    /// Design 77 §7: the messages waiting and blocked this week, a row under Calls while either isn't nought.
-    sms_value: Option<String>,
+    /// Design 77 §7: the messages waiting and blocked this week, a row under Calls while either isn't nought, and the
+    /// Calls page's anchor it leads to.
+    sms_value: Option<(String, &'static str)>,
     apps_value: String,
     music_value: String,
     /// Device › Music or Device › Time shows a warning: the value in orange ("Needs attention").

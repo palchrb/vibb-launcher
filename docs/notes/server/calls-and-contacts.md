@@ -216,7 +216,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   fram uten mobildata": rows in the settings group, not Attention (`CallProblem::needs_attention`). While SMS isn't
   managed: "Vibb One er fortsatt SMS-appen" (code QA L3), a row.
 - **The device page's row** "Meldinger": "2 meldinger venter · 3 blokkert denne uken" (`calls_sms::summary_value`),
-  under Calls & Contacts while either isn't nought, to `#held`.
+  under Calls & Contacts while either isn't nought, to `#held` - or to `#mmsc` when no message is held and design 83's
+  address questions are what waits.
 - Every write is one transaction scoped to the phone, 500 on a database error, and nudges the phone (`calls::saved`:
   `command_notify`), so an allow reaches it with the policy within seconds while it is online. Tests: `tests::sms_page`
   (each allow path's defaults, the escaped prefill, Slett nå / Slett alle, the names' rule, the SMS settings, the
@@ -448,7 +449,8 @@ two sources, and nothing else lets an address in:
 - **The parent's allow**, `device_mmsc_hosts` (0137: per phone, MCC/MNC and entry - `open`, `allowed`, `declined`).
 - **An entry** (`mmsc_hosts::valid_entry`, the launcher's `MmsGate.validEntry`, both over
   `testdata/sms_contract.json`'s `mmsc_entries`): `host`, or `host:port` for a port other than 80, 443 and 8080 -
-  lower case, a last label that starts with a letter or exactly four decimal octets, matched exactly.
+  lower case, a last label that starts with a letter or exactly four decimal octets (the first never 0 or 127: a
+  parent is not asked about "this host"), matched exactly.
 - **The policy** (`mmsc_hosts::policy`): a row for each SIM operator in the newest status report that carries an
   `sms_state` (`sms_state.sim_operators`, at most 4; `mmsc_hosts::Reported`) and has an unasked or an allowed entry.
   `[]` without such a report or from a launcher that reports no operator - fail closed. A sync fetches the policy
@@ -481,13 +483,16 @@ two sources, and nothing else lets an address in:
   notice of the group its form was in - `#mmsc` for a question, `?mmsc=1…#mmsc-decided` for "Bildeadresser", whose
   forms post with `?decided=1` to say so.
 - The device page's "N meldinger venter" counts the open questions too (`calls_sms::summary_value`,
-  `calls_mmsc::open_count`). The finding "MMS kan ikke sjekkes på dette SIM-kortet" stays beside the question (the
-  standing state); its long text gains "Når en kontakt sender et bilde, kan du tillate adressen her." while the
-  newest `sms_state` has `sim_operators`.
+  `calls_mmsc::open_count`), and leads to `#mmsc` when no message is held (code QA). An allowed row says "Tillatt
+  {date} av {parent}", or "Tillatt {date}" (`allowed_on`) when the account is gone. The finding "MMS kan ikke sjekkes
+  på dette SIM-kortet" stays beside the question (the standing state); its long text gains "Når en kontakt sender et
+  bilde, kan du tillate adressen her." while the newest `sms_state` has `sim_operators`.
 - Tests: `tests::mmsc_hosts` (the policy has exactly the reported SIMs' entries and never a hint; what the intake
   keeps and drops, and that an answered address raises no second event; allow, decline and take back with each
-  form's landing; the ninth allow), `sms::tests` (the contract's `mmsc_entries`, `report` and `policy`),
-  `mmsc_hosts::tests::the_list_is_well_formed`, the seeded family's rows on the nb page
-  (`tests::i18n_pages::nb_pages_have_no_english`).
+  form's landing, the device page's count and its link; the ninth allow and an allowed row with no account; the
+  oldest decline past the cap), `tests::cleanup::pruning_keeps_only_what_retention_allows` (only an open row goes
+  after 30 days), `tests::lock_glance`'s device delete (the rows go with the phone), `sms::tests` (the contract's
+  `mmsc_entries`, `report` and `policy`), `mmsc_hosts::tests::the_list_is_well_formed`, the seeded family's rows on
+  the nb page (`tests::i18n_pages::nb_pages_have_no_english`).
 - **Not shown by any of this:** what an operator's notification really names, and which network the platform fetches
   on - design 77's step 0, on a real SIM. Until then "MMS works" means "the gate and the allow work".
