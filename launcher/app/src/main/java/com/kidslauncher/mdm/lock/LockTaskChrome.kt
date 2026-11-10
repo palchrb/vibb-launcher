@@ -15,6 +15,7 @@ import com.kidslauncher.mdm.server.chromeWriteOrder
 import com.kidslauncher.mdm.server.fallbackKioskPackages
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 import com.kidslauncher.mdm.server.sosNarrowedPackages
+import com.kidslauncher.mdm.server.unpinFeatures
 
 private const val LOG_TAG = "LockTaskChrome"
 
@@ -322,11 +323,30 @@ object LockTaskChrome {
         val mdm = LauncherPreferences.mdm()
         val packages = setting.packages
         if (packages == null) {
+            // The app block goes first, in a write of its own ([unpinFeatures], emulator.md §6af):
+            // emptying the list makes the system restart Home inside that very call, while lock task
+            // still reads LOCKED and the old features still stand - with the block bit that start
+            // became BlockedAppActivity, which locked the phone to "App is not available".
+            val blockLifted = liftAppBlock(dpm, admin)
+            // The stored switch goes off before the list is emptied too, not after: the Home the
+            // system restarts in that call resumes while the call is still running, and with the
+            // switch still on its reconcileKioskMode() asked for lock task with nothing allow-listed
+            // - Android's screen-pinning request, in the middle of a pause (§6af, the second race).
+            val wasOn = mdm.kioskEnabled()
+            mdm.kioskEnabled(false)
             try {
                 dpm.setLockTaskPackages(admin, emptyArray())
-                mdm.kioskEnabled(false)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to unpin kiosk state", e)
+                // Still pinned: the switch and the block come back with it.
+                if (wasOn) mdm.kioskEnabled(true)
+                if (blockLifted != null) {
+                    try {
+                        dpm.setLockTaskFeatures(admin, blockLifted)
+                    } catch (e2: Exception) {
+                        Log.w(LOG_TAG, "Failed to put the app block back after a failed unpin", e2)
+                    }
+                }
             }
         } else if (!applyLockTaskFeaturesVerified(dpm, admin, setting.features)) {
             // Order matters (the boot-deadlock incident in CLAUDE.md): setLockTaskFeatures, which
@@ -346,6 +366,24 @@ object LockTaskChrome {
         }
         return false
     }
+
+    /**
+     * The unpin's first write: the platform's lock-task features without the app block, when it is
+     * set. Returns the features as they were when that write went through (to put back if the unpin
+     * then fails), else `null`. Never stops the unpin: without a lock-task policy the platform
+     * throws, and there is nothing to lift then.
+     */
+    private fun liftAppBlock(dpm: DevicePolicyManager, admin: ComponentName): Int? =
+        try {
+            val current = dpm.getLockTaskFeatures(admin)
+            unpinFeatures(current)?.let { without ->
+                dpm.setLockTaskFeatures(admin, without)
+                current
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't lift the app block before the unpin", e)
+            null
+        }
 
     /**
      * The heal's flip: only setLockTaskFeatures - the packages, the status bar and
