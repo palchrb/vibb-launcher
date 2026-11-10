@@ -21,8 +21,6 @@ import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.MissedCallText
 import com.kidslauncher.mdm.ui.home.PressFeedback
-import com.kidslauncher.mdm.ui.wallpaper.InkChoice
-import com.kidslauncher.mdm.ui.wallpaper.KidInk
 
 /** One shown row: the model's [row], a contact's buttons ([actions], the card's rule) and the app a Melding leaves
  * Vibb for ([messageApp], TalkBack's "… i Element X"; `null` = our own thread or none). */
@@ -51,9 +49,6 @@ class PhoneBookAdapter(
             notifyDataSetChanged()
         }
 
-    /** The wallpaper's ink for the one text on it, the "Venter på svar" label. */
-    var ink: InkChoice? = null
-
     init {
         setHasStableIds(true)
     }
@@ -79,7 +74,7 @@ class PhoneBookAdapter(
                 if (viewType == TYPE_CONTACT_STACKED) RowLayout.STACKED else RowLayout.INLINE,
             )
             TYPE_REQUEST -> RequestHolder(inflater.inflate(R.layout.item_phone_book_request, parent, false))
-            else -> LabelHolder(inflater.inflate(R.layout.item_phone_book_label, parent, false) as TextView)
+            else -> LabelHolder(inflater.inflate(R.layout.item_phone_book_label, parent, false))
         }
     }
 
@@ -99,7 +94,6 @@ class PhoneBookAdapter(
         when (holder) {
             is ContactHolder -> holder.bind(item)
             is RequestHolder -> holder.bind(item.row)
-            is LabelHolder -> ink?.let { KidInk.label(holder.label, it, dim = true) }
         }
     }
 
@@ -277,7 +271,7 @@ class PhoneBookAdapter(
         }
     }
 
-    class LabelHolder(val label: TextView) : RecyclerView.ViewHolder(label)
+    class LabelHolder(view: View) : RecyclerView.ViewHolder(view)
 
     companion object {
         /** An emergency number on every GSM phone (Telecom routes it to the preloaded dialer). */

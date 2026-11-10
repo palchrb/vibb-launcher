@@ -2631,7 +2631,7 @@ as it is, quotes, `«»` and emoji included (quote the whole command for the she
   `'Liked “Kommer kl 5” !'` -> ordinary bubbles, notified as messages.
 - **The notification:** after an add, `dumpsys notification --noredact` shows the conversation's notification on
   `launcher:messages_reactions` with the line "Reagerte med 👍 på «Kommer kl 5»" and public "Ny reaksjon"; the
-  emulator's vibrator (`dumpsys vibrator_manager`) one 80 ms effect, no sound - with the phone unlocked (above). Under a time rule without calls, and with
+  emulator's vibrator (`dumpsys vibrator_manager`) one 40 ms effect (80 ms until 2026-11-10), no sound - with the phone unlocked (above). Under a time rule without calls, and with
   Do Not Disturb on (`adb shell cmd notification set_dnd priority`, back with `off`), the same post goes on
   `launcher:messages_silent`, no vibration. No wake on the lock either way.
 - **The long press:** on Mamma's bubble the panel - two rows of four 56 dp cells (❤️ 👍 👎 😂 / ‼️ ❓ + and the kid's
@@ -2652,6 +2652,58 @@ as it is, quotes, `«»` and emoji included (quote the whole command for the she
   them (Home's badge, the list's dot and last line).
 
 Screenshots: the chip, the panel and the picker at 288 dp.
+
+## 6ab. A thread follows its newest message, the phone book on the night ground (2026-11-10)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-10, branch `sms-follow-book-ground` (b2f5ebad), with §6v's
+setup (lock-task features 63, a light colour wallpaper picked in kid Settings) and main's debug build of the same day
+as the control (`install -r` over the branch's and back). "At the end" below is measured, not judged by eye: in
+`uiautomator dump` the last row's bottom is the list's bottom less its 8 dp padding.
+
+- **The thread at the end follows:** one incoming SMS; five back to back (`adb emu sms send` in a loop), three rounds,
+  one of two-line texts; eight sent at the same moment, four rounds; the kid's "Levert" line and Mamma's
+  `'Likte «Kommer kl 5»'` making the last bubble taller; a reaction on an earlier bubble; the keyboard opening and
+  closing; the field growing to five lines and emptied again; a picture from the fake MMSC (§6v step 3b), alone and
+  between texts. The last message was whole at the end every time.
+- **Scrolled up stays put:** one and then three incoming SMS, and a picture: the visible rows' bounds are the same
+  before and after. Back at the end by hand, the next one is followed again. The kid's own send while scrolled up goes
+  to the end.
+- **An older page keeps the place:** 125 messages, the thread reopened (a page is 100), dragged slowly until the page's
+  first row shows: the rows are where they were once the older page is in, and the next drag shows it above. A fling
+  runs through the page's edge without a jump.
+- **The control did not show the miss:** main's build followed every burst too, the eight at once included. The
+  overtaken list update that drops the old scroll depends on timing this AVD doesn't produce; that the miss is gone is
+  for the Jelly Star to show.
+- **The phone book:** the list, the search with hits and "Fant ingenting" at font scale 1.0 and 1.3, and the contact
+  sheet and the request form at 1.0, are `kid_ground` (`#0C0C14`) from the top edge to the bottom, like Kalender, with
+  light status icons and a light navigation handle; Home on the light wallpaper keeps its dark ones. Main's build shows
+  the rows on the wallpaper.
+- **The buzz:** a reaction with the thread closed plays one 40 ms step (`dumpsys vibrator_manager`, "Recent
+  vibrations"). The 40 ms reaches only a channel not yet created: an install that already ran a build with reactions
+  (a debug build on the lab phone, an AVD without `-wipe-data`) keeps 80 ms until its data is cleared.
+- **What `handy36` can't show:** its status bar is 136 px (the Jelly Star's and `jelly36`'s: 36), so with the keyboard
+  up the thread's list is 104 px, and 7 px under a five-line field - shorter than one bubble. The same on the phone
+  book: with the keyboard up the list is shorter than a row, and on b2f5ebad the search's first hit lay against its
+  bottom with its top cut (main's build too; fixed in the round below). The keyboard-up views are `jelly36`'s or the
+  phone's to judge. The fake MMSC's picture is 160 x 120: a portrait picture's tall bubble was not run.
+
+**The code QA's fix round (ee9ef7a1), the same day**, on the AVD's kept data (no `-wipe-data`, `install -r`; no server
+was up - the phone ran on its stored policy):
+
+- **Unread until the end is reached:** scrolled up, one SMS in: the rows' bounds are the same, `message.is_read` is 0.
+  Home without scrolling down: the Meldinger tile reads "Meldinger, 1 ulest" with its
+  badge. The tile brings the same thread back, still scrolled up and still unread; flung to the end it is read and the
+  badge is gone. Back to the list instead: the row reads "1 ulest", and the thread opened from it is at its end and
+  read. Scrolled up, Home, a message in (its notification posted), the thread again: unread and the notification
+  still there until the end is reached, then read and the notification gone. At the end with the thread in front an
+  incoming message is followed and read at once, as before.
+- **The kid's own send while the list coasts:** a fling coasts for about 1.9 s here (`dumpsys gfxinfo ... framestats`).
+  A draft typed, the keyboard closed, `input swipe 240 300 240 690 50` and a tap on Send 10 ms, 0.4 s and 0.9 s after
+  the swipe: the thread ended at its end with the sent bubble whole every time (four runs). The build before the fix
+  was not run against the same taps, so that the miss existed here is not shown.
+- **The phone book's first hit:** the keyboard up, "o" (5 hits), "ol", back to "o", and "o" typed from a list scrolled
+  down: the first hit's top is at the list's top every time (the row's picture 10 dp under it, as in a list at rest),
+  at font scale 1.0 and 1.3; the list itself is still shorter than a row on this AVD.
 
 ## 7. Reporting back
 

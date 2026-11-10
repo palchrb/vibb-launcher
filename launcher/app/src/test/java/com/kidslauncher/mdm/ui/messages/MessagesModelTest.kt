@@ -35,6 +35,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.launch
+import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -260,6 +261,58 @@ class MessagesModelTest {
         assertEquals(DeliveryLine.SENDING, deliveryLine(failed.copy(delivery = Delivery.SENDING), lastOut = true))
         assertNull(deliveryLine(failed.copy(delivery = Delivery.SENT), lastOut = false))
         assertNull(deliveryLine(message("i", 1, 0), lastOut = true))
+    }
+
+    @Test
+    fun `the thread follows its newest message at its end and after the kid's own send, else nothing moves`() {
+        val shown = listOf(message("a", 1, 0), message("b", 2, 0, Direction.OUT, Delivery.SENT))
+        // At the end: whatever comes - a message in, a delivery update, an older page.
+        assertTrue(threadFollows(following = true, newestBefore = 2, messages = shown + message("c", 3, 0)))
+        assertTrue(threadFollows(following = true, newestBefore = 2, messages = shown))
+        // Scrolled up: a message in, a delivery update and an older page move nothing; the kid's own send does.
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = shown + message("c", 3, 0)))
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = shown.map { it.copy(delivery = Delivery.DELIVERED) }))
+        assertFalse(threadFollows(following = false, newestBefore = 2, messages = listOf(message("o", 0, 0, Direction.OUT, Delivery.SENT)) + shown))
+        val sent = message("d", 3, 0, Direction.OUT, Delivery.QUEUED)
+        assertTrue(threadFollows(following = false, newestBefore = 2, messages = shown + sent))
+        assertTrue(threadFollows(following = false, newestBefore = 2, messages = shown + sent + message("e", 4, 0)))
+    }
+
+    @Test
+    fun `the list is at its end when the last bubble's bottom shows, and a followed one goes on to it`() {
+        assertTrue(threadAtEnd(lastBottom = 800, listEnd = 800, slop = 16))
+        assertTrue(threadAtEnd(lastBottom = 816, listEnd = 800, slop = 16))
+        // A tall picture whose top shows isn't shown yet; a last bubble that isn't laid out is further down still.
+        assertFalse(threadAtEnd(lastBottom = 817, listEnd = 800, slop = 16))
+        assertFalse(threadAtEnd(lastBottom = null, listEnd = 800, slop = 16))
+        // Less than a screen of messages: at its end.
+        assertTrue(threadAtEnd(lastBottom = 300, listEnd = 800, slop = 0))
+
+        assertEquals(40, threadEndGap(following = true, lastBottom = 840, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = 800, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = 300, listEnd = 800))
+        assertEquals(0, threadEndGap(following = true, lastBottom = null, listEnd = 800))
+        assertEquals(0, threadEndGap(following = false, lastBottom = 840, listEnd = 800))
+    }
+
+    @Test
+    fun `a thread is read only in front and following, and the screen is wired to the rules`() {
+        assertTrue(threadReads(resumed = true, following = true))
+        // Scrolled up, a message that comes in isn't shown: unread until the end is reached. Never behind another screen.
+        assertFalse(threadReads(resumed = true, following = false))
+        assertFalse(threadReads(resumed = false, following = true))
+
+        // The wiring that was the fault (2026-11-10): the scroll hung on a flag one list captured, and a list overtaken by
+        // the next never ran its callback. Every list asks the field, and every layout goes on to the end.
+        val screen = listOf("src", "app/src").map { File("$it/main/java/com/kidslauncher/mdm/ui/messages/ThreadActivity.kt") }
+            .first { it.exists() }.readText()
+        assertTrue(screen.contains("ZoneId.systemDefault())) {\n            if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)"))
+        assertTrue(screen.contains("binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }"))
+        assertTrue(screen.contains("val markRead = threadReads(resumed, following)"))
+        // Reaching the end reads what came in meanwhile; the kid's own send stops a coasting list first.
+        assertTrue(screen.contains("if (turnedOn) load()"))
+        assertTrue(screen.contains("if (follows && !following) binding.threadList.stopScroll()\n        follow(follows)"))
+        assertEquals("set at its declaration, in take() and in follow() only", 3, Regex("\\bfollowing = ").findAll(screen).count())
     }
 
     @Test

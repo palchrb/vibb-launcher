@@ -38,10 +38,11 @@ const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
  */
 const val NOTIFICATION_CHANNEL_REACTIONS = "launcher:messages_reactions"
 
-/** One pulse of 80 ms - a message's default is 350 + 250 + 350 ms. Frozen with the channel above at its first creation
- * on a phone: a changed pattern needs a new channel id too (the length waits for the user's word on the Jelly Star,
- * code QA's open point). */
-private val REACTION_VIBRATION = longArrayOf(0, 80)
+/** One pulse of 40 ms, a single short tap (the user, 2026-11-10; it was 80 ms) - a message's default is
+ * 350 + 250 + 350 ms. The length is the owner's to tune by feel on the phone (the Jelly Star, Android 13); it can
+ * change here only until the first release that creates the channel above - a phone keeps the pattern its channel was
+ * created with, so a change after that needs a new channel id too. */
+private val REACTION_VIBRATION = longArrayOf(0, 40)
 
 /** One notification per conversation: this id, tagged with the conversation's id. */
 const val MESSAGES_NOTIFICATION_ID = 1009

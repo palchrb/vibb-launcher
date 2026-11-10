@@ -164,6 +164,21 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   after an hour at every share, picture and sync). The delete confirm (`view_messages_confirm.xml`) is part of the
   screen, no system dialog; no trash, no undo. One task of their own (`.messages` affinity, as Dagen's), in Recents as
   "Meldinger"; `MessagesScreens.startThread` puts the list under a thread opened from outside.
+- **A thread follows its newest message (2026-11-10, the user; branch `sms-follow-book-ground`):** pure `threadFollows`,
+  `threadAtEnd`, `threadEndGap`, `threadReads` (`MessagesModelTest`, which also pins the screen's wiring by its
+  source); the activity only measures. The thread opens following; a scroll sets it to "the last bubble's bottom is
+  within 8 dp of the list's end" (a tall picture counts only by its bottom), a layout can only turn it on (the end came
+  into view: a delete left less than a screen); the kid's own send (an OUT message with a newer `seq`) turns it on and
+  stops a list that still coasts. While it follows, every shown list goes to the last position and every layout of the
+  list - a new or grown bubble, the keyboard, the compose bar's height - scrolls on by the exact gap left; scrolled up,
+  nothing moves (a message in, a delivery line, an older page). **Read only when shown (code QA, 2026-11-10):** a read
+  marks the thread read only while it is in front and follows (`threadReads`), so a message that comes in while the kid
+  reads older ones stays unread - Home's badge and the list's dot show it if the kid leaves without going down - until
+  the end is reached: turning following on (`follow`) reads once more, which marks it read and cancels its
+  notification. Nothing tells the kid meanwhile: no notification while the thread is in front (`SmsRuntime`), no "new
+  message" mark, no sound - the user's to ask for. The cause of the missed follows: the scroll hung on one
+  `submitList`'s commit callback, which `AsyncListDiffer` never runs for a list overtaken by the next one - and a new
+  message's read is followed at once by another (its own `markRead`, a delivery update), which didn't ask to scroll.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
@@ -393,8 +408,16 @@ the list shows `contactRequestRows`.
 ## The phone book as one list (design 79; branch `phone-book-list`)
 
 Design `docs/design/79-phone-book-list.md` (approved 2026-11-09 with one change: the emergency numbers at the bottom).
-The grid of avatars became one list of solid night rows on the kid's wallpaper, with search, the kid's own contact
-pictures and the contact request's screen.
+The grid of avatars became one list of solid night rows, with search, the kid's own contact pictures and the contact
+request's screen.
+
+**The ground (2026-11-10, the user; branch `sms-follow-book-ground`):** the phone book is on Dagen's plain night ground,
+no longer the kid's wallpaper - the same resources as `activity_day.xml` (`@color/kid_ground` on the root, the header
+`kid_ink`, the info line, "Venter på svar" and the count `kid_ink_dim`, the rows Dagen's `bg_day_event` tile) and the
+theme's bars (no `showsSystemWallpaper`, light bar icons), so a later light look covers both by those resources. Gone
+from the phone book: `WallpaperGround`/`KidInk`, the wallpaper listener and refresh, the adapter's `ink` and
+`KidSearchField.countLine` (`HomeGroundTest`: only Home and kid Settings show the wallpaper). Nothing of design 79's
+layout, sizes, order or behaviour moved. The card, the thread, the call screens and the picture screens were night already.
 
 - **The order (pure `calls/PhoneBookList.kt`, `PhoneBookListTest`):** `phoneBookRows` - a request's answer once at the
   very top; the contacts with an unseen missed call, newest call first; everyone else A-Å (`listCollator`: the
@@ -433,7 +456,9 @@ pictures and the contact request's screen.
   marked letters as typed - "o" finds Ola, Ørjan and Østby, "ø" finds only Ø names, "å" never finds Anna. A keystroke
   only filters (code QA M2): `render()` gathers the inputs (the view, the emergency set, unread, requests, every
   contact's buttons and app label - one lookup per package) at resume and from the listeners, the search runs
-  `filter()` over them; Meldinger likewise, its emergency check asked once per number per render. `KidSearchField` (`view_kid_search.xml`):
+  `filter()` over them; Meldinger likewise, its emergency check asked once per number per render. The phone book's list goes to
+  its top with `scrollToPositionWithOffset(0, 0)` (code QA, 2026-11-10): after a filter took the rows on screen away a
+  plain `scrollToPosition(0)` lays out from the end, and a first hit taller than the list showed with its top cut. `KidSearchField` (`view_kid_search.xml`):
   the 44 dp pill, never focused by itself, no menus, autofill or suggestions, the count line "3 treff" (a polite live
   region, at most every 500 ms). From 8 rows, sticky while it holds text (`searchShown`). In the phone book while
   searching the top dissolves, waiting requests are hits too and the emergency numbers' hits come last; "Fant
@@ -554,10 +579,12 @@ on the wire but nb's heart.
 - **The notification (`SmsNotifier`):** lines from `engine.notifiable` (the unread bubbles first, then unread reactions
   in effect in the lines left - a reaction never pushes a message out; "Reagerte med ❤️ på «…»" with the quote cut at
   40, or "på et bilde"; the public text "Ny reaksjon" only when every line is a reaction, `smsPublicIsReaction`). A
-  reaction from someone else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 80 ms buzz, no heads-up)
+  reaction from someone else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 40 ms buzz, no heads-up)
   - or on `launcher:messages_silent` under a time rule without calls or any Do Not Disturb (filter not `ALL`, fail
   closed); the pure `smsChannel` decides - and never wakes the lock. The pattern is frozen with the channel at its
-  first creation: a new length needs a new channel id (the user hasn't decided the length yet). A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
+  first creation: a new length needs a new channel id. 2026-11-10, the user: one short tap, 40 ms (it was 80; no release
+  has created the channel yet, so the id stays) - the length is theirs to tune on the Jelly Star before that release.
+  The emulator pass below ran with 80 ms. A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
   only while it is up (`afterReaction`).
 - **The thread (`ThreadActivity`, models in `MessagesModel`):** the chip (`reactionChip`: three different emoji then
   "+N", the kid's own in a peach ring and dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)

@@ -7,7 +7,7 @@ import android.view.View
 import androidx.core.view.WindowCompat
 
 /**
- * Puts the shown wallpaper behind a kid screen (Home, phone book, kid Settings): transparent
+ * Puts the shown wallpaper behind a kid screen (Home, kid Settings): transparent
  * over Android's own wallpaper when that is ours and current (those screens' windows show the
  * system wallpaper, so no bitmap of ours is drawn at all), else drawn by us - a colour, the
  * 160° gradient or the one shared decoded photo (QA 08 #6). Then the ink's scrim, and the
@@ -29,8 +29,8 @@ enum class GroundKind {
  * [systemShowsOurs]: Android's wallpaper is ours and current; [scrimAlpha]: the ink's scrim alpha. [ownGround]: the
  * screen draws the wallpaper itself, always - Home (`ui/home/HomeGround.kt`: Android's wallpaper window isn't shown under
  * Home during a transition into it - the black frames - and handing over to it shifted a photo by its wallpaper zoom),
- * and since qa-launcher-small-a-code Q-1 the phone book and kid Settings too, so switching between them never swaps the
- * copy for Android's slightly differently scaled render.
+ * and since qa-launcher-small-a-code Q-1 kid Settings too, so switching between them never swaps the copy for Android's
+ * slightly differently scaled render (the phone book is on the plain night ground since 2026-11-10).
  */
 fun groundKind(systemShowsOurs: Boolean, scrimAlpha: Int, ownGround: Boolean = false): GroundKind = when {
     ownGround || !systemShowsOurs -> GroundKind.FULL
