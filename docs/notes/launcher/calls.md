@@ -152,7 +152,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   weekday this week, else the date), `threadItems` (by `seq`, a day separator per day, the time under each run's last bubble - below), `deliveryLine` ("Sendt"/"Levert"/
   "Sender …" under the kid's last message; "Ikke sendt"/"Kanskje ikke sendt - trykk for å prøve igjen" wherever a
   failed or `UNCERTAIN` one is), `partViews` (step 3b's parts), `MessageActions` (D18's deletes; "Prøv igjen" sends the
-  text again with a new `clientId` and deletes the failed message once accepted - refused, it stays).
+  same message again - its text and its pictures - under `retry:<failed id>` and deletes the failed one only when the
+  engine accepted a message with all of it; refused, it stays - "A failed picture's retry" below).
 - **Screens (`ui/messages/`, XML views, Dagen's ground and header):** `MessagesActivity` (the list; "Ny melding" as the
   header's action while `composeState` would send; long-press or TalkBack's "Slett samtale" asks in the screen),
   `ThreadActivity` (bubbles - received in `kid_message_in` (#34324A, the user's D2), the kid's in `kid_message_out`
@@ -263,7 +264,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the row's width, no `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. The
   line is clickable only as the tap to try again (the listener is set before `isClickable`: `setOnClickListener` makes
   a view clickable, with null too). The emulator pass, with its measures, the two faults it saw beside this (a failed
-  picture's retry sends its text alone; the compose bar with a picture under the keyboard) and what it could not show
+  picture's retry sent its text alone - fixed since, "A failed picture's retry" below; the compose bar with a picture
+  under the keyboard) and what it could not show
   ("Sender …" on screen among it), is `docs/testing/emulator.md` §6ae.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
@@ -288,7 +290,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   decoded off the main thread); a tap opens `PictureActivity`. Since step 3b `Message.parts` comes from the `part`
   table and `openPart` gives the main process's own JPEG.
 - **Fix round after the code QA (`docs/review/qa-sms-screens.md`):** "Prøv igjen" sends under `retry:<failed id>` (two
-  taps send once) and only while the compose bar is open; the contact avatars' badge is missed calls plus unread
+  taps send once) and only while the compose bar is open (since 2026-11-10 with the failed message's pictures -
+  "A failed picture's retry" below); the contact avatars' badge is missed calls plus unread
   messages (`ContactBadge`, `SmsHome.unreadFrom`, Home, the phone book, the sheet); the notification lets the system add
   no contextual actions; the engine's live flow is a drop-oldest change signal collected off the engine thread, and the
   screens coalesce their reads (`Coalescer`, the thread reads its one conversation); the time-rule row and the tile
@@ -382,6 +385,22 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   with its parts; the outbox (`drainMms`) gates every recipient again, composes the m-send-req with the vendored
   `PduComposer` from our files and hands it to `sendMultimediaMessage`; the result's m-send-conf is read in the isolated
   parse (a refusal there is `FAILED`).
+- **A failed picture's retry (2026-11-10, found by the bubble-time emulator pass):** "Prøv igjen" sent `failed.body`
+  alone - a failed picture with text went again as its text only and the failed message, picture and all, was deleted;
+  a picture alone did nothing (an empty send, `Refusal.EMPTY`, no words). Now `MessageActions.retry` builds the send
+  from the failed message's parts (`PictureRef` of each part's hash and size, in their order) with its text, as the
+  first send did, and deletes the failed message only when the accepted message has the same text and the same hashes.
+  **The bytes are there while the failed message is:** an outgoing picture is our own JPEG in `PartFiles`, named by its
+  SHA-256; the `part` row of the message holds it, a file is deleted only when no part names it (`dropUnheld`,
+  `prune`), and the retry's new message names the same hash before the failed one goes - so nothing is copied and
+  nothing is lost. What can still stop it is the gate, as for any send: "Bilder i meldinger" switched off for the
+  recipient since, the file gone all the same, the carrier's maximum lower now, or a part that isn't `AVAILABLE`. Then
+  nothing is sent - never the text alone - and nothing is deleted: the failed message stays with its line and the toast
+  is "Dette bildet kan ikke sendes" (`afterRetryRefusal` -> `AfterRefusal.PICTURE`, the existing
+  `messages_picture_unusable`; a time rule, SMS off and the rest keep the send's own words). Two taps still send once
+  (the engine's repeat rule compares the text and the hashes). Not changed: the link is offered by the text gate alone
+  (`retryOffered`), so it also shows on a failed picture whose recipient lost "Bilder i meldinger" - the tap then says
+  the line above; and a failed reaction's retry sends its words as before. `MessagesModelTest`, `MmsEngineTest`.
 - **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
   `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
   one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory, `--es stand_in <url>` plays the

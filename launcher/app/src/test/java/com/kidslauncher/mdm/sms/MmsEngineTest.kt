@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.sms.engine.IncomingSms
 import com.kidslauncher.mdm.sms.engine.ReactionCommand
 import com.kidslauncher.mdm.sms.engine.ReactionOp
 import com.kidslauncher.mdm.sms.engine.SenderKind
+import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.MessageId
 import com.kidslauncher.mdm.sms.engine.MmsFlow
 import com.kidslauncher.mdm.sms.engine.MmsRadio
@@ -40,6 +41,7 @@ import com.kidslauncher.mdm.sms.engine.SmsJudge
 import com.kidslauncher.mdm.sms.engine.SmsRadio
 import com.kidslauncher.mdm.sms.mms.MmsAddress
 import com.kidslauncher.mdm.sms.mms.MmsNotification
+import com.kidslauncher.mdm.ui.messages.MessageActions
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -554,6 +556,69 @@ class MmsEngineTest {
         now += MmsFlow.STAGED_KEEP_MS + 1
         engine.prune()
         assertTrue(files.stored.isEmpty())
+    }
+
+    // ---- "Prøv igjen" on a failed picture (MessageActions.retry, through the engine) ----
+
+    private val jpeg = byteArrayOf(0x51, 0x52, 0x53, 0x54, 0x55, 0x56)
+
+    /** A picture message to Mamma the MMSC refused, as the thread reads it. */
+    private fun failedPicture(body: String): Message {
+        val ref = engine.putPicture(jpeg, 1280, 960)
+        val first = engine.send(SendCommand("first", null, mamma.number, body, listOf(ref), Origin.KID_SCREEN)) as SendResult.Accepted
+        engine.drainOutbox()
+        engine.onMmsSent(first.message.id.value, ok = false, code = "12")
+        sends.clear()
+        return engine.messages(first.message.conversationId, null, 10).single().also { assertEquals(Delivery.FAILED, it.delivery) }
+    }
+
+    private fun retry(failed: Message) = MessageActions.retry(engine::send, { engine.delete(it, Origin.KID_SCREEN) }, failed)
+
+    private fun ByteArray.holds(bytes: ByteArray) = (0..size - bytes.size).any { at -> bytes.indices.all { this[at + it] == bytes[it] } }
+
+    @Test
+    fun `try again on a failed picture sends the picture with its text, once, and the failed one goes`() {
+        val failed = failedPicture("Se her")
+        val hash = failed.parts.single().sha256!!
+        val one = retry(failed) as SendResult.Accepted
+        // A second tap on the stale bubble is the engine's repeat: the same message.
+        assertEquals(one.message.id, (retry(failed) as SendResult.Accepted).message.id)
+        assertEquals(MessageActions.retryClientId(failed.id), one.message.clientId)
+        assertEquals("Se her", one.message.body)
+        assertEquals(listOf(Triple(hash, 1280, 960)), one.message.parts.map { Triple(it.sha256, it.width, it.height) })
+        // The failed message is gone; its file stays, held by the new message's part.
+        assertEquals(listOf(one.message.id), engine.messages(failed.conversationId, null, 10).map { it.id })
+        assertTrue(hash in files.stored)
+        engine.drainOutbox()
+        val (id, pdu) = sends.single()
+        assertEquals(one.message.id.value, id)
+        assertTrue(pdu.holds(jpeg))
+        assertTrue(pdu.holds("Se her".toByteArray()))
+    }
+
+    @Test
+    fun `try again on a failed picture alone sends the picture`() {
+        val failed = failedPicture("")
+        val again = retry(failed) as SendResult.Accepted
+        assertEquals(failed.parts.map { it.sha256 }, again.message.parts.map { it.sha256 })
+        assertEquals(listOf(again.message.id), engine.messages(failed.conversationId, null, 10).map { it.id })
+        engine.drainOutbox()
+        assertTrue(sends.single().second.holds(jpeg))
+    }
+
+    @Test
+    fun `try again on a picture that can't go again sends nothing - not its text alone - and keeps the failed message`() {
+        val failed = failedPicture("Se her")
+        // "Bilder i meldinger" went off for Mamma: she may still be texted, the picture may not go.
+        rules = rules()!!.copy(contacts = listOf(mamma.copy(mms = false), pappa, bestemor))
+        assertEquals(SendResult.Refused(Refusal.NOT_ALLOWED), retry(failed))
+        rules = rules()
+        // The file gone from under the part (the engine never takes a held file; a wiped directory would).
+        files.stored.clear()
+        assertEquals(SendResult.Refused(Refusal.NOT_ALLOWED), retry(failed))
+        assertEquals(listOf(failed.id), engine.messages(failed.conversationId, null, 10).map { it.id })
+        engine.drainOutbox()
+        assertTrue(sends.isEmpty())
     }
 
     private fun SmsEngine.groupConversationForTest(addresses: List<String>): String = store.transaction { groupConversationFor(addresses, null).id }

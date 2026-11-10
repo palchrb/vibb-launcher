@@ -99,7 +99,8 @@ object MessagesScreens {
         ComposeState.GROUPS_OFF -> R.string.messages_groups_off
     }
 
-    /** The toast after a send the gate refused ([afterRefusal], code QA L5); `null` = nothing to say. */
+    /** The toast after a send the gate refused ([afterRefusal], code QA L5; a retry's, [afterRetryRefusal]); `null` =
+     * nothing to say. */
     fun refusalLine(after: AfterRefusal): Int? = when (after) {
         AfterRefusal.NOT_NOW -> R.string.messages_compose_not_now
         AfterRefusal.NOT_ALLOWED -> R.string.messages_compose_not_allowed
@@ -107,6 +108,7 @@ object MessagesScreens {
         AfterRefusal.READ_ONLY -> R.string.messages_read_only
         AfterRefusal.TOO_LONG -> R.string.messages_too_long
         AfterRefusal.GROUPS_OFF -> R.string.messages_groups_off
+        AfterRefusal.PICTURE -> R.string.messages_picture_unusable
         AfterRefusal.SEND_AGAIN, AfterRefusal.NOTHING -> null
     }
 

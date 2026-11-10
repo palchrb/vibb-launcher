@@ -17,6 +17,7 @@ import com.kidslauncher.mdm.sms.engine.MessageId
 import com.kidslauncher.mdm.sms.engine.Origin
 import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PartState
+import com.kidslauncher.mdm.sms.engine.PictureRef
 import com.kidslauncher.mdm.sms.engine.Refusal
 import com.kidslauncher.mdm.sms.engine.SendCommand
 import com.kidslauncher.mdm.sms.engine.SendResult
@@ -145,6 +146,10 @@ enum class AfterRefusal {
 
     /** Design 80 D13: "Gruppemeldinger er slått av". */
     GROUPS_OFF,
+
+    /** A failed picture's "Prøv igjen" that can't send the picture again ([afterRetryRefusal]): "Dette bildet kan ikke
+     * sendes". */
+    PICTURE,
 }
 
 fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
@@ -157,6 +162,15 @@ fun afterRefusal(reason: Refusal): AfterRefusal = when (reason) {
     Refusal.EMPTY -> AfterRefusal.NOTHING
     Refusal.GROUPS_OFF -> AfterRefusal.GROUPS_OFF
 }
+
+/**
+ * After a refused "Prøv igjen" of [failed] ([MessageActions.retry]). The link shows only where the text could go now
+ * ([retryOffered]), so a picture message the gate still won't take as it is - "Bilder i meldinger" went off, the
+ * picture's file is gone, or it is over the carrier's maximum now - says the picture can't be sent, never "Du kan ikke
+ * svare her" or "Meldingen er for lang". Every other refusal has the send's own words ([afterRefusal]).
+ */
+fun afterRetryRefusal(failed: Message, reason: Refusal): AfterRefusal =
+    if (failed.parts.isNotEmpty() && (reason == Refusal.NOT_ALLOWED || reason == Refusal.TOO_LARGE)) AfterRefusal.PICTURE else afterRefusal(reason)
 
 /**
  * Whether "Ny melding" shows: the gate would send to a contact on its list now. Judged on a contact that isn't an
@@ -645,18 +659,35 @@ object MessageActions {
     }
 
     /**
-     * "Prøv igjen" on a failed (or uncertain) message: the same text again through [send] (the gate again), under an id
-     * of its own derived from the failed message ([retryClientId]; §6.2: never the failed one's - at most once). Two
-     * taps on the same failed bubble are the engine's repeat and send once (code QA of step 2, M1); a retry of the
-     * retry, if that fails too, is a new message with a new id. Once accepted the failed message goes, so the thread
-     * holds the text once; refused, it stays as it was.
+     * "Prøv igjen" on a failed (or uncertain) message: the same content again - its text and its pictures, as the first
+     * send carried them - through [send] (the gate again), under an id of its own derived from the failed message
+     * ([retryClientId]; §6.2: never the failed one's - at most once). Two taps on the same failed bubble are the
+     * engine's repeat and send once (code QA of step 2, M1); a retry of the retry, if that fails too, is a new message
+     * with a new id. The failed message goes only once the engine accepted a message that [carries] all of it, so the
+     * thread holds it once; refused, it stays as it was.
+     *
+     * The pictures are the failed message's own parts: the engine keeps an outgoing picture's file for as long as a part
+     * names its hash, so the bytes are there while the failed message is. A part that can't be sent again (no hash, not
+     * available) is a refusal here, as a file the engine no longer holds is one there ([Refusal.NOT_ALLOWED], the
+     * engine's answer for a picture it doesn't hold): nothing is sent - never the text without its picture - and
+     * nothing is deleted.
      */
     fun retry(send: (SendCommand) -> SendResult?, delete: (MessageId) -> Unit, failed: Message): SendResult? {
         if (failed.direction != Direction.OUT || failed.delivery !in RETRYABLE) return null
-        val result = send(SendCommand(retryClientId(failed.id), failed.conversationId, null, failed.body.orEmpty(), origin = Origin.KID_SCREEN))
-        if (result is SendResult.Accepted && result.message.id != failed.id) delete(failed.id)
+        val pictures = failed.parts.sortedBy { it.index }.map { part ->
+            val sha = part.sha256?.takeIf { part.state == PartState.AVAILABLE } ?: return SendResult.Refused(Refusal.NOT_ALLOWED)
+            PictureRef(sha, part.width, part.height)
+        }
+        val result = send(SendCommand(retryClientId(failed.id), failed.conversationId, null, failed.body.orEmpty(), pictures, Origin.KID_SCREEN))
+        if (result is SendResult.Accepted && result.message.id != failed.id && carries(result.message, failed)) delete(failed.id)
         return result
     }
+
+    /** Whether [sent] holds everything [failed] did: the same text and the same pictures, in their order. */
+    private fun carries(sent: Message, failed: Message): Boolean =
+        sent.body.orEmpty() == failed.body.orEmpty() && hashes(sent) == hashes(failed)
+
+    private fun hashes(message: Message): List<String?> = message.parts.sortedBy { it.index }.map { it.sha256 }
 
     fun retryClientId(failed: MessageId): String = "retry:" + failed.value
 
