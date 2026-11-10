@@ -5,6 +5,9 @@ and launcher, one small API addition (`lock_glance.sms`), no new shared contract
 message engine), round 7 / design 34 (the lock's notification rows, `lock_glance`) and design 37 ("Name and icon",
 `launcher_ui.app_display`).
 
+**Revision 2, 2026-11-10**: the design QA's fourteen findings (four Mediums, ten Lows), each checked against the code
+and all applied - §13 says where each went.
+
 The user, 2026-11-10:
 
 > Jeg ønsker å styre notifications for sms på låst telefon helt likt som jeg gjør for de andre appene? Lar det seg
@@ -58,7 +61,9 @@ Meldinger is not an installed app and is on neither page.
 
 **What the survey had wrong or the code sharpens:**
 
-1. A reaction's buzz is **80 ms** (`L/sms/SmsNotifier.kt:44` `REACTION_VIBRATION = longArrayOf(0, 80)`), not 40.
+1. A reaction's buzz is **80 ms** on `main` (`L/sms/SmsNotifier.kt:44` `REACTION_VIBRATION = longArrayOf(0, 80)`), not
+   40; branch `sms-follow-book-ground`, not merged yet, makes it 40 on the user's wish. This note names no length
+   for W3: it is "the reaction buzz's length".
 2. "Only Meldinger could honour a buzz" is not so: every app row that alerts reaches `PinLockRuntime.noticeCame()`
    too (`L/badges/GlanceStore.kt:79`), so the launcher can buzz for everything on the lock (§9).
 3. The package grammar cannot make a key uncollidable: both sides accept the same grammar
@@ -86,10 +91,13 @@ module (`builtin.rs`: `MESSAGES`, `is_reserved(package)`) and one launcher const
 
 - Server: a reported installed app under the prefix is dropped at intake (`device_api.rs:812` `cap_installed_apps`),
   so it never reaches the Apps page, the allowlist, the lock card or a permissions form; `never_a_catalog_package`
-  (`handlers/tracked_apps.rs:735`) refuses the prefix; the allowlist and permissions saves refuse it;
-  `lock_glance::valid_package` and `save_app_display` accept **exactly** the known key and refuse every other name
-  under the prefix; `policy_apps` never puts a reserved name in `lock_glance.apps`; `card_apps` never lists one as an
-  "unlisted tick".
+  (`handlers/tracked_apps.rs:735`) refuses the prefix; the allow switch (`toggle_app`, `handlers/devices.rs:2264`)
+  and the permissions target (`perms_target`, `:1436`, which serves `save_app_permissions` `:1304` and
+  `save_lock_media` `:1332`) refuse it; `lock_glance::valid_package` and `save_app_display` accept **exactly** the
+  known key and refuse every other name under the prefix; `policy_apps` never puts a reserved name in
+  `lock_glance.apps`; `card_apps` never lists one as an "unlisted tick". Every other field that takes a package (a
+  time rule's exempt apps, the relock windows, music) needs no refusal: the name is never reported, so there it is
+  an app not on the phone, like any unknown name.
 - Launcher: `AppDisplay.entry(pkg)` answers null for a reserved name, and only a new `AppDisplay.builtin(key)` reads
   the key's entry; `glanceApp` drops reserved names from `lock_glance.apps`.
 
@@ -103,16 +111,24 @@ package made to collide.
 neighbours. A migration (the next free number at build; 0135 today):
 
 - `INSERT OR IGNORE` a row per existing device with `show_text = device_policy.sms_lock_text` (no policy row: 0) -
-  exactly what each phone shows today: Name only, or Full text where the switch was on.
+  what each phone shows today **or less**: Name only, or Full text where the switch was on, and the text only while
+  SMS is managed (D3). The one case that changes: calls managed, SMS not, the switch on
+  (`handlers/calls_sms.rs:1014-1031` writes it whatever the mode) - that phone shows the text today and the name
+  after this. Stricter, never looser.
 - The trigger `devices_get_lock_glance_default` is recreated to seed Meldinger at Name only beside Element X.
 - `device_policy.sms_lock_text` stays as a column and **nothing reads or writes it** (as `lock_glance_text` after
   0083); the `DevicePolicy` field goes.
 
 **D3. On the wire: `lock_glance.sms`, one of `"off"`, `"name"`, `"text"`**, always sent by a server that has this
 design. From the row: none -> `off`, 0 -> `name`, 1 -> `text`; **`text` is sent as `name` unless `sms_mode` is
-`managed`** (the only time the parent sees the row, D7) - the server owns that rule, the phone only reads the word. A
-failed read is a 500, never a default. `call_policy.sms_lock_text` is still sent for older launchers, derived: `true`
-only when `lock_glance.sms` is `text`.
+`managed`** (the only time the parent sees the row, D7) - the server owns that rule, the phone only reads the word.
+`call_policy.sms_lock_text` is still sent for older launchers, derived: `true` only when `lock_glance.sms` is `text`.
+
+**A failed read keeps today's fallback** (`handlers/device_api.rs:373-384`: "never a 500 that would cost the phone its
+rules", pinned by `tests/lock_glance.rs:285-300`) and fails closed with it: the policy carries
+`lock_glance: {"apps": [], "sms": "off"}` - never an absent `sms`, which a new launcher would read as the older rule
+(D4) - and `call_policy.sms_lock_text` false. There is one read per policy: `build_call_policy` (`:642`, the field at
+`:694`) is handed the level from it and never reads the table itself.
 
 **D4. The launcher's reading fails closed.** `GlancePolicy` gains `sms`: `OFF`, `NAME`, `TEXT` or `LEGACY`.
 
@@ -121,6 +137,7 @@ only when `lock_glance.sms` is `text`.
 | an object with `sms` `off` / `name` / `text` | that |
 | an object with any other `sms` value | `OFF` |
 | an object without `sms` (an older server) | `LEGACY` |
+| present but not an object (today's `else -> UNKNOWN`, `L/badges/GlanceRows.kt:54-58`) | `OFF` |
 | absent in a fresh policy (an older server) | `LEGACY` |
 | absent or unreadable in the cache, or no policy yet | `OFF` (as the apps: an unknown policy shows nothing) |
 
@@ -140,39 +157,64 @@ The Home tile needs no trigger for the level (it shows no text); for the icon se
 `app_display` entry". A constant on both sides and in `sms_contract.json`. The server uses it for notes only, never
 to change what it sends.
 
-**D7. The Notifications group.** Meldinger's row is listed **while `sms_mode` is `managed`**, sorted by its name among
-the apps like any other, labelled `device.sms.messages` ("Messages" / "Meldinger"; the chosen name with W1). The words:
+**D7. The Notifications group.** Meldinger's row is listed **while `sms_mode` is `managed`**, labelled
+`device.sms.messages` ("Messages" / "Meldinger"; the chosen name with W1). It is **the group's first row**, with or
+without an allowlist: with one the card lists the apps in the Apps page's order, not by name
+(`handlers/devices.rs:1074-1133`), and there D10 pins Meldinger under Vibb One, whose own row the card leaves out;
+one place in both cases is easier to find than two. The words:
 
-- Off stored and the phone has not claimed `messages_app_v1`: a note on the row, "This phone still shows the name
-  and how many - update Vibb One" / "Denne telefonen viser fortsatt navn og antall - oppdater Vibb One".
-- No notification access while Meldinger is listed: the note becomes "Missed calls and Messages only" / "Bare tapte
-  anrop og Meldinger", "Vibb One has no notification access, so the other apps' notifications don't show. The fix is
-  under Home Screen on the phone's page." / "Vibb One har ikke varseltilgang, så varsler fra de andre appene vises
-  ikke. Løsningen står under Hjem-skjerm på telefonens side." Without Meldinger listed it stays as today.
+- Off stored, the phone has reported and has not claimed `messages_app_v1`: "This phone still shows the name and how
+  many - update Vibb One" / "Denne telefonen viser fortsatt navn og antall - oppdater Vibb One". The note is **its
+  own field on the row**, gated on reported-and-not-capable as `lock_glance::notes` is (`lock_glance.rs:113-130`) -
+  never `LockScreenApp.note`: that field means "ticked but not listed", makes the form post `unlisted=1` and aim at
+  `#notifications` (`device_lock.html:289-291`), and an Off save then lands on the group
+  (`handlers/lock_glance.rs:126`) - a jump. Meldinger's row stays listed at Off and is never "unlisted", so every
+  save returns to `#lock-screen-app-me.vibb.builtin.messages`.
+- No notification access while Meldinger is listed **and not Off**: the note becomes "Missed calls and Messages only"
+  / "Bare tapte anrop og Meldinger", "Vibb One has no notification access, so the other apps' notifications don't
+  show. The fix is under Home Screen on the phone's page." / "Vibb One har ikke varseltilgang, så varsler fra de andre
+  appene vises ikke. Løsningen står under Hjem-skjerm på telefonens side." Not listed, or Off: it stays as today.
 - `device.lock.wake_sub` becomes "For the apps on the lock below and missed calls" / "For appene på låsen nedenfor og
   tapte anrop" (Meldinger is now one of the apps below). The footer stands.
-- The security log's lines for this row (`lock_glance::log_line`, `text_log_line`) say "Messages" / "Meldinger", never
-  the key.
+- The security log never shows the key. `log_line` / `text_log_line` (`lock_glance.rs:134-158`) store `{package}` as a
+  parameter that is worded when read (`en.json` / `nb.json` :829-832), so a label put in at write would freeze the
+  writer's language. The built-in key picks **its own catalog keys** instead, with no package parameter:
+  `security.detail.lock_screen_messages.on` / `.off` - "phone {device}: Messages on the lock screen: on" / "telefon
+  {device}: Meldinger på låseskjermen: på" (`off` / `av`) - and `security.detail.lock_screen_messages_text.on` /
+  `.off` - "phone {device}: Messages' text on the lock screen: on" / "telefon {device}: meldingsteksten til Meldinger
+  på låseskjermen: på" (`off` / `av`). With W1 the lines still say Messages / Meldinger, not the chosen name.
 
 **D8. Calls & Contacts.** The switch goes. In its place under Messages one link row, "On the lock screen" / "På
-låseskjermen" with the level as its value, to `/devices/{id}/lock#lock-screen-app-me.vibb.builtin.messages`. The
-`/calls/sms` handler stops reading `sms_lock_text` (`handlers/calls_sms.rs` ~1014), so a stale page's post changes
-nothing; the Avansert summary line `device.calls.adv.lock_text` goes.
+låseskjermen" with the level as its value, to `/devices/{id}/lock#lock-screen-app-me.vibb.builtin.messages`. The link
+row is drawn **only while `sms_mode` is `managed`**: `#sms-settings` is drawn whatever the mode
+(`device_calls.html:447`, `:520-545`), and the row the link points to is not (D7). The `/calls/sms` handler stops
+reading `sms_lock_text` (`handlers/calls_sms.rs` ~1014), so a stale page's post changes nothing; the Avansert summary
+line `device.calls.adv.lock_text` goes.
 
 **D9. The icon is a `launcher_ui.app_display` entry under the key** - the existing table, save and policy shape; absent
 = Automatic. The form for a built-in (`AppDisplayForm` with a `builtin` flag):
 
 - no "App logo" radio, and `own` is refused for the key (there is no app logo to show);
 - "Automatic" is today's look and previews as it: the chat glyph on `#347470`. A chosen glyph with colour Automatic
-  keeps the teal; a chosen colour with icon Automatic keeps the chat glyph;
+  keeps the teal. **A colour applies only with a chosen glyph, as for every app**: the table keeps no row without a
+  name or an icon (`server/src/app_display.rs:74-76`), `wire_entry` sends a colour only with a glyph (`:325-337`)
+  and the launcher's `appDisplayMap` drops one without;
 - no name field and no On Home switch in the core (W1, W2); a posted `label` or `on_home` for the key is ignored.
 
-On the phone one helper, `messagesLook()` (glyph: `AppGlyphs.ICONS[icon]`, else chat; tile colour:
-`AppGlyphs.COLORS[color].tile`, else `kid_messages_tile`), feeds all three places of §1: the Home tile, the time-rule
-screen's row, and the lock row's badge and fallback icon (the badge's fixed drawable is tinted). `GridTile.Messages`
-carries the look so a change redraws the tile; `AppDisplay.refresh` already calls `reloadApps()` on a changed map (the
-build confirms that rebuilds the Messages tile, and re-binds the lock row). The notification's small icon stays Vibb
-One's.
+On the phone one helper, `messagesLook()` (glyph: `AppGlyphs.ICONS[icon]`, else chat; tile colour: the entry's
+`AppGlyphs.COLORS[color].tile` **only when the entry has an icon**, else `kid_messages_tile`), feeds all three places
+of §1: the Home tile, the time-rule screen's row, and the lock row's badge and fallback icon (the badge's fixed
+drawable is tinted). A change reaches each by a named path:
+
+- **Home**: `GridTile.Messages` carries the look, so `tileChange` sees it; `AppDisplay.refresh` already calls
+  `reloadApps()` on a changed map and `renderGrid` (`L/ui/HomeActivity.kt:826-840`) builds the tile.
+- **The lock row** does not re-bind today: the panel renders only when `SmsHome.summary.glance != smsRows`
+  (`L/lock/GlancePanel.kt:246-248`), and `GlanceSmsRow` (`L/badges/GlanceRows.kt:460`) carries no look. So **the row
+  carries the look**, as `GridTile.Messages` does, set in `SmsHome.refresh`; and `AppDisplay.refresh` calls
+  `SmsHome.refresh(context)` when the key's entry changed, so the rows differ and the panel renders.
+- **The time-rule row** reads the helper at each bind.
+
+The notification's small icon stays Vibb One's.
 
 **D10. The Apps page row.** One switch-less row, "Messages" / "Meldinger", pinned directly under Vibb One's in
 "Allowed", with the sub "Part of Vibb One" / "En del av Vibb One" and under it only the display form: no allow
@@ -185,10 +227,13 @@ to `#app-me.vibb.builtin.messages` and a refused one re-renders with the form op
 ## 3. Server changes
 
 - Migration (D2). `builtin.rs` (D1). `lock_glance.rs`: `valid_package`, `policy_apps`, `card_apps`, the level word
-  for the policy (D3), the note variant and the log words (D7); the policy's `lock_glance` struct gains `sms`.
-- `handlers/devices.rs` `lock_screen_card`: adds Meldinger's row while SMS is managed. `handlers/lock_glance.rs`
-  needs nothing but D1's check.
-- `handlers/device_api.rs`: `build_call_policy` derives `sms_lock_text`; `cap_installed_apps` drops the prefix.
+  for the policy (D3), the row's own note, the no-access variant and the built-in's log keys (D7); the policy's
+  `lock_glance` struct gains `sms`.
+- `handlers/devices.rs` `lock_screen_card`: adds Meldinger's row first while SMS is managed; `toggle_app` and
+  `perms_target` refuse the prefix (D1). `handlers/lock_glance.rs` needs nothing but D1's check (`log_line` and
+  `text_log_line` pick the keys).
+- `handlers/device_api.rs`: the one read's level goes to `build_call_policy`, which derives `sms_lock_text`; the
+  fallback of a failed read gains `sms: "off"` (D3); `cap_installed_apps` drops the prefix.
 - `handlers/calls.rs`, `handlers/calls_sms.rs`, `templates/device_calls.html`: D8.
 - `handlers/device_pages.rs` `render_apps`, `partials/device_app_row.html`, `partials/app_display_form.html`,
   `static/app-display.js` (the teal Automatic preview), `app_display.rs` (`own` refused for the key): D9, D10.
@@ -220,24 +265,43 @@ receives the key's `app_display` entry matches it to no installed app and ignore
 ## 6. Contract and tests (lean)
 
 No new shared file, so no CI path filter changes. `server/testdata/sms_contract.json` (and its byte-identical launcher
-copy) gains one section, `app`:
+copy) gains one section, `app`, filled by step (§11):
 
-- `capability` and `key`;
-- `lock`: rows of (stored choice, `sms_mode`) -> `lock_glance.sms` and the derived `sms_lock_text`;
-- `lock_read`: about ten rows of D4's table with a call-policy state -> the level (each word; an unknown word -> off;
-  no `sms` with `sms_lock_text` true / false -> text / name; absent fresh -> legacy; absent cached -> off);
-- `display`: the key's `app_display` entry.
+- **step 1**: `key`; `lock`: rows of (stored choice, `sms_mode`) -> `lock_glance.sms` and the derived
+  `sms_lock_text`; `lock_read`: about ten rows of D4's table with a call-policy state -> the level (each word; an
+  unknown word -> off; not an object -> off; no `sms` with `sms_lock_text` true / false -> text / name; absent fresh
+  -> legacy; absent cached -> off);
+- **step 2**: `capability` (the launcher claims it only here; the server's constant for D7's note is step 1's and is
+  checked against the contract from step 2) and `display`: the key's `app_display` entry.
 
-Server: `sms::tests` produce the `lock` rows; `lock_glance::tests` (the package rules, `policy_apps` drops the key,
-the card lists Meldinger only while managed, the note variant, the log words); `policy_json_keys_snapshot`
-(`lock_glance` = `{apps, sms}`); `tests/sms_page.rs` (the switch is gone, an old post changes nothing) with the posts
-in `tests/calls.rs` and `tests/calls_simpler.rs` updated; `tests/app_display.rs` (the key's row is saved and sent,
-`own` refused); one intake test (a reported app under the prefix is dropped); one migration test (the seed follows
-the old switch).
+**Server, new:** `sms::tests` produce the `lock` rows; `lock_glance::tests` (the package rules, `policy_apps` drops
+the key, the card lists Meldinger first and only while managed, the row's own note, the no-access variant only when
+not Off, the built-in's log keys); `tests/app_display.rs` (the key's row is saved and sent, `own` refused, a colour
+only with a glyph); one intake test (a reported app under the prefix is dropped); one test of D1's two refusals.
 
-Launcher: `SmsContractTest` (the rows), `SmsGlanceTest` (`smsLockLevel`), `PolicyResponseCompatTest` (`lock_glance`
-keys `{apps, sms}`, the key's entry decodes), one `AppDisplay` test (a reserved name answers null from `entry`),
-`HomeModelTest` (a changed look is a full rebind).
+**Server, existing tests that must change:**
+
+- `tests/lock_glance.rs`: the default-row tests (`the_migration_gives_existing_devices_element_x_and_the_switch_off`,
+  `a_new_device_gets_element_x_by_the_trigger_and_a_delete_cascades`, and whichever else counts a new device's rows -
+  a device now has two); one new migration test (the seed follows the old switch); and
+  `an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy` (`:285-300`), extended to pin exactly
+  `lock_glance == {"apps": [], "sms": "off"}` and `call_policy.sms_lock_text` false;
+- `tests/device_pages.rs:734`: a scalar subquery on `device_lock_glance_apps` that assumes one row per device - it
+  names the package now;
+- `tests/device_api.rs:546-549` (`policy_json_keys_snapshot`): the `lock_glance` literal gains `sms`;
+- `tests/sms_page.rs` (the switch is gone, an old post changes nothing, the link row only while managed) and the
+  posts in `tests/calls.rs` and `tests/calls_simpler.rs`.
+
+**Launcher:** `SmsContractTest` (the rows), `SmsGlanceTest` (`smsLockLevel`), `PolicyResponseCompatTest` (`:594`'s
+`setOf("apps")` becomes `apps` and `sms`; `:616`'s not-an-object case keeps the apps unknown and reads `sms` Off; the
+key's entry decodes), one `AppDisplay` test (a reserved name answers null from `entry`), `HomeModelTest` (a changed
+look is a full rebind), one equality case (a changed look makes the lock's SMS row differ).
+
+**Docs, in the commit that changes the code:** the root `CLAUDE.md`'s SMS contract paragraph (the `app` section and
+`messages_app_v1`), `server/CLAUDE.md` (the migration's line and the next free number, the
+`device_lock_glance_apps` line of the data model, `lock_glance` in the policy's route line), and the area notes the
+change touches (`docs/notes/server/hardening-and-pins.md` "The lock's glance page", `launcher-ui.md` "App names and
+icons", `calls-and-contacts.md`; `docs/notes/launcher/lock-and-glance.md`, `calls.md`).
 
 ## 7. Optional W1: a name for Meldinger too
 
@@ -259,10 +323,10 @@ lock row and the phone book's Message button (`L/calls/MessageButtons.kt`), so n
 it from the PWA at once. It answers PLAN's open point "hide Meldinger even with old history" - which needs the row
 while SMS is **not** managed too, and the server cannot see today whether the tile lingers. So W2 adds one report key,
 `sms_state.has_history` (the launcher has it: `SmsHome.summary.hasHistory`; into `sms_contract.json`'s `report` and
-the server's intake), and the Apps row is then also listed while the phone reports history. Its own sub (the stock one names sync apps): "Off:
-Messages still receives and notifies, but the kid doesn't see it on Home, except during a pause." / "Av: Meldinger
-tar fortsatt imot og varsler, men barnet ser den ikke på Hjem, unntatt i en pause." An older launcher ignores it (the
-same update note as D10). Size **S-M** (the report key is most of it). **The core without it:** no switch for the
+the server's intake), and the Apps row is then also listed while the phone reports history. Its own sub (the stock
+one names sync apps): "Off: Messages still receives and notifies, but the kid doesn't see it on Home, except during a
+pause." / "Av: Meldinger tar fortsatt imot og varsler, men barnet ser den ikke på Hjem, unntatt i en pause." An older
+launcher ignores it (the same update note as D10). Size **S-M** (the report key is most of it). **The core without it:** no switch for the
 built-in; the tile follows `messagesTileShown` alone, as today.
 
 ## 9. Optional W3: a buzz on a locked phone
@@ -278,8 +342,14 @@ What can honestly be offered: **one switch beside "Wake the screen for a notific
 vibb, ingen lyd, for appene på låsen nedenfor og tapte anrop"; `launcher_ui.lock_buzz_on_notification`, default off.
 It covers everything that brings a row to the lock, Meldinger included, because all of it passes
 `PinLockRuntime.noticeCame()` (`L/lock/PinLockRuntime.kt:1503`). The launcher vibrates once itself (it holds
-`VIBRATE`): only while locked, not during a call or ringing, not when the ringer is silent, not under Do Not Disturb
-or a time rule's silence, with a gap between buzzes as the wake has, and never for a row set to Off. No sound.
+`VIBRATE`), for the reaction buzz's length: only while locked, not during a call or ringing, not when the ringer is
+silent, not under Do Not Disturb or a time rule's silence, and never for a row set to Off. No sound.
+
+**Where it is decided.** `noticeCame()` returns at `:1508` when the wake is not allowed - the wake switch off, its
+gap, the hourly cap - and after it never wakes when the proximity sensor reads near. The buzz is decided **before
+that return**, by its own pure plan beside `NoticeWakePlan`: independent of the wake switch and of proximity (a
+pocket is where a buzz matters, and there the screen never lights), with its own gap between buzzes. It vibrates with
+`USAGE_NOTIFICATION` attributes, so Android's own vibration settings apply.
 
 Not recommended: a switch for Meldinger alone (the special case this note removes), or a buzz choice per app (a third
 control on every row). Tests: `policy_json_keys_snapshot` / `PolicyResponseCompatTest` for the key and one pure plan
@@ -293,13 +363,17 @@ channels, the unread badge, the apps' lock rows and their reader, the allowlist,
 
 ## 11. Steps and sizes
 
-One branch, two commits that each build and pass alone; one server release and one launcher RC, either first.
+One branch, two commits that each build and pass alone; one server release and one launcher RC, either first. **No
+launcher RC is cut between the steps**: step 1's launcher honours Off but claims `messages_app_v1` only in step 2, so
+a build of step 1 alone would get D7's "update Vibb One" note while already hiding the row.
 
-1. **The lock level** - `server/` and `launcher/` in one commit with the contract's `app` section: the migration,
-   `builtin.rs` and the reservation, `lock_glance.sms` and the derived `sms_lock_text`, the Notifications row and its
-   words, Calls & Contacts' link row; the launcher's reader, level, hook and wake. Server **M**, launcher **S-M**.
+1. **The lock level** - `server/` and `launcher/` in one commit with the contract's `key`, `lock` and `lock_read`:
+   the migration, `builtin.rs` and the reservation, `lock_glance.sms` and the derived `sms_lock_text`, the
+   Notifications row and its words, Calls & Contacts' link row; the launcher's reader, level, hook and wake. Server
+   **M**, launcher **S-M**.
 2. **The icon** - the Apps row and the built-in form; the launcher's look helper in its three places; the launcher
-   claims `messages_app_v1` here. With W1 and W2 if chosen. Server **M**, launcher **S-M** (+ S for W1, + S-M for W2).
+   claims `messages_app_v1` here, and the contract gains `capability` and `display`. With W1 and W2 if chosen. Server
+   **M**, launcher **S-M** (+ S for W1, + S-M for W2).
 
 The core is **M-L** in all. W3 is its own step after its step 0, **S-M**.
 
@@ -314,8 +388,32 @@ The core is **M-L** in all. W3 is its own step after its step 0, **S-M**.
 4. Meldinger's row under Notifications shows **only while SMS is "Styrt av Vibb"**, and the full text shows only then.
    OK?
 5. The old switch on Calls & Contacts goes; one line there points to the new place. Every phone keeps what it shows
-   today until you change it. OK?
+   today until you change it - or less: the text only while SMS is "Styrt av Vibb". (Today a phone with calls managed,
+   SMS not, and the old switch on still shows the text of its old messages; after this it shows the name.) OK?
 6. On a phone with an older Vibb One, **Off still shows the name and how many** until Vibb One is updated; the page
    says so on the row. The text never shows unless you chose Full text.
-7. Meldinger sits right under Vibb One on the Apps page and by its name under Notifications. Say if it should sit
+7. Meldinger sits right under Vibb One on the Apps page and first under Notifications. Say if it should sit
    elsewhere.
+
+## 13. The design QA, finding by finding (revision 2)
+
+No High, four Mediums, ten Lows. Each was checked against the code; all fourteen stand and are applied.
+
+| # | | Where it went |
+|---|---|---|
+| 1 | M | D3: a failed read keeps today's fallback - `{"apps": [], "sms": "off"}`, `sms_lock_text` false, one read; §6 extends the test |
+| 2 | M | D9: a colour only with a chosen glyph; `messagesLook()` reads the colour only when the entry has an icon |
+| 3 | M | D7: the update note is its own field on the row, never `LockScreenApp.note`; every save returns to the row |
+| 4 | M | D8: the link row only while `sms_mode` is `managed` |
+| 5 | L | D7: Meldinger is the group's first row, with or without an allowlist (§12 item 7) |
+| 6 | L | D7: the built-in's own security-log keys, en and nb, no package parameter |
+| 7 | L | D2 and §12 item 5: "or less: the text only while SMS is managed" |
+| 8 | L | D4's table: present but not an object -> Off |
+| 9 | L | D7: the no-access variant only while Meldinger is listed and not Off |
+| 10 | L | D9: the lock row carries the look; `AppDisplay.refresh` refreshes `SmsHome` on a changed entry |
+| 11 | L | §6 and §11: the contract's `app` section by step; no launcher RC between the steps |
+| 12 | L | D1: `toggle_app` and `perms_target` named; every other package field needs no refusal |
+| 13 | L | §6: the existing tests and the docs that must change |
+| 14 | L | §9: the buzz is decided before `noticeCame()`'s return, with its own gap and `USAGE_NOTIFICATION` |
+
+Also corrected: the reaction buzz's length is not a number here (§1 item 1, §9).
