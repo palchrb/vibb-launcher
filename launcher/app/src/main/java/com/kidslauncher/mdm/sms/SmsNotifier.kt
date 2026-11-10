@@ -164,6 +164,8 @@ object SmsNotifier {
      * of it. The swipe mark is read and spent on the main thread, where the glance keeps it ([SmsGlance.comeBack]).
      * Design 82 D4: with Meldinger's level Off there is no row to gain, so no wake - the notification itself is as
      * before.
+     * Design 82 W3 (the user, 2026-11-10): a message in a row already on the lock is no notice that came - no wake,
+     * as before - but it buzzes as one does ([smsPostBuzzes], `PinLockRuntime.noticeUpdated`: the buzz alone).
      */
     private fun wakeIfAlerts(
         context: Context,
@@ -184,6 +186,8 @@ object SmsNotifier {
             val gainsRow = smsGainsRow(level, unreadAfter, mark, seq)
             if (smsPostAlerts(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, gainsRow = gainsRow)) {
                 com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
+            } else if (smsPostBuzzes(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, level = level, unreadAfter = unreadAfter)) {
+                com.kidslauncher.mdm.lock.PinLockRuntime.noticeUpdated()
             }
         }
     }

@@ -5,6 +5,8 @@ package com.kidslauncher.mdm.lock
  * tested in LockWakeTest. The notices that may wake the screen ([PinLockRuntime.noticeCame]) make the locked phone
  * vibrate once, without a sound - decided before the wake and apart from it: neither the wake's switch, the lit
  * screen nor the proximity read is asked (a pocket is where a buzz matters, and there the screen never lights).
+ * Since 2026-11-10 (the user: one buzz for every new message) a message more in a row the lock already shows buzzes
+ * too, through [PinLockRuntime.noticeUpdated] - the same gate and the same gap, and never the wake.
  */
 
 /** The buzz's length: the SMS reaction buzz's (`SmsNotifier`). */

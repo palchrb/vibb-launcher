@@ -187,6 +187,35 @@ class LockWakeTest {
         assertTrue(noticeBuzzGapOver(null) && noticeBuzzGapOver(BUZZ_GAP_MS) && !noticeBuzzGapOver(BUZZ_GAP_MS - 1))
     }
 
+    /** Design 82 W3 (the user, 2026-11-10: one buzz for every new message): a message more in a row already on the lock
+     * comes through `noticeUpdated` - the buzz's own gate and gap, so a burst is one buzz, and by source nothing of
+     * the wake. */
+    @Test
+    fun `a message in a row already there - the buzz alone, one for a burst, never the wake`() {
+        var last: Long? = null
+        val buzzed = mutableListOf<Long>()
+        for (at in listOf(0L, 400L, 3_000L, BUZZ_GAP_MS - 1, BUZZ_GAP_MS, BUZZ_GAP_MS + 300)) {
+            val since = last?.let { at - it }
+            if (noticeBuzzAllowed(true, LockMode.LOCKED, NoticeBusy(), RINGER_MODE_NORMAL, INTERRUPTION_FILTER_ALL, false, since)) {
+                buzzed += at
+                last = at
+            }
+        }
+        assertEquals(listOf(0L, BUZZ_GAP_MS), buzzed)
+        val runtime = code("lock/PinLockRuntime.kt")
+        val updated = runtime.substringAfter("fun noticeUpdated() {").substringBefore("\n    }\n")
+        // What is in memory answers before anything is read from the system; then the one buzz, with the same gate.
+        val early = "if (!noticeBuzzOn || mode != LockMode.LOCKED || !noticeBuzzGapOver(noticeBuzzAt?.let { now - it })) return"
+        assertTrue(updated, updated.indexOf(early) in 0 until updated.indexOf("noticeBuzz(app, now, noticeBusy(app, now))"))
+        for (wake in listOf("noticeAllowed(", "show(", "NoticeProximity", "noticeWakeOff", "lastNoticeElapsed", "noticeWokeAt")) {
+            assertFalse(wake, updated.contains(wake))
+        }
+        // One buzz, one stamp: both triggers share the gap.
+        assertEquals(1, Regex("""noticeBuzzAt = """).findAll(runtime).count())
+        assertEquals(1, Regex("""\.vibrate\(""").findAll(runtime.substringAfter("private fun noticeBuzz(").substringBefore("fun noticeCame() {")).count())
+        assertFalse(runtime.substringAfter("fun noticeCame() {").substringBefore("\n    }\n").contains("noticeUpdated"))
+    }
+
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }
     private fun code(path: String) = File(main, "java/com/kidslauncher/mdm/$path").readText()
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
