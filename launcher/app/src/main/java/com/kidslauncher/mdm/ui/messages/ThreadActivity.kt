@@ -795,7 +795,9 @@ class ThreadActivity : UIObjectActivity() {
                 pickerItems(list.groups, recent) { drawable(it, paint) }
             }
             if (isDestroyed || !picking) return@launch
-            pickerAdapter.submitList(items)
+            // Every visit opens at the top, where "Nylig brukt" is - not where the last one left the grid (emulator pass).
+            val grid = pickerView().findViewById<RecyclerView>(R.id.messages_picker_grid)
+            pickerAdapter.submitList(items) { grid.scrollToPosition(0) }
             bindGroups(items)
         }
     }
