@@ -353,7 +353,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
   `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`
-  control, `pagehide` - a reload would cancel the POST), never while a Name and icon form is open, never on a refused
+  control, `pagehide` - a reload would cancel the POST), never while a Name and icon form is open or a text field has
+  the focus or any field differs from what the page came with (design 80's code QA V1, v8: the tick waits and reloads
+  once the edit is saved or undone), never on a refused
   save's page (the answer to a POST); a refusal's `?notice=` is dropped from the address once shown. A phone
   not set up has the page too. Every read is a 500 on a DB error (`app_rows`, the names, the last report), never a
   shorter list.

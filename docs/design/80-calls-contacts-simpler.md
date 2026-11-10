@@ -25,6 +25,9 @@ sms og ringe, så skal nok det gjelde både inn og ut fra tlf. Bare en tanke".
   only - anyone can send the message that taught it; a contact with it makes the phone drop it), **a stale SMS form
   writes only the own-number slots it changed** (`own_number_<n>_shown`), and **"Bruk dette nummeret" is offered only
   for a number the tap stores** (`phone::normalize` and a full `+` number); an empty SIM list keeps the learned state.
+  Its second pass: **a learned number is stored only under the conditions the page offered it** (nothing stored, no
+  SIM reporting a number, not a contact - one helper, `learned_offer`; a stale tap is `own_number_gone`), and
+  `auto-reload.js` waits while a field is typed in or focused.
 
 **What it changes:**
 - **Steps 1 and 2 (server and template):** no policy key, no contract file, no migration and no launcher change.

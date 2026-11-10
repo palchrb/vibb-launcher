@@ -391,22 +391,29 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
     `own_number_<n>_shown` (what the page drew), and `save_sms` writes a slot only when its field differs; an older
     page without it is as before. The Avansert drawn open from `?advanced=1` carries `data-reopens`, which
     `auto-reload.js` (v7), `pull-refresh.js` (v4) and `reconnect.js` (v12) skip in `shownOpen` - it comes back open -
-    so the page reloads in place again; a `<details>` opened inside it still blocks.
+    so the page reloads in place again; a `<details>` opened inside it still blocks. Second pass (V1):
+    `auto-reload.js` (v8) also waits while a text field has the focus or any field differs from what the page came
+    with (reconnect's `edited` rule, its `typing`) and reloads once the edit is saved or undone, so a number typed into
+    that Avansert during the 3 s refresh is never lost and the refresh never stops for good.
   - **One rule for "Bruk dette nummeret"** (L4): `usable_own` (`phone::normalize` leaves the number as it is, and a full
     `+` number that isn't short or an emergency number) filters every SIM and learned number in `reported_own`; the
     row is offered by it and the route stores only what it kept. A SIM reporting `113`, `90000009` or `+4712` reads as
-    unknown.
+    unknown. Second pass (V2): one helper, `learned_offer`, decides both whether the page offers the learned number
+    and whether the tap stores it (nothing stored, no SIM reporting a number, not a contact); a stale tap lands on
+    `?notice=own_number_gone` and stores nothing.
   - **Add Contact of an emergency number without JS** follows the two-way texts switch (`resolve` runs `both_ways` on
     `(sms_out, sms_out)`), and the refusal redraw judges the sent number (L5).
   - An unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`), never the write-all (N2). No free
     slot for a learned or conflict number lands on `?notice=own_number_no_slot` with its own words (N4). The short-number
-    line names the kid (N5). "Tilpasset" takes exactly the switch's 51 px box, so its label wraps at the same width at
-    any font size (N3). Avansert › Meldinger has hairlines between its rows (`.group-lines`).
+    line names the kid (N5). "Tilpasset" takes the switch's box as its minimum (`flex: 0 0 auto; min-width: 51px`, no
+    gap of its own; second pass V3): at the default size its label wraps as beside the switch, so a save moves nothing;
+    at a larger font the word takes room from the label and is never clipped (N3). Avansert › Meldinger has hairlines between its rows (`.group-lines`).
   - Tests: `tests::calls_simpler::a_page_drawn_before_the_capability_never_turns_groups_off`,
     `a_learned_number_can_be_added_as_a_contact`, `a_stale_sms_form_keeps_a_number_stored_meanwhile`,
     `bruk_dette_nummeret_only_for_a_number_the_tap_stores`, `an_emergency_number_added_without_js_follows_the_texts_switch`,
     `an_unknown_settings_section_is_refused`; `contact_requests::the_prefill_and_retry_rules` (every switch, the name);
-    the reconnect jstest for `data-reopens`.
+    the reconnect jstest for `data-reopens`; second pass: `a_stale_learned_offer_stores_nothing` and the auto-reload
+    jstest "a typed or focused field in an open data-reopens Avansert holds the reload until it is undone".
 - Tests: `tests::calls_simpler` (D3 through the form, L1, H2, N4, `more`, L2, the Avansert row and the Matrix ID, the
   sub-lines, Add Contact's ways in and the own-number refusal, the split settings form, the own number by its source,
   the page's order and Avansert row, the RCS line's 14 days), `calls_form::tests` (`both_ways`' table, the emergency

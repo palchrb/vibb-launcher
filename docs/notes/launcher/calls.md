@@ -381,7 +381,8 @@ the list shows `contactRequestRows`.
 - **The code QA's fix round** (`docs/review/qa-80-code.md` L2, L7): `simSet` "" (no subscription readable - a SIM
   loading, a modem restart) is "unknown", not a change: `MmsFlow.ownLearnedFor` keeps the stored state and uses none of
   it, and `OwnLearning.learn` learns nothing; only a readable set that differs clears it. A contact with `sms_in` that is
-  an emergency number teaches nothing (pinned in `MmsEngineTest`). On the server side a learned number no longer blocks
+  an emergency number teaches nothing (pinned in `MmsEngineTest`), and nothing is learned while SMS isn't "Styrt av
+  Vibb" (the mode check alone pinned, second pass V4). On the server side a learned number no longer blocks
   a contact: the parent can add it, and the phone then drops it (`OwnLearning.current`).
 - Tests: `OwnLearningTest` (every condition, the conflict, what clears it, the order of the own numbers, D13 on
   `MmsGate.group`), `MmsEngineTest` (groups off end to end - the blocked group, the refused reply and the failed queued

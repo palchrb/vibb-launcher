@@ -409,3 +409,45 @@ Each mutation was rerun only against its targeted tests, then reverted (`git che
 
 Not checked in this verification: the full suites (the implementer reports server 1845/0, jstests 333, launcher
 2393/0), clippy, the real contact form in a browser (V3 is measured on a bare group), and a device.
+
+## Second pass (2026-11-10, branch `calls-simpler`)
+
+Code in 04587fc4 (V1), ad71a903 (V2), dcb17428 (V3) and dd999c73 (V4); this section and the notes in the docs commit
+after them. Each finding was confirmed in the code first; none was refuted. Each new test was run against its
+mutation: killed.
+
+| Finding | Commit | What changed | The test |
+|---|---|---|---|
+| V1 | 04587fc4 | `auto-reload.js` (v8) gets reconnect's protection as its own `typing(doc)`: while a text field has the focus or any field differs from what the page came with (reconnect's `edited` rule), the tick waits another 3 s, and it reloads once the edit is saved or undone - a page never stops refreshing for good. The `data-reopens` skip stays (L3's reload in place). Every page with the script (Device › Apps, the summary, Calls & Contacts) gets the guard; `reconnect.js` already had `edited`, and `pull-refresh.js` is the parent's own pull. | jstest `auto-reload.test.js` "a typed or focused field in an open data-reopens Avansert holds the reload until it is undone" (typed: 0 reloads; focused: 0; undone and blurred: 1). Mutation `typing` always false: killed. |
+| V2 | ad71a903 | One helper, `calls_sms::learned_offer(stored, reported, contacts)`: nothing stored, no SIM reporting a number, the learned number not a contact. `own_rows` offers the learned row by it, and `/calls/own-number/use`'s `learned`/`conflict:<n>` branch stores only through it (a conflict's chosen number not a contact either); otherwise `?notice=own_number_gone`, nothing stored. | `tests::calls_simpler::a_stale_learned_offer_stores_nothing` (a SIM reports a number since: refused; the learned number became a contact: refused; neither: stored). Mutation: the route's branch without `learned_offer`'s conditions: killed. |
+| V3 | dcb17428 | `div.row[data-way] > .row-value`, `div.row[data-custom] > .row-value`: `flex: 0 0 auto; min-width: 51px; margin-left: 0` (was `flex: 0 0 51px`, a 12 px gap and `overflow: visible`). `style.css?v=88`. | The browser pass on the real contact form (below); the saves at 100 %: 0 px. |
+| V4 | dd999c73 | Test only. | `MmsEngineTest` "nothing is learned while SMS isn't Styrt av Vibb (code QA V4)": SMS "Av", the callback window open, a contact's one-to-one MMS retrieved, no own number learned. LM3b (`senderAllowed` without the SMS-mode check alone): killed. |
+
+### V3 measured on the real contact form
+
+Chromium (Playwright), nb, a throwaway server with the seeded family. Mormor's contact form open (calls and texts
+split, so "Tilpasset" beside "Kan ringe og bli ringt"), against Pappa's open form (the switch with the same label).
+The root font is set on `<html>`.
+
+| Width | Root font | "Tilpasset" | Its right edge | Clipped | Row heights (Tilpasset/switch) |
+|---|---|---|---|---|---|
+| 320 px | 100 % | 52 px | 16 px inside the row and the cell | no | 53/53 |
+| 320 px | 125 % | 64 px | 16 px inside | no | 75/75 |
+| 320 px | 150 % | 77 px | 16 px inside | no | 86/86 |
+| 320 px | 200 % | 103 px | 16 px inside | no | 192/107 |
+| 390 px | 100 % | 52 px | 16 px inside | no | 53/53 |
+| 390 px | 125 % | 64 px | 16 px inside | no | 53/53 |
+| 390 px | 150 % | 77 px | 16 px inside | no | 86/54 |
+| 390 px | 200 % | 103 px | 16 px inside | no | 107/107 |
+
+The label never overlaps the word, and the word never overflows its box. At 100 % a save that splits a channel moves
+nothing: 390 px 570.8 -> 570.8 (Mamma's texts), 320 px 251.0 -> 251.0 (Pappa's texts). Both requirements hold at the
+default size. At a larger font the word is wider than the switch, so the label beside it wraps sooner (390 px at
+150 %: 86 against 54; 320 px at 200 %: 192 against 107). A save that splits or joins a channel at that size moves the
+rows below by the difference: "never clipped" wins, as the brief said. At 200 % the page scrolls sideways at both
+widths, from the tab bar's "Innstillinger", the RCS row's `messages.google.com/...` link and the message-app select.
+That is not this row, and it is outside this round.
+
+Suites after the second pass, counted from the reports: server `cargo test` 1846 passed, 0 failed (one new),
+`cargo fmt --check` and `cargo clippy --all-targets` clean; jstests 334 passed, 0 failed (one new); the launcher's
+`testDebugUnitTest -PwarningsAsErrors=true` 2394 tests, 0 failed (one new).
