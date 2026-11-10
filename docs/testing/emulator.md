@@ -2568,7 +2568,8 @@ until a parent allows an address. Two ways onto the row, and each scenario uses 
     (`the_policy_has_the_reported_sims_entries`).
 - **Not on the AVD**: what an operator's notification names, whether a listed name matches it, which network the
   platform fetches on (the stand-in fetches over the AVD's only network), redirects - design 77's step 0 on a real
-  SIM, with its two checks for design 83's gate.
+  SIM, with its two checks for design 83's gate (design 77 §9, "Design 83's gate, step by step": a test phone's debug
+  launcher, this script and hook, **no stand-in**).
 
 ### 6v, step 5: the lock glance's Meldinger rows (design 77 §6.8)
 

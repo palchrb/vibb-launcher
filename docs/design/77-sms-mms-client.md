@@ -1570,10 +1570,11 @@ risk.
    - **MMS:**
      - each carrier's MMSC host as seen in a real m-notification-ind, and whether the MMS APN reaches an outside host;
      - design 83's gate, before any entry is unasked (`scripts/mmsc-hosts.py`'s `UNASKED` stays `"none"` until both
-       are recorded): (a) with Wi-Fi on, a picture from a single-label or private host is fetched (it resolved on the
-       MMS network); (b) with the debug launcher, a notification naming a private address on the Wi-Fi network, where
-       `scripts/fake-mmsc.py` listens, brings no request there, with mobile data on and off. If (b) fails, a parent's
-       allow of such a name has the same weakness: that comes back to the owner before MMS ships;
+       are recorded): (a) with Wi-Fi on, a picture at a single-label or private address is fetched (it resolved on
+       the MMS network); (b) a notification naming a private address on the Wi-Fi network, where
+       `scripts/fake-mmsc.py` listens, brings no request there although the platform was asked. The steps are
+       "Design 83's gate, step by step" below. If (b) fails, a parent's allow of such a name has the same weakness:
+       that comes back to the owner before MMS ships;
      - whether each carrier's m-notification-ind carries `From`, and its `X-Mms-Expiry` (D16's window against it);
      - the carrier's MMS maximum (`getCarrierConfigValues`);
      - a real MMS round trip with a picture.
@@ -1587,6 +1588,39 @@ risk.
      while the dialer role is ours, the process surviving (`adb shell pidof`); the own number on each SIM.
    - These decide D10's host list, D12's fallback, D14's runbook line and §8.6's rules. If denying GMS breaks something
      essential, that comes back to the user here.
+   - **Design 83's gate, step by step** (code QA of design 83, M3). A test phone with the real SIM and the *debug*
+     launcher - never the kid's phone; `MmsDebugReceiver` exists only in that build -, SMS "Styrt av Vibb", Mamma a
+     contact with "Bilder i meldinger", a PC with adb on the same Wi-Fi. `RECEIVER` below is
+     `me.vibb.launcher.debug/com.kidslauncher.mdm.sms.MmsDebugReceiver`. No `--es stand_in` in the process's life: with
+     it our own code fetches, over Wi-Fi, and neither check says anything (kill the launcher's process to forget one).
+     1. *The SIM's row.* `adb shell getprop gsm.sim.operator.numeric` is the SIM's MCC/MNC. With `"none"` the policy
+        has no entry for it, so every address below is put on its row first: by the parent's "Tillat" on Device ›
+        Calls once the phone has asked, or by the hook - `adb shell am broadcast -n RECEIVER --es mmsc_host <host or
+        host:port> --es mccmnc <MCC/MNC>` (memory only: send it again after every process death).
+     2. *(a), the operator's own address.* Wi-Fi on, mobile data on. Mamma's real phone sends a picture. The first one
+        is kept ("Bildet kunne ikke hentes") and Device › Calls asks, with the address the notification named: write
+        it down (the first MMS check above). If it is a single-label name or a private address, "Tillat"; the picture
+        in the thread, with Wi-Fi still on, is (a). A public name says nothing about (a) for that operator: record
+        that instead.
+     3. *(b), the fake on the Wi-Fi.* On the PC `python3 -I scripts/fake-mmsc.py serve 8080 <dir>`; `<pc>` is the
+        PC's own (private) address on the Wi-Fi. First show that the phone reaches it there, or "no request" proves
+        nothing: `adb shell "printf 'GET /mms/9 HTTP/1.0\r\n\r\n' | nc <pc> 8080 >/dev/null"` and the fake's log has
+        `GET /mms/9`.
+     4. *(b), the push.* Put `<pc>` on the SIM's row with the hook (1), then `adb shell am broadcast -n RECEIVER --es
+        push_hex $(python3 -I scripts/fake-mmsc.py push 1 <Mamma's number> http://<pc>:8080/mms/1)`.
+     5. *(b), reading it.* `adb logcat -s MmsRuntime` and the fake's log, one of three:
+        - logcat has "A download failed: <result> (http <status>) -> <error>" and the fake has no `GET /mms/1`: the
+          address passed our gate, the row reached `DOWNLOADING`, the platform was asked and tried somewhere else
+          than the Wi-Fi. **(b) holds** for this run;
+        - the fake has `GET /mms/1`: the platform fetched over Wi-Fi. **(b) fails**;
+        - neither (the thread says "Bildet kunne ikke hentes" at once): our own gate kept the picture and the platform
+          was never asked - the address isn't on the row (the hook lost to a process death, another MCC/MNC), or
+          the sender isn't a contact with pictures. The run counts for nothing; repeat it.
+     6. *Mobile data on and off.* 4 and 5 once each way, Wi-Fi on throughout, a new number each time (`push 2 ...
+        /mms/2`). With data off the platform may answer "no data": that is still its answer, and still the log line.
+     7. *Written down* in `docs/testing/<date>-step0-mms.md`: per SIM the operator and its MCC/MNC, the address its
+        notification named, (a) or why it says nothing, (b)'s log line with data on and with data off, and the fake's
+        log. `UNASKED` moves only with that file in the same commit.
 1. **The engine and SMS (L), launcher:**
    - the per-channel modes on the phone (D2): `calls_mode`/`sms_mode` read with the reject-if-missing rule, the calls
      path behaving as unmanaged when only SMS is managed, the DE boot copy's new version;
