@@ -109,7 +109,7 @@ so it is only the shade.
 **Fix:** fill the five lines with unread messages first and give reactions only what is left (or always keep the
 newest unread message); one `SmsEngineTest` case.
 
-### L2. The guards the note leans on most have no test: five mutants survive - confirmed (mutants)
+### L2. The guards the note leans on most have no test: six mutants survive - confirmed (mutants)
 
 - **Do Not Disturb (m7):** `SmsNotifier.kt:123` reduced to `val quiet = silent` passes every test. The user's "fully
   silent under Do Not Disturb" rests on that line alone.
