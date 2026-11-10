@@ -15,6 +15,16 @@ maps each one to where it landed. New in this revision:
 - a throwaway **step 0** on the emulator and the Jelly Star decides go or no-go before anything is built (M7);
 - **the contact card stays night** (the user, answer 4) - it is out of scope.
 
+**Addition, 2026-11-10 - the phone book is a page too.** Since the batch `sms-follow-book-ground` the phone book is no
+longer on the wallpaper: it has Dagen's plain ground (`kid_ground`), on the user's wish ("bare lys/mørk bakgrunn akkurat
+som for kalender"), and the user expects it to follow the same choice ("jeg regner med vi har samme lys/mørk modus som
+kalender og sms?"). So the phone book (`activity_phone_book`, its search field, rows, empty state and request form) joins
+Meldinger and Kalender in scope and takes the page tokens; where this note says the phone book shows the wallpaper or is
+out (§2's table and the scope sentence below), read it as in. The caption in kid Settings names it too ("Gjelder
+Meldinger, Kalender, Telefonbok og listene her i Innstillinger"). To settle in the build, with the user: the contact
+card stays night by their answer 4, which was given while the phone book showed the wallpaper - over a Lys phone book it
+is a night card on a paper page; show both in step 0 before choosing.
+
 The user's words (2026-11-09):
 - On the own-bubble colour in the new message screens: "burde vi ha en mørk og en lys modus".
 - On who decides: "kan ikke barnet selv få bestemme mørk/lys/følge telefonen i barnets settings meny? men da må det gi
