@@ -350,7 +350,7 @@
                     {% if let Some((field, why)) = add_error %}{% if *field == "number" %}<p class="field-error" id="contact_number-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.tp("device.calls.number_hint", [("code", default_country_code.as_str())]) }}</p>{% endif %}
                     {#- QA L3 (the user, 2026-11-09): a kid's request for a short number says it may cost money and that the parent
                         chooses - calls and texts start off. Follows the number in the field, as the save judges it. -#}
-                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.t("device.requests.short_choose") }}</p>{% endif %}
+                    {% if add_short %}<p class="field-hint tone-orange" data-request-short>{{ self.tp("device.requests.short_choose", [("name", device.name.as_str())]) }}</p>{% endif %}
                     {#- Design 80 D5: the same four choices as a contact, its Avansert with the one-way switches -
                         "Kontakten" in the words until it has a name. `switches` says the form has them; `*_shown`
                         what each main row shows (static/contact-form.js keeps them equal to the pair's class, and
@@ -443,7 +443,7 @@
         lock-screen text, the phone's own number, the RCS help once its time under SMS is over, and the sender names.
         Its row says what it holds and every value that isn't the default, so nothing hides. Its forms return with
         ?advanced=1, which draws it open (so do a refusal and a notice inside it); they sit only inside it. -#}
-    <details class="section" id="advanced"{% if advanced_open %} open{% endif %}>
+    <details class="section" id="advanced"{% if advanced_open %} open data-reopens{% endif %}>
         <summary class="row section-toggle">
             <span class="row-label">{{ self.t("device.calls.advanced") }}<span class="row-sub" data-adv-line="emergency">{{ adv_emergency }}</span>{% if let Some(warn) = adv_emergency_warn %}<span class="row-sub tone-orange" data-adv-line="emergency-rules">{{ warn }}</span>{% endif %}<span class="row-sub" data-adv-line="messages">{{ adv_messages }}</span>{% if number_line %}<span class="row-sub tone-orange" data-adv-line="number">{{ self.t("device.calls.number_missing") }}</span>{% endif %}</span>
             <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -521,7 +521,7 @@
             {% if let Some(text) = sms_notice %}
             <div class="group"><p class="flash flash-error" role="status" data-flash="sms-settings">{{ text }}</p></div>
             {% endif %}
-            <div class="group">
+            <div class="group group-lines">
                 <div id="message-button">
                     <form method="post" action="/devices/{{ device.id }}/calls/settings#message-button">
                         <input type="hidden" name="section" value="button">
@@ -541,9 +541,10 @@
                         <span class="row-label">{{ self.t("device.sms.settings.lock_text") }}</span>
                         <input type="checkbox" role="switch" class="sw" name="sms_lock_text" value="on"{% if sms.lock_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
-                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has it (an older page leaves the
-                        stored value); disabled until the phone claims `sms_groups_v1`. -#}
-                    <input type="hidden" name="groups_shown" value="1">
+                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has the switch (an older page
+                        leaves the stored value); disabled until the phone claims `sms_groups_v1`, and then without the
+                        marker, so a page drawn before the capability never turns groups off (code QA M1). -#}
+                    {% if sms.groups_capable %}<input type="hidden" name="groups_shown" value="1">{% endif %}
                     <label class="row" data-groups>
                         <span class="row-label">{{ self.t("device.sms.settings.groups") }}<span class="row-sub">{{ self.t("device.sms.settings.groups_sub") }}</span>{% if !sms.groups_capable %}<span class="row-sub tone-orange">{{ self.t("device.sms.settings.groups_update_first") }}</span>{% endif %}</span>
                         <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %}{% if !sms.groups_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -561,7 +562,7 @@
                                 <summary class="link-button">{{ self.t("device.sms.own.change") }}&hellip;</summary>
                                 <div class="field own-field">
                                     <label class="field-label" for="{{ own.field }}">{{ own.label }}</label>
-                                    <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}>
+                                    <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}><input type="hidden" name="{{ own.field }}_shown" value="{{ own.shown }}">
                                     {% if let Some(why) = own.error %}<p class="field-error" id="{{ own.field }}-error">{{ why }}</p>{% endif %}
                                 </div>
                             </details>
@@ -570,7 +571,7 @@
                     {% else %}
                     <div class="field contact-field" data-own="{{ own.slot }}">
                         <label class="field-label" for="{{ own.field }}">{{ own.label }}</label>
-                        <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}>
+                        <input type="tel" id="{{ own.field }}" name="{{ own.field }}" value="{{ own.value }}" maxlength="32" autocomplete="off" data-autosave{% if own.error.is_some() %} aria-invalid="true" aria-describedby="{{ own.field }}-error" autofocus{% endif %}><input type="hidden" name="{{ own.field }}_shown" value="{{ own.shown }}">
                         {% if let Some(why) = own.error %}<p class="field-error" id="{{ own.field }}-error">{{ why }}</p>{% else if let Some(hint) = own.hint %}<p class="field-hint">{{ hint }}</p>{% endif %}
                     </div>
                     {#- Design 80 §4.4: a conflict - "Bruk" beside each of the two numbers the phone saw. -#}
@@ -634,7 +635,7 @@
         </section>
     </details>
     {% if auto_refresh %}
-    <script src="/static/auto-reload.js?v=6" defer></script>
+    <script src="/static/auto-reload.js?v=8" defer></script>
     {% endif %}
     <script src="/static/contact-form.js?v=1" defer></script>
     {% if !contacts.is_empty() %}

@@ -1149,3 +1149,13 @@ test("a closed contact holding an open Avansert doesn't block the reload in plac
         assert.strictEqual(rc.shownOpen(doc), rowOpen, `row open: ${rowOpen}`);
     }
 });
+
+// Design 80, code QA L3: the Calls page's Avansert drawn open from `?advanced=1` (`data-reopens`) comes back open after
+// a reload, so it doesn't block the reload in place; a <details> the parent opened inside it still does.
+test("a <details> the server reopens after a reload doesn't block it; one opened inside it does", () => {
+    const advanced = { nodeName: "DETAILS", hasAttribute: (n) => n === "open" || n === "data-reopens", parentNode: null };
+    const doc = (open) => ({ querySelectorAll: (selector) => (selector === "details[open]" ? open : []) });
+    assert.strictEqual(rc.shownOpen(doc([advanced])), false);
+    const inside = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: advanced } };
+    assert.strictEqual(rc.shownOpen(doc([advanced, inside])), true);
+});

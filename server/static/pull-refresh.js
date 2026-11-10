@@ -76,10 +76,15 @@
 
     // Design 80 D11 (M1): only an open <details> the reader can see counts - one with no closed <details> around it.
     // A contact's Avansert drawn open inside its closed row holds nothing that would be lost. No layout read.
+    // Code QA N1: the same function is in static/auto-reload.js and static/reconnect.js (each script stands alone) - change all three
+    // together.
     function shownOpen(doc) {
         if (!doc.querySelectorAll) return !!(doc.querySelector && doc.querySelector("details[open]"));
         var open = doc.querySelectorAll("details[open]");
         for (var i = 0; i < open.length; i++) {
+            // Code QA L3: a <details> the server draws open again after a reload (`data-reopens`: the Calls page's
+            // Avansert from `?advanced=1`) loses nothing by one.
+            if (open[i].hasAttribute && open[i].hasAttribute("data-reopens")) continue;
             var node = open[i].parentNode;
             var shown = true;
             while (node && node !== doc) {

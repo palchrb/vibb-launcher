@@ -43,7 +43,9 @@ object OwnLearning {
 
     /**
      * The state in force: cleared by a change of the active SIMs ([sims]), by a number the parent stored ([parent]) -
-     * which then wins - and by a contact with the learned number (a number that is a contact can't be "us").
+     * which then wins - and by a contact with the learned number (a number that is a contact can't be "us"). An empty
+     * [sims] is "can't be read now" (a SIM loading, a modem restart): the caller keeps the stored state and uses none
+     * of it ([MmsFlow.ownLearned], code QA L2).
      */
     fun current(stored: OwnLearned?, sims: String, parent: List<OwnNumberRule>, contacts: List<RuleContact>): OwnLearned? {
         val state = stored ?: return null
@@ -79,7 +81,8 @@ object OwnLearning {
         now: Long,
         sims: String,
     ): OwnLearned? {
-        if (known.isNotEmpty() || !senderAllowed) return null
+        // Code QA L2: while the active SIMs can't be read ("") nothing is learned - the state is kept as it is.
+        if (known.isNotEmpty() || !senderAllowed || sims.isEmpty()) return null
         if (current != null && current.conflict.isNotEmpty()) return null
         if (to.size != 1 || cc.isNotEmpty()) return null
         val number = to.single().plmnNumber

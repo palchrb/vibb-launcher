@@ -764,7 +764,7 @@ async fn the_phones_own_number_by_its_source() {
             .unwrap();
     assert_eq!(own, [(1, "+4790000009".to_string())]);
     let html = page(&app, &cookie, &format!("{calls}?advanced=1")).await;
-    assert!(html.contains("<details class=\"section\" id=\"advanced\" open>"));
+    assert!(html.contains("<details class=\"section\" id=\"advanced\" open data-reopens>"));
     assert!(part(&html, "id=\"sms-settings\"", "</section>").contains("Saved"));
     // A source the report no longer has: the notice, nothing stored.
     let res = app
@@ -828,7 +828,7 @@ async fn the_phones_own_number_by_its_source() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    assert!(html.contains("<details class=\"section\" id=\"advanced\" open>"));
+    assert!(html.contains("<details class=\"section\" id=\"advanced\" open data-reopens>"));
     assert!(
         html.contains("<details class=\"own-edit\" open>"),
         "the refused field open"
@@ -951,7 +951,7 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(
         res.text()
-            .contains("<details class=\"section\" id=\"advanced\" open>")
+            .contains("<details class=\"section\" id=\"advanced\" open data-reopens>")
     );
 }
 
@@ -1057,8 +1057,7 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
 }
 
 /// §4.4/§4.5: the number the phone learned shows with its teacher named by the contact, "Use this number" stores the
-/// reported one into the first free slot, a conflict shows both with a "Use" each, and the learned number is never a
-/// contact.
+/// reported one into the first free slot, a conflict shows both with a "Use" each, and a slot that isn't free says so.
 #[tokio::test]
 async fn the_learned_number_and_a_conflict() {
     let app = TestApp::new().await;
@@ -1087,20 +1086,6 @@ async fn the_learned_number_and_a_conflict() {
         !html.contains("data-number-line"),
         "a learned number isn't missing"
     );
-    // Never a contact.
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/contacts"),
-            Some(&cookie),
-            &[
-                ("name", "Meg"),
-                ("number", "+4790000009"),
-                ("switches", "on"),
-            ],
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let use_uri = format!("/devices/{id}/calls/own-number/use");
     let res = app
         .request_form(
@@ -1119,7 +1104,8 @@ async fn the_learned_number_and_a_conflict() {
             .unwrap();
     assert_eq!(own, [(1, "+4790000009".to_string())]);
 
-    // A conflict: both shown, a "Use" each; the second stored. With slot 1 taken nothing is free: the notice.
+    // A conflict: both shown, a "Use" each; the second stored. With slot 1 taken nothing is free: the notice says so
+    // (code QA N4), not "another number meanwhile".
     let conflict = json!({ "number": null, "from": "+4791234567", "at": 2, "conflict": ["+4790000002", "+4790000003"] });
     report_groups(
         &app,
@@ -1137,9 +1123,16 @@ async fn the_learned_number_and_a_conflict() {
         .await;
     assert_redirect(
         &res,
-        &format!("{calls}?advanced=1&notice=own_number_gone"),
+        &format!("{calls}?advanced=1&notice=own_number_no_slot"),
         Some("sms-settings"),
     );
+    let html = page(
+        &app,
+        &cookie,
+        &format!("{calls}?advanced=1&notice=own_number_no_slot"),
+    )
+    .await;
+    assert!(html.contains("The phone already has a saved number, so nothing was saved."));
     sqlx::query("DELETE FROM device_own_numbers")
         .execute(&app.db)
         .await
@@ -1169,4 +1162,350 @@ async fn the_learned_number_and_a_conflict() {
             .await
             .unwrap();
     assert_eq!(own, [(1, "+4790000003".to_string())]);
+}
+
+// ---- The code QA's fix round (docs/review/qa-80-code.md) ----
+
+async fn own_numbers(app: &TestApp, id: i64) -> Vec<(i64, String)> {
+    sqlx::query_as("SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot")
+        .bind(id)
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+}
+
+/// M1: a page drawn before the phone claimed `sms_groups_v1` (the switch disabled) has no `groups_shown`, so saving
+/// another field after the phone updated never turns group texts off.
+#[tokio::test]
+async fn a_page_drawn_before_the_capability_never_turns_groups_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    let sms = format!("/devices/{id}/calls/sms");
+    let stale = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+    let drawn = fields_of(&stale, &sms);
+    assert!(!drawn.iter().any(|(k, _)| k == "groups_shown"), "{drawn:?}");
+    report_groups(&app, &token, json!({})).await;
+    post(
+        &app,
+        &cookie,
+        &sms,
+        &with(drawn, "sms_lock_text", Some("on")),
+    )
+    .await;
+    assert!(
+        groups_on(&app, id).await,
+        "the stale page left groups as they were"
+    );
+    // Drawn with the capability, the marker is there.
+    let fresh = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+    assert!(
+        fields_of(&fresh, &sms)
+            .iter()
+            .any(|(k, _)| k == "groups_shown")
+    );
+}
+
+/// L1: a number the phone only learned (anyone can send the message that taught it) never blocks a contact; added as
+/// one, the policy carries it - the phone then drops the learned number (`OwnLearning.current`) - and the page no
+/// longer offers it as the phone's number.
+#[tokio::test]
+async fn a_learned_number_can_be_added_as_a_contact() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4791234567", [true; 6]).await;
+    let learned =
+        json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }], "own_learned": learned }),
+    )
+    .await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[
+                ("name", "Klassekamerat"),
+                ("number", "+4790000009"),
+                ("switches", "on"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let policy = app.policy(&token).await;
+    assert!(
+        policy["call_policy"]["contacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["number"] == "+4790000009")
+    );
+    let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+    let settings = part(&html, "id=\"sms-settings\"", "</section>");
+    assert!(!settings.contains("Learnt from a message"), "{settings}");
+    assert!(!settings.contains(r#"value="learned""#));
+}
+
+/// L3: a stale SMS form (Back, a second tab) never deletes a number stored meanwhile - a slot is written only when its
+/// field differs from what the page drew; an older page (no `_shown`) is as before.
+#[tokio::test]
+async fn a_stale_sms_form_keeps_a_number_stored_meanwhile() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    report(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": "+4790000009" }] }),
+    )
+    .await;
+    let sms = format!("/devices/{id}/calls/sms");
+    let stale = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+    let drawn = fields_of(&stale, &sms);
+    assert!(
+        drawn.contains(&("own_number_1_shown".to_string(), String::new())),
+        "{drawn:?}"
+    );
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/calls/own-number/use"),
+        Some(&cookie),
+        &[("source", "sim:1")],
+    )
+    .await;
+    post(
+        &app,
+        &cookie,
+        &sms,
+        &with(drawn.clone(), "sms_lock_text", Some("on")),
+    )
+    .await;
+    assert_eq!(
+        own_numbers(&app, id).await,
+        [(1, "+4790000009".to_string())]
+    );
+    // A number typed on that page is written.
+    post(
+        &app,
+        &cookie,
+        &sms,
+        &with(drawn, "own_number_1", Some("+4790000008")),
+    )
+    .await;
+    assert_eq!(
+        own_numbers(&app, id).await,
+        [(1, "+4790000008".to_string())]
+    );
+    // An older page without the marker: an empty field still removes the slot.
+    app.request_form(Method::POST, &sms, Some(&cookie), &[("own_number_1", "")])
+        .await;
+    assert!(own_numbers(&app, id).await.is_empty());
+}
+
+/// L4: "Bruk dette nummeret" is offered only for a number the tap stores - a reported short code, an emergency number,
+/// a number without its country code or one `phone::normalize` won't take reads as unknown - and the tap refuses it.
+#[tokio::test]
+async fn bruk_dette_nummeret_only_for_a_number_the_tap_stores() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    let use_uri = format!("/devices/{id}/calls/own-number/use");
+    for bad in ["113", "90000009", "+4712"] {
+        report(
+            &app,
+            &token,
+            json!({ "own_numbers": [{ "slot": 1, "number": bad }] }),
+        )
+        .await;
+        let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
+        let settings = part(&html, "id=\"sms-settings\"", "</section>");
+        assert!(!settings.contains(r#"value="sim:1""#), "{bad}: {settings}");
+        assert!(!settings.contains("From the SIM card"), "{bad}");
+        let res = app
+            .request_form(
+                Method::POST,
+                &use_uri,
+                Some(&cookie),
+                &[("source", "sim:1")],
+            )
+            .await;
+        assert_redirect(
+            &res,
+            &format!("/devices/{id}/calls?advanced=1&notice=own_number_gone"),
+            Some("sms-settings"),
+        );
+        assert!(own_numbers(&app, id).await.is_empty(), "{bad}");
+    }
+    report(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": "+4790000009" }] }),
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &use_uri,
+        Some(&cookie),
+        &[("source", "sim:1")],
+    )
+    .await;
+    assert_eq!(
+        own_numbers(&app, id).await,
+        [(1, "+4790000009".to_string())]
+    );
+}
+
+/// L5: Add Contact of an emergency number without JS follows the two-way texts switch (`sms_out` off when it was turned
+/// off), and a refusal redraws it as the save would.
+#[tokio::test]
+async fn an_emergency_number_added_without_js_follows_the_texts_switch() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = managed_phone(&app).await;
+    let add = format!("/devices/{id}/contacts");
+    let res = app
+        .request_form(
+            Method::POST,
+            &add,
+            Some(&cookie),
+            &[
+                ("name", "Ambulanse"),
+                ("number", "113"),
+                ("switches", "on"),
+                ("calls_shown", "on"),
+                ("calls", "on"),
+                ("inbound", "on"),
+                ("outbound", "on"),
+                ("texts_shown", "on"),
+                ("sms_in", "on"),
+                ("sms_out", "on"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let ambulance: i64 = sqlx::query_scalar("SELECT id FROM contacts WHERE phone_number = '113'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        flags(&app, id, ambulance).await,
+        [true, true, false, false, false, false]
+    );
+    // A refused name: the redraw resolves 113 as an emergency number - the two-way switch turned on is the kid's way,
+    // never "Kan sende melding til".
+    let res = app
+        .request_form(
+            Method::POST,
+            &add,
+            Some(&cookie),
+            &[
+                ("name", ""),
+                ("number", "113"),
+                ("switches", "on"),
+                ("texts_shown", "off"),
+                ("texts", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    let form = part(&html, "id=\"add-contact\"", "</form>");
+    assert_eq!(input_checked(form, "sms_in", "on"), Some(false));
+    assert_eq!(input_checked(form, "sms_out", "on"), Some(true));
+}
+
+/// N2: an unknown section marker on `/calls/settings` is refused, never the write-all.
+#[tokio::test]
+async fn an_unknown_settings_section_is_refused() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = managed_phone(&app).await;
+    sqlx::query("UPDATE device_policy SET default_message_app = 'signal' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calls/settings"),
+            Some(&cookie),
+            &[
+                ("section", "everything"),
+                ("calls_mode", "off"),
+                ("sms_mode", "off"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let stored: (String, String, String) = sqlx::query_as(
+        "SELECT calls_mode, sms_mode, default_message_app FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        ("managed".into(), "managed".into(), "signal".into())
+    );
+}
+
+/// V2: "Bruk dette nummeret" for a learned number checks again what the page checked before offering it - a tap from a
+/// stale page stores nothing once a SIM reports a number or the learned number has become a contact.
+#[tokio::test]
+async fn a_stale_learned_offer_stores_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4791234567", [true; 6]).await;
+    let learned =
+        json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
+    let use_uri = format!("/devices/{id}/calls/own-number/use");
+    let gone = format!("/devices/{id}/calls?advanced=1&notice=own_number_gone");
+    let tap = || {
+        let (app, cookie, uri) = (&app, &cookie, &use_uri);
+        async move {
+            app.request_form(Method::POST, uri, Some(cookie), &[("source", "learned")])
+                .await
+        }
+    };
+    // A SIM reports a number since the page was drawn.
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": "+4790000008" }], "own_learned": learned }),
+    )
+    .await;
+    assert_redirect(&tap().await, &gone, Some("sms-settings"));
+    assert!(own_numbers(&app, id).await.is_empty());
+    // The learned number has become a contact since.
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }], "own_learned": learned }),
+    )
+    .await;
+    let klassekamerat = contact(&app, id, "Klassekamerat", "+4790000009", [true; 6]).await;
+    assert_redirect(&tap().await, &gone, Some("sms-settings"));
+    assert!(own_numbers(&app, id).await.is_empty());
+    // Neither: stored, as offered.
+    sqlx::query("DELETE FROM device_contacts WHERE contact_id = ?")
+        .bind(klassekamerat)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_redirect(
+        &tap().await,
+        &format!("/devices/{id}/calls?advanced=1"),
+        Some("sms-settings"),
+    );
+    assert_eq!(
+        own_numbers(&app, id).await,
+        [(1, "+4790000009".to_string())]
+    );
 }
