@@ -42,6 +42,15 @@ Esmertec AG and The Android Open Source Project, licensed under the Apache Licen
 modified here (made pure JVM and hardened); each file keeps its header and says it was modified, and the package's
 `README.md` lists every change. The few files written here in that package are under the GPL-3.0 (or later) and say so.
 
+The server's list of MMS servers (`server/testdata/mmsc_hosts.txt`, made by `scripts/mmsc-hosts.py`, design 83) is
+extracted from AOSP's APN list, [`device/sample`](https://android.googlesource.com/device/sample)'s
+`etc/apns-full-conf.xml` at commit `73f904fbeb872f5675cb5f18cd9dfb15856425a6`, Copyright 2006, The Android Open Source
+Project, licensed under the Apache License 2.0 - see
+[`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt). It was
+changed here: only each operator's MMS server hosts are kept (lower-cased, with a port other than 80, 443 or 8080),
+grouped by MCC/MNC in two classes, the hosts on the script's skip list left out; the file's header says so.
+`scripts/mmsc-hosts-sample.xml`, the script's self-test input, is written here (GPL-3.0 or later).
+
 The launcher's weather symbols (`launcher/app/src/main/res/drawable/weather_*.xml`, their names in
 `res/values*/weather_symbols.xml` and the table `weather/WeatherSymbols.kt`, made by `scripts/yr-symbols.py`, design 75;
 and `scripts/yr-symbols-11.svg`, upstream's `symbols/darkmode/11.svg` unchanged, the script's self-test input)
