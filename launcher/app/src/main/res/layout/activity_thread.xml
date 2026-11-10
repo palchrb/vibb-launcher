@@ -16,188 +16,206 @@
         android:id="@+id/thread_header"
         layout="@layout/include_kid_header" />
 
-    <!-- No second finger is split off to the other child: a gesture that begins on the mark is handed on to the list
-         (ThreadActivity.dragsThroughMark), and the list must not get another finger's gesture of its own meanwhile. -->
-    <FrameLayout
-        android:id="@+id/thread_list_frame"
+    <!-- Everything under the header, in exactly the room between it and the keyboard. A LinearLayout measures what
+         comes after a weighted child against its whole height, so here the compose bar is measured against this room
+         (less its margins) and not against the screen: where the room is short - a picture attached, a text of four
+         or five lines and the keyboard up at 320 x 569 dp - the bar is as tall as the room and the picture's preview
+         gives way inside it (below), never the field or the send button. -->
+    <LinearLayout
+        android:id="@+id/thread_body"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:splitMotionEvents="false">
+        android:orientation="vertical">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/thread_list"
+        <!-- No second finger is split off to the other child: a gesture that begins on the mark is handed on to the
+             list (ThreadActivity.dragsThroughMark), and the list must not get another finger's gesture of its own
+             meanwhile. -->
+        <FrameLayout
+            android:id="@+id/thread_list_frame"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingTop="4dp"
-            android:paddingBottom="8dp" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:splitMotionEvents="false">
 
-        <!-- "Ny melding" / "Nye meldinger" (2026-11-10): over the list's lower edge while the kid reads older messages
-             and one came in; a tap goes to the thread's end, a drag that begins on it scrolls the list. A 32 dp pill in
-             a 48 dp touch target, above the compose bar and so above the keyboard; TalkBack hears it as it comes (a
-             live region). -->
-        <Button
-            android:id="@+id/thread_new"
-            android:layout_width="wrap_content"
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/thread_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingTop="4dp"
+                android:paddingBottom="8dp" />
+
+            <!-- "Ny melding" / "Nye meldinger" (2026-11-10): over the list's lower edge while the kid reads older
+                 messages and one came in; a tap goes to the thread's end, a drag that begins on it scrolls the list. A
+                 32 dp pill in a 48 dp touch target, above the compose bar and so above the keyboard; TalkBack hears it
+                 as it comes (a live region). -->
+            <Button
+                android:id="@+id/thread_new"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:accessibilityLiveRegion="polite"
+                android:background="@drawable/bg_message_new"
+                android:fontFamily="@font/nunito_bold"
+                android:includeFontPadding="false"
+                android:minWidth="0dp"
+                android:minHeight="48dp"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp"
+                android:stateListAnimator="@null"
+                android:textAllCaps="false"
+                android:textColor="@color/kid_core"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- Design 81 D13: every emoji, in the thread's place while it shows. -->
+        <include layout="@layout/view_messages_picker" />
+
+        <TextView
+            android:id="@+id/thread_line"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center_horizontal"
-            android:accessibilityLiveRegion="polite"
-            android:background="@drawable/bg_message_new"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="12dp"
             android:fontFamily="@font/nunito_bold"
-            android:includeFontPadding="false"
-            android:minWidth="0dp"
+            android:gravity="center"
             android:minHeight="48dp"
-            android:paddingStart="16dp"
-            android:paddingTop="14dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="14dp"
-            android:stateListAnimator="@null"
-            android:textAllCaps="false"
-            android:textColor="@color/kid_core"
-            android:textSize="14sp"
-            android:visibility="gone" />
-    </FrameLayout>
-
-    <!-- Design 81 D13: every emoji, in the thread's place while it shows. -->
-    <include layout="@layout/view_messages_picker" />
-
-    <TextView
-        android:id="@+id/thread_line"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="12dp"
-        android:fontFamily="@font/nunito_bold"
-        android:gravity="center"
-        android:minHeight="48dp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:textColor="@color/kid_core_dim"
-        android:textSize="15sp"
-        android:visibility="gone" />
-
-    <LinearLayout
-        android:id="@+id/thread_compose"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="10dp"
-        android:gravity="bottom"
-        android:orientation="horizontal"
-        android:visibility="gone">
-
-        <!-- D11: a picture - only while every recipient's "Bilder i meldinger" is on (the approved mockup: left of the
-             field). -->
-        <ImageButton
-            android:id="@+id/thread_picture"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_message_add"
-            android:contentDescription="@string/messages_add_picture"
-            android:padding="12dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_message_add"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="15sp"
             android:visibility="gone" />
 
         <LinearLayout
-            android:layout_width="0dp"
+            android:id="@+id/thread_compose"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:background="@drawable/bg_message_compose"
-            android:orientation="vertical"
-            android:paddingStart="16dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="4dp">
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="10dp"
+            android:gravity="bottom"
+            android:orientation="horizontal"
+            android:visibility="gone">
 
-            <!-- The picture picked for this message: its preview, or "Gjør klar bildet …" while the isolated process and
-                 the re-encode run; the cross takes it away. -->
+            <!-- D11: a picture - only while every recipient's "Bilder i meldinger" is on (the approved mockup: left of
+                 the field). -->
+            <ImageButton
+                android:id="@+id/thread_picture"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_message_add"
+                android:contentDescription="@string/messages_add_picture"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_message_add"
+                android:visibility="gone" />
+
             <LinearLayout
-                android:id="@+id/thread_attachment"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="top"
-                android:orientation="horizontal"
-                android:visibility="gone">
+                android:layout_weight="1"
+                android:background="@drawable/bg_message_compose"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="4dp">
 
-                <ImageView
-                    android:id="@+id/thread_attachment_image"
-                    android:layout_width="96dp"
+                <!-- The picture picked for this message: its preview, or "Gjør klar bildet …" while the isolated process
+                     and the re-encode run; the cross takes it away. 96 dp high where there is room; the one weighted
+                     child of the bar, so where the bar is taller than its room (thread_body) this row is lower by
+                     exactly what is missing - the preview a lower crop, down to nothing - and the field keeps its
+                     lines. -->
+                <LinearLayout
+                    android:id="@+id/thread_attachment"
+                    android:layout_width="wrap_content"
                     android:layout_height="96dp"
-                    android:background="@drawable/bg_message_picture"
-                    android:importantForAccessibility="no"
-                    android:scaleType="centerCrop" />
+                    android:layout_marginTop="8dp"
+                    android:layout_weight="1"
+                    android:gravity="top"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:id="@+id/thread_attachment_image"
+                        android:layout_width="96dp"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/bg_message_picture"
+                        android:importantForAccessibility="no"
+                        android:scaleType="centerCrop" />
+
+                    <TextView
+                        android:id="@+id/thread_attachment_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:layout_marginStart="8dp"
+                        android:fontFamily="@font/nunito_bold"
+                        android:maxWidth="160dp"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
+                    <ImageButton
+                        android:id="@+id/thread_attachment_remove"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_message_add"
+                        android:contentDescription="@string/messages_picture_remove"
+                        android:padding="10dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_message_remove" />
+                </LinearLayout>
+
+                <EditText
+                    android:id="@+id/thread_field"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@null"
+                    android:fontFamily="@font/nunito_semibold"
+                    android:hint="@string/messages_compose_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textCapSentences|textMultiLine"
+                    android:maxLength="1600"
+                    android:maxLines="5"
+                    android:minHeight="44dp"
+                    android:saveEnabled="false"
+                    android:textColor="@color/kid_ink"
+                    android:textColorHint="@color/kid_core_dim"
+                    android:textSize="16sp" />
 
                 <TextView
-                    android:id="@+id/thread_attachment_text"
+                    android:id="@+id/thread_counter"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    android:layout_marginStart="8dp"
+                    android:layout_gravity="end"
                     android:fontFamily="@font/nunito_bold"
-                    android:maxWidth="160dp"
                     android:textColor="@color/kid_core_dim"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:visibility="gone" />
-
-                <ImageButton
-                    android:id="@+id/thread_attachment_remove"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="4dp"
-                    android:background="@drawable/bg_message_add"
-                    android:contentDescription="@string/messages_picture_remove"
-                    android:padding="10dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_message_remove" />
             </LinearLayout>
 
-            <EditText
-                android:id="@+id/thread_field"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@null"
-                android:fontFamily="@font/nunito_semibold"
-                android:hint="@string/messages_compose_hint"
-                android:importantForAutofill="no"
-                android:inputType="textCapSentences|textMultiLine"
-                android:maxLength="1600"
-                android:maxLines="5"
-                android:minHeight="44dp"
-                android:saveEnabled="false"
-                android:textColor="@color/kid_ink"
-                android:textColorHint="@color/kid_core_dim"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/thread_counter"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="end"
-                android:fontFamily="@font/nunito_bold"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="12sp"
-                android:visibility="gone" />
+            <ImageButton
+                android:id="@+id/thread_send"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_day_add"
+                android:contentDescription="@string/messages_send"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_message_send" />
         </LinearLayout>
 
-        <ImageButton
-            android:id="@+id/thread_send"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/bg_day_add"
-            android:contentDescription="@string/messages_send"
-            android:padding="12dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_message_send" />
+        <include layout="@layout/view_messages_picture_choice" />
+
+        <include layout="@layout/view_messages_react" />
+
+        <include layout="@layout/view_messages_confirm" />
     </LinearLayout>
-
-    <include layout="@layout/view_messages_picture_choice" />
-
-    <include layout="@layout/view_messages_react" />
-
-    <include layout="@layout/view_messages_confirm" />
 </LinearLayout>

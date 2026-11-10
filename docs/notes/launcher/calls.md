@@ -264,14 +264,33 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the row's width, no `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. The
   line is clickable only as the tap to try again (the listener is set before `isClickable`: `setOnClickListener` makes
   a view clickable, with null too). The emulator pass, with its measures, the two faults it saw beside this (a failed
-  picture's retry sent its text alone - fixed since, "A failed picture's retry" below; the compose bar with a picture
-  under the keyboard) and what it could not show
+  picture's retry sent its text alone; the compose bar with a picture lay under the keyboard - both fixed since, "A
+  failed picture's retry" and "The compose bar with a picture, over the keyboard" below) and what it could not show
   ("Sender …" on screen among it), is `docs/testing/emulator.md` §6ae.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
   never selectable or linked: nothing opens another app (`KidScreensEscapeTest`, which guards `ui/messages` and allows
   `Intent.createChooser` in `PictureShare.kt` alone).
+- **The compose bar with a picture, over the keyboard (2026-11-10, found by the bubble-time emulator pass):** the bar
+  with a picture is 234 px at 320 x 569 dp (the 96 dp preview over a field of one or two lines; 266, 299 and 331 px
+  with three, four and five), and a `LinearLayout` offers a child measured after a weighted one (the list) the
+  parent's whole height, not what is left - so a bar taller than the room between the header and the keyboard lay with
+  its lower part, the field's last lines and the send button, under the keyboard. Seen on `handy36` (a 136 px status
+  bar: 204 px of room, the bar's lower 36 px hidden with one line of text). **By the numbers for the Jelly Star's
+  36 px status bar** (`jelly36`; the keyboard's top where `handy36` had it, 424 px from the screen's bottom - the
+  phone's own keyboard may differ): 304 px of room; with one or two lines the bar fits and the list keeps 49 px, with
+  three 17 px; with four the bar's bottom edge is 1 px under the keyboard; with five 33 px are - the field's last line,
+  the one being typed, and near half the send button. Layout only (`activity_thread.xml`, no code, no strings):
+  everything under the header is in one weighted `thread_body`, so the bar is offered exactly the room there is (less
+  its margins), and the preview's row is the bar's one weighted child at 96 dp, its picture as high as the row - where
+  the bar is taller than its room the row is lower by exactly what is missing and the field keeps its lines. Computed,
+  keyboard up (no emulator in that round - the pass that follows measures it): at a 36 px status bar the preview is
+  96 x 96 dp as before with up to three lines, 96 x 85 dp with four and 96 x 64 dp with five; on `handy36` 96 x 62 dp
+  with one or two lines, 96 x 40 dp with three, 96 x 18 dp with four (the 40 dp cross cut to the row), none with five.
+  The field and the send button are whole in every case. With the keyboard down the preview is 96 x 96 dp as it was.
+  The other panels under the header (the line, the picture choice, the react panel, the delete confirm) are offered
+  the same room now instead of the screen's height; their place is unchanged.
 - **The engine's thread:** every read and write goes through `SmsRuntime.ask` (the engine thread, the answer posted to
   the main thread) and the screens reload on `SmsRuntime.events` (the engine's live flow). `SmsHome` holds what Home
   and the time-rule screen need (history, the unread total, the role), refreshed after every event, every rule change
