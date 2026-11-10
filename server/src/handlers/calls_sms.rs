@@ -212,6 +212,31 @@ pub(crate) async fn phone_numbers(
     Ok(numbers)
 }
 
+/// §4.4/§4.5 (code QA V2): what the phone learned is offered - and "Bruk dette nummeret" stores it - only while nothing
+/// is stored (else `own_number_no_slot`), no SIM reports a number and the learned number isn't a contact on this phone
+/// (else `own_number_gone`). One rule for the page and the route.
+fn learned_offer<'a>(
+    stored: &[(i64, String)],
+    reported: &'a ReportedOwn,
+    contacts: &HashMap<String, (String, bool)>,
+) -> Result<&'a LearnedOwn, &'static str> {
+    if !stored.is_empty() {
+        return Err("own_number_no_slot");
+    }
+    if reported.sims.iter().any(|(_, number)| number.is_some()) {
+        return Err("own_number_gone");
+    }
+    let learned = reported.learned.as_ref().ok_or("own_number_gone")?;
+    if learned
+        .number
+        .as_ref()
+        .is_some_and(|number| contacts.contains_key(number))
+    {
+        return Err("own_number_gone");
+    }
+    Ok(learned)
+}
+
 /// §4.5's rows for the stored numbers (`stored`, by slot) and the last report's SIMs (`sims`): one per slot in
 /// question - an active SIM's or a stored one - and one field for SIM 1 while there is neither. "SIM 1" / "SIM 2" is
 /// said only on a phone that reports two, or for a stored slot 2. Also whether the number is missing (no source at
@@ -314,12 +339,9 @@ fn own_rows(
     let unknown = stored.is_empty() && !sims.iter().any(|(_, number)| number.is_some());
     // §4.4/§4.5: nothing stored and no SIM knows it - what the phone learned from a message, on the first slot's row:
     // the number with its teacher named by the contact, or a conflict's two numbers to choose from.
-    // A learned number that is a contact here isn't "us" (the phone drops it at its next judgement, code QA L1).
-    let learned = reported
-        .learned
-        .as_ref()
-        .filter(|_| unknown)
-        .filter(|l| l.number.as_ref().is_none_or(|n| !names.contains_key(n)));
+    // A learned number that is a contact here isn't "us" (the phone drops it at its next judgement, code QA L1). The
+    // route takes the same rule (`learned_offer`, code QA V2).
+    let learned = learned_offer(stored, reported, names).ok();
     if let (Some(learned), Some(row)) = (learned, rows.first_mut()) {
         let teacher = names
             .get(&learned.from)
@@ -1114,29 +1136,28 @@ pub async fn use_own_number(
             // Design 80 §4.4: a learned number, or one of a conflict's two, into the first active slot with no stored
             // number (slot 1 on a phone with one SIM).
             None => {
-                let learned = reported.learned.as_ref();
-                let number = match source {
-                    "learned" => learned.and_then(|l| l.number.clone()),
-                    "conflict:0" => learned.and_then(|l| l.conflict.first().cloned()),
-                    "conflict:1" => learned.and_then(|l| l.conflict.get(1).cloned()),
-                    _ => None,
-                };
-                let stored: Vec<i64> =
-                    sqlx::query_scalar("SELECT slot FROM device_own_numbers WHERE device_id = ?")
-                        .bind(id)
-                        .fetch_all(&state.db)
-                        .await?;
-                let mut active: Vec<i64> = reported.sims.iter().map(|(slot, _)| *slot).collect();
-                if active.is_empty() {
-                    active.push(1);
-                }
-                let free = active.into_iter().find(|slot| !stored.contains(slot));
-                // Code QA N4: a number with no free slot says so, not "another number meanwhile".
-                match (number, free) {
-                    (Some(number), Some(slot)) => Ok((slot, number)),
-                    (Some(_), None) => Err("own_number_no_slot"),
-                    (None, _) => Err("own_number_gone"),
-                }
+                let stored: Vec<(i64, String)> = sqlx::query_as(
+                    "SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot",
+                )
+                .bind(id)
+                .fetch_all(&state.db)
+                .await?;
+                let contacts = contacts_by_number(&state.db, id).await?;
+                // Code QA V2: the page's own rule again - a stale page's tap never stores the learned number over a
+                // number stored or reported since, nor one that has become a contact. N4: a stored number says so.
+                learned_offer(&stored, &reported, &contacts)
+                    .and_then(|learned| {
+                        match source {
+                            "learned" => learned.number.clone(),
+                            "conflict:0" => learned.conflict.first().cloned(),
+                            "conflict:1" => learned.conflict.get(1).cloned(),
+                            _ => None,
+                        }
+                        .filter(|number| !contacts.contains_key(number))
+                        .ok_or("own_number_gone")
+                    })
+                    // Nothing stored: the first active slot (slot 1 on a phone with one SIM).
+                    .map(|number| (reported.sims.first().map_or(1, |(slot, _)| *slot), number))
             }
         };
         let (slot, number) = match found {

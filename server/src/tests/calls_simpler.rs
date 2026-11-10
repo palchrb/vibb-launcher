@@ -1454,3 +1454,54 @@ async fn an_unknown_settings_section_is_refused() {
         ("managed".into(), "managed".into(), "signal".into())
     );
 }
+
+/// V2: "Bruk dette nummeret" for a learned number checks again what the page checked before offering it - a tap from a
+/// stale page stores nothing once a SIM reports a number or the learned number has become a contact.
+#[tokio::test]
+async fn a_stale_learned_offer_stores_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = managed_phone(&app).await;
+    contact(&app, id, "Mamma", "+4791234567", [true; 6]).await;
+    let learned = json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
+    let use_uri = format!("/devices/{id}/calls/own-number/use");
+    let gone = format!("/devices/{id}/calls?advanced=1&notice=own_number_gone");
+    let tap = || {
+        let (app, cookie, uri) = (&app, &cookie, &use_uri);
+        async move {
+            app.request_form(Method::POST, uri, Some(cookie), &[("source", "learned")])
+                .await
+        }
+    };
+    // A SIM reports a number since the page was drawn.
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": "+4790000008" }], "own_learned": learned }),
+    )
+    .await;
+    assert_redirect(&tap().await, &gone, Some("sms-settings"));
+    assert!(own_numbers(&app, id).await.is_empty());
+    // The learned number has become a contact since.
+    report_groups(
+        &app,
+        &token,
+        json!({ "own_numbers": [{ "slot": 1, "number": null }], "own_learned": learned }),
+    )
+    .await;
+    let klassekamerat = contact(&app, id, "Klassekamerat", "+4790000009", [true; 6]).await;
+    assert_redirect(&tap().await, &gone, Some("sms-settings"));
+    assert!(own_numbers(&app, id).await.is_empty());
+    // Neither: stored, as offered.
+    sqlx::query("DELETE FROM device_contacts WHERE contact_id = ?")
+        .bind(klassekamerat)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_redirect(
+        &tap().await,
+        &format!("/devices/{id}/calls?advanced=1"),
+        Some("sms-settings"),
+    );
+    assert_eq!(own_numbers(&app, id).await, [(1, "+4790000009".to_string())]);
+}
