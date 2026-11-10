@@ -696,14 +696,18 @@ image format** (QA M1).
        - rule 7 **holds the push unfetched for the parent** (D16): nothing is fetched before the parent allows the
          sender, and then only after every check here passes again;
        - rule 3 holds it for the rules (D15).
-  2. **`X-Mms-Content-Location` is the carrier's MMSC.**
-     - Its scheme is `http` or `https`, it has no userinfo, and its port is absent or 80, 443 or 8080.
-     - Its host is on the list for this SIM's MCC/MNC (`getSimOperator()`). The list is held by the server and carried
-       in the policy as `call_policy.mmsc_hosts: [{mccmnc, hosts}]`, built from step 0's real MMS on Telia, Telenor,
-       Ice and their MVNOs.
-     - An unknown MCC/MNC **fails closed**: the MMS shows as "Bilde kan ikke hentes" ("Picture can't be fetched"), and
-       the PWA gets the finding "MMS kan ikke sjekkes på dette SIM-kortet" ("MMS can't be checked on this SIM").
-     - Any other host blocks as `kind = mms`, `sender_class = bad_location`.
+  2. **`X-Mms-Content-Location` is on the SIM's MMSC list** (the list, its entries and the parent's allow are
+     `docs/design/83-mmsc-hosts.md`, which replaces this check's first text).
+     - Its scheme is `http` or `https`, it has no userinfo, and its host is one the entry grammar takes (design 83 §1).
+       Anything else is a shape failure and blocks as `kind = mms`, `sender_class = bad_location`.
+     - The entry it names is on the list for this SIM's MCC/MNC (`getSimOperator()`): the host alone when the port is
+       absent or 80, 443 or 8080, `host:port` for any other port - an exact match, never a suffix. The policy carries
+       the list as `call_policy.mmsc_hosts: [{mccmnc, hosts}]`: for each SIM the phone reports, the entries that are
+       unasked for it (generated from AOSP's APN list, design 83 §3) and the ones the parent allowed for it.
+     - An entry that isn't there - an MCC/MNC without a row included - **fails closed**: the MMS shows as "Bilde kan
+       ikke hentes" ("Picture can't be fetched"), and a contact's is reported (`sms_state.mmsc_unlisted`) so the
+       parent can allow that address on Device › Calls (design 83 §4). A SIM whose row is empty still gives the
+       finding "MMS kan ikke sjekkes på dette SIM-kortet" ("MMS can't be checked on this SIM").
   3. `X-Mms-Message-Size` is at most the carrier's maximum (`SmsManager.getCarrierConfigValues()`'s
      `MMS_CONFIG_MAX_MESSAGE_SIZE`, else 1 MB).
 - **Only then** do we call `downloadMultimediaMessage`:
@@ -716,7 +720,8 @@ image format** (QA M1).
 - After the download, the retrieve-conf's `From` must equal the notification's (both normalised, both `/TYPE=PLMN`),
   and D12's group rule must hold. Otherwise it is dropped and counted.
 - **The promise, stated honestly:** an MMS is never fetched for a blocked sender, nor for a held one before the
-  parent's allow (D16), nor from a host that isn't the SIM's MMSC. That shuts out Enea's "MMS Fingerprint" technique (a crafted push pointing at the attacker's URL).
+  parent's allow (D16), nor from a host that is neither unasked for the SIM nor allowed by the parent for it (design
+  83). That shuts out Enea's "MMS Fingerprint" technique (a crafted push pointing at the attacker's URL).
   - What remains is the same as for SMS (§3): someone who spoofs an allowed number through the real MMSC.
 - We don't answer the MMSC for a blocked MMS. Whether a NotifyResp "rejected" is worth sending is [verify].
 - NotifyResp and Acknowledge for allowed messages go through `sendMultimediaMessage` (AM `MmsSender.java:89-135`).
@@ -1322,8 +1327,10 @@ flight, QA I6):
   - purged 30 days after `at` by `retention` (D16).
 - `notification_prefs.push_sms_held INTEGER NOT NULL DEFAULT 1` (the push switch, as r13's `push_extra_time`).
 
-**The MMSC host list** (D10): `src/mmsc_hosts.rs`, a compiled-in table `{mccmnc, hosts}` filled from step 0. Not
-parent-editable in v1. A change is a server release.
+**The MMSC host list** (D10): `src/mmsc_hosts.rs`. Since design 83 (`docs/design/83-mmsc-hosts.md`) it reads the
+generated `testdata/mmsc_hosts.txt` (`scripts/mmsc-hosts.py`, from AOSP's APN list) and the parent's answers in
+`device_mmsc_hosts`; the first text here - a hand table filled from step 0, not parent-editable, a change a server
+release - is replaced by that note.
 
 **Policy** (`build_call_policy`, `models::CallPolicy`):
 - `calls_mode` and `sms_mode` (always sent), and the old `managed`, `calls_enabled`, `sms_enabled` derived from them
@@ -1562,6 +1569,11 @@ risk.
      `3gpp2` PDUs ever occur.
    - **MMS:**
      - each carrier's MMSC host as seen in a real m-notification-ind, and whether the MMS APN reaches an outside host;
+     - design 83's gate, before any entry is unasked (`scripts/mmsc-hosts.py`'s `UNASKED` stays `"none"` until both
+       are recorded): (a) with Wi-Fi on, a picture from a single-label or private host is fetched (it resolved on the
+       MMS network); (b) with the debug launcher, a notification naming a private address on the Wi-Fi network, where
+       `scripts/fake-mmsc.py` listens, brings no request there, with mobile data on and off. If (b) fails, a parent's
+       allow of such a name has the same weakness: that comes back to the owner before MMS ships;
      - whether each carrier's m-notification-ind carries `From`, and its `X-Mms-Expiry` (D16's window against it);
      - the carrier's MMS maximum (`getCarrierConfigValues`);
      - a real MMS round trip with a picture.

@@ -2486,9 +2486,12 @@ none of it is in a release build - `checkReleaseHasNoDebugHook`, `DebugHookAbsen
   `MmsFileProvider` URI (its capped pipe), the send-req POSTed, the result sent to the same PendingIntent;
 - the server's MMSC table is empty until step 0: `--es mmsc_host 10.0.2.2 --es mccmnc 310260` puts the fake server on
   the list (memory only - a process death forgets all three, so nudge syncs without killing the process: an SMS from a
-  stranger asks for one, `adb emu sms send 4790000077 Hei`).
+  stranger asks for one, `adb emu sms send 4790000077 Hei`). Since design 83 the policy has no row for the AVD's SIM
+  until a parent allows an address, and the hook's host joins that SIM's row - "6v, design 83" below says which
+  scenario uses the hook and which the parent's allow.
 
-The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080: D10 takes 80, 443 or 8080 only).
+The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080: D10 took 80, 443 or 8080 only;
+since design 83 a host alone covers those three and any other port is its own `host:port` entry).
 
 - **Fail closed without the table** (no `mmsc_host` yet): a push from Mamma starts the isolated process
   (`ActivityManager: Start proc ...:mmsparse ... /u0i1` - an isolated uid - and "isolated not needed" once unbound) and
@@ -2501,7 +2504,8 @@ The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080
 - **The other cases** (`push` N FROM LOCATION, then the store with `run-as ... cat databases/messages.db`):
   - Pappa (pictures off), `.../mms/12?from=%2B4790000002`: fetched, the text shown, "Et bilde ble ikke vist", no "+";
   - a stranger `+4790000041`: a `held` row with the push (84 bytes), **no GET**;
-  - `http://attacker.invalid:8080/mms/14`: blocked `bad_location`, **no GET**;
+  - `http://attacker.invalid:8080/mms/14`: blocked `bad_location`, **no GET** (since design 83 kept as "Bildet
+    kunne ikke hentes" and reported, still no GET; `bad_location` is a shape failure, `http://x@10.0.2.2:8080/mms/14`);
   - `.../mms/15-group` (To: the kid and Bestemor): a conversation "Mamma, Bestemor" with "Mamma" over the bubble; a
     text reply from it is one send-req to both (`To: +4790000001, +4790000005`);
   - `.../mms/16-stranger-group`: fetched, then blocked `group`, nothing shown;
@@ -2530,6 +2534,41 @@ The fake MMSC: `python3 -I scripts/fake-mmsc.py serve 8080 <out-dir>` (port 8080
 - **Not on the AVD**: a real carrier's MMS service and MMSC, a real push, the platform's own byte stream into the
   provider (the stand-in writes it), HEIF/AVIF, the parse service dying on a crafted message (JVM tests:
   `MmsEngineTest`'s three deaths) - step 0 on the Jelly Star.
+
+### 6v, design 83: the MMSC list and the parent's allow
+
+**Not run yet** (written with the build, 2026-11-10; the first pass fills in what was seen). Step 3b's set-up: the
+debug launcher, `fake-mmsc.py serve 8080`, the stand-in (`--es stand_in http://10.0.2.2:8080/mmsc`, in memory), a
+server from this branch, Mamma a contact with "Bilder i meldinger". The AVD's SIM is 310260: Android's list has five
+names for it, all hints (`grep '^310260 ' server/testdata/mmsc_hosts.txt`), so the policy has **no row** for it
+until a parent allows an address. Two ways onto the row, and each scenario uses one:
+
+- **The hook** (`--es mmsc_host 10.0.2.2 --es mccmnc 310260`): for every run that is about something else than the
+  list - step 3b's cases, reactions, the thread's pictures. In memory, merged into the SIM's row; it never reaches the
+  server, so the PWA shows no address.
+- **The parent's allow** (no `mmsc_host` broadcast in this process's life - kill the process to forget one): for
+  everything below.
+  - *Kept and reported*: `push 31 +4790000001 http://10.0.2.2:8080/mms/31` -> "Bildet kunne ikke hentes", **no GET**;
+    within the minute a status report with `sms_state.sim_operators` (310260 and the AVD's operator name) and
+    `mmsc_unlisted` (`10.0.2.2`, Mamma's number); the PWA's Calls page asks under "Meldinger som venter", with
+    "Android's list has: ..." and the warning (the address isn't one of the five), the inbox has the event, the device
+    page's count includes it.
+  - *Allow -> fetch*: "Tillat" -> the page returns to the row in "Bildeadresser", the phone is nudged, its policy has
+    `{"mccmnc": "310260", "hosts": ["10.0.2.2"]}`, `GET /mms/31` and the picture in the thread.
+  - *The hint*: a push naming one of the five names (`http://mms.tracfone.com/mms/32`) -> the question says the
+    address is in Android's list; "Ikke tillat" -> no GET, the row under "Bildeadresser" as "Ikke tillatt", and a
+    second push at that address asks nothing.
+  - *Another port*: serve on 8002 too; a push at `http://10.0.2.2:8002/mms/33` is its own question (`10.0.2.2:8002`)
+    although `10.0.2.2` is allowed.
+  - *Take back*: "Fjern" on `10.0.2.2` -> the next push there is kept again and asks nothing (declined).
+  - *A restart or an expiry in between*: kill the process, or wait past the picture's `X-Mms-Expiry`, between the
+    push and the allow - fetched after the allow, or "Bildet er ikke lenger tilgjengelig".
+  - *A stranger in the callback window*: kept, no report row, no question.
+  - *The SIM's operator changes*: only where the AVD can change it; else read the JVM and server tests
+    (`the_policy_has_the_reported_sims_entries`).
+- **Not on the AVD**: what an operator's notification names, whether a listed name matches it, which network the
+  platform fetches on (the stand-in fetches over the AVD's only network), redirects - design 77's step 0 on a real
+  SIM, with its two checks for design 83's gate.
 
 ### 6v, step 5: the lock glance's Meldinger rows (design 77 §6.8)
 

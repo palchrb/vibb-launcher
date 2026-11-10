@@ -354,7 +354,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   `malformed`), D4 on the number (`SmsRules.decideIncoming`), then for an allowed sender alone the host
   (`MmsGate.location`: printable ASCII without whitespace, `http`/`https`, no userinfo, port absent/80/443/8080, the host
   - without case - on this SIM's MCC/MNC row; any other host blocks `bad_location`; an MCC/MNC with no row fails
-  closed: shown at once as "Bildet kunne ikke hentes", never fetched) and the size (`MMS_CONFIG_MAX_MESSAGE_SIZE`,
+  closed: shown at once as "Bildet kunne ikke hentes", never fetched - **changed by design 83**: another port is its
+  own `host:port` entry, and an address that isn't on the row is kept and reported instead of blocked; "The MMSC
+  list's entries and the parent's allow" below) and the size (`MMS_CONFIG_MAX_MESSAGE_SIZE`,
   `MmsCodec.capOf`). Then the message with one placeholder part (PENDING) in the sender's conversation, `mms` row
   `NOTIFIED` -> `drainDownloads` (the host again, the expiry, `DOWNLOADING` and its try committed before the platform
   has it) -> `downloadMultimediaMessage` into `MmsFileProvider` -> `MmsResultReceiver` -> `DOWNLOADED` (committed, so a
@@ -429,13 +431,14 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   a refused tap also leaves the line at "Ikke sendt", without the offer, until the thread is read again).
 - **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
   `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
-  one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory, `--es stand_in <url>` plays the
+  one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory (since design 83 in that SIM's own row), `--es stand_in <url>` plays the
   platform's MMS service (the AVD's carrier config has MMS off) through our own provider URI and result PendingIntents
   (`MmsDebug`; the release twin has none and stands in for nothing). `scripts/fake-mmsc.py` is the fake MMSC;
   `docs/testing/emulator.md` §6v, step 3b. The run found one screen bug, fixed: a tall picture bubble wasn't scrolled
   to its bottom after a send (`scrollToPosition` counts it shown once its top is).
-- **Left for step 0 (the real phone):** the MMSC host table (`server/src/mmsc_hosts.rs`, empty: every MMS fails closed
-  until then; `tests::the_table_is_well_formed` checks a new row's shape), each carrier's `From` and `X-Mms-Expiry`,
+- **Left for step 0 (the real phone):** the MMSC host table (`server/src/mmsc_hosts.rs`, empty then: every MMS failed
+  closed; since design 83 a generated list of hints and the parent's allow, with step 0's two checks as the gate for
+  any unasked entry - the section below), each carrier's `From` and `X-Mms-Expiry`,
   the MMS maximum, whether the acknowledgement needs the content location as its URL (`MMS_CONFIG_NOTIFY_WAP_MMSC_ENABLED`),
   a real round trip, HEIF/AVIF in the isolated process, `pread` of the pixels' region on the Jelly Star's kernel
   (Android 13's ashmem - the emulator's android-36 ran memfd; a failing read only fails the picture, verification V1),
@@ -759,3 +762,40 @@ on the wire but nb's heart.
   sent bytes. Not on a device yet: TalkBack running, the pending dim, whether the buzz is felt. Seen there, outside
   this design: on a kiosk phone every notification is muted while handy's lock is up (`featuresWhileLocked` removes
   NOTIFICATIONS) - for the user to decide.
+
+## The MMSC list's entries and the parent's allow (design 83, `docs/design/83-mmsc-hosts.md`; branch `mmsc-hosts`)
+
+The server's side is `docs/notes/server/calls-and-contacts.md`, "The MMSC list and the parent's allow". No new
+capability, device route or kid-facing string: the bubble is still "Bildet kunne ikke hentes".
+- **The gate (`MmsGate.location`):** a location is `Bad` only for its shape - not printable ASCII, not `http`/`https`,
+  userinfo, or a host the entry grammar refuses (`MmsGate.validEntry`: `[a-z0-9.-]` in non-empty labels, the last one
+  starting with a letter or exactly four decimal octets; so no IPv6 literal, `010.0.0.9` or `2130706433`) - and blocks
+  as `bad_location`. Anything else names an **entry**: the lower-cased host (a trailing dot dropped) when the port is
+  absent or 80, 443 or 8080, `host:port` for any other port. The entry on the SIM's row (exact, without case, never a
+  suffix) is `Ok(host)`; any other - a SIM without a row or an unreadable operator included - is `Unlisted(entry)`.
+  `validEntry` and the server's `mmsc_hosts::valid_entry` run the same rows (`sms_contract.json`'s `mmsc_entries`).
+- **A kept picture (`MmsFlow.admit`):** an allowed sender's `Unlisted` picture is stored `FAILED`/`mmsc_unknown`
+  with its content location - nothing fetched, nothing answered to the MMSC - as an unknown SIM's was before. For a
+  contact's, `PushOutcome.Shown.ask` makes `MmsRuntime` ask for the held sync (`SmsRuntime.requestHeldSyncSoon`), so
+  the report reaches the parent within the minute. That now includes a released (held) push whose address isn't on
+  the row: it is shown as kept and its held row released, where step 3b dropped it as `bad_location`.
+- **The report (`MmsFlow.unlisted`, `SmsRuntime.report`):** `sms_state.mmsc_unlisted` `[{mccmnc, host, from, at}]`,
+  computed at every report from the `mmsc_unknown` rows: the sender still passes as a contact (not a callback-window
+  stranger), the location is still `Unlisted` for the SIM's operator, and the picture arrived within 7 days
+  (`PUSH_KEY_KEEP_MS`); one row per MCC/MNC and entry by its newest picture, the newest 4 (`UNLISTED_MAX`). The entry,
+  never the URL. `sms_state.sim_operators` `[{mccmnc, name}]` is the active SIMs' `getSimOperator()` (5-6 digits) and
+  operator name (`SmsRuntime.simOperators`, at most 4): the server sends rows only for these. Both keys are always
+  sent.
+- **After the allow (`MmsFlow.retryWaiting`):** a `mmsc_unknown` row goes back to `NOTIFIED` only when its own
+  location is now `Ok` - another address allowed for the SIM, or the same host on another port, fetches nothing - and
+  then `drainDownloads` checks it once more before the fetch. A row the server takes away again just stops matching.
+- **The debug hook:** `SmsRuntime.withDebugMmsc` merges `MmsDebug.mmscRules()` into the SIM's own row
+  (`MmsGate.merged`); appended as a second row for the same MCC/MNC it was never read once the policy had one.
+- **Mixed versions fail closed:** an older server sends `[]` and drops the two keys; an older launcher on this
+  server reports no `sim_operators`, gets no row and keeps every picture unfetched.
+- Tests: `MmsGateTest` (the entry and port vectors, the shape failures, the merge), `MmsEngineTest` (a kept picture is
+  fetched once its own entry is allowed and not before; the report's contact rule, 7 days and newest 4; a released
+  push at an unlisted address), `SmsContractTest` (the report, the policy row, `mmsc_entries`).
+- **Not unit-tested:** `SmsRuntime.simOperators` (the platform's telephony) and `MmsRuntime`'s sync request - the
+  emulator's, `docs/testing/emulator.md` §6v "design 83". **Only a real SIM shows** what an operator's notification
+  names and on which network the platform fetches (design 77 step 0's two checks).
