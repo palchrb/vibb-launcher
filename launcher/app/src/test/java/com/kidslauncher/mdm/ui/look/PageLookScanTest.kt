@@ -47,16 +47,43 @@ class PageLookScanTest {
         assertEquals(1, Regex("""\bPageLook\b""").findAll(home).count())
         val resume = home.substringAfter("override fun onResume()").substringBefore("\n    }\n")
         assertTrue(resume.indexOf("if (darkUnderLock())") in 0 until resume.indexOf("PageLook.onHomeResumed(this)"))
-        // Kid Settings: the row is shown in debug builds only (step 1), and a release build draws nothing of it.
+        // Kid Settings: the row is shown, and listens, in debug builds only (step 1); a release build draws nothing
+        // of it.
         val settings = sources.getValue("$root/ui/kidsettings/KidSettingsActivity.kt")
-        assertTrue(settings.contains("if (BuildConfig.DEBUG) binding.kidSettingsLookSection.visibility = View.VISIBLE"))
+        val debug = settings.substringAfter("if (BuildConfig.DEBUG) {", "").substringBefore("\n        }\n")
+        assertTrue(debug.trimStart().startsWith("binding.kidSettingsLookSection.visibility = View.VISIBLE"))
+        assertTrue(debug.contains("PageLook.choose(this, mode)"))
         assertEquals(1, Regex("""kidSettingsLookSection\.visibility\s*=""").findAll(settings).count())
+        assertEquals(1, Regex("""PageLook\.choose\(""").findAll(settings).count())
         val render = settings.substringAfter("private fun renderLook() {").substringBefore("\n    }\n")
         assertTrue(render.trimStart().startsWith("if (binding.kidSettingsLookSection.visibility != View.VISIBLE) return"))
         val layout = listOf("src/main/res", "app/src/main/res").map(::File).first { it.isDirectory }
             .resolve("layout/activity_kid_settings.xml").readText()
         val section = layout.substringAfter("android:id=\"@+id/kid_settings_look_section\"").substringBefore(">")
         assertTrue(section.contains("android:visibility=\"gone\""))
+    }
+
+    @Test
+    fun `a page takes its look, its colours and its place in the registry from its base class`() {
+        val page = sources.getValue("com/kidslauncher/mdm/ui/look/KidPageActivity.kt")
+        assertTrue(page.contains("override fun lookNightMode(): Int = PageLook.pageNightMode()"))
+        // The page colours over the launcher's theme, forced: without `true` the theme's own night values stay.
+        assertTrue(page.contains("override fun getTheme(): Resources.Theme? = super.getTheme()?.also { it.applyStyle(R.style.PageColors, true) }"))
+        // The registry of live pages (what a change finishes) and the started count (when a change may run).
+        val calls = listOf(
+            "onCreate(savedInstanceState: Bundle?)" to "PageLook.pageCreated(this)",
+            "onStart()" to "PageLook.pageTaskStarted()",
+            "onStop()" to "PageLook.pageTaskStopped()",
+            "onDestroy()" to "PageLook.pageDestroyed(this)",
+        )
+        for ((method, call) in calls) {
+            val body = page.substringAfter("override fun $method {", "").substringBefore("\n    }\n")
+            assertTrue("$method: $call", body.contains(call))
+            assertEquals(call, 1, page.split(call).size - 1)
+        }
+        // Kid Settings' preview is drawn as a page in a look: the same colours, forced the same way.
+        val look = sources.getValue("com/kidslauncher/mdm/ui/look/PageLook.kt")
+        assertTrue(look.contains("wrapped.theme.applyStyle(R.style.PageColors, true)"))
     }
 
     @Test

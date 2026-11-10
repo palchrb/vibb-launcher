@@ -19,6 +19,7 @@ maps each one to where it landed. New in this revision:
 **Step 1 built, 2026-11-10** (branch `kid-look-1`): the mechanism, the tokens and Kalender, the kid Settings row in debug
 builds only. Built and unit-tested; not yet seen running (`docs/testing/emulator.md` §6ah is its pass). Where the build
 departs from this note or settles something it left open, a line marked "Step 1, 2026-11-10" says so at the place.
+The code QA's fix round (`docs/review/qa-78-step1-code.md`) is marked "Fix round, 2026-11-10" the same way.
 
 **Addition, 2026-11-10 - the phone book is a page too.** Since the batch `sms-follow-book-ground` the phone book is no
 longer on the wallpaper: it has Dagen's plain ground (`kid_ground`), on the user's wish ("bare lys/mørk bakgrunn akkurat
@@ -291,6 +292,15 @@ Step 1, 2026-11-10: `PageColors`' values - `colorBackground` and `colorPrimary` 
 `colorAccent` and `colorControlActivated` `kid_page_accent`; `colorControlHighlight` `kid_page_ripple_strong`
 (AppCompat's own dark ripple is the same 20 % white at night).
 
+Fix round, 2026-11-10 (code QA M1): `enforceNavigationBarContrast` is `@bool/kid_page_nav_contrast` - true at night,
+false in `values-notnight` - not false in both looks. Kalender had the default (true) before the step, so with 3-button
+navigation the system's scrim behind the buttons stays in Mørk (D2: Mørk is today's) and is off only on the paper. The
+window's two grounds are no difference in Mørk either, on a release build or any other: `launcherBaseTheme` already had
+`windowSplashScreenBackground` = `kid_ground`, and Kalender's `windowBackground` was the framework's
+`?android:attr/colorBackground`, which the base theme sets to `kid_ground` (`Theme.Material` and its Light twin both
+define it so, and AppCompat 1.7.1's API 21+ themes add no window background of their own; the QA read #303030 there).
+`KidPageTheme` names both as `kid_page_ground` so that Lys gets the paper. Read from the resources, not seen running.
+
 ### 5.3 Who sets the mode
 
 - **The app's night mode** - `UiModeManager.setApplicationNightMode(MODE_NIGHT_YES | MODE_NIGHT_NO)`, never AUTO.
@@ -351,6 +361,15 @@ left gets its `onStop` only after Home's `onResume`, so the count can still be o
 itself. And a page task is known by its base intent's component, `DayActivity` (the only activity started with
 `NEW_TASK` into the `.day` affinity). Meldinger's task joins in step 2.
 
+Fix round, 2026-11-10 (code QA M2, L1, L4): the rules are a pure class, `LookState`, over the host, so `PageLookTest`
+runs the unlocked start, the tap and Home's resume themselves. At the unlocked start `applied` and `choice` are both
+read before the system call - a change that was waiting for Home still waits after a process start. A system call that
+fails is caught and logged in the host, at the start and in a change alike: the pages still draw in the stored look
+(their own AppCompat mode), and only a starting window can be the other look's until the next unlocked start asks
+again. Home's resume does not finish a change a process death cut short - `choice` equals `applied` from the change's
+first write on -: a death between that write and the tasks' removal leaves Kalender's card in Recents with an old-look
+snapshot until the next change, the page itself created again in the new look.
+
 ### 5.5 Status and navigation bars
 
 A page draws edge to edge (targetSdk 36) under transparent bars; the icon ink comes from `kid_page_light_bars` in the
@@ -406,9 +425,11 @@ if a parent turned it on, Lys pages could be inverted. Step 0 and step 1 check i
 - Step 1, 2026-11-10: the preview's container is `importantForAccessibility="noHideDescendants"` - with "no" alone
   TalkBack would still stop on the two bubble texts. The strip has bubble drawables of its own (`bg_look_preview_in`,
   `_out`, 12 sp text), not Meldinger's, which are step 2's; the received one ends in an ellipsis on a narrow screen.
-  The caption is the 2026-11-10 addition's wording, the phone book named (the table below has the older one). The
-  section is `gone` in the layout and shown by `if (BuildConfig.DEBUG)`; what a release build does get in step 1 is the
-  mechanism - the night pins, the unlocked-start call (always night, nothing can pick Lys), Kalender on `KidPageTheme`.
+  The caption is the 2026-11-10 addition's wording, the phone book named (the table below has the shipped strings
+  since the fix round; the caption's own bullet above keeps revision 2's). It describes step 2 - in step 1 only
+  Kalender follows the look - and is seen in debug builds only until then. The section is `gone` in the layout and
+  shown, its listeners set, by `if (BuildConfig.DEBUG)`; what a release build does get in step 1 is the mechanism -
+  the night pins, the unlocked-start call (always night, nothing can pick Lys), Kalender on `KidPageTheme`.
 - Strings (en / nb), all new:
 
 | Key | en | nb |
@@ -416,7 +437,7 @@ if a parent turned it on, Lys pages could be inverted. Step 0 and step 1 check i
 | `kid_settings_look` | Appearance | Utseende |
 | `kid_settings_look_dark` | Dark | Mørk |
 | `kid_settings_look_light` | Light | Lys |
-| `kid_settings_look_caption` | For Messages, Calendar and the lists here in Settings. Home and the contact card stay as they are. | Gjelder Meldinger, Kalender og listene her i Innstillinger. Hjem og kontaktkortet er alltid som før. |
+| `kid_settings_look_caption` | For Messages, Calendar, the phone book and the lists here in Settings. Home and the contact card stay as they are. | Gjelder Meldinger, Kalender, Telefonbok og listene her i Innstillinger. Hjem og kontaktkortet er alltid som før. |
 | `kid_settings_look_preview_in` | Hi! Are you coming? | Hei! Kommer du? |
 | `kid_settings_look_preview_out` | Yes, now! | Ja, nå! |
 
@@ -459,6 +480,9 @@ Step 1, 2026-11-10: built as listed. The phone book (the 2026-11-10 addition) is
 step 2. The emulator pass is written as steps (`docs/testing/emulator.md` §6ah) and has not been run: no emulator was
 started in the build round.
 
+Fix round, 2026-11-10: the code QA (`docs/review/qa-78-step1-code.md`: no High, three Medium, nine Low) and what each
+finding became are in the review's "Fixes"; §5.2, §5.4 and §7 have its lines, and §6ah its additions.
+
 **Step 2 - Meldinger and the lists** (after design 77 step 2 is merged). The three message screens on page tokens
 (bubbles, selection rings, the picture's place, the unread dot, compose field with its hairline, send, the delete
 confirm and its pills, the delivery line, the day separator), `PictureActivity` in the started counter, the kept
@@ -468,6 +492,11 @@ tints the back arrow with `kid_page_ink` on a page; the row shown in release bui
 for the kept text (stored, restored, cleared on send, on delete, when the contact may no longer text, when unmanaged;
 the 1,600-character and 50-conversation caps). Emulator: both looks of every screen in §2's "In" rows; a half-typed
 text across a change.
+
+For step 2, from step 1's code QA (L5, 2026-11-10; read, not seen): Home's resume runs a waiting change without asking
+`mayChange` (§5.4), so while a change waits, a Home resume that falls between an open of Kalender and the page's
+creation removes the task that was just opened along with the old one. Only a debug build can have a waiting change in
+step 1; settle it before the row is shown in release builds.
 
 Docs at each step: a new section in `docs/notes/launcher/ui-polish.md` ("The kid's look: Mørk or Lys", design 78), its
 line in `launcher/CLAUDE.md`'s index, `docs/testing/emulator.md`.

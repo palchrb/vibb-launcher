@@ -144,7 +144,7 @@
         <item name="android:windowSplashScreenBackground">@color/kid_page_ground</item>
         <item name="android:windowLightStatusBar">@bool/kid_page_light_bars</item>
         <item name="android:windowLightNavigationBar">@bool/kid_page_light_bars</item>
-        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">@bool/kid_page_nav_contrast</item>
         <item name="alertDialogTheme">@style/KidPageAlertDialog</item>
     </style>
 

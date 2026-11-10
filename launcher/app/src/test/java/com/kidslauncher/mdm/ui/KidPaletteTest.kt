@@ -494,22 +494,11 @@ class KidPaletteTest {
         assertPagePairs(day = false)
     }
 
-    /** Design 78 §4.1: "Vibb dag", value by value, and every pair of the table. */
+    /** Design 78 §4.1: "Vibb dag" - every pair of the table, and its numbers. The values are the resource file's. */
     @Test
     fun `a page in Lys is the warm paper palette, every pair readable`() {
-        val day = mapOf(
-            "kid_page_ground" to "#F6F2EF", "kid_page_tile" to "#FFFFFF", "kid_page_edge" to "#24000000",
-            "kid_page_lift" to "#FFFFFF", "kid_page_control" to "#FFFFFF",
-            "kid_page_ink" to "#1B1B1F", "kid_page_core" to "#1B1B1F", "kid_page_dim" to "#5E5752",
-            "kid_page_accent" to "#A64B25", "kid_page_accent_fill" to "#E8895E",
-            "kid_page_selected_out" to "#1B1B1F", "kid_page_button" to "#12000000",
-            "kid_page_back" to "#0F000000", "kid_page_divider" to "#1A000000",
-            "kid_page_ripple" to "#14000000", "kid_page_ripple_strong" to "#1F000000",
-            "kid_page_message_in" to "#E8E4EE", "kid_page_message_in_ink" to "#1B1B1F",
-            "kid_page_message_in_dim" to "#5E5870", "kid_page_alert" to "#B3261E",
-            "kid_page_danger" to "#FBE3E1", "kid_page_danger_text" to "#A1241C",
-        )
-        assertEquals(day, pageDay)
+        // Every page token has a day value: one left out would be the night's on the paper.
+        assertEquals(pageNight.keys, pageDay.keys)
         assertPagePairs(day = true)
         // The table's numbers: the ink, the dim and the accent on the paper, the night glyph on the peach fill.
         val ground = inLook("kid_page_ground", true)
@@ -566,8 +555,16 @@ class KidPaletteTest {
         assertEquals("@color/kid_page_ground", page["android:windowSplashScreenBackground"])
         assertEquals("@bool/kid_page_light_bars", page["android:windowLightStatusBar"])
         assertEquals("@bool/kid_page_light_bars", page["android:windowLightNavigationBar"])
-        assertEquals("false", page["android:enforceNavigationBarContrast"])
+        assertEquals("@bool/kid_page_nav_contrast", page["android:enforceNavigationBarContrast"])
         assertEquals("@style/KidPageAlertDialog", page["alertDialogTheme"])
+        // The bars per look. At night light icons and the system's scrim behind a 3-button navigation bar - the
+        // default, what Kalender had before the design (D2); on the paper dark icons and no scrim.
+        fun bools(dir: String): Map<String, String> {
+            val nodes = parse("$dir/bools_kid_page.xml").getElementsByTagName("bool")
+            return (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+        }
+        assertEquals(mapOf("kid_page_light_bars" to "false", "kid_page_nav_contrast" to "true"), bools("values"))
+        assertEquals(mapOf("kid_page_light_bars" to "true", "kid_page_nav_contrast" to "false"), bools("values-notnight"))
 
         val overlay = styleItems("PageColors")
         assertEquals(

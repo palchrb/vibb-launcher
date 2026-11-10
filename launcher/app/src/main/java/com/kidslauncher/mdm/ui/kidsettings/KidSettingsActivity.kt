@@ -182,12 +182,15 @@ class KidSettingsActivity : UIObjectActivity() {
                 section?.let { renderControls(it) }
             }
         }
-        // Design 78 §7: the look's row, in debug builds only until step 2 (only Kalender follows the look yet).
-        if (BuildConfig.DEBUG) binding.kidSettingsLookSection.visibility = View.VISIBLE
-        for ((button, mode) in lookButtons()) {
-            button.setOnClickListener {
-                PageLook.choose(this, mode)
-                renderLook()
+        // Design 78 §7: the look's row - shown and listening - in debug builds only until step 2 (only Kalender
+        // follows the look yet).
+        if (BuildConfig.DEBUG) {
+            binding.kidSettingsLookSection.visibility = View.VISIBLE
+            for ((button, mode) in lookButtons()) {
+                button.setOnClickListener {
+                    PageLook.choose(this, mode)
+                    renderLook()
+                }
             }
         }
         for ((row, kind) in pickRows()) {

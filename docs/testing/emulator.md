@@ -3193,7 +3193,8 @@ are in the session's `scratchpad/retry-shots/`.
 
 ## 6ah. The kid's look: Mørk or Lys - step 1's pass (design 78)
 
-**Steps, written with the build on 2026-11-10. Not run yet**: nothing below is a result. Step 1 is the mechanism and
+**Steps, written with the build on 2026-11-10 and added to in the code QA's fix round the same day
+(`docs/review/qa-78-step1-code.md`, L8). Not run yet**: nothing below is a result. Step 1 is the mechanism and
 Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
 **debug** build only.
 
@@ -3211,6 +3212,9 @@ adb logcat -b events -c                                                  # befor
 adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity|wm_destroy_activity" | grep -E "\.day\.|kidsettings"
 adb shell dumpsys activity recents | grep -c "\.day"                     # Kalender's task: 1, or 0 after a change
 adb shell settings put system font_scale 1.3                             # and 1.0 after
+adb shell dumpsys activity activities | grep -E "mLockTaskModeState|mLockTaskModeTasks"   # the kiosk and its tasks
+adb logcat -d -s Application | grep -E "The kid's look took|Unlocked setup"               # an unlocked start's cost
+adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton   # .gestural back
 ```
 
 The look is picked in kid Settings (Home's "Innstillinger" tile): the section "Utseende" after the background
@@ -3242,19 +3246,51 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
    nothing else on kid Settings changes (compare with step 1's screenshot: only the control and the strip differ; no
    flash, no relaunch of kid Settings in the events log).
 3. `kid_look.xml`: `choice` and `applied` both `light`. `dumpsys activity recents | grep -c "\.day"` is 0, and the
-   events log has `wm_destroy_activity` for `DayActivity`. Recents shows no Kalender card.
+   events log has `wm_destroy_activity` for `DayActivity`. Recents shows no Kalender card. **With the kiosk on** (an
+   allowlist and kiosk in the policy; do steps 1-3 once so): `mLockTaskModeState=LOCKED` before the tap and after it,
+   Home's task still in `mLockTaskModeTasks` and Kalender's no longer; kid Settings stays in front and nothing of the
+   kiosk shows or drops (no "App is not available", Back and Home as before).
 4. Home, the Kalender tile: Kalender in Lys from its first frame (A), one `wm_on_create_called`.
 5. The same back to **Mørk**. Then with an event page open in Kalender's task before going Home: both activities are
    destroyed at the tap, and the next open is the day view.
 6. Tap the look that is already applied: nothing is destroyed, Kalender's card stays in Recents.
 7. Tap Lys, then `adb reboot` within a few seconds. After the unlock: `kid_look.xml` says `light`, Kalender opens in
-   Lys from its first frame. The same after `adb install -r` of the same APK (the process restarted).
+   Lys from its first frame. The same after `adb install -r` of the same APK (the process restarted). This shows that
+   the look survives a reboot and a process start, no more: it cannot be counted on to hit either window the unlocked
+   start's call is there for (a crash between a change's write and its system call is inside one turn of the main
+   thread, and nothing outside says whether the system had written its own value when the reboot came). Step 10 puts
+   the two values apart by hand instead.
 8. A phone that never ran this build (the update): install main's debug APK on a wiped `jelly36` with the system's
    dark theme **off**, provision, then `adb install -r` this build. `kid_look.xml` has `applied` = `dark` without any
    tap; Kalender opens with a night starting window (no light frame), although the system is light.
 
-The waiting change (a tap while a page task is started, run at Home's next resume) can't be reached by hand - kid
-Settings in front means no page is started; `PageLookTest` holds its rule.
+9. **Kalender's task alive only in Recents.** Open Kalender, go Home, and kill the launcher's process as its own uid
+   (`adb shell run-as me.vibb.launcher.debug sh -c 'kill -9 $(pidof me.vibb.launcher.debug)'`); the launcher starts
+   again and the PIN lock comes up. Unlock: the recents count is still 1, although the new process has no
+   `DayActivity`. Kid Settings, tap the other look: the count is 0, and the next open from Home is a clean one in the
+   new look (A), one `wm_on_create_called`.
+10. **The stored look repairs the system's value.** With Mørk applied and no Kalender task (right after a change),
+   write `kid_look.xml` back with both values `light` and kill the process (`run-as me.vibb.launcher.debug sh -c 'cat >
+   shared_prefs/kid_look.xml; kill -9 $(pidof me.vibb.launcher.debug)'`, the edited copy on its stdin). After the
+   unlock Kalender's cold open from Home is Lys from the starting window on, although no change ran: the unlocked
+   start gave the system the stored look. Tap Mørk after.
+11. **A change that waits, written by hand.** With Mørk applied and Kalender's task behind, write the file with
+   `choice` = `light` and `applied` = `dark` and kill the process the same way. After the unlock, Home's resume runs
+   the change once: both values `light`, the recents count 0, and Kalender opens in Lys. Go to kid Settings and Home
+   again: the events log shows nothing destroyed and nothing closed (the resume has nothing left to run).
+12. **The unlocked start's cost.** After each process start above (the `install -r`, the reboot, the kills), read the
+   `Application` lines: `The kid's look took N ms` (one small prefs file and one binder call, on every
+   unlock-to-Home path) beside `Unlocked setup took N ms` (design 59's head, which does not include it). Write the
+   numbers down; one that isn't small beside the head's is a finding.
+
+The waiting change by a real tap (a tap while a page task is started, run at Home's next resume) is **not reliably**
+reached by hand: with kid Settings in front the page the kid left is stopped, so the tap would have to land before
+that page has had its `onStop` - which comes once Home has resumed and gone idle, well before a finger is through
+Home's tile and at the row. To try it (only where "Utseende" is on kid Settings' first screen): Kalender in front,
+then Home, the Innstillinger tile and Lys as fast as one shell line sends them (`adb shell "input keyevent
+KEYCODE_HOME; input tap <tile>; input tap <Lys>"`). A hit is `choice` = `light` with `applied` = `dark` in
+`kid_look.xml` and Kalender's card still in Recents; the next Home runs the change. A miss is step 2's ordinary change
+and no finding. `PageLookTest` holds the rule, and step 11 shows the stored half of it every time.
 
 ### C. Kalender in both looks
 
@@ -3273,6 +3309,10 @@ screen (Mørk must be the same picture as main's; anything that differs is a fin
   another day is chosen**: the framework draws it in the peach fill, which is 2.6:1 on Lys's white panel - say how it
   reads.
 - [ ] The status bar's icons and the gesture pill on each of the three screens, and with the keyboard up.
+- [ ] **3-button navigation** (the overlay command above; `adb shell settings get secure navigation_mode` reads 0;
+  `.gestural` back after). In **Mørk**, the bottom of each of the three screens with main's build and with this build:
+  the same picture, the system's scrim behind the three buttons included (`kid_page_nav_contrast`; the code QA's M1).
+  In Lys: dark buttons on the paper with no scrim behind them, each one clear to see, with the keyboard up too.
 
 ### D. The screens that are not pages: before and after
 

@@ -12,10 +12,26 @@ import java.io.File
 class PageTokensScanTest {
     private val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
 
-    private val layouts = listOf(
-        "activity_day", "activity_event", "activity_event_edit", "item_day_empty", "item_day_event", "item_day_legend",
-        "include_kid_header", "view_look_preview",
-    )
+    /**
+     * The page layouts, read from the code: every layout Kalender's classes name - `R.layout.x`, or its binding
+     * class - and kid Settings' preview strip (inflated as a page, `PageLook.wrap`), with what they include.
+     */
+    private val layouts: List<String> by lazy {
+        val classes = File(main, "java/com/kidslauncher/mdm/ui/day").listFiles { f -> f.extension == "kt" }.orEmpty()
+            .joinToString("\n") { kotlin(it) }
+        val named = Regex("""R\.layout\.([a-z_0-9]+)""").findAll(classes).map { it.groupValues[1] } +
+            Regex("""\b([A-Z][A-Za-z0-9]*)Binding\b""").findAll(classes)
+                .map { it.groupValues[1].replace(Regex("(?<=.)([A-Z])"), "_$1").lowercase() }
+        val found = LinkedHashSet(named.toList() + "view_look_preview")
+        val unread = ArrayDeque(found)
+        while (unread.isNotEmpty()) {
+            for (included in Regex("""layout="@layout/([a-z_0-9]+)"""").findAll(xml("layout/${unread.removeFirst()}"))) {
+                if (found.add(included.groupValues[1])) unread += included.groupValues[1]
+            }
+        }
+        found.toList()
+    }
+
     private val drawables = listOf(
         "bg_day_event", "bg_day_event_now", "bg_day_add", "bg_day_save", "ic_day_add", "bg_kid_back_button",
         "bg_kid_page_dialog", "bg_look_preview", "bg_look_preview_in", "bg_look_preview_out",
@@ -44,6 +60,8 @@ class PageTokensScanTest {
 
     @Test
     fun `the page layouts, their drawables and their styles name page tokens only`() {
+        // The three screens, the pager's page and the rows, and the header they include.
+        assertTrue("$layouts", layouts.containsAll(listOf("activity_day", "activity_event", "activity_event_edit", "item_day_page", "item_day_event", "include_kid_header")))
         for (layout in layouts) assertEquals("layout/$layout", emptyList<String>(), strays(xml("layout/$layout")))
         for (drawable in drawables) assertEquals("drawable/$drawable", emptyList<String>(), strays(xml("drawable/$drawable")))
         // Every drawable and style a page layout names is one of those checked here.
@@ -90,25 +108,5 @@ class PageTokensScanTest {
         }
         val adapter = kotlin(File(main, "java/com/kidslauncher/mdm/ui/day/DayListAdapter.kt"))
         assertEquals(2, Regex("""\.argb\((text\.)?context\)""").findAll(adapter).count())
-    }
-
-    @Test
-    fun `both looks define the same page tokens`() {
-        fun names(dir: String) = Regex("""<color name="([a-z_0-9]+)">""").findAll(File(main, "res/$dir/colors_kid_page.xml").readText())
-            .map { it.groupValues[1] }.toList()
-        val night = names("values")
-        assertEquals(night, names("values-notnight"))
-        assertTrue(night.all { it.startsWith("kid_page_") })
-        // No other file defines a page token, and no other qualifier a colour of ours.
-        val res = File(main, "res")
-        for (dir in res.listFiles { f -> f.isDirectory && f.name.startsWith("values") }.orEmpty()) {
-            for (file in dir.listFiles { f -> f.extension == "xml" }.orEmpty()) {
-                if (file.name == "colors_kid_page.xml") continue
-                assertTrue("${dir.name}/${file.name}", !file.readText().contains("<color name=\"kid_page_"))
-            }
-        }
-        fun bars(dir: String) = File(main, "res/$dir/bools_kid_page.xml").readText()
-        assertTrue(bars("values").contains("""<bool name="kid_page_light_bars">false</bool>"""))
-        assertTrue(bars("values-notnight").contains("""<bool name="kid_page_light_bars">true</bool>"""))
     }
 }

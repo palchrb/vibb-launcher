@@ -332,8 +332,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 The kid's own pages are drawn in one of two looks, Mørk (today's night) or Lys ("Vibb dag": warm paper, white tiles);
 every other screen is night as before. Step 1 is the mechanism, the tokens and Kalender's three screens; Meldinger, the
 phone book and kid Settings' lists join in step 2. **The row in kid Settings is shown in debug builds only in step 1**,
-so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10; **not yet seen running** -
-`docs/testing/emulator.md` §6ah is the pass.
+so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10, with the code QA's fix round
+(`docs/review/qa-78-step1-code.md`); **not yet seen running** - `docs/testing/emulator.md` §6ah is the pass.
 
 - **A page** is an activity that extends `ui/look/KidPageActivity` and has `@style/KidPageTheme` in the manifest with
   no `uiMode` in `configChanges`: `DayActivity`, `EventActivity`, `EventEditActivity` (`PageManifestTest`). The class
@@ -344,11 +344,13 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10; **
   page colours; and it keeps `PageLook`'s registry of live pages and its count of started activities of the page tasks.
 - **Page tokens**: `res/values/colors_kid_page.xml` (the night: each a reference to today's token, or today's literal)
   and `res/values-notnight/colors_kid_page.xml` (the day, design §4.1 value by value) are the only qualified colours;
-  `bools_kid_page.xml`'s `kid_page_light_bars` gives the bars dark icons in Lys. A page's layouts, drawables, styles and
-  classes name `kid_page_*` only, plus what is the same in both looks: `kid_on_accent` (the night on a peach fill),
-  `kid_on_accent_press` (the press on a peach fill) and the kid's own bubble's three (`PageTokensScanTest`). Two white
-  masks stay literal because they are only ever drawn tinted: `bg_day_dot` (by the adapter, in the calendar's colour)
-  and `ic_kid_back` (by the header's `android:tint="@color/kid_page_ink"`).
+  `bools_kid_page.xml` holds the bars per look: `kid_page_light_bars` (dark icons in Lys) and `kid_page_nav_contrast`
+  (`enforceNavigationBarContrast`: the system's scrim behind a 3-button navigation bar, on at night as Kalender had
+  it, off on the paper). A page's layouts, drawables, styles and classes name `kid_page_*` only, plus what is the same
+  in both looks: `kid_on_accent` (the night on a peach fill), `kid_on_accent_press` (the press on a peach fill) and
+  the kid's own bubble's three (`PageTokensScanTest`). Two white masks stay literal because they are only ever drawn
+  tinted: `bg_day_dot` (by the adapter, in the calendar's colour) and `ic_kid_back` (by the header's
+  `android:tint="@color/kid_page_ink"`).
 - **Shared with screens that are not pages**: the header (`include_kid_header`, `bg_kid_back_button`), `KidManageLink`
   and the Kalender drawables Meldinger and the phone book also use (`bg_day_event`, `bg_day_add`, `bg_day_save`,
   `ic_day_add`) are on page tokens already. A screen that is not a page is pinned to night, where every page token is
@@ -372,14 +374,26 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10; **
   `PlayLinkBlockedTheme`. **What this changes on a release build** (design D2): on a phone whose system dark theme is
   off, what AppCompat draws by itself on the night screens - `?selectableItemBackground`'s ripple,
   `colorControlNormal`, unthemed switches and dividers, parent Settings' preference widgets - takes its night form;
-  with the system's dark theme on, nothing changes.
-- **`PageLook`** (`ui/look/PageLook.kt`; its rules are pure functions over a `LookHost`, `PageLookTest`). CE prefs
-  `kid_look`: `choice` and `applied`, each `dark` or `light`, absent or unknown read as dark.
+  with the system's dark theme on, nothing changes. Kalender's own theme adds no difference in Mørk (the code QA's
+  M1, 2026-11-10): the navigation bar's contrast scrim is on at night as before (`kid_page_nav_contrast`), and
+  `KidPageTheme`'s `windowBackground` and `windowSplashScreenBackground` are at night what `launcherBaseTheme` already
+  gave Kalender - the splash ground was `kid_ground`, and the window background was the framework's
+  `?android:attr/colorBackground`, which the base theme sets to `kid_ground` (AppCompat 1.7.1 adds no window
+  background of its own on API 21+). Read from the resources, not seen running.
+- **`PageLook`** (`ui/look/PageLook.kt`): the rules are the pure `LookState` over a `LookHost` (`PageLookTest` runs
+  its three entry points with a recording host); the object keeps the Android host and the registry of pages.
+  `nightValues(mode)` is the one place a look becomes a night constant - AppCompat's, `UiModeManager`'s and a
+  configuration's. CE prefs `kid_look`: `choice` and `applied`, each `dark` or `light`, absent or unknown read as dark.
   - *Every unlocked start* (`Application.initUnlocked` -> `atUnlockedStart`): `applied = dark` is written first when
     it is absent, then `UiModeManager.setApplicationNightMode(applied)` is called **always**, the first run included.
     The system keeps the app's night mode per package and draws a page's starting window from it (step 0: unset, a
     Mørk page got the system's light splash); the call also repairs a value the system lost. Nothing reads `kid_look`
-    before the first unlock, and `KidAppComponentFactory` runs the unlocked init before any page exists.
+    before the first unlock, and `KidAppComponentFactory` runs the unlocked init before any page exists. Both stored
+    values are read before the system call, so a change that was waiting for Home still waits after a process start.
+    A system call that fails is caught and logged in the host (here and in a change): the pages still draw in the
+    stored look, and only a starting window can be the other look's until the next unlocked start asks again.
+    `Application` logs `The kid's look took N ms` for the start's part; it is outside `Unlocked setup took N ms`,
+    which stays design 59's head.
   - *The kid's tap* (`choose`): a tap on the look already applied stores the choice only. Otherwise, while no
     activity of a page task is started (`mayChange`), the change runs in this order: one `commit()` of `choice` and
     `applied`; every live page finished; Kalender's task closed (`ActivityManager.appTasks`, the one whose root is
@@ -388,13 +402,17 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10; **
   - *A change that had to wait*: with a page task started only the choice is stored, and Home's next `onResume` runs
     the change (`onHomeResumed`, after the lock's dark return; not behind `mayChange` again, because the page the kid
     just left is stopped only after Home has resumed). Kid Settings in front means no page is started, so this path is
-    a belt; it also finishes a change a process death cut short.
+    a belt. It does **not** finish a change a process death cut short: `choice` and `applied` are equal from the
+    change's first write on, so the resume has nothing to run. A death between that write and the tasks' removal
+    leaves Kalender's card in Recents with an old-look snapshot until the next change; the page itself is created
+    again in the new look, and the next unlocked start gives the system the stored mode (read, not seen on a device).
 - **The row** (`activity_kid_settings.xml`'s `kid_settings_look_section`, `gone` in the layout; `KidSettingsActivity`
-  shows it only `if (BuildConfig.DEBUG)`, and `renderLook` returns at once while it is gone): the heading "Utseende" /
-  "Appearance", a card with design 34 P9's segmented control (Mørk / Lys) and a 56 dp preview strip
-  (`view_look_preview`: a received bubble and the kid's own, inflated through `PageLook.wrap` so it shows the real
+  shows it and sets its listeners only `if (BuildConfig.DEBUG)`, and `renderLook` returns at once while it is gone):
+  the heading "Utseende" / "Appearance", a card with design 34 P9's segmented control (Mørk / Lys) and a 56 dp preview
+  strip (`view_look_preview`: a received bubble and the kid's own, inflated through `PageLook.wrap` so it shows the real
   tokens of the chosen look although kid Settings stays night; hidden from TalkBack), and a caption. Six strings, en
-  and nb.
+  and nb. The caption names Meldinger, the phone book and the Settings lists: it describes step 2, and is seen in
+  debug builds only until then.
 - **Not in step 1**: Meldinger's three screens, the picture viewer in the started count, the kept thread text, the
   phone book, the Wi-Fi, Bluetooth and sound lists, `KidHeader`'s own tint, the row in release builds.
 - **Known, to look at in the pass**: step 0 saw the status bar's icons take their dark tint about 230 ms late on a
@@ -404,7 +422,10 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10; **
   colours on Android 14 (no enforced edge-to-edge there) and Android 16's "make more apps dark" are not checked.
 - Tests: `ui/look/PageLookTest` (the stored look; `mayChange` with a picture in front and a translucent activity over
   a page; what a change closes and in which order; the tap that stores only; every unlocked start, the first run
-  included), `PageManifestTest`, `PageTokensScanTest`, `PageLookScanTest` (who touches `kid_look` and `PageLook`,
-  none before the first unlock; the debug-only row; the three night pins set before the base context),
-  `ui/KidPaletteTest` (each night token today's; the day palette value by value and every pair of §4.1 in both looks;
-  `PageColors` and the page dialog; the dot table), `day/PickerThemeTest` (both looks).
+  included; a waiting change across a process start; Home's resume running it once; the night constant per API),
+  `PageManifestTest`, `PageTokensScanTest` (its layout list read from the layouts `ui/day/` names, with what they
+  include), `PageLookScanTest` (who touches `kid_look` and `PageLook`, none before the first unlock; the debug-only
+  row and its listeners; a page's look, its forced `PageColors` and its four registry calls in `KidPageActivity`; the
+  three night pins set before the base context), `ui/KidPaletteTest` (each night token today's; a day value for every
+  page token and every pair of §4.1 in both looks; `PageColors`, the page theme's bars per look and the page dialog;
+  the dot table), `day/PickerThemeTest` (both looks).

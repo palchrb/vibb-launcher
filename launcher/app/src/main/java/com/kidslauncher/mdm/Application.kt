@@ -279,12 +279,18 @@ class Application : android.app.Application() {
         // unlock, before the anchor's first sync can send it. Never throws.
         com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
         // Design 78 §5.4: the kid's look goes to the system at every unlocked start, the first run included - before
-        // any page of this process can open. Guarded on its own: a failure leaves the pages night, nothing else.
+        // any page of this process can open. Guarded on its own: with `kid_look` unreadable the pages stay night,
+        // nothing else. A system call that failed is logged inside (PageLook's host); the pages then still draw in
+        // the stored look, and only a starting window can be the other look's.
+        val lookStart = android.os.SystemClock.elapsedRealtime()
         try {
             com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)
         } catch (e: Exception) {
-            android.util.Log.e("Application", "The kid's look wasn't applied", e)
+            android.util.Log.e("Application", "The kid's look wasn't read", e)
         }
+        // Its own line (one small prefs file and one binder call): "Unlocked setup took" below stays the head that
+        // design 59 F3's recipe reads - LauncherPreferences.init and initRest.
+        android.util.Log.i("Application", "The kid's look took ${android.os.SystemClock.elapsedRealtime() - lookStart} ms")
         val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
