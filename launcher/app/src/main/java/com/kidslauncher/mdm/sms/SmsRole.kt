@@ -22,6 +22,12 @@ const val SMS_ENGINE_CAPABILITY = "sms_engine_v1"
 /** Design 80 D13: the phone honours `call_policy.sms_groups` and reports `sms_state.own_learned`. */
 const val SMS_GROUPS_CAPABILITY = "sms_groups_v1"
 
+/** Design 82: Meldinger is managed as an app - the phone honours `lock_glance.sms` (Off hides its lock rows) and the
+ * `launcher_ui.app_display` entry under its key (the icon, the name, "On Home"), and reports
+ * `sms_state.has_history`. The server's `lock_glance::MESSAGES_APP_CAPABILITY`, `sms_contract.json`'s
+ * `app.capability`. */
+const val MESSAGES_APP_CAPABILITY = "messages_app_v1"
+
 /**
  * D1: "Styrt av Vibb" takes the role; "Ikke styrt" hands back a role we took ([takenByUs]); "Av" and unknown rules
  * ([mode] `null`) keep what is held and never take it - `DISALLOW_SMS` stops everything in "Av", the history stays, and

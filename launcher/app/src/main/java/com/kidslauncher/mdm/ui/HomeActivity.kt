@@ -832,6 +832,7 @@ class HomeActivity : UIObjectActivity() {
                 data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
+                messagesLook = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook(),
             ),
             data.infos,
             data.icons,

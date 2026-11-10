@@ -163,7 +163,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   `PictureShare`: a copy in `cacheDir/share/` behind the not-exported `FileProvider` `${applicationId}.share`, deleted
   after an hour at every share, picture and sync). The delete confirm (`view_messages_confirm.xml`) is part of the
   screen, no system dialog; no trash, no undo. One task of their own (`.messages` affinity, as Dagen's), in Recents as
-  "Meldinger"; `MessagesScreens.startThread` puts the list under a thread opened from outside.
+  "Meldinger" (the parent's name for it where there is one, set again at every render - `labelTask`); `MessagesScreens.startThread` puts the list under a thread opened from outside.
 - **A thread follows its newest message (2026-11-10, the user; branch `sms-follow-book-ground`):** pure `threadFollows`,
   `threadAtEnd`, `threadEndGap`, `threadReads` (`MessagesModelTest`, which also pins the screen's wiring by its
   source); the activity only measures. The thread opens following; a scroll sets it to "the last bubble's bottom is
@@ -267,6 +267,15 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   follow `SmsHome` and the role; each refusal has its own words (`afterRefusal`); "Del" leaves out every target the
   parent didn't allow and the nearby share (`shareExclusions`); drafts never go into the saved state. The
   history-only tile keeps its name "Meldinger" (the user, 2026-11-09: "la være inntil videre").
+- **Meldinger as an app, step 2 (design 82 D9, W1, W2):** the parent can give Meldinger a name, a glyph on a colour
+  and keep it off Home - `docs/notes/launcher/home-and-photos.md`, "Meldinger's entry". The name
+  (`AppDisplay.messagesName`) is spelled on Home's tile and its TalkBack text, the time-rule row, the lock keypad's
+  prompt, the lock row's action (`glance_sms_action`, now `%1$s`), Meldinger's header and its task name; the
+  notification channels' names and the notification's small icon stay. The launcher claims **`messages_app_v1`**
+  (`MESSAGES_APP_CAPABILITY`, in `STATUS_CAPABILITIES`): it honours Off on the lock and reads the key's entry.
+  **`sms_state.has_history`** (`SmsState.hasHistory`) tells the server the phone has threads to read - the engine's
+  own read at report time, `SmsHome.summary.hasHistory` only when the engine does not answer - so the PWA lists
+  Meldinger's row while the tile can linger outside "Styrt av Vibb".
 
 ## MMS pictures, step 3b (design 77 D8, D10-D12, D14, D16; branch `sms-mms`)
 
@@ -570,10 +579,24 @@ Meldinger rows". What was decided (the design left it open):
   message was notified, silently, §6.7), and its tap takes the thread only where the rule allows calls - the message
   screens' own rule (`messagesUsableUnder`), else the plain keypad; from the lock with a rule in force it is handed to
   the time-rule screen, as every other row.
-- **The text:** only with `call_policy.sms_lock_text` (managed rules that say so; unknown or unmanaged rules: none),
-  read on the engine thread only then (`SmsHome.refresh`, `smsLockText`), cleaned as the glance's other texts
-  (`cleanGlanceText`, 200 characters). With the switch off the row never says more than the name and the count - not
-  "Bilde" either.
+- **The level** (design 82 D4, `docs/design/82-meldinger-as-an-app.md`): the parent's choice for Meldinger on the
+  lock is the policy's `lock_glance.sms` - `GlancePolicy.sms` (`badges/GlanceRows.kt`: `OFF`, `NAME`, `TEXT`, or
+  `LEGACY` from a server without the key) - and one pure function gives it to both readers, `smsLockLevel(sms,
+  callPolicyState)` (`sms/SmsGlance.kt`): the word as it is, whatever the call rules say; `LEGACY` is the rule before
+  design 82 - the text only with managed rules whose `call_policy.sms_lock_text` says so, otherwise the name. **Off:
+  no row** (pure `smsGlanceRows`: none, and no message read) **and no wake** (`smsGainsRow` takes the level: nothing
+  to gain); the system notification, the badge and the thread are untouched, as for an app set to Off. A read of
+  the engine that fails drops the lock's rows (`SmsHome.refresh`: they were built at the last good read's level) and
+  keeps Home's tile and badges. The reading fails closed
+  (`glanceSms`): another word or value is Off, a `lock_glance` that is no object is Off, a cache without the key or
+  no policy yet is Off; only a missing `sms` in an object, or a fresh policy without `lock_glance`, is `LEGACY`. A
+  changed level reaches the rows by `GlanceStore.smsLevelChanged` (set by `SmsRuntime.listen` to `SmsHome.refresh`;
+  the store holds no Context), and the apps' notices are cleared and reswept only when `apps` changed - so the other
+  rows never blank for it. At start-up the level is Off until the cached policy is applied. Tests: `SmsContractTest`
+  (`sms_contract.json`'s `app.lock_read`, every row), `SmsGlanceTest`, `GlanceRowsTest`, `PolicyResponseCompatTest`.
+- **The text:** only at Full text (`SmsLockLevel.TEXT`), read on the engine thread only then (`SmsHome.refresh`),
+  cleaned as the glance's other texts (`cleanGlanceText`, 200 characters). At Name only the row never says more than
+  the name and the count - not "Bilde" either.
 - **When it goes:** the thread read (opening it marks the messages read: `Read` -> the summary's refresh), the
   message or the conversation deleted (`MessageDeleted`), and a swipe or "Fjern" on the lock (`SmsGlance.dismiss`:
   hidden in memory until the conversation's next message, our notification of it cancelled unless a newer message came during the drag, nothing marked read - Home's

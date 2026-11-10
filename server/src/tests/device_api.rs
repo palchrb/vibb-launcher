@@ -464,6 +464,7 @@ async fn policy_json_keys_snapshot() {
             "clock_format",
             "home_columns",
             "language",
+            "lock_buzz_on_notification",
             "lock_wake_on_notification",
             "lock_wallpaper",
             "lock_weather",
@@ -475,6 +476,11 @@ async fn policy_json_keys_snapshot() {
     // Launcher round 7 §3: always sent, off for a new phone (the launcher reads a missing key as off).
     assert_eq!(
         launcher_ui["lock_wake_on_notification"],
+        serde_json::json!(false)
+    );
+    // Design 82 W3: always sent, off for a new phone (the launcher reads a missing key as off).
+    assert_eq!(
+        launcher_ui["lock_buzz_on_notification"],
         serde_json::json!(false)
     );
     // Design 25, "Lock background": always sent, null = the lock shows Home's wallpaper.
@@ -541,11 +547,14 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(location_keys, ["interval_minutes", "mode", "zones"]);
 
     // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
-    // the sender only (per app since design 51). The launcher's `lockGlancePolicy` decodes exactly
-    // this shape (`PolicyResponseCompatTest`).
+    // the sender only (per app since design 51) - and `sms`, Meldinger's level (design 82 D3), Name only. The
+    // launcher's `lockGlancePolicy` decodes exactly this shape (`PolicyResponseCompatTest`).
     assert_eq!(
         object["lock_glance"],
-        serde_json::json!({ "apps": [{ "package": "io.element.android.x", "show_text": false }] })
+        serde_json::json!({
+            "apps": [{ "package": "io.element.android.x", "show_text": false }],
+            "sms": "name",
+        })
     );
 
     // Dagen (design 69 §4.1): always an object, a fresh phone's defaults - on Home, the kid may add events (to the

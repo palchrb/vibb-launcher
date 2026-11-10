@@ -1070,9 +1070,11 @@ pub async fn update_kiosk_block(
 /// before design 31 step 4): with an allowlist the allowed apps (the "Names and icons" set),
 /// without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN still has
 /// the lock), and always every ticked package outside that list, so any tick can be removed. Never
-/// Play core or the launcher itself.
+/// Play core or the launcher itself. Design 82 D7: while SMS is managed Meldinger's row is the group's first, with or
+/// without an allowlist.
 pub(crate) async fn lock_screen_card(
     state: &AppState,
+    lang: Lang,
     policy: &DevicePolicy,
     latest_status: Option<&DeviceStatus>,
     rows: &AppRows,
@@ -1088,27 +1090,62 @@ pub(crate) async fn lock_screen_card(
     let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
     let launcher =
         |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
-    let capable = latest_status
-        .and_then(|s| s.capabilities_json.as_deref())
-        .is_some_and(|caps| caps.contains(&format!("\"{}\"", lock_glance::LOCK_GLANCE_CAPABILITY)));
-    let notes = lock_glance::notes(
-        crate::kid_lock::policy_kid_lock(policy).is_some(),
-        latest_status.is_some(),
-        capable,
-        latest_status.and_then(|s| s.notification_listener_enabled),
-    );
-    let ticked = match lock_glance::ticked(&state.db, policy.device_id).await {
+    let claims = |capability: &str| {
+        latest_status
+            .and_then(|s| s.capabilities_json.as_deref())
+            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
+    };
+    // [messages_shown]: Meldinger's row is listed and not Off - its rows need no notification access.
+    let notes = |messages_shown: bool| {
+        lock_glance::notes(
+            crate::kid_lock::policy_kid_lock(policy).is_some(),
+            latest_status.is_some(),
+            claims(lock_glance::LOCK_GLANCE_CAPABILITY),
+            latest_status.and_then(|s| s.notification_listener_enabled),
+            messages_shown,
+        )
+    };
+    let ticked: std::collections::BTreeMap<String, bool> = match lock_glance::ticked(
+        &state.db,
+        policy.device_id,
+    )
+    .await
+    {
         Ok(ticked) => ticked.into_iter().collect(),
         Err(err) => {
             tracing::error!(device_id = policy.device_id, %err, "couldn't read the lock screen's apps");
             return LockScreenCard {
-                notes,
+                notes: notes(false),
                 apps: Vec::new(),
                 unreadable: true,
                 empty_text,
             };
         }
     };
+    // Design 82 W1: the parent's name for Meldinger, else the page's word (a failed read is the word).
+    let messages_name = match crate::app_display::device_label(
+        &state.db,
+        policy.device_id,
+        crate::builtin::MESSAGES,
+    )
+    .await
+    {
+        Ok(name) => name,
+        Err(err) => {
+            tracing::error!(device_id = policy.device_id, %err, "couldn't read Meldinger's name");
+            None
+        }
+    };
+    let messages = (policy.sms_mode == "managed").then(|| {
+        lock_glance::messages_row(
+            messages_name
+                .unwrap_or_else(|| crate::i18n::t(lang, "device.sms.messages").to_string()),
+            ticked.get(crate::builtin::MESSAGES).copied(),
+            latest_status.is_some(),
+            claims(lock_glance::MESSAGES_APP_CAPABILITY),
+        )
+    });
+    let notes = notes(messages.as_ref().is_some_and(|row| row.on));
     let apps = if policy.allowlist_json.is_some() {
         let listed = apps
             .iter()
@@ -1124,12 +1161,31 @@ pub(crate) async fn lock_screen_card(
         listed.sort_by_key(|(_, label)| label.to_lowercase());
         lock_glance::card_apps(listed, &ticked, None)
     };
+    let apps = messages.into_iter().chain(apps).collect();
     LockScreenCard {
         notes,
         apps,
         unreadable: false,
         empty_text,
     }
+}
+
+/// Whether Device › Apps lists Meldinger's row with nothing stored for it (design 82 D10, W2 - the rule of
+/// `device_pages`' Apps page): SMS is managed, or the phone reports threads to read. A failed read counts as not
+/// listed: the save then lands on the group, which is always there.
+async fn messages_row_listed(db: &sqlx::SqlitePool, device_id: i64) -> bool {
+    let managed =
+        sqlx::query_scalar::<_, String>("SELECT sms_mode FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|mode| mode == "managed");
+    managed
+        || crate::sms::reported_history(db, device_id)
+            .await
+            .unwrap_or(false)
 }
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
@@ -1140,7 +1196,8 @@ pub(crate) async fn lock_screen_card(
 /// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
 /// field focused (the form posts to `…#app-<package>`, so the answer lands on the app's row, not
-/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`); nudges.
+/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`; `#allowed` for Meldinger when the
+/// save left its row unlisted, [messages_row_listed]); nudges.
 pub async fn save_app_display(
     State(state): State<AppState>,
     lang: crate::i18n::Lang,
@@ -1153,7 +1210,12 @@ pub async fn save_app_display(
         .get("from")
         .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     let package = field("package_name").trim().to_string();
-    if !crate::app_display::valid_package_name(&package) || crate::play::is_play_core(&package) {
+    // Design 82 D1, D9: no installed app has a name under the reserved prefix - the one known key is Meldinger's.
+    let builtin = package == crate::builtin::MESSAGES;
+    if !crate::app_display::valid_package_name(&package)
+        || crate::play::is_play_core(&package)
+        || (crate::builtin::is_reserved(&package) && !builtin)
+    {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app_name");
     }
     let exists: Option<i64> = match sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
@@ -1208,6 +1270,13 @@ pub async fn save_app_display(
     let reset = matches!(action, "reset" | "catalog");
     let values = if reset || action == "own" {
         DisplayValues::empty()
+    } else if builtin && field("icon").trim() == crate::app_display::OWN {
+        // Design 82 D9: a part of Vibb One has no app logo to show.
+        return refuse(FieldError {
+            field: "icon",
+            key: "apps.display.error.icon_builtin",
+        })
+        .await;
     } else {
         match crate::app_display::validate(field("label"), field("icon"), field("color")) {
             Ok(values) => values,
@@ -1281,11 +1350,16 @@ pub async fn save_app_display(
     match result {
         Ok(_) => {
             let _ = state.command_notify.send(id);
+            // Design 82's code QA S1: Meldinger's row is listed only while there is a reason for it. A save that
+            // took the last one away (Reset, or On Home back on with nothing else chosen) lands on the group, which
+            // is always on the page - never on an anchor that is gone, which would be the top of the page.
+            let fragment = if builtin && !keep_row && !messages_row_listed(&state.db, id).await {
+                "allowed".to_string()
+            } else {
+                format!("app-{package}")
+            };
             Redirect::to(&crate::handlers::device_pages::apps_url(
-                id,
-                "",
-                from,
-                &format!("app-{package}"),
+                id, "", from, &fragment,
             ))
             .into_response()
         }
@@ -1450,7 +1524,8 @@ async fn perms_target(
         .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     // No row has a name outside the grammar (the launcher's `isValidPackageName`, stricter than the status intake's),
     // so there is no row to return to (no page sends one).
-    if !crate::app_display::valid_package_name(&package) {
+    // Design 82 D1: a reserved name is Vibb One's own, never an installed app with permissions.
+    if !crate::app_display::valid_package_name(&package) || crate::builtin::is_reserved(&package) {
         return Err(Box::new(crate::i18n::error(
             lang,
             StatusCode::BAD_REQUEST,
@@ -2280,7 +2355,10 @@ pub async fn toggle_app(
     if crate::play::is_play_core(&package_name) {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.play_core");
     }
-    if package_name.is_empty() && tracked_app_id.is_none() {
+    // Design 82 D1: a reserved name (Vibb One's built-ins) is never allowed or removed.
+    if (package_name.is_empty() && tracked_app_id.is_none())
+        || crate::builtin::is_reserved(&package_name)
+    {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
     }
     let failed = |err: sqlx::Error| {

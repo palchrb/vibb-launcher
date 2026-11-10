@@ -59,6 +59,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 80 D13: the policy's `call_policy.sms_groups` ("Gruppemeldinger") and `sms_state.own_learned` (the own
     // number learned from a message, §4.4). Until a phone claims it the server draws the switch disabled.
     com.kidslauncher.mdm.sms.SMS_GROUPS_CAPABILITY,
+    // Design 82: Meldinger's lock level (`lock_glance.sms`), its `app_display` entry and `sms_state.has_history`.
+    // Until a phone claims it the server's rows say "after Vibb One is updated".
+    com.kidslauncher.mdm.sms.MESSAGES_APP_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

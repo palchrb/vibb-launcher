@@ -162,6 +162,8 @@ object SmsNotifier {
      * Launcher round 7 §3: an accepted message's alerting post that brings its row onto the lock is a notice that came -
      * the parent's switch and the lock's gate decide the rest (as the missed-call notice's). Only that it came, nothing
      * of it. The swipe mark is read and spent on the main thread, where the glance keeps it ([SmsGlance.comeBack]).
+     * Design 82 D4: with Meldinger's level Off there is no row to gain, so no wake - the notification itself is as
+     * before.
      */
     private fun wakeIfAlerts(
         context: Context,
@@ -178,7 +180,8 @@ object SmsNotifier {
         val passesFilter = passesFilter(context)
         main.post {
             val mark = SmsGlance.comeBack(conversationId, seq)
-            val gainsRow = smsGainsRow(unreadAfter, mark, seq)
+            val level = smsLockLevel(com.kidslauncher.mdm.badges.GlanceStore.policy.sms, com.kidslauncher.mdm.calls.CallPolicyStore.state)
+            val gainsRow = smsGainsRow(level, unreadAfter, mark, seq)
             if (smsPostAlerts(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, gainsRow = gainsRow)) {
                 com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
             }

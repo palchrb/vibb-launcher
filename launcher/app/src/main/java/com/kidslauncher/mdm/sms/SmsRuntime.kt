@@ -190,6 +190,8 @@ object SmsRuntime {
             }
             SmsHome.refresh(app)
         }
+        // Design 82 D5: Meldinger's level on the lock changed - its rows are read again (the store holds no Context).
+        com.kidslauncher.mdm.badges.GlanceStore.smsLevelChanged = { SmsHome.refresh(app) }
         // Every event moves Home's badges (a message in, a read mark, a delete) - read on the engine thread. Collected
         // off it (code QA of step 2, L1): a collector on the emitting thread can't drain while that thread runs a burst.
         val opened = engine ?: return
@@ -471,6 +473,9 @@ object SmsRuntime {
             ownNumbers = ownNumbers(app, (state as? CallPolicyState.Managed)?.rules?.defaultCc ?: "47"),
             holdFull = SmsHoldFull(counts?.numbersFull == true, counts?.namesFull == true),
             ownLearned = awaitResult(app) { it.mms.ownLearned() }?.let { SmsOwnLearned(it.number, it.from, it.at, it.conflict) },
+            // Design 82 W2: the engine's own answer (the summary's read; the summary itself is empty until Home's first
+            // refresh in a new process), the summary when the engine doesn't answer.
+            hasHistory = awaitResult(app) { it.conversations().isNotEmpty() } ?: SmsHome.summary.hasHistory,
         )
     }
 

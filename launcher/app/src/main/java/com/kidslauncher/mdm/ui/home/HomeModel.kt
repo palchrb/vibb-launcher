@@ -26,9 +26,10 @@ sealed interface GridTile {
     data object PhoneBook : GridTile
 
     /** Meldinger (design 77 §6.7): next to the phone book, while SMS is "Styrt av Vibb" with the role ours or there is
-     * history to read ([com.kidslauncher.mdm.ui.messages.messagesTileShown]). [badge]: the unread total. No
-     * long-press menu. */
-    data class Messages(val badge: Int) : GridTile
+     * history to read ([com.kidslauncher.mdm.ui.messages.messagesTileShown]), unless the parent keeps it off Home
+     * (design 82 W2). [badge]: the unread total; [look]: its glyph, tile colour and name as the parent chose them
+     * (design 82 D9 - carried here so a changed look rebinds the tile, [tileChange]). No long-press menu. */
+    data class Messages(val badge: Int, val look: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook()) : GridTile
 
     /** Dagen (design 69 §2.2): the kid's day, right after the phone book - when the parent keeps it on Home and a
      * calendar is shown ([com.kidslauncher.mdm.calendar.CalendarStore.tileShown]). No badge, no long-press menu. */
@@ -55,7 +56,7 @@ fun showPhoneBookTile(state: CallPolicyState): Boolean = state !is CallPolicySta
 
 /**
  * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), Meldinger ([messages]: its
- * unread total, `null` = no tile), Dagen ([showDay]), then
+ * unread total, `null` = no tile; [messagesLook] its look), Dagen ([showDay]), then
  * [apps] by label (case-insensitive, stable), each with its unread count from [badges]
  * (0 = no badge), then the flashlight ([torch]; `null` = no flash unit, no tile) and the Settings tile.
  */
@@ -66,10 +67,11 @@ fun homeGrid(
     torch: com.kidslauncher.mdm.torch.TorchState? = null,
     showDay: Boolean = false,
     messages: Int? = null,
+    messagesLook: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook(),
 ): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
-    if (messages != null) tiles += GridTile.Messages(messages)
+    if (messages != null) tiles += GridTile.Messages(messages, messagesLook)
     if (showDay) tiles += GridTile.Day
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)

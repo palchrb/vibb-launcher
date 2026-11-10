@@ -214,12 +214,18 @@ D13), `migration` (D2's table: the old three switches to
 `calls_mode`/`sms_mode` - the server's migration 0130 and the launcher reading an older server), `modes` (each mode pair
 and the derived old keys an older launcher reads, failing closed), `policy` (a seeded `call_policy` with the SMS keys:
 the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`, design 80's
-`sms_groups`; `groups_off` the switch off), `report` (the exact `sms_state` with design 80's `own_learned`, and
-`own_learned_conflict`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
+`sms_groups`; `groups_off` the switch off), `report` (the exact `sms_state` with design 80's `own_learned` and design
+82's `has_history`, and `own_learned_conflict`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
 sender cleaned by its class before it leaves the phone), `intake` (the server's sender check), `names` and
-`name_matches` (D17's letter rule and fold). The server's `sms::tests` produce the policy, post the report and the held
-body and run every row; the launcher's `SmsContractTest` decodes and encodes them exactly and runs the rows; both
-compare the copies. The receive and send rules (D4/D5) stay the launcher's alone, in
+`name_matches` (D17's letter rule and fold), and `app` (design 82, Meldinger as an app: its `key`
+`me.vibb.builtin.messages`; `lock`, the server's stored choice and `sms_mode` to `lock_glance.sms` and the derived
+`call_policy.sms_lock_text`; `lock_read`, the launcher's reading of a `lock_glance` - fresh or cached, with the old
+switch - to the word and the level shown; `capability`, `messages_app_v1`, which the launcher claims; `display`, the
+key's `launcher_ui.app_display` entry - a name, a glyph on a colour, off Home). The server's `sms::tests` produce the
+policy, post the report and the held body and run every row (`the_app_lock_rows` the `app` rows and the capability;
+`tests::app_display::meldinger_has_a_row_and_a_name_and_icon_of_its_own` saves and sends exactly `display`); the
+launcher's `SmsContractTest` decodes and encodes them exactly and runs the rows (`display` read as Meldinger's look);
+both compare the copies. The receive and send rules (D4/D5) stay the launcher's alone, in
 `launcher/app/src/test/resources/sms_rules.json` (`SmsRulesTest`). The policy's new `call_policy` keys are pinned by
 `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 

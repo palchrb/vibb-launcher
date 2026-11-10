@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.badges
 
+import com.kidslauncher.mdm.appdisplay.isBuiltinName
 import com.kidslauncher.mdm.appdisplay.isValidPackageName
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.MessagePackages
@@ -23,10 +24,11 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The parent's choice (`PolicyResponse.lock_glance`): the packages whose messages show on the lock
- * ([apps]'s keys), each with whether its text shows too (design 51; per app since then). Missed
- * calls always show; they aren't in it.
+ * ([apps]'s keys), each with whether its text shows too (design 51; per app since then), and
+ * Meldinger's level ([sms], design 82 D4 - Off unless the policy says otherwise). Missed calls always
+ * show; they aren't in it.
  */
-data class GlancePolicy(val apps: Map<String, Boolean>) {
+data class GlancePolicy(val apps: Map<String, Boolean>, val sms: GlanceSms = GlanceSms.OFF) {
     /** This ticked app's message text shows, not only who it's from. */
     fun showsText(packageName: String): Boolean = apps[packageName] == true
 
@@ -36,8 +38,9 @@ data class GlancePolicy(val apps: Map<String, Boolean>) {
          * something. */
         val UNKNOWN = GlancePolicy(emptyMap())
 
-        /** What an older server without the key means (its own default for every phone). */
-        val SERVER_DEFAULT = GlancePolicy(mapOf(MessagePackages.ELEMENT_X to false))
+        /** What an older server without the key means (its own default for every phone; Meldinger by
+         * its old switch). */
+        val SERVER_DEFAULT = GlancePolicy(mapOf(MessagePackages.ELEMENT_X to false), GlanceSms.LEGACY)
     }
 }
 
@@ -45,21 +48,43 @@ data class GlancePolicy(val apps: Map<String, Boolean>) {
  * `PolicyResponse.lockGlance` read field by field: nothing in it can fail the policy (design 25
  * §2.1, like `app_display` and `music`).
  * - an object: `apps` = its usable entries ([glanceApp]; anything else in the list is dropped, so
- *   is a non-list); a top-level `show_text` (before design 51) is ignored - sender only;
+ *   is a non-list); a top-level `show_text` (before design 51) is ignored - sender only; `sms` by
+ *   [glanceSms];
  * - missing or JSON `null`: from a fresh response ([fresh]) an older server - its own default,
- *   Element X with the sender only; from the cache it is a cache an older build wrote (it never
- *   kept the key), so unknown (QA Low 11);
+ *   Element X with the sender only, Meldinger by its old switch; from the cache it is a cache an
+ *   older build wrote (it never kept the key), so unknown (QA Low 11);
  * - anything else: unknown.
  */
 fun lockGlancePolicy(element: JsonElement?, fresh: Boolean): GlancePolicy = when (element) {
     null, JsonNull -> if (fresh) GlancePolicy.SERVER_DEFAULT else GlancePolicy.UNKNOWN
-    is JsonObject -> GlancePolicy((element["apps"] as? JsonArray).orEmpty().mapNotNull(::glanceApp).toMap())
+    is JsonObject -> GlancePolicy((element["apps"] as? JsonArray).orEmpty().mapNotNull(::glanceApp).toMap(), glanceSms(element["sms"]))
     else -> GlancePolicy.UNKNOWN
+}
+
+/**
+ * Meldinger's level on the lock as the policy says it (`lock_glance.sms`, design 82 D4): the server's word, or
+ * [LEGACY] from a server without the key - then the old switch decides (`call_policy.sms_lock_text`,
+ * `smsLockLevel`). The policy's word is never widened: anything unreadable is [OFF].
+ */
+enum class GlanceSms(val wire: String?) {
+    OFF("off"),
+    NAME("name"),
+    TEXT("text"),
+    LEGACY(null),
+}
+
+/** `lock_glance.sms` of an object: one of the three words is that level; a missing key is an older server
+ * ([GlanceSms.LEGACY]); any other value - another word, a JSON `null`, a number - is Off. */
+private fun glanceSms(value: JsonElement?): GlanceSms {
+    if (value == null) return GlanceSms.LEGACY
+    val word = (value as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return GlanceSms.OFF
+    return GlanceSms.entries.firstOrNull { it.wire == word } ?: GlanceSms.OFF
 }
 
 /** One entry of `lock_glance.apps`: a string is that package, sender only (the shape before design
  * 51, from an older server); an object is its `package` with its own `show_text` (true only for
- * JSON `true`); anything else, or a package name that isn't one, is dropped. */
+ * JSON `true`); anything else, a package name that isn't one, or a name under Vibb One's reserved
+ * prefix (design 82 D1: never an installed app) is dropped. */
 private fun glanceApp(entry: JsonElement): Pair<String, Boolean>? {
     val (packageName, showText) = when (entry) {
         is JsonObject -> (entry["package"] as? JsonPrimitive)?.takeIf { it.isString }?.content to
@@ -67,7 +92,7 @@ private fun glanceApp(entry: JsonElement): Pair<String, Boolean>? {
         is JsonPrimitive -> entry.takeIf { it.isString }?.content to false
         else -> null to false
     }
-    return packageName?.takeIf(::isValidPackageName)?.let { it to showText }
+    return packageName?.takeIf { isValidPackageName(it) && !isBuiltinName(it) }?.let { it to showText }
 }
 
 /** The store's policy and whether a fresh one came in this process. */
@@ -452,10 +477,11 @@ data class GlanceMissedRow(
  * Design 77 §6.8 (step 5): one of our own SMS conversations with unread messages - read from the message engine, never
  * from a notification (GlanceReader skips ours). Only what the engine accepted: held and blocked messages have no
  * conversation, so they never make a row. [count] is the conversation's unread; [timeMs] and [upToSeq] are its newest
- * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only while the parent's
- * `call_policy.sms_lock_text` is on (cleaned, [GLANCE_TEXT_MAX]); [picture] the newest is a picture without text (shown
- * as "Bilde" only with the text on); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
- * the callback window (D4 rule 2).
+ * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only at the parent's level
+ * Full text for Meldinger (`lock_glance.sms`, design 82 - `smsLockLevel`; cleaned, [GLANCE_TEXT_MAX]); [picture] the
+ * newest is a picture without text (shown as "Bilde", and set only at Full text too); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
+ * the callback window (D4 rule 2). [look] is Meldinger's glyph, tile colour and name as the parent chose them (design 82
+ * D9, set in `SmsHome.refresh`): the row's badge and fallback icon draw it, and a changed look is a changed row.
  */
 data class GlanceSmsRow(
     val conversation: com.kidslauncher.mdm.sms.engine.Conversation,
@@ -466,6 +492,7 @@ data class GlanceSmsRow(
     val picture: Boolean = false,
     val sender: String? = null,
     val unknownSender: Boolean = false,
+    val look: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook(),
 ) : GlanceRow {
     val conversationId: String get() = conversation.id.value
 

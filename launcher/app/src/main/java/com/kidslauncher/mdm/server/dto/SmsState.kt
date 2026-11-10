@@ -27,6 +27,9 @@ data class SmsState(
     val holdFull: SmsHoldFull,
     /** Design 80 §4.4 (capability `sms_groups_v1`): the own number learned from a message, `null` for none. */
     val ownLearned: SmsOwnLearned?,
+    /** Design 82 W2 (capability `messages_app_v1`): there are conversations to read - Home's tile shows even while SMS
+     * is not managed, so the server lists Meldinger's row for the parent's "On Home". */
+    val hasHistory: Boolean,
 )
 
 /** Design 80 §4.4: [number] in use (`null` during a conflict), its teacher [from], when ([at], epoch ms), and

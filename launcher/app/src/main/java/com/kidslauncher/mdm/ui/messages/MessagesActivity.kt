@@ -103,12 +103,7 @@ class MessagesActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setTaskDescription(
-            ActivityManager.TaskDescription.Builder()
-                .setLabel(getString(R.string.messages_title))
-                .setIcon(R.mipmap.ic_launcher)
-                .build(),
-        )
+        labelTask()
         binding = ActivityMessagesBinding.inflate(layoutInflater)
         setContentView(binding.root)
         KidInsets.apply(binding.root)
@@ -173,7 +168,25 @@ class MessagesActivity : UIObjectActivity() {
      * ([mayStartNew]: judged on a contact that isn't an emergency number - code QA N3). */
     private fun mayStart(): Boolean = mayStartNew(SmsRuntime.judge(this), MessagesScreens.rules())
 
+    /** The task's label as it was last set ([labelTask]). */
+    private var taskLabel: String? = null
+
+    /** The task's label (Recents) is Meldinger's name (design 82 W1) - set again at every render, so a name the parent
+     * changes while the screen is open reaches it as it reaches the header (code QA L4); only when it changed. */
+    private fun labelTask() {
+        val name = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesName(this)
+        if (name == taskLabel) return
+        taskLabel = name
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setLabel(name)
+                .setIcon(R.mipmap.ic_launcher)
+                .build(),
+        )
+    }
+
     private fun render() {
+        labelTask()
         val readOnly = historyReadOnlyNow()
         val canStart = !readOnly && mayStart()
         if (picking && !canStart) setPicking(false)
@@ -188,6 +201,8 @@ class MessagesActivity : UIObjectActivity() {
         KidHeader.bind(this, binding.messagesHeader, R.string.messages_title, action = R.string.messages_new.takeIf { canStart }, back = R.string.kid_back) {
             setPicking(true)
         }
+        // Design 82 W1: under the parent's name for Meldinger, where there is one.
+        binding.messagesHeader.kidHeaderTitle.text = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesName(this)
         info(
             when {
                 readOnly -> getString(R.string.messages_read_only)

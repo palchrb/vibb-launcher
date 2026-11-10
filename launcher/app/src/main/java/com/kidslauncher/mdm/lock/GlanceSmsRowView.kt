@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.lock
 
 import android.app.Activity
 import android.content.res.ColorStateList
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.widget.ImageView
 import com.kidslauncher.mdm.R
@@ -17,11 +18,12 @@ import com.kidslauncher.mdm.ui.messages.whoOfAddress
 /**
  * How an SMS conversation's row looks on the lock glance (design 77 §6.8, step 5) - calm, as the missed-call row (design
  * 25): the name as the message screens say it (the contact's name now, a sender name, the number, a group's members),
- * "Ny melding" / "3 nye meldinger" under it, the time of the newest unread message; with the parent's text switch on
- * (`call_policy.sms_lock_text`) the newest text in the subtitle's place ("Bilde" for a picture alone, "Pappa: ..." in a
+ * "Ny melding" / "3 nye meldinger" under it, the time of the newest unread message; at the parent's level Full text
+ * for Meldinger (`lock_glance.sms`, design 82 - `smsLockLevel`) the newest text in the subtitle's place ("Bilde" for a picture alone, "Pappa: ..." in a
  * group, "Ukjent avsender: ..." for one the callback window let in) and the count after the name ("· 3 nye"). The
  * contact's Home avatar with a small teal message badge in the corner (the missed call's red phone badge's place);
- * without a contact the chat glyph on Home's Meldinger teal. One TalkBack text ("3 nye meldinger fra Mamma, ..., 14:05").
+ * without a contact the chat glyph on Home's Meldinger teal - both in the parent's glyph and colour where chosen (design
+ * 82 D9, the row's [GlanceSmsRow.look]). One TalkBack text ("3 nye meldinger fra Mamma, ..., 14:05").
  */
 internal object GlanceSmsRowView {
     /** Binds [row] into the reused [view] (every part it shows is set, the others hidden) and returns the TalkBack text;
@@ -51,14 +53,14 @@ internal object GlanceSmsRowView {
         val contact = contactOf(row.conversation, rules)
         if (contact != null) {
             KidAvatars.bindContact(icon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f, thumb = true)
-            badge(activity, view)
+            badge(activity, view, row)
         } else {
             view.glanceRowInitial.visibility = View.GONE
             view.glanceRowBadge.visibility = View.GONE
             icon.scaleType = ImageView.ScaleType.CENTER
-            icon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_messages_tile))
+            icon.backgroundTintList = ColorStateList.valueOf(row.look.tileColor(activity))
             icon.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_ink))
-            icon.setImageResource(R.drawable.app_glyph_chat)
+            icon.setImageResource(row.look.glyph)
         }
         val from = if (row.count == 1) {
             activity.getString(R.string.glance_sms_from, name)
@@ -77,15 +79,17 @@ internal object GlanceSmsRowView {
         return if (row.unknownSender) activity.getString(R.string.sms_unknown_sender_line, group) else group
     }
 
-    /** The corner's message badge on a contact's avatar - the layout's own badge view, put in this look on a reused view. */
-    private fun badge(activity: Activity, view: ViewLockGlanceRowBinding) {
+    /** The corner's message badge on a contact's avatar - the layout's own badge view, put in this look on a reused view.
+     * The drawable's fill takes Meldinger's colour (design 82 D9); its ring in the row's colour stays. */
+    private fun badge(activity: Activity, view: ViewLockGlanceRowBinding, row: GlanceSmsRow) {
         val badge = view.glanceRowBadge
         val pad = KidAvatars.dp(activity, 4f)
         badge.setBackgroundResource(R.drawable.bg_glance_sms_badge)
+        (badge.background?.mutate() as? GradientDrawable)?.setColor(row.look.tileColor(activity))
         badge.setPadding(pad, pad, pad, pad)
         badge.scaleType = ImageView.ScaleType.FIT_CENTER
         badge.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_ink))
-        badge.setImageResource(R.drawable.app_glyph_chat)
+        badge.setImageResource(row.look.glyph)
         badge.visibility = View.VISIBLE
     }
 }

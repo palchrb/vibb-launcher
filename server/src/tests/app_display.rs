@@ -539,6 +539,250 @@ async fn on_home_off_keeps_an_app_off_home() {
     assert_eq!(app_display(&app, &token).await, serde_json::json!([]));
 }
 
+/// Design 82 D9, D10, W1, W2: Meldinger, a part of Vibb One, has a row on Device › Apps - under Vibb One's, without
+/// a switch - while SMS is managed, while the phone reports threads to read, or while something is chosen for it.
+/// Its Name and icon has no "App logo" and previews Automatic as the chat glyph on teal; the save lands on its row
+/// and reaches the phone as `sms_contract.json`'s `app.display`; `own` and every other reserved name are refused.
+#[tokio::test]
+async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
+    use crate::builtin::MESSAGES;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../testdata/sms_contract.json")).unwrap();
+    let cell = || async {
+        let page = app
+            .get_page(&device_page(id, Section::Apps), &cookie)
+            .await
+            .text();
+        let at = page.find(&format!(r#"id="app-{MESSAGES}""#))?;
+        let cell = &page[at..];
+        Some(cell[..cell.find("</form>").expect("the form's end")].to_string())
+    };
+    // SMS not managed, nothing chosen, nothing reported: no row.
+    assert_eq!(cell().await, None);
+
+    // The phone has threads to read: the row, saying where SMS stands, and an older Vibb One's note.
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true, "sms_state": { "has_history": true },
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    let html = cell().await.expect("the row");
+    assert!(
+        html.contains(
+            r#"row-label">Messages<span class="row-sub">Part of Vibb One · SMS is not managed by Vibb<"#
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains("Shows on the phone after Vibb One is updated"),
+        "{html}"
+    );
+    assert!(
+        html.contains(r##"data-auto-glyph="chat" data-auto-tile="#347470""##),
+        "{html}"
+    );
+    assert!(
+        html.contains(r##"style="background: #347470" aria-hidden="true"><img src="/static/app-icons/chat.svg""##),
+        "{html}"
+    );
+    // No switch, no "App logo", no permissions; its own words for "On Home".
+    for absent in [
+        "apps/toggle",
+        r#"value="own""#,
+        "apps/permissions",
+        "the app stays allowed",
+    ] {
+        assert!(!html.contains(absent), "{absent}: {html}");
+    }
+    assert!(
+        html.contains("<p>Off: Messages still receives and notifies"),
+        "{html}"
+    );
+
+    // SMS managed, and a Vibb One that knows the key: the plain row.
+    sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": [contract["app"]["capability"]],
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    let html = cell().await.expect("the row");
+    assert!(
+        html.contains(r#"row-label">Messages<span class="row-sub">Part of Vibb One<"#),
+        "{html}"
+    );
+    assert!(!html.contains("after Vibb One is updated"), "{html}");
+
+    // The contract's entry: a name, a glyph on a colour, off Home.
+    let display = &contract["app"]["display"];
+    let field = |key: &str| display[key].as_str().unwrap();
+    let saved = save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("package_name", MESSAGES),
+            ("label", field("label")),
+            ("icon", field("icon")),
+            ("color", field("color")),
+            ("on_home_shown", "1"),
+        ],
+    )
+    .await;
+    assert_redirect(
+        &saved,
+        &device_page(id, Section::Apps),
+        Some(&format!("app-{MESSAGES}")),
+    );
+    assert_eq!(
+        app_display(&app, &token).await,
+        serde_json::json!([display])
+    );
+    let html = cell().await.expect("the row");
+    assert!(
+        html.contains(r#"row-label">Tekst<span class="row-sub">Messages · Part of Vibb One<"#),
+        "{html}"
+    );
+    assert!(html.contains("· not on Home"), "{html}");
+    // W1: the lock screen's row has the name too.
+    let lock = app
+        .get_page(&device_page(id, Section::Lock), &cookie)
+        .await
+        .text();
+    let row = &lock[lock
+        .find(&format!(r#"id="lock-screen-app-{MESSAGES}""#))
+        .unwrap()..];
+    assert!(row[..row.find("</form>").unwrap()].contains("Tekst"));
+
+    // A colour only with a glyph, as for every app; a chosen glyph without a colour keeps the teal.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("package_name", MESSAGES),
+            ("label", "Tekst"),
+            ("color", "plum"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        app_display(&app, &token).await,
+        serde_json::json!([{"package_name": MESSAGES, "label": "Tekst", "icon": null, "color": "auto"}])
+    );
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("icon", "mail")],
+    )
+    .await;
+    let html = cell().await.expect("the row");
+    assert!(
+        html.contains(r##"style="background: #347470" aria-hidden="true"><img src="/static/app-icons/mail.svg""##),
+        "{html}"
+    );
+
+    // No app logo for a part of Vibb One: refused at the field, the row kept.
+    let own = save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("icon", "own")],
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::BAD_REQUEST);
+    let page = own.text();
+    assert!(
+        page.contains(&format!(
+            r#"<details class="app-display" id="display-{MESSAGES}" open>"#
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains("Pick one of the icons or Automatic."),
+        "{page}"
+    );
+    assert_eq!(app_display(&app, &token).await[0]["icon"], "mail");
+    // Reset: back to its own look; the row stays while SMS is managed.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("action", "reset")],
+    )
+    .await;
+    assert_eq!(app_display(&app, &token).await, serde_json::json!([]));
+    assert!(cell().await.is_some());
+    // Code QA S2: SMS not managed again. The last report says nothing of SMS (as one before the first unlock), so
+    // the newest that does is read - the phone still has its threads, and the row.
+    sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(cell().await.is_some());
+    // Code QA S1: a name is all that lists the row once the phone reports no threads; Reset takes the row off the
+    // page, so the save lands on the group - never on an anchor that is gone.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("label", "Tekst")],
+    )
+    .await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true, "sms_state": { "has_history": false },
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    assert!(cell().await.is_some());
+    let reset = save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("action", "reset")],
+    )
+    .await;
+    assert_redirect(&reset, &device_page(id, Section::Apps), Some("allowed"));
+    app.assert_lands(&reset, &cookie).await;
+    assert_eq!(cell().await, None);
+    // Every other name under the prefix is nobody's.
+    let other = save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", "me.vibb.builtin.other"), ("label", "X")],
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::BAD_REQUEST);
+}
+
 /// Refused input: 400, nothing written, Device › Apps with that app's form open, the entered
 /// values kept and the field with the problem focused (no jump to the top).
 #[tokio::test]

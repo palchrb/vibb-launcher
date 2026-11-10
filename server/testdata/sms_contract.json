@@ -61,7 +61,8 @@
       "last_error": null,
       "own_numbers": [{"slot": 1, "number": "+4790000001"}, {"slot": 2, "number": null}],
       "hold_full": {"numbers": false, "names": true},
-      "own_learned": {"number": "+4790000002", "from": "+4791234567", "at": 1762700000000, "conflict": []}
+      "own_learned": {"number": "+4790000002", "from": "+4791234567", "at": 1762700000000, "conflict": []},
+      "has_history": true
     },
     "own_learned_conflict": {"number": null, "from": "+4791234567", "at": 1762700400000, "conflict": ["+4790000002", "+4790000003"]}
   },
@@ -136,5 +137,34 @@
     {"listed": "ΣΩ", "sender": "σω", "match": true},
     {"listed": "Posten", "sender": "P​osten", "match": true},
     {"listed": "Posten", "sender": "Poste", "match": false}
-  ]
+  ],
+  "app": {
+    "key": "me.vibb.builtin.messages",
+    "capability": "messages_app_v1",
+    "display": {"package_name": "me.vibb.builtin.messages", "label": "Tekst", "icon": "mail", "color": "plum", "on_home": false},
+    "lock": [
+      {"stored": null, "sms_mode": "managed", "sms": "off", "sms_lock_text": false},
+      {"stored": false, "sms_mode": "managed", "sms": "name", "sms_lock_text": false},
+      {"stored": true, "sms_mode": "managed", "sms": "text", "sms_lock_text": true},
+      {"stored": null, "sms_mode": "unmanaged", "sms": "off", "sms_lock_text": false},
+      {"stored": false, "sms_mode": "unmanaged", "sms": "name", "sms_lock_text": false},
+      {"stored": true, "sms_mode": "unmanaged", "sms": "name", "sms_lock_text": false},
+      {"stored": true, "sms_mode": "off", "sms": "name", "sms_lock_text": false}
+    ],
+    "lock_read": [
+      {"lock_glance": {"apps": [], "sms": "off"}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": [], "sms": "name"}, "fresh": true, "sms_lock_text": true, "sms": "name", "level": "name"},
+      {"lock_glance": {"apps": [], "sms": "text"}, "fresh": true, "sms_lock_text": false, "sms": "text", "level": "text"},
+      {"lock_glance": {"apps": [], "sms": "text"}, "fresh": false, "sms_lock_text": null, "sms": "text", "level": "text"},
+      {"lock_glance": {"apps": [], "sms": "full"}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": [], "sms": true}, "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
+      {"lock_glance": ["text"], "fresh": true, "sms_lock_text": true, "sms": "off", "level": "off"},
+      {"lock_glance": {"apps": []}, "fresh": true, "sms_lock_text": true, "sms": "legacy", "level": "text"},
+      {"lock_glance": {"apps": []}, "fresh": true, "sms_lock_text": false, "sms": "legacy", "level": "name"},
+      {"lock_glance": {"apps": []}, "fresh": false, "sms_lock_text": null, "sms": "legacy", "level": "name"},
+      {"fresh": true, "sms_lock_text": true, "sms": "legacy", "level": "text"},
+      {"fresh": true, "sms_lock_text": null, "sms": "legacy", "level": "name"},
+      {"fresh": false, "sms_lock_text": true, "sms": "off", "level": "off"}
+    ]
+  }
 }

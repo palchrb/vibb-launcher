@@ -537,11 +537,16 @@
                         <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                     </form>
                 </div>
+                {#- Design 82 D8: Meldinger's lock level is set where every app's is - Lock Screen & PINs'
+                    Notifications. The link shows only while SMS is managed, when that row is listed. -#}
+                {% if let Some(level) = sms.lock_level %}
+                <a class="row" href="/devices/{{ device.id }}/lock#lock-screen-app-{{ crate::builtin::MESSAGES }}" data-row="sms-lock-level">
+                    <span class="row-label">{{ self.t("device.sms.settings.on_lock") }}</span>
+                    <span class="row-value">{{ self.t(level) }}</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </a>
+                {% endif %}
                 <form method="post" action="/devices/{{ device.id }}/calls/sms#sms-settings">
-                    <label class="row">
-                        <span class="row-label">{{ self.t("device.sms.settings.lock_text") }}</span>
-                        <input type="checkbox" role="switch" class="sw" name="sms_lock_text" value="on"{% if sms.lock_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-                    </label>
                     {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has the switch (an older page
                         leaves the stored value); disabled until the phone claims `sms_groups_v1`, and then without the
                         marker, so a page drawn before the capability never turns groups off (code QA M1). -#}

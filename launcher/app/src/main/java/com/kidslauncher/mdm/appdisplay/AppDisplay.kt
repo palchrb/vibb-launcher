@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.appdisplay
 
 import android.content.Context
 import android.util.Log
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.cachedPolicy
 import kotlinx.serialization.json.JsonArray
@@ -48,6 +49,42 @@ fun isValidPackageName(name: String): Boolean =
                 seg.all { (it.isLetterOrDigit() && it.code < 128) || it == '_' }
         }
     }
+
+/** Design 82 D1: every name under this prefix is Vibb One's own, never an installed app's (the server's
+ * `builtin::RESERVED_PREFIX`). */
+const val BUILTIN_PREFIX = "me.vibb.builtin."
+
+/** Meldinger's key (design 82 D1; `sms_contract.json`'s `app.key`, the server's `builtin::MESSAGES`). */
+const val BUILTIN_MESSAGES = "me.vibb.builtin.messages"
+
+/** A name under the reserved prefix: no installed app is read under it. */
+fun isBuiltinName(name: String): Boolean = name.startsWith(BUILTIN_PREFIX)
+
+/** The parent's choice for the installed app [packageName]: never a reserved name's entry (design 82 D1) - a package
+ * made to carry Meldinger's key is not dressed as it, nor kept off Home by its switch. */
+fun appEntry(map: Map<String, AppDisplayEntry>, packageName: String?): AppDisplayEntry? =
+    packageName?.takeIf { !isBuiltinName(it) }?.let { map[it] }
+
+/** The parent's choice for a part of Vibb One (design 82 D9): [key]'s entry, only for a reserved name. */
+fun builtinEntry(map: Map<String, AppDisplayEntry>, key: String): AppDisplayEntry? = map[key]?.takeIf { isBuiltinName(key) }
+
+/**
+ * How Meldinger shows (design 82 D9, W1) on Home's tile, the time-rule screen's row and the lock's SMS rows: [glyph]
+ * a white glyph drawable, [tile] the tile's colour (ARGB; `null` = its own teal, `R.color.kid_messages_tile`), [name]
+ * the parent's name (`null` = `R.string.messages_title`). The defaults are its own look.
+ */
+data class MessagesLook(val glyph: Int = R.drawable.app_glyph_chat, val tile: Int? = null, val name: String? = null) {
+    fun tileColor(context: Context): Int = tile ?: context.getColor(R.color.kid_messages_tile)
+
+    fun shownName(context: Context): String = name ?: context.getString(R.string.messages_title)
+}
+
+/** Meldinger's look from its entry: the chosen glyph, else the chat glyph; the colour **only with a chosen glyph**, as
+ * for every app (a glyph with [AUTO_COLOR] keeps the teal); the app's-own-logo key is no glyph of ours. */
+fun messagesLook(entry: AppDisplayEntry?): MessagesLook {
+    val glyph = entry?.icon?.let { AppGlyphs.ICONS[it] } ?: return MessagesLook(name = entry?.label)
+    return MessagesLook(glyph, AppGlyphs.COLORS[entry.color]?.tile, entry.label)
+}
 
 /** A usable label: trimmed, 1-20 characters (code points), no control characters; else `null`. */
 fun cleanDisplayLabel(raw: String?): String? {
@@ -129,7 +166,16 @@ object AppDisplay {
     var map: Map<String, AppDisplayEntry> = emptyMap()
         private set
 
-    fun entry(packageName: String?): AppDisplayEntry? = packageName?.let { map[it] }
+    fun entry(packageName: String?): AppDisplayEntry? = appEntry(map, packageName)
+
+    /** A part of Vibb One's entry (design 82 D9): the one read of a reserved name. */
+    fun builtin(key: String): AppDisplayEntry? = builtinEntry(map, key)
+
+    /** Meldinger's glyph, tile colour and name as the parent chose them ([messagesLook]). */
+    fun messagesLook(): MessagesLook = messagesLook(builtin(BUILTIN_MESSAGES))
+
+    /** Meldinger's name (design 82 W1): the parent's, else the launcher's word. */
+    fun messagesName(context: Context): String = messagesLook().shownName(context)
 
     fun label(packageName: String?): String? = entry(packageName)?.label
 
@@ -157,7 +203,9 @@ object AppDisplay {
     }
 
     /** Reads the cached policy (`Ok` only - a corrupt or missing cache shows the apps' own names);
-     * with [reload] a change reloads the app list. Returns true when the map changed. */
+     * with [reload] a change reloads the app list. A changed entry of Meldinger's refreshes the message summary, so
+     * the lock's SMS rows carry the new look and Home's tile follows the switch (design 82 D9, W2). Returns true when
+     * the map changed. */
     fun refresh(context: Context, reload: Boolean = true): Boolean {
         val next = try {
             (cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.appDisplay
@@ -167,8 +215,10 @@ object AppDisplay {
             return false
         }
         if (next == map) return false
+        val messagesChanged = builtinEntry(next, BUILTIN_MESSAGES) != builtinEntry(map, BUILTIN_MESSAGES)
         map = next
         if (reload) (context.applicationContext as? com.kidslauncher.mdm.Application)?.reloadApps()
+        if (messagesChanged) com.kidslauncher.mdm.sms.SmsHome.refresh(context)
         return true
     }
 }

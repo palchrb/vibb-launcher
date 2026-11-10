@@ -1184,7 +1184,7 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         ),
         (
             format!("/devices/{id}/calls/sms#sms-settings"),
-            vec![("sms_lock_text", "on"), ("own_number_1", "")],
+            vec![("own_number_1", "")],
             Some((adv.as_str(), Some("sms-settings"))),
         ),
         (

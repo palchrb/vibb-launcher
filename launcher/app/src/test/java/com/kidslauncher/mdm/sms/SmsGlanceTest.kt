@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.sms
 
 import com.kidslauncher.mdm.badges.GlanceMissedRow
+import com.kidslauncher.mdm.badges.GlanceSms
 import com.kidslauncher.mdm.badges.glanceWithSms
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
@@ -26,6 +27,7 @@ import com.kidslauncher.mdm.sms.engine.SmsJudge
 import com.kidslauncher.mdm.sms.engine.SmsRadio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,9 +60,32 @@ class SmsGlanceTest {
         return engine.receiveSms(IncomingSms(kind, from, body, sentAt = now - 1000 + ++smsc, subId = 1, receivedAt = now))
     }
 
-    /** What SmsHome's refresh builds on the engine thread. */
-    private fun rows(showText: Boolean) = engine.conversations().filter { it.unread > 0 }
-        .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText) }
+    /** What SmsHome's refresh builds on the engine thread ([smsGlanceRows]). */
+    private fun rows(showText: Boolean) =
+        smsGlanceRows(if (showText) SmsLockLevel.TEXT else SmsLockLevel.NAME, engine.conversations()) { engine.messages(it.id, null, SMS_GLANCE_LOOKBACK) }
+
+    /** Design 82 D4 (code QA L2): the parent's level decides the rows and the wake. Off: no row - nothing is even
+     * read - and no row gained; Name only: the name and the count, never the text or "Bilde", whatever came. */
+    @Test
+    fun `the level - no row and no gained row at Off, no text and no picture at Name only`() {
+        val cases = listOf(
+            conversation("+4791234567") to message(3, "Hei"),
+            conversation("+4791234567") to message(4, body = null, parts = listOf(part)),
+            conversation("+4790000001", "+4790000002") to message(5, "Kommer", sender = "+4790000002"),
+        )
+        for ((thread, newest) in cases) {
+            assertTrue(smsGlanceRows(SmsLockLevel.OFF, listOf(thread)) { throw AssertionError("read at Off") }.isEmpty())
+            val row = smsGlanceRows(SmsLockLevel.NAME, listOf(thread)) { listOf(newest) }.single()
+            assertEquals(1, row.count)
+            assertEquals(newest.seq, row.upToSeq)
+            assertNull(row.text)
+            assertFalse(row.picture)
+        }
+        assertEquals("Hei", smsGlanceRows(SmsLockLevel.TEXT, listOf(cases[0].first)) { listOf(cases[0].second) }.single().text)
+        assertFalse(smsGainsRow(SmsLockLevel.OFF, unreadAfter = 1, hiddenMark = null, messageSeq = 10))
+        assertFalse(smsGainsRow(SmsLockLevel.OFF, unreadAfter = 3, hiddenMark = 11, messageSeq = 12))
+        assertTrue(smsGainsRow(SmsLockLevel.NAME, unreadAfter = 1, hiddenMark = null, messageSeq = 10))
+    }
 
     @Test
     fun `only accepted messages make a row - a stranger's and a sender name's held messages never do`() {
@@ -85,11 +110,16 @@ class SmsGlanceTest {
         val on = rows(showText = true).single()
         assertEquals("the newest, cleaned", "Kommer du? snart", on.text)
         assertEquals(off.upToSeq, on.upToSeq)
-        // The switch itself: only managed rules that say so.
-        assertTrue(smsLockText(CallPolicyState.Managed(rules.copy(smsLockText = true))))
-        assertFalse(smsLockText(CallPolicyState.Managed(rules)))
-        assertFalse(smsLockText(CallPolicyState.Unmanaged))
-        assertFalse(smsLockText(CallPolicyState.UnknownFailClosed))
+        // The level (design 82 D4): the policy's word as it is, whatever the rules say; without one (an older server)
+        // the old switch - the text only with managed rules that say so, otherwise the name.
+        val withText = CallPolicyState.Managed(rules.copy(smsLockText = true))
+        assertEquals(SmsLockLevel.OFF, smsLockLevel(GlanceSms.OFF, withText))
+        assertEquals(SmsLockLevel.NAME, smsLockLevel(GlanceSms.NAME, withText))
+        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.TEXT, CallPolicyState.UnknownFailClosed))
+        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.LEGACY, withText))
+        for (state in listOf(CallPolicyState.Managed(rules), CallPolicyState.Unmanaged, CallPolicyState.UnknownFailClosed)) {
+            assertEquals(state.toString(), SmsLockLevel.NAME, smsLockLevel(GlanceSms.LEGACY, state))
+        }
         assertFalse("the redacted row", on.toString().contains("Kommer") || on.toString().contains("4791234567"))
     }
 
@@ -187,6 +217,8 @@ class SmsGlanceTest {
         assertEquals(7, row.upToSeq)
         assertEquals("Hei", row.text)
         assertNull(smsGlanceRow(conversation("+4791234567", unread = 0), listOf(message(7, "Hei")), true))
+        // Design 82 D9: the row carries Meldinger's look - a changed one is a changed row, so the lock renders.
+        assertNotEquals(row, row.copy(look = com.kidslauncher.mdm.appdisplay.MessagesLook(name = "Tekst")))
     }
 
     // ---- the notice wake (launcher round 7 §3) ----
@@ -216,10 +248,11 @@ class SmsGlanceTest {
 
     @Test
     fun `a row is gained by the first unread message, or the first after a swipe`() {
-        assertTrue("the conversation's only unread", smsGainsRow(unreadAfter = 1, hiddenMark = null, messageSeq = 10))
-        assertFalse("its second", smsGainsRow(unreadAfter = 2, hiddenMark = null, messageSeq = 11))
-        assertTrue("the first after the row was swiped away", smsGainsRow(unreadAfter = 3, hiddenMark = 11, messageSeq = 12))
-        assertFalse("a mark not older than it", smsGainsRow(unreadAfter = 3, hiddenMark = 12, messageSeq = 12))
+        val level = SmsLockLevel.TEXT
+        assertTrue("the conversation's only unread", smsGainsRow(level, unreadAfter = 1, hiddenMark = null, messageSeq = 10))
+        assertFalse("its second", smsGainsRow(level, unreadAfter = 2, hiddenMark = null, messageSeq = 11))
+        assertTrue("the first after the row was swiped away", smsGainsRow(level, unreadAfter = 3, hiddenMark = 11, messageSeq = 12))
+        assertFalse("a mark not older than it", smsGainsRow(level, unreadAfter = 3, hiddenMark = 12, messageSeq = 12))
         // The engine's count: the first message from Mamma gains the row, the second doesn't.
         receive("+4791234567", "Hei")
         assertEquals(1, engine.conversations().single().unread)

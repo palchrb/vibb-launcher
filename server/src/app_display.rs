@@ -31,6 +31,37 @@ pub const AUTO_PREVIEW: &str = "#606B80";
 /// text at 4.5:1 (qa-14-code #4). Also in `static/app-display.js`.
 pub const OWN_PREVIEW: &str = "#5C6370";
 
+/// Design 82 D9: what a part of Vibb One shows when nothing is chosen - its own glyph on its own tile, where an
+/// app shows its tone. "Automatic" previews as it, and a chosen glyph with the colour [AUTO] keeps the tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltinLook {
+    /// A key of [ICONS].
+    pub glyph: &'static str,
+    pub tile: &'static str,
+}
+
+/// Meldinger's: the chat glyph on the launcher's `kid_messages_tile`.
+pub const MESSAGES_LOOK: BuiltinLook = BuiltinLook {
+    glyph: "chat",
+    tile: "#347470",
+};
+
+impl BuiltinLook {
+    /// The tile the phone draws for `values`: a chosen glyph on its colour, else the built-in's own. A colour
+    /// applies only with a chosen glyph, as for every app.
+    pub fn shown(&self, values: Option<&DisplayValues>) -> (&'static str, &'static str) {
+        let glyph = values
+            .and_then(|v| v.icon.as_deref())
+            .and_then(|icon| ICONS.iter().find(|(key, _)| *key == icon))
+            .map(|(key, _)| *key);
+        match (glyph, values) {
+            (Some(glyph), Some(v)) if color_known(&v.color) => (glyph, tile_of(&v.color)),
+            (Some(glyph), _) => (glyph, self.tile),
+            _ => (self.glyph, self.tile),
+        }
+    }
+}
+
 /// One entry of `launcher_ui.app_display` - every key always present. `label` `null` = the app's
 /// own name; `icon` `null` = Vibb style (the white glyph on the app's tone), [OWN] = the app's own
 /// logo, else a key of [ICONS]; `color` is [AUTO] or a key of [COLORS] (always [AUTO] for `null`
@@ -286,6 +317,22 @@ pub async fn device_rows(
         .collect())
 }
 
+/// This phone's own name for `package`, if the parent gave it one (design 82 W1: Meldinger's name on the pages).
+pub async fn device_label(
+    db: &SqlitePool,
+    device_id: i64,
+    package: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let label: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT label FROM device_app_display WHERE device_id = ? AND package_name = ?",
+    )
+    .bind(device_id)
+    .bind(package)
+    .fetch_optional(db)
+    .await?;
+    Ok(sanitized(label.flatten(), None, AUTO.to_string()).label)
+}
+
 /// The packages this phone keeps off Home (design 69 §4.4, `device_app_display.on_home = 0`).
 pub async fn off_home(
     db: &SqlitePool,
@@ -392,6 +439,11 @@ pub struct AppDisplayForm {
     pub on_home: Option<bool>,
     /// The switch's label and its ⓘ text in the page's language (`i18n`), set with [Self::on_home].
     pub on_home_words: Option<(&'static str, &'static str)>,
+    /// Design 82 D9: the form of a part of Vibb One ([Self::builtin]) - no "App logo", and "Automatic" is its own
+    /// look. `None` for an app.
+    pub builtin: Option<BuiltinLook>,
+    /// A line over the fields, in the page's language (design 82 D10: an older Vibb One doesn't show the choice yet).
+    pub note: Option<&'static str>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -480,7 +532,31 @@ impl AppDisplayForm {
             from: None,
             on_home: None,
             on_home_words: None,
+            builtin: None,
+            note: None,
         }
+    }
+
+    /// The form of a part of Vibb One (design 82 D9): the preview is its own look until a glyph is chosen, and a
+    /// chosen glyph with the colour [AUTO] keeps its tile.
+    pub fn builtin(mut self, look: BuiltinLook) -> Self {
+        self.preview_tile = match self.glyph() {
+            Some(_) if color_known(&self.color) => tile_of(&self.color),
+            _ => look.tile,
+        }
+        .to_string();
+        self.builtin = Some(look);
+        self
+    }
+
+    /// What the colour [AUTO] previews as behind a chosen glyph.
+    pub fn auto_tile(&self) -> &'static str {
+        self.builtin.map_or(AUTO_PREVIEW, |look| look.tile)
+    }
+
+    /// The glyph the preview draws: the chosen one, else a built-in's own.
+    pub fn preview_glyph(&self) -> Option<&str> {
+        self.glyph().or(self.builtin.map(|look| look.glyph))
     }
 
     /// The text field's preview text: the entered name, else the app's own.
@@ -648,6 +724,30 @@ mod tests {
         assert!(script.contains(OWN_PREVIEW) && script.contains(AUTO_PREVIEW));
         // The state's words come from the page (`data-w-own`, `data-w-vibb`).
         assert!(script.contains("\"own\"") && script.contains("\"vibb\""));
+    }
+
+    /// Design 82 D9: a part of Vibb One keeps its own glyph and tile until a glyph is chosen; a colour applies only
+    /// with a chosen glyph, and a chosen glyph without one keeps the tile. There is no app logo to show.
+    #[test]
+    fn a_builtin_keeps_its_look_until_a_glyph_is_chosen() {
+        let values = |icon: Option<&str>, color: &str| DisplayValues {
+            label: None,
+            icon: icon.map(str::to_string),
+            color: color.to_string(),
+        };
+        let own = (MESSAGES_LOOK.glyph, MESSAGES_LOOK.tile);
+        assert!(icon_known(own.0));
+        assert_eq!(MESSAGES_LOOK.shown(None), own);
+        assert_eq!(MESSAGES_LOOK.shown(Some(&values(None, "plum"))), own);
+        assert_eq!(MESSAGES_LOOK.shown(Some(&values(Some(OWN), AUTO))), own);
+        assert_eq!(
+            MESSAGES_LOOK.shown(Some(&values(Some("mail"), AUTO))),
+            ("mail", own.1)
+        );
+        assert_eq!(
+            MESSAGES_LOOK.shown(Some(&values(Some("mail"), "plum"))),
+            ("mail", tile_of("plum"))
+        );
     }
 
     #[test]

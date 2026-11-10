@@ -173,7 +173,7 @@
     </section>
 
     {#- The pickers and switches save on change (autosave.js) and return to their group or row
-        (#screen, #lock-wallpaper, #lock-wake, #lock-screen-app-<package>): without JS the
+        (#screen, #lock-wallpaper, #lock-wake, #lock-buzz, #lock-screen-app-<package>): without JS the
         answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4);
         <noscript> Save without JS. -#}
     <section id="screen" aria-labelledby="screen-title">
@@ -217,6 +217,13 @@
                 <label class="row">
                     <span class="row-label">{{ self.t("device.lock.wake") }}<span class="row-sub">{{ self.t("device.lock.wake_sub") }}</span></span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_wake %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/lock-buzz#lock-buzz" class="cell" id="lock-buzz">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.lock.buzz") }}<span class="row-sub">{{ self.t("device.lock.buzz_sub") }}</span>{% if lock_buzz_needs_update %}<span class="row-sub tone-orange" data-hint>{{ self.t("device.lock.buzz_needs_update") }}</span>{% endif %}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_buzz %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
@@ -290,7 +297,7 @@
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
-                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}</span>
+                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}{% if let Some(hint) = app.hint %}<span class="row-sub tone-orange" data-hint>{{ self.t(hint) }}</span>{% endif %}</span>
                     <select class="pick" name="show" data-autosave>
                         <option value="off"{% if !app.on %} selected{% endif %}>{{ self.t("common.off") }}</option>
                         <option value="name"{% if app.on && !app.show_text %} selected{% endif %}>{{ self.t("device.lock.name_only") }}</option>

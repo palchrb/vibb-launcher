@@ -247,6 +247,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `lock_glance::each_move_of_the_select_is_stored_as_the_lock_shows_it` (every transition, the policy, the log),
   `refused_saves_write_nothing` (the values), `the_page_lists_the_allowed_apps_with_their_ticks` (the select, its
   label, the footer), `device_pages::lock_forms_return_to_the_page`, `lock_auto_saves_have_a_save_without_js`.
+  **Since design 82 the same select is Meldinger's too** (the launcher's built-in SMS app, key
+  `me.vibb.builtin.messages`): the group's first row while SMS is managed, saved by the same handler to its own
+  anchor, and Calls & Contacts' old switch is one link row to it (`docs/notes/server/hardening-and-pins.md`,
+  "Meldinger's row"). The row is labelled with the parent's name for Meldinger when one is set (W1).
 - **Wake the screen for a notification** (launcher round 7 §3, `docs/design/r7-launcher-small-items.md`): its own
   cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps on the lock below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
@@ -255,11 +259,23 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's footer says that what
   the lock shows is seen by anyone near the phone (its ⓘ went in the ⓘ cut, 2026-10-24). Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
+- **Buzz for a notification** (design 82 W3, `docs/design/82-meldinger-as-an-app.md` §9 and §14): the cell `#lock-buzz`
+  right under the wake's - a switch (sub-line "One short buzz, no sound, for the apps on the lock below and missed
+  calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-buzz` (`lock_glance::save_buzz`:
+  `device_policy.lock_buzz_on_notification`, migration 0136, off by default; 404 for an unknown phone), back to
+  `#lock-buzz`, the phone nudged, a `lock_buzz_changed` security-log line when the value changed
+  (`lock_glance::buzz_log_line`); sent as `launcher_ui.lock_buzz_on_notification`, always. One switch for everything
+  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. A phone that has
+  reported and whose last report lacks `messages_app_v1` (the buzz ships in that launcher release) shows the orange
+  line "This phone does not buzz yet - update Vibb One" under the switch (`lock_buzz_needs_update`); never before
+  the first report. Tests:
+  `lock_glance::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy`, the redirect table in `device_pages`,
+  `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
   `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
   `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
   itself, posted to its own row `/lock#show-pin` (the fragment never reaches the server), `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
-  → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`,
+  → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-buzz`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`, `#lock-buzz`,
   `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off
   and (design 59) "Phone's PIN isn't the Child PIN" → `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Android's lock in the Child PIN group** (design 59 step 2; `docs/notes/server/hardening-and-pins.md`, "Android's
@@ -349,7 +365,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Element X · Installed", when the shown one differs - `own_label`, as the Apps tab's Katalog does) and a switch, its
   own form; an allowed app with a package has its `app_display_form` in a `<details>` under the row ("Name and icon:
   …"; its name field's placeholder stays the app's own; "On Home"'s explanation behind an ⓘ left of its switch,
-  `.on-home`). The footer's ⓘ holds the keyboard and
+  `.on-home`). Directly under Vibb One's row sits **Meldinger's** (design 82 D10: "Messages", "Part of Vibb One", no
+  switch - only its Name and icon, saved to `#app-me.vibb.builtin.messages` like every row's;
+  `docs/notes/server/launcher-ui.md`, "Meldinger, a part of Vibb One"). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
   `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`

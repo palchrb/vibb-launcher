@@ -1097,7 +1097,7 @@ class GlancePanel(
         captured = message?.takeIf { taken }?.let { GlanceStore.contentIntent(it.notificationKey) }
         promptLabel = message?.takeIf { taken }?.let { glancePromptLabel(label(it.packageName)) }
             ?: activity.getString(R.string.day_title).takeIf { taken && row is GlanceCalendarRow }
-            ?: activity.getString(R.string.messages_title).takeIf { taken && row is GlanceSmsRow }
+            ?: (row as? GlanceSmsRow)?.takeIf { taken }?.look?.shownName(activity)
         step(GlanceStageEvent.Row(target.takeIf { taken }))
         // 2026-11-09: the row read afresh while the keypad is up - an event removed since leaves it; the day still opens.
         if (row is GlanceCalendarRow) calendar.refresh()
@@ -1338,7 +1338,7 @@ class GlancePanel(
                     is GlanceMissedRow -> bindMissed(view, row)
                     is GlanceCalendarRow -> bindCalendar(view, row)
                     is GlanceSmsRow -> describe(
-                        view, GlanceSmsRowView.bind(activity, view, row, timeText(row.timeMs)), activity.getString(R.string.glance_sms_action), row,
+                        view, GlanceSmsRowView.bind(activity, view, row, timeText(row.timeMs)), activity.getString(R.string.glance_sms_action, row.look.shownName(activity)), row,
                     )
                 }
                 view.root.setOnClickListener { tap(row) }

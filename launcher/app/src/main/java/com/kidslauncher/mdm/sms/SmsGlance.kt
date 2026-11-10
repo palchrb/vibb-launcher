@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.sms
 
 import android.content.Context
 import com.kidslauncher.mdm.badges.GLANCE_TEXT_MAX
+import com.kidslauncher.mdm.badges.GlanceSms
 import com.kidslauncher.mdm.badges.GlanceSmsRow
 import com.kidslauncher.mdm.badges.cleanGlanceText
 import com.kidslauncher.mdm.calls.CallPolicyState
@@ -19,14 +20,27 @@ import com.kidslauncher.mdm.sms.engine.Notifiable
 /** How many of a conversation's newest messages are looked through for its newest unread incoming one. */
 const val SMS_GLANCE_LOOKBACK = 20
 
-/** The parent's switch for the text on the lock (`call_policy.sms_lock_text`, default off): only managed rules that
- * say so - unknown or unmanaged rules show no text. */
-fun smsLockText(state: CallPolicyState): Boolean = (state as? CallPolicyState.Managed)?.rules?.smsLockText == true
+/** What Meldinger shows on the lock: nothing, the name and how many, or the newest text too. */
+enum class SmsLockLevel { OFF, NAME, TEXT }
+
+/**
+ * Meldinger's level on the lock (design 82 D4), for the glance rows and the wake alike. The policy's word
+ * (`lock_glance.sms`) is the level, whatever the call rules say - the server owns the rule. [GlanceSms.LEGACY], a
+ * server without the word, is the rule before design 82: the text only with managed rules whose `sms_lock_text` says
+ * so, otherwise the name - unknown or unmanaged rules show no text.
+ */
+fun smsLockLevel(sms: GlanceSms, state: CallPolicyState): SmsLockLevel = when (sms) {
+    GlanceSms.OFF -> SmsLockLevel.OFF
+    GlanceSms.NAME -> SmsLockLevel.NAME
+    GlanceSms.TEXT -> SmsLockLevel.TEXT
+    GlanceSms.LEGACY -> if ((state as? CallPolicyState.Managed)?.rules?.smsLockText == true) SmsLockLevel.TEXT else SmsLockLevel.NAME
+}
 
 /**
  * [conversation]'s row, or `null` without unread messages. [newestFirst] is its newest messages (the engine's backfill
  * order); the row's time and mark are its newest unread incoming message's. The text is read only when [showText] -
- * the parent's switch - is on; with it off the row is the name and the count alone, and never says "picture" either.
+ * the parent's level is Full text ([SmsLockLevel.TEXT]); otherwise the row is the name and the count alone, and never
+ * says "picture" either. At Off no row is asked for at all ([smsGlanceRows]).
  * The engine's conversations hold only accepted messages (a held or blocked one has none), so nothing here can show
  * a stranger's held message.
  */
@@ -45,6 +59,21 @@ fun smsGlanceRow(conversation: Conversation, newestFirst: List<Message>, showTex
         unknownSender = newest?.unknownSender == true,
     )
 }
+
+/**
+ * The lock's Meldinger rows at the parent's [level] (design 82 D4), newest first - what `SmsHome.refresh` builds on
+ * the engine thread: none at [SmsLockLevel.OFF], and then nothing is read ([messages], a conversation's newest
+ * messages, is never asked); the name and the count alone at [SmsLockLevel.NAME]; the newest text at
+ * [SmsLockLevel.TEXT] ([smsGlanceRow]).
+ */
+fun smsGlanceRows(level: SmsLockLevel, conversations: List<Conversation>, messages: (Conversation) -> List<Message>): List<GlanceSmsRow> =
+    if (level == SmsLockLevel.OFF) {
+        emptyList()
+    } else {
+        conversations.filter { it.unread > 0 }
+            .mapNotNull { smsGlanceRow(it, messages(it), showText = level == SmsLockLevel.TEXT) }
+            .sortedByDescending { it.timeMs }
+    }
 
 /**
  * The channel of a conversation notification's post: silent under a time rule without calls ([silent], as before), and
@@ -96,9 +125,10 @@ fun smsPostAlerts(
         gainsRow
 
 /** Whether a message ([messageSeq]) brings its conversation's row onto the lock: it is the conversation's only unread
- * message ([unreadAfter] counts it), or the row was swiped away before it ([hiddenMark], the swipe's `upToSeq`). */
-fun smsGainsRow(unreadAfter: Int, hiddenMark: Long?, messageSeq: Long): Boolean =
-    unreadAfter == 1 || (hiddenMark != null && messageSeq > hiddenMark)
+ * message ([unreadAfter] counts it), or the row was swiped away before it ([hiddenMark], the swipe's `upToSeq`) -
+ * and never at the parent's [level] Off, where Meldinger has no row to gain (design 82 D4). */
+fun smsGainsRow(level: SmsLockLevel, unreadAfter: Int, hiddenMark: Long?, messageSeq: Long): Boolean =
+    level != SmsLockLevel.OFF && (unreadAfter == 1 || (hiddenMark != null && messageSeq > hiddenMark))
 
 /** The rows the kid hasn't swiped away: [hidden] holds, per conversation id, the newest unread message's `seq` at the
  * swipe - a newer message brings the row back. */

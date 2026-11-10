@@ -53,6 +53,26 @@ class AppDisplayTest {
         assertTrue(onHomeListable(null, windowOpen = false))
     }
 
+    /** Design 82 D1, D9: a name under the reserved prefix is no installed app's - `entry` answers null for it and
+     * only the built-in read finds it; Meldinger's look is its own until a glyph is chosen, takes a colour only with
+     * one, and never the app's-own-logo key. */
+    @Test
+    fun `a reserved name is read only as a built-in, and Meldinger's colour needs a glyph`() {
+        val map = map(
+            """[{"package_name":"$BUILTIN_MESSAGES","label":"Tekst","icon":null,"color":"plum"},
+                {"package_name":"$element","label":"Chat","icon":null,"color":"auto"}]""",
+        )
+        assertNull(appEntry(map, BUILTIN_MESSAGES))
+        assertEquals(AppDisplayEntry("Chat", null), appEntry(map, element))
+        assertNull(builtinEntry(map, element))
+        assertEquals(MessagesLook(name = "Tekst"), messagesLook(builtinEntry(map, BUILTIN_MESSAGES)))
+        assertEquals(MessagesLook(), messagesLook(null))
+        val mail = AppGlyphs.ICONS["mail"]!!
+        assertEquals(MessagesLook(mail), messagesLook(AppDisplayEntry(null, "mail")))
+        assertEquals(MessagesLook(mail, AppGlyphs.COLORS["plum"]!!.tile), messagesLook(AppDisplayEntry(null, "mail", "plum")))
+        assertEquals(MessagesLook(), messagesLook(AppDisplayEntry(null, OWN_ICON)))
+    }
+
     /** Design 34 P1 (QA H1): "the app's own logo" is kept with and without a label, always auto. */
     @Test
     fun `the app's own logo is kept with and without a label`() {

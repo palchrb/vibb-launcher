@@ -7,6 +7,7 @@ mod app_permissions;
 mod attention;
 mod audit;
 mod boot_witness;
+mod builtin;
 mod caldav;
 mod calendar;
 mod calendar_feeds;
@@ -1434,6 +1435,11 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lock-wake",
             post(handlers::lock_glance::save_wake),
+        )
+        // Design 82 W3: "Buzz for a notification".
+        .route(
+            "/devices/{id}/lock-buzz",
+            post(handlers::lock_glance::save_buzz),
         )
         .route(
             "/apps/tracked/{id}/display",

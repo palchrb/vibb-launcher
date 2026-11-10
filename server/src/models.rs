@@ -131,8 +131,6 @@ pub struct DevicePolicy {
     /// rollback; nothing reads them.
     pub calls_mode: String,
     pub sms_mode: String,
-    /// §6.8: the message text on the lock glance's row (default off), sent as `call_policy.sms_lock_text`.
-    pub sms_lock_text: bool,
     /// Design 80 D13 (migrations/0134_sms_groups.sql): group texts allowed at all, `call_policy.sms_groups`.
     pub sms_groups: bool,
     /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
@@ -187,6 +185,9 @@ pub struct DevicePolicy {
     /// "Wake the screen for a notification" (launcher round 7 §3, migrations/0084, default off),
     /// sent as `launcher_ui.lock_wake_on_notification`.
     pub lock_wake_on_notification: bool,
+    /// "Buzz for a notification" (design 82 W3, migrations/0136, default off), sent as
+    /// `launcher_ui.lock_buzz_on_notification`.
+    pub lock_buzz_on_notification: bool,
     /// Device › Weather's "Weather on the lock screen" (design 75, migrations/0122, default off), sent as
     /// `launcher_ui.lock_weather`.
     pub lock_weather: bool,
@@ -303,6 +304,9 @@ pub struct LauncherUi {
     /// page or a missed call turns the screen on, on the lock. Always sent; a launcher without the
     /// key reads it as off.
     pub lock_wake_on_notification: bool,
+    /// "Buzz for a notification" (design 82 W3): the same notices make the locked phone vibrate once, without a
+    /// sound. Always sent; a launcher without the key reads it as off.
+    pub lock_buzz_on_notification: bool,
     /// "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by the date and asks
     /// `GET /api/devices/weather`. Always sent; a launcher without the key reads it as off.
     pub lock_weather: bool,
@@ -1275,8 +1279,9 @@ pub struct PolicyResponse {
     pub music: Option<crate::music::MusicPolicy>,
     /// The lock's glance page (design 25), always sent: `{apps: [{package, show_text}]}` - the apps
     /// whose message notifications the PIN lock's first page shows (missed calls always show), each
-    /// with whether its text shows too (design 51). A failing query sends `apps: []` (fewer rows, never a 500). An older
-    /// launcher ignores it; an older server's missing key means Element X, sender only.
+    /// with whether its text shows too (design 51) - and `sms`, Meldinger's level `off`/`name`/`text` (design 82 D3).
+    /// A failing query sends `apps: []` and `sms: "off"` (fewer rows, never a 500). An older launcher ignores it; an
+    /// older server's missing key means Element X, sender only.
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
     /// Dagen (design 69 §4.1), always sent: the phone-wide switches, the parent's choices per calendar and the title
     /// rules (`calendar::CalendarPolicy`). A DB error is a 500 (a missing hide rule would show what the parent hid).
@@ -1326,7 +1331,8 @@ pub struct CallPolicy {
     /// them, rejects a policy without them.
     pub calls_mode: String,
     pub sms_mode: String,
-    /// §6.8: the message text on the lock glance's row.
+    /// §6.8: the message text on the lock glance's row - since design 82 derived from `lock_glance.sms` (true only
+    /// at `text`), for a launcher from before that key.
     pub sms_lock_text: bool,
     /// D17: the sender names let through, sorted by their fold.
     pub sms_names: Vec<String>,

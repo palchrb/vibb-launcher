@@ -920,11 +920,6 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
             .await;
         assert_redirect(&res, &format!("{calls}?advanced=1"), Some("sms-names"));
     }
-    cookie_form(
-        &[("sms_lock_text", "on")],
-        format!("/devices/{id}/calls/sms"),
-    )
-    .await;
     sqlx::query("UPDATE device_policy SET roles_changed_at = datetime('now', '-15 days') WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
@@ -936,11 +931,11 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
         "{html}"
     );
     assert!(html.contains("data-adv-line=\"emergency-rules\">1 number follows the call rules<"));
-    assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · 2 sender names · Message text on the lock screen<"));
+    assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · 2 sender names<"));
     assert!(!part(&html, "id=\"settings\"", "</section>").contains("chat features in Messages if"));
     assert!(html.contains("data-rcs-row"));
     let nb = page(&app, &cookie, &format!("{calls}?lang=nb")).await;
-    assert!(nb.contains("Meldingsknapp: SMS · 2 avsendernavn · Meldingstekst på låseskjermen"));
+    assert!(nb.contains("Meldingsknapp: SMS · 2 avsendernavn<"));
     assert!(nb.contains("1 nummer følger anropsreglene"));
     // A refused Add Number draws Avansert open.
     let res = cookie_form(
@@ -1018,13 +1013,8 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
         json!(false)
     );
     // An older page (no marker) keeps it off; the switch turned on with the marker writes it.
-    app.request_form(
-        Method::POST,
-        &sms,
-        Some(&cookie),
-        &[("sms_lock_text", "on")],
-    )
-    .await;
+    app.request_form(Method::POST, &sms, Some(&cookie), &[("own_number_1", "")])
+        .await;
     assert!(!groups_on(&app, id).await);
     let at = Utc::now().timestamp_millis() - 60_000;
     app.request(
@@ -1037,7 +1027,7 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
     .await;
     let html = page(&app, &cookie, &calls).await;
     assert!(html.contains("data-blocked-reason>Group texts are turned off<"));
-    assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · Message text on the lock screen · Group texts off<"));
+    assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · Group texts off<"));
     assert!(
         !html.contains("data-number-line") && !html.contains("data-adv-line=\"number\""),
         "silent while off"
@@ -1186,13 +1176,7 @@ async fn a_page_drawn_before_the_capability_never_turns_groups_off() {
     let drawn = fields_of(&stale, &sms);
     assert!(!drawn.iter().any(|(k, _)| k == "groups_shown"), "{drawn:?}");
     report_groups(&app, &token, json!({})).await;
-    post(
-        &app,
-        &cookie,
-        &sms,
-        &with(drawn, "sms_lock_text", Some("on")),
-    )
-    .await;
+    post(&app, &cookie, &sms, &drawn).await;
     assert!(
         groups_on(&app, id).await,
         "the stale page left groups as they were"
@@ -1277,13 +1261,7 @@ async fn a_stale_sms_form_keeps_a_number_stored_meanwhile() {
         &[("source", "sim:1")],
     )
     .await;
-    post(
-        &app,
-        &cookie,
-        &sms,
-        &with(drawn.clone(), "sms_lock_text", Some("on")),
-    )
-    .await;
+    post(&app, &cookie, &sms, &drawn).await;
     assert_eq!(
         own_numbers(&app, id).await,
         [(1, "+4790000009".to_string())]

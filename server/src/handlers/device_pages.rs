@@ -990,6 +990,10 @@ struct LockTemplate {
     background_same_as_home: bool,
     /// "Wake the screen for a notification" (launcher round 7 §3, `/lock-wake`).
     lock_wake: bool,
+    /// "Buzz for a notification" (design 82 W3, `/lock-buzz`).
+    lock_buzz: bool,
+    /// The phone has reported and its Vibb One is from before the buzz: the switch's orange line (code QA S4).
+    lock_buzz_needs_update: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -1352,7 +1356,8 @@ async fn render_lock(
             Err(err) => return read_failed(lang, id, "the phone's apps", err),
         };
     let lock_screen =
-        crate::handlers::devices::lock_screen_card(state, &policy, latest.as_ref(), &rows).await;
+        crate::handlers::devices::lock_screen_card(state, lang, &policy, latest.as_ref(), &rows)
+            .await;
     // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
     let labels: std::collections::HashMap<String, String> = rows
         .apps
@@ -1408,6 +1413,12 @@ async fn render_lock(
         background_same_as_home: !backgrounds.iter().any(|w| w.lock),
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
+        lock_buzz: policy.lock_buzz_on_notification,
+        // Design 82's code QA S4: the buzz ships in the launcher release that reports `messages_app_v1` (there is no
+        // capability of its own), so a phone whose last report lacks it never buzzes - say so by the switch, as the
+        // Apps row's "older Vibb One" note: only once the phone has reported, never before.
+        lock_buzz_needs_update: latest.is_some()
+            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY),
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,
@@ -1773,6 +1784,9 @@ pub struct AppView {
     pub letter: String,
     /// Name and icon: every allowed app with a package name but Vibb (design 14).
     pub display: Option<crate::app_display::AppDisplayForm>,
+    /// Design 82 D10: a part of Vibb One (Meldinger), not an app on the phone - no switch, no permissions, only its
+    /// row and Name and icon.
+    pub builtin: bool,
     /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
     /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
@@ -2024,6 +2038,11 @@ pub(crate) async fn render_apps(
         Ok(apps) => apps,
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
+    // Design 82 W2: the phone still has threads to read, so Meldinger may be on Home while SMS is not managed.
+    let messages_history = match crate::sms::reported_history(&state.db, id).await {
+        Ok(history) => history,
+        Err(err) => return read_failed(lang, id, "the phone's message state", err),
+    };
     let paused = latest
         .as_ref()
         .is_some_and(|s| s.paused_at(Utc::now().timestamp_millis()));
@@ -2129,6 +2148,7 @@ pub(crate) async fn render_apps(
             })
             .flatten();
         let view = AppView {
+            builtin: false,
             perms,
             letter: crate::handlers::devices::initial(&row.label),
             refused: refused
@@ -2144,6 +2164,74 @@ pub(crate) async fn render_apps(
         } else {
             not_allowed.push(view);
         }
+    }
+    // Design 82 D10: Meldinger's row, directly under Vibb One's.
+    let own_row =
+        own.contains_key(crate::builtin::MESSAGES) || off_home.contains(crate::builtin::MESSAGES);
+    if policy.sms_mode == "managed" || own_row || messages_history {
+        let key = crate::builtin::MESSAGES;
+        let anchor = format!("app-{key}");
+        let current = own.get(key);
+        let (glyph, tile) = display::MESSAGES_LOOK.shown(current);
+        let name = t(lang, "device.sms.messages");
+        let mut form = AppDisplayForm::new(
+            lang,
+            format!("/devices/{id}/apps/display#{anchor}"),
+            format!("display-{key}"),
+            key.to_string(),
+            name.to_string(),
+            &current.cloned().unwrap_or_else(DisplayValues::empty),
+            entered
+                .as_ref()
+                .filter(|(entered, _)| entered == key)
+                .map(|(_, e)| e),
+        )
+        .builtin(display::MESSAGES_LOOK);
+        form.own_row = own_row;
+        form.from = from.clone();
+        let on_home = !off_home.contains(key);
+        form.on_home = Some(on_home);
+        form.on_home_words = Some((t(lang, "apps.on_home"), t(lang, "apps.builtin.on_home_sub")));
+        if !on_home {
+            form.summary = format!("{} · {}", form.summary, t(lang, "apps.not_on_home"));
+        }
+        form.note = (latest.is_some()
+            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY))
+        .then_some(t(lang, "apps.builtin.update_note"));
+        let label = current.and_then(|values| values.label.clone());
+        let part_of = t(lang, "apps.builtin.part_of_vibb");
+        let row = crate::handlers::devices::UnifiedAppRow {
+            status_label: if policy.sms_mode == "managed" {
+                part_of.to_string()
+            } else {
+                format!("{part_of} · {}", t(lang, "apps.builtin.sms_unmanaged"))
+            },
+            own_label: label.is_some().then(|| name.to_string()),
+            label: label.unwrap_or_else(|| name.to_string()),
+            package_name: key.to_string(),
+            tracked_app_id: None,
+            is_launcher: false,
+            checked: true,
+            is_installing: false,
+            install_failed: false,
+            show_no_release_hint: false,
+            access: None,
+            third_party: false,
+        };
+        let at = usize::from(allowed.first().is_some_and(|app| app.row.is_launcher));
+        allowed.insert(
+            at,
+            AppView {
+                builtin: true,
+                perms: None,
+                letter: crate::handlers::devices::initial(&row.label),
+                refused: None,
+                icon: Some((glyph.to_string(), tile)),
+                display: Some(form),
+                anchor,
+                row,
+            },
+        );
     }
     Html(
         AppsTemplate {

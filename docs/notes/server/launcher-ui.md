@@ -82,6 +82,25 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   back). Off sends `on_home: false` in the entry (the key is left out while on), and such a row is kept even with
   neither a label nor an icon; the launcher keeps the app off Home and the drawer except in a pause or the override - a
   sync app (ICSx5, DAVx5) that must stay allowed. `app_display::on_home_off_keeps_an_app_off_home`; `docs/notes/server/calendar.md`.
+- **Meldinger, a part of Vibb One** (design 82 D9, D10, W1, W2; `docs/design/82-meldinger-as-an-app.md` §14): the
+  built-in SMS app's name, icon and On Home are a `device_app_display` row under its key `me.vibb.builtin.messages`
+  (`builtin::MESSAGES`), sent in `launcher_ui.app_display` like any entry - an older launcher matches it to no
+  installed app. `save_app_display` accepts exactly that key of the reserved prefix and refuses `own` for it
+  (`apps.display.error.icon_builtin`: no app logo to show). The form is `AppDisplayForm::builtin(MESSAGES_LOOK)`: no
+  "App logo" radio, Automatic previewed as the chat glyph on `#347470` (`BuiltinLook`, the form's `data-auto-glyph` /
+  `data-auto-tile`, read by `static/app-display.js`), a chosen glyph with colour Automatic on the same teal
+  (`BuiltinLook::shown`), a colour only with a glyph as for every app, On Home with its own sub
+  (`apps.builtin.on_home_sub`), and `note` "Shows on the phone after Vibb One is updated" while the phone's last
+  report lacks `messages_app_v1`. **The row** on Device › Apps (`render_apps`, `AppView.builtin`,
+  `partials/device_app_row.html`'s own branch): directly under Vibb One's, no switch, no permissions, "Part of Vibb
+  One" - listed while `sms_mode` is `managed`, while a row is stored for the key, or while `sms_state.has_history`
+  is true in the newest report that carries an `sms_state` (`sms::reported_history`; W2: the tile may linger on Home
+  for old threads; a report from before the first unlock says nothing and is skipped), and
+  outside managed the sub adds "SMS is not managed by Vibb". A save that leaves the row unlisted (Reset with SMS not
+  managed and no threads) returns to `#allowed`, not to the row's anchor (`devices::messages_row_listed`). The parent's name shows there and on the Lock Screen
+  row (`app_display::device_label`). Tests: `app_display::tests::a_builtin_keeps_its_look_until_a_glyph_is_chosen`,
+  `tests/app_display.rs` `meldinger_has_a_row_and_a_name_and_icon_of_its_own` (saves and sends
+  `sms_contract.json`'s `app.display`).
 
 ## Per-app permissions (design 68, `docs/design/68-app-permissions.md`, migration `0102_app_permissions.sql`)
 

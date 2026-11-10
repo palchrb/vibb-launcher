@@ -90,6 +90,20 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `scripts/material-symbols.sh` (root) from `server/testdata/app_icons.json` - the test copy in
   `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks that every tile is one of the six
   tones). The Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
+- **Meldinger's entry** (design 82 D1, D9, W1, W2; `docs/design/82-meldinger-as-an-app.md` §14): the built-in SMS
+  app's name, icon and On Home ride the same list under the reserved key `me.vibb.builtin.messages`
+  (`BUILTIN_MESSAGES`; the prefix `BUILTIN_PREFIX`). A reserved name is no installed app's: `AppDisplay.entry`
+  (`appEntry`) answers null for it and only `AppDisplay.builtin(key)` (`builtinEntry`) reads it. `messagesLook(entry)`
+  -> `MessagesLook(glyph, tile, name)`: the parent's glyph (`AppGlyphs.ICONS`), else the chat glyph; the colour's tile
+  **only with a chosen glyph**, else `kid_messages_tile` (`tileColor`); the name, else `messages_title`
+  (`shownName`, `AppDisplay.messagesName`); `own` is no glyph, so it is Meldinger's own look. It feeds the Home tile
+  (`GridTile.Messages.look`, so `tileChange` is a full rebind for a new icon or name), the time-rule screen's row
+  (read at each bind) and the lock's rows (`GlanceSmsRow.look`, set in `SmsHome.refresh`); `AppDisplay.refresh`
+  calls `SmsHome.refresh` when the key's entry changed, so the lock renders. On Home off (`on_home: false`):
+  `SmsHome.tileShown()` is `onHomeListable(entry, windowOpen) && messagesTileShown(...)` - no tile and no time-rule
+  row outside a pause or the offline override; messages still arrive and notify, and a thread opens from the
+  notification, the lock's row and the phone book. Tests: `AppDisplayTest`, `SmsContractTest` (`sms_contract.json`'s
+  `app.display`), `HomeModelTest`, `SmsGlanceTest`, `PolicyResponseCompatTest`.
 - **Not device-tested**: the checks in the 14 doc ("Implementation status").
 
 ## The flashlight on Home (design 41, `docs/design/41-flashlight.md`, at the monorepo root)

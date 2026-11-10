@@ -678,7 +678,7 @@
         <item quantity="one">%1$d new message from %2$s</item>
         <item quantity="other">%1$d new messages from %2$s</item>
     </plurals>
-    <string name="glance_sms_action">Unlock and open Messages</string>
+    <string name="glance_sms_action">Unlock and open %1$s</string>
     <!-- The glance page's time-rule card for TalkBack (design r13 §1.2): the label, then the certain end. -->
     <string name="glance_rule_card_description">%1$s, until %2$s</string>
     <!-- The time-rule screen's card read aloud (launcher round L6): "School, until 14:30", then what still works. -->

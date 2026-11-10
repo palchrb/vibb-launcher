@@ -731,11 +731,13 @@ pub(crate) fn check_pins(
 }
 
 /// Packages a catalog app can never be: the Android system's own (`android`, `com.android.*` -
-/// Settings, the package installer, the AOSP browser and files apps) and Play's core.
+/// Settings, the package installer, the AOSP browser and files apps), Play's core, and the names reserved for Vibb
+/// One's built-ins (design 82 D1).
 pub(crate) fn never_a_catalog_package(package: &str) -> bool {
     package == "android"
         || package.starts_with("com.android.")
         || crate::play::is_play_core(package)
+        || crate::builtin::is_reserved(package)
 }
 
 /// The phone (by name) whose latest report has `package` as a system app or from an installer

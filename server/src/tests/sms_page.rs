@@ -7,8 +7,8 @@ use axum::http::{Method, StatusCode};
 use chrono::Utc;
 use serde_json::json;
 
+use super::TestApp;
 use super::web_push::{ENDPOINT, subscribe};
-use super::{TestApp, input_checked};
 
 /// A phone whose last report claims the engine, with SMS "Styrt av Vibb".
 async fn managed_phone(app: &TestApp) -> (i64, String) {
@@ -456,8 +456,10 @@ async fn the_sender_names_follow_the_rule() {
     );
 }
 
-/// The SMS settings form (D12, §6.8): the lock-text switch and the own numbers, normalised; a number that isn't one
-/// is refused in place with what was sent; an empty field removes the number. Lands on `#sms-settings`.
+/// The SMS settings form (D12): the own numbers, normalised; a number that isn't one is refused in place with what
+/// was sent; an empty field removes the number. Lands on `#sms-settings`. Design 82 D8: §6.8's lock-text switch is
+/// gone - a stale page's `sms_lock_text` changes nothing, and the link row to Meldinger's level on Lock Screen & PINs
+/// is drawn only while SMS is managed.
 #[tokio::test]
 async fn the_sms_settings_save_in_place() {
     let app = TestApp::new().await;
@@ -488,7 +490,8 @@ async fn the_sms_settings_save_in_place() {
     );
     app.assert_lands(&res, &cookie).await;
     let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(policy["sms_lock_text"], json!(true));
+    assert_eq!(policy["sms_lock_text"], json!(false), "the stale switch");
+    assert_eq!(app.policy(&token).await["lock_glance"]["sms"], "name");
     assert_eq!(
         policy["own_numbers"],
         json!([{ "slot": 1, "number": "+4790000001" }])
@@ -498,16 +501,30 @@ async fn the_sms_settings_save_in_place() {
     let page = res.text();
     assert!(page.contains(r#"id="own_number_2-error""#), "{page}");
     assert!(page.contains(r#"value="12ab""#));
-    assert_eq!(
-        input_checked(&page, "sms_lock_text", "on"),
-        Some(false),
-        "what was sent"
-    );
+    assert!(!page.contains(r#"name="sms_lock_text""#), "{page}");
     let res = save(&[("own_number_1", ""), ("own_number_2", "")]).await;
     assert!(res.status.is_redirection());
     let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(policy["sms_lock_text"], json!(false));
     assert_eq!(policy["own_numbers"], json!([]));
+
+    // The link row: not while SMS isn't managed (Lock Screen & PINs has no row to go to), then with the level.
+    let calls = format!("/devices/{id}/calls?advanced=1");
+    let link = format!(r#"href="/devices/{id}/lock#lock-screen-app-me.vibb.builtin.messages""#);
+    let page = app.get_page(&calls, &cookie).await.text();
+    assert!(!page.contains(&link), "{page}");
+    sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&calls, &cookie).await.text();
+    let row = &page[page.find(&link).expect("the link row")..];
+    let row = &row[..row.find("</a>").unwrap()];
+    assert!(row.contains("On the lock screen"), "{row}");
+    assert!(
+        row.contains(r#"<span class="row-value">Name only</span>"#),
+        "{row}"
+    );
 }
 
 /// D3's "Meldinger" group: three switches saved with the call ones and shown in the row's summary; an emergency
