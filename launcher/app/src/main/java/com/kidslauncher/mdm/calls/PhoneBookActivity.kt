@@ -443,7 +443,13 @@ class PhoneBookActivity : UIObjectActivity() {
             PhoneBookItem(row, inputs.actions[key], inputs.messageApps[key])
         }
         adapter.submitList(items) {
-            if (toTop) binding.phoneBookList.scrollToPosition(0)
+            // With the offset: after a filter took the rows on screen away, a plain scrollToPosition(0) finds no view at
+            // 0 and lays out from the end - a first hit taller than the list (the keyboard up, a large text size) then
+            // shows with its top cut.
+            if (toTop) {
+                binding.phoneBookList.stopScroll()
+                (binding.phoneBookList.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(0, 0)
+            }
             toTop = false
             noteSightings()
         }

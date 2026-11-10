@@ -165,7 +165,7 @@ class ThreadActivity : UIObjectActivity() {
         binding.threadList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 // Only a scroll says where the kid reads (a layout reports 0): at the end the thread follows.
-                if (dy != 0) following = atEnd()
+                if (dy != 0) follow(atEnd())
                 // Older messages when the top is reached and the last page was full.
                 if (dy < 0 && layout.findFirstVisibleItemPosition() == 0 && messages.size >= limit) {
                     limit += PAGE
@@ -301,12 +301,12 @@ class ThreadActivity : UIObjectActivity() {
     private fun load() = reload.request()
 
     /** The conversation (by its id, else the number's - one conversation, code QA L2) and its newest [limit] messages,
-     * from the engine thread; read up to the newest while the thread is in front. */
+     * from the engine thread; read up to the newest while the thread is in front and follows ([threadReads]). */
     private fun loadNow(done: () -> Unit) {
         val id = conversationId
         val wanted = number?.let { normalised(it) }
         val count = limit
-        val markRead = resumed
+        val markRead = threadReads(resumed, following)
         val forThread = generation
         SmsRuntime.ask(this, { engine ->
             val found = id?.let { engine.conversation(ConversationId(it)) } ?: wanted?.let { engine.conversationWith(it) }
@@ -361,7 +361,10 @@ class ThreadActivity : UIObjectActivity() {
         }
         renderHeader()
         renderCompose()
-        following = threadFollows(following, newestSeq, messages)
+        val follows = threadFollows(following, newestSeq, messages)
+        // The kid's own send while the list coasts: the fling's next step would say "not at the end" before this list is in.
+        if (follows && !following) binding.threadList.stopScroll()
+        follow(follows)
         newestSeq = messages.maxOfOrNull { it.seq } ?: 0L
         // Asked by every list, not only the one that brought the message: a list overtaken by the next read (the read
         // that marked it read, a delivery update) never gets its callback. A bubble taller than the list shows its
@@ -369,6 +372,14 @@ class ThreadActivity : UIObjectActivity() {
         adapter.submitList(threadItems(messages, System.currentTimeMillis(), ZoneId.systemDefault())) {
             if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
         }
+    }
+
+    /** [following] from now on. Turning on - the end reached, the kid's own send - reads once more: what came in while
+     * the kid read older messages is read now ([threadReads]), and its notification goes. */
+    private fun follow(now: Boolean) {
+        val turnedOn = now && !following
+        following = now
+        if (turnedOn) load()
     }
 
     /** The last bubble's bottom in the list, `null` while that bubble isn't laid out. */
@@ -384,7 +395,7 @@ class ThreadActivity : UIObjectActivity() {
      * thread that follows goes on to its end ([threadEndGap]); one that doesn't follows again once its end shows (a
      * delete left less than a screen). */
     private fun afterLayout() {
-        if (!following) following = atEnd()
+        if (!following) follow(atEnd())
         val gap = threadEndGap(following, lastBottom(), listEnd())
         if (gap > 0) binding.threadList.scrollBy(0, gap)
     }

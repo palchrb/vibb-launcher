@@ -395,6 +395,10 @@ fun threadItems(messages: List<Message>, now: Long, zone: ZoneId): List<ThreadIt
 fun threadFollows(following: Boolean, newestBefore: Long, messages: List<Message>): Boolean =
     following || messages.any { it.direction == Direction.OUT && it.seq > newestBefore }
 
+/** Whether a read of the thread marks it read: in front ([resumed]) and following. A message that comes in while the
+ * kid reads older ones is not shown, so it stays unread - Home's badge, the list's dot - until the end is reached. */
+fun threadReads(resumed: Boolean, following: Boolean): Boolean = resumed && following
+
 /** Whether the thread's list is at its end: the last bubble's bottom ([lastBottom], `null` while that bubble isn't laid
  * out) is at most [slop] below the list's visible end [listEnd]. A tall bubble (a picture) counts as shown only when its
  * bottom is. */

@@ -35,6 +35,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.launch
+import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -292,6 +293,26 @@ class MessagesModelTest {
         assertEquals(0, threadEndGap(following = true, lastBottom = 300, listEnd = 800))
         assertEquals(0, threadEndGap(following = true, lastBottom = null, listEnd = 800))
         assertEquals(0, threadEndGap(following = false, lastBottom = 840, listEnd = 800))
+    }
+
+    @Test
+    fun `a thread is read only in front and following, and the screen is wired to the rules`() {
+        assertTrue(threadReads(resumed = true, following = true))
+        // Scrolled up, a message that comes in isn't shown: unread until the end is reached. Never behind another screen.
+        assertFalse(threadReads(resumed = true, following = false))
+        assertFalse(threadReads(resumed = false, following = true))
+
+        // The wiring that was the fault (2026-11-10): the scroll hung on a flag one list captured, and a list overtaken by
+        // the next never ran its callback. Every list asks the field, and every layout goes on to the end.
+        val screen = listOf("src", "app/src").map { File("$it/main/java/com/kidslauncher/mdm/ui/messages/ThreadActivity.kt") }
+            .first { it.exists() }.readText()
+        assertTrue(screen.contains("ZoneId.systemDefault())) {\n            if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)"))
+        assertTrue(screen.contains("binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }"))
+        assertTrue(screen.contains("val markRead = threadReads(resumed, following)"))
+        // Reaching the end reads what came in meanwhile; the kid's own send stops a coasting list first.
+        assertTrue(screen.contains("if (turnedOn) load()"))
+        assertTrue(screen.contains("if (follows && !following) binding.threadList.stopScroll()\n        follow(follows)"))
+        assertEquals("set at its declaration, in take() and in follow() only", 3, Regex("\\bfollowing = ").findAll(screen).count())
     }
 
     @Test
