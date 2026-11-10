@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -36,6 +37,8 @@ import com.kidslauncher.mdm.sms.engine.ConversationId
 import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.Origin
+import com.kidslauncher.mdm.sms.engine.ReactionCommand
+import com.kidslauncher.mdm.sms.engine.ReactionOp
 import com.kidslauncher.mdm.sms.engine.SendCommand
 import com.kidslauncher.mdm.sms.engine.SendResult
 import com.kidslauncher.mdm.sms.engine.SmsEngine
@@ -87,6 +90,15 @@ class ThreadActivity : UIObjectActivity() {
     /** The message whose delete confirm is up. */
     private var selected: String? = null
 
+    /** Design 81 D7: the message whose reaction panel is up, and whether the picker (D13) shows over the thread. */
+    private var reacting: Message? = null
+    private var picking = false
+
+    /** D6: whether the phone's font draws an emoji (`Paint.hasGlyph`), remembered - main thread only. */
+    private val glyphs = HashMap<String, Boolean>()
+    private val glyphPaint = android.graphics.Paint()
+    private val pickerAdapter = PickerAdapter()
+
     /** D11: the picture picked for this draft (our own JPEG, held by the engine), and whether one is being made ready. */
     private var picture: PicturePick.Prepared? = null
     private var preparing = false
@@ -126,8 +138,17 @@ class ThreadActivity : UIObjectActivity() {
 
     private val back = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
-            if (choosing()) hideChoice() else cancelDelete()
+            when {
+                reacting != null -> hideReact()
+                choosing() -> hideChoice()
+                else -> cancelDelete()
+            }
         }
+    }
+
+    /** Back closes whatever in-screen panel is up. */
+    private fun updateBack() {
+        back.isEnabled = selected != null || choosing() || reacting != null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -148,6 +169,22 @@ class ThreadActivity : UIObjectActivity() {
                 }
             }
         })
+        // Design 81 D7: a tap on the thread closes the reaction panel (and is spent on that).
+        binding.threadList.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
+            override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
+                if (reacting == null || e.actionMasked != android.view.MotionEvent.ACTION_DOWN) return false
+                hideReact()
+                return true
+            }
+        })
+        val pickerGrid = binding.root.findViewById<RecyclerView>(R.id.messages_picker_grid)
+        pickerGrid.layoutManager = GridLayoutManager(this, PICKER_COLUMNS).apply {
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int) = if (pickerAdapter.currentList.getOrNull(position) is PickerItem.Heading) PICKER_COLUMNS else 1
+            }
+        }
+        pickerGrid.adapter = pickerAdapter
+        binding.root.findViewById<View>(R.id.messages_picker_close).setOnClickListener { hideReact() }
         onBackPressedDispatcher.addCallback(this, back)
         NoTextActions.apply(binding.threadField)
         binding.threadField.addTextChangedListener(object : TextWatcher {
@@ -187,6 +224,7 @@ class ThreadActivity : UIObjectActivity() {
         newestSeq = 0L
         limit = PAGE
         cancelDelete()
+        hideReact()
         generation++
         // The conversation's draft, else the number's (verification L8: a thread opened by number may have moved it).
         val kept = keptDraft(drafts, conversationId, number)
@@ -267,7 +305,8 @@ class ThreadActivity : UIObjectActivity() {
         SmsRuntime.ask(this, { engine ->
             val found = id?.let { engine.conversation(ConversationId(it)) } ?: wanted?.let { engine.conversationWith(it) }
             val list = found?.let { engine.messages(it.id, null, count) }.orEmpty()
-            if (markRead && found != null && found.unread > 0) engine.markRead(found.id, found.lastSeq, Origin.KID_SCREEN)
+            // Not only with unread messages: a reaction (design 81) is never counted unread, and goes read with its bubble.
+            if (markRead && found != null) engine.markRead(found.id, found.lastSeq, Origin.KID_SCREEN)
             Loaded(found, list)
         }) { loaded ->
             done()
@@ -305,6 +344,15 @@ class ThreadActivity : UIObjectActivity() {
         messages = loaded.messages
         retrying.clear()
         if (selected != null && messages.none { it.id.value == selected }) cancelDelete()
+        // Design 81 D7: the panel follows its bubble (a reaction came or went), and goes with it.
+        reacting?.let { open ->
+            val now = messages.firstOrNull { it.id == open.id }
+            when {
+                now == null -> hideReact()
+                now != open && !picking -> showReact(now)
+                else -> reacting = now
+            }
+        }
         renderHeader()
         renderCompose()
         val newest = messages.maxOfOrNull { it.seq } ?: 0L
@@ -344,16 +392,18 @@ class ThreadActivity : UIObjectActivity() {
         val before = compose
         compose = composeState(judge, targets)
         if (before != compose && adapter.itemCount > 0) adapter.notifyDataSetChanged()
+        // Design 81 D7 (L5): the panel was for the rules it was opened under - a change closes it.
+        if (before != compose && reacting != null) closeReact()
         // D11: the "+" only while every recipient's "Bilder i meldinger" is on; a picture picked before a rule took that
         // away goes (the engine would refuse it anyway).
         val pictures = picturesAllowed(judge, targets)
         if (!pictures && compose == ComposeState.OPEN && picture != null) removePicture()
         if (!pictures && choosing()) hideChoice()
         binding.threadPicture.visibility = if (pictures) View.VISIBLE else View.GONE
-        val covered = selected != null || choosing()
+        val covered = selected != null || choosing() || reacting != null
         val line = MessagesScreens.composeLine(compose)
         binding.threadCompose.visibility = if (!covered && line == null) View.VISIBLE else View.GONE
-        binding.threadLine.visibility = if (selected == null && !choosing() && line != null) View.VISIBLE else View.GONE
+        binding.threadLine.visibility = if (!covered && line != null) View.VISIBLE else View.GONE
         if (line != null) binding.threadLine.setText(line)
         renderCounter()
     }
@@ -387,7 +437,7 @@ class ThreadActivity : UIObjectActivity() {
         }
         panel.findViewById<View>(R.id.messages_picture_cancel).setOnClickListener { hideChoice() }
         panel.visibility = View.VISIBLE
-        back.isEnabled = true
+        updateBack()
         renderCompose()
         val title = panel.findViewById<View>(R.id.messages_picture_choice_title)
         title.post { title.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
@@ -396,7 +446,7 @@ class ThreadActivity : UIObjectActivity() {
     private fun hideChoice() {
         if (!::binding.isInitialized || !choosing()) return
         choiceView().visibility = View.GONE
-        back.isEnabled = selected != null
+        updateBack()
         renderCompose()
     }
 
@@ -564,8 +614,9 @@ class ThreadActivity : UIObjectActivity() {
 
     private fun askDelete(message: Message) {
         hideChoice()
+        closeReact()
         selected = message.id.value
-        back.isEnabled = true
+        updateBack()
         adapter.notifyDataSetChanged()
         renderCompose()
         MessagesScreens.showConfirm(binding.root.findViewById(R.id.messages_confirm), getString(R.string.messages_delete_message_title), ::cancelDelete) {
@@ -580,16 +631,246 @@ class ThreadActivity : UIObjectActivity() {
         if (!::binding.isInitialized) return
         val was = selected
         selected = null
-        back.isEnabled = choosing()
+        updateBack()
         MessagesScreens.hideConfirm(binding.root.findViewById(R.id.messages_confirm))
         if (was != null) adapter.notifyDataSetChanged()
         renderCompose()
+    }
+
+    // ---- Design 81: reactions ----
+
+    /** D6: whether the phone's font draws [emoji] - never an empty box; main thread. */
+    private fun drawable(emoji: String): Boolean = glyphs.getOrPut(emoji) { glyphPaint.hasGlyph(emoji) }
+
+    /** A reactor as TalkBack names them: "deg" for the kid, else the contact's name now, else the number. */
+    private fun reactorName(address: String?): String =
+        address?.let { MessagesScreens.name(this, whoOfAddress(it, MessagesScreens.rules())) } ?: getString(R.string.messages_reaction_you)
+
+    private fun reactView(): View = binding.root.findViewById(R.id.messages_react)
+
+    private fun pickerView(): View = binding.root.findViewById(R.id.messages_picker)
+
+    /** D7: a long press opens the reaction panel - or, with nothing but "Slett" to offer, the delete confirm as before. */
+    private fun longPress(m: Message) {
+        if (reactPanel(m, compose) == null) askDelete(m) else showReact(m)
+    }
+
+    /** D7: the panel in the compose bar's place: the grid (the kid's reaction now in the peach ring), "Fjern
+     * reaksjonene" when others reacted, "Slett". */
+    @android.annotation.SuppressLint("NotifyDataSetChanged")
+    private fun showReact(m: Message) {
+        val panel = reactPanel(m, compose)
+        if (panel == null) {
+            hideReact()
+            return
+        }
+        hideChoice()
+        cancelDelete()
+        reacting = m
+        val view = reactView()
+        val rows = listOf(view.findViewById<LinearLayout>(R.id.messages_react_row1), view.findViewById(R.id.messages_react_row2))
+        rows.forEach { it.removeAllViews() }
+        view.findViewById<View>(R.id.messages_react_grid).visibility = if (panel.cells == null) View.GONE else View.VISIBLE
+        panel.cells.orEmpty().forEachIndexed { i, cell -> rows[i / 4].addView(cellView(m, cell)) }
+        view.findViewById<View>(R.id.messages_react_remove).apply {
+            visibility = if (panel.removeOthers) View.VISIBLE else View.GONE
+            setOnClickListener { removeOthers(m) }
+        }
+        view.findViewById<View>(R.id.messages_react_delete).setOnClickListener { askDelete(m) }
+        val wasShown = view.visibility == View.VISIBLE
+        view.visibility = View.VISIBLE
+        updateBack()
+        adapter.notifyDataSetChanged()
+        renderCompose()
+        // TalkBack's focus moves into the panel when it opens (code QA N2 of step 2, as the confirm's).
+        if (!wasShown) view.post { (rows[0].getChildAt(0) ?: view).performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
+    }
+
+    /** A 56 dp cell of the grid: an emoji ("Reager med ❤️", or "Fjern din ❤️" for the kid's own now), "+" or empty. */
+    private fun cellView(m: Message, cell: ReactCell): View = TextView(this).apply {
+        layoutParams = LinearLayout.LayoutParams(KidAvatars.dp(context, 56f), KidAvatars.dp(context, 56f))
+        gravity = Gravity.CENTER
+        setTextColor(context.getColor(R.color.kid_core))
+        when (cell) {
+            is ReactCell.Pick -> {
+                text = if (drawable(cell.emoji)) cell.emoji else MISSING_GLYPH
+                textSize = 26f
+                contentDescription = cellLabel(cell)
+                setBackgroundResource(if (cell.current) R.drawable.bg_messages_react_current else R.drawable.bg_messages_react_cell)
+                setOnClickListener { react(m, cell) }
+            }
+            ReactCell.More -> {
+                text = "+"
+                textSize = 26f
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_bold)
+                contentDescription = getString(R.string.messages_more_emoji)
+                setBackgroundResource(R.drawable.bg_messages_react_cell)
+                setOnClickListener { showPicker() }
+            }
+            ReactCell.Empty -> importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+    }
+
+    private fun cellLabel(cell: ReactCell.Pick): String =
+        getString(if (cell.current) R.string.messages_react_remove else R.string.messages_react_with, if (drawable(cell.emoji)) cell.emoji else getString(R.string.messages_reaction_unknown))
+
+    /** The panel and the picker go, without redrawing the compose bar (for [renderCompose] itself). */
+    @android.annotation.SuppressLint("NotifyDataSetChanged")
+    private fun closeReact() {
+        if (!::binding.isInitialized || reacting == null) return
+        reacting = null
+        picking = false
+        reactView().visibility = View.GONE
+        pickerView().visibility = View.GONE
+        binding.threadList.visibility = View.VISIBLE
+        updateBack()
+        adapter.notifyDataSetChanged()
+    }
+
+    private fun hideReact() {
+        if (reacting == null) return
+        closeReact()
+        renderCompose()
+    }
+
+    /** A cell's tap (D7): the kid's reaction now goes, any other replaces it (D4). */
+    private fun react(m: Message, cell: ReactCell.Pick) = react(m, cell.emoji, if (cell.current) ReactionOp.REMOVE else ReactionOp.ADD)
+
+    /**
+     * D8: the reaction through the engine's send - the gate inside it, the body the engine's own, in the launcher's
+     * language. The panel closes first; a refusal (a time rule began meanwhile, say) stores nothing and says why, as a
+     * send's (L5). The badge shows from the engine's event, pending until sent.
+     */
+    private fun react(m: Message, emoji: String, op: ReactionOp) {
+        hideReact()
+        val app = applicationContext
+        val command = SendCommand(
+            clientId = UUID.randomUUID().toString(),
+            conversationId = m.conversationId,
+            to = null,
+            body = "",
+            origin = Origin.KID_SCREEN,
+            reaction = ReactionCommand(m.id, emoji, op, getString(R.string.messages_reaction_language)),
+        )
+        SmsRuntime.ask(this, { SmsRuntime.send(app, command) }) { result ->
+            if (isDestroyed) return@ask
+            val refusal = when (result) {
+                is SendResult.Accepted -> null
+                is SendResult.Refused -> MessagesScreens.refusalLine(afterRefusal(result.reason))
+                null -> MessagesScreens.refusalLine(AfterRefusal.UNAVAILABLE)
+            }
+            refusal?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
+            renderCompose()
+            load()
+        }
+    }
+
+    /** D5: "Fjern reaksjonene" - everyone else's reactions on [m] go here; the senders aren't told. */
+    private fun removeOthers(m: Message) {
+        hideReact()
+        SmsRuntime.ask(this, { engine -> engine.removeReactions(m.id, Origin.KID_SCREEN) }) { load() }
+    }
+
+    /** D13: every emoji, in the thread's place - read from the pinned list and filtered by the font off the main thread. */
+    private fun showPicker() {
+        if (reacting == null || picking) return
+        picking = true
+        reactView().visibility = View.GONE
+        binding.threadList.visibility = View.GONE
+        pickerView().visibility = View.VISIBLE
+        updateBack()
+        val app = applicationContext
+        val title = pickerView().findViewById<View>(R.id.messages_picker_title)
+        title.post { title.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) }
+        lifecycleScope.launch {
+            val items = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val list = SmsRuntime.emoji(app)
+                val paint = android.graphics.Paint()
+                val recent = ReactionRecents.read(app).filter { list.canonical(it) == it }
+                pickerItems(list.groups, recent) { paint.hasGlyph(it) }
+            }
+            if (isDestroyed || !picking) return@launch
+            pickerAdapter.submitList(items)
+            bindGroups(items)
+        }
+    }
+
+    /** The strip of groups: each group's icon, named for TalkBack; a tap brings its heading to the top. */
+    private fun bindGroups(items: List<PickerItem>) {
+        val strip = pickerView().findViewById<LinearLayout>(R.id.messages_picker_groups)
+        val grid = pickerView().findViewById<RecyclerView>(R.id.messages_picker_grid)
+        strip.removeAllViews()
+        items.forEachIndexed { position, item ->
+            val group = (item as? PickerItem.Heading)?.group?.let(EMOJI_GROUPS::get) ?: return@forEachIndexed
+            strip.addView(
+                TextView(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(KidAvatars.dp(context, 48f), KidAvatars.dp(context, 48f))
+                    gravity = Gravity.CENTER
+                    text = group.second
+                    textSize = 22f
+                    contentDescription = getString(group.first)
+                    setBackgroundResource(R.drawable.bg_messages_react_cell)
+                    setOnClickListener { (grid.layoutManager as GridLayoutManager).scrollToPositionWithOffset(position, 0) }
+                },
+            )
+        }
+    }
+
+    /** D13: an emoji chosen in the picker is sent at once (the kid's own one now is taken away, as in the grid) and
+     * goes into "Nylig brukt". */
+    private fun pick(emoji: String) {
+        val m = reacting ?: return
+        val mine = m.reactions.firstOrNull { it.by == null }
+        ReactionRecents.write(applicationContext, recentAfter(ReactionRecents.read(applicationContext), emoji))
+        react(m, emoji, if (mine?.key == com.kidslauncher.mdm.sms.engine.EmojiList.key(emoji)) ReactionOp.REMOVE else ReactionOp.ADD)
+    }
+
+    /** The picker's grid: a heading (a TalkBack heading) per group, then its emoji at 28 sp in 48 dp cells - each read
+     * by TalkBack as Android names it. */
+    private inner class PickerAdapter : ListAdapter<PickerItem, RecyclerView.ViewHolder>(PICKER_DIFF) {
+        override fun getItemViewType(position: Int) = if (getItem(position) is PickerItem.Heading) TYPE_DAY else TYPE_BUBBLE
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            val context = parent.context
+            val view = TextView(context).apply {
+                if (viewType == TYPE_DAY) {
+                    layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    setPadding(KidAvatars.dp(context, 8f), KidAvatars.dp(context, 12f), KidAvatars.dp(context, 8f), KidAvatars.dp(context, 4f))
+                    textSize = 14f
+                    typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_extrabold)
+                    setTextColor(context.getColor(R.color.kid_core_dim))
+                    isAccessibilityHeading = true
+                } else {
+                    layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, KidAvatars.dp(context, 48f))
+                    gravity = Gravity.CENTER
+                    textSize = 28f
+                    setTextColor(context.getColor(R.color.kid_core))
+                    setBackgroundResource(R.drawable.bg_messages_react_cell)
+                }
+            }
+            return object : RecyclerView.ViewHolder(view) {}
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            val view = holder.itemView as TextView
+            when (val item = getItem(position)) {
+                is PickerItem.Heading -> view.text = item.group?.let { EMOJI_GROUPS[it]?.first?.let(::getString) ?: it }
+                    ?: getString(R.string.messages_picker_recent)
+                is PickerItem.Emoji -> {
+                    view.text = item.emoji
+                    view.contentDescription = item.emoji
+                    view.setOnClickListener { pick(item.emoji) }
+                }
+            }
+        }
     }
 
     // ---- the bubbles ----
 
     private inner class BubbleAdapter : ListAdapter<ThreadItem, RecyclerView.ViewHolder>(DIFF) {
         inner class Bubble(view: View) : RecyclerView.ViewHolder(view) {
+            val frame: android.widget.FrameLayout = view.findViewById(R.id.bubble_frame)
+            val chip: LinearLayout = view.findViewById(R.id.bubble_reactions)
             val bubble: LinearLayout = view.findViewById(R.id.bubble)
             val from: TextView = view.findViewById(R.id.bubble_from)
             val unknown: TextView = view.findViewById(R.id.bubble_unknown)
@@ -597,7 +878,8 @@ class ThreadActivity : UIObjectActivity() {
             val text: TextView = view.findViewById(R.id.bubble_text)
             val time: TextView = view.findViewById(R.id.bubble_time)
             val delivery: TextView = view.findViewById(R.id.bubble_delivery)
-            var deleteAction = View.NO_ID
+            /** TalkBack's actions on the bubble ("Slett", and design 81's reactions), removed at the next bind. */
+            val actions = mutableListOf<Int>()
         }
 
         inner class Day(view: View) : RecyclerView.ViewHolder(view)
@@ -624,13 +906,14 @@ class ThreadActivity : UIObjectActivity() {
             val context = holder.itemView.context
             val m = item.message
             val mine = m.direction == Direction.OUT
-            (holder.bubble.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
+            (holder.frame.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
             holder.bubble.setBackgroundResource(if (mine) R.drawable.bg_message_out else R.drawable.bg_message_in)
             // The user's colours (2026-11-09): dark ink on the peach bubble, white on the lilac-grey; each time in its dim.
             holder.text.setTextColor(context.getColor(if (mine) R.color.kid_message_out_ink else R.color.kid_ink))
             holder.time.setTextColor(context.getColor(if (mine) R.color.kid_message_out_dim else R.color.kid_message_in_dim))
             val ring = if (mine) R.drawable.bg_message_selected_out else R.drawable.bg_message_selected_in
-            holder.bubble.foreground = if (m.id.value == selected) ContextCompat.getDrawable(context, ring) else null
+            val marked = m.id.value == selected || m.id == reacting?.id
+            holder.bubble.foreground = if (marked) ContextCompat.getDrawable(context, ring) else null
             val maxWidth = (bubbleRoom(context) * 0.8f).toInt()
             holder.text.maxWidth = maxWidth - KidAvatars.dp(context, 28f)
             holder.unknown.visibility = if (m.unknownSender) View.VISIBLE else View.GONE
@@ -656,21 +939,90 @@ class ThreadActivity : UIObjectActivity() {
             holder.delivery.isFocusable = retry
             holder.delivery.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
             val whoText = if (mine) getString(R.string.messages_you) else groupSender ?: MessagesScreens.name(context, who())
+            bindChip(holder, m, mine)
+            // Design 81 D6 (N2): the reactions are part of the bubble's description; the chip itself isn't read.
+            val reacted = reactionWords(m.reactions, ::drawable, getString(R.string.messages_reaction_unknown), ::reactorName) { emoji, by ->
+                getString(R.string.messages_reaction_from, emoji, by)
+            }.takeIf { it.isNotEmpty() }?.let { getString(R.string.messages_reactions, it.joinToString(", ")) }
             holder.bubble.contentDescription = listOfNotNull(
                 getString(R.string.messages_bubble_description, whoText, time),
                 getString(R.string.messages_unknown).takeIf { m.unknownSender },
                 body.takeIf { it.isNotEmpty() },
                 partWords,
+                reacted,
             ).joinToString(", ")
             holder.bubble.setOnLongClickListener {
-                askDelete(m)
+                longPress(m)
                 true
             }
-            if (holder.deleteAction != View.NO_ID) ViewCompat.removeAccessibilityAction(holder.bubble, holder.deleteAction)
-            holder.deleteAction = ViewCompat.addAccessibilityAction(holder.bubble, getString(R.string.messages_delete)) { _, _ ->
-                askDelete(m)
-                true
+            bindActions(holder, m)
+        }
+
+        /** D6: the chip on the bubble's bottom edge, at the corner facing the middle - up to three emoji, the kid's own
+         * in the peach ring (dimmed until sent), then "+N"; never wider than its bubble (the bubble widens instead). */
+        private fun bindChip(holder: Bubble, m: Message, mine: Boolean) {
+            val context = holder.itemView.context
+            val chip = reactionChip(m.reactions, ::drawable)
+            holder.chip.removeAllViews()
+            holder.chip.visibility = if (chip == null) View.GONE else View.VISIBLE
+            (holder.bubble.layoutParams as android.widget.FrameLayout.LayoutParams).bottomMargin = if (chip == null) 0 else KidAvatars.dp(context, 10f)
+            if (chip == null) {
+                holder.bubble.minimumWidth = 0
+                return
             }
+            (holder.chip.layoutParams as android.widget.FrameLayout.LayoutParams).gravity = Gravity.BOTTOM or if (mine) Gravity.START else Gravity.END
+            for (e in chip.emoji) {
+                holder.chip.addView(
+                    TextView(context).apply {
+                        text = if (e.drawable) e.emoji else MISSING_GLYPH
+                        textSize = 14f
+                        setTextColor(context.getColor(R.color.kid_ink))
+                        val pad = KidAvatars.dp(context, 3f)
+                        setPadding(pad, 0, pad, 0)
+                        if (e.mine) setBackgroundResource(R.drawable.bg_message_reaction_mine)
+                        alpha = if (e.pending) 0.5f else 1f
+                    },
+                )
+            }
+            if (chip.more > 0) {
+                holder.chip.addView(
+                    TextView(context).apply {
+                        text = getString(R.string.messages_reactions_more, chip.more)
+                        textSize = 12f
+                        typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_bold)
+                        setTextColor(context.getColor(R.color.kid_message_in_dim))
+                        setPadding(KidAvatars.dp(context, 3f), 0, KidAvatars.dp(context, 3f), 0)
+                    },
+                )
+            }
+            holder.chip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            holder.bubble.minimumWidth = holder.chip.measuredWidth + 2 * KidAvatars.dp(context, 10f)
+        }
+
+        /** TalkBack's actions (D7): one per emoji of the grid, "Flere emojier", "Fjern reaksjonene" - as the panel would
+         * offer them - and "Slett". */
+        private fun bindActions(holder: Bubble, m: Message) {
+            holder.actions.forEach { ViewCompat.removeAccessibilityAction(holder.bubble, it) }
+            holder.actions.clear()
+            fun action(label: String, run: () -> Unit) {
+                holder.actions += ViewCompat.addAccessibilityAction(holder.bubble, label) { _, _ ->
+                    run()
+                    true
+                }
+            }
+            val panel = reactPanel(m, compose)
+            for (cell in panel?.cells.orEmpty()) {
+                when (cell) {
+                    is ReactCell.Pick -> action(cellLabel(cell)) { react(m, cell) }
+                    ReactCell.More -> action(getString(R.string.messages_more_emoji)) {
+                        showReact(m)
+                        showPicker()
+                    }
+                    ReactCell.Empty -> Unit
+                }
+            }
+            if (panel?.removeOthers == true) action(getString(R.string.messages_remove_reactions)) { removeOthers(m) }
+            action(getString(R.string.messages_delete)) { askDelete(m) }
         }
 
         /** The message's pictures and part lines (D11, step 3b's parts; an SMS has none); returns their words for
@@ -792,6 +1144,9 @@ class ThreadActivity : UIObjectActivity() {
 
         /** Messages read at a time; scrolling to the top reads the next page. */
         private const val PAGE = 100
+
+        /** D13: the picker's columns (48 dp each at 288 dp). */
+        private const val PICKER_COLUMNS = 5
         private const val TYPE_DAY = 0
         private const val TYPE_BUBBLE = 1
 
@@ -805,6 +1160,25 @@ class ThreadActivity : UIObjectActivity() {
         private val preparer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "sms-picture") }
 
         private const val STATE_CAPTURE = "capture"
+
+        /** D13: the picker's groups by Unicode's name - their words and the strip's icon. */
+        private val EMOJI_GROUPS = mapOf(
+            "Smileys & Emotion" to (R.string.messages_emoji_smileys to "😀"),
+            "People & Body" to (R.string.messages_emoji_people to "👋"),
+            "Animals & Nature" to (R.string.messages_emoji_animals to "🐶"),
+            "Food & Drink" to (R.string.messages_emoji_food to "🍎"),
+            "Travel & Places" to (R.string.messages_emoji_travel to "✈️"),
+            "Activities" to (R.string.messages_emoji_activities to "⚽"),
+            "Objects" to (R.string.messages_emoji_objects to "💡"),
+            "Symbols" to (R.string.messages_emoji_symbols to "❤️"),
+            "Flags" to (R.string.messages_emoji_flags to "🏁"),
+        )
+
+        private val PICKER_DIFF = object : DiffUtil.ItemCallback<PickerItem>() {
+            override fun areItemsTheSame(oldItem: PickerItem, newItem: PickerItem): Boolean = oldItem == newItem
+
+            override fun areContentsTheSame(oldItem: PickerItem, newItem: PickerItem): Boolean = oldItem == newItem
+        }
 
         private val DIFF = object : DiffUtil.ItemCallback<ThreadItem>() {
             override fun areItemsTheSame(oldItem: ThreadItem, newItem: ThreadItem): Boolean = when {

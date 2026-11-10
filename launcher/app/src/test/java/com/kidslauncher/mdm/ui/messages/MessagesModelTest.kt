@@ -30,6 +30,7 @@ import com.kidslauncher.mdm.sms.engine.SmsRadio
 import com.kidslauncher.mdm.timerules.TimeLock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -538,5 +539,70 @@ class MessagesModelTest {
         assertEquals(first.message.id, second.message.id)
         engine.drainOutbox()
         assertEquals(listOf("hei"), sent)
+    }
+
+    // ---- Design 81: the chip, the panel, the picker ----
+
+    private fun reaction(emoji: String, by: String?, pending: Boolean = false) =
+        com.kidslauncher.mdm.sms.engine.Reaction(MessageId("r$emoji$by"), emoji, com.kidslauncher.mdm.sms.engine.EmojiList.key(emoji), by, pending)
+
+    @Test
+    fun `the chip - three different emoji then +N, the kid's own marked and dimmed while pending, a dot for a missing glyph (D6)`() {
+        val reactions = listOf(
+            reaction("❤️", "+4790000001"), reaction("❤", "+4790000002"), reaction("😂", "+4790000003"),
+            reaction("🫨", "+4790000004"), reaction("👍", null, pending = true), reaction("🎉", "+4790000006"),
+        )
+        val chip = reactionChip(reactions) { it != "🫨" }!!
+        assertEquals(listOf("❤️", "😂", "🫨"), chip.emoji.map { it.emoji })
+        assertEquals(listOf(true, true, false), chip.emoji.map { it.drawable })
+        assertEquals(2, chip.more)
+        val mine = reactionChip(listOf(reaction("👍", null, pending = true), reaction("❤️", "+4790000001"))) { true }!!
+        assertEquals(listOf(true to true, false to false), mine.emoji.map { it.mine to it.pending })
+        assertNull(reactionChip(emptyList()) { true })
+        // TalkBack: one per person, the kid as "you", a missing glyph as "a reaction".
+        val words = reactionWords(listOf(reaction("❤️", "+4790000001"), reaction("🫨", null)), { it != "🫨" }, "en reaksjon", { it?.let { "Mamma" } ?: "deg" }) { e, who -> "$e fra $who" }
+        assertEquals(listOf("❤️ fra Mamma", "en reaksjon fra deg"), words)
+    }
+
+    @Test
+    fun `the long press - the grid only where the kid could send, the eighth cell, Fjern reaksjonene (D7)`() {
+        val bubble = message("m", 1, at(9, 10)).copy(reactions = listOf(reaction("🎉", null), reaction("❤️", "+4790000001")))
+        val panel = reactPanel(bubble, ComposeState.OPEN)!!
+        assertEquals(8, panel.cells!!.size)
+        assertEquals(ReactCell.More, panel.cells!![6])
+        assertEquals(ReactCell.Pick("🎉", current = true), panel.cells!![7])
+        assertTrue(panel.cells!!.take(6).none { (it as ReactCell.Pick).current })
+        assertTrue(panel.removeOthers)
+        // The kid's own among the six is outlined there, the eighth cell empty.
+        val liked = reactPanel(bubble.copy(reactions = listOf(reaction("👍", null))), ComposeState.OPEN)!!
+        assertEquals(ReactCell.Pick("👍", current = true), liked.cells!![1])
+        assertEquals(ReactCell.Empty, liked.cells!![7])
+        // Under a time rule (or read-only, or group texts off): only what is local.
+        assertEquals(ReactPanel(null, true), reactPanel(bubble, ComposeState.NOT_NOW))
+        assertNull("nothing to remove: straight to the delete confirm", reactPanel(bubble.copy(reactions = emptyList()), ComposeState.GROUPS_OFF))
+        // The kid's own bubble, and a picture not there yet, get no grid.
+        assertNull(reactPanel(message("o", 2, at(9, 10), Direction.OUT), ComposeState.OPEN))
+        val waiting = message("p", 3, at(9, 10), body = null, parts = listOf(Part(0, "image/jpeg", 0, null, null, null, PartState.PENDING)))
+        assertNull(reactPanel(waiting, ComposeState.OPEN))
+        assertNotNull(reactPanel(waiting.copy(parts = listOf(Part(0, "image/jpeg", 9, "a".repeat(64), 4, 3, PartState.AVAILABLE))), ComposeState.OPEN))
+    }
+
+    @Test
+    fun `the picker - Nylig brukt first, the groups from the asset, only what the font draws (D13)`() {
+        val list = com.kidslauncher.mdm.sms.EmojiAsset.list
+        val items = pickerItems(list.groups, listOf("🎉", "🫨"), { it != "🫨" && it != "🇳🇴" })
+        assertEquals(PickerItem.Heading(null), items.first())
+        assertEquals(PickerItem.Emoji("🎉"), items[1])
+        assertEquals(PickerItem.Heading("Smileys & Emotion"), items[2])
+        val headings = items.filterIsInstance<PickerItem.Heading>().map { it.group }
+        assertEquals(listOf(null, "Smileys & Emotion", "People & Body", "Animals & Nature", "Food & Drink", "Travel & Places", "Activities", "Objects", "Symbols", "Flags"), headings)
+        val shown = items.filterIsInstance<PickerItem.Emoji>().map { it.emoji }
+        assertTrue("👍" in shown && "👍🏽" !in shown && "🇳🇴" !in shown && "🫨" !in shown)
+        assertTrue(pickerItems(list.groups, emptyList()) { true }.first() is PickerItem.Heading)
+        // The recent row: newest first, five at most, never one of the six.
+        val recent = listOf("🎉", "🐶", "🍕", "⚽", "💡")
+        assertEquals(listOf("🌈", "🎉", "🐶", "🍕", "⚽"), recentAfter(recent, "🌈"))
+        assertEquals(listOf("🍕", "🎉", "🐶", "⚽", "💡"), recentAfter(recent, "🍕"))
+        assertEquals(recent, recentAfter(recent, "❤️"))
     }
 }

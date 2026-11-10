@@ -151,3 +151,19 @@ object MessagesScreens {
 
     fun listUnder(context: Context): Intent = listIntent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 }
+
+/** Design 81 D13: "Nylig brukt" - the emoji the kid picked from the picker, newest first, kept on this phone only (the
+ * launcher's own preferences, CE storage); never sent anywhere. */
+object ReactionRecents {
+    private const val FILE = "sms_reactions"
+    private const val KEY = "recent"
+
+    fun read(context: Context): List<String> =
+        prefs(context).getString(KEY, null)?.split('\n')?.filter { it.isNotEmpty() }?.take(RECENT_MAX).orEmpty()
+
+    fun write(context: Context, recent: List<String>) {
+        prefs(context).edit().putString(KEY, recent.take(RECENT_MAX).joinToString("\n")).apply()
+    }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+}

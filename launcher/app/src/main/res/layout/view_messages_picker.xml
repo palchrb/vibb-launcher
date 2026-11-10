@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 81 D13: every emoji, our own picker over the thread (the confirm's surface, the thread's full height while it
+     shows): "Velg en reaksjon" and its cross, a strip of the nine groups (a tap jumps to the group), then the grid -
+     "Nylig brukt" first, five columns, a heading per group. No search, no motion beyond the scroll. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/messages_picker"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="8dp"
+    android:layout_weight="1"
+    android:background="@drawable/bg_messages_confirm"
+    android:clickable="true"
+    android:focusable="false"
+    android:orientation="vertical"
+    android:paddingTop="4dp"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:id="@+id/messages_picker_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:accessibilityHeading="true"
+            android:focusable="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/messages_picker_title"
+            android:textColor="@color/kid_core"
+            android:textSize="17sp" />
+
+        <ImageButton
+            android:id="@+id/messages_picker_close"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_messages_react_cell"
+            android:contentDescription="@string/messages_picker_close"
+            android:padding="14dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_message_remove" />
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/messages_picker_groups"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp" />
+    </HorizontalScrollView>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/messages_picker_grid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="8dp" />
+</LinearLayout>
