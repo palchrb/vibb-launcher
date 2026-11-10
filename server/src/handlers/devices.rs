@@ -1170,6 +1170,24 @@ pub(crate) async fn lock_screen_card(
     }
 }
 
+/// Whether Device › Apps lists Meldinger's row with nothing stored for it (design 82 D10, W2 - the rule of
+/// `device_pages`' Apps page): SMS is managed, or the phone reports threads to read. A failed read counts as not
+/// listed: the save then lands on the group, which is always there.
+async fn messages_row_listed(db: &sqlx::SqlitePool, device_id: i64) -> bool {
+    let managed =
+        sqlx::query_scalar::<_, String>("SELECT sms_mode FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|mode| mode == "managed");
+    managed
+        || crate::sms::reported_history(db, device_id)
+            .await
+            .unwrap_or(false)
+}
+
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
 /// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
 /// design 34 P1 - an older page's "catalog" does the same, its "own" keeps its old meaning: an
@@ -1178,7 +1196,8 @@ pub(crate) async fn lock_screen_card(
 /// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
 /// field focused (the form posts to `…#app-<package>`, so the answer lands on the app's row, not
-/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`); nudges.
+/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`; `#allowed` for Meldinger when the
+/// save left its row unlisted, [messages_row_listed]); nudges.
 pub async fn save_app_display(
     State(state): State<AppState>,
     lang: crate::i18n::Lang,
@@ -1331,11 +1350,16 @@ pub async fn save_app_display(
     match result {
         Ok(_) => {
             let _ = state.command_notify.send(id);
+            // Design 82's code QA S1: Meldinger's row is listed only while there is a reason for it. A save that
+            // took the last one away (Reset, or On Home back on with nothing else chosen) lands on the group, which
+            // is always on the page - never on an anchor that is gone, which would be the top of the page.
+            let fragment = if builtin && !keep_row && !messages_row_listed(&state.db, id).await {
+                "allowed".to_string()
+            } else {
+                format!("app-{package}")
+            };
             Redirect::to(&crate::handlers::device_pages::apps_url(
-                id,
-                "",
-                from,
-                &format!("app-{package}"),
+                id, "", from, &fragment,
             ))
             .into_response()
         }

@@ -18,8 +18,8 @@ import com.kidslauncher.mdm.ui.messages.whoOfAddress
 /**
  * How an SMS conversation's row looks on the lock glance (design 77 §6.8, step 5) - calm, as the missed-call row (design
  * 25): the name as the message screens say it (the contact's name now, a sender name, the number, a group's members),
- * "Ny melding" / "3 nye meldinger" under it, the time of the newest unread message; with the parent's text switch on
- * (`call_policy.sms_lock_text`) the newest text in the subtitle's place ("Bilde" for a picture alone, "Pappa: ..." in a
+ * "Ny melding" / "3 nye meldinger" under it, the time of the newest unread message; at the parent's level Full text
+ * for Meldinger (`lock_glance.sms`, design 82 - `smsLockLevel`) the newest text in the subtitle's place ("Bilde" for a picture alone, "Pappa: ..." in a
  * group, "Ukjent avsender: ..." for one the callback window let in) and the count after the name ("· 3 nye"). The
  * contact's Home avatar with a small teal message badge in the corner (the missed call's red phone badge's place);
  * without a contact the chat glyph on Home's Meldinger teal - both in the parent's glyph and colour where chosen (design

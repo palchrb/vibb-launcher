@@ -990,9 +990,23 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
     let anchor = format!("lock-screen-app-{MESSAGES}");
 
-    // SMS not managed: no row, and a stored Full text goes out as the name.
+    // SMS not managed: no row, and a stored Full text goes out as the name - the old key false with it.
+    let stored_text = |text: bool| {
+        sqlx::query(
+            "UPDATE device_lock_glance_apps SET show_text = ? WHERE device_id = ? AND package_name = ?",
+        )
+        .bind(text)
+        .bind(id)
+        .bind(MESSAGES)
+        .execute(&app.db)
+    };
+    assert_eq!(stored_text(true).await.unwrap().rows_affected(), 1);
     assert_eq!(form_of(&page().await, MESSAGES), None);
-    assert_eq!(app.policy(&token).await["lock_glance"]["sms"], "name");
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["lock_glance"]["sms"], "name");
+    assert_eq!(policy["call_policy"]["sms_lock_text"], false);
+    // Back to the seed, Name only.
+    stored_text(false).await.unwrap();
 
     sms_managed(&app, id).await;
     let html = page().await;
@@ -1329,6 +1343,31 @@ async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
         "{cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");
+    // Code QA S4: a phone that has reported on a Vibb One from before the buzz (it ships with `messages_app_v1`)
+    // says so under the switch - never before the first report, and not once it is updated.
+    let hint = || async {
+        app.get_page(&lock_page(id), &cookie)
+            .await
+            .text()
+            .contains("This phone does not buzz yet - update Vibb One")
+    };
+    assert!(!cell.contains("data-hint"), "no report yet: {cell}");
+    report(
+        &app,
+        &token,
+        &[],
+        json!({ "capabilities": ["lock_glance_v1"] }),
+    )
+    .await;
+    assert!(hint().await);
+    report(
+        &app,
+        &token,
+        &[],
+        json!({ "capabilities": [crate::lock_glance::MESSAGES_APP_CAPABILITY] }),
+    )
+    .await;
+    assert!(!hint().await);
 
     let mut nudges = app.state.command_notify.subscribe();
     for on in [true, true, false] {

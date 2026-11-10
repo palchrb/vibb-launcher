@@ -540,7 +540,7 @@
                 {#- Design 82 D8: Meldinger's lock level is set where every app's is - Lock Screen & PINs'
                     Notifications. The link shows only while SMS is managed, when that row is listed. -#}
                 {% if let Some(level) = sms.lock_level %}
-                <a class="row" href="/devices/{{ device.id }}/lock#lock-screen-app-me.vibb.builtin.messages" data-row="sms-lock-level">
+                <a class="row" href="/devices/{{ device.id }}/lock#lock-screen-app-{{ crate::builtin::MESSAGES }}" data-row="sms-lock-level">
                     <span class="row-label">{{ self.t("device.sms.settings.on_lock") }}</span>
                     <span class="row-value">{{ self.t(level) }}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -992,6 +992,8 @@ struct LockTemplate {
     lock_wake: bool,
     /// "Buzz for a notification" (design 82 W3, `/lock-buzz`).
     lock_buzz: bool,
+    /// The phone has reported and its Vibb One is from before the buzz: the switch's orange line (code QA S4).
+    lock_buzz_needs_update: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -1412,6 +1414,11 @@ async fn render_lock(
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
+        // Design 82's code QA S4: the buzz ships in the launcher release that reports `messages_app_v1` (there is no
+        // capability of its own), so a phone whose last report lacks it never buzzes - say so by the switch, as the
+        // Apps row's "older Vibb One" note: only once the phone has reported, never before.
+        lock_buzz_needs_update: latest.is_some()
+            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY),
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,

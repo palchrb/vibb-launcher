@@ -477,9 +477,9 @@ data class GlanceMissedRow(
  * Design 77 §6.8 (step 5): one of our own SMS conversations with unread messages - read from the message engine, never
  * from a notification (GlanceReader skips ours). Only what the engine accepted: held and blocked messages have no
  * conversation, so they never make a row. [count] is the conversation's unread; [timeMs] and [upToSeq] are its newest
- * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only while the parent's
- * `call_policy.sms_lock_text` is on (cleaned, [GLANCE_TEXT_MAX]); [picture] the newest is a picture without text (shown
- * as "Bilde" only with the text on); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
+ * unread incoming message's (a newer one brings a row the kid swiped away back). [text] only at the parent's level
+ * Full text for Meldinger (`lock_glance.sms`, design 82 - `smsLockLevel`; cleaned, [GLANCE_TEXT_MAX]); [picture] the
+ * newest is a picture without text (shown as "Bilde", and set only at Full text too); [sender] a group's newest sender's address (D12); [unknownSender] it was let in by
  * the callback window (D4 rule 2). [look] is Meldinger's glyph, tile colour and name as the parent chose them (design 82
  * D9, set in `SmsHome.refresh`): the row's badge and fallback icon draw it, and a changed look is a changed row.
  */

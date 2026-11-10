@@ -2542,7 +2542,9 @@ PBKDF2-HMAC-SHA256, 210,000 rounds, 4 digits - the own lock, no Android credenti
   the glance shows "Pappa / 2 nye meldinger" and "Mamma / Ny melding", newest first, each with the contact's avatar
   and the teal message badge; no row for the stranger (held, D16). TalkBack's text (UI dump): "2 nye meldinger fra
   Pappa, 19:11".
-- `device_policy.sms_lock_text = 1`, a sync: "Pappa · 2 nye / Og matpakka", "Mamma / Middag kl 17, kommer du hj…" (one
+- Meldinger's level set to Full text (then `device_policy.sms_lock_text = 1`; since design 82's migration 0135:
+  Lock Screen & PINs > Notifications > Messages, or `UPDATE device_lock_glance_apps SET show_text = 1 WHERE
+  device_id = ? AND package_name = 'me.vibb.builtin.messages'`, with `sms_mode = 'managed'`), a sync: "Pappa · 2 nye / Og matpakka", "Mamma / Middag kl 17, kommer du hj…" (one
   line under 720 dp).
 - A tap on Mamma's row: "Skriv koden for å åpne Meldinger" / "Enter your code to open Messages"; the PIN opens her
   thread (`GlanceOpener: Glance: opened the messages`), Back gives the list. At the next lock-up her row is gone (read).

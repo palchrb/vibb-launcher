@@ -170,8 +170,21 @@ class LockWakeTest {
         assertFalse("a silent time rule", buzz(ruleSilent = true))
         assertFalse(buzz(sinceLastBuzzMs = BUZZ_GAP_MS - 1))
         assertTrue(buzz(sinceLastBuzzMs = BUZZ_GAP_MS))
-        val came = code("lock/PinLockRuntime.kt").substringAfter("fun noticeCame() {").substringBefore("\n    }\n")
-        assertTrue(came, came.indexOf("noticeBuzz(app, ") in 0 until came.indexOf("noticeAllowed(app, "))
+        val runtime = code("lock/PinLockRuntime.kt")
+        val came = runtime.substringAfter("fun noticeCame() {").substringBefore("\n    }\n")
+        // One read of what the phone is busy with, for the buzz and the wake's first gate - the buzz first.
+        assertTrue(came, came.indexOf("val busy = noticeBusy(app, cameAt)") in 0 until came.indexOf("noticeBuzz(app, cameAt, busy)"))
+        assertTrue(came, came.indexOf("noticeBuzz(app, cameAt, busy)") in 0 until came.indexOf("noticeAllowed(app, "))
+        assertTrue(came, came.contains("noticeAllowed(app, cameAt, near = false, busy = busy)"))
+        // Code QA L3: the switch, the lock's mode and the gap answer before anything is read from the system, and the
+        // buzz reads nothing of calls or alarms itself.
+        val buzz = runtime.substringAfter("private fun noticeBuzz(").substringBefore("\n    }\n")
+        val firstRead = buzz.indexOf("getSystemService")
+        for (early in listOf("if (!noticeBuzzOn) return", "if (mode != LockMode.LOCKED) return", "if (!noticeBuzzGapOver(sinceLast)) return")) {
+            assertTrue(early, buzz.indexOf(early) in 0 until firstRead)
+        }
+        assertFalse(buzz, buzz.contains("noticeBusy(") || buzz.contains("telecomInCall(") || buzz.contains("alarmNow("))
+        assertTrue(noticeBuzzGapOver(null) && noticeBuzzGapOver(BUZZ_GAP_MS) && !noticeBuzzGapOver(BUZZ_GAP_MS - 1))
     }
 
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }

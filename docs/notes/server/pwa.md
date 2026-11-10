@@ -265,7 +265,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `device_policy.lock_buzz_on_notification`, migration 0136, off by default; 404 for an unknown phone), back to
   `#lock-buzz`, the phone nudged, a `lock_buzz_changed` security-log line when the value changed
   (`lock_glance::buzz_log_line`); sent as `launcher_ui.lock_buzz_on_notification`, always. One switch for everything
-  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. Tests:
+  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. A phone that has
+  reported and whose last report lacks `messages_app_v1` (the buzz ships in that launcher release) shows the orange
+  line "This phone does not buzz yet - update Vibb One" under the switch (`lock_buzz_needs_update`); never before
+  the first report. Tests:
   `lock_glance::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy`, the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →

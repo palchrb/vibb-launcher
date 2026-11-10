@@ -181,7 +181,7 @@ object SmsNotifier {
         main.post {
             val mark = SmsGlance.comeBack(conversationId, seq)
             val level = smsLockLevel(com.kidslauncher.mdm.badges.GlanceStore.policy.sms, com.kidslauncher.mdm.calls.CallPolicyStore.state)
-            val gainsRow = level != SmsLockLevel.OFF && smsGainsRow(unreadAfter, mark, seq)
+            val gainsRow = smsGainsRow(level, unreadAfter, mark, seq)
             if (smsPostAlerts(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, gainsRow = gainsRow)) {
                 com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
             }

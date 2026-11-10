@@ -31,8 +31,8 @@ object SmsHome {
         val unread: Int,
         val roleHeld: Boolean,
         val unreadByNumber: Map<String, Int> = emptyMap(),
-        /** The lock glance's "Meldinger" rows (design 77 §6.8, [smsGlanceRow]): one per conversation with unread
-         * messages, newest first; the text only while the parent's switch is on. */
+        /** The lock glance's "Meldinger" rows (design 77 §6.8, [smsGlanceRows]): one per conversation with unread
+         * messages, newest first; none at the parent's level Off, the text only at Full text (design 82 D4). */
         val glance: List<GlanceSmsRow> = emptyList(),
     )
 
@@ -74,18 +74,15 @@ object SmsHome {
             val level = smsLockLevel(GlanceStore.policy.sms, CallPolicyStore.state)
             // Design 82 D9: each row carries Meldinger's look, so a changed icon makes the rows differ and the lock renders.
             val look = AppDisplay.messagesLook()
-            val glance = if (level == SmsLockLevel.OFF) {
-                emptyList()
-            } else {
-                conversations.filter { it.unread > 0 }
-                    .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText = level == SmsLockLevel.TEXT)?.copy(look = look) }
-                    .sortedByDescending { it.timeMs }
-            }
+            val glance = smsGlanceRows(level, conversations) { engine.messages(it.id, null, SMS_GLANCE_LOOKBACK) }.map { it.copy(look = look) }
             Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations), glance)
         }) { next ->
             // No engine (the work never ran): nothing cleared the flag.
             if (next == null) pending.set(false)
-            if (next != null) summary = next
+            // Design 82's code QA L1: a read that failed keeps what Home shows (the tile, the badges and their counts
+            // - nothing the kid hasn't seen), but never the lock's rows: they were built at the level of the last good
+            // read, and the parent may have turned it down since. Fail closed; the next good read brings them back.
+            summary = next ?: summary.copy(glance = emptyList())
             for (listener in listeners.toList()) {
                 try {
                     listener()

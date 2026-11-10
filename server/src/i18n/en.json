@@ -1410,6 +1410,7 @@
   "device.lock.wake_sub": "For the apps on the lock below and missed calls",
   "device.lock.buzz": "Buzz for a notification",
   "device.lock.buzz_sub": "One short buzz, no sound, for the apps on the lock below and missed calls",
+  "device.lock.buzz_needs_update": "This phone does not buzz yet - update Vibb One",
   "device.weather.lock": "Weather on the lock screen",
   "device.weather.lock_sub": "Yr's symbol and the temperature by the date; tap for the day. From MET Norway, for where the phone is (about 2 km).",
   "device.weather.zone": "When the position isn't fresh, use",

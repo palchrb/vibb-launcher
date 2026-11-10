@@ -733,6 +733,45 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     .await;
     assert_eq!(app_display(&app, &token).await, serde_json::json!([]));
     assert!(cell().await.is_some());
+    // Code QA S2: SMS not managed again. The last report says nothing of SMS (as one before the first unlock), so
+    // the newest that does is read - the phone still has its threads, and the row.
+    sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(cell().await.is_some());
+    // Code QA S1: a name is all that lists the row once the phone reports no threads; Reset takes the row off the
+    // page, so the save lands on the group - never on an anchor that is gone.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("label", "Tekst")],
+    )
+    .await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true, "sms_state": { "has_history": false },
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    assert!(cell().await.is_some());
+    let reset = save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", MESSAGES), ("action", "reset")],
+    )
+    .await;
+    assert_redirect(&reset, &device_page(id, Section::Apps), Some("allowed"));
+    app.assert_lands(&reset, &cookie).await;
+    assert_eq!(cell().await, None);
     // Every other name under the prefix is nobody's.
     let other = save(
         &app,

@@ -1490,18 +1490,23 @@ object PinLockRuntime {
      * the wake: neither its switch, the lit screen nor the proximity read is asked (a pocket is where a buzz matters,
      * and there the screen never lights). `USAGE_NOTIFICATION`, so Android's own vibration settings apply. Carries
      * nothing about the notice. Never throws. Main thread.
+     * Code QA L3: what is in memory answers first - the switch, the lock's mode, the gap - before anything is read
+     * from the system (the ringer, the filter); [busy] is [noticeCame]'s one read, shared with the wake's gate.
      */
-    private fun noticeBuzz(app: Context, now: Long) {
+    private fun noticeBuzz(app: Context, now: Long, busy: NoticeBusy) {
         if (!noticeBuzzOn) return
+        if (mode != LockMode.LOCKED) return
+        val sinceLast = noticeBuzzAt?.let { now - it }
+        if (!noticeBuzzGapOver(sinceLast)) return
         try {
             val allowed = noticeBuzzAllowed(
                 switchOn = noticeBuzzOn,
                 mode = mode,
-                busy = noticeBusy(app, now),
+                busy = busy,
                 ringerMode = app.getSystemService(AudioManager::class.java)?.ringerMode,
                 interruptionFilter = app.getSystemService(android.app.NotificationManager::class.java)?.currentInterruptionFilter,
                 ruleSilent = com.kidslauncher.mdm.timerules.ZenRuleRuntime.ruleSilent(),
-                sinceLastBuzzMs = noticeBuzzAt?.let { now - it },
+                sinceLastBuzzMs = sinceLast,
             )
             if (!allowed) return
             val vibrator = app.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator ?: return
@@ -1530,11 +1535,11 @@ object PinLockRuntime {
         )
     }
 
-    private fun noticeAllowed(app: Context, now: Long, near: Boolean?): Boolean = noticeWakeAllowed(
+    private fun noticeAllowed(app: Context, now: Long, near: Boolean?, busy: NoticeBusy = noticeBusy(app, now)): Boolean = noticeWakeAllowed(
         switchOn = noticeWakeOn,
         mode = mode,
         interactive = interactive(app),
-        busy = noticeBusy(app, now),
+        busy = busy,
         sinceLastLockUpMs = lockUpAtElapsed?.let { now - it },
         sinceLastWakeMs = noticeWakes.lastOrNull()?.let { now - it },
         wakesThisHour = wakesInHour(noticeWakes, now).size,
@@ -1551,10 +1556,13 @@ object PinLockRuntime {
         // Design 59d §8.16: a notice this recent makes a system Home start no gesture of the kid's.
         lastNoticeElapsed = SystemClock.elapsedRealtime()
         val app = appContext ?: return
-        // Design 82 W3: decided before the wake's returns - a dark screen in a pocket still buzzes.
-        noticeBuzz(app, SystemClock.elapsedRealtime())
         try {
-            if (proximityReading || !noticeAllowed(app, SystemClock.elapsedRealtime(), near = false)) return
+            val cameAt = SystemClock.elapsedRealtime()
+            // One read of what the phone is busy with (Telecom, the alarm), for the buzz and the wake's first gate.
+            val busy = noticeBusy(app, cameAt)
+            // Design 82 W3: decided before the wake's returns - a dark screen in a pocket still buzzes.
+            noticeBuzz(app, cameAt, busy)
+            if (proximityReading || !noticeAllowed(app, cameAt, near = false, busy = busy)) return
             proximityReading = true
             NoticeProximity.read(app, handler) { near ->
                 proximityReading = false

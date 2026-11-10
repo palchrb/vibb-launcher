@@ -192,11 +192,12 @@ const SMS_STATE_FIELDS: &[(&str, Field)] = &[
     ("has_history", Field::Bool),
 ];
 
-/// The last report's `sms_state.has_history` (design 82 W2): `false` without a report or from a launcher that
-/// doesn't say.
+/// `sms_state.has_history` (design 82 W2) of the newest report that carries an `sms_state` at all: `false` without
+/// one or from a launcher that doesn't say. Not simply the last report - the launcher sends `sms_state: null`
+/// before the first unlock (its store is locked then), and a restarted phone still has its threads (code QA S2).
 pub async fn reported_history(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
     let state: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT sms_state_json FROM device_status WHERE device_id = ? \
+        "SELECT sms_state_json FROM device_status WHERE device_id = ? AND sms_state_json IS NOT NULL \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device_id)

@@ -125,7 +125,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **`sms_state`** in the status report (`device_status.sms_state_json`), through `sms::sanitize_state`: the flat keys by
   `SMS_STATE_FIELDS`, `blocked` counts by class, at most two `own_numbers`, `hold_full`. No content. Since design 82
   W2 `has_history` (a boolean: the phone has threads to read, so its Meldinger tile shows whatever the mode) - read
-  by `sms::reported_history` for Device › Apps' Meldinger row.
+  by `sms::reported_history` for Device › Apps' Meldinger row, from the newest report that carries an `sms_state` (the
+  phone sends none before its first unlock).
 - **`POST /api/devices/sms-held`** (`sms::held`, 16 KiB, at most 50 rows): `{rows: [{id, at, kind, sender_class,
   sender, expires_at, state}]}`, instants epoch ms. Each row checked first (id 16-64 lowercase hex; kind; class; sender
   by class - `sms::sender_ok`, the contract's `intake` rows; `at` at most 5 min ahead, `expires_at - at` 0..24 h + 1

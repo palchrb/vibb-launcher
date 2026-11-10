@@ -222,7 +222,7 @@
             </form>
             <form method="post" action="/devices/{{ device.id }}/lock-buzz#lock-buzz" class="cell" id="lock-buzz">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.buzz") }}<span class="row-sub">{{ self.t("device.lock.buzz_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("device.lock.buzz") }}<span class="row-sub">{{ self.t("device.lock.buzz_sub") }}</span>{% if lock_buzz_needs_update %}<span class="row-sub tone-orange" data-hint>{{ self.t("device.lock.buzz_needs_update") }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_buzz %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>

@@ -451,7 +451,7 @@ show is listed in the build report for the emulator pass.
 **Step 2, the icon, with W1 and W2** - as D9, D10, §7 and §8, with these choices:
 
 - **The row is listed** while `sms_mode` is `managed`, while a row is stored for the key (a name, an icon or On Home
-  off), or - W2 - while the phone's last report says `sms_state.has_history`. The sub adds "SMS is not managed by
+  off), or - W2 - while the phone's newest report with an `sms_state` says `has_history` (the code QA's S2, below). The sub adds "SMS is not managed by
   Vibb" whenever SMS is not managed (D10 names only the stored-row case; with W2 the history case reads the same).
 - **The update note** shows only when the phone has reported and that report lacks `messages_app_v1` - never for a
   phone that has not reported yet.
@@ -466,8 +466,8 @@ show is listed in the build report for the emulator pass.
 - **W1's name in the PWA**: the Apps row (with "Messages" before the sub when a name is set, as an app's own name) and
   the Lock Screen row. Calls & Contacts' headings and the security log keep "Messages" / "Meldinger". A failed read of
   the name on the lock card is logged and the page's word is shown.
-- **`sms_state.has_history`** is read from the last report by `sms::reported_history`; a failed read is the Apps
-  page's ordinary read failure, as its other reads.
+- **`sms_state.has_history`** is read by `sms::reported_history` from the newest report that carries an `sms_state`
+  (the code QA's S2); a failed read is the Apps page's ordinary read failure, as its other reads.
 - **The launcher's `MessagesLook` carries the name too** (`glyph`, `tile`, `name`), so a renamed Meldinger rebinds
   the Home tile and re-renders the lock's rows by the same two paths as a changed icon. `AppDisplay.entry` and
   `builtin` sit on two pure functions, `appEntry` and `builtinEntry`, which the tests read.
@@ -493,7 +493,8 @@ with these choices:
   /devices/{id}/lock-buzz`, `lock_glance::save_buzz`, `device_policy.lock_buzz_on_notification`, migration 0136),
   saved, nudged and logged exactly as the wake's (`lock_buzz_changed`, "phone 3: buzz for a notification: on").
 - **The plan** is `lock/NoticeBuzzPlan.kt` `noticeBuzzAllowed`; `PinLockRuntime.noticeBuzz` is the first thing
-  `noticeCame()` does once it has a context, so none of the wake's returns is before it.
+  `noticeCame()` decides once it has a context and its one read of what the phone is busy with (the code QA's L3),
+  so none of the wake's returns is before it.
 - **The gap** is `BUZZ_GAP_MS`, 10 s, in memory - §9 names no number. Rows that come together are one buzz; a notice
   a little later has its own. There is no hourly cap.
 - **"Not during a call or ringing"** is the wake's whole `NoticeBusy`: our call, the system's, a VoIP ring or call,
@@ -512,3 +513,47 @@ with these choices:
   the device pass: that Android plays the buzz from the background while the lock is up, that Android's own
   vibration settings switch it off, and that nothing else vibrates for the same notice (a phone outside lock task,
   or with Android's own lock screen as the gate, may let the notification itself vibrate).
+
+**The code QA's round** (two reviewers, one per side: no High, no Medium; every Low fixed in one commit on top of
+the three). No wire change, no contract change, no migration.
+
+- **S1, a save never lands on an anchor that is gone.** `save_app_display` returned to `#app-me.vibb.builtin.messages`
+  always - also when the save took the row's last reason away (Reset, or On Home back on with nothing else chosen,
+  with SMS not managed and no reported threads), and without JS the page then opened at its top. For the key, when no
+  row is kept and neither `sms_mode = 'managed'` nor `sms::reported_history` holds (`messages_row_listed`; a failed
+  read counts as not listed), the save returns to `#allowed`, the group, which is always on the page.
+- **S2, the threads survive a restart.** The launcher sends `sms_state: null` before the first unlock, and
+  `reported_history` read only the last report - an unmanaged phone with old threads lost its Apps row after a
+  reboot until the next report after an unlock. It reads the newest report that carries an `sms_state` now (`AND
+  sms_state_json IS NOT NULL`). Left as it is: the status history keeps `STATUS_HISTORY_HOURS` of reports, so a phone
+  that stays locked longer than that after a restart still loses the row until it is unlocked - the row comes back
+  with the first report after the unlock, and nothing on the phone depends on it.
+- **S3**: the policy test stores Full text before it says "a stored Full text goes out as the name", and checks
+  `call_policy.sms_lock_text` false with it.
+- **S4, the buzz switch says when the phone can't buzz yet.** The server may be updated before the phone, and the
+  switch then saves and logs against a Vibb One that never buzzes. The buzz has no capability of its own: it ships
+  in the launcher release that reports `messages_app_v1`, so that capability is the rule - the same as the Apps
+  row's "older Vibb One" note. A phone that has reported and whose last report lacks it shows an orange line under
+  the switch ("This phone does not buzz yet - update Vibb One", `device.lock.buzz_needs_update`,
+  `LockTemplate.lock_buzz_needs_update`), whatever the switch says, so the parent reads it before switching it on;
+  never before the first report.
+- **S5**: `docs/testing/emulator.md`'s run log says how the level is set since migration 0135.
+- **S6**: the Norwegian sub-line reads "Én kort vibrering, ingen lyd, ..." - "vibb" is the product's name, not a word
+  for a vibration.
+- **S7**: Calls & Contacts' link to the lock row takes the key from `builtin::MESSAGES` in the template.
+- **S8**: the migration-order test's message names every migration up to 0136.
+- **L1, a failed read never keeps the lock's rows.** `SmsHome.refresh` kept the whole old summary when the engine's
+  read failed, so rows built at Full text stayed on the lock after the parent turned the level down. A failed read
+  now drops the lock's rows (`summary.copy(glance = emptyList())`); the next good read brings them back. Kept: what
+  Home shows - `hasHistory`, `unread`, `roleHeld` and `unreadByNumber` (the tile and the badges). They say nothing
+  the kid hasn't seen, and dropping them would take the tile off Home for a read error.
+- **L2, the level's rule is pure.** `smsGlanceRows(level, conversations, messages)` builds the rows - none at Off,
+  where no message is read; the name and the count alone at Name only - and `smsGainsRow` takes the level (never at
+  Off). `SmsHome.refresh` and `SmsNotifier.wakeIfAlerts` only call them; one test in `SmsGlanceTest` holds both.
+- **L3, the buzz reads the system last.** `noticeBuzz` answers from memory first - the switch, `LockMode.LOCKED`,
+  the gap (`noticeBuzzGapOver`) - before the ringer and the filter are read. `noticeCame()` reads `NoticeBusy`
+  once and hands it to the buzz and to the wake's first gate (the gate after the proximity read reads it again,
+  300 ms later, as before). `LockWakeTest` pins the order by source.
+- **L4**: Meldinger's task label (Recents) follows W1's name at every render, not only at `onCreate`
+  (`MessagesActivity.labelTask`, set only when the name changed).
+- **L5**: two doc comments said the text shows while `call_policy.sms_lock_text` is on; they say Full text now.

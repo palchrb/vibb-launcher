@@ -163,7 +163,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   `PictureShare`: a copy in `cacheDir/share/` behind the not-exported `FileProvider` `${applicationId}.share`, deleted
   after an hour at every share, picture and sync). The delete confirm (`view_messages_confirm.xml`) is part of the
   screen, no system dialog; no trash, no undo. One task of their own (`.messages` affinity, as Dagen's), in Recents as
-  "Meldinger"; `MessagesScreens.startThread` puts the list under a thread opened from outside.
+  "Meldinger" (the parent's name for it where there is one, set again at every render - `labelTask`); `MessagesScreens.startThread` puts the list under a thread opened from outside.
 - **A thread follows its newest message (2026-11-10, the user; branch `sms-follow-book-ground`):** pure `threadFollows`,
   `threadAtEnd`, `threadEndGap`, `threadReads` (`MessagesModelTest`, which also pins the screen's wiring by its
   source); the activity only measures. The thread opens following; a scroll sets it to "the last bubble's bottom is
@@ -526,8 +526,10 @@ Meldinger rows". What was decided (the design left it open):
   `LEGACY` from a server without the key) - and one pure function gives it to both readers, `smsLockLevel(sms,
   callPolicyState)` (`sms/SmsGlance.kt`): the word as it is, whatever the call rules say; `LEGACY` is the rule before
   design 82 - the text only with managed rules whose `call_policy.sms_lock_text` says so, otherwise the name. **Off:
-  no row** (`SmsHome.refresh` builds none) **and no wake** (`SmsNotifier.wakeIfAlerts`: nothing to show); the system
-  notification, the badge and the thread are untouched, as for an app set to Off. The reading fails closed
+  no row** (pure `smsGlanceRows`: none, and no message read) **and no wake** (`smsGainsRow` takes the level: nothing
+  to gain); the system notification, the badge and the thread are untouched, as for an app set to Off. A read of
+  the engine that fails drops the lock's rows (`SmsHome.refresh`: they were built at the last good read's level) and
+  keeps Home's tile and badges. The reading fails closed
   (`glanceSms`): another word or value is Off, a `lock_glance` that is no object is Off, a cache without the key or
   no policy yet is Off; only a missing `sms` in an object, or a fresh policy without `lock_glance`, is `LEGACY`. A
   changed level reaches the rows by `GlanceStore.smsLevelChanged` (set by `SmsRuntime.listen` to `SmsHome.refresh`;

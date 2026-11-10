@@ -93,9 +93,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`apps.builtin.on_home_sub`), and `note` "Shows on the phone after Vibb One is updated" while the phone's last
   report lacks `messages_app_v1`. **The row** on Device › Apps (`render_apps`, `AppView.builtin`,
   `partials/device_app_row.html`'s own branch): directly under Vibb One's, no switch, no permissions, "Part of Vibb
-  One" - listed while `sms_mode` is `managed`, while a row is stored for the key, or while the last report's
-  `sms_state.has_history` is true (`sms::reported_history`; W2: the tile may linger on Home for old threads), and
-  outside managed the sub adds "SMS is not managed by Vibb". The parent's name shows there and on the Lock Screen
+  One" - listed while `sms_mode` is `managed`, while a row is stored for the key, or while `sms_state.has_history`
+  is true in the newest report that carries an `sms_state` (`sms::reported_history`; W2: the tile may linger on Home
+  for old threads; a report from before the first unlock says nothing and is skipped), and
+  outside managed the sub adds "SMS is not managed by Vibb". A save that leaves the row unlisted (Reset with SMS not
+  managed and no threads) returns to `#allowed`, not to the row's anchor (`devices::messages_row_listed`). The parent's name shows there and on the Lock Screen
   row (`app_display::device_label`). Tests: `app_display::tests::a_builtin_keeps_its_look_until_a_glyph_is_chosen`,
   `tests/app_display.rs` `meldinger_has_a_row_and_a_name_and_icon_of_its_own` (saves and sends
   `sms_contract.json`'s `app.display`).

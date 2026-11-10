@@ -13,6 +13,10 @@ const val NOTICE_BUZZ_MS = 40L
 /** At least this long between two notice buzzes (in memory: a new process starts over). */
 const val BUZZ_GAP_MS = 10_000L
 
+/** Whether the gap since the last buzz is over ([sinceLastBuzzMs], `null` = none in this process): asked first by
+ * `PinLockRuntime.noticeBuzz`, before anything is read from the system, and by [noticeBuzzAllowed]. */
+fun noticeBuzzGapOver(sinceLastBuzzMs: Long?): Boolean = sinceLastBuzzMs == null || sinceLastBuzzMs >= BUZZ_GAP_MS
+
 /**
  * Whether a notice that came ([PinLockRuntime.noticeCame]) buzzes: the parent's [switchOn], the lock LOCKED ([mode]),
  * nothing [busy] (the wake's [NoticeBusy]: a call, a ring, the emergency flow, a ringing alarm, the boot's mark, the
@@ -32,5 +36,4 @@ fun noticeBuzzAllowed(
 ): Boolean =
     switchOn && mode == LockMode.LOCKED && !busy.any &&
         (ringerMode == RINGER_MODE_NORMAL || ringerMode == RINGER_MODE_VIBRATE) &&
-        interruptionFilter == INTERRUPTION_FILTER_ALL && !ruleSilent &&
-        (sinceLastBuzzMs == null || sinceLastBuzzMs >= BUZZ_GAP_MS)
+        interruptionFilter == INTERRUPTION_FILTER_ALL && !ruleSilent && noticeBuzzGapOver(sinceLastBuzzMs)
