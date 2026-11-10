@@ -102,6 +102,23 @@ fun lockTaskFeatures(serverFeatures: Long, blockActivityStart: Boolean): Int {
     return if (blockActivityStart) base or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK else base
 }
 
+/**
+ * The features to write right before the lock-task packages are emptied (the kiosk's end: a pause, an
+ * override, the kiosk switched off): [current] without the app block, or `null` when the block is
+ * not set (nothing to write).
+ *
+ * Why (seen on the emulator, 2026-11-10, docs/testing/emulator.md §6af): `setLockTaskPackages(admin, [])`
+ * removes Home's task from lock task and, inside the same call, restarts Home - but the end of
+ * lock-task mode is only posted to a handler, and the features are reset after the packages. If the
+ * start is checked before that handler ran, lock task still reads LOCKED with the block bit and an
+ * empty list: Home's start is swapped for the system's BlockedAppActivity ("App is not available"),
+ * which locks the phone to its own task. Without the bit the start is never swapped. The pin writes
+ * the plan's features again before its packages, so the block is back whenever the kiosk is.
+ */
+fun unpinFeatures(current: Int): Int? =
+    if (current and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK == 0) null
+    else current and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK.inv()
+
 /*
  * Handy's PIN lock (step 10, design 10-lock-and-call-ui.md §3 with qa-10-design.md #1/#10): while
  * the lock is LOCKED the lock screen always runs in lock task. The same pure functions serve the

@@ -624,6 +624,7 @@ the pass adds to it:
 - **Two rows named "Meldinger"** in nb while Google Messages is allowed too (Apps and the Lock Screen group); the sub
   "En del av Vibb One" and the icon tell them apart, and W1's rename removes it.
 - **Outside this design:** one of three pauses of all restrictions left the kiosk on Android's "App is not available"
-  screen for Vibb One, lock task still on with an empty allow-list (§6ad, "Found"). Not fixed here.
+  screen for Vibb One, lock task still on with an empty allow-list (§6ad, "Found"). Not fixed here; reproduced on
+  main (1 of 10), explained and fixed on 2026-11-10 (`docs/testing/emulator.md` §6af).
 - **Not run:** L1 (no cheap way to make the engine's read fail, and no unit test holds it - it stands on the code,
   `SmsHome.refresh`), the Recents label after a reset, TalkBack by touch.
