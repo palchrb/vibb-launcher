@@ -82,7 +82,27 @@ data class Message(
     /** The front end's idempotency key for OUT. */
     val clientId: String?,
     val origin: Origin,
+    /** Design 81 D5: on a reaction row (events and the notification carry them; [MessageEngine.messages] never does),
+     * what it does to which bubble. */
+    val reaction: ReactionRef? = null,
+    /** Design 81 D4: on a bubble, the reactions in effect on it, oldest first. */
+    val reactions: List<Reaction> = emptyList(),
 )
+
+/** Design 81: a reaction adds an emoji to a bubble or takes it away again. */
+enum class ReactionOp { ADD, REMOVE }
+
+/** A reaction row's link (D5): the bubble it names, its emoji in the list's fully-qualified form (D2), add or remove. */
+data class ReactionRef(val target: MessageId, val emoji: String, val op: ReactionOp)
+
+/** A reaction in effect on a bubble (D4): [id] is the row that put it there, [emoji] fully-qualified, [key] without
+ * selectors ([EmojiList.key]); [by] is the reactor's address, `null` for the kid, whose own is [pending] until it is
+ * sent. */
+data class Reaction(val id: MessageId, val emoji: String, val key: String, val by: String?, val pending: Boolean)
+
+/** A line of a conversation's notification (design 81 D12): an unread incoming message, or an unread incoming reaction
+ * still in effect ([message] is the reaction row, [target] the bubble it names). */
+data class Notifiable(val message: Message, val target: Message? = null)
 
 sealed interface EngineEvent {
     val seq: Long
@@ -112,7 +132,13 @@ data class SendCommand(
     val body: String,
     val pictures: List<PictureRef> = emptyList(),
     val origin: Origin,
+    /** Design 81 D8: a reaction instead of a text - the engine composes its body ([body] isn't used then). */
+    val reaction: ReactionCommand? = null,
 )
+
+/** Design 81 D8: react to [target] with [emoji] (any listed form), or take the kid's reaction away; the wire form in
+ * [lang] (`nb`, else English - the launcher's language). */
+data class ReactionCommand(val target: MessageId, val emoji: String, val op: ReactionOp, val lang: String)
 
 sealed interface SendResult {
     /** The same message for a repeated [SendCommand.clientId]. */
@@ -143,6 +169,10 @@ interface MessageEngine {
     fun delete(id: MessageId, origin: Origin)
 
     fun deleteConversation(id: ConversationId, origin: Origin)
+
+    /** Design 81 D5: hides everyone else's reactions on [target] here (the kid's "Fjern reaksjonene") - their rows go,
+     * `MessageDeleted` for each; the senders aren't told. */
+    fun removeReactions(target: MessageId, origin: Origin)
 
     /** A picture part's bytes: always the main process's own JPEG (D8), never a received part; `null` when the part
      * isn't an available picture. */

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 81 D7: what a long press on a bubble opens, built into the screen like the delete confirm (its surface and
+     spacing): the 4 x 2 grid of 56 dp cells - the six, "+" for every emoji and the kid's own other reaction (ThreadActivity
+     fills them) - then "Fjern reaksjonene" when others reacted, and "Slett", which leads to the confirm. It takes the
+     compose bar's place; Back or a tap on the thread closes it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/messages_react"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/bg_messages_confirm"
+    android:clickable="true"
+    android:focusable="false"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:id="@+id/messages_react_grid"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/messages_react_row1"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:orientation="horizontal" />
+
+        <LinearLayout
+            android:id="@+id/messages_react_row2"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:orientation="horizontal" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/messages_react_remove"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_messages_button"
+        android:fontFamily="@font/nunito_extrabold"
+        android:minHeight="48dp"
+        android:text="@string/messages_remove_reactions"
+        android:textAllCaps="false"
+        android:textColor="@color/kid_core"
+        android:textSize="16sp" />
+
+    <Button
+        android:id="@+id/messages_react_delete"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_messages_delete"
+        android:fontFamily="@font/nunito_extrabold"
+        android:minHeight="48dp"
+        android:text="@string/messages_delete"
+        android:textAllCaps="false"
+        android:textColor="@color/kid_emergency_text"
+        android:textSize="16sp" />
+</LinearLayout>

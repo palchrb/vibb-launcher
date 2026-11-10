@@ -14,6 +14,7 @@ import com.kidslauncher.mdm.sms.engine.IdSource
 import com.kidslauncher.mdm.sms.engine.IncomingSms
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.MessageId
+import com.kidslauncher.mdm.sms.engine.Notifiable
 import com.kidslauncher.mdm.sms.engine.Origin
 import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PartState
@@ -239,13 +240,51 @@ class SmsGlanceTest {
     fun `after a group move the one-to-one notification keeps what is still unread`() {
         val first = receive("+4791234567", "Hei") as Received.Shown
         val id = ConversationId(first.conversation.id)
-        val left = smsNotifiedMessages(engine.messages(id, null, 10), 5)
+        val left = engine.notifiable(id, 5).map { it.message }
         assertEquals(listOf("Hei"), left.map { it.body })
         engine.markRead(id, first.message.seq, Origin.KID_SCREEN)
-        assertTrue("nothing unread: the notification goes", smsNotifiedMessages(engine.messages(id, null, 10), 5).isEmpty())
+        assertTrue("nothing unread: the notification goes", engine.notifiable(id, 5).map { it.message }.isEmpty())
         // Oldest first, at most five.
         repeat(7) { receive("+4791234567", "m$it") }
-        assertEquals((2..6).map { "m$it" }, smsNotifiedMessages(engine.messages(id, null, 10), 5).map { it.body })
+        assertEquals((2..6).map { "m$it" }, engine.notifiable(id, 5).map { it.message }.map { it.body })
+    }
+
+    /** Design 81 D12 (code QA L2, N2): a reaction buzzes on its own channel, silent under a time rule and under any Do
+     * Not Disturb; a message keeps its own rule; the lock's text says "reaction" only when nothing else is on it. */
+    @Test
+    fun `a reaction's channel - its own, silent under a time rule or Do Not Disturb - and the lock's text`() {
+        assertEquals(NOTIFICATION_CHANNEL_REACTIONS, smsChannel(silent = false, reaction = true, passesFilter = true))
+        assertEquals(NOTIFICATION_CHANNEL_MESSAGES_SILENT, smsChannel(silent = false, reaction = true, passesFilter = false))
+        assertEquals(NOTIFICATION_CHANNEL_MESSAGES_SILENT, smsChannel(silent = true, reaction = true, passesFilter = true))
+        assertEquals(NOTIFICATION_CHANNEL_MESSAGES, smsChannel(silent = false, reaction = false, passesFilter = false))
+        assertEquals(NOTIFICATION_CHANNEL_MESSAGES_SILENT, smsChannel(silent = true, reaction = false, passesFilter = true))
+        val hei = receive("+4791234567", "Hei") as Received.Shown
+        val line = Notifiable(hei.message)
+        val reacted = Notifiable(hei.message.copy(id = MessageId("r")), target = hei.message)
+        assertTrue(smsPublicIsReaction(listOf(reacted)))
+        assertFalse(smsPublicIsReaction(listOf(line, reacted)))
+        assertFalse(smsPublicIsReaction(emptyList()))
+    }
+
+    /** Design 81 verification V1: a reaction buzzes only with its own line on the notification - five unread messages
+     * leave it no room, and then the notification is only rebuilt, quietly. */
+    @Test
+    fun `a reaction buzzes only when its line is on the notification`() {
+        val hei = receive("+4791234567", "Hei") as Received.Shown
+        val id = ConversationId(hei.conversation.id)
+        repeat(3) { receive("+4791234567", "m$it") }
+        val withRoom = receive("+4791234567", "Likte «Hei»") as Received.Attached
+        assertTrue("four unread messages and the reaction's line", smsReactionShown(engine.notifiable(id, 5), withRoom.reaction.id))
+        receive("+4791234567", "m3")
+        val noRoom = receive("+4791234567", "Lo av «Hei»") as Received.Attached
+        assertEquals(5, engine.notifiable(id, 5).count { it.target == null })
+        assertFalse("five unread messages: no room, a quiet rebuild", smsReactionShown(engine.notifiable(id, 5), noRoom.reaction.id))
+        // The notifier asks before it posts on the reactions channel; a removal never gets that far (afterReaction).
+        val root = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val notifier = root.walkTopDown().first { it.name == "SmsNotifier.kt" }.readText()
+        val notify = notifier.substringAfter("fun notify(").substringBefore("val me = Person.Builder()")
+        assertTrue(notify.contains("if (reaction && !smsReactionShown(lines, message.id))"))
+        assertTrue(notify.substringAfter("smsReactionShown(lines, message.id))").substringBefore("return").contains("afterReaction("))
     }
 
     /** The one source check left: the wake's one trigger is our notification's own post - after it, never in "not

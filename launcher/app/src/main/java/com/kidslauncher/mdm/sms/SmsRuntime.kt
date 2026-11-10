@@ -30,6 +30,7 @@ import com.kidslauncher.mdm.server.dto.SmsOwnLearned
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
 import com.kidslauncher.mdm.server.dto.SmsState
 import com.kidslauncher.mdm.sms.engine.Carrier
+import com.kidslauncher.mdm.sms.engine.EmojiList
 import com.kidslauncher.mdm.sms.engine.HeldPost
 import com.kidslauncher.mdm.sms.engine.MmsGate
 import com.kidslauncher.mdm.sms.mms.MmsRuntime
@@ -56,6 +57,9 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 private const val LOG_TAG = "SmsRuntime"
+
+/** Design 81 D2: Unicode's emoji list, stripped (`scripts/emoji-list.py`). */
+private const val EMOJI_ASSET = "sms/emoji-16.0.txt"
 
 /** How long the sync waits for the engine thread's work (it is never slow; this is a guard). */
 private const val ENGINE_WAIT_S = 20L
@@ -115,6 +119,7 @@ object SmsRuntime {
                 opened, System::currentTimeMillis, { judge(app) }, PlatformRadio(app),
                 mmsRadio = com.kidslauncher.mdm.sms.mms.PlatformMmsRadio(app),
                 files = com.kidslauncher.mdm.sms.mms.MmsRuntime.files(app),
+                emojiList = { emoji(app) },
             ).also {
                 store = opened
                 engine = it
@@ -128,18 +133,40 @@ object SmsRuntime {
         }
     }
 
+    @Volatile
+    private var emojiList: EmojiList? = null
+
+    /** Design 81 D2: the pinned emoji list, read from the asset once (an unreadable asset is recorded, and only the six
+     * classic reactions are recognised then). */
+    fun emoji(context: Context): EmojiList {
+        emojiList?.let { return it }
+        synchronized(this) {
+            emojiList?.let { return it }
+            val list = try {
+                context.assets.open(EMOJI_ASSET).use { EmojiList.parse(it.readBytes().toString(Charsets.UTF_8)) }
+            } catch (e: Exception) {
+                recordError(context, "emoji list: ${e.javaClass.simpleName}")
+                EmojiList.EMPTY
+            }
+            emojiList = list
+            return list
+        }
+    }
+
     /** Process start (unlocked): the engine judges what it held for the rules, expires, and resumes the outbox. */
     fun start(context: Context) {
         val app = context.applicationContext
         onEngine(app) { engine ->
-            engine.judgeHeldForRules().forEach { notifyShown(app, engine, it) }
+            // Read before the first receive needs it (D7's budget).
+            emoji(app)
+            engine.judgeHeldForRules().forEach { notifyReceived(app, engine, it) }
             engine.expire()
             engine.sweepUncertain()
             engine.drainOutbox()
             // A release the last process didn't get to (it died between the policy and the release): the cached
             // policy's drops first, as at every accepted policy.
             val drops = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.callPolicy?.smsHeldDrop.orEmpty()
-            engine.releasePass(drops).forEach { notifyShown(app, engine, it) }
+            engine.releasePass(drops).forEach { notifyReceived(app, engine, it) }
             // Step 3b: what MMS work the last process left (pushes, downloads, parses), and D14's data listener.
             engine.mms.retryWaiting(dataOn = false)
             MmsRuntime.listenForData(app)
@@ -154,7 +181,7 @@ object SmsRuntime {
         // the parent's deletions come first, policyAccepted). Home's tile and the screens hear of it after (SmsHome).
         CallPolicyStore.addListener {
             onEngine(app) { engine ->
-                engine.judgeHeldForRules().forEach { notifyShown(app, engine, it) }
+                engine.judgeHeldForRules().forEach { notifyReceived(app, engine, it) }
                 engine.rulesChanged()
                 // A push the rules couldn't judge (D15) waits in `pending_push`: judged now. An MMS that failed for an
                 // unknown MCC/MNC is fetched once the policy's MMSC list knows the SIM (code QA L10).
@@ -251,9 +278,33 @@ object SmsRuntime {
 
     private fun afterReceive(app: Context, engine: SmsEngine, received: Received) {
         when (received) {
-            is Received.Shown -> notifyShown(app, engine, received)
+            is Received.Shown, is Received.Attached -> notifyReceived(app, engine, received)
             is Received.HeldForParent, is Received.Blocked -> requestHeldSync(app)
             Received.HeldForRules, Received.Duplicate -> Unit
+        }
+    }
+
+    /** A message shown or a reaction attached: its notification. Engine thread. */
+    private fun notifyReceived(app: Context, engine: SmsEngine, received: Received) {
+        when (received) {
+            is Received.Shown -> notifyShown(app, engine, received)
+            is Received.Attached -> notifyAttached(app, engine, received)
+            else -> Unit
+        }
+    }
+
+    /**
+     * Design 81 D12: a reaction from someone else adds its line to the conversation's notification - a short buzz on its
+     * own channel, silent under a time rule (as a message is) and under Do Not Disturb, never a wake; a removal, or a
+     * reaction the kid heard of as a waiting picture, only rebuilds a notification that is up.
+     */
+    private fun notifyAttached(app: Context, engine: SmsEngine, attached: Received.Attached) {
+        attached.movedFrom?.let { SmsNotifier.afterMove(app, engine, it) }
+        if (attached.conversation.id == threadInFront) return
+        if (attached.notify) {
+            SmsNotifier.notify(app, engine, attached.conversation, attached.reaction, silent = TimeRulesStore.callsBlockedNow(), wake = false, reaction = true)
+        } else {
+            SmsNotifier.afterReaction(app, engine, attached.conversation.id)
         }
     }
 
@@ -267,10 +318,11 @@ object SmsRuntime {
         SmsNotifier.notify(app, engine, shown.conversation, shown.message, silent = TimeRulesStore.callsBlockedNow() || shown.again)
     }
 
-    /** Step 3b: an MMS shown or fetched (from the MMS thread) - notified on the engine thread. */
-    fun notifyShown(context: Context, shown: Received.Shown) {
+    /** Step 3b: an MMS shown or fetched (from the MMS thread), or one that turned out to be a reaction (design 81 D9) -
+     * notified on the engine thread. */
+    fun notifyReceived(context: Context, received: Received) {
         val app = context.applicationContext
-        onEngine(app) { notifyShown(app, it, shown) }
+        onEngine(app) { notifyReceived(app, it, received) }
     }
 
     /** D16 for an MMS held or blocked on the MMS thread: the same coalesced sync request as an SMS's. */
@@ -323,7 +375,7 @@ object SmsRuntime {
     /** At every accepted policy (D16): drops first, expiry, then release; waits for the engine thread. Never throws. */
     fun policyAccepted(context: Context, drops: List<String>) {
         val app = context.applicationContext
-        await(app) { engine -> engine.releasePass(drops).forEach { notifyShown(app, engine, it) } }
+        await(app) { engine -> engine.releasePass(drops).forEach { notifyReceived(app, engine, it) } }
         // A released MMS push (D16) is judged again and fetched in the next MMS pass.
         MmsRuntime.kick(app)
     }

@@ -84,6 +84,14 @@ class MessagesWiringTest {
         assertTrue(body(thread, "private fun loadNow(").contains("forThread != generation"))
     }
 
+    /** Design 81's emulator pass: the picker reopened where the last visit left its grid, so "Nylig brukt" (its first
+     * row) was out of sight. Every opening scrolls the grid to the top once its lines are in. */
+    @Test
+    fun `the reaction picker opens at the top, where Nylig brukt is`() {
+        val picker = body(code("ui/messages/ThreadActivity.kt"), "private fun showPicker(")
+        assertTrue(picker.contains("pickerAdapter.submitList(items) { grid.scrollToPosition(0) }"))
+    }
+
     @Test
     fun `a retry goes through the gate under the failed message's own id`() {
         val thread = code("ui/messages/ThreadActivity.kt")

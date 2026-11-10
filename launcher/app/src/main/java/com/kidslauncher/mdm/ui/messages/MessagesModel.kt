@@ -7,6 +7,10 @@ import com.kidslauncher.mdm.calls.smsMode
 import com.kidslauncher.mdm.sms.engine.Conversation
 import com.kidslauncher.mdm.sms.engine.Delivery
 import com.kidslauncher.mdm.sms.engine.Direction
+import com.kidslauncher.mdm.sms.engine.EmojiGroup
+import com.kidslauncher.mdm.sms.engine.EmojiList
+import com.kidslauncher.mdm.sms.engine.Reaction
+import com.kidslauncher.mdm.sms.engine.Reactions
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.MessageEngine
 import com.kidslauncher.mdm.sms.engine.MessageId
@@ -434,6 +438,120 @@ fun fetchRetryOffered(message: Message): Boolean =
 /** Whether a received MMS couldn't be read (code QA N7). */
 fun fetchUnreadable(message: Message): Boolean =
     message.direction == Direction.IN && message.failure == com.kidslauncher.mdm.sms.engine.MmsFlow.FAILURE_UNREADABLE
+
+// ---- Design 81: reactions ----
+
+/** One emoji of a bubble's chip (D6): [drawable] false when the phone's font can't draw it (a neutral dot shows then,
+ * never an empty box); [mine] the kid's own (the peach outline), [pending] until it is sent (dimmed). */
+data class ChipEmoji(val emoji: String, val drawable: Boolean, val mine: Boolean, val pending: Boolean)
+
+/** D6 (N1): up to [CHIP_EMOJI] different emoji in the order they came, and [more] further different ones ("+N"). */
+data class ReactionChip(val emoji: List<ChipEmoji>, val more: Int)
+
+const val CHIP_EMOJI = 3
+
+/** What the chip shows for an emoji the font can't draw. */
+const val MISSING_GLYPH = "•"
+
+/** The chip of a bubble with [reactions] ([Message.reactions]); `null` without any. Equal emoji (by key) are one. */
+fun reactionChip(reactions: List<Reaction>, drawable: (String) -> Boolean): ReactionChip? {
+    if (reactions.isEmpty()) return null
+    val byKey = reactions.groupBy { it.key }
+    val shown = byKey.values.take(CHIP_EMOJI).map { same ->
+        val mine = same.firstOrNull { it.by == null }
+        ChipEmoji(same.first().emoji, drawable(same.first().emoji), mine != null, mine?.pending == true)
+    }
+    return ReactionChip(shown, byKey.size - shown.size)
+}
+
+/** D6 (N2): what TalkBack reads of the reactions, one per person - [item] of the emoji ([unknown] for one the font can't
+ * draw) and who ([who] of the reactor's address, `null` for the kid). The bubble's description joins them. */
+fun reactionWords(
+    reactions: List<Reaction>,
+    drawable: (String) -> Boolean,
+    unknown: String,
+    who: (String?) -> String,
+    item: (String, String) -> String,
+): List<String> = reactions.map { item(if (drawable(it.emoji)) it.emoji else unknown, who(it.by)) }
+
+/** A cell of the long-press panel's grid (D7). */
+sealed interface ReactCell {
+    /** An emoji; [current]: the kid's reaction now (outlined in peach - a tap takes it away, another replaces it). */
+    data class Pick(val emoji: String, val current: Boolean) : ReactCell
+
+    /** "+": every emoji (D13). */
+    data object More : ReactCell
+
+    data object Empty : ReactCell
+}
+
+/** What a long press opens (D7): [cells] - the 4 x 2 grid, or `null` when the kid can't react there - and "Fjern
+ * reaksjonene" ([removeOthers]). "Slett" is always under them. */
+data class ReactPanel(val cells: List<ReactCell>?, val removeOthers: Boolean)
+
+/**
+ * D7: the panel for a long press on [message]. The grid only where the compose bar would send now ([compose] open:
+ * SMS "Styrt av Vibb", the gate's yes, no time rule, group texts on) and only on a received bubble with text or a
+ * picture that is there - the six, "+" and the kid's own other reaction as the eighth cell. "Fjern reaksjonene" when
+ * someone else reacted, wherever the thread is (the read-only history too). `null`: nothing but "Slett" - straight to
+ * the delete confirm, as before.
+ */
+fun reactPanel(message: Message, compose: ComposeState): ReactPanel? {
+    val reactable = message.direction == Direction.IN && compose == ComposeState.OPEN &&
+        (!message.body.isNullOrBlank() || message.parts.any { it.mime.startsWith("image/") && it.state == PartState.AVAILABLE })
+    val others = message.reactions.any { it.by != null }
+    if (!reactable && !others) return null
+    val mine = message.reactions.firstOrNull { it.by == null }
+    val cells = if (!reactable) {
+        null
+    } else {
+        val six = Reactions.SIX.map { ReactCell.Pick(it, mine?.key == EmojiList.key(it)) }
+        val eighth = mine?.takeIf { six.none { it.current } }?.let { ReactCell.Pick(it.emoji, current = true) } ?: ReactCell.Empty
+        six + ReactCell.More + eighth
+    }
+    return ReactPanel(cells, others)
+}
+
+/** A line of the picker (D13): a group's heading ([group] Unicode's name, `null` for "Nylig brukt") or one emoji. */
+sealed interface PickerItem {
+    data class Heading(val group: String?) : PickerItem
+
+    data class Emoji(val emoji: String) : PickerItem
+}
+
+/** D13: "Nylig brukt" holds at most this many. */
+const val RECENT_MAX = 5
+
+/** D13: the picker - "Nylig brukt" first, then each group with what the font can draw ([drawable]; a group left empty
+ * goes). [groups] come from the pinned list: fully-qualified, no skin tones, no components. */
+fun pickerItems(groups: List<EmojiGroup>, recent: List<String>, drawable: (String) -> Boolean): List<PickerItem> {
+    val items = mutableListOf<PickerItem>()
+    val recents = recent.filter(drawable).take(RECENT_MAX)
+    if (recents.isNotEmpty()) {
+        items += PickerItem.Heading(null)
+        recents.mapTo(items) { PickerItem.Emoji(it) }
+    }
+    for (group in groups) {
+        val shown = group.emoji.filter(drawable)
+        if (shown.isEmpty()) continue
+        items += PickerItem.Heading(group.name)
+        shown.mapTo(items) { PickerItem.Emoji(it) }
+    }
+    return items
+}
+
+/** "Nylig brukt" after the picker's [picked] was sent with [op] (code QA N6): only an add the engine [accepted] moves
+ * it to the front - a refused send or a removal leaves the row as it was. */
+fun recentAfterSend(recent: List<String>, picked: String, op: com.kidslauncher.mdm.sms.engine.ReactionOp, accepted: Boolean): List<String> =
+    if (accepted && op == com.kidslauncher.mdm.sms.engine.ReactionOp.ADD) recentAfter(recent, picked) else recent
+
+/** "Nylig brukt" after [picked] from the picker: newest first, at most [RECENT_MAX], never one of the six (the panel
+ * always has them). */
+fun recentAfter(recent: List<String>, picked: String): List<String> {
+    val key = EmojiList.key(picked)
+    if (Reactions.SIX.any { EmojiList.key(it) == key }) return recent.take(RECENT_MAX)
+    return (listOf(picked) + recent.filter { EmojiList.key(it) != key }).take(RECENT_MAX)
+}
 
 /** A picture's thumbnail shape (height over width) from its stored size, kept between a wide and a tall bound; 3:4
  * when the size isn't known. */

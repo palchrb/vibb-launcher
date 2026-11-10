@@ -25,6 +25,9 @@
         android:paddingTop="4dp"
         android:paddingBottom="8dp" />
 
+    <!-- Design 81 D13: every emoji, in the thread's place while it shows. -->
+    <include layout="@layout/view_messages_picker" />
+
     <TextView
         android:id="@+id/thread_line"
         android:layout_width="match_parent"
@@ -159,6 +162,8 @@
     </LinearLayout>
 
     <include layout="@layout/view_messages_picture_choice" />
+
+    <include layout="@layout/view_messages_react" />
 
     <include layout="@layout/view_messages_confirm" />
 </LinearLayout>

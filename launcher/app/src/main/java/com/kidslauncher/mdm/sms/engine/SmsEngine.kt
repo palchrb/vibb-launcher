@@ -33,6 +33,15 @@ sealed interface Received {
         val again: Boolean = false,
         val movedFrom: String? = null,
     ) : Received
+    /** Design 81 D12: an incoming reaction attached to the bubble it names - its own outcome, never [Shown]: it adds no
+     * unread message. [notify]: an add from someone else the kid hasn't heard of; a removal, or a reaction whose waiting
+     * picture was told before, only rebuilds the notification. [movedFrom] as [Shown]'s. */
+    data class Attached(
+        val reaction: Message,
+        val conversation: ConversationRow,
+        val notify: Boolean,
+        val movedFrom: String? = null,
+    ) : Received
     data object HeldForRules : Received
     data class HeldForParent(val row: HeldRow) : Received
     data class Blocked(val row: BlockedRow?) : Received
@@ -50,6 +59,11 @@ fun receiveKey(sms: IncomingSms): String {
     digest.update("${sms.address}\u0000${sms.sentAt}\u0000${sms.body}".toByteArray(Charsets.UTF_8))
     return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
+
+/** A row as the reaction [link] makes it (design 81 D5): linked to its bubble, and read when it is a removal. */
+internal fun MessageRow.attachedTo(link: SmsEngine.Attachment): MessageRow = copy(
+    reactionTo = link.target, reactionEmoji = link.emoji, reactionKey = link.key, reactionOp = link.op, read = read || link.op == ReactionOp.REMOVE,
+)
 
 /** The platform's SMS sending, behind an interface for the JVM tests. */
 interface SmsRadio {
@@ -82,6 +96,8 @@ class SmsEngine(
     private val ids: IdSource = RandomIds,
     mmsRadio: MmsRadio = MmsRadio.None,
     files: PartFiles = PartFiles.None,
+    /** Design 81 D2: the pinned emoji list (read once, from the asset on the phone). */
+    private val emojiList: () -> EmojiList = { EmojiList.EMPTY },
 ) : MessageEngine {
     /** Step 3b: the MMS half (§6.4, D10-D12, D14) over the same store, events and conversations. */
     val mms = MmsFlow(this, store, clock, judge, ids, mmsRadio, files)
@@ -117,17 +133,36 @@ class SmsEngine(
                 IncomingVerdict.Block -> Received.Blocked(block(sms.receivedAt, "sms", clean, REASON_RULE))
             }
         }
-        if (received is Received.Shown) emit(EngineEvent.MessageAdded(received.message.seq, received.message))
+        added(received)
         return received
     }
 
-    /** Inside a transaction: the conversation found or made, the message and its `MessageAdded`. */
-    internal fun show(sms: IncomingSms, clean: CleanSender, verdict: IncomingVerdict.Allow, at: Long, origin: Origin = Origin.ENGINE): Received.Shown {
+    /** The live `MessageAdded` of a message (or reaction) a receive committed. */
+    private fun added(received: Received) {
+        when (received) {
+            is Received.Shown -> emit(EngineEvent.MessageAdded(received.message.seq, received.message))
+            is Received.Attached -> emit(EngineEvent.MessageAdded(received.reaction.seq, received.reaction))
+            else -> Unit
+        }
+    }
+
+    /** Inside a transaction: the conversation found or made, the message and its `MessageAdded`. With [attach] (not for
+     * a message the parent released, design 81 D10) a text that is exactly a reaction naming one bubble here is stored
+     * as that reaction ([Received.Attached]). */
+    internal fun show(
+        sms: IncomingSms,
+        clean: CleanSender,
+        verdict: IncomingVerdict.Allow,
+        at: Long,
+        origin: Origin = Origin.ENGINE,
+        attach: Boolean = true,
+    ): Received {
         // A sender without a usable address reaches here only unfiltered (QA L3): its own conversation, never a number's.
         val address = addressOf(clean).ifEmpty { UNKNOWN_PREFIX + com.kidslauncher.mdm.day.TitleRules.clean(sms.address, 20) }
         val conversation = conversationFor(address, verdict.contact?.id, verdict.contact?.name ?: nameOf(clean), sms.subId)
         val seq = store.nextSeq()
-        val row = MessageRow(
+        val link = if (attach) attachment(sms.body, address, conversation.id, seq) else null
+        val plain = MessageRow(
             id = ids.ulid(clock()),
             conversationId = conversation.id,
             seq = seq,
@@ -146,9 +181,93 @@ class SmsEngine(
             verdict = MessageVerdict.SHOWN,
             subId = sms.subId,
         )
+        val row = link?.let(plain::attachedTo) ?: plain
         store.insertMessage(row)
         store.insertEvent(EventRow(seq, EventType.MESSAGE_ADDED, row.id, conversation.id, origin, null, clock()))
-        return Received.Shown(row.toMessage(), conversation)
+        return if (link == null) Received.Shown(row.toMessage(), conversation) else Received.Attached(row.toMessage(), conversation, notify = link.op == ReactionOp.ADD)
+    }
+
+    // ---- Design 81: reactions ----
+
+    /** What a received text attaches to (D3) and how. */
+    internal class Attachment(val target: String, val emoji: String, val key: String, val op: ReactionOp)
+
+    /**
+     * Inside the receive's transaction (D2-D4): [body] from [reactor] as a reaction to one bubble of [conversationId]
+     * older than [seq], or `null` - it stays a message. The candidates are one indexed range query of bubbles (M2); the
+     * pictures are read only for a picture reaction's few, the reactions only for a removal.
+     */
+    internal fun attachment(body: String, reactor: String, conversationId: String, seq: Long): Attachment? {
+        val parsed = Reactions.parse(body, emojiList()) ?: return null
+        val rows = store.messages(conversationId, seq, Reactions.CANDIDATES)
+        val pictures = parsed.target == ReactionTarget.Image
+        val reactions = if (parsed.op == ReactionOp.REMOVE) store.reactions(rows.map { it.id }).groupBy { it.reactionTo } else emptyMap()
+        val candidates = rows.mapIndexed { i, row ->
+            ReactionCandidate(
+                id = row.id,
+                sender = row.sender.takeIf { row.direction == Direction.IN },
+                body = row.body,
+                pictures = if (pictures && i < Reactions.PICTURE_WINDOW) partsOf(row).filter { it.mime.startsWith("image/") }.map { it.state } else emptyList(),
+                reactions = Reactions.state(reactions[row.id].orEmpty()),
+            )
+        }
+        val target = Reactions.resolve(parsed, reactor, candidates) ?: return null
+        return Attachment(target, parsed.emoji, parsed.key, parsed.op)
+    }
+
+    /** Inside a transaction: the reaction rows on [targetId] that [which] picks go, each with its `MessageDeleted`
+     * (L8) - returned to emit once committed. */
+    internal fun deleteReactionsOn(targetId: String, origin: Origin, which: (MessageRow) -> Boolean = { true }): List<EngineEvent> =
+        store.reactions(listOf(targetId)).filter(which).map { row ->
+            store.deleteMessageRow(row.id)
+            val seq = store.nextSeq()
+            store.insertEvent(EventRow(seq, EventType.MESSAGE_DELETED, row.id, row.conversationId, origin, null, clock()))
+            EngineEvent.MessageDeleted(seq, MessageId(row.id), origin)
+        }
+
+    override fun removeReactions(target: MessageId, origin: Origin) {
+        val events = store.transaction { deleteReactionsOn(target.value, origin) { it.direction == Direction.IN } }
+        if (events.isEmpty()) return
+        store.afterDeletes()
+        events.forEach(::emit)
+    }
+
+    /**
+     * D12: what [id]'s notification shows - its newest unread incoming messages, then, in the lines left of [limit], its
+     * unread incoming reactions still in effect (a removed or replaced one drops out): a reaction never pushes a
+     * message's line out (code QA L1). Oldest first; empty when nothing is unread (then it has no notification).
+     */
+    fun notifiable(id: ConversationId, limit: Int): List<Notifiable> {
+        val messages = store.messages(id.value, null, limit * 2).filter { it.direction == Direction.IN && !it.read }
+            .take(limit).map { Notifiable(it.toMessage(partsOf(it))) }
+        val room = limit - messages.size
+        if (room == 0) return messages.reversed()
+        val unread = store.unreadReactions(id.value, limit * 2)
+        val rows = store.reactions(unread.mapNotNull { it.reactionTo }.distinct()).groupBy { it.reactionTo }
+        val reactions = unread.mapNotNull { row ->
+            val target = row.reactionTo?.let(store::message) ?: return@mapNotNull null
+            val inEffect = Reactions.state(rows[target.id].orEmpty()).any { it.id.value == row.id }
+            if (inEffect) Notifiable(row.toMessage(), target.toMessage(partsOf(target))) else null
+        }
+        return (messages + reactions.take(room)).sortedBy { it.message.seq }
+    }
+
+    /**
+     * D8 (L5): the kid's reaction to send - its body and link, or `null` (refused): the target a shown, received bubble
+     * of this conversation that isn't a reaction, with text or a picture that is there; the emoji a listed one, sent
+     * fully-qualified; a removal only of the kid's reaction in effect.
+     */
+    private fun reactionToSend(command: SendCommand, reaction: ReactionCommand): Pair<String, Attachment>? {
+        if (command.pictures.isNotEmpty()) return null
+        val target = store.message(reaction.target.value)?.takeIf {
+            it.conversationId == command.conversationId?.value && it.direction == Direction.IN && it.verdict == MessageVerdict.SHOWN && it.reactionTo == null
+        } ?: return null
+        val emoji = Reactions.emoji(reaction.emoji, emojiList()) ?: return null
+        val key = EmojiList.key(emoji)
+        val text = target.body?.let(Reactions::normalise)?.takeIf { it.isNotEmpty() }
+        if (text == null && partsOf(target).none { it.mime.startsWith("image/") && it.state == PartState.AVAILABLE }) return null
+        if (reaction.op == ReactionOp.REMOVE && Reactions.state(store.reactions(listOf(target.id))).none { it.by == null && it.key == key }) return null
+        return Reactions.format(emoji, reaction.op, text, reaction.lang) to Attachment(target.id, emoji, key, reaction.op)
     }
 
     private fun holdForRules(sms: IncomingSms, clean: CleanSender): Received {
@@ -242,9 +361,9 @@ class SmsEngine(
     // ---- D15: held for the rules ----
 
     /** Judges every message held while the rules couldn't be (D15), as if just received: shown, held for the parent,
-     * blocked, or still held. Returns what is shown now (for the notifications). */
-    fun judgeHeldForRules(): List<Received.Shown> {
-        val shown = mutableListOf<Received.Shown>()
+     * blocked, or still held. Returns what is shown now, a message or a reaction (for the notifications). */
+    fun judgeHeldForRules(): List<Received> {
+        val shown = mutableListOf<Received>()
         for (row in store.messagesHeldForRules().sortedBy { it.at }) {
             val kind = row.senderKind ?: SenderKind.MALFORMED
             val sms = IncomingSms(kind, row.sender, row.body.orEmpty(), row.sentAt, row.subId, row.at)
@@ -260,9 +379,9 @@ class SmsEngine(
                     else -> Received.Blocked(block(row.at, "sms", clean, REASON_RULE))
                 }
             }
-            if (result is Received.Shown) {
+            if (result is Received.Shown || result is Received.Attached) {
                 shown += result
-                emit(EngineEvent.MessageAdded(result.message.seq, result.message))
+                added(result)
             }
         }
         if (shown.isNotEmpty() || store.messagesHeldForRules().isEmpty()) store.afterDeletes()
@@ -274,9 +393,10 @@ class SmsEngine(
     /**
      * At every accepted policy (D16): the parent's deletions first ([drops], `sms_held_drop` - QA R2-L4), then expiry
      * (QA R2-L2: an offline phone's first allow releases nothing past the window), then each held row is released only
-     * when rule 5 or 6 now lets its exact sender in. Returns the released messages (notified like new ones).
+     * when rule 5 or 6 now lets its exact sender in. Returns the released messages (notified like new ones) - always as
+     * text, never as a reaction (design 81 D10: what the parent let in is what the kid sees).
      */
-    fun releasePass(drops: Collection<String>): List<Received.Shown> {
+    fun releasePass(drops: Collection<String>): List<Received> {
         var deleted = false
         val dropSet = drops.toSet()
         store.transaction {
@@ -289,7 +409,7 @@ class SmsEngine(
         }
         if (deleted) store.afterDeletes()
         expire()
-        val released = mutableListOf<Received.Shown>()
+        val released = mutableListOf<Received>()
         val judge = judge()
         for (row in store.heldRows().filter { it.state == HeldState.HELD && it.mms && it.push != null }.sortedBy { it.at }) {
             if (!SmsRules.releases(row.kind, row.sender, judge)) continue
@@ -307,13 +427,13 @@ class SmsEngine(
             val shown = store.transaction {
                 val contact = if (row.kind == SenderKind.NUMBER) judge.rules?.contacts?.firstOrNull { it.number == row.sender } else null
                 val sms = IncomingSms(row.kind, row.sender, row.body.orEmpty(), row.sentAt, row.subId, row.at)
-                val result = show(sms, CleanSender(row.senderClass, row.sender), IncomingVerdict.Allow(false, contact), row.at)
+                val result = show(sms, CleanSender(row.senderClass, row.sender), IncomingVerdict.Allow(false, contact), row.at, attach = false)
                 store.updateHeld(row.copy(state = HeldState.RELEASED, body = null, push = null, reported = false))
                 store.addCounter(COUNT_RELEASED)
                 result
             }
             released += shown
-            emit(EngineEvent.MessageAdded(shown.message.seq, shown.message))
+            added(shown)
         }
         if (released.isNotEmpty()) store.afterDeletes()
         return released
@@ -410,8 +530,11 @@ class SmsEngine(
 
     override fun send(command: SendCommand): SendResult {
         store.messageByClientId(command.clientId)?.let { return repeated(it, command) }
-        if (command.body.isBlank() && command.pictures.isEmpty()) return SendResult.Refused(Refusal.EMPTY)
-        if (command.body.length > SEND_MAX) return SendResult.Refused(Refusal.TOO_LARGE)
+        // Design 81 D8 (L5): a reaction's body is the engine's own, composed first; then it is checked as any text.
+        val reaction = command.reaction?.let { reactionToSend(command, it) ?: return SendResult.Refused(Refusal.NOT_ALLOWED) }
+        val body = reaction?.first ?: command.body
+        if (body.isBlank() && command.pictures.isEmpty()) return SendResult.Refused(Refusal.EMPTY)
+        if (body.length > SEND_MAX) return SendResult.Refused(Refusal.TOO_LARGE)
         val judge = judge()
         val targets = targetsOf(command) ?: return SendResult.Refused(Refusal.NOT_ALLOWED)
         // Design 80 D13: "Gruppemeldinger" off - nothing goes to a group, whoever is in it.
@@ -432,7 +555,7 @@ class SmsEngine(
             // The conversation's own SIM, which the outbox sends on (code QA N3).
             val subId = command.conversationId?.let { store.conversation(it.value)?.subId }
             val cap = com.kidslauncher.mdm.sms.mms.MmsCodec.capOf(judge.carrier(subId).maxMessageBytes)
-            if (sizes.sum() + command.body.length * 4L + MMS_OVERHEAD > cap) return SendResult.Refused(Refusal.TOO_LARGE)
+            if (sizes.sum() + body.length * 4L + MMS_OVERHEAD > cap) return SendResult.Refused(Refusal.TOO_LARGE)
         }
         val isMms = command.pictures.isNotEmpty() || targets.size > 1
         val parts = if (isMms) mms.outgoingParts(command.pictures) else emptyList()
@@ -441,12 +564,13 @@ class SmsEngine(
             val existing = command.conversationId?.let { store.conversation(it.value) }
             val conversation = existing ?: conversationFor(single!!.number, single.contact?.id, single.contact?.name, null)
             val seq = store.nextSeq()
-            val row = MessageRow(
+            val plain = MessageRow(
                 id = ids.ulid(clock()), conversationId = conversation.id, seq = seq, direction = Direction.OUT,
                 sender = single?.number, senderKind = SenderKind.NUMBER, unknownSender = false, at = clock(), sentAt = null,
-                body = command.body, delivery = Delivery.QUEUED, failure = null, read = true, clientId = command.clientId,
+                body = body, delivery = Delivery.QUEUED, failure = null, read = true, clientId = command.clientId,
                 origin = command.origin, verdict = MessageVerdict.SHOWN, subId = conversation.subId, mms = isMms,
             )
+            val row = reaction?.second?.let(plain::attachedTo) ?: plain
             val result = store.insertOutgoing(row)
             if (result is InsertOutgoing.Inserted) {
                 if (parts.isNotEmpty()) store.putParts(row.id, parts)
@@ -465,10 +589,16 @@ class SmsEngine(
     }
 
     /** A repeated `clientId` (QA M5): the same body and pictures are the same message, sent once; anything else is
-     * refused. */
+     * refused. A reaction is the same when it does the same (design 81 L5: target, emoji by key, add or remove), not by
+     * its composed words. */
     private fun repeated(row: MessageRow, command: SendCommand): SendResult {
         val parts = partsOf(row)
-        val same = row.body == command.body && parts.mapNotNull { it.sha256 } == command.pictures.map { it.sha256 }
+        val reaction = command.reaction
+        val same = if (reaction != null || row.reactionTo != null) {
+            reaction != null && row.reactionTo == reaction.target.value && row.reactionOp == reaction.op && row.reactionKey == EmojiList.key(reaction.emoji)
+        } else {
+            row.body == command.body && parts.mapNotNull { it.sha256 } == command.pictures.map { it.sha256 }
+        }
         return if (same) SendResult.Accepted(row.toMessage(parts)) else SendResult.Refused(Refusal.DUPLICATE_CLIENT_ID)
     }
 
@@ -677,8 +807,13 @@ class SmsEngine(
         )
     }
 
-    override fun messages(id: ConversationId, beforeSeq: Long?, limit: Int): List<Message> =
-        store.messages(id.value, beforeSeq, limit).map { it.toMessage(partsOf(it)) }
+    /** The bubbles, each with the reactions in effect on it (design 81 §3, "one seam": the engine alone filters and
+     * folds - front ends never see a reaction row here). */
+    override fun messages(id: ConversationId, beforeSeq: Long?, limit: Int): List<Message> {
+        val rows = store.messages(id.value, beforeSeq, limit)
+        val reactions = store.reactions(rows.map { it.id }).groupBy { it.reactionTo }
+        return rows.map { it.toMessage(partsOf(it)).copy(reactions = Reactions.state(reactions[it.id].orEmpty())) }
+    }
 
     /** A message's parts (§6.6): an SMS has none, so only an MMS asks the store. */
     internal fun partsOf(row: MessageRow): List<Part> = if (row.mms) store.parts(row.id) else emptyList()
@@ -707,16 +842,18 @@ class SmsEngine(
 
     override fun delete(id: MessageId, origin: Origin) {
         var pictures = emptyList<String>()
-        val seq = store.transaction {
+        val events = store.transaction {
             val row = store.message(id.value)?.takeIf { it.verdict == MessageVerdict.SHOWN } ?: return@transaction null
             pictures = partsOf(row).mapNotNull { it.sha256 }
             store.deleteMessageRow(id.value)
-            store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_DELETED, id.value, null, origin, null, clock())) }
+            val seq = store.nextSeq().also { store.insertEvent(EventRow(it, EventType.MESSAGE_DELETED, id.value, null, origin, null, clock())) }
+            // Design 81 D5 (L8): its reactions go with it, each told.
+            listOf(EngineEvent.MessageDeleted(seq, id, origin)) + deleteReactionsOn(id.value, origin)
         } ?: return
         store.afterDeletes()
         // D18: a picture file no message holds any more goes with it.
         mms.dropUnheld(pictures)
-        emit(EngineEvent.MessageDeleted(seq, id, origin))
+        events.forEach(::emit)
     }
 
     override fun deleteConversation(id: ConversationId, origin: Origin) {

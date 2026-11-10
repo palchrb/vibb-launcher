@@ -2596,6 +2596,63 @@ some of a long string).
   waiting row, Lina added on the server, a sync (`adb install -r`): Lina's contact has the picture,
   `contact_request_photos/` and `request_photo_draft/` are empty.
 
+## 6aa. SMS reactions (design 81 steps 1-3)
+
+Run on `handy36` (`-wipe-data`, `wm density 240`) on 2026-11-10, branch `sms-reactions` after merging main edeb78a6;
+what was seen, and what an emulator can't show, is in `docs/review/qa-81-code.md`, "Emulator pass". The setup of §6v:
+a server, the phone enrolled, SMS and calls "Styrt av Vibb", contacts with `sms_in`, `sms_out` and `mms` (the run used
+Mamma `+4790000001`, Pappa `+4790000002`, Bestemor `+4790000005`), the own number `+4790000010` for groups. On
+`jelly36`, or `handy36` with `adb shell wm density 240` for the Jelly Star's 320 x 569 dp (back with `wm density
+reset`). The engine's store and the notifications as in §6v (`messages.db` and `-wal`, `dumpsys notification
+--noredact`, `dumpsys vibrator_manager`'s "Recent vibrations"); the console's `sms send` takes the text after the number
+as it is, quotes, `«»` and emoji included (quote the whole command for the shell).
+
+- **Seed the lock-task features as a real phone gets them** (`device_policy.lock_task_features = 63`, the server's
+  default): with 0 there is no NOTIFICATIONS feature, and in kiosk Android mutes every notification
+  (`dumpsys notification` shows `mDisableNotificationEffects=true`). The same happens while handy's PIN lock is up
+  (`featuresWhileLocked`) - so check sounds and buzzes unlocked.
+- **The store's upgrade:** install main's debug build first, enroll, receive a few SMS (store v4), then this branch's
+  build with `install -r`; `run-as ... cat databases/messages.db` (and `-wal`): `PRAGMA user_version` 5, the four
+  `reaction_*` columns and `message_reaction`. A fresh store to compare with: kill the process from its own uid
+  (`run-as me.vibb.launcher.debug kill <pid>` - a device owner can't be force-stopped), `run-as ... rm -f
+  databases/messages.db*`, Home, one SMS.
+- **A sync:** after a database change, kill the process as above and start Home (its start sync); while the debug
+  hook's `mmsc_host`/`stand_in` are needed (memory only), an SMS from a stranger asks for a sync instead.
+- **Android's notification cooldown** attenuates a buzz that follows another notification from the launcher within
+  seconds: wait a minute between the posts you measure.
+
+- **An incoming reaction attaches:** the kid sends Mamma "Kommer kl 5"; then
+  `adb emu sms send +4790000001 'Likte «Kommer kl 5»'` -> the thread shows no new bubble, a chip with 👍 on the kid's
+  bubble's bottom-left edge; `message` has the row with `reaction_to` = the bubble's id, `reaction_op` `ADD`; Home's
+  badge and the list's last line don't change. The same with `'Liked “Kommer kl 5”'`, `'Loved "Kommer kl 5"'` (straight
+  quotes), `'Satte et hjerte ved «Kommer kl 5»'` (replaces the 👍), `'Reagerte med 🎉 på «Kommer kl 5»'`, and
+  `'Fjernet 🎉 fra «Kommer kl 5»'` (the chip goes, no notification).
+- **An unknown form stays text:** `'Likte «filmen»'` (no such bubble), `'Reacted with a sticker to “Ok”'`,
+  `'Liked “Kommer kl 5” !'` -> ordinary bubbles, notified as messages.
+- **The notification:** after an add, `dumpsys notification --noredact` shows the conversation's notification on
+  `launcher:messages_reactions` with the line "Reagerte med 👍 på «Kommer kl 5»" and public "Ny reaksjon"; the
+  emulator's vibrator (`dumpsys vibrator_manager`) one 80 ms effect, no sound - with the phone unlocked (above). Under a time rule without calls, and with
+  Do Not Disturb on (`adb shell cmd notification set_dnd priority`, back with `off`), the same post goes on
+  `launcher:messages_silent`, no vibration. No wake on the lock either way.
+- **The long press:** on Mamma's bubble the panel - two rows of four 56 dp cells (❤️ 👍 👎 😂 / ‼️ ❓ + and the kid's
+  other reaction), "Fjern reaksjonene" once Mamma reacted to it, "Slett" - fits at 288 dp; a tap on the thread closes
+  it; TalkBack's actions list "Reager med ❤️" ... "Slett". On the kid's own bubble, or under a time rule, only
+  "Fjern reaksjonene" / "Slett", or the delete confirm at once.
+- **Sending:** tap 👍 -> the chip shows dimmed at once, the stored `OUT` row's body is exactly `Likte «Hei»` (nb
+  launcher) or `Liked “Hei”` (en), `SENT` -> full colour. "+" -> the picker: "Velg en reaksjon", the group strip, five
+  columns, no skin tones, no empty boxes; pick 🎉 -> `Reagerte med 🎉 på «Hei»`, and 🎉 leads "Nylig brukt" next time
+  - every opening starts at the top, whatever group the last one scrolled to (the run's one fix).
+- **MMS:** with `scripts/fake-mmsc.py` (§6v step 3b) a group text reaction (`Likte «…»` to the kid and Bestemor)
+  attaches in the group's thread when its text arrives; a picture plus the same text stays a picture message. While
+  an MMS waits (mobile data off), `'Likte et bilde'` by SMS stays a plain message, whatever the MMS turns out to be (a
+  text, a reaction, dropped); once a picture is fetched, the same words attach to it (code QA M1).
+- **The store's SQL** (no JVM test opens SQLite; `docs/review/qa-81-code.md`, "What the emulator pass must check"):
+  a v4 install (design 80's) with messages upgraded to v5, and a fresh one - `PRAGMA user_version` 5, the same
+  `.schema message`, `message_reaction` present; with reaction rows present, `unread()` and `lastMessage()` ignore
+  them (Home's badge, the list's dot and last line).
+
+Screenshots: the chip, the panel and the picker at 288 dp.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

@@ -1,8 +1,25 @@
 # 81 - SMS reactions: the iPhone's "Likte «…»" as a small emoji on the bubble, and the kid reacting back
 
-Status: design note by the architect, 2026-11-09, on `main` at 407f6a4a, branch `design-81-sms-reactions`. **Nothing is
-built.** Launcher only; no server, PWA or contract change (§6). Builds on design 77 (the message engine, steps 1-3b
-merged) and needs a short capture first (§8 step 0).
+Status: design note by the architect, 2026-11-09, on `main` at 407f6a4a, branch `design-81-sms-reactions`. **Steps
+1-3 built** on branch `sms-reactions` (2026-11-10, awaiting code QA); **step 0, the capture, not done** - the user
+approved building without it (revision 4), so every [C] below is still open. Launcher only; no server, PWA or contract
+change (§6). Builds on design 77 (the message engine, steps 1-3b merged) and design 80 (its `messages.db` v4).
+
+**Revision 4, 2026-11-10**, at the build, with the user's answers:
+- **Step 0 is skipped for now.** The user: "foreslår å bygge uten testen". The forms are Apple's string tables (§1);
+  each lives in one Kotlin table (`Reactions.FORMS`) and as a row of the vectors file with its source (`apple`,
+  `wire` for nb's heart), so the capture later changes rows, not code. Nothing is marked `capture`.
+- **How loud (replaces D12's "quiet" and §10's last line).** The user: "Jeg liker sånn som iMessage har, hvor du får en
+  kortere vibrasjon ved reactions." A reaction from someone else gives **one short buzz and no sound** on a channel of
+  its own, `launcher:messages_reactions` (DEFAULT importance, no sound, vibration `0, 80` ms - a message's default is
+  350 + 250 + 350 ms; no heads-up, which is HIGH only). **Fully silent** - posted on `launcher:messages_silent` - where a
+  message is posted silently today (a time rule without calls) and under **any** Do Not Disturb (the filter not
+  `ALL`, fail closed, as the lock's wake rule). D12 below says it all.
+- **The store is version 5, not 4.** Design 80 (`calls-simpler`, merged into this branch at db4eae05) took v4 for its
+  learned own number; reactions are v5 on top of it.
+- Group texts off (design 80 D13): a reaction into a group is refused as a group text is (`GROUPS_OFF`), the panel
+  offers no grid there (the compose bar is closed), and an incoming group reaction is dropped with its group before
+  any matching.
 
 **Revision 3, 2026-11-09**, on branch `design-81-rev3`, after the user's answers ("Jeg er ok med dine forslag, men
 kanskje man kan se alle emojis om man trykker på plusstegn ved siden av dine seks? Jeg tenker barnet skal få en
@@ -206,9 +223,11 @@ All [A]. Which noun iOS picks for a picture that came by MMS is [C]. AirMessage 
   - **Otherwise** there is no target.
 - **A picture target** (`an image` / `et bilde`, L2):
   - Count every image part, in any state, among the newest 10 candidates.
-  - Exactly one picture message, whose picture is `AVAILABLE`, `PENDING` or `WAITING_DATA`: that bubble. An iPhone
-    often reacts before our fetch is done, and the badge then sits on the placeholder.
-  - None, more than one, or one that is `NOT_SHOWN`, `FAILED`, `TOO_LARGE` or `GONE`: no target.
+  - Exactly one picture message, whose picture is `AVAILABLE`: that bubble.
+  - None, more than one, or one that is `PENDING`, `WAITING_DATA`, `NOT_SHOWN`, `FAILED`, `TOO_LARGE` or `GONE`: no
+    target. (Code QA M1, the fix round: every incoming MMS shows a placeholder picture until it is fetched, text-only
+    ones too, so a reaction on it could land on what turns out to be a text, a reaction, or a dropped message. An
+    iPhone's reaction before our fetch is done stays the text "Likte et bilde" instead - never hidden, never misfiled.)
 - **A bubble with a picture and text** is one bubble here. An iPhone shows it as two, so either form names it.
 - **No target, or an ambiguous one:** the message stays a plain text bubble, exactly as today. A reaction is never
   hidden unless it attached to something.
@@ -227,8 +246,7 @@ All [A]. Which noun iOS picks for a picture that came by MMS is [C]. AirMessage 
 - the original text for the later export (design 77 §9 step 7 writes it back as the SMS it was);
 - an id the later bridge can map to a Matrix `m.reaction` (a removal maps to that reaction's redaction).
 
-The store goes to version 4 (or the next free version when this is built; step 5's `sms-glance` is still at 3), in
-`VERSION_4`:
+The store goes to version 5 (revision 4: design 80 took 4), in `VERSION_5`:
 - `ALTER TABLE message ADD COLUMN reaction_to TEXT` (the target's id);
 - `reaction_emoji TEXT` (the fully-qualified form);
 - `reaction_key TEXT` (D2's key);
@@ -250,10 +268,10 @@ How the rows behave:
     `MessageDeleted` each.
   - It is local: the sender isn't told, and a later reaction from them shows again.
   - For the later bridge it is the kid's own redaction in their room.
-- **A downgrade.** A debug downgrade from version 4 throws, because there is no `onDowngrade`, and a reinstall or
+- **A downgrade.** A debug downgrade from version 5 throws, because there is no `onDowngrade`, and a reinstall or
   cleared data is the way back. This is accepted for development builds (L7). Releases only go up.
 
-**D6. What the kid sees.** Calm, in design 34's look; nothing moves, and D12's notification is quiet.
+**D6. What the kid sees.** Calm, in design 34's look; nothing moves, and D12's notification is one short buzz.
 - **The badge (N1).**
   - **Where:** a small rounded chip on the bubble's bottom edge, at the corner facing the middle of the screen: bottom
     right on an incoming (left-aligned) bubble, bottom left on the kid's own.
@@ -270,7 +288,7 @@ How the rows behave:
   parts), as "Reaksjoner: ❤️ fra Mamma, 👍 fra deg" ("Reactions: ❤️ from Mum, 👍 from you"). The words come from
   format strings in `values/` and `values-nb/`. The chip is `importantForAccessibility = no`.
 - **Nothing else changes.**
-  - Apart from D12's quiet notification, an attached reaction adds nothing to the unread count, Home's badge or the
+  - Apart from D12's notification, an attached reaction adds nothing to the unread count, Home's badge or the
     lock glance.
   - It doesn't move the conversation up the list or change its last line.
   - The thread doesn't scroll for it, because it isn't a bubble (M2).
@@ -367,14 +385,16 @@ How the rows behave:
   - "Slett", which already exists.
 - The wire forms follow D8.
 
-**D12. Notifications (M1; revision 3: a reaction notifies, quietly).**
+**D12. Notifications (M1; revision 3: a reaction notifies; revision 4: with a short buzz).**
 - **Its own outcome.** The engine gives an attached reaction its own result,
-  `Received.Attached(conversation, target, notify)`, not `Received.Shown`.
-  - `notify` is true only for an add from someone else.
+  `Received.Attached(reaction, conversation, notify, movedFrom)`, not `Received.Shown`.
+  - `notify` is true only for an add from someone else the kid hasn't heard of (a reaction MMS whose waiting picture was
+    told before rebuilds instead, below).
   - A removal never notifies, and neither does the kid's own reaction or a released message (which is text anyway,
     D10).
-  - `afterReceive` and the MMS thread's `notifyShown` hand `Attached(notify = true)` to `SmsNotifier.notify` with
-    `silent = true, wake = false`, so it never reaches today's "unread or else this message" fallback.
+  - `afterReceive` and the MMS thread's `notifyReceived` hand `Attached(notify = true)` to `SmsNotifier.notify` with
+    `reaction = true, wake = false`; with nothing unread left (the kid read it meanwhile) nothing is posted - it never
+    reaches today's "unread or else this message" fallback.
 - **What it says.** The conversation's one notification (one id per conversation, as today) gets a line from the
   reactor, in `MessagingStyle`, at the reaction's time:
   - "Reagerte med ❤️ på «Kommer kl 5»" ("Reacted ❤️ to “Kommer kl 5”"), with the quote cut at 40 characters with `…`;
@@ -383,12 +403,22 @@ How the rows behave:
   The sender's name is the `MessagingStyle` person, as for a message, and in a group each line names its member, so
   the shade reads "Mamma: Reagerte med ❤️ på «…»". The public version says "Ny reaksjon" ("New reaction"). A tap opens
   the thread. "Svar" shows as for a message.
-- **How loud: quiet** (proposed; §10).
-  - It is posted on the existing quiet channel `launcher:messages_silent` (low importance, no sound, no heads-up). It
-    lands in the shade and the status bar.
+- **How loud: one short buzz, no sound** (revision 4, the user: "Jeg liker sånn som iMessage har, hvor du får en
+  kortere vibrasjon ved reactions").
+  - Its own channel, `launcher:messages_reactions` ("Reaksjoner"): DEFAULT importance (Android buzzes only from DEFAULT
+    up; LOW never does), no sound, vibration on with the pattern `0, 80` ms - one pulse, clearly shorter than a
+    message's default 350 + 250 + 350 ms. No heads-up (that is HIGH only). It lands in the shade and the status bar. A
+    channel's sound and vibration are the user's once it exists, so a later change of mind takes a new id.
+  - **Silent** - posted on `launcher:messages_silent`, `setSilent` - wherever a message is posted silently today (a
+    time rule without calls, `TimeRulesStore.callsBlockedNow()`), and under **any** Do Not Disturb: the interruption
+    filter not `ALL` (an unknown one counts as on), whatever the mode lets through - the same fail-closed test as the
+    lock's wake (design 77 step 5, code QA H1).
+  - The kid's own sound choices: kid Settings has no message-vibration switch (the "kid-sounds" note: Android's
+    notification vibration intensity is a hidden setting no app may write). The ones that exist act on the reaction as
+    on a message, by Android itself: "Lydløs (vibrerer)" and "Lyd" both let the short buzz through (a message rings in
+    "Lyd" and buzzes in "Lydløs"); a silent ringer (from the volume panel) and Android's own "Notification vibration"
+    off stop it; "Meldingslyd" plays nothing here (the channel has no sound).
   - A message after it alerts as today, and the rebuilt notification carries both.
-  - Time rules and Do Not Disturb then need nothing of their own: under a time rule a message is already silent, and
-    the system's filter treats the quiet channel as it treats any low-importance post.
 - **What it doesn't do.**
   - It doesn't raise the unread count, Home's badge or the Meldinger badge. It doesn't move the conversation up the
     list or change its last line.
@@ -397,12 +427,15 @@ How the rows behave:
 - **Rebuilt from what is still unread, never cancelled while something is.**
   - The notification's lines are the conversation's unread IN bubbles and its unread, still-effective incoming
     reactions (D4: a removed or replaced one drops out), newest `SHOWN_MESSAGES` by `seq`.
-  - The engine gives the notifier both through one read, `engine.notifiable(id, limit)`. `smsNotifiedMessages`, the
-    move rebuild (`SmsNotifier.afterMove`) and this note's cases all use it.
+  - The engine gives the notifier both through one read, `engine.notifiable(id, limit)`. The notifier's lines (it
+    replaced `smsNotifiedMessages`), the move rebuild (`SmsNotifier.afterMove`) and this note's cases all use it.
   - **Cases:**
-    - a removal of a reaction that is on the notification rebuilds it quietly;
+    - a removal of a reaction rebuilds the notification quietly - only while it is up (`SmsNotifier.afterReaction`:
+      one the kid swiped away stays away);
     - a reaction MMS that was told before its text arrived (`TOLD_STATES`) and then attaches rebuilds it too;
-    - opening the thread marks both kinds read and the notification goes, as today.
+    - opening the thread marks both kinds read and the notification goes, as today. `markReadUpTo` marks the bubbles
+      up to the mark and the reactions on them, which came later with a higher `seq`; the thread marks on every read
+      while in front, not only when a bubble is unread (a reaction never is).
   - It is cancelled only when nothing unread remains. A real unread message's line never disappears because of a
     reaction.
 - **N7 is fixed already.** Design 77's group move (`movedFrom`) cancelled the sender's one-to-one notification even
@@ -462,8 +495,8 @@ How the rows behave:
 | `SmsEngine.send`, `repeated` | engine | `ReactionCommand` (D8) |
 | `SmsEngine.messages()` | engine | attaches each target's `reactions` from `store.reactions(targetIds)` (D4) |
 | `SmsEngine.notifiable(id, limit)`, `removeReactions(target, origin)` | engine | D12's lines (unread bubbles and unread effective reactions); D5's local hiding |
-| `SmsNotifier.notify` / `afterMove` | notifier | lines from `notifiable`; a reaction's post quiet and without a wake (D12) |
-| `MessageRow`, `MessageStore`, `SqliteMessageStore`, `FakeMessageStore` | store | the columns and `VERSION_4`; `messages()`, `lastMessage()` and `unread()` with `AND reaction_to IS NULL`; `reactions(targetIds)`; the cascade on delete. The fake keeps the same contract (design 77's QA L8 parity) |
+| `SmsNotifier.notify` / `afterMove` | notifier | lines from `notifiable`; a reaction's post on its own short-buzz channel, silent under a time rule or Do Not Disturb, without a wake (D12) |
+| `MessageRow`, `MessageStore`, `SqliteMessageStore`, `FakeMessageStore` | store | the columns and `VERSION_5`; `messages()`, `lastMessage()` and `unread()` with `AND reaction_to IS NULL`; `reactions(targetIds)`; the cascade on delete. The fake keeps the same contract (design 77's QA L8 parity) |
 | `Message` (the seam) | model | `reaction: ReactionRef?` (target, emoji, op) on a reaction row as events carry it; `reactions: List<Reaction>` (emoji, key, by: address or `null` for the kid, pending) on a bubble |
 | `ThreadActivity`, `MessagesModel` | front end 1 | the chip (D6) from `Message.reactions`, the panel (D7), the picker (D13) with its recent row. No fold: `threadItems`, `deliveryLine`, paging, the scroll and the list's last line see only bubbles (M2) |
 
@@ -517,7 +550,7 @@ None. The user agreed there is no parent switch (Q5).
   - `match`:
     - equal texts, for an add (not the reactor's) and for a removal (the bubble carrying it);
     - a cut quote, an ambiguous cut, a bubble newer than the reaction (L1);
-    - one picture, two pictures, a `NOT_SHOWN` picture, a `PENDING` picture;
+    - one picture, two pictures, a `NOT_SHOWN` picture, a `PENDING` picture (no target since the code QA's M1);
     - a removal with nothing to remove;
     - a natural nb sentence with no matching bubble (N3);
   - `state` (D4): add, replace, remove, a `FAILED` change, an `UNCERTAIN` row, `❤` then `Removed a heart`;
@@ -546,7 +579,7 @@ None. The user agreed there is no parent switch (Q5).
 - **The emulator loop (N6).** A `docs/testing/emulator.md` §6 entry, written in the build round:
   - `adb emu sms send` with each form;
   - `fake-mmsc.py` with a group text reaction and a picture plus reaction text;
-  - the panel and the picker at 288 dp, and the quiet notification under a time rule and Do Not Disturb.
+  - the panel and the picker at 288 dp, and the reaction's short buzz, and none under a time rule and Do Not Disturb.
 
 ## 8. Steps and sizes
 
@@ -563,7 +596,7 @@ None. The user agreed there is no parent switch (Q5).
 1. **Receive (M):**
    - `Reactions.kt`, `Emoji.kt` and the vectors;
    - store v4 with the filtered reads;
-   - the engine's attach, replace and remove, `Attached`, `notifiable`, the quiet notification and its rebuild;
+   - the engine's attach, replace and remove, `Attached`, `notifiable`, the notification (one short buzz) and its rebuild;
    - the chip, TalkBack, en + nb.
 2. **Send (M):** the long-press panel with "+" and "Fjern reaksjonene", `ReactionCommand` through the gate, the
    pending and failed states.
@@ -602,8 +635,10 @@ siden av dine seks? Jeg tenker barnet skal få en notification ved reactions. Re
 - **Q5 parent switch:** none (§6).
 - **New:** "+" opens every emoji (D13). An emoji beyond the six is sent in the iOS 18 form (D8).
 
-**Left for the user (one line):** a reaction's notification is **quiet** as proposed in D12: in the shade, no sound.
-If they want it to sound like a message, it is the alerting channel instead, with the same rules (no unread, no wake).
+**Answered at the build (revision 4):** "Jeg liker sånn som iMessage har, hvor du får en kortere vibrasjon ved
+reactions." A reaction from someone else gives one short buzz and no sound on its own channel, silent under a time rule
+and under Do Not Disturb, still no unread and no wake (D12). And "foreslår å bygge uten testen": step 0 waits; nothing
+is open for the user but the capture itself.
 
 ## 11. The design QA, finding by finding (`docs/review/qa-81-design.md`)
 
@@ -615,7 +650,7 @@ If they want it to sound like a message, it is the alerting channel instead, wit
 | M3 unbounded or invisible emoji | D2: a pinned Unicode 16.0 list, 16 UTF-16 units, U+FE0E dropped, stored fully-qualified, compared by a key without selectors |
 | M4 removal on repeated texts, failed rows, emoji variants | D3: a removal names the equal bubble carrying the sender's reaction, an add prefers a bubble not by the reactor; D4: `FAILED` ignored, `UNCERTAIN` pending; keys compared |
 | L1 window past the reaction's own seq | D3: candidates have `seq` lower than the reaction's |
-| L2 "a message with a picture" undefined | D3: every image part in any state counts; it attaches only to an `AVAILABLE`/`PENDING`/`WAITING_DATA` one; D7: the grid only on an `AVAILABLE` picture |
+| L2 "a message with a picture" undefined | D3: every image part in any state counts; it attaches only to an `AVAILABLE` one (until the code QA's M1 also `PENDING`/`WAITING_DATA`); D7: the grid only on an `AVAILABLE` picture |
 | L3 normalise both sides, cut marker, units | D2: the same normalisation on both sides, `…` only (unless step 0), 10 code points |
 | L4 200-character cut | D8: 200 UTF-16 units, a grapheme-boundary cut, one part if step 0 allows; cost in Q3 |
 | L5 `ReactionCommand` edges | D8: compose before `EMPTY`, `repeated()` compares the reaction fields, the target checks; D7: a refused send closes the panel |
@@ -631,3 +666,40 @@ If they want it to sound like a message, it is the alerting channel instead, wit
 | N6 the emulator loop | §7: an emulator.md §6 entry in the build round |
 | N7 the group move cancels the one-to-one's notification (pre-existing, design 77) | Not design 81's: fixed on `main` by step 5 (`SmsNotifier.afterMove`, rebuild, cancel only when empty); D12 reuses it |
 | N8 more questions | Q3 (Q6 + Q7), Q4 (Q8), Q5 (Q9) |
+
+## 12. As built (branch `sms-reactions`, 2026-11-10): where the build goes beyond or past the text above
+
+- **The emoji list** is `assets/sms/emoji-16.0.txt`, about 104 KB (not 80): every listed sequence's code points and
+  status (`f`/`m`/`u`; components and the Component group left out, no names) and the group lines, made by
+  `scripts/emoji-list.py` from Unicode's file with its SHA-256 pinned; the vectors file pins the asset's SHA-256. If the
+  asset can't be read the engine records it, and the classic six are still received and sent (`Reactions.emoji`: they
+  are constants; code QA N1), no other emoji. The licence's text is `LICENSE-UNICODE` (code QA N7).
+- **The picker's group icons** are the ones listed in D13 (😀 👋 🐶 🍎 ✈️ ⚽ 💡 ❤️ 🏁), not each group's first emoji
+  (which would be 🐵, 🍇, 🌍, 🎃, 👓, 🏧 for six of them).
+- **The picker takes the thread list's place** while it shows (the screen is a vertical column; an overlay would mean a
+  new root layout). Back or ✕ closes the picker and the panel together. Choosing the kid's own current emoji in the
+  picker takes it away, as its cell in the grid does.
+- **An MMS still being fetched is never a picture target** (code QA M1, the fix round; D3 above). So a placeholder
+  never carries a reaction: a group MMS's move, a drop, a retrieve that turns it into a text or a reaction, and a
+  conversation deleted meanwhile have nothing to give back. (The first build let a reaction sit on the placeholder,
+  detached it on the move and deleted it with a drop - the review showed a real SMS could end hidden or deleted that
+  way; both paths are gone.)
+- **The notification's lines** (code QA L1, N2): unread messages first, reactions only in the lines left; the lock
+  screen's public text says "Ny reaksjon" only when every line is a reaction. The channel choice is the pure
+  `smsChannel(silent, reaction, passesFilter)`. The vibration `0, 80` waits for the user's word on the Jelly Star.
+  A reaction buzzes only when its own line is on the notification (`smsReactionShown`, the verification's V1): with
+  five unread messages there is no room for it, and D12's post becomes a quiet rebuild (`afterReaction`) - no buzz with
+  nothing to show for it. A removal already rebuilds quietly.
+- **The chip** has its own room below the bubble (its measured height less 5 dp, code QA L3), and "Nylig brukt" learns
+  only an emoji that was sent as an add (N6).
+- **The panel** closes when the compose bar's state changes under it (a time rule began, group texts went off), and
+  follows its bubble when a reaction comes or goes while it is open. TalkBack's label for the kid's current reaction
+  is "Fjern din ❤️" ("Remove your ❤️"); the others "Reager med ❤️".
+- **The launcher's language** for the wire form is the language the launcher shows (a `messages_reaction_language`
+  resource, `en` / `nb`), so `launcher_ui.language` and the phone's own language decide as for every screen.
+- **[C], still open** (none captured): the English curly quotes and Telia/Telenor/Ice's 7-bit translation (§1.5);
+  whether iOS cuts a long quote, and with `…` or `...` (D2 accepts `…` only); every removal form on the wire, and
+  whether iOS sends a removal at all (§1.2); the noun iOS uses for an MMS picture (`an image` assumed, §1.3); whether an
+  iPhone reads our nb forms and `Likte et bilde` (D8 sends nb on an nb launcher); the iOS 18 picture forms missing from
+  27.0's table (§1.3, sent for an emoji beyond the six); Google Messages' form in Norway (D1: not recognised); whether
+  an iPhone matches a cut quote (D8 keeps three parts).

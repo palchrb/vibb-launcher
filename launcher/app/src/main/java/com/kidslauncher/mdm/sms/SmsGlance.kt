@@ -8,6 +8,7 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.sms.engine.Conversation
 import com.kidslauncher.mdm.sms.engine.Direction
 import com.kidslauncher.mdm.sms.engine.Message
+import com.kidslauncher.mdm.sms.engine.Notifiable
 
 /*
  * The lock glance's "Meldinger" rows (design 77 §6.8, step 5): one per conversation with unread messages, read from the
@@ -45,10 +46,26 @@ fun smsGlanceRow(conversation: Conversation, newestFirst: List<Message>, showTex
     )
 }
 
-/** What a conversation's notification shows: its newest unread incoming messages, at most [max], oldest first - empty
- * when nothing is unread (then it has no notification). [newestFirst] is the engine's backfill order. */
-fun smsNotifiedMessages(newestFirst: List<Message>, max: Int): List<Message> =
-    newestFirst.filter { it.direction == Direction.IN && !it.read }.take(max).reversed()
+/**
+ * The channel of a conversation notification's post: silent under a time rule without calls ([silent], as before), and
+ * design 81 D12's reaction from someone else ([reaction]) on its own short-buzz channel - silent too under any Do Not
+ * Disturb ([passesFilter] false: the filter isn't `ALL`, or unknown), whatever the mode lets through.
+ */
+fun smsChannel(silent: Boolean, reaction: Boolean, passesFilter: Boolean): String = when {
+    silent || (reaction && !passesFilter) -> NOTIFICATION_CHANNEL_MESSAGES_SILENT
+    reaction -> NOTIFICATION_CHANNEL_REACTIONS
+    else -> NOTIFICATION_CHANNEL_MESSAGES
+}
+
+/** Design 81 D12 (verification V1): a reaction buzzes only when its own line is on the notification - with five unread
+ * messages there is no room for it (they come first, code QA L1), and a buzz with nothing to show for it would mislead;
+ * then the notification is only rebuilt, quietly. A removal never posts at all ([SmsNotifier.afterReaction]). */
+fun smsReactionShown(lines: List<Notifiable>, reaction: com.kidslauncher.mdm.sms.engine.MessageId): Boolean =
+    lines.any { it.target != null && it.message.id == reaction }
+
+/** Design 81 D12 (code QA N2): the lock screen's public text follows what the notification holds - "Ny reaksjon" only
+ * when every line is a reaction, "Ny melding" as soon as one unread message is on it. */
+fun smsPublicIsReaction(lines: List<Notifiable>): Boolean = lines.isNotEmpty() && lines.all { it.target != null }
 
 /** `NotificationManager.IMPORTANCE_DEFAULT`: the lowest importance that makes a sound (pure here). */
 private const val SMS_ALERT_IMPORTANCE = 3

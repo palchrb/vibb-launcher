@@ -414,8 +414,10 @@ class MmsFlow internal constructor(
      * written, an accepted group moves it to the group's conversation, and the MMSC gets its answer - an m-notifyresp-ind
      * "retrieved" for an immediate fetch, an m-acknowledge-ind for a deferred one (code QA L2). Returns it to notify:
      * quietly when the kid was told of it before (it waited), with the conversation it left when it moved (code QA L8).
+     * A message of exactly one text and nothing else that is a reaction naming a bubble of the conversation it ended up
+     * in becomes that reaction (design 81 D9): [Received.Attached].
      */
-    fun onRetrieved(messageId: String, content: RetrievedMms): Received.Shown? {
+    fun onRetrieved(messageId: String, content: RetrievedMms): Received? {
         // The pictures this answer stored: kept only if a part ends up holding them.
         val fetched = content.parts.filterIsInstance<RetrievedPart.Picture>().map { it.sha256 }
         val m = store.mms(messageId)?.takeIf { it.state == MmsState.DOWNLOADED || it.state == MmsState.DOWNLOADING }
@@ -485,6 +487,9 @@ class MmsFlow internal constructor(
         val now = clock()
         val events = mutableListOf<EngineEvent>()
         var movedFrom: String? = null
+        // Design 81 D9 (H1): only an MMS that holds nothing but one text may be a reaction. Until now this row was a
+        // placeholder, which no reaction attaches to (code QA M1): whatever it turns out to be, nothing hangs on it.
+        val mayReact = body != null && Reactions.candidate(textParts = content.texts.size, otherParts = content.parts.size)
         val result = store.transaction {
             var updated = row.copy(body = body, failure = null)
             var conversation = store.conversation(row.conversationId.orEmpty())
@@ -501,6 +506,9 @@ class MmsFlow internal constructor(
                     conversation = target
                 }
             }
+            // Matched in the conversation it ended up in, against the bubbles older than it (D3, D9).
+            val link = if (mayReact && conversation != null) engine.attachment(body!!, m.from, conversation.id, updated.seq) else null
+            if (link != null) updated = updated.attachedTo(link)
             store.updateMessage(updated)
             store.putParts(row.id, parts)
             store.updateMms(m.copy(state = MmsState.DONE, failure = null, notified = true, crashes = 0))
@@ -512,7 +520,11 @@ class MmsFlow internal constructor(
                 store.insertEvent(EventRow(seq, EventType.MESSAGE_UPDATED, row.id, row.conversationId, Origin.ENGINE, null, now))
                 events += EngineEvent.MessageUpdated(seq, MessageId(row.id), message.delivery, parts)
             }
-            conversation?.let { Received.Shown(message, it, again = m.notified, movedFrom = movedFrom) }
+            conversation?.let {
+                // A reaction whose placeholder was told before only rebuilds the notification (D12).
+                if (link != null) Received.Attached(message, it, notify = link.op == ReactionOp.ADD && !m.notified, movedFrom = movedFrom)
+                else Received.Shown(message, it, again = m.notified, movedFrom = movedFrom)
+            }
         }
         events.forEach(engine::emit)
         dropUnheld(fetched)
@@ -615,6 +627,7 @@ class MmsFlow internal constructor(
         val row = store.message(m.messageId)
         val held = store.parts(m.messageId).mapNotNull { it.sha256 }
         if (m.state == MmsState.DOWNLOADED || m.state == MmsState.DOWNLOADING) radio.discardDownload(m.messageId)
+        // Design 81 (code QA M1): a message still being fetched never carries a reaction, so none goes with it.
         val seq = store.transaction {
             store.deleteMessageRow(m.messageId)
             engine.block(row?.at ?: clock(), KIND_MMS, clean, SmsEngine.REASON_RULE)
