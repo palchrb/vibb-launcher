@@ -512,10 +512,22 @@ Meldinger rows". What was decided (the design left it open):
   message was notified, silently, §6.7), and its tap takes the thread only where the rule allows calls - the message
   screens' own rule (`messagesUsableUnder`), else the plain keypad; from the lock with a rule in force it is handed to
   the time-rule screen, as every other row.
-- **The text:** only with `call_policy.sms_lock_text` (managed rules that say so; unknown or unmanaged rules: none),
-  read on the engine thread only then (`SmsHome.refresh`, `smsLockText`), cleaned as the glance's other texts
-  (`cleanGlanceText`, 200 characters). With the switch off the row never says more than the name and the count - not
-  "Bilde" either.
+- **The level** (design 82 D4, `docs/design/82-meldinger-as-an-app.md`): the parent's choice for Meldinger on the
+  lock is the policy's `lock_glance.sms` - `GlancePolicy.sms` (`badges/GlanceRows.kt`: `OFF`, `NAME`, `TEXT`, or
+  `LEGACY` from a server without the key) - and one pure function gives it to both readers, `smsLockLevel(sms,
+  callPolicyState)` (`sms/SmsGlance.kt`): the word as it is, whatever the call rules say; `LEGACY` is the rule before
+  design 82 - the text only with managed rules whose `call_policy.sms_lock_text` says so, otherwise the name. **Off:
+  no row** (`SmsHome.refresh` builds none) **and no wake** (`SmsNotifier.wakeIfAlerts`: nothing to show); the system
+  notification, the badge and the thread are untouched, as for an app set to Off. The reading fails closed
+  (`glanceSms`): another word or value is Off, a `lock_glance` that is no object is Off, a cache without the key or
+  no policy yet is Off; only a missing `sms` in an object, or a fresh policy without `lock_glance`, is `LEGACY`. A
+  changed level reaches the rows by `GlanceStore.smsLevelChanged` (set by `SmsRuntime.listen` to `SmsHome.refresh`;
+  the store holds no Context), and the apps' notices are cleared and reswept only when `apps` changed - so the other
+  rows never blank for it. At start-up the level is Off until the cached policy is applied. Tests: `SmsContractTest`
+  (`sms_contract.json`'s `app.lock_read`, every row), `SmsGlanceTest`, `GlanceRowsTest`, `PolicyResponseCompatTest`.
+- **The text:** only at Full text (`SmsLockLevel.TEXT`), read on the engine thread only then (`SmsHome.refresh`),
+  cleaned as the glance's other texts (`cleanGlanceText`, 200 characters). At Name only the row never says more than
+  the name and the count - not "Bilde" either.
 - **When it goes:** the thread read (opening it marks the messages read: `Read` -> the summary's refresh), the
   message or the conversation deleted (`MessageDeleted`), and a swipe or "Fjern" on the lock (`SmsGlance.dismiss`:
   hidden in memory until the conversation's next message, our notification of it cancelled unless a newer message came during the drag, nothing marked read - Home's

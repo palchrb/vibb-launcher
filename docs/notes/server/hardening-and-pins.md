@@ -84,6 +84,35 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the lock screen: on"); nudges; redirect to the app's row, `/devices/{id}/lock#lock-screen-app-<package>` from both
   forms (scroll-restore keeps the place). The
   Home Screen's notification-access warning and the Lock screen group's ⓘ name the lock's first page.
+- **Meldinger's row** (design 82, `docs/design/82-meldinger-as-an-app.md`, migration `0135_messages_lock_level.sql`):
+  the launcher's built-in SMS app is managed here like every app. Its key is `me.vibb.builtin.messages`
+  (`src/builtin.rs`: `MESSAGES`; the whole prefix `me.vibb.builtin.` is reserved - `is_reserved`,
+  `is_unknown_reserved`), and its level is a `device_lock_glance_apps` row under it: no row Off, `show_text` 0 Name
+  only, 1 Full text. 0135 seeds every existing phone from its old switch (`device_policy.sms_lock_text`, which nothing
+  reads or writes after it; no policy row: Name only) and recreates the trigger, so a new device has Meldinger at Name
+  only beside Element X. **On the wire** it is never an app: `lock_glance.sms` = `off` / `name` / `text`
+  (`lock_glance::sms_level`), always sent, and `text` only while `sms_mode` is `managed` - else `name`; `policy_apps`
+  drops every reserved name. `call_policy.sms_lock_text` is still sent for older launchers, derived
+  (`LockGlancePolicy::sms_lock_text`: true only at `text`); `build_call_policy` is handed the one read's level. The
+  failed read's fallback is `LockGlancePolicy::unreadable()`: `{"apps": [], "sms": "off"}` and `sms_lock_text` false -
+  never an absent `sms`, which a new launcher would read as the older rule. **The page**: `lock_screen_card` lists the
+  row first in the group, with or without an allowlist, **only while `sms_mode` is `managed`** (`messages_row`; the
+  same select, the same route and anchor `#lock-screen-app-me.vibb.builtin.messages`, so it saves in place). With Off
+  stored on a phone that has reported without `messages_app_v1` (`MESSAGES_APP_CAPABILITY`) the row says "This phone
+  still shows the name and how many - update Vibb One" in its own field `LockScreenApp.hint` - never `note`, which
+  would make the form post `unlisted=1` and return to the group. With no notification access while the row is listed
+  and not Off the note is `Note::NoNotificationAccessButMessages` ("Missed calls and Messages only"). The security log
+  never shows the key: `log_line` / `text_log_line` pick `security.detail.lock_screen_messages(.on/.off)` and
+  `lock_screen_messages_text(.on/.off)`, without a package parameter. **The reservation** (D1): a reported installed
+  app under the prefix is dropped at intake (`device_api::cap_installed_apps`), `never_a_catalog_package`, the allow
+  switch (`toggle_app`) and the permissions target (`perms_target`) refuse it, `valid_package` accepts exactly the key,
+  `card_apps` never lists a reserved name as an app or an unlisted tick. Tests: `lock_glance::tests`
+  (`meldingers_row`, the notes, the log keys, the package rules), `tests/lock_glance.rs`
+  (`the_messages_migration_takes_each_phones_old_switch`,
+  `meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place`,
+  `meldingers_row_says_what_an_older_phone_shows_and_the_access_note_counts_it`,
+  `a_reserved_name_is_never_an_installed_app`, the unreadable table's exact fallback), `sms::tests::the_app_lock_rows`
+  (`sms_contract.json`'s `app.lock`), `builtin::tests`.
 - Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (both migrations on an old database - 0083's backfill per
   phone -, the trigger, the cascade, the policy incl. a dropped table, both routes - the text per app, a re-tick
   resetting it, the 404 for an unticked app -, refusals, the page and its notes), `device_pages`'s form table,

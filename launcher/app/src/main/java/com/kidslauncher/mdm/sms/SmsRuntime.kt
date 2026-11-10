@@ -190,6 +190,8 @@ object SmsRuntime {
             }
             SmsHome.refresh(app)
         }
+        // Design 82 D5: Meldinger's level on the lock changed - its rows are read again (the store holds no Context).
+        com.kidslauncher.mdm.badges.GlanceStore.smsLevelChanged = { SmsHome.refresh(app) }
         // Every event moves Home's badges (a message in, a read mark, a delete) - read on the engine thread. Collected
         // off it (code QA of step 2, L1): a collector on the emitting thread can't drain while that thread runs a burst.
         val opened = engine ?: return

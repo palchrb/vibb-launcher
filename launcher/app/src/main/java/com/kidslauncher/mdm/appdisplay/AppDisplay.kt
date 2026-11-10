@@ -49,6 +49,16 @@ fun isValidPackageName(name: String): Boolean =
         }
     }
 
+/** Design 82 D1: every name under this prefix is Vibb One's own, never an installed app's (the server's
+ * `builtin::RESERVED_PREFIX`). */
+const val BUILTIN_PREFIX = "me.vibb.builtin."
+
+/** Meldinger's key (design 82 D1; `sms_contract.json`'s `app.key`, the server's `builtin::MESSAGES`). */
+const val BUILTIN_MESSAGES = "me.vibb.builtin.messages"
+
+/** A name under the reserved prefix: no installed app is read under it. */
+fun isBuiltinName(name: String): Boolean = name.startsWith(BUILTIN_PREFIX)
+
 /** A usable label: trimmed, 1-20 characters (code points), no control characters; else `null`. */
 fun cleanDisplayLabel(raw: String?): String? {
     val label = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null

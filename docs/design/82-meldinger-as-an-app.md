@@ -417,3 +417,33 @@ No High, four Mediums, ten Lows. Each was checked against the code; all fourteen
 | 14 | L | §9: the buzz is decided before `noticeCame()`'s return, with its own gap and `USAGE_NOTIFICATION` |
 
 Also corrected: the reaction buzz's length is not a number here (§1 item 1, §9).
+
+## 14. As built (branch `meldinger-app`, 2026-11-10)
+
+The user's answers to §12: W1 yes, W2 yes, W3 yes as §9 recommends (default off, its own third commit); points 4-7 as
+written. So the branch has three commits, not §11's two. No emulator ran in the build round: what only a phone can
+show is listed in the build report for the emulator pass.
+
+**Step 1, the lock level** - as D1-D8, with these choices where the note left room or the code differed:
+
+- **Migration 0135** (`0135_messages_lock_level.sql`). A device without a `device_policy` row is seeded at Name only.
+- **`save_app_display` refuses the whole reserved prefix in step 1** (400); step 2 opens exactly the key. D1 asks for
+  "exactly the known key" - until the built-in form exists there is nothing for a row under the key to do.
+- **The row's own note is `LockScreenApp.hint`** (D7's "its own field"), drawn under the label in `device_lock.html`;
+  `note` stays `None` for Meldinger, so the form never posts `unlisted=1`.
+- **The card's tests are integration tests** (`tests/lock_glance.rs`), not `lock_glance::tests` as §6 says: the row's
+  place and the mode gate are `lock_screen_card`'s (`handlers/devices.rs`), not the pure module's. The pure module's
+  tests cover `messages_row`, the notes, the log keys and the package rules.
+- **`device.lock.wake_sub`** read "For the apps on the lock below, missed calls and messages" on `main`; it is D7's
+  wording now, in both languages.
+- **The contract's rows.** `app.lock`: `{stored, sms_mode, sms, sms_lock_text}` (`stored` null = no row). `app.lock_read`:
+  `{lock_glance?, fresh, sms_lock_text, sms, level}` - `lock_glance` absent = no key, `sms_lock_text` null = no
+  managed call rules, `sms` the word read (`legacy` for a server without it) and `level` what the lock shows. The
+  server's `the_app_lock_rows` produces every `lock` row and checks that each word it sends is read as itself.
+- **`GlancePolicy.sms` has a default, `OFF`**: every construction that does not say otherwise fails closed
+  (`UNKNOWN`); `SERVER_DEFAULT` says `LEGACY`.
+- **The wake at Off**: `SmsNotifier.wakeIfAlerts` still spends the swipe mark (`SmsGlance.comeBack`, as before) and
+  only then finds no row to gain - the level changes nothing but the wake.
+- **The launcher's policy log line does not name the level**: `LockGlanceGuardTest` allows only the counts there.
+- **`GlanceStore.refreshPolicy`** calls the hook before it decides whether the apps changed; a change of the level
+  alone returns without the clear and the resweep (D5).

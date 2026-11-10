@@ -290,7 +290,7 @@
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
-                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}</span>
+                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}{% if let Some(hint) = app.hint %}<span class="row-sub tone-orange" data-hint>{{ self.t(hint) }}</span>{% endif %}</span>
                     <select class="pick" name="show" data-autosave>
                         <option value="off"{% if !app.on %} selected{% endif %}>{{ self.t("common.off") }}</option>
                         <option value="name"{% if app.on && !app.show_text %} selected{% endif %}>{{ self.t("device.lock.name_only") }}</option>

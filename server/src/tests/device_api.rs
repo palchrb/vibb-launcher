@@ -541,11 +541,14 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(location_keys, ["interval_minutes", "mode", "zones"]);
 
     // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
-    // the sender only (per app since design 51). The launcher's `lockGlancePolicy` decodes exactly
-    // this shape (`PolicyResponseCompatTest`).
+    // the sender only (per app since design 51) - and `sms`, Meldinger's level (design 82 D3), Name only. The
+    // launcher's `lockGlancePolicy` decodes exactly this shape (`PolicyResponseCompatTest`).
     assert_eq!(
         object["lock_glance"],
-        serde_json::json!({ "apps": [{ "package": "io.element.android.x", "show_text": false }] })
+        serde_json::json!({
+            "apps": [{ "package": "io.element.android.x", "show_text": false }],
+            "sms": "name",
+        })
     );
 
     // Dagen (design 69 §4.1): always an object, a fresh phone's defaults - on Home, the kid may add events (to the

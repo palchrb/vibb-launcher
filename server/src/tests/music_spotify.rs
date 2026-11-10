@@ -202,7 +202,8 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// A contact photo's kept original 0123, after design 75's lock weather 0122 (which reaches `main` first). Security
 /// review S-L5's Bluetooth switch 0124, the status report's `tailnet_joined` 0125, the weather's place name dropped 0126,
 /// the lock screen's media apps 0127, Push never lost silently's Remove notes 0128, design 76's certificate check 0129,
-/// design 77's SMS 0130, Spotify audiobooks' marker 0131, design 77 step 4's push budget 0132.
+/// design 77's SMS 0130, Spotify audiobooks' marker 0131, design 77 step 4's push budget 0132. Design 82's lock
+/// level for Meldinger 0135.
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -273,7 +274,8 @@ fn migrations_from_73_in_order() {
             (131, "spotify audiobook".to_string()),
             (132, "push budget".to_string()),
             (133, "contact requests".to_string()),
-            (134, "sms groups".to_string())
+            (134, "sms groups".to_string()),
+            (135, "messages lock level".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.kidslauncher.mdm.badges.GlanceSmsRow
+import com.kidslauncher.mdm.badges.GlanceStore
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.smsMode
 import com.kidslauncher.mdm.ui.messages.messagesTileShown
@@ -61,10 +62,15 @@ object SmsHome {
             // Cleared as the read begins: a change after this point queues the next read (code QA N5: only here).
             pending.set(false)
             val conversations = engine.conversations()
-            val showText = smsLockText(CallPolicyStore.state)
-            val glance = conversations.filter { it.unread > 0 }
-                .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText) }
-                .sortedByDescending { it.timeMs }
+            // Design 82 D4: the parent's level for Meldinger on the lock - no rows at Off, the text only at Full text.
+            val level = smsLockLevel(GlanceStore.policy.sms, CallPolicyStore.state)
+            val glance = if (level == SmsLockLevel.OFF) {
+                emptyList()
+            } else {
+                conversations.filter { it.unread > 0 }
+                    .mapNotNull { smsGlanceRow(it, engine.messages(it.id, null, SMS_GLANCE_LOOKBACK), showText = level == SmsLockLevel.TEXT) }
+                    .sortedByDescending { it.timeMs }
+            }
             Summary(conversations.isNotEmpty(), conversations.sumOf { it.unread }, SmsRuntime.roleHeld(app), unreadByNumber(conversations), glance)
         }) { next ->
             // No engine (the work never ran): nothing cleared the flag.

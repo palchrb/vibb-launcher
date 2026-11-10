@@ -347,7 +347,22 @@ pub(crate) async fn build_policy(
     .fetch_all(&state.db)
     .await?;
 
-    let call_policy = build_call_policy(state, &policy).await?;
+    // The lock's glance page (design 25): cosmetic like the wallpapers - a failing query sends no
+    // apps (missed calls only on the phone's lock), never a 500 that would cost the phone its rules. Design 82 D3:
+    // it fails closed for Meldinger too - `sms: "off"`, never an absent key - and the one read's level is what
+    // `call_policy.sms_lock_text` is derived from.
+    let lock_glance =
+        crate::lock_glance::policy_lock_glance(&state.db, device_id, &policy.sms_mode)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(
+                    device_id,
+                    %err,
+                    "couldn't load the lock screen's apps - policy sent with lock_glance.apps: [] and sms: off"
+                );
+                crate::lock_glance::LockGlancePolicy::unreadable()
+            });
+    let call_policy = build_call_policy(state, &policy, lock_glance.sms_lock_text()).await?;
     // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
     let app_permissions =
         crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
@@ -369,19 +384,6 @@ pub(crate) async fn build_policy(
             None
         }
     };
-
-    // The lock's glance page (design 25): cosmetic like the wallpapers - a failing query sends no
-    // apps (missed calls only on the phone's lock), never a 500 that would cost the phone its rules.
-    let lock_glance = crate::lock_glance::policy_lock_glance(&state.db, device_id)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(
-                device_id,
-                %err,
-                "couldn't load the lock screen's apps - policy sent with lock_glance.apps: []"
-            );
-            crate::lock_glance::LockGlancePolicy { apps: Vec::new() }
-        });
 
     // Dagen (design 69 §4.1): a read error fails the policy, like the zones - the phone keeps its cache.
     let mut calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
@@ -638,10 +640,12 @@ async fn build_time_policy(
 /// Always explicit (QA blocker 3): an unmanaged device gets `managed: false` with defaults and no
 /// contacts, never a missing key - the launcher treats a missing `call_policy` after managed
 /// calls as a suspect response and keeps its last rules. Read errors are 500s like the rest of
-/// `build_policy`.
+/// `build_policy`. [sms_lock_text] is the old key derived from `lock_glance.sms` (design 82 D3), for a launcher from
+/// before it: true only at Full text.
 async fn build_call_policy(
     state: &AppState,
     policy: &DevicePolicy,
+    sms_lock_text: bool,
 ) -> Result<CallPolicy, PolicyError> {
     let default_country_code: String =
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
@@ -691,7 +695,7 @@ async fn build_call_policy(
         emergency_menu,
         calls_mode: policy.calls_mode.clone(),
         sms_mode: policy.sms_mode.clone(),
-        sms_lock_text: policy.sms_lock_text,
+        sms_lock_text,
         sms_groups: policy.sms_groups,
         sms_names,
         own_numbers,
@@ -806,15 +810,17 @@ pub(crate) fn is_package_name(name: &str) -> bool {
 pub(crate) const MAX_APP_VERSION_NAME_CHARS: usize = 60;
 
 /// The installed-apps list within limits (security review M7): entries without a real package
-/// name are dropped, and so are duplicates; labels are clipped, an installer that isn't a package
-/// name is dropped, a versionName is trimmed and clipped (a blank one is none), and at most
-/// [MAX_INSTALLED_APPS] are kept.
+/// name are dropped, and so are duplicates and every name under the prefix reserved for Vibb One's built-ins
+/// (design 82 D1: such a package never reaches the Apps page, the allowlist or a lock row); labels are clipped, an
+/// installer that isn't a package name is dropped, a versionName is trimmed and clipped (a blank one is none), and
+/// at most [MAX_INSTALLED_APPS] are kept.
 fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
     let reported = apps.len();
     let mut seen = std::collections::HashSet::new();
     let capped: Vec<InstalledApp> = apps
         .into_iter()
         .filter(|app| is_package_name(&app.package_name))
+        .filter(|app| !crate::builtin::is_reserved(&app.package_name))
         .filter(|app| seen.insert(app.package_name.clone()))
         .take(MAX_INSTALLED_APPS)
         .map(|app| InstalledApp {

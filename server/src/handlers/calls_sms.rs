@@ -7,8 +7,10 @@
 //!   venter" at the foot. An emergency number, or a name without a letter, offers only "Slett nå", with why (QA
 //!   R2-H1); a row past its `expires_at` by the server's clock reads "Utløpt" with no action (R2-L2).
 //! - "Blokkerte meldinger" (folded): the `blocked` rows of the last 30 days.
-//! - The SMS settings (one form): the phone's own number per SIM (D12) and "Vis meldingstekst på låseskjermen"
-//!   (`sms_lock_text`, §6.8).
+//! - The SMS settings (one form): the phone's own number per SIM (D12) and "Gruppemeldinger". The message text on
+//!   the lock (§6.8's `sms_lock_text`) is no longer here: since design 82 Meldinger's lock level is a row under Lock
+//!   Screen & PINs' Notifications, and this group has a link to it while SMS is managed (D8). A stale page's
+//!   `sms_lock_text` is not read.
 //! - "Avsendernavn som slipper gjennom" (D17): the names, Add and Remove, the honest warning.
 //!
 //! Every write is one transaction scoped to the phone, answers 500 on a database error and nudges the phone
@@ -394,7 +396,9 @@ pub(super) struct SmsPage {
     pub waiting: usize,
     pub blocked: Vec<BlockedView>,
     pub names: Vec<NameView>,
-    pub lock_text: bool,
+    /// Design 82 D8: Meldinger's level on the lock as the link row's value (its catalog key) - `Some` only while SMS
+    /// is managed, when Lock Screen & PINs lists the row the link points to.
+    pub lock_level: Option<&'static str>,
     /// Design 80 §4.5: the phone's own numbers, a row per slot in question.
     pub own_rows: Vec<OwnRow>,
     /// No number from any source: every group text is blocked (said on view while SMS is managed, D7/D8).
@@ -563,13 +567,24 @@ pub(super) async fn load(
     .bind(ROWS_MAX)
     .fetch_all(db)
     .await?;
-    let (lock_text, sms_mode, groups): (bool, String, bool) = sqlx::query_as(
-        "SELECT sms_lock_text, sms_mode, sms_groups FROM device_policy WHERE device_id = ?",
-    )
-    .bind(device_id)
-    .fetch_optional(db)
-    .await?
-    .unwrap_or((false, String::new(), true));
+    let (sms_mode, groups): (String, bool) =
+        sqlx::query_as("SELECT sms_mode, sms_groups FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or((String::new(), true));
+    let lock_level = if sms_mode == "managed" {
+        let stored: Option<bool> = sqlx::query_scalar(
+            "SELECT show_text FROM device_lock_glance_apps WHERE device_id = ? AND package_name = ?",
+        )
+        .bind(device_id)
+        .bind(crate::builtin::MESSAGES)
+        .fetch_optional(db)
+        .await?;
+        Some(crate::lock_glance::level_label(stored))
+    } else {
+        None
+    };
     let stored: Vec<(i64, String)> = sqlx::query_as(
         "SELECT slot, number FROM device_own_numbers WHERE device_id = ? ORDER BY slot",
     )
@@ -609,7 +624,7 @@ pub(super) async fn load(
         waiting,
         blocked,
         names,
-        lock_text,
+        lock_level,
         own_rows,
         number_missing,
         groups,
@@ -1011,7 +1026,6 @@ pub async fn save_sms(
             }
         }
     }
-    let lock_text = form.contains_key("sms_lock_text");
     // Design 80 D13: only a post from a page with the switch (`groups_shown`) writes "Gruppemeldinger" - an older page
     // keeps it - and only for a phone claiming `sms_groups_v1` (the switch is disabled before: it isn't sent).
     let groups = if form.contains_key("groups_shown") {
@@ -1026,10 +1040,9 @@ pub async fn save_sms(
     let result = async {
         let mut tx = state.db.begin().await?;
         let updated = sqlx::query(
-            "UPDATE device_policy SET sms_lock_text = ?, sms_groups = COALESCE(?, sms_groups), \
+            "UPDATE device_policy SET sms_groups = COALESCE(?, sms_groups), \
              updated_at = datetime('now') WHERE device_id = ?",
         )
-        .bind(lock_text)
         .bind(groups)
         .bind(id)
         .execute(&mut *tx)

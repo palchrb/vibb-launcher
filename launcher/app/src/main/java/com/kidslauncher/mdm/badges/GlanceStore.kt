@@ -34,6 +34,11 @@ object GlanceStore {
 
     val policy: GlancePolicy get() = policyState.policy
 
+    /** Design 82 D5: called on the main thread when Meldinger's level ([GlancePolicy.sms]) changed. Set once by
+     * `SmsRuntime` (its rows are read again) - the store itself holds no Context. */
+    @Volatile
+    var smsLevelChanged: (() -> Unit)? = null
+
     private val notices = LinkedHashMap<String, GlanceNotice>()
     private val intents = HashMap<String, PendingIntent>()
     private val opened = HashMap<GlanceConversation, Long>()
@@ -159,8 +164,9 @@ object GlanceStore {
     /**
      * The parent's choice from `PolicyResponse.lockGlance` ([lockGlancePolicy]; [fresh]: a sync's
      * accepted policy, else the `Ok` cache). Any thread: posted to the main thread (QA Low 12). A
-     * change re-sweeps the active notifications. The cache read at process start never overwrites a
-     * fresh policy that arrived first.
+     * change of the apps re-sweeps the active notifications; a change of Meldinger's level alone only
+     * reads its rows again ([smsLevelChanged], design 82 D5), so the other rows never blank for it. The
+     * cache read at process start never overwrites a fresh policy that arrived first.
      */
     fun refreshPolicy(element: JsonElement?, fresh: Boolean) {
         val next = try {
@@ -176,6 +182,8 @@ object GlanceStore {
                 if (policyState.policy == before) return@post
                 val withText = next.apps.count { it.value }
                 Log.i(LOG_TAG, "Lock glance policy: ${next.apps.size} apps, $withText with text")
+                if (next.sms != before.sms) smsLevelChanged?.invoke()
+                if (next.apps == before.apps) return@post
                 notices.clear()
                 intents.clear()
                 GlanceReader.resweep()

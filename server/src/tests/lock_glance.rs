@@ -1,36 +1,66 @@
 //! Design 25: the lock's glance page - the apps whose messages the PIN lock's first page shows
 //! (migrations/0066) and, per app, whether their text shows (design 51, migrations/0083),
-//! `PolicyResponse.lock_glance`, and Lock Screen & PINs' Notifications group.
+//! `PolicyResponse.lock_glance`, and Lock Screen & PINs' Notifications group. Since design 82 the built-in Meldinger
+//! has a row of its own in the table (migrations/0135), sent as `lock_glance.sms`.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::TestApp;
+use crate::builtin::MESSAGES;
 use crate::lock_glance::ELEMENT_X;
 
 /// The migration that adds the table, the switch and the default (renumbered at a rebase: here only).
 const MIGRATION: i64 = 66;
 
+/// The ticked apps - without Meldinger's own row (design 82), which is [messages]'.
 async fn ticks(app: &TestApp, id: i64) -> Vec<String> {
     sqlx::query_scalar(
-        "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ? ORDER BY package_name",
+        "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ? AND package_name != ? \
+         ORDER BY package_name",
     )
     .bind(id)
+    .bind(MESSAGES)
     .fetch_all(&app.db)
     .await
     .unwrap()
 }
 
-/// Each tick with its text flag.
+/// Each ticked app with its text flag.
 async fn texts(app: &TestApp, id: i64) -> Vec<(String, bool)> {
     sqlx::query_as(
         "SELECT package_name, show_text FROM device_lock_glance_apps WHERE device_id = ? \
-         ORDER BY package_name",
+         AND package_name != ? ORDER BY package_name",
     )
     .bind(id)
+    .bind(MESSAGES)
     .fetch_all(&app.db)
     .await
     .unwrap()
+}
+
+/// Meldinger's stored level (design 82 D2): no row = Off, else its `show_text`.
+async fn messages(app: &TestApp, id: i64) -> Option<bool> {
+    messages_in(&app.db, id).await
+}
+
+async fn messages_in(db: &sqlx::SqlitePool, id: i64) -> Option<bool> {
+    sqlx::query_scalar(
+        "SELECT show_text FROM device_lock_glance_apps WHERE device_id = ? AND package_name = ?",
+    )
+    .bind(id)
+    .bind(MESSAGES)
+    .fetch_optional(db)
+    .await
+    .unwrap()
+}
+
+async fn sms_managed(app: &TestApp, id: i64) {
+    sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
 }
 
 fn text_of(package: &str, on: bool) -> (String, bool) {
@@ -141,13 +171,14 @@ async fn the_migration_gives_existing_devices_element_x_and_the_switch_off() {
     super::cleanup::finish(&db).await;
     for id in ids {
         let apps: Vec<String> = sqlx::query_scalar(
-            "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ?",
+            "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ? ORDER BY package_name",
         )
         .bind(id)
         .fetch_all(&db)
         .await
         .unwrap();
-        assert_eq!(apps, [ELEMENT_X]);
+        // And 0135's row for Meldinger (design 82).
+        assert_eq!(apps, [ELEMENT_X, MESSAGES]);
         let text: bool =
             sqlx::query_scalar("SELECT lock_glance_text FROM device_policy WHERE device_id = ?")
                 .bind(id)
@@ -196,10 +227,49 @@ async fn the_text_migration_takes_each_phones_old_switch() {
         .fetch_all(&db)
         .await
         .unwrap();
+        // 0135's row for Meldinger follows `sms_lock_text` (off here), not this switch.
         assert_eq!(
             rows,
-            [text_of("com.a.chat", text), text_of(ELEMENT_X, text)]
+            [
+                text_of("com.a.chat", text),
+                text_of(ELEMENT_X, text),
+                text_of(MESSAGES, false)
+            ]
         );
+    }
+}
+
+/// Design 82 D2: 0135 gives every existing phone Meldinger's row at what it shows today - Full text where the old
+/// switch was on, else Name only (a device without a policy row too).
+#[tokio::test]
+async fn the_messages_migration_takes_each_phones_old_switch() {
+    let (db, _dir) = super::cleanup::migrated_before(135).await;
+    let mut ids = Vec::new();
+    for (name, text) in [
+        ("with text", Some(1)),
+        ("name only", Some(0)),
+        ("bare", None),
+    ] {
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+            .bind(name)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        if let Some(text) = text {
+            sqlx::query(
+                "INSERT INTO device_policy (device_id, kiosk_desired, sms_lock_text) VALUES (?, 1, ?)",
+            )
+            .bind(id)
+            .bind(text)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        ids.push(id);
+    }
+    super::cleanup::finish(&db).await;
+    for (id, text) in ids.into_iter().zip([true, false, false]) {
+        assert_eq!(messages_in(&db, id).await, Some(text));
     }
 }
 
@@ -210,6 +280,8 @@ async fn a_new_device_gets_element_x_by_the_trigger_and_a_delete_cascades() {
     // The test helper's plain INSERT, as any other path that creates a device.
     let (helper, _) = app.create_device("helper").await;
     assert_eq!(texts(&app, helper).await, [text_of(ELEMENT_X, false)]);
+    // Design 82 D2: and Meldinger at Name only.
+    assert_eq!(messages(&app, helper).await, Some(false));
     // The page's own create.
     let res = app
         .request_form(
@@ -236,7 +308,9 @@ async fn a_new_device_gets_element_x_by_the_trigger_and_a_delete_cascades() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     assert!(ticks(&app, helper).await.is_empty());
+    assert_eq!(messages(&app, helper).await, None);
     assert_eq!(ticks(&app, page).await, [ELEMENT_X]);
+    assert_eq!(messages(&app, page).await, Some(false));
 }
 
 #[tokio::test]
@@ -245,7 +319,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
     let (id, token) = app.enrolled_device("phone").await;
     assert_eq!(
         app.policy(&token).await["lock_glance"],
-        json!({ "apps": [{ "package": ELEMENT_X, "show_text": false }] })
+        json!({ "apps": [{ "package": ELEMENT_X, "show_text": false }], "sms": "name" })
     );
     for (package, text) in [
         ("org.thoughtcrime.securesms", true),
@@ -272,6 +346,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
                 { "package": ELEMENT_X, "show_text": false },
                 { "package": "org.thoughtcrime.securesms", "show_text": true },
             ],
+            "sms": "name",
         })
     );
     // Another phone's ticks are its own.
@@ -286,7 +361,17 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
 async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
+    // Design 82 D3: Meldinger at Full text on a managed phone, so the fallback below is seen to take it away.
+    sms_managed(&app, id).await;
+    assert_eq!(
+        show(&app, Some(&app.admin_cookie().await), id, MESSAGES, "text")
+            .await
+            .status,
+        StatusCode::SEE_OTHER
+    );
     let before = app.policy(&token).await;
+    assert_eq!(before["lock_glance"]["sms"], "text");
+    assert_eq!(before["call_policy"]["sms_lock_text"], true);
     // The trigger names the table, so it goes first.
     sqlx::query("DROP TRIGGER devices_get_lock_glance_default")
         .execute(&app.db)
@@ -297,9 +382,16 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
         .await
         .unwrap();
     let after = app.policy(&token).await;
-    assert_eq!(after["lock_glance"], json!({ "apps": [] }));
+    // Fail closed for Meldinger too: `sms` is "off", never absent (a new launcher would read an absent one as an
+    // older server's rule), and the derived old key is false.
+    assert_eq!(after["lock_glance"], json!({ "apps": [], "sms": "off" }));
+    assert_eq!(after["call_policy"]["sms_lock_text"], false);
     let strip = |mut v: Value| {
         v.as_object_mut().unwrap().remove("lock_glance");
+        v["call_policy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sms_lock_text");
         v
     };
     assert_eq!(strip(before), strip(after));
@@ -886,6 +978,187 @@ async fn the_page_shows_each_note() {
     assert!(!html.contains("data-warning"), "{html}");
 }
 
+/// Design 82 D7: Meldinger's row is the group's first and only while SMS is managed; every save returns to its own
+/// cell (Off too - it stays listed), reaches the policy as `lock_glance.sms` with the derived `sms_lock_text`, and
+/// is logged without the key.
+#[tokio::test]
+async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let page =
+        || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
+    let anchor = format!("lock-screen-app-{MESSAGES}");
+
+    // SMS not managed: no row, and a stored Full text goes out as the name.
+    assert_eq!(form_of(&page().await, MESSAGES), None);
+    assert_eq!(app.policy(&token).await["lock_glance"]["sms"], "name");
+
+    sms_managed(&app, id).await;
+    let html = page().await;
+    let form = form_of(&html, MESSAGES).expect("Meldinger's row");
+    assert!(form.contains("Messages"), "{form}");
+    assert_eq!(shown(&form), "name");
+    assert!(
+        form.contains(&format!("/devices/{id}/lock-screen/apps#{anchor}")),
+        "{form}"
+    );
+    assert!(!form.contains("unlisted"), "{form}");
+    assert!(!form.contains("data-hint"), "{form}");
+    // Before every app's row (Element X, listed for its tick).
+    assert!(
+        html.find(&format!(r#"id="{anchor}""#)) < html.find(r#"id="lock-screen-app-io.element"#),
+        "{html}"
+    );
+
+    for (value, sms, text) in [
+        ("off", "off", false),
+        ("text", "text", true),
+        ("name", "name", false),
+    ] {
+        let res = show(&app, Some(&cookie), id, MESSAGES, value).await;
+        super::assert_redirect(&res, &lock_page(id), Some(&anchor));
+        app.assert_lands(&res, &cookie).await;
+        let policy = app.policy(&token).await;
+        assert_eq!(policy["lock_glance"]["sms"], sms);
+        assert_eq!(policy["call_policy"]["sms_lock_text"], text);
+        assert_eq!(
+            policy["lock_glance"]["apps"],
+            json!([{ "package": ELEMENT_X, "show_text": false }])
+        );
+        assert_eq!(shown(&form_of(&page().await, MESSAGES).unwrap()), value);
+    }
+    assert_eq!(
+        events(&app, "lock_screen_app_changed").await,
+        ["off", "on"].map(|s| (
+            format!("phone {id}: Messages on the lock screen: {s}"),
+            Some("parent".to_string())
+        ))
+    );
+    assert_eq!(
+        events(&app, "lock_screen_text_changed").await,
+        ["on", "off"].map(|s| (
+            format!("phone {id}: Messages' text on the lock screen: {s}"),
+            Some("parent".to_string())
+        ))
+    );
+}
+
+/// Design 82 D7: the row's own line for Off on a phone that can't hide the row yet, and the no-access note that
+/// counts Meldinger while its row shows.
+#[tokio::test]
+async fn meldingers_row_says_what_an_older_phone_shows_and_the_access_note_counts_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let page =
+        || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
+    sms_managed(&app, id).await;
+    const HINT: &str = "This phone still shows the name and how many - update Vibb One";
+
+    // A launcher from before `messages_app_v1`, without notification access.
+    report(
+        &app,
+        &token,
+        &[],
+        json!({ "capabilities": ["lock_glance_v1"], "notification_listener_enabled": false }),
+    )
+    .await;
+    let html = page().await;
+    assert!(html.contains("Missed calls and Messages only"), "{html}");
+    assert!(!form_of(&html, MESSAGES).unwrap().contains(HINT));
+
+    show(&app, Some(&cookie), id, MESSAGES, "off").await;
+    let html = page().await;
+    assert!(html.contains("Missed calls only"), "{html}");
+    assert!(!html.contains("Missed calls and Messages only"), "{html}");
+    let form = form_of(&html, MESSAGES).unwrap();
+    assert!(form.contains(HINT), "{form}");
+    // Still its own cell: the hint is not the "unlisted" note.
+    assert!(!form.contains("unlisted"), "{form}");
+
+    // An up-to-date launcher hides the row at Off: no line.
+    report(
+        &app,
+        &token,
+        &[],
+        json!({
+            "capabilities": ["lock_glance_v1", crate::lock_glance::MESSAGES_APP_CAPABILITY],
+            "notification_listener_enabled": true,
+        }),
+    )
+    .await;
+    assert!(!page().await.contains(HINT));
+}
+
+/// Design 82 D1: the prefix is reserved. A reported app under it is dropped at intake, and neither the allow switch
+/// nor an app's permissions take a reserved name.
+#[tokio::test]
+async fn a_reserved_name_is_never_an_installed_app() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    report(
+        &app,
+        &token,
+        &[
+            (MESSAGES, "Fake"),
+            ("me.vibb.builtin.other", "Other"),
+            ("com.a.chat", "Chat"),
+        ],
+        json!({}),
+    )
+    .await;
+    let stored: String = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored: Vec<crate::models::InstalledApp> = serde_json::from_str(&stored).unwrap();
+    assert_eq!(
+        stored
+            .iter()
+            .map(|a| a.package_name.as_str())
+            .collect::<Vec<_>>(),
+        ["com.a.chat"]
+    );
+
+    let allowlist = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT allowlist_json FROM device_policy WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let before = allowlist().await;
+    for (path, fields) in [
+        (
+            "apps/toggle",
+            &[("package_name", MESSAGES), ("selected", "on")][..],
+        ),
+        ("apps/permissions", &[("package_name", MESSAGES)][..]),
+        (
+            "apps/lock-media",
+            &[("package_name", MESSAGES), ("on", "on")][..],
+        ),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/{path}"),
+                Some(&cookie),
+                fields,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{path}");
+    }
+    assert_eq!(allowlist().await, before);
+}
+
 /// Home Screen's notification-access warning names the lock screen (design 31 step 5; the device
 /// page's Launcher card before); Lock Screen & PINs says what its first page shows.
 #[tokio::test]
@@ -984,7 +1257,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         "{cell}"
     );
     assert!(
-        cell.contains("For the apps on the lock below, missed calls and messages"),
+        cell.contains("For the apps on the lock below and missed calls"),
         "{cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");

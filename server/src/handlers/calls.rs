@@ -937,7 +937,6 @@ async fn load_page(
     let mut sms_page = sms_page;
     if let Some(refusal) = &shown.sms {
         // What the refused form sent, so nothing typed is lost.
-        sms_page.lock_text = refusal.sent.contains_key("sms_lock_text");
         for row in &mut sms_page.own_rows {
             if let Some(sent) = refusal.sent.get(&row.field) {
                 row.value = sent.trim().to_string();
@@ -1046,9 +1045,6 @@ async fn load_page(
             sms_page.names.len() as i64,
             &[],
         ));
-    }
-    if sms_page.lock_text {
-        adv_messages.push(t(lang, "device.calls.adv.lock_text").to_string());
     }
     if !sms_page.groups {
         adv_messages.push(t(lang, "device.calls.adv.groups_off").to_string());

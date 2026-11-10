@@ -7,6 +7,7 @@ mod app_permissions;
 mod attention;
 mod audit;
 mod boot_witness;
+mod builtin;
 mod caldav;
 mod calendar;
 mod calendar_feeds;

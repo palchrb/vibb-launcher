@@ -114,7 +114,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   hardening switches, the update fence's night window, the backup lock and the red "managed without a Parent PIN" card
   all read `managed()` on the server and `CallPolicyStore.state.managed` on the phone - so picking SMS "Styrt av Vibb"
   on an otherwise unmanaged phone turns those on too.
-- **The policy** (`device_api::build_call_policy`): always `calls_mode`, `sms_mode`, the derived three, `sms_lock_text`,
+- **The policy** (`device_api::build_call_policy`): always `calls_mode`, `sms_mode`, the derived three, `sms_lock_text`
+  (since design 82 derived from Meldinger's lock level, true only when `lock_glance.sms` is `text`;
+  `docs/notes/server/hardening-and-pins.md`, "The lock's glance page"),
   `sms_names` (`device_sms_names`, by fold), `own_numbers` (`device_own_numbers`, `[{slot, number}]`), `mmsc_hosts`
   (`mmsc_hosts.rs`, compiled in, empty until step 0) and `sms_held_drop` (`device_sms_held` ids with a `dropped_at` in
   the last 24 h, still `held`/`dropped`, newest first, at most 100) - also with both channels unmanaged (then no
@@ -185,8 +187,13 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `sms_held` events read for every parent (code QA L4). A row no longer waiting answers `?notice=held_gone#held`, a
   number without a contact `?notice=held_no_contact#held` (refusals, nothing written). "Blokkerte meldinger" (`#blocked`, a folded `details.section`): the `blocked` rows of 30 days, sender
   label (or what the phone couldn't read), kind, when.
-- **The SMS settings** (`#sms-settings`, `POST /devices/{id}/calls/sms`, one form): "Vis meldingstekst på
-  låseskjermen" (`sms_lock_text`) and "Telefonens nummer, SIM 1/2" (`device_own_numbers`, `phone::normalize` with the
+- **The SMS settings** (`#sms-settings`, `POST /devices/{id}/calls/sms`, one form): until design 82 "Vis meldingstekst
+  på låseskjermen" (`sms_lock_text`) - **gone since design 82 D8**: Meldinger's level is a row under Notifications on
+  Lock Screen & PINs, and in the switch's place, only while `sms_mode` is `managed`, one link row "On the lock screen"
+  / "På låseskjermen" with the level as its value (`SmsPage.lock_level`, `data-row="sms-lock-level"`) to
+  `/devices/{id}/lock#lock-screen-app-me.vibb.builtin.messages`; the handler no longer reads `sms_lock_text`, so a
+  stale page's post changes nothing, and the Avansert line's "Message text on the lock screen" is gone
+  (`sms_page::the_sms_settings_save_in_place`) - and "Telefonens nummer, SIM 1/2" (`device_own_numbers`, `phone::normalize` with the
   default country code, a full `+` number of at most 16 characters - never a short code or an emergency number, code
   QA L7; empty removes it). A number that isn't one renders in place (400) with
   what was sent.
@@ -360,8 +367,7 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   (and the mismatch finding, now "Sjekk Telefonens nummer under Avansert"). A stored slot for a SIM not in the phone:
   its field, "SIM 2 - ikke i telefonen nå" (L5). Nothing known: the field, "Telefonen vet ikke nummeret sitt ennå. Uten
   det blokkeres gruppemeldinger." "SIM 1"/"SIM 2" only on a phone reporting two or a stored slot 2. **`/calls/sms`
-  writes only the slots it is sent** (an absent field keeps its slot, an empty one removes it); `sms_lock_text` as
-  before. "Bruk dette nummeret" is a `<button form="own-use-<slot>">` of a small form after the SMS form, so Enter in
+  writes only the slots it is sent** (an absent field keeps its slot, an empty one removes it). "Bruk dette nummeret" is a `<button form="own-use-<slot>">` of a small form after the SMS form, so Enter in
   a field never posts it.
 - **Step 3, "Gruppemeldinger" and the learned number** (D13, §4.4; one commit with the launcher):
   `device_policy.sms_groups` (migration 0134, default on), sent as `call_policy.sms_groups` always

@@ -588,18 +588,18 @@ class PolicyResponseCompatTest {
     @Test
     fun `lock_glance never fails the policy, and missing means default fresh, unknown cached (25)`() {
         fun withGlance(glance: String) = serverResponse.replaceFirst("{", "{\"lock_glance\": $glance,")
-        // The server's literal for a fresh device (policy_json_keys_snapshot).
-        val today = withGlance("""{"apps": [{"package": "io.element.android.x", "show_text": false}]}""")
+        // The server's literal for a fresh device (policy_json_keys_snapshot); `sms` is Meldinger's level (design 82 D3).
+        val today = withGlance("""{"apps": [{"package": "io.element.android.x", "show_text": false}], "sms": "name"}""")
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
-        assertEquals(setOf("apps"), policy.lockGlance!!.jsonObject.keys)
-        val expected = com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false))
+        assertEquals(setOf("apps", "sms"), policy.lockGlance!!.jsonObject.keys)
+        val expected = com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlanceSms.NAME)
         assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = false))
         assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = true))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
-        val withText = (decodeCached(withGlance("""{"apps": [{"package": "org.example.chat", "show_text": true}, {"package": "io.element.android.x", "show_text": false}]}""")) as CachedPolicy.Ok).policy
+        val withText = (decodeCached(withGlance("""{"apps": [{"package": "org.example.chat", "show_text": true}, {"package": "io.element.android.x", "show_text": false}], "sms": "text"}""")) as CachedPolicy.Ok).policy
         assertEquals(
-            com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false, "org.example.chat" to true)),
+            com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false, "org.example.chat" to true), com.kidslauncher.mdm.badges.GlanceSms.TEXT),
             com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance, fresh = true),
         )
         // Nothing in it fails the policy; what can't be used is dropped.
@@ -611,9 +611,12 @@ class PolicyResponseCompatTest {
             assertTrue(odd, decodeFresh(withGlance(odd)) is FreshDecode.Ok)
         }
         val bad = (decodeFresh(withGlance("""{"apps": [5, null, "not a package", "io.element.android.x"], "show_text": "true"}""")) as FreshDecode.Ok).policy
-        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance, fresh = true))
+        // (No `sms`: a server before design 82 - Meldinger by its old switch.)
+        assertEquals(expected.copy(sms = com.kidslauncher.mdm.badges.GlanceSms.LEGACY), com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance, fresh = true))
+        // Not an object: the apps unknown, and Meldinger Off (design 82 D4).
         val array = (decodeFresh(withGlance("""["io.element.android.x"]""")) as FreshDecode.Ok).policy
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance, fresh = true))
+        assertEquals(com.kidslauncher.mdm.badges.GlanceSms.OFF, com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.sms)
         // An older server: no key. Fresh = its default (Element X, sender only); cached = unknown.
         // The status report's capability the server's notes look for.
         assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
@@ -622,6 +625,7 @@ class PolicyResponseCompatTest {
         assertNull(older.lockGlance)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))
         assertEquals(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
+        assertEquals(com.kidslauncher.mdm.badges.GlanceSms.LEGACY, com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.sms)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = false))
         val explicitNull = (decodeFresh(withGlance("null")) as FreshDecode.Ok).policy
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance, fresh = true))

@@ -647,6 +647,35 @@ mod tests {
         );
     }
 
+    /// Design 82 D3: Meldinger's lock level. Every `app.lock` row - the stored choice and `sms_mode` - gives its
+    /// `lock_glance.sms` and the derived `call_policy.sms_lock_text`; and in `app.lock_read` (the launcher's reading,
+    /// D4) each word this server sends is read as itself, whatever the call policy says.
+    #[test]
+    fn the_app_lock_rows() {
+        use crate::lock_glance::{LockGlancePolicy, SMS_NAME, SMS_OFF, SMS_TEXT, sms_level};
+        let app = &contract()["app"];
+        assert_eq!(app["key"], crate::builtin::MESSAGES);
+        for row in app["lock"].as_array().unwrap() {
+            let sms = sms_level(row["stored"].as_bool(), row["sms_mode"].as_str().unwrap());
+            assert_eq!(row["sms"], sms, "{row}");
+            let policy = LockGlancePolicy {
+                apps: Vec::new(),
+                sms,
+            };
+            assert_eq!(row["sms_lock_text"], policy.sms_lock_text(), "{row}");
+        }
+        let mut sent = std::collections::BTreeSet::new();
+        for row in app["lock_read"].as_array().unwrap() {
+            let word = row["lock_glance"].get("sms").and_then(|word| word.as_str());
+            if let Some(word) = word.filter(|word| [SMS_OFF, SMS_NAME, SMS_TEXT].contains(word)) {
+                assert_eq!(row["level"], word, "{row}");
+                assert_eq!(row["sms"], word, "{row}");
+                sent.insert(word.to_string());
+            }
+        }
+        assert_eq!(sent.len(), 3, "every word the server sends has a row");
+    }
+
     /// Whether two names are the same sender name: equal folds of the cleaned texts.
     fn same_name(a: &str, b: &str) -> bool {
         fold(&clean_name(a)) == fold(&clean_name(b))

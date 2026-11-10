@@ -1,6 +1,10 @@
 package com.kidslauncher.mdm.sms
 
+import com.kidslauncher.mdm.appdisplay.BUILTIN_MESSAGES
+import com.kidslauncher.mdm.appdisplay.BUILTIN_PREFIX
+import com.kidslauncher.mdm.badges.lockGlancePolicy
 import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.CallRules
 import com.kidslauncher.mdm.calls.ChannelMode
 import com.kidslauncher.mdm.calls.channelModes
 import com.kidslauncher.mdm.calls.forCalls
@@ -22,6 +26,7 @@ import com.kidslauncher.mdm.sms.engine.SenderClean
 import com.kidslauncher.mdm.sms.engine.SenderKind
 import com.kidslauncher.mdm.sms.engine.SmsNames
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -158,6 +163,30 @@ class SmsContractTest {
         assertTrue(ServerJson.decodeFromString(CallPolicy.serializer(), """{"managed": true}""").smsGroups)
         // Rules stored before it read as on.
         assertTrue(com.kidslauncher.mdm.calls.decodeCallRules("""{"calls_enabled": true}""")!!.smsGroups)
+    }
+
+    /** Design 82 D1/D4: Meldinger's key, and every `app.lock_read` row - the policy's `lock_glance` as it arrived
+     * (fresh or from the cache; no key = none) with the call rules' old switch (`null` = no managed rules) gives the
+     * word read and the level shown. `app.lock` is the server's side: the three words it sends, the old key true only
+     * with `text`. */
+    @Test
+    fun `Meldinger's lock level is read by D4's table`() {
+        val app = contract["app"]!!.jsonObject
+        assertEquals(app.str("key"), BUILTIN_MESSAGES)
+        assertTrue(BUILTIN_MESSAGES.startsWith(BUILTIN_PREFIX))
+        val rules = CallRules(callsEnabled = true, contacts = emptyList(), callsMode = ChannelMode.MANAGED, smsMode = ChannelMode.MANAGED)
+        for (row in app["lock_read"]!!.jsonArray.map { it.jsonObject }) {
+            val state = when (row["sms_lock_text"]) {
+                is JsonNull -> CallPolicyState.Unmanaged
+                else -> CallPolicyState.Managed(rules.copy(smsLockText = row.bool("sms_lock_text")))
+            }
+            val sms = lockGlancePolicy(row["lock_glance"], row.bool("fresh")).sms
+            assertEquals(row.toString(), row.str("sms"), sms.wire ?: "legacy")
+            assertEquals(row.toString(), row.str("level"), smsLockLevel(sms, state).name.lowercase())
+        }
+        val sent = app["lock"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(setOf("off", "name", "text"), sent.map { it.str("sms") }.toSet())
+        for (row in sent) assertEquals(row.toString(), row.str("sms") == "text", row.bool("sms_lock_text"))
     }
 
     @Test

@@ -731,7 +731,8 @@ async fn lock_forms_return_to_the_page() {
     // Each did what it says.
     let (kid, timeout, text, wake): (Option<String>, i64, bool, bool) = sqlx::query_as(
         "SELECT kid_pin_hash, screen_timeout_seconds, \
-         (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id), \
+         (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id \
+          AND g.package_name = 'io.element.android.x'), \
          lock_wake_on_notification FROM device_policy p WHERE device_id = ?",
     )
     .bind(id)

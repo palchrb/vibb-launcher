@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.sms
 
 import com.kidslauncher.mdm.badges.GlanceMissedRow
+import com.kidslauncher.mdm.badges.GlanceSms
 import com.kidslauncher.mdm.badges.glanceWithSms
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
@@ -85,11 +86,16 @@ class SmsGlanceTest {
         val on = rows(showText = true).single()
         assertEquals("the newest, cleaned", "Kommer du? snart", on.text)
         assertEquals(off.upToSeq, on.upToSeq)
-        // The switch itself: only managed rules that say so.
-        assertTrue(smsLockText(CallPolicyState.Managed(rules.copy(smsLockText = true))))
-        assertFalse(smsLockText(CallPolicyState.Managed(rules)))
-        assertFalse(smsLockText(CallPolicyState.Unmanaged))
-        assertFalse(smsLockText(CallPolicyState.UnknownFailClosed))
+        // The level (design 82 D4): the policy's word as it is, whatever the rules say; without one (an older server)
+        // the old switch - the text only with managed rules that say so, otherwise the name.
+        val withText = CallPolicyState.Managed(rules.copy(smsLockText = true))
+        assertEquals(SmsLockLevel.OFF, smsLockLevel(GlanceSms.OFF, withText))
+        assertEquals(SmsLockLevel.NAME, smsLockLevel(GlanceSms.NAME, withText))
+        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.TEXT, CallPolicyState.UnknownFailClosed))
+        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.LEGACY, withText))
+        for (state in listOf(CallPolicyState.Managed(rules), CallPolicyState.Unmanaged, CallPolicyState.UnknownFailClosed)) {
+            assertEquals(state.toString(), SmsLockLevel.NAME, smsLockLevel(GlanceSms.LEGACY, state))
+        }
         assertFalse("the redacted row", on.toString().contains("Kommer") || on.toString().contains("4791234567"))
     }
 

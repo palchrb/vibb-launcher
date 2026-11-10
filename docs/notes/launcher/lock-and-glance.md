@@ -202,7 +202,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   counting toward `GLANCE_MAX_ROWS`, the "more" line and the compact tile's rule like any row. The look
   (`lock/GlanceSmsRowView.kt`): the name as the message screens say it, "Ny melding" / "3 nye meldinger", the newest
   unread message's time; the contact's Home avatar with a teal message badge in the missed call's corner
-  (`bg_glance_sms_badge`, Home's Meldinger teal), else the chat glyph on that teal; with `call_policy.sms_lock_text` the
+  (`bg_glance_sms_badge`, Home's Meldinger teal), else the chat glyph on that teal; at Full text (`lock_glance.sms`,
+  design 82 - `smsLockLevel`; no row at all at Off; `docs/notes/launcher/calls.md`, "The level") the
   text in the subtitle's place and the count after the name. The tap: `GlanceTarget.Thread` -> `GlanceOpen.THREAD`
   (`MessagesScreens.startThread`, the notification's way in), the prompt "Skriv koden for å åpne Meldinger", under a
   time rule only where the rule allows calls (`glanceUsableUnderLock`), handed to the time-rule screen as the others. A

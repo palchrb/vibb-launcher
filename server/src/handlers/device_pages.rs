@@ -1352,7 +1352,8 @@ async fn render_lock(
             Err(err) => return read_failed(lang, id, "the phone's apps", err),
         };
     let lock_screen =
-        crate::handlers::devices::lock_screen_card(state, &policy, latest.as_ref(), &rows).await;
+        crate::handlers::devices::lock_screen_card(state, lang, &policy, latest.as_ref(), &rows)
+            .await;
     // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
     let labels: std::collections::HashMap<String, String> = rows
         .apps

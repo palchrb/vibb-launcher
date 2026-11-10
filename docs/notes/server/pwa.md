@@ -247,6 +247,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `lock_glance::each_move_of_the_select_is_stored_as_the_lock_shows_it` (every transition, the policy, the log),
   `refused_saves_write_nothing` (the values), `the_page_lists_the_allowed_apps_with_their_ticks` (the select, its
   label, the footer), `device_pages::lock_forms_return_to_the_page`, `lock_auto_saves_have_a_save_without_js`.
+  **Since design 82 the same select is Meldinger's too** (the launcher's built-in SMS app, key
+  `me.vibb.builtin.messages`): the group's first row while SMS is managed, saved by the same handler to its own
+  anchor, and Calls & Contacts' old switch is one link row to it (`docs/notes/server/hardening-and-pins.md`,
+  "Meldinger's row").
 - **Wake the screen for a notification** (launcher round 7 §3, `docs/design/r7-launcher-small-items.md`): its own
   cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps on the lock below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
