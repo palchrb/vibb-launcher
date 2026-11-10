@@ -75,18 +75,22 @@ object GlanceStore {
      * A post the reader kept (`GlanceReader.posted` only - never a sweep, a ranking update or a
      * policy re-read): [put], and when it [alerts] and the visible rows gained one
      * ([glanceWakes]), the lock may wake the screen (round 7 §3, `PinLockRuntime.noticeCame` -
-     * nothing about the notice goes with it).
+     * nothing about the notice goes with it). Design 82 W3 (the user, 2026-11-10): when no row is gained but one
+     * counts a message more ([glanceRowGrew]), the buzz alone (`PinLockRuntime.noticeUpdated`) - never the wake.
      */
     fun putPosted(notice: GlanceNotice, intent: PendingIntent?, alerts: Boolean) {
-        val before = if (alerts) visibleConversations() else emptySet()
+        val before = if (alerts) visibleRows() else emptyList()
         put(notice, intent)
-        if (alerts && glanceWakes(alerts, notice.suspended, before, visibleConversations())) {
+        if (!alerts) return
+        val after = visibleRows()
+        if (glanceWakes(alerts, notice.suspended, glanceRowConversations(before), glanceRowConversations(after))) {
             com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
+        } else if (glanceRowGrew(alerts, notice.suspended, glanceRowCounts(before), glanceRowCounts(after))) {
+            com.kidslauncher.mdm.lock.PinLockRuntime.noticeUpdated()
         }
     }
 
-    private fun visibleConversations(): Set<GlanceConversation> =
-        glanceRowConversations(glanceRows(notices.values, null, policy, opened))
+    private fun visibleRows(): List<GlanceRow> = glanceRows(notices.values, null, policy, opened)
 
     fun remove(key: String) {
         intents.remove(key)

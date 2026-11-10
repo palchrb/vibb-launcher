@@ -2893,7 +2893,8 @@ built-in one is renamed.
   `mVibrationEnabled=false`) - one per message.
 - **What the buzz doesn't do:** a message in a thread whose row is already on the lock (the second unread, the row not
   swiped away) gave no buzz - only a gained row does (`smsGainsRow`, the wake's rule too), so the rows were swiped
-  away between the steps above. Under Do Not Disturb and a rule's silence an SMS never gets as far as `noticeCame()`
+  away between the steps above. (Changed after this pass, 2026-11-10: every new message the lock shows buzzes, the
+  10 s gap kept - design 82 §14, "The buzz for every new message"; not run on the emulator yet.) Under Do Not Disturb and a rule's silence an SMS never gets as far as `noticeCame()`
   (`smsPostAlerts`), so the buzz's own filter and silence gates were not seen working apart from that.
 - **Recents and TalkBack, by dump:** Meldinger's task has `taskDescription label="Beskjeder"` and the overview reads
   "Vibb One (debug) Beskjeder" (L4). Content descriptions: the tile "Beskjeder, 3 uleste" and "Beskjeder"; the lock's

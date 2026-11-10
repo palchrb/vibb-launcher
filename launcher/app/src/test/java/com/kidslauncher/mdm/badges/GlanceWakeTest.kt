@@ -63,6 +63,31 @@ class GlanceWakeTest {
         assertTrue(glanceWakes(true, false, emptySet(), before))
     }
 
+    private fun counts(vararg notices: GlanceNotice) = glanceRowCounts(glanceRows(notices.toList(), null, policy, emptyMap()))
+
+    /** Design 82 W3 (the user, 2026-11-10: one buzz for every new message): a post that gains no row buzzes when a
+     * visible row counts more than before - never for the same count, and never as a wake. */
+    @Test
+    fun `a message more in a visible row buzzes without a wake - an edit, a suspended app or a quiet post doesn't`() {
+        val first = notice("k1", "room-a", 100)
+        val before = counts(first)
+        // The same notification with one message more in it.
+        val grown = first.copy(count = 2, postTimeMs = 200)
+        assertTrue(glanceRowGrew(true, false, before, counts(grown)))
+        assertFalse("the wake, unchanged", glanceWakes(true, false, rows(first), rows(grown)))
+        // Another notification in the same conversation.
+        assertTrue(glanceRowGrew(true, false, before, counts(first, notice("k3", "room-a", 300))))
+        // The same count posted again (an edit, an app that counts nothing), or fewer: not guessed.
+        assertFalse(glanceRowGrew(true, false, before, counts(first.copy(postTimeMs = 400))))
+        assertFalse(glanceRowGrew(true, false, counts(grown), counts(first.copy(postTimeMs = 500))))
+        // A row more is the wake's, with the buzz it has always had - nothing grew.
+        assertFalse(glanceRowGrew(true, false, before, counts(first, notice("k2", "room-b", 200))))
+        assertFalse("not alerting", glanceRowGrew(false, false, before, counts(grown)))
+        assertFalse("suspended", glanceRowGrew(true, true, before, counts(grown)))
+        // An app set to Off has no row to count.
+        assertTrue(glanceRowCounts(glanceRows(listOf(grown), null, GlancePolicy(emptyMap()), emptyMap())).isEmpty())
+    }
+
     private val main = listOf(File("src/main"), File("app/src/main")).first { it.exists() }
     private fun code(name: String) = File(main, "java/com/kidslauncher/mdm/badges/$name").readText()
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
@@ -87,6 +112,10 @@ class GlanceWakeTest {
         for (name in listOf("replaceAll", "updateSuspended", "refreshPolicy", "put", "remove")) {
             assertFalse(name, store.substringAfter("fun $name(").substringBefore("\n    }\n").contains("noticeCame"))
         }
+        // The buzz alone, only where no row was gained, and only from the post.
+        assertEquals(1, Regex("""noticeUpdated\(""").findAll(store).count())
+        assertTrue(putPosted, putPosted.indexOf("PinLockRuntime.noticeCame()") in 0 until putPosted.indexOf("} else if (glanceRowGrew("))
+        assertTrue(putPosted.substringAfter("} else if (glanceRowGrew(").contains("com.kidslauncher.mdm.lock.PinLockRuntime.noticeUpdated()"))
         // No argument: nothing about the notice reaches the lock.
         val runtime = File(main, "java/com/kidslauncher/mdm/lock/PinLockRuntime.kt").readText()
         assertTrue(runtime.contains("    fun noticeCame() {"))

@@ -260,6 +260,33 @@ class SmsGlanceTest {
         assertEquals(2, engine.conversations().single().unread)
     }
 
+    /** Design 82 W3 (the user, 2026-11-10: one buzz for every new message): a message more in a row already on the
+     * lock is no notice that came - no wake, as before - and buzzes ([smsPostBuzzes]); never at Off, silently or under
+     * Do Not Disturb. The notifier asks it only where the wake said no. */
+    @Test
+    fun `a second message in a row already on the lock buzzes and never wakes`() {
+        fun buzzes(silent: Boolean = false, passesFilter: Boolean = true, level: SmsLockLevel = SmsLockLevel.NAME, unreadAfter: Int = 2) =
+            smsPostBuzzes(posted = true, silent = silent, enabled = true, channelImportance = 3, passesFilter = passesFilter, level = level, unreadAfter = unreadAfter)
+        receive("+4791234567", "Hei")
+        val second = receive("+4791234567", "Hallo?") as Received.Shown
+        val unread = engine.conversations().single().unread
+        val gainsRow = smsGainsRow(SmsLockLevel.NAME, unread, hiddenMark = null, messageSeq = second.message.seq)
+        assertFalse("the wake, unchanged", alerts(gainsRow = gainsRow))
+        assertTrue(buzzes(unreadAfter = unread))
+        assertTrue(buzzes(level = SmsLockLevel.TEXT))
+        assertFalse("Meldinger's row Off", buzzes(level = SmsLockLevel.OFF))
+        assertFalse("read meanwhile: no row", buzzes(unreadAfter = 0))
+        assertFalse("a time rule's silence", buzzes(silent = true))
+        assertFalse("Do Not Disturb", buzzes(passesFilter = false))
+        assertFalse("the silent channel", smsPostBuzzes(true, false, true, 2, true, SmsLockLevel.NAME, 2))
+        val root = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val notifier = root.walkTopDown().first { it.name == "SmsNotifier.kt" }.readText()
+        val wake = notifier.substringAfter("private fun wakeIfAlerts(").substringBefore("\n    }\n")
+        assertTrue(wake, wake.indexOf("PinLockRuntime.noticeCame()") in 0 until wake.indexOf("} else if (smsPostBuzzes("))
+        assertTrue(wake.substringAfter("} else if (smsPostBuzzes(").contains("PinLockRuntime.noticeUpdated()"))
+        assertEquals(1, Regex("""noticeUpdated\(\)""").findAll(notifier).count())
+    }
+
     @Test
     fun `a swipe keeps the notification when a newer message came during the drag (code QA L2)`() {
         assertTrue(smsDismissCancels(swipedUpToSeq = 5, currentUpToSeq = 5))
