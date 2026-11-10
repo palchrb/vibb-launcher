@@ -199,6 +199,7 @@
     <!-- Code QA L5: a failed message where the kid can't send now - no invitation to tap. -->
     <string name="messages_not_sent_plain">Ikke sendt</string>
     <string name="messages_maybe_not_sent_plain">Kanskje ikke sendt</string>
+    <string name="messages_delivery_time">%1$s · %2$s</string>
     <string name="messages_too_long">Meldingen er for lang</string>
     <string name="messages_delete">Slett</string>
     <string name="messages_delete_conversation">Slett samtale</string>
