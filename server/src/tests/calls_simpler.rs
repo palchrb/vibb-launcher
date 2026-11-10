@@ -1463,7 +1463,8 @@ async fn a_stale_learned_offer_stores_nothing() {
     let cookie = app.admin_cookie().await;
     let (id, token) = managed_phone(&app).await;
     contact(&app, id, "Mamma", "+4791234567", [true; 6]).await;
-    let learned = json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
+    let learned =
+        json!({ "number": "+4790000009", "from": "+4791234567", "at": 1, "conflict": [] });
     let use_uri = format!("/devices/{id}/calls/own-number/use");
     let gone = format!("/devices/{id}/calls?advanced=1&notice=own_number_gone");
     let tap = || {
@@ -1503,5 +1504,8 @@ async fn a_stale_learned_offer_stores_nothing() {
         &format!("/devices/{id}/calls?advanced=1"),
         Some("sms-settings"),
     );
-    assert_eq!(own_numbers(&app, id).await, [(1, "+4790000009".to_string())]);
+    assert_eq!(
+        own_numbers(&app, id).await,
+        [(1, "+4790000009".to_string())]
+    );
 }
