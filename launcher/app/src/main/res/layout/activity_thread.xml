@@ -16,11 +16,14 @@
         android:id="@+id/thread_header"
         layout="@layout/include_kid_header" />
 
+    <!-- No second finger is split off to the other child: a gesture that begins on the mark is handed on to the list
+         (ThreadActivity.dragsThroughMark), and the list must not get another finger's gesture of its own meanwhile. -->
     <FrameLayout
         android:id="@+id/thread_list_frame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:splitMotionEvents="false">
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/thread_list"
@@ -31,8 +34,9 @@
             android:paddingBottom="8dp" />
 
         <!-- "Ny melding" / "Nye meldinger" (2026-11-10): over the list's lower edge while the kid reads older messages
-             and one came in; a tap goes to the thread's end. A 32 dp pill in a 48 dp touch target, above the compose
-             bar and so above the keyboard; TalkBack hears it as it comes (a live region). -->
+             and one came in; a tap goes to the thread's end, a drag that begins on it scrolls the list. A 32 dp pill in
+             a 48 dp touch target, above the compose bar and so above the keyboard; TalkBack hears it as it comes (a
+             live region). -->
         <Button
             android:id="@+id/thread_new"
             android:layout_width="wrap_content"

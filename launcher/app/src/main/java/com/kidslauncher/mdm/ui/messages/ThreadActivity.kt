@@ -9,9 +9,11 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -94,6 +96,11 @@ class ThreadActivity : UIObjectActivity() {
      * ([threadNewMark]). */
     private var seenSeq = 0L
     private var mark = NewMark.NONE
+
+    /** The mark's own tap by keyboard or TalkBack took the focus's view away ([toEnd]): the last bubble gets the
+     * keyboard's focus ([endFocus]) and TalkBack's ([endSpoken]) once it is laid out ([afterLayout]). */
+    private var endFocus = false
+    private var endSpoken = false
     private var compose = ComposeState.UNAVAILABLE
     private var resumed = false
 
@@ -185,6 +192,7 @@ class ThreadActivity : UIObjectActivity() {
         })
         binding.threadList.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout() }
         binding.threadNew.setOnClickListener { toEnd() }
+        dragsThroughMark()
         ViewCompat.replaceAccessibilityAction(binding.threadNew, AccessibilityActionCompat.ACTION_CLICK, getString(R.string.messages_arrived_go), null)
         // Design 81 D7: a tap on the thread closes the reaction panel (and is spent on that).
         binding.threadList.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
@@ -243,6 +251,8 @@ class ThreadActivity : UIObjectActivity() {
         binding.threadList.stopScroll()
         following = true
         seenSeq = 0L
+        endFocus = false
+        endSpoken = false
         limit = PAGE
         cancelDelete()
         hideReact()
@@ -431,13 +441,66 @@ class ThreadActivity : UIObjectActivity() {
 
     /** The mark's tap: to the thread's end, as the kid's own scroll there - following turns on ([follow]), and every
      * layout then goes on to the last bubble's bottom ([afterLayout]). A list that coasts stops first, and what was
-     * open for a bubble - "Slette meldingen?", the reaction panel - closes: that bubble leaves the screen. */
+     * open for a bubble - "Slette meldingen?", the reaction panel - closes: that bubble leaves the screen.
+     *
+     * The focus goes with the tap (code QA L4; the emulator pass saw the keyboard's fall to the header's back button):
+     * the mark is about to go, and a focus on a view that went falls to the window's first element. The keyboard's
+     * goes to the compose field while the bar shows - asked before the mark goes, so it never falls -, else to the
+     * last bubble; TalkBack's goes to the last bubble, the message the tap was for. Only a focus the mark had: a finger's
+     * tap moves none (no keyboard opens), and a mark that goes because the kid scrolled to the end takes none. */
     private fun toEnd() {
+        val keys = binding.threadNew.isFocused
+        val spoken = binding.threadNew.isAccessibilityFocused
         cancelDelete()
         hideReact()
         binding.threadList.stopScroll()
+        val toField = keys && binding.threadCompose.visibility == View.VISIBLE && binding.threadField.requestFocus()
         follow(true)
-        if (adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
+        if (adapter.itemCount == 0) return
+        binding.threadList.scrollToPosition(adapter.itemCount - 1)
+        endFocus = keys && !toField
+        endSpoken = spoken
+    }
+
+    /** A drag that begins on the mark scrolls the list as one that begins beside it (the emulator pass's F1: the mark
+     * sits where a thumb starts its way down, and a sibling over the list took the whole gesture). The mark's touch
+     * listener hands every event of the gesture on to the list's own `onTouchEvent`, in the list's coordinates - what a
+     * list gets for a touch none of its rows takes, so no bubble under the mark is pressed or long-pressed. Until the
+     * list drags (its own touch slop) the mark keeps its press and its tap; from then on the gesture is the list's
+     * alone - the mark's press is cancelled, so the lift taps nothing - and it flings and reaches the end as any scroll
+     * ([follow] by the list's scroll listener). A gesture that never dragged ends as a cancel for the list: the tap is
+     * the mark's. A touch stops a list that coasts, as on a row. Not while the reaction panel is open: a touch in the
+     * list is spent on closing it, and the mark's tap closes it too. The frame doesn't split a second finger off
+     * (`splitMotionEvents`), so a gesture has one receiver. TalkBack's click and a keyboard's Enter never come here. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun dragsThroughMark() {
+        var passing = false
+        var dragging = false
+        binding.threadNew.setOnTouchListener { pill, e ->
+            val list = binding.threadList
+            val action = e.actionMasked
+            if (action == MotionEvent.ACTION_DOWN) {
+                passing = reacting == null
+                dragging = false
+                if (passing) list.stopScroll()
+            }
+            if (!passing) return@setOnTouchListener false
+            val last = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
+            val passed = MotionEvent.obtain(e)
+            passed.offsetLocation((pill.left - list.left).toFloat(), (pill.top - list.top).toFloat())
+            if (last && !dragging) passed.action = MotionEvent.ACTION_CANCEL
+            list.onTouchEvent(passed)
+            passed.recycle()
+            if (!dragging && list.scrollState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                dragging = true
+                val cancel = MotionEvent.obtain(e)
+                cancel.action = MotionEvent.ACTION_CANCEL
+                pill.onTouchEvent(cancel)
+                cancel.recycle()
+            }
+            if (last) passing = false
+            dragging
+        }
     }
 
     /** The last bubble's bottom in the list, `null` while that bubble isn't laid out. */
@@ -445,17 +508,28 @@ class ThreadActivity : UIObjectActivity() {
         layout.findViewByPosition(adapter.itemCount - 1)?.let(layout::getDecoratedBottom)
     }
 
+    /** The last message's bubble - the row's one focusable view and its one TalkBack node -, `null` until laid out. */
+    private fun lastBubble(): View? =
+        binding.threadList.layoutManager?.findViewByPosition(adapter.itemCount - 1)?.findViewById(R.id.bubble)
+
     private fun listEnd(): Int = binding.threadList.height - binding.threadList.paddingBottom
 
     private fun atEnd(): Boolean = threadAtEnd(lastBottom(), listEnd(), KidAvatars.dp(this, END_SLOP_DP))
 
     /** Every layout of the list - a new bubble, one that grew or shrank, the keyboard, the compose bar's height: a
      * thread that follows goes on to its end ([threadEndGap]); one that doesn't follows again once its end shows (a
-     * delete left less than a screen). */
+     * delete left less than a screen). The first one with the last bubble after the mark's tap by keyboard or TalkBack
+     * hands that bubble the focus ([toEnd]). */
     private fun afterLayout() {
         if (!following) follow(atEnd())
         val gap = threadEndGap(following, lastBottom(), listEnd())
         if (gap > 0) binding.threadList.scrollBy(0, gap)
+        if (endFocus || endSpoken) lastBubble()?.let { bubble ->
+            if (endFocus) bubble.requestFocus()
+            if (endSpoken) bubble.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+            endFocus = false
+            endSpoken = false
+        }
     }
 
     private fun normalised(raw: String): String =

@@ -326,12 +326,33 @@ class MessagesModelTest {
         assertTrue(screen.contains("binding.threadList.stopScroll()\n        following = true\n        seenSeq = 0L"))
         assertTrue(screen.contains("renderAttachment()\n        renderMark()\n        adapter.submitList(emptyList())"))
         assertTrue(screen.contains("binding.threadNew.setOnClickListener { toEnd() }"))
+        assertTrue(screen.contains("        cancelDelete()\n        hideReact()\n        binding.threadList.stopScroll()\n        val toField = "))
+        // The tap takes the focus it had along (code QA L4): the keyboard's to the compose field before the mark goes,
+        // else - and TalkBack's always - to the last bubble at its layout; a finger's tap and a scroll to the end move none.
         assertTrue(
             screen.contains(
-                "cancelDelete()\n        hideReact()\n        binding.threadList.stopScroll()\n        follow(true)\n" +
-                    "        if (adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)",
+                "val toField = keys && binding.threadCompose.visibility == View.VISIBLE && binding.threadField.requestFocus()\n" +
+                    "        follow(true)\n        if (adapter.itemCount == 0) return\n" +
+                    "        binding.threadList.scrollToPosition(adapter.itemCount - 1)\n" +
+                    "        endFocus = keys && !toField\n        endSpoken = spoken\n    }",
             ),
         )
+        assertEquals("set at its declaration, in take(), in toEnd() and once handed on", 4, Regex("\\bendFocus = ").findAll(screen).count())
+        // A drag that begins on the mark is the list's (emulator pass F1): every event goes on to the list's own
+        // onTouchEvent - never its dispatch, which would press the bubble under the mark -, the mark's press is cancelled
+        // once the list drags, and a gesture that never dragged ends as a cancel for the list.
+        assertTrue(screen.contains("if (last && !dragging) passed.action = MotionEvent.ACTION_CANCEL\n            list.onTouchEvent(passed)"))
+        assertTrue(
+            screen.contains(
+                "if (!dragging && list.scrollState == RecyclerView.SCROLL_STATE_DRAGGING) {\n                dragging = true\n" +
+                    "                val cancel = MotionEvent.obtain(e)\n                cancel.action = MotionEvent.ACTION_CANCEL\n" +
+                    "                pill.onTouchEvent(cancel)",
+            ),
+        )
+        assertFalse(screen.contains("list.dispatchTouchEvent("))
+        val layout = listOf("src", "app/src").map { File("$it/main/res/layout/activity_thread.xml") }.first { it.exists() }.readText()
+        assertTrue(layout.contains("android:id=\"@+id/thread_list_frame\""))
+        assertTrue(layout.contains("android:splitMotionEvents=\"false\""))
         assertEquals("set at its declaration, in take() and in the latest list's callback only", 3, Regex("\\bseenSeq = ").findAll(screen).count())
     }
 

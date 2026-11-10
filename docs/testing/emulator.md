@@ -2781,7 +2781,8 @@ cat databases/messages.db` (`message.is_read`).
   the bubble's own colour with a 1 dp outline and covers part of its text or picture until the tap. (3) A reaction for
   a bubble on screen while scrolled up moves the rows over that bubble up by the chip's 18 dp (the list keeps its
   lower rows; the follow round's behaviour, not the mark's). (4) The Meldinger list's header action reads "Ny
-  melding" too (a new conversation).
+  melding" too (a new conversation). After the pass: (1) and the focus after the mark's tap (the header's back
+  button, above) are fixed on the branch - built, not run here yet (`docs/notes/launcher/calls.md`, the mark).
 - **What `handy36` can't show:** TalkBack by touch - an injected `input tap` isn't touch exploration here (one tap on
   the mark with TalkBack on went straight to the end), so the double-tap, the words spoken and where accessibility
   focus lands without keyboard focus are the phone's to show; a thread switch through `onNewIntent` with the old list

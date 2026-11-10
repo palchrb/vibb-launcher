@@ -198,7 +198,36 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   and the reaction panel (their bubble leaves the screen; code QA L1), stops a coasting list, turns following on
   through `follow` (which reads the thread and cancels its notification, as reaching the end by hand does) and goes to
   the last position; `afterLayout` goes on to a tall bubble's bottom. The mark leaves whenever following turns on,
-  however that came about. **Look:** a 32 dp pill
+  however that came about. **The tap's focus (code QA L4; the emulator pass saw the keyboard's fall to the header's
+  back button):** the mark goes, and a focus on a view that went falls to the window's first element - so `toEnd`
+  takes along the focus the mark had, and only that. The keyboard's (`isFocused`: Enter on the mark) goes to the
+  compose field while the bar shows, asked before the mark goes - the kid came for the newest message, and the answer
+  is written there; the field takes focus without a layout to wait for -, else (the read-only line, a time rule) to
+  the last bubble.
+  TalkBack's (`isAccessibilityFocused`: the double-tap) goes to the last bubble, the message the tap was for
+  (`ACTION_ACCESSIBILITY_FOCUS` on `bubble`, the row's one node). The last bubble gets it in `afterLayout`, at the
+  first layout that has it (`endFocus`, `endSpoken`; reset by `take`). A finger's tap moves no focus (no keyboard
+  opens), and neither does a mark that leaves because the kid scrolled to the end. Known: with the fade off (the
+  system's animations off) and no compose bar, the keyboard's focus is on the header for the one frame until that
+  layout; and a last bubble taller than the list is scrolled to its top by the keyboard's focus, as by a Tab onto it.
+  **A drag that begins on the mark (the emulator pass's F1)** scrolls the list as one that begins beside it - before,
+  the button over the list took the whole gesture, a dead strip of 105-158 dp where a thumb starts its way down.
+  `dragsThroughMark`: the mark's touch listener hands every event of the gesture on to the list's own `onTouchEvent`,
+  moved to the list's coordinates - what a list gets for a touch none of its rows takes; never its `dispatchTouchEvent`,
+  which would press and long-press the bubble under the mark. Until the list drags (its own touch slop) the mark keeps
+  its press and its tap; then the mark's press is cancelled (an `ACTION_CANCEL` to its own `onTouchEvent`) and the
+  listener keeps the rest, so the lift taps nothing, and the list scrolls, flings and turns the mark off at the end
+  through its scroll listener as for any scroll. A gesture that never dragged ends as a cancel for the list (no fling
+  from a sloppy tap). A touch on the mark stops a coasting list, as one on a row. While the reaction panel is open
+  the mark hands nothing on: a touch in the list is spent on closing the panel, and the mark's tap closes it too.
+  `thread_list_frame` has `splitMotionEvents="false"`: a second finger is never the list's own gesture next to the one
+  handed on. TalkBack's click and a keyboard's Enter don't pass the listener. Built, not run on an emulator yet.
+  **`take()` keeps `submitList(emptyList())`** (code QA L5's question, decided 2026-11-10 after the emulator pass):
+  `submitList(null)` would empty the list at once, where a finger still dragging the old thread's rows could turn
+  following off before the new thread's first list - but no way in hands a new intent to a thread that was scrolled
+  (the list, the notification and `smsto:` all build a new activity; only two row taps 30 ms apart reach `onNewIntent`,
+  with a thread 0.1 s old). It becomes worth doing, with a check that the first list after `null` lands at the end,
+  the day a way in starts a plain `threadIntent` over a living thread (design 82). **Look:** a 32 dp pill
   in a 48 dp touch target (`bg_message_new`: a received bubble's `kid_message_in` with the reaction chip's 1 dp
   `kid_ground` outline, 8 dp inside the target's top and bottom), Nunito bold 14 sp in `kid_core`, flat (no state
   animator); a 150 ms fade in and out, none with the system's animations off (`ValueAnimator.areAnimatorsEnabled`). No
