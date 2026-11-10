@@ -878,6 +878,18 @@ class MmsEngineTest {
     }
 
     @Test
+    fun `nothing is learned while SMS isn't Styrt av Vibb (code QA V4)`() {
+        own = emptyList()
+        // SMS "Av" with the callback window open: the window lets a message in, but the learning needs SMS managed.
+        rules = rules()!!.copy(smsMode = ChannelMode.OFF)
+        callbackWindow = true
+        val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        assertNotNull(mms.onRetrieved(id, retrieved(to = listOf(kid))))
+        assertNull(mms.ownLearned())
+    }
+
+    @Test
     fun `nothing is learned from a contact with sms_in that is an emergency number (code QA L7)`() {
         own = emptyList()
         // A rule set the server never sends (it never sends `sms_in` for an emergency number), as a phone could hold it.
