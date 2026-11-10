@@ -3,7 +3,8 @@
 //! iOS 27 and later (WebKit bug 317153: `black-translucent` is deprecated). Safari 26 and older get `black-translucent`,
 //! the one combination the user has seen good there. iOS reads the style from the page Safari had loaded when the app
 //! was added to the Home Screen, and Safari's User-Agent tells its version only by `Version/NN` (the OS token is frozen
-//! at `18_6` since iOS 26), so the server answers each Safari with its own: [old_safari_bar].
+//! at `18_6` since iOS 26), so the server answers each Safari with its own: [old_safari_bar]. Another iOS browser
+//! (`CriOS/`, `FxiOS/`, `EdgiOS/`, `OPiOS/`) is never read as Safari, whatever `Version/` it carries.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -15,13 +16,15 @@ use axum::response::{IntoResponse, Response};
 pub const DEFAULT: &str = "default";
 
 /// The status bar style for a page answered to `user_agent`: `black-translucent` for an iPhone, iPad or Mac Safari
-/// whose `Version/NN` is 26 or lower, [DEFAULT] for everything else - no User-Agent, no `Version/` (Chrome on iOS, the
-/// installed app's own requests), 27 and later, or a number that doesn't read.
+/// whose `Version/NN` is 26 or lower, [DEFAULT] for everything else - no User-Agent, no `Version/` (the installed
+/// app's own requests), another iOS browser (a product token ending in `iOS/`: `CriOS/`, `FxiOS/`, `EdgiOS/`,
+/// `OPiOS/`, some of which carry a `Version/` too), 27 and later, or a number that doesn't read.
 pub fn status_bar_style(user_agent: Option<&str>) -> &'static str {
     let old_safari = user_agent.is_some_and(|ua| {
         ["iPhone", "iPad", "Macintosh"]
             .iter()
             .any(|device| ua.contains(device))
+            && !ua.contains("iOS/")
             && ua
                 .split_once("Version/")
                 .and_then(|(_, rest)| {
@@ -131,12 +134,33 @@ mod tests {
                  Version/26.0 Mobile/15E148 Safari/604.1",
                 TRANSLUCENT,
             ),
-            // Chrome on iOS and the installed app's own requests: no Version/.
+            // Another iOS browser is never Safari, with a Version/ of 26 or lower too.
             (
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
                  CriOS/141.0.7390.96 Mobile/15E148 Safari/604.1",
                 DEFAULT,
             ),
+            (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+                 Version/26.0 CriOS/141.0.7390.96 Mobile/15E148 Safari/604.1",
+                DEFAULT,
+            ),
+            (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+                 Version/26.0 FxiOS/144.0 Mobile/15E148 Safari/605.1.15",
+                DEFAULT,
+            ),
+            (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+                 Version/18.0 EdgiOS/141.0.3537.71 Mobile/15E148 Safari/605.1.15",
+                DEFAULT,
+            ),
+            (
+                "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+                 Version/26.0 OPiOS/5.3.0 Mobile/15E148 Safari/604.1",
+                DEFAULT,
+            ),
+            // The installed app's own requests: no Version/.
             (
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) \
                  Mobile/15E148",
@@ -164,5 +188,65 @@ mod tests {
             assert_eq!(status_bar_style(Some(ua)), style, "{ua}");
         }
         assert_eq!(status_bar_style(None), DEFAULT);
+    }
+
+    /// A page that comes with a Content-Length never leaves with it once its bar line was swapped (the new line is
+    /// longer): a kept length would cut the page short in the browser.
+    #[tokio::test]
+    async fn a_rewritten_page_never_keeps_its_old_length() {
+        use tower::ServiceExt;
+
+        let page = format!(
+            "<html><head>{}</head><body>Emma</body></html>",
+            meta(DEFAULT)
+        );
+        let sent = page.clone();
+        let router = axum::Router::new()
+            .route(
+                "/",
+                axum::routing::get(move || {
+                    let page = sent.clone();
+                    async move {
+                        (
+                            [
+                                (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+                                (header::CONTENT_LENGTH, page.len().to_string()),
+                            ],
+                            page,
+                        )
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn(old_safari_bar));
+        for (ua, style) in [
+            ("Version/27.2 (iPhone)", DEFAULT),
+            ("Version/26.1 (iPhone)", "black-translucent"),
+        ] {
+            let request = Request::builder()
+                .uri("/")
+                .header(header::USER_AGENT, ua)
+                .body(Body::empty())
+                .unwrap();
+            let response = router.clone().oneshot(request).await.unwrap();
+            let length = response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .map(|value| value.to_str().unwrap().parse::<usize>().unwrap());
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(
+                String::from_utf8_lossy(&body).contains(&meta(style)),
+                "{ua}"
+            );
+            if style == DEFAULT {
+                // The premise: the page reaches the middleware with its length.
+                assert_eq!(length, Some(page.len()), "{ua}");
+            } else {
+                // None, or the one axum's router sets from the new body - never the page's own.
+                assert_ne!(body.len(), page.len(), "{ua}");
+                assert!(length.is_none_or(|length| length == body.len()), "{ua}");
+            }
+        }
     }
 }

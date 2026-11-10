@@ -618,8 +618,10 @@ async fn the_tab_pages_open_on_their_large_title() {
 
 /// The installed iPhone app's status bar by Safari's version (2026-11-10, `status_bar`): the page
 /// Safari 26 loads says `black-translucent` - signed in or not -, Safari 27's and one without a
-/// User-Agent keep head.html's `default`; every page varies by the User-Agent, a static file is
-/// passed as it is.
+/// User-Agent keep head.html's `default`; every page varies by the User-Agent. Anything that isn't a
+/// page passes as it is: a static file byte for byte, the event stream unbuffered. A POST's own page
+/// goes through both rewrites (`mark_post_answer`). The rewritten page's length is
+/// `status_bar::tests::a_rewritten_page_never_keeps_its_old_length`.
 #[tokio::test]
 async fn a_safari_26_gets_the_translucent_bar() {
     use axum::body::Body;
@@ -664,14 +666,16 @@ async fn a_safari_26_gets_the_translucent_bar() {
                 .any(|v| v == "User-Agent"),
             "{uri}"
         );
-        if let Some(length) = res.headers.get(header::CONTENT_LENGTH) {
-            assert_eq!(
-                length.to_str().unwrap(),
-                res.body.len().to_string(),
-                "{uri}"
-            );
-        }
     }
+    // The stylesheet: an old Safari gets the bytes any browser gets, and no `Vary: User-Agent`.
+    let plain = app
+        .send(
+            Request::builder()
+                .uri("/static/style.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
     let css = app
         .send(
             Request::builder()
@@ -682,11 +686,57 @@ async fn a_safari_26_gets_the_translucent_bar() {
         )
         .await;
     assert_eq!(css.status, StatusCode::OK);
+    assert!(!css.body.is_empty() && css.body == plain.body);
     assert!(
         !css.headers
             .get_all(header::VARY)
             .iter()
             .any(|v| v == "User-Agent")
+    );
+    // The event stream is never read whole: it answers at once, and a nudge arrives as its first chunk.
+    let (id, token) = app.enrolled_device("phone").await;
+    let moment = std::time::Duration::from_secs(5);
+    let stream = tokio::time::timeout(
+        moment,
+        app.call_via(
+            &app.router,
+            super::LOOPBACK_PEER,
+            Request::builder()
+                .uri("/api/devices/commands/stream")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::USER_AGENT, safari(26))
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("the event stream was held back");
+    assert_eq!(stream.headers()[header::CONTENT_TYPE], "text/event-stream");
+    let mut events = stream.into_body();
+    app.state.command_notify.send(id).unwrap();
+    let first = tokio::time::timeout(moment, http_body_util::BodyExt::frame(&mut events))
+        .await
+        .expect("the event stream's first chunk was held back")
+        .expect("the stream ended")
+        .unwrap();
+    assert_eq!(first.into_data().unwrap(), "data: command\n\n", "the nudge");
+    // A POST's own page (a wrong password's sign-in page) is marked and carries the old Safari's bar.
+    let wrong = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/login")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::USER_AGENT, safari(26))
+                .body(Body::from("username=parent&password=not+the+password"))
+                .unwrap(),
+        )
+        .await;
+    let html = wrong.text();
+    assert!(
+        html.contains("<body data-post-answer") && html.contains(&bar("black-translucent")),
+        "{}: {html}",
+        wrong.status
     );
 }
 
@@ -1130,13 +1180,19 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
+    // Main's top: 8 px under the status bar's inset, never less than the night strip - 12 px in the
+    // installed app on iOS 27, where the inset is 0 (the user's pick on the iPhone, 2026-11-10).
     // The editor bar sticks inside `main`, and a sticky offset counts from inside the scroller's
-    // padding: its `top: -8px` cancels exactly the 8 px below the status bar's strip in main's
-    // `padding-top`, so it sits right under the strip. Change one, change the other.
+    // padding: its `top: -8px` cancels exactly the 8 px in main's `padding-top` and its own 8 px
+    // of padding give them back, so its row never moves. Change one, change the other.
     assert!(
-        main.contains("padding-top: calc(8px + var(--top-strip));"),
+        main.contains(
+            "padding-top: max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip));"
+        ),
         "{main}"
     );
+    // Every page's large title sits 12 px under its 44 px bar or back link (the user, 2026-11-10).
+    assert!(block(".page-title").contains("margin: 12px 0 20px;"));
     let editor = block(".editor-bar");
     assert!(editor.contains("top: -8px;"), "{editor}");
     // The bar floats over main's bottom (2026-10-22, the see-through bar): absolute in the body -
@@ -1235,6 +1291,21 @@ fn the_app_shell_scrolls_main_not_the_document() {
              height:min(100vh,calc(100%+env(safe-area-inset-top,0px)));}}"
         ),
         "the standalone shell"
+    );
+    // The sign-in pages' height and the lock page's centre follow the same shell.
+    assert!(
+        compact.contains(
+            "@media(display-mode:standalone){.auth-page{\
+             min-height:min(100vh,calc(100%+env(safe-area-inset-top,0px)));}}"
+        ),
+        "the standalone auth page"
+    );
+    assert!(
+        compact.contains(
+            "margin-top:max(0px,calc(min(100vh,calc(100dvh+env(safe-area-inset-top,0px)))/2\
+             -var(--vibb-mark-size)/2-24px-var(--top-strip)));"
+        ),
+        "the standalone lock page's centre"
     );
     // A locked or hidden page hides every child of the body but the strip (iOS skips a hidden box).
     assert!(

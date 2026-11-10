@@ -381,9 +381,13 @@ input[type="radio"] {
 
 /* The scroller: the full width (the scrollbar at the window's edge, the wheel working over the
    margins, the same width on every page), the 720 px column (480 px narrow) from its padding.
-   viewport-fit=cover (head.html): every edge takes its safe-area inset - the top from --top-strip
-   (the status bar's night strip), the notch's sides in landscape; the tab bar over its bottom
-   clears the home indicator.
+   viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar's above,
+   the notch's sides in landscape; the tab bar over its bottom clears the home indicator. The top
+   is 8 px under the inset and never less than the status bar's night strip (--top-strip): under
+   the `default` bar of iOS 27 the inset is 0 and the strip 12 px, so the page starts at the
+   strip's lower edge - 12 pt under the status bar, 4 more than iOS 26's 8 (the user's pick on the
+   iPhone, 2026-11-10; 8 px + the strip was 12 pt too tall). With the inset as the strip (iOS 26's
+   translucent bar) or neither (a browser tab) it is 8 px + the inset.
    touch-action here, not on body: a scroller resets an inherited one, so the rows inside would
    keep double-tap zoom; pinch zoom stays, and Leaflet's own rules win on the map. */
 .container {
@@ -393,7 +397,7 @@ input[type="radio"] {
     overscroll-behavior-y: contain;
     touch-action: manipulation;
     padding: 8px 16px 16px;
-    padding-top: calc(8px + var(--top-strip));
+    padding-top: max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip));
     padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px));
     padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
     /* A page without the tab bar (music_spotify_done) reaches the home indicator itself. */
@@ -427,7 +431,7 @@ input[type="radio"] {
     font-size: 1.875rem;
     font-weight: 800;
     line-height: 1.15;
-    margin: 4px 0 20px;
+    margin: 12px 0 20px;
     word-break: break-word;
     overflow-wrap: anywhere;
 }
@@ -2124,7 +2128,7 @@ details.edit[open] > summary .chev {
    room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
    bell, and the large title under it sit exactly where every other tab has them. The band is main's
    content like the bar, so it scrolls away with it, under the status bar's night strip
-   (body::before), which it meets without a seam; its 100vh above the top is what an iOS pull-down
+   (.top-strip), which it meets without a seam; its 100vh above the top is what an iOS pull-down
    bounce shows (night, not the grey ground). */
 .title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0; }
 .title-bar-night .title-action { color: var(--night-action); }
@@ -2595,8 +2599,11 @@ input.row-num { width: 6.5em; text-align: right; }
 /* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
 /* It sticks inside <main> (design 43), and a sticky offset counts from inside the scroller's
-   padding (8px + the status bar's inset): -8px puts it right under the status bar, as before. Its
-   side margins reach the 720 px column's edge (main's wider padding outside it is page background). */
+   padding (.container: 8px + the status bar's inset, at least the night strip): -8px puts the bar's
+   box right under the status bar and its own 8 px of padding back, so the back link and Save stay
+   exactly where they are before any scrolling. In the installed app on iOS 27 (no inset, a 12 px
+   strip) the box starts 4 px down and the strip covers its padding alone. Its side margins reach
+   the 720 px column's edge (main's wider padding outside it is page background). */
 .editor-bar { position: -webkit-sticky; position: sticky; top: -8px; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 /* The container's sides take the notch's inset in landscape: the bar's background reaches its edge too. */
 .editor-bar { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -2646,7 +2653,7 @@ a.act, a.act:hover { text-decoration: none; }
 
 /* A tab's landing page opens on its large title under a 44px bar (the mockups) that ends with the bell
    (design 35) on every tab; Devices and Apps put their + before it. */
-.container > .page-title:first-child { margin-top: 48px; }
+.container > .page-title:first-child { margin-top: 56px; }
 .title-add { justify-content: center; min-width: 44px; padding: 0; }
 .title-add svg { width: 22px; height: 22px; }
 /* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
@@ -2942,7 +2949,9 @@ html.veiled body > :not(.top-strip) { visibility: hidden !important; }
 }
 /* The installed app: the half of the shell's height (the body rule above). A margin's % counts from the width, so the
    layout viewport is 100dvh here - iOS 26 reports both short by the same inset under the translucent bar (WebKit
-   301108). Without dvh (iOS before 15.4, always under the translucent bar) 100vh is the screen. */
+   301108), and under `default` 100dvh is the layout viewport (measured on iOS 27.2, 2026-11-10: 793 of the screen's
+   852, as innerHeight; 100vh 852). Without dvh (iOS before 15.4, always under the translucent bar) 100vh is the
+   screen. */
 @media (display-mode: standalone) {
     .lock-centre {
         margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - var(--top-strip)));
