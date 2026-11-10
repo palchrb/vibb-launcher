@@ -89,8 +89,9 @@ class ThreadActivity : UIObjectActivity() {
     /** Whether the list follows its newest message ([threadFollows]): at its end, until the kid scrolls up. */
     private var following = true
 
-    /** The newest `seq` the list's end has been shown with, and the "new message" mark that tells of what came in
-     * after it while the kid reads older messages ([threadNewMark]). */
+    /** The newest `seq` the list's end has been shown with - moved only where a list that follows goes to its end
+     * ([show]) - and the "new message" mark that tells of what came in after it while the kid reads older messages
+     * ([threadNewMark]). */
     private var seenSeq = 0L
     private var mark = NewMark.NONE
     private var compose = ComposeState.UNAVAILABLE
@@ -238,6 +239,8 @@ class ThreadActivity : UIObjectActivity() {
         conversation = null
         messages = emptyList()
         newestSeq = 0L
+        // The thread before this one may coast still: its next step would say "not at the end" of the new one.
+        binding.threadList.stopScroll()
         following = true
         seenSeq = 0L
         limit = PAGE
@@ -379,24 +382,26 @@ class ThreadActivity : UIObjectActivity() {
         if (follows && !following) binding.threadList.stopScroll()
         follow(follows)
         newestSeq = messages.maxOfOrNull { it.seq } ?: 0L
-        // A list that follows shows its end; scrolled up, what came in after the last such list is the mark's.
-        if (following) seenSeq = newestSeq
-        renderMark()
         // Asked by every list, not only the one that brought the message: a list overtaken by the next read (the read
         // that marked it read, a delivery update) never gets its callback. A bubble taller than the list shows its
-        // bottom after the layout ([afterLayout]).
+        // bottom after the layout ([afterLayout]). The end counts as shown ([seenSeq]) here alone, with the scroll: the
+        // callback runs for the latest list only, the one [newestSeq] tells of, and a list the kid scrolled away from
+        // before it was in has shown nothing - its message is the mark's.
         adapter.submitList(threadItems(messages, System.currentTimeMillis(), ZoneId.systemDefault())) {
-            if (following && adapter.itemCount > 0) binding.threadList.scrollToPosition(adapter.itemCount - 1)
+            if (following && adapter.itemCount > 0) {
+                binding.threadList.scrollToPosition(adapter.itemCount - 1)
+                seenSeq = newestSeq
+            }
         }
     }
 
-    /** [following] from now on. Turning on - the end reached, the kid's own send, the mark's tap - reads once more: what
-     * came in while the kid read older messages is seen ([seenSeq]) and read now ([threadReads]), its notification
-     * goes, and so does the mark. */
+    /** [following] from now on, and the mark by it - every list comes through here ([show]). Turning on - the end
+     * reached, the kid's own send, the mark's tap - takes the mark away and reads once more: what came in while the kid
+     * read older messages is read now ([threadReads]), its notification goes, and that read's list counts it as shown
+     * ([seenSeq]; not here: [newestSeq] may tell of a list that isn't in yet). */
     private fun follow(now: Boolean) {
         val turnedOn = now && !following
         following = now
-        if (turnedOn) seenSeq = newestSeq
         renderMark()
         if (turnedOn) load()
     }
@@ -425,8 +430,10 @@ class ThreadActivity : UIObjectActivity() {
     }
 
     /** The mark's tap: to the thread's end, as the kid's own scroll there - following turns on ([follow]), and every
-     * layout then goes on to the last bubble's bottom ([afterLayout]). A list that coasts stops first. */
+     * layout then goes on to the last bubble's bottom ([afterLayout]). A list that coasts stops first, and what was
+     * open for a bubble - "Slette meldingen?", the reaction panel - closes: that bubble leaves the screen. */
     private fun toEnd() {
+        cancelDelete()
         hideReact()
         binding.threadList.stopScroll()
         follow(true)

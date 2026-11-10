@@ -185,13 +185,20 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   more than one, no count - over the list's lower edge, centred, above the compose bar and so above the keyboard
   (`thread_new` in `thread_list_frame`, which now wraps the list and is what the emoji picker hides). Never for the
   kid's own message (a send goes to the end) and never for a reaction alone (no bubble, no `seq` among the messages).
-  **What counts as shown:** `ThreadActivity.seenSeq`, the newest `seq` the end was shown with - set with every list a
-  following thread shows and the moment following turns on (`follow`), reset by `take`; the mark counts the IN messages
-  after it. In memory only: a rebuilt screen opens following, at its end, so nothing is owed; a screen that was only
-  paused or stopped keeps it, and the first read after the return shows the mark for what came meanwhile. **A tap**
-  closes the reaction panel, stops a coasting list, turns following on through `follow` (which reads the thread and
-  cancels its notification, as reaching the end by hand does) and goes to the last position; `afterLayout` goes on to
-  a tall bubble's bottom. The mark leaves whenever following turns on, however that came about. **Look:** a 32 dp pill
+  **What counts as shown:** `ThreadActivity.seenSeq`, the newest `seq` the end was shown with - set in one place, the
+  latest list's commit callback in `show`, with the scroll to the end of a thread that follows (code QA L2: set by
+  `show` itself, a message whose list the kid scrolled away from before it was in counted as seen, unshown), and reset
+  by `take`; the mark counts the IN messages after it. Turning following on (`follow`) doesn't set it - `newestSeq` may
+  tell of a list that isn't in yet - but takes the mark away at once (a thread that follows has none) and reads, and
+  that read's list sets it; a kid who reaches the end by hand and leaves it before that read is in gets the mark once
+  more for what was there, never a miss. In memory only: a rebuilt screen opens following, at its end, so nothing is
+  owed; a screen that was only paused or stopped keeps it, and the first read after the return shows the mark for what
+  came meanwhile. `take` stops a coasting list first (code QA L5): the old thread's fling would turn following off
+  before the new thread's first list, and the mark would tell of its whole page. **A tap** closes "Slette meldingen?"
+  and the reaction panel (their bubble leaves the screen; code QA L1), stops a coasting list, turns following on
+  through `follow` (which reads the thread and cancels its notification, as reaching the end by hand does) and goes to
+  the last position; `afterLayout` goes on to a tall bubble's bottom. The mark leaves whenever following turns on,
+  however that came about. **Look:** a 32 dp pill
   in a 48 dp touch target (`bg_message_new`: a received bubble's `kid_message_in` with the reaction chip's 1 dp
   `kid_ground` outline, 8 dp inside the target's top and bottom), Nunito bold 14 sp in `kid_core`, flat (no state
   animator); a 150 ms fade in and out, none with the system's animations off (`ValueAnimator.areAnimatorsEnabled`). No
