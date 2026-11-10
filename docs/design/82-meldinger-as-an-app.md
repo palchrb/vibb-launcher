@@ -557,3 +557,29 @@ the three). No wire change, no contract change, no migration.
 - **L4**: Meldinger's task label (Recents) follows W1's name at every render, not only at `onCreate`
   (`MessagesActivity.labelTask`, set only when the name changed).
 - **L5**: two doc comments said the text shows while `call_policy.sms_lock_text` is on; they say Full text now.
+
+**The emulator pass** (2026-11-10, `handy36`, `docs/testing/emulator.md` §6ad). Nothing in the design changed; what
+the pass adds to it:
+
+- **Seen as designed:** migrations 0135/0136 on a database at 0134 (Name only, and Full text where the old switch was
+  on); the three "update Vibb One" lines before the new launcher's first report and none after; W1's name, icon,
+  colour and On Home on the tile, the PIN prompt, the header, the Recents label and the Lock Screen row without a
+  restart of the launcher; the tile under a pause and with history and SMS off (read-only); the three levels on the
+  lock and a level change reaching a lock that is showing; one 40 ms buzz, and none with the switch off, unlocked,
+  inside the 10 s gap, on Silent, under Do Not Disturb, under a rule's silence and while a call rings; every save of
+  the row, the level and the switch staying in place with JavaScript and landing on its anchor without it, S1's
+  `#allowed` included (that state was staged in the pass's database, the phone's kept threads can't go).
+- **One vibration per message.** The notification's channel has its vibration off, so the dump shows the buzz alone.
+  Whether Android adds anything on the Jelly Star is the phone's to show.
+- **The buzz comes with a gained row only** (§9: "everything that brings a row to the lock"): a second message in a
+  thread whose row is already on the lock gave no buzz (the wake has the same rule, `smsGainsRow`). Under Do Not
+  Disturb and a rule's silence an SMS stops in `smsPostAlerts` before `noticeCame()`, so the pass didn't exercise
+  `noticeBuzz`'s own filter and silence gates; another app's row (Element X's) wasn't staged.
+- **The display form is the shared one:** it closes after a save, and a refused save comes back open at the row's top
+  with the error in view - not at the page's top, and not exactly where the Save button was.
+- **Two rows named "Meldinger"** in nb while Google Messages is allowed too (Apps and the Lock Screen group); the sub
+  "En del av Vibb One" and the icon tell them apart, and W1's rename removes it.
+- **Outside this design:** one of three pauses of all restrictions left the kiosk on Android's "App is not available"
+  screen for Vibb One, lock task still on with an empty allow-list (§6ad, "Found"). Not fixed here.
+- **Not run:** L1 (no cheap way to make the engine's read fail, and no unit test holds it - it stands on the code,
+  `SmsHome.refresh`), the Recents label after a reset, TalkBack by touch.

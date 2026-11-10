@@ -2830,6 +2830,94 @@ cat databases/messages.db` (`message.is_read`).
   bar's place (needs a rule from a server); a portrait picture's bubble (the fake MMSC's is 160 x 120).
 - Screenshots of the run are in the session's `scratchpad/mark-shots/`.
 
+## 6ad. Meldinger as an app: its Apps row, the lock level and the buzz (design 82) (2026-11-10)
+
+Run on `handy36` on its kept data (no `-wipe-data`, `wm density 240`, `install -r`; the AVD's data copied first and put
+back after) on 2026-11-10, branch `meldinger-app` (0952a091, with main's §6ac mark merged in). The branch's server ran
+on the host (port 3111, the phone at `10.0.2.2`) on a copy of an earlier pass's database, at migration 0134 when it
+started; the PWA was driven through headless Chromium (390 x 844, nb) with JavaScript and without it. The phone is in
+the kiosk (Home roots lock task), managed SMS, Mamma (`+4790000001`) and Pappa (`+4790000002`) with their kept
+threads. A save's place is read as the scroll of `main.container` and the form's cell's top, before the save and after
+the page it lands on. A vibration is read in `dumpsys vibrator_manager`'s "Recent vibrations" and the launcher's
+"Notice buzz" log line. Google Messages is allowed on this AVD, so in nb two rows are named "Meldinger" until the
+built-in one is renamed.
+
+- **Migrations 0135 and 0136 on an upgraded database:** the server took its own backup
+  (`backups/pre-migrate-0134-0136.db`) and came up at 0136: `device_lock_glance_apps` got `me.vibb.builtin.messages`
+  with `show_text` 0 (Name only) beside Element X's row, `lock_buzz_on_notification` is 0. A second copy of the 0134
+  database with `sms_lock_text = 1` set by hand first came up with `show_text` 1 (Full text).
+- **An older Vibb One against the new server** (the launcher already on the AVD, before `install -r`): `#lock-buzz`
+  shows the orange "Denne telefonen vibrerer ikke ennå - oppdater Vibb One" under the switch, the Apps row "Vises på
+  telefonen når Vibb One er oppdatert", and the lock row at Av "Denne telefonen viser fortsatt navn og antall -
+  oppdater Vibb One". The old launcher does what the lines say: at Av its lock still shows the name and the count, and
+  at Hele teksten it shows the text (the derived `call_policy.sms_lock_text`). After `install -r` and the new
+  launcher's first report (`messages_app_v1`) the three lines are gone.
+- **The Apps row:** Device › Apps lists "Meldinger" with the sub "Meldinger · En del av Vibb One" under Allowed, and
+  "Navn og ikon" takes the name "Beskjeder", the icon "e-post", the colour "Plomme" and "På Hjem"; the summary reads
+  "Beskjeder, med ikonet «e-post» på plomme". Saved with JavaScript: the name (moved 0 px), the icon and the colour,
+  "På Hjem" on (the cell's top -396 before and after). Without it: "På Hjem" off lands on the row's anchor, the cell's
+  top at the top of the view. After a save "Navn og ikon" is closed again (the form every app's row has). A refused
+  save (a name of 30 characters) comes back with the form open and "Høyst 20 tegn - hjemskjermen viser omtrent 10.":
+  the row's top is at the top of the view, with JavaScript too - 396 px from where the Save button was, not the
+  page's top (scroll 211).
+- **S1, a reset that leaves the row unlisted:** staged, not reached by the phone - the phone's network off, SMS set to
+  not managed, and `has_history` set to false by hand in the newest report of the pass's own database (the kept
+  threads can't go without a wipe; for the second run the display row was put back by hand). Tilbakestill without
+  JavaScript: `/devices/1/apps#allowed`, the Allowed group at the top of the view (scroll 123), the row gone. With
+  it: the hash is `#allowed`, the scroll 607 before and after, the row gone.
+- **The Lock Screen row and the buzz switch:** "Varsler på låseskjermen" lists the built-in app under the name from
+  the Apps row ("Beskjeder") with Av / Bare navn / Hele teksten; the row is not there while SMS is not managed.
+  `#lock-buzz` is "Vibrer ved varsler", "Én kort vibrering, ingen lyd, for appene på låsen nedenfor og tapte anrop".
+  Every save of the level and of the switch stays where it was with JavaScript and lands on its anchor without it.
+  (Calls & Contacts' SMS mode, saved to stage the above, moved 26 px once: the page got shorter above a scroll that
+  was near its end; the save back stayed.)
+- **Home:** the rename, the icon and the colour reach the tile without a restart of the launcher (the same pid all
+  through the pass): the tile "Beskjeder" with the envelope on plum, content description "Beskjeder, 3 uleste", the
+  PIN prompt "Skriv koden for å åpne Beskjeder", the list's header "Beskjeder". "På Hjem" off: the tile leaves Home,
+  messages still arrive and the lock's row still opens the thread; on: the tile is back. Under a pause of all
+  restrictions with "På Hjem" off the tile is on Home ("Åpen til ...", "Lås igjen") and it is gone again when the
+  pause ends. With SMS off and the kept threads the tile stays, without a badge, and Meldinger is read-only:
+  "Meldingene her kan bare leses." in the list and as the thread's line, no "Ny melding" action; the Apps row's sub
+  adds "SMS er ikke styrt av Vibb".
+- **The lock at each level:** an SMS from Mamma on the locked phone. Hele teksten: "Mamma", "Hei Emma, middag klokka
+  f…", the time, the row's small badge the chosen icon on plum. Bare navn: "Mamma", "Ny melding" (three unread: "3
+  nye meldinger"). Av: no row, and no buzz for the next message. A level saved in the PWA while the lock shows - Bare
+  navn, Hele teksten, Av, Bare navn - is on the lock's rows when they are read 5 s later.
+- **The buzz:** the switch on, the phone locked, a message that brings a row: one step of 40 ms, `usage:
+  NOTIFICATION`, from `me.vibb.launcher.debug` (the dump's durations read 41-88 ms here). Pappa's row and then Mamma's
+  3 s later: one buzz, for the first; a row 19 s after that: one. None with the switch off (the row comes); none
+  unlocked; none with the ringer on Silent, one on Vibrate; none with Do Not Disturb on and none under a time rule's
+  silence ("Stilletid" on the lock) - the row comes in both. Mamma ringing and an SMS from Pappa meanwhile: no buzz
+  while it rings (the lock yields to the call screen), then Pappa's row, "Tapt anrop fra Mamma" and one buzz as the
+  call ends. No vibration from the notification's channel beside the buzz in any dump (`launcher:messages` has
+  `mVibrationEnabled=false`) - one per message.
+- **What the buzz doesn't do:** a message in a thread whose row is already on the lock (the second unread, the row not
+  swiped away) gave no buzz - only a gained row does (`smsGainsRow`, the wake's rule too), so the rows were swiped
+  away between the steps above. Under Do Not Disturb and a rule's silence an SMS never gets as far as `noticeCame()`
+  (`smsPostAlerts`), so the buzz's own filter and silence gates were not seen working apart from that.
+- **Recents and TalkBack, by dump:** Meldinger's task has `taskDescription label="Beskjeder"` and the overview reads
+  "Vibb One (debug) Beskjeder" (L4). Content descriptions: the tile "Beskjeder, 3 uleste" and "Beskjeder"; the lock's
+  rows "Ny melding fra Mamma, 4:18" at Bare navn, "Ny melding fra Mamma, Hei Emma, middag klokka fem, 4:18" at Hele
+  teksten, "3 nye meldinger fra Pappa, ...".
+- **Main's mark in this build:** scrolled up in Mamma's thread, an SMS in: `thread_new` "Ny melding"
+  `[161,647][318,719]`; the tap goes to the end and reads it.
+- **Found, not design 82's, not fixed:** the first pause of all restrictions (the Parent PIN in Settings; Home and
+  Meldinger the locked tasks, a call screen and the lock's tasks earlier in the log) left the phone on Android's "App
+  is not available" for Vibb One: the system's Home start was caught by the lock-task interceptor (`startActivity ...
+  BlockedAppActivity`, then `Attempted Lock Task Mode violation ... HomeActivity` three times), with
+  `mLockTaskPackages` already empty, `mLockTaskModeState=LOCKED` and the blocked screen's own task the only locked
+  one; the Home key did nothing. `am task lock stop` didn't help, `am stack remove <its root task>` did. Two more
+  pauses - one with the same two tasks, one after a ringing call and a lock row's unlock into the thread - went
+  through: 1 of 3, on an emulator logging "Slow operation" at the time. The branch changes no lock-task or pause
+  code; whether main alone does it wasn't tried. The log and two screenshots are in the session's
+  `scratchpad/m82/logs/` and `m82/shots/`.
+- **Not run, not proven:** L1 (a failed engine read dropping the lock's rows - no cheap way to make the read fail,
+  and no unit test holds it: it stands on the code, `SmsHome.refresh`); the Recents label after a reset; TalkBack by
+  touch and the lock row's action label (§6ac's note); whether the notification and the buzz are felt as one or two
+  on the phone, Android playing the buzz from the background there, and Android's own vibration settings - the Jelly
+  Star's; the buzz for another app's row (Element X's).
+- Screenshots of the run are in the session's `scratchpad/meldinger-shots/`.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
