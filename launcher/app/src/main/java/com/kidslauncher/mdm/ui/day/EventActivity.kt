@@ -17,7 +17,7 @@ import com.kidslauncher.mdm.day.eventDay
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -29,7 +29,7 @@ import java.time.format.DateTimeFormatter
  * 2 000 code points) - a plain TextView, no links (kiosk). An event that is gone (or a rule now hides) says so and
  * goes back. Not exported.
  */
-class EventActivity : UIObjectActivity() {
+class EventActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityEventBinding
     private val main = Handler(Looper.getMainLooper())

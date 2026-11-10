@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A page's status and navigation bar icons (design 78 §5.5): light icons on the night ground, dark ones in
+     values-notnight. Read by KidPageTheme, so the starting window has them too. -->
+<resources>
+    <bool name="kid_page_light_bars">false</bool>
+</resources>

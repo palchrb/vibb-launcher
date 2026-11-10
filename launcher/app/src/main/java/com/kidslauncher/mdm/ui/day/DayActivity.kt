@@ -29,7 +29,7 @@ import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.LockActivity
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -42,7 +42,7 @@ import java.time.temporal.ChronoUnit
  * "Pågår nå"; a new day, a time set or a zone change moves the anchor and keeps the page's date. Read-only but for
  * the kid's own events ("+", step 3). Nothing here reaches the server.
  */
-class DayActivity : UIObjectActivity() {
+class DayActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityDayBinding
     private lateinit var adapter: DayPagerAdapter

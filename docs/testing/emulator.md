@@ -3191,6 +3191,128 @@ real refusal; two taps of a finger rather than two injected ones; a display size
 default. `handy36`'s rows of the compose bar stay computed (`docs/notes/launcher/calls.md`). Screenshots of the run
 are in the session's `scratchpad/retry-shots/`.
 
+## 6ah. The kid's look: Mørk or Lys - step 1's pass (design 78)
+
+**Steps, written with the build on 2026-11-10. Not run yet**: nothing below is a result. Step 1 is the mechanism and
+Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
+**debug** build only.
+
+Setup: **`jelly36`** (§3), the debug launcher of branch `kid-look-1` as Device Owner (§4), enrolled, with §6w's
+calendars: Kalender on Home, events today in two calendars with colours (§6w step 9), one in progress, an all-day one,
+one with a description and a place, the kid's own "Min kalender" (the "+"), and a reminder that can come up on the
+glance (§6w step 6). The phone in Norwegian. For the before pictures: main's debug APK built from the commit the
+branch started from, installed over it with `adb install -r` (§6ag: that restarts the launcher and the PIN lock comes
+up).
+
+```
+adb shell cmd uimode night yes|no                                        # the SYSTEM's dark theme, not the look
+adb shell run-as me.vibb.launcher.debug cat shared_prefs/kid_look.xml    # choice and applied
+adb logcat -b events -c                                                  # before each open or change
+adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity|wm_destroy_activity" | grep -E "\.day\.|kidsettings"
+adb shell dumpsys activity recents | grep -c "\.day"                     # Kalender's task: 1, or 0 after a change
+adb shell settings put system font_scale 1.3                             # and 1.0 after
+```
+
+The look is picked in kid Settings (Home's "Innstillinger" tile): the section "Utseende" after the background
+section, Mørk | Lys.
+
+### A. The starting window, on the real code (step 0's recording again)
+
+Record with the device's own `screenrecord` and step every frame, as §6k's frame-stepping rule. Eight recordings: Mørk
+and Lys, each from Home's Kalender tile and from the glance's reminder row (the tap, the kid's code), each **cold**
+(no Kalender task: right after a change of look, or the card swiped away in Recents) and **warm** (the task behind:
+Kalender, Home, Kalender). Then the four tile recordings once more with the system's dark theme the other way
+(`cmd uimode night no`).
+
+- [ ] No frame of the other look between the last frame of Home (or the keypad) and the page's own first frame: the
+  starting window has the look's ground.
+- [ ] In Lys the status bar's icons and the gesture pill are dark from the first frame with the light ground. **Known
+  from step 0**: on the cold open from Home's tile the icons stayed white for about 230 ms and then tinted over about
+  95 ms; the user accepted it for now. Write down the frame count again for each of the eight; a longer or a new case
+  is a finding, the known one is not a failure of the run.
+- [ ] The events log for each open: `wm_on_create_called` once for `DayActivity`, no `wm_relaunch_activity`.
+- [ ] With Kalender open in each look: `cmd uimode night no`, then `yes`, then Battery Saver on and off
+  (`adb shell cmd battery unplug`, `adb shell settings put global low_power 1`, `0`, `adb shell cmd battery reset`).
+  The page keeps its look and the events log shows no relaunch and no new `wm_on_create_called`.
+
+### B. A change of look
+
+1. Open Kalender, go Home, open kid Settings. The control shows the applied look. Screenshot.
+2. Tap **Lys**. The preview strip turns to the paper ground with the lilac received bubble and the peach own one;
+   nothing else on kid Settings changes (compare with step 1's screenshot: only the control and the strip differ; no
+   flash, no relaunch of kid Settings in the events log).
+3. `kid_look.xml`: `choice` and `applied` both `light`. `dumpsys activity recents | grep -c "\.day"` is 0, and the
+   events log has `wm_destroy_activity` for `DayActivity`. Recents shows no Kalender card.
+4. Home, the Kalender tile: Kalender in Lys from its first frame (A), one `wm_on_create_called`.
+5. The same back to **Mørk**. Then with an event page open in Kalender's task before going Home: both activities are
+   destroyed at the tap, and the next open is the day view.
+6. Tap the look that is already applied: nothing is destroyed, Kalender's card stays in Recents.
+7. Tap Lys, then `adb reboot` within a few seconds. After the unlock: `kid_look.xml` says `light`, Kalender opens in
+   Lys from its first frame. The same after `adb install -r` of the same APK (the process restarted).
+8. A phone that never ran this build (the update): install main's debug APK on a wiped `jelly36` with the system's
+   dark theme **off**, provision, then `adb install -r` this build. `kid_look.xml` has `applied` = `dark` without any
+   tap; Kalender opens with a night starting window (no light frame), although the system is light.
+
+The waiting change (a tap while a page task is started, run at Home's next resume) can't be reached by hand - kid
+Settings in front means no page is started; `PageLookTest` holds its rule.
+
+### C. Kalender in both looks
+
+Each of these in Lys beside the mockup (`docs/design/78-mockups.html`) and in Mørk beside main's build of the same
+screen (Mørk must be the same picture as main's; anything that differs is a finding):
+
+- [ ] The day view: the header with its back disc and arrow, the date, an event row (start time in the accent, the
+  title, the second line dim), the calendar dots of both calendars and the kid's own (each clear of the white tile and
+  of the paper), "Pågår nå"'s ring, an all-day row, the key under the list, the "+" disc with its night glyph, an empty
+  day's line, a reminder shown under the header. A row pressed: the ripple is visible and dark in Lys.
+- [ ] An event's page: title, time, description and place, the calendar's dot and name, "Endre" and "Slett" (its own
+  event), "Slett"'s confirm dialog - a white panel with dark text and accent buttons in Lys.
+- [ ] "Ny avtale": the field labels and fields, the keyboard up, "Lagre". The **date picker** and the **time picker**
+  in both looks at font 1.0 and 1.3: the panel, every day number, the weekday row, both month arrows, the header and
+  the chosen day (night text on the peach fill), the clock face's numbers, the buttons. **Look at today's number while
+  another day is chosen**: the framework draws it in the peach fill, which is 2.6:1 on Lys's white panel - say how it
+  reads.
+- [ ] The status bar's icons and the gesture pill on each of the three screens, and with the keyboard up.
+
+### D. The screens that are not pages: before and after
+
+Screenshots with main's build and with this build, each with the system's dark theme **on** and **off**, and on this
+build with the look Mørk and again Lys: Home, the phone book, Meldinger's list and a thread, the contact card, the
+emergency menu, kid Settings (its Wi-Fi, Bluetooth and sound lists too), the drawer, parent Settings behind its PIN
+dialog, the time-rule screen, the PIN lock with its glance, an incoming and an ongoing call (§5), and the "link
+blocked" notice (a `market://` link while the Play Store is suspended, `docs/notes/launcher/push-and-play.md`).
+
+- [ ] System dark **on**: this build is main's picture on every screen, in both looks.
+- [ ] System dark **off**: only what AppCompat draws by itself differs from main - a row's ripple while pressed, a
+  control's tint, an unthemed switch or divider, parent Settings' preference widgets (design D2). Anything else - a
+  ground, a text colour, an icon - is a finding. The "link blocked" notice: its ground, text and OK button as before.
+- [ ] Lys against Mørk on this build: no difference on any of these screens; their starting windows are night in Lys
+  too (record the phone book's and Meldinger's cold open from Home in Lys).
+- [ ] None of them is relaunched by a change of look or by `cmd uimode night yes|no` (the events log), the call screen
+  during a call included.
+
+### E. TalkBack and the font scale
+
+- [ ] TalkBack on kid Settings (the image's own TalkBack if it has one; otherwise read the nodes with
+  `uiautomator dump`, to `/data/local/tmp` as §6ag): the heading "Utseende", then "Mørk" and "Lys" as two choices with
+  their selected state, then the caption. The preview strip is not a stop and its two texts are not read.
+- [ ] Font scale 1.3: the control's segments stay at least 48 dp high with their words whole, the strip keeps its
+  56 dp with both bubbles inside it (the received one may end in an ellipsis), the caption wraps; Kalender's three
+  screens and both pickers in Lys.
+
+### F. To note, not to judge
+
+- Android 16's "make more apps dark" (Accessibility; step 0's image had no such switch): if this image has it, what it
+  does to a Lys page.
+- A release build has no row. It is checked from CI's release APK on an emulator of its own, never from a local
+  build on a phone: kid Settings shows no "Utseende", Kalender is night, and `kid_look.xml` has `applied` = `dark`
+  after the first unlock.
+
+### What `jelly36` can't show
+
+The Jelly Star's own Android build (step 0's repeat there is still open - a debug build on a test phone, never the
+kid's), a finger's tap instead of an injected one, an Android 14 phone's bars under a Lys page.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

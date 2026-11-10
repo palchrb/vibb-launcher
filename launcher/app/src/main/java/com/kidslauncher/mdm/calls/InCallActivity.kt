@@ -12,6 +12,7 @@ import android.text.format.DateUtils
 import android.view.View
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityInCallBinding
 
@@ -32,6 +33,13 @@ import com.kidslauncher.mdm.databinding.ActivityInCallBinding
  * Direct-boot-aware: no contact avatars before the first unlock (the silhouette then).
  */
 class InCallActivity : AppCompatActivity() {
+
+    /** Design 78 §5.3: the call screen is night as a constant, like every screen that is not a page. It reads
+     * nothing - the kid's look lives in CE storage, and this screen runs before the first unlock too. */
+    override fun attachBaseContext(newBase: Context) {
+        delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES
+        super.attachBaseContext(newBase)
+    }
 
     private lateinit var binding: ActivityInCallBinding
     private val handler = Handler(Looper.getMainLooper())

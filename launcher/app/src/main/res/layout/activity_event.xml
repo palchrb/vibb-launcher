@@ -6,7 +6,7 @@
     android:id="@+id/event_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/kid_ground"
+    android:background="@color/kid_page_ground"
     android:fillViewport="true">
 
     <LinearLayout
@@ -37,7 +37,7 @@
                 android:layout_height="wrap_content"
                 android:accessibilityHeading="true"
                 android:fontFamily="@font/nunito_extrabold"
-                android:textColor="@color/kid_ink"
+                android:textColor="@color/kid_page_ink"
                 android:textSize="18sp" />
 
             <TextView
@@ -46,7 +46,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:fontFamily="@font/nunito_extrabold"
-                android:textColor="@color/kid_accent"
+                android:textColor="@color/kid_page_accent"
                 android:textSize="14sp" />
 
             <TextView
@@ -55,7 +55,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="@font/nunito_bold"
-                android:textColor="@color/kid_core"
+                android:textColor="@color/kid_page_core"
                 android:textSize="14sp"
                 android:visibility="gone" />
 
@@ -65,7 +65,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="@font/nunito_bold"
-                android:textColor="@color/kid_core_dim"
+                android:textColor="@color/kid_page_dim"
                 android:textSize="13sp" />
 
             <TextView
@@ -77,7 +77,7 @@
                 android:fontFamily="@font/nunito_semibold"
                 android:lineSpacingMultiplier="1.15"
                 android:linksClickable="false"
-                android:textColor="@color/kid_core"
+                android:textColor="@color/kid_page_core"
                 android:textIsSelectable="false"
                 android:textSize="14sp"
                 android:visibility="gone" />
@@ -100,7 +100,7 @@
                 android:id="@+id/event_delete"
                 style="@style/KidManageLink"
                 android:text="@string/event_delete"
-                android:textColor="@color/kid_missed_text" />
+                android:textColor="@color/kid_page_alert" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

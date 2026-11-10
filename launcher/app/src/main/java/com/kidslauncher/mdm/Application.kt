@@ -278,6 +278,13 @@ class Application : android.app.Application() {
         // Design 59 §3.9: the boot's first CE start (decide's boot-count test) stamps this boot's start with the
         // unlock, before the anchor's first sync can send it. Never throws.
         com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
+        // Design 78 §5.4: the kid's look goes to the system at every unlocked start, the first run included - before
+        // any page of this process can open. Guarded on its own: a failure leaves the pages night, nothing else.
+        try {
+            com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "The kid's look wasn't applied", e)
+        }
         val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)

@@ -5,6 +5,7 @@ import android.app.ActivityManager
 import android.app.Dialog
 import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -27,6 +28,7 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
@@ -64,6 +66,12 @@ private const val STATE_ENTERED = "entered"
  * recording or a cast. Not direct-boot-aware (it can't be: the kid PIN lives in CE storage).
  */
 class PinLockActivity : AppCompatActivity() {
+
+    /** Design 78 §5.3: the lock is night as a constant, like every screen that is not a page - it reads nothing. */
+    override fun attachBaseContext(newBase: Context) {
+        delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES
+        super.attachBaseContext(newBase)
+    }
 
     private lateinit var binding: ActivityPinLockBinding
     private val handler = Handler(Looper.getMainLooper())

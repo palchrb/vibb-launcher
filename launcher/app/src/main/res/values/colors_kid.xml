@@ -14,6 +14,10 @@
     <color name="vibb_night">@color/kid_ground</color>
     <color name="kid_ink">#FFFFFF</color>
     <color name="kid_ink_dim">#BFFFFFFF</color>
+    <!-- The glyph and text on a peach fill, and its press (design 78 §4.1): the same in Mørk and Lys, so not page
+         tokens. kid_ground had this role on a page before ("the ink on the peach", not "the ground"). -->
+    <color name="kid_on_accent">#0C0C14</color>
+    <color name="kid_on_accent_press">#33000000</color>
     <color name="kid_badge">#B4532C</color>
     <color name="kid_call_badge">#2F9E44</color>
     <!-- The Phone book tile (and the time-rule screen's phone book row): a muted call green,

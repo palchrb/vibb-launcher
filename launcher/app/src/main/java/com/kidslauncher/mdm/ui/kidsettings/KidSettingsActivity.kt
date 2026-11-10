@@ -15,6 +15,7 @@ import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
+import android.view.LayoutInflater
 import android.view.View
 import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
@@ -29,6 +30,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo
 import com.kidslauncher.mdm.apps.AppFilter.Companion.AppSetVisibility
@@ -50,6 +52,8 @@ import com.kidslauncher.mdm.ui.quickcontrols.BluetoothDevicesActivity
 import com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.homeApps
+import com.kidslauncher.mdm.ui.look.LookMode
+import com.kidslauncher.mdm.ui.look.PageLook
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
@@ -104,6 +108,8 @@ class KidSettingsActivity : UIObjectActivity() {
     private var soundValues: Map<SoundKind, SoundValue> = emptyMap()
     private var soundValuesJob: Job? = null
     private var pickerOpening = false
+    /** The look the preview is drawn in ([renderLook]); null before the first draw. */
+    private var previewLook: LookMode? = null
 
     /** Volume keys, the volume panel or a DND schedule changed the ringer: show what is true now. */
     private val soundReceiver = object : BroadcastReceiver() {
@@ -174,6 +180,14 @@ class KidSettingsActivity : UIObjectActivity() {
             button.setOnClickListener {
                 QuickControls.setSound(this, choice)
                 section?.let { renderControls(it) }
+            }
+        }
+        // Design 78 §7: the look's row, in debug builds only until step 2 (only Kalender follows the look yet).
+        if (BuildConfig.DEBUG) binding.kidSettingsLookSection.visibility = View.VISIBLE
+        for ((button, mode) in lookButtons()) {
+            button.setOnClickListener {
+                PageLook.choose(this, mode)
+                renderLook()
             }
         }
         for ((row, kind) in pickRows()) {
@@ -255,6 +269,7 @@ class KidSettingsActivity : UIObjectActivity() {
             lastLogged = described
         }
         this.section = section
+        renderLook()
         renderControls(section)
         binding.kidSettingsLocationLine.visibility = if (model.sharesLocation) View.VISIBLE else View.GONE
         renderHidden()
@@ -505,9 +520,29 @@ class KidSettingsActivity : UIObjectActivity() {
         binding.kidSettingsSoundVibrate to SoundChoice.SILENT_VIBRATE,
     )
 
+    private fun lookButtons(): List<Pair<RadioButton, LookMode>> = listOf(
+        binding.kidSettingsLookDark to LookMode.DARK,
+        binding.kidSettingsLookLight to LookMode.LIGHT,
+    )
+
+    /**
+     * The look's row (design 78 §7): the kid's choice checked, and the preview drawn in it - inflated through
+     * [PageLook.wrap], so its page tokens resolve in that look although this screen stays night. Redrawn at the tap.
+     */
+    private fun renderLook() {
+        if (binding.kidSettingsLookSection.visibility != View.VISIBLE) return
+        val look = PageLook.choice
+        binding.kidSettingsLookGroup.check(if (look == LookMode.LIGHT) R.id.kid_settings_look_light else R.id.kid_settings_look_dark)
+        if (look == previewLook) return
+        previewLook = look
+        binding.kidSettingsLookPreview.removeAllViews()
+        LayoutInflater.from(PageLook.wrap(this, look)).inflate(R.layout.view_look_preview, binding.kidSettingsLookPreview, true)
+    }
+
     private fun renderInk(ink: InkChoice) {
         for (view in listOf(
             binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
+            binding.kidSettingsLookHeading, binding.kidSettingsLookCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
@@ -527,6 +562,7 @@ class KidSettingsActivity : UIObjectActivity() {
         if (ink != this.ink) {
             this.ink = ink
             for ((button, _) in soundButtons()) styleSegment(button, ink)
+            for ((button, _) in lookButtons()) styleSegment(button, ink)
         }
     }
 

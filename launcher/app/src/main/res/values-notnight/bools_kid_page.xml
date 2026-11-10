@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark bar icons on the paper ground (design 78 §5.5). -->
+<resources>
+    <bool name="kid_page_light_bars">true</bool>
+</resources>

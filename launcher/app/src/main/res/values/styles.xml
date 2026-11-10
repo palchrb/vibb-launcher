@@ -35,40 +35,61 @@
         <item name="android:textColor">@color/kid_accent</item>
     </style>
 
+    <!-- The default AlertDialog of a page (design 78 §4.4, KidPageTheme): KidAlertDialog on page tokens, so Dagen's
+         delete confirm and its length list follow the page's look. Every colour item is named again; at night each
+         is the value above. -->
+    <style name="KidPageAlertDialog" parent="KidAlertDialog">
+        <item name="android:windowBackground">@drawable/bg_kid_page_dialog</item>
+        <item name="android:colorBackground">@color/kid_page_lift</item>
+        <item name="colorBackgroundFloating">@color/kid_page_lift</item>
+        <item name="android:textColor">@color/kid_page_ink</item>
+        <item name="android:textColorPrimary">@color/kid_page_ink</item>
+        <item name="android:textColorSecondary">@color/kid_page_ink</item>
+        <item name="colorAccent">@color/kid_page_accent</item>
+        <item name="colorControlActivated">@color/kid_page_accent</item>
+        <item name="buttonBarButtonStyle">@style/KidPageDialogButton</item>
+    </style>
+
+    <style name="KidPageDialogButton" parent="KidDialogButton">
+        <item name="android:textColor">@color/kid_page_accent</item>
+    </style>
+
     <!-- "Ny avtale"'s framework date and time pickers (EventEditActivity; jellystar2, 2026-10-27): passed to both
          constructors. Without it the picker took the system's light dialog under our theme's white text, and every
          day number but the selected one was white on white. The framework's own dark Material dialog (never
          DeviceDefault, which follows an OEM's day/night) with every colour of ours set by name - the panel the lifted
          night, text and the month arrows our ink, the weekday row dim, the header and the selection peach with night
-         text on them - so it is the same in the system's light and dark mode. -->
+         text on them - so it is the same in the system's light and dark mode. Since design 78 this is the night
+         form, in page tokens (each today's value at night); values-notnight/styles.xml has VibbPickerDialog's day
+         twin, the same items on the framework's light dialog, for a page in Lys (§4.4). -->
     <style name="VibbPickerDialog" parent="@android:style/Theme.Material.Dialog">
-        <item name="android:windowBackground">@drawable/bg_kid_dialog</item>
-        <item name="android:colorBackground">@color/kid_ground_lift</item>
-        <item name="android:colorBackgroundFloating">@color/kid_ground_lift</item>
-        <item name="android:colorPrimary">@color/kid_accent</item>
-        <item name="android:colorAccent">@color/kid_accent</item>
-        <item name="android:colorControlActivated">@color/kid_accent</item>
-        <item name="android:colorControlNormal">@color/kid_ink</item>
-        <item name="android:textColor">@color/kid_ink</item>
-        <item name="android:textColorPrimary">@color/kid_ink</item>
-        <item name="android:textColorSecondary">@color/kid_core_dim</item>
-        <item name="android:textColorPrimaryInverse">@color/kid_ground</item>
-        <item name="android:textColorSecondaryInverse">@color/kid_ground</item>
+        <item name="android:windowBackground">@drawable/bg_kid_page_dialog</item>
+        <item name="android:colorBackground">@color/kid_page_lift</item>
+        <item name="android:colorBackgroundFloating">@color/kid_page_lift</item>
+        <item name="android:colorPrimary">@color/kid_page_accent_fill</item>
+        <item name="android:colorAccent">@color/kid_page_accent</item>
+        <item name="android:colorControlActivated">@color/kid_page_accent_fill</item>
+        <item name="android:colorControlNormal">@color/kid_page_ink</item>
+        <item name="android:textColor">@color/kid_page_ink</item>
+        <item name="android:textColorPrimary">@color/kid_page_ink</item>
+        <item name="android:textColorSecondary">@color/kid_page_dim</item>
+        <item name="android:textColorPrimaryInverse">@color/kid_on_accent</item>
+        <item name="android:textColorSecondaryInverse">@color/kid_on_accent</item>
         <item name="android:datePickerStyle">@style/VibbDatePicker</item>
         <item name="android:timePickerStyle">@style/VibbTimePicker</item>
     </style>
 
     <style name="VibbDatePicker" parent="@android:style/Widget.Material.DatePicker">
         <item name="android:datePickerMode">calendar</item>
-        <item name="android:headerBackground">@color/kid_accent</item>
+        <item name="android:headerBackground">@color/kid_page_accent_fill</item>
         <item name="android:calendarTextColor">@color/vibb_picker_number</item>
     </style>
 
     <style name="VibbTimePicker" parent="@android:style/Widget.Material.TimePicker">
         <item name="android:timePickerMode">clock</item>
-        <item name="android:headerBackground">@color/kid_accent</item>
-        <item name="android:numbersBackgroundColor">@color/kid_ground</item>
-        <item name="android:numbersSelectorColor">@color/kid_accent</item>
+        <item name="android:headerBackground">@color/kid_page_accent_fill</item>
+        <item name="android:numbersBackgroundColor">@color/kid_page_ground</item>
+        <item name="android:numbersSelectorColor">@color/kid_page_accent_fill</item>
         <item name="android:numbersTextColor">@color/vibb_picker_number</item>
         <item name="android:numbersInnerTextColor">@color/vibb_picker_number</item>
     </style>
@@ -114,6 +135,37 @@
         <item name="fontFamily">@font/nunito</item>
     </style>
 
+    <!-- A page: a full-screen kid screen that paints its own solid ground and follows the kid's Mørk or Lys
+         (design 78 §5.2; ui/look/KidPageActivity). The manifest sets it, so the starting window Android draws
+         before our code runs has the page's ground and bar icons - both follow the app's night mode
+         (PageLook). PageManifestTest keeps it on exactly the pages. -->
+    <style name="KidPageTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@color/kid_page_ground</item>
+        <item name="android:windowSplashScreenBackground">@color/kid_page_ground</item>
+        <item name="android:windowLightStatusBar">@bool/kid_page_light_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/kid_page_light_bars</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="alertDialogTheme">@style/KidPageAlertDialog</item>
+    </style>
+
+    <!-- A page's colours, laid over its theme by KidPageActivity.getTheme after UIObject.modifyTheme (which
+         applies colorThemeDefault's night colours on every call). It is what colours a theme reference on a page:
+         ?android:attr/textColorSecondary, ?attr/selectableItemBackground's ripple, a control's tint. At night
+         each is what launcherBaseTheme resolves to today (its three text colours are all the ink; the ripple is
+         AppCompat's own dark one). KidPaletteTest checks the text pairs in both looks. -->
+    <style name="PageColors">
+        <item name="android:colorBackground">@color/kid_page_ground</item>
+        <item name="android:textColor">@color/kid_page_ink</item>
+        <item name="android:textColorPrimary">@color/kid_page_ink</item>
+        <item name="android:textColorSecondary">@color/kid_page_ink</item>
+        <item name="android:textColorHint">@color/kid_page_ink</item>
+        <item name="colorAccent">@color/kid_page_accent</item>
+        <item name="colorPrimary">@color/kid_page_ground</item>
+        <item name="colorControlNormal">@color/kid_page_ink</item>
+        <item name="colorControlActivated">@color/kid_page_accent</item>
+        <item name="colorControlHighlight">@color/kid_page_ripple_strong</item>
+    </style>
+
     <!-- Design 16b (QA #11): the boot cover - a framework theme (no AppCompat, nothing from
          launcherBaseTheme), Vibb night, readable before the first unlock (APK resources only). -->
     <style name="BootCoverTheme" parent="@android:style/Theme.Material.NoActionBar">
@@ -123,6 +175,29 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
+    <!-- The "link blocked" notice (PlayLinkBlockedActivity, a plain Activity; design 78 §5.3): a framework night
+         theme of its own, as the boot cover's. It had the application's AppCompat DayNight theme, whose window
+         follows the app's night mode - light in Lys - before the notice's own night content. No preview, the
+         fade, Nunito and the night text on a peach button as launcherBaseTheme gave it. -->
+    <style name="PlayLinkBlockedTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:windowSplashScreenBackground">@color/kid_ground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_none</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:statusBarColor">@color/kid_ground</item>
+        <item name="android:navigationBarColor">@color/kid_ground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowAnimationStyle">@style/WindowFadeTransition</item>
+        <item name="android:colorAccent">@color/kid_accent</item>
+        <item name="android:fontFamily">@font/nunito</item>
+        <item name="android:buttonStyle">@style/PlayLinkBlockedButton</item>
+    </style>
+
+    <style name="PlayLinkBlockedButton" parent="@android:style/Widget.Material.Button.Colored">
+        <item name="android:textColor">@color/kid_ground</item>
     </style>
 
     <!-- Handy's PIN lock (step 10), with the window preview on. Design 32 (decision 3, QA M3): the
@@ -340,7 +415,8 @@
         <item name="showText">false</item>
     </style>
 
-    <!-- The kid's event form (design 69 §1b): a small upper-case label over a night tile with the value. -->
+    <!-- The kid's event form (design 69 §1b): a small upper-case label over a tile with the value, in page tokens
+         (design 78). -->
     <style name="KidEventFieldLabel">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -350,7 +426,7 @@
         <item name="android:fontFamily">@font/nunito_extrabold</item>
         <item name="android:textAllCaps">true</item>
         <item name="android:letterSpacing">0.05</item>
-        <item name="android:textColor">@color/kid_core_dim</item>
+        <item name="android:textColor">@color/kid_page_dim</item>
         <item name="android:textSize">12sp</item>
     </style>
 
@@ -365,11 +441,13 @@
         <item name="android:paddingEnd">14dp</item>
         <item name="android:paddingTop">10dp</item>
         <item name="android:paddingBottom">10dp</item>
-        <item name="android:textColor">@color/kid_ink</item>
-        <item name="android:textColorHint">@color/kid_core_dim</item>
+        <item name="android:textColor">@color/kid_page_ink</item>
+        <item name="android:textColorHint">@color/kid_page_dim</item>
         <item name="android:textSize">16sp</item>
     </style>
 
+    <!-- A text link: the header's action, an event's "Endre" and "Slett", kid Settings' wallpaper links. The page
+         accent (design 78): kid Settings is pinned to night, where it is the peach as before. -->
     <style name="KidManageLink">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
@@ -380,7 +458,7 @@
         <item name="android:fontFamily">@font/nunito_bold</item>
         <item name="android:paddingStart">10dp</item>
         <item name="android:paddingEnd">10dp</item>
-        <item name="android:textColor">@color/kid_slider</item>
+        <item name="android:textColor">@color/kid_page_accent</item>
         <item name="android:textSize">14sp</item>
     </style>
 

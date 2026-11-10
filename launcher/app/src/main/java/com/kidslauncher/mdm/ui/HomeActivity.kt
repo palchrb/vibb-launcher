@@ -485,6 +485,8 @@ class HomeActivity : UIObjectActivity() {
         }
         startWork()
         PinLockRuntime.onHomeResumed(interactive())
+        // Design 78 §5.4: a change of look that had to wait for a page to leave the screen runs now.
+        com.kidslauncher.mdm.ui.look.PageLook.onHomeResumed(this)
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
         // doc comment on the GrapheneOS hardened_malloc / native-crash risk this sidesteps by
         // waiting until the launcher has actually rendered instead of racing the very first UI

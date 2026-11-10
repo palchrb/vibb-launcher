@@ -9,13 +9,14 @@ import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.pow
 
 /** "Ny avtale"'s date and time pickers (jellystar2, 2026-10-27: every day number but the selected one was invisible):
- * both are built with VibbPickerDialog, and the theme names every colour the pickers draw, readable on its panel. */
+ * both are built with VibbPickerDialog, and the theme names every colour the pickers draw, readable on its panel - in
+ * Mørk (`values/`) and in Lys (`values-notnight/`, design 78 §4.4). */
 class PickerThemeTest {
     private val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
 
-    private fun styles(): Map<String, Pair<String, Map<String, String>>> {
+    private fun styles(dir: String): Map<String, Pair<String, Map<String, String>>> {
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
-            .parse(File(main, "res/values/styles.xml"))
+            .parse(File(main, "res/$dir/styles.xml"))
         val out = HashMap<String, Pair<String, Map<String, String>>>()
         val list = doc.getElementsByTagName("style")
         for (i in 0 until list.length) {
@@ -31,8 +32,9 @@ class PickerThemeTest {
         return out
     }
 
-    private fun colours(): Map<String, String> {
-        val text = File(main, "res/values/colors_kid.xml").readText()
+    /** The kid palette with the page tokens of that look ([dir]). */
+    private fun colours(dir: String): Map<String, String> {
+        val text = File(main, "res/values/colors_kid.xml").readText() + File(main, "res/$dir/colors_kid_page.xml").readText()
         return Regex("""<color name="([a-z_]+)">([^<]+)</color>""").findAll(text).associate { it.groupValues[1] to it.groupValues[2].trim() }
     }
 
@@ -63,35 +65,47 @@ class PickerThemeTest {
     }
 
     @Test
-    fun `the theme names every colour the pickers draw, readable on its panel`() {
-        val all = styles()
-        val colours = colours()
-        val (parent, theme) = all.getValue("VibbPickerDialog")
-        assertEquals("@android:style/Theme.Material.Dialog", parent)
-        for (key in listOf("android:windowBackground", "android:colorBackground", "android:colorAccent", "android:colorControlNormal",
-            "android:textColorPrimary", "android:textColorSecondary", "android:textColorPrimaryInverse")) {
-            assertTrue(key, key in theme)
-        }
-        assertEquals("@style/VibbDatePicker", theme["android:datePickerStyle"])
-        assertEquals("@style/VibbTimePicker", theme["android:timePickerStyle"])
-        val date = all.getValue("VibbDatePicker").second
-        val time = all.getValue("VibbTimePicker").second
+    fun `the theme names every colour the pickers draw, readable on its panel, in both looks`() {
+        val night = styles("values")
+        val date = night.getValue("VibbDatePicker").second
+        val time = night.getValue("VibbTimePicker").second
         assertEquals("@color/vibb_picker_number", date["android:calendarTextColor"])
         assertEquals("@color/vibb_picker_number", time["android:numbersTextColor"])
         assertEquals("@color/vibb_picker_number", time["android:numbersInnerTextColor"])
+        // The framework's dark dialog in Mørk and its light one in Lys (never DeviceDefault), the same items in both:
+        // a qualified style replaces the whole style. The two widget styles name page tokens only and have no twin.
+        val day = styles("values-notnight")
+        assertEquals(setOf("VibbPickerDialog"), day.keys)
+        assertEquals(night.getValue("VibbPickerDialog").second, day.getValue("VibbPickerDialog").second)
+        for ((dir, framework) in listOf("values" to "@android:style/Theme.Material.Dialog", "values-notnight" to "@android:style/Theme.Material.Light.Dialog")) {
+            val (parent, theme) = styles(dir).getValue("VibbPickerDialog")
+            val palette = colours(dir)
+            assertEquals(dir, framework, parent)
+            for (key in listOf("android:windowBackground", "android:colorBackground", "android:colorAccent", "android:colorControlNormal",
+                "android:textColorPrimary", "android:textColorSecondary", "android:textColorPrimaryInverse")) {
+                assertTrue("$dir $key", key in theme)
+            }
+            assertEquals("@style/VibbDatePicker", theme["android:datePickerStyle"])
+            assertEquals("@style/VibbTimePicker", theme["android:timePickerStyle"])
 
-        val panel = resolve(theme.getValue("android:colorBackground"), colours)
-        val ink = resolve(theme.getValue("android:textColorPrimary"), colours)
-        assertTrue("day numbers on the panel", contrast(ink, panel) >= 4.5)
-        // The header and the selection: night text on peach.
-        val accent = resolve(theme.getValue("android:colorAccent"), colours)
-        assertTrue("on the peach", contrast(resolve(theme.getValue("android:textColorPrimaryInverse"), colours), accent) >= 4.5)
-        assertEquals(accent, resolve(date.getValue("android:headerBackground"), colours))
-        // The clock face's numbers on its own disc.
-        assertTrue("clock numbers", contrast(ink, resolve(time.getValue("android:numbersBackgroundColor"), colours)) >= 4.5)
+            val panel = resolve(theme.getValue("android:colorBackground"), palette)
+            val ink = resolve(theme.getValue("android:textColorPrimary"), palette)
+            assertTrue("$dir: day numbers on the panel", contrast(ink, panel) >= 4.5)
+            assertTrue("$dir: the weekday row on the panel", contrast(resolve(theme.getValue("android:textColorSecondary"), palette), panel) >= 4.5)
+            assertTrue("$dir: the buttons on the panel", contrast(resolve(theme.getValue("android:colorAccent"), palette), panel) >= 4.5)
+            // The header and the selection: the peach fill with the night text on it.
+            val fill = resolve(theme.getValue("android:colorControlActivated"), palette)
+            assertTrue("$dir: on the peach", contrast(resolve(theme.getValue("android:textColorPrimaryInverse"), palette), fill) >= 4.5)
+            assertEquals(fill, resolve(date.getValue("android:headerBackground"), palette))
+            assertEquals(fill, resolve(time.getValue("android:headerBackground"), palette))
+            assertEquals(fill, resolve(time.getValue("android:numbersSelectorColor"), palette))
+            // The clock face's numbers on its own disc.
+            assertTrue("$dir: clock numbers", contrast(ink, resolve(time.getValue("android:numbersBackgroundColor"), palette)) >= 4.5)
+        }
 
         val selector = File(main, "res/color/vibb_picker_number.xml").readText()
-        assertTrue(selector.contains("""<item android:color="@color/kid_ground" android:state_activated="true" />"""))
-        assertTrue(selector.contains("""<item android:color="@color/kid_ink" />"""))
+        assertTrue(selector.contains("""<item android:color="@color/kid_on_accent" android:state_activated="true" />"""))
+        assertTrue(selector.contains("""<item android:color="@color/kid_page_dim" android:state_enabled="false" />"""))
+        assertTrue(selector.contains("""<item android:color="@color/kid_page_ink" />"""))
     }
 }

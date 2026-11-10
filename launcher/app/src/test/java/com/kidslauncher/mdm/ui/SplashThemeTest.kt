@@ -63,7 +63,10 @@ class SplashThemeTest {
                 val kept = base[name] ?: continue
                 val dropped = kept.second.keys - style.second.keys
                 assertTrue("${dir.name}/$name drops $dropped", dropped.isEmpty())
-                assertEquals("${dir.name}/$name changes its parent", kept.first, style.first)
+                // The one exception (design 78 §4.4): the pickers' dialog on a page in Lys is the framework's light
+                // dialog, so what the pickers draw that we don't name is light too.
+                val parent = if (dir.name == "values-notnight" && name == "VibbPickerDialog") "@android:style/Theme.Material.Light.Dialog" else kept.first
+                assertEquals("${dir.name}/$name changes its parent", parent, style.first)
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui
 
+import com.kidslauncher.mdm.day.CalendarColor
 import com.kidslauncher.mdm.ui.home.EMERGENCY_AVATAR
 import com.kidslauncher.mdm.ui.home.TONE_SLATE
 import com.kidslauncher.mdm.ui.home.TONE_TEAL
@@ -11,7 +12,8 @@ import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.pow
 
-/** The Vibb night palette (fix round 2026-10-06): text colours on the ground stay >= 4.5:1. */
+/** The Vibb night palette (fix round 2026-10-06): text colours on the ground stay >= 4.5:1. Since design 78 the kid's
+ * pages have a day palette too (`values-notnight`), held to the same numbers. */
 class KidPaletteTest {
     private fun resFile(path: String): File =
         listOf("src/main/res/$path", "app/src/main/res/$path").map(::File).first { it.exists() }
@@ -444,5 +446,194 @@ class KidPaletteTest {
         // and glyph identify it), and its red reads on the bare night too.
         assertTrue(contrast("kid_emergency_tonal", "kid_ground") < 1.5)
         assertTrue(contrast("kid_emergency_text", "kid_ground") >= 4.5)
+    }
+
+    // Design 78: the kid's pages in Mørk and Lys.
+
+    private fun pageColours(dir: String): Map<String, String> {
+        val nodes = parse("$dir/colors_kid_page.xml").getElementsByTagName("color")
+        return (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+    }
+
+    private val pageNight = pageColours("values")
+    private val pageDay = pageColours("values-notnight")
+
+    /** A page token in that look - or an unqualified token, or a literal - as `#[AA]RRGGBB`. */
+    private fun inLook(name: String, day: Boolean): String {
+        val value = (if (day) pageDay else pageNight)[name.removePrefix("@color/")] ?: return resolve(name)
+        return if (value.startsWith("@color/")) inLook(value, day) else value
+    }
+
+    private fun styleItems(name: String): Map<String, String> {
+        val styles = parse("values/styles.xml").getElementsByTagName("style")
+        val style = (0 until styles.length).map { styles.item(it) as Element }.first { it.getAttribute("name") == name }
+        val nodes = style.getElementsByTagName("item")
+        return (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+    }
+
+    /** Design 78 D2: Mørk is today's night - every page token a reference to today's token, or today's literal. */
+    @Test
+    fun `a page in Mørk is today's night, token by token`() {
+        val today = mapOf(
+            "kid_page_ground" to "@color/kid_ground", "kid_page_tile" to "@color/kid_music_tile", "kid_page_edge" to "#00000000",
+            "kid_page_lift" to "@color/kid_ground_lift", "kid_page_control" to "@color/kid_music_control",
+            "kid_page_ink" to "@color/kid_ink", "kid_page_core" to "@color/kid_core", "kid_page_dim" to "@color/kid_core_dim",
+            "kid_page_accent" to "@color/kid_accent", "kid_page_accent_fill" to "@color/kid_accent",
+            "kid_page_selected_out" to "@color/kid_core", "kid_page_button" to "@color/kid_sheet_button",
+            "kid_page_back" to "@color/kid_back_button", "kid_page_divider" to "@color/kid_divider",
+            // The rows' and the back disc's ripples were these literals in their drawables.
+            "kid_page_ripple" to "#1FFFFFFF", "kid_page_ripple_strong" to "#33FFFFFF",
+            "kid_page_message_in" to "@color/kid_message_in", "kid_page_message_in_ink" to "@color/kid_ink",
+            "kid_page_message_in_dim" to "@color/kid_message_in_dim", "kid_page_alert" to "@color/kid_missed_text",
+            "kid_page_danger" to "@color/kid_emergency_tonal", "kid_page_danger_text" to "#FF8A8A",
+        )
+        assertEquals(today, pageNight)
+        assertEquals("#FF8A8A", resolve("kid_emergency_text").uppercase())
+        // What sits on a peach fill is the night in both looks, the ground's value under its own name.
+        assertEquals(resolve("kid_ground"), resolve("kid_on_accent"))
+        assertPagePairs(day = false)
+    }
+
+    /** Design 78 §4.1: "Vibb dag", value by value, and every pair of the table. */
+    @Test
+    fun `a page in Lys is the warm paper palette, every pair readable`() {
+        val day = mapOf(
+            "kid_page_ground" to "#F6F2EF", "kid_page_tile" to "#FFFFFF", "kid_page_edge" to "#24000000",
+            "kid_page_lift" to "#FFFFFF", "kid_page_control" to "#FFFFFF",
+            "kid_page_ink" to "#1B1B1F", "kid_page_core" to "#1B1B1F", "kid_page_dim" to "#5E5752",
+            "kid_page_accent" to "#A64B25", "kid_page_accent_fill" to "#E8895E",
+            "kid_page_selected_out" to "#1B1B1F", "kid_page_button" to "#12000000",
+            "kid_page_back" to "#0F000000", "kid_page_divider" to "#1A000000",
+            "kid_page_ripple" to "#14000000", "kid_page_ripple_strong" to "#1F000000",
+            "kid_page_message_in" to "#E8E4EE", "kid_page_message_in_ink" to "#1B1B1F",
+            "kid_page_message_in_dim" to "#5E5870", "kid_page_alert" to "#B3261E",
+            "kid_page_danger" to "#FBE3E1", "kid_page_danger_text" to "#A1241C",
+        )
+        assertEquals(day, pageDay)
+        assertPagePairs(day = true)
+        // The table's numbers: the ink, the dim and the accent on the paper, the night glyph on the peach fill.
+        val ground = inLook("kid_page_ground", true)
+        assertEquals(15.4, contrast(inLook("kid_page_ink", true), ground), 0.1)
+        assertEquals(6.4, contrast(inLook("kid_page_dim", true), ground), 0.1)
+        assertEquals(5.2, contrast(inLook("kid_page_accent", true), ground), 0.1)
+        assertEquals(7.6, contrast("kid_on_accent", inLook("kid_page_accent_fill", true)), 0.1)
+        // A tile is a grouped list's white on the paper: a quiet step, no edge.
+        assertEquals(1.11, contrast(inLook("kid_page_tile", true), ground), 0.01)
+        // The kid's own bubble is the same peach in both looks.
+        for (own in listOf("kid_message_out", "kid_message_out_ink", "kid_message_out_dim")) {
+            assertTrue(own, own !in pageDay && own in colours)
+        }
+    }
+
+    /** §4.1's pairs in one look: a text at 4.5:1 or more on what is under it, a ring at 3:1. */
+    private fun assertPagePairs(day: Boolean) {
+        fun c(name: String) = inLook(name, day)
+        val ground = c("kid_page_ground")
+        val tile = c("kid_page_tile")
+        val bubble = c("kid_page_message_in")
+        val own = c("kid_message_out")
+        val texts = listOf(
+            "kid_page_ink" to ground, "kid_page_ink" to tile, "kid_page_ink" to c("kid_page_lift"),
+            "kid_page_core" to ground, "kid_page_core" to tile,
+            "kid_page_dim" to ground, "kid_page_dim" to tile,
+            "kid_page_accent" to ground, "kid_page_accent" to tile, "kid_page_accent" to c("kid_page_lift"), "kid_page_accent" to bubble,
+            "kid_on_accent" to c("kid_page_accent_fill"),
+            // The tonal pill and the back disc, over a tile and the ground.
+            "kid_page_ink" to over(c("kid_page_button"), tile), "kid_page_ink" to over(c("kid_page_button"), ground),
+            "kid_page_ink" to over(c("kid_page_back"), ground),
+            "kid_page_message_in_ink" to bubble, "kid_page_message_in_dim" to bubble,
+            "kid_page_alert" to ground, "kid_page_alert" to tile,
+            "kid_page_danger_text" to c("kid_page_danger"),
+            "kid_message_out_ink" to own, "kid_message_out_dim" to own,
+        )
+        for ((ink, under) in texts) {
+            val ratio = contrast(c(ink), under)
+            assertTrue("${if (day) "Lys" else "Mørk"}: $ink on $under: $ratio", ratio >= 4.5)
+        }
+        // "Pågår nå"'s ring on its tile and a selected received bubble's on its bubble. The own bubble's ring is held
+        // to 3:1 in Lys only: in Mørk it is today's kid_core on the peach, unchanged by this design (D2).
+        val rings = listOf("kid_page_accent" to tile, "kid_page_accent" to bubble) + if (day) listOf("kid_page_selected_out" to own) else emptyList()
+        for ((ring, under) in rings) {
+            assertTrue("$ring on $under", contrast(c(ring), under) >= 3.0)
+        }
+    }
+
+    /** Design 78 §5.2 and §4.4: what a theme reference resolves to on a page, and a page's dialogs. */
+    @Test
+    fun `a page's theme colours and its dialogs read in both looks`() {
+        val page = styleItems("KidPageTheme")
+        assertEquals("@color/kid_page_ground", page["android:windowBackground"])
+        assertEquals("@color/kid_page_ground", page["android:windowSplashScreenBackground"])
+        assertEquals("@bool/kid_page_light_bars", page["android:windowLightStatusBar"])
+        assertEquals("@bool/kid_page_light_bars", page["android:windowLightNavigationBar"])
+        assertEquals("false", page["android:enforceNavigationBarContrast"])
+        assertEquals("@style/KidPageAlertDialog", page["alertDialogTheme"])
+
+        val overlay = styleItems("PageColors")
+        assertEquals(
+            setOf(
+                "android:colorBackground", "android:textColor", "android:textColorPrimary", "android:textColorSecondary",
+                "android:textColorHint", "colorAccent", "colorPrimary", "colorControlNormal", "colorControlActivated", "colorControlHighlight",
+            ),
+            overlay.keys,
+        )
+        assertTrue(overlay.values.all { it.startsWith("@color/kid_page_") })
+        val dialog = styleItems("KidPageAlertDialog")
+        val button = styleItems("KidPageDialogButton").getValue("android:textColor")
+        assertEquals("@style/KidPageDialogButton", dialog["buttonBarButtonStyle"])
+        val window = dialog.getValue("android:windowBackground")
+        val solid = parse("drawable/${window.removePrefix("@drawable/")}.xml").getElementsByTagName("solid").item(0) as Element
+        assertEquals(dialog["android:colorBackground"], solid.getAttributeNS("http://schemas.android.com/apk/res/android", "color"))
+        for (day in listOf(false, true)) {
+            val look = if (day) "Lys" else "Mørk"
+            val ground = inLook(overlay.getValue("android:colorBackground"), day)
+            for (key in listOf(
+                "android:textColor", "android:textColorPrimary", "android:textColorSecondary", "android:textColorHint",
+                "colorAccent", "colorControlNormal", "colorControlActivated",
+            )) {
+                val ratio = contrast(inLook(overlay.getValue(key), day), ground)
+                assertTrue("$look: PageColors $key: $ratio", ratio >= 4.5)
+            }
+            val panel = inLook(dialog.getValue("android:colorBackground"), day)
+            assertEquals(panel, inLook(dialog.getValue("colorBackgroundFloating"), day))
+            for (ink in listOf(
+                dialog.getValue("android:textColorPrimary"), dialog.getValue("android:textColor"), dialog.getValue("android:textColorSecondary"),
+                dialog.getValue("colorAccent"), dialog.getValue("colorControlActivated"), button,
+            )) {
+                val ratio = contrast(inLook(ink, day), panel)
+                assertTrue("$look: dialog $ink on $panel: $ratio", ratio >= 4.5)
+            }
+        }
+        // In Mørk the page's dialog is KidAlertDialog, colour by colour.
+        val today = styleItems("KidAlertDialog")
+        for ((key, value) in dialog.filterValues { it.startsWith("@color/") }) {
+            assertEquals(key, resolve(today.getValue(key)), inLook(value, false))
+        }
+        assertEquals(resolve(styleItems("KidDialogButton").getValue("android:textColor")), inLook(button, false))
+    }
+
+    /** Design 78 §4.2: a calendar's dot is a graphic - 3:1 or more on a tile and on the ground, in both looks. */
+    @Test
+    fun `a calendar's dot stands off the tile and the ground in both looks`() {
+        val dayTable = mapOf(
+            CalendarColor.SKY to 0x3A76B0, CalendarColor.FOREST to 0x3C8650, CalendarColor.SUN to 0xA87414,
+            CalendarColor.BERRY to 0xC24E48, CalendarColor.SEA to 0x2B8580, CalendarColor.LAVENDER to 0x9455A2,
+            CalendarColor.SAND to 0x8C7650, CalendarColor.SLATE to 0x6C6C7A, CalendarColor.OWN to 0xC2622C,
+        )
+        assertEquals(CalendarColor.entries.toSet(), dayTable.keys)
+        for (color in CalendarColor.entries) {
+            assertEquals(color.name, dayTable.getValue(color), color.dayArgb and 0xFFFFFF)
+            assertEquals(color.name, color.argb, color.argb(night = true))
+            assertEquals(color.name, color.dayArgb, color.argb(night = false))
+            for (day in listOf(false, true)) {
+                val dot = "#%06X".format(color.argb(night = !day) and 0xFFFFFF)
+                for (under in listOf("kid_page_tile", "kid_page_ground")) {
+                    val ratio = contrast(dot, inLook(under, day))
+                    assertTrue("${color.name} on $under, ${if (day) "Lys" else "Mørk"}: $ratio", ratio >= 3.0)
+                }
+            }
+        }
+        // The kid's own calendar: the accent at night, as before.
+        assertEquals(resolve("kid_accent").uppercase(), "#%06X".format(CalendarColor.OWN.argb and 0xFFFFFF))
     }
 }

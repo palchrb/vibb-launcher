@@ -6,7 +6,9 @@
      ui.KidHeader; the page's top padding is the status-bar inset (ui.KidInsets) plus at most
      8 dp, and its content starts right below this row (KidHeaderLayoutTest). The row is at least 56 dp and grows with
      Dagen's second line at a larger font (the E5 run's M1: a fixed 56 dp clipped the date at font 1.3). The back
-     button's description here is Home's; KidHeader sets each page's own (E9 L6: kid Settings' pages go back to it). -->
+     button's description here is Home's; KidHeader sets each page's own (E9 L6: kid Settings' pages go back to it).
+     In page tokens since design 78, the white arrow tinted with the page's ink: on a page they follow the kid's
+     Mørk or Lys, on every other screen (pinned to night) they are the night values as before. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -23,7 +25,8 @@
         android:contentDescription="@string/kid_back_home"
         android:padding="13dp"
         android:scaleType="fitCenter"
-        android:src="@drawable/ic_kid_back" />
+        android:src="@drawable/ic_kid_back"
+        android:tint="@color/kid_page_ink" />
 
     <!-- The title, and Dagen's second line under it (design 69 §2.1: the weekday over the date); gone elsewhere. -->
     <LinearLayout
@@ -41,7 +44,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_extrabold"
             android:maxLines="1"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_page_ink"
             android:textSize="24sp" />
 
         <TextView
@@ -51,7 +54,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_bold"
             android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="14sp"
             android:visibility="gone" />
     </LinearLayout>

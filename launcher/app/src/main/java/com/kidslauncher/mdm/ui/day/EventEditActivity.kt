@@ -20,7 +20,7 @@ import com.kidslauncher.mdm.day.kidEventMinutes
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -33,7 +33,7 @@ import java.time.ZoneId
  * changes one of the kid's own events (re-checked before the save: Vibb One's, in the kid's calendar). Every provider
  * write is [CalendarStore]'s, off the main thread. Not exported.
  */
-class EventEditActivity : UIObjectActivity() {
+class EventEditActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityEventEditBinding
     private var eventId: Long? = null

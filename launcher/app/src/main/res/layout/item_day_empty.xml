@@ -11,5 +11,5 @@
     android:paddingEnd="16dp"
     android:paddingBottom="22dp"
     android:text="@string/day_empty"
-    android:textColor="@color/kid_core_dim"
+    android:textColor="@color/kid_page_dim"
     android:textSize="14sp" />

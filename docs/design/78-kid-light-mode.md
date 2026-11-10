@@ -1,6 +1,7 @@
 # 78 - A light look for the kid's own screens: Mørk or Lys
 
 Status: design note by the architect, 2026-11-09, on `main` at b9eff6b6, branch `design-78-light`. **Nothing is built.**
+(Since 2026-11-10 step 1 is: "Step 1 built", below.)
 Launcher only: no server, PWA or contract change. Mockups: `docs/design/78-mockups.html` (Meldinger and Kalender in
 both looks side by side, the contact card - night in both -, the kid Settings row, the token table).
 **Revision 2, 2026-11-09**, after the design QA (`docs/review/qa-78-design.md`: 0 Critical, 3 High, 7 Medium, 11 Low,
@@ -14,6 +15,10 @@ maps each one to where it landed. New in this revision:
 - nothing touches the choice before the first unlock (H3); the stored mode is re-applied at every unlocked start (M2);
 - a throwaway **step 0** on the emulator and the Jelly Star decides go or no-go before anything is built (M7);
 - **the contact card stays night** (the user, answer 4) - it is out of scope.
+
+**Step 1 built, 2026-11-10** (branch `kid-look-1`): the mechanism, the tokens and Kalender, the kid Settings row in debug
+builds only. Built and unit-tested; not yet seen running (`docs/testing/emulator.md` §6ah is its pass). Where the build
+departs from this note or settles something it left open, a line marked "Step 1, 2026-11-10" says so at the place.
 
 **Addition, 2026-11-10 - the phone book is a page too.** Since the batch `sms-follow-book-ground` the phone book is no
 longer on the wallpaper: it has Dagen's plain ground (`kid_ground`), on the user's wish ("bare lys/mørk bakgrunn akkurat
@@ -199,6 +204,12 @@ and text on a peach fill; today's `kid_ground` in that role) and the own-bubble 
 
 `kid_page_day_mine` (the kid's own events' green start) removed 2026-11-09, the user: every start time is the accent.
 
+Step 1, 2026-11-10: one more unqualified colour, `kid_on_accent_press` #33000000 - the press on a peach fill ("+",
+"Lagre"), the same in both looks; it was a literal in those drawables. Two drawables keep a literal white because they
+are masks that are only ever drawn tinted, `bg_day_dot` and `ic_kid_back`; `PageTokensScanTest` exempts them by name and
+asserts each tint site. `kid_page_selected_out` on the peach is 1.6:1 in Mørk - today's `kid_core` ring, unchanged (D2);
+`KidPaletteTest` holds it to 3:1 in Lys only.
+
 The own bubble stays peach in both looks: "my messages are peach" is the one thing the kid learns, and the peach reads
 on paper as well as on night (1.8:1 to the day ground as a shape; its text 8.7:1). The received bubble's day value
 keeps D2's lilac hint so the two looks are one family. The tiles stay without an edge (1.11:1, like iOS's grouped
@@ -216,6 +227,11 @@ lists); only the compose field, an input, gets the hairline.
   page. The glance gets the night value through its pinned context. The parent's PWA swatches stay the night values.
 - The "+" disc: `kid_page_accent_fill` with the glyph in `kid_on_accent`.
 
+Step 1, 2026-11-10: `CalendarColor.argb` stays the night table as a property, and the lock's glance keeps reading it
+directly (it is no page and never day) instead of going through `argb(context)`; the resolver is the only way in
+`ui/day/` (`PageTokensScanTest`). The "+" disc is 2.3:1 to the paper ground in Lys - this note's value; its glyph is
+what identifies it.
+
 ### 4.3 The contact card
 
 Out of scope (the user, answer 4): it keeps `kid_ground_lift` and every colour of design 34 P3, and `KidPaletteTest`'s
@@ -231,6 +247,13 @@ never merges with the unqualified one, so the twin names every item again: panel
 `kid_page_ink`, weekday row `kid_page_dim`, header and selection `kid_page_accent_fill` with `kid_on_accent`, and the
 two picker styles (`PickerThemeTest` reads both files). Every other screen keeps `KidAlertDialog` (night).
 
+Step 1, 2026-11-10: only `VibbPickerDialog` has a twin. `VibbDatePicker` and `VibbTimePicker` name page tokens only
+(their parents are the framework's widget styles, which have no light form of their own to pick), so they resolve by
+the look without one. The twin's parent differs from the night style's by design, so `SplashThemeTest`'s rule "a
+qualified style keeps its parent" names it as its one exception. Not settled here: in Lys the framework date picker
+draws today's number, while it is not the chosen day, in `colorControlActivated` - the peach fill, 2.6:1 on the white
+panel; step 1's pass looks at it.
+
 ## 5. The mechanism
 
 ### 5.1 Resources
@@ -242,6 +265,12 @@ two picker styles (`PickerThemeTest` reads both files). Every other screen keeps
 - Every page layout and drawable names `kid_page_*` (or `kid_on_accent` and the unqualified bubble colours); every
   literal or night token in them is replaced. Code that sets a colour on a page reads it through the activity's
   context (`getColor(R.color.kid_page_...)`), which resolves in the page's mode.
+
+Step 1, 2026-11-10: what Kalender shares with screens that are not pages yet is on page tokens already - the header
+(`include_kid_header`, `bg_kid_back_button`; the back arrow tinted `kid_page_ink` in the layout rather than by
+`KidHeader` in step 2), `KidManageLink`, and `bg_day_event`, `bg_day_add`, `bg_day_save`, `ic_day_add`, which
+Meldinger and the phone book also use. Those screens are pinned to night, where each page token is today's value, so
+they draw as before.
 
 ### 5.2 The page theme and its colour overlay
 
@@ -256,6 +285,11 @@ two picker styles (`PickerThemeTest` reads both files). Every other screen keeps
   `colorControlActivated` and `colorControlHighlight`, all `kid_page_*`. That is what colours the Wi-Fi and Bluetooth
   rows' `?android:attr/textColorSecondary` text and icons and their `?attr/selectableItemBackground` ripples.
   `KidPaletteTest` checks the overlay's text pairs in both files.
+
+Step 1, 2026-11-10: `PageColors`' values - `colorBackground` and `colorPrimary` the ground; the four text colours and
+`colorControlNormal` the ink (as `launcherBaseTheme`, whose three other text colours all point at `textColor`);
+`colorAccent` and `colorControlActivated` `kid_page_accent`; `colorControlHighlight` `kid_page_ripple_strong`
+(AppCompat's own dark ripple is the same 20 % white at night).
 
 ### 5.3 Who sets the mode
 
@@ -277,6 +311,12 @@ two picker styles (`PickerThemeTest` reads both files). Every other screen keeps
   `PlayLinkBlockedActivity` (a plain `Activity`) gets an explicit framework night theme like `BootCoverTheme`, so no
   AppCompat light window shows before its content; `BootCoverActivity` and the translucent ones already use framework
   themes that don't read the night bit.
+
+Step 1, 2026-11-10: "every one of them" is every non-page activity in the manifest, the plain `Activity`s on framework
+themes and the `:bootcover` one included (25 activities, 22 of them with `uiMode`): a rule without exceptions is the
+one `PageManifestTest` can hold. `PlayLinkBlockedTheme` is `Theme.Material.NoActionBar` on `kid_ground` with no
+preview, the fade, Nunito, the accent and a framework coloured button with night text, as `launcherBaseTheme` gave the
+notice; its look is in step 1's pass.
 
 ### 5.4 When the look changes
 
@@ -303,6 +343,13 @@ The applied mode lives in memory and in CE prefs (`kid_look.applied`). It change
    conversations - the oldest dropped -, cleared when sent or emptied, when the conversation is deleted, when its
    contact may no longer text, and when the phone goes unmanaged) and restored when the thread opens. Recents loses the
    Kalender and Meldinger cards at a change (the user, answer 6).
+
+Step 1, 2026-11-10: three things this section left open. A tap on the look that is already applied stores the choice
+only (it also withdraws a change that was waiting). The waiting change runs in `HomeActivity.onResume`
+(`PageLook.onHomeResumed`, after the lock's dark return) **without asking `mayChange` again**: the page the kid just
+left gets its `onStop` only after Home's `onResume`, so the count can still be one there, and Home in front is the rule
+itself. And a page task is known by its base intent's component, `DayActivity` (the only activity started with
+`NEW_TASK` into the `.day` affinity). Meldinger's task joins in step 2.
 
 ### 5.5 Status and navigation bars
 
@@ -333,6 +380,8 @@ if a parent turned it on, Lys pages could be inverted. Step 0 and step 1 check i
   equal to `choice` once a change has run) and the kept thread texts (§5.4). `commit()` on the kid's tap, like the
   wallpaper pick (`WallpaperStore`, `kid_wallpaper_id`). Read only from `initUnlocked()`, the pages and kid Settings (a
   source-scan test); never before the first unlock.
+  Step 1, 2026-11-10: `HomeActivity` is a fourth caller, for the waiting change alone (§5.4); it is not
+  direct-boot-aware, and `PageLookScanTest` names it. The kept thread texts are step 2's.
 - **The parent sees and sets nothing** (the user, answer 5). *Why:* the standing rule is that every restriction is
   liftable; this is not a restriction but the kid's preference, like the ringtone. Nothing to lift, nothing to watch,
   no policy key, no status-report key, no contract file, no server or PWA change.
@@ -354,6 +403,12 @@ if a parent turned it on, Lys pages could be inverted. Step 0 and step 1 check i
   contact card stay as they are."
 - **Release builds show the row from step 2 on** (step 1 changes only Kalender, so its caption would not be true yet);
   debug builds show it in step 1 for testing.
+- Step 1, 2026-11-10: the preview's container is `importantForAccessibility="noHideDescendants"` - with "no" alone
+  TalkBack would still stop on the two bubble texts. The strip has bubble drawables of its own (`bg_look_preview_in`,
+  `_out`, 12 sp text), not Meldinger's, which are step 2's; the received one ends in an ellipsis on a narrow screen.
+  The caption is the 2026-11-10 addition's wording, the phone book named (the table below has the older one). The
+  section is `gone` in the layout and shown by `if (BuildConfig.DEBUG)`; what a release build does get in step 1 is the
+  mechanism - the night pins, the unlocked-start call (always night, nothing can pick Lys), Kalender on `KidPageTheme`.
 - Strings (en / nb), all new:
 
 | Key | en | nb |
@@ -399,6 +454,10 @@ every non-page `AppCompatActivity` pins night in `attachBaseContext`); `PickerTh
 kid Settings with Kalender behind (its task gone, the next open clean); before and after screenshots of Home, the
 phone book, kid Settings, the drawer, parent Settings, the time-rule screen and the lock in the system's dark mode
 (identical) and light mode (only D2's AppCompat bits differ); TalkBack on the row; font scale 1.3.
+
+Step 1, 2026-11-10: built as listed. The phone book (the 2026-11-10 addition) is not in this list and stays night until
+step 2. The emulator pass is written as steps (`docs/testing/emulator.md` §6ah) and has not been run: no emulator was
+started in the build round.
 
 **Step 2 - Meldinger and the lists** (after design 77 step 2 is merged). The three message screens on page tokens
 (bubbles, selection rings, the picture's place, the unread dot, compose field with its hairline, send, the delete
